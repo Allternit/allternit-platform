@@ -142,6 +142,125 @@ If the disputed pack named an organization and its credits went to that org's fa
 
 The live Stripe webhook endpoint must subscribe to `charge.dispute.created` and `charge.dispute.closed`. Without them, chargebacks leave the credits in place.
 
+## Store purchases (Apple and Google)
+
+**Status: AVAILABLE (dark until configured).** The same plans and credit packs can be bought in the iPhone app (Apple In-App Purchase) and in the Play app (Google Play Billing). Store prices are higher than web prices; the credits are the same. Setup and secrets are in [Store billing](/operations/store-billing). Until a store's secrets are set, that store's `store.enabled` is `false` and its routes answer 503.
+
+The server never trusts the client. A client sends a transaction id (Apple) or a purchase token (Google); the server reads the purchase from the App Store Server API or the Play Developer API, grants credits once, and stores the result. Store notifications are only a prompt to look again.
+
+### Routes
+
+All routes live under `/api/v1/billing/store/`. The first three authenticated routes need a signed-in account with the `billing` scope. The notification routes are unauthenticated and re-fetch from the store.
+
+| Method | Path | Auth | Body | Success |
+| --- | --- | --- | --- | --- |
+| POST | `/billing/store/preflight` | signed in | `{ "provider": "apple" or "google", "kind": "plan" or "pack", "id": "plus", "environment": "production" or "sandbox" }` (`environment` optional, default `production`) | `200 { "account_token": "uuid", "product_id": "..." }` |
+| POST | `/billing/store/apple/transactions` | signed in | `{ "transaction_id": "..." }` (`transactionId` also accepted) | `200` purchase answer |
+| POST | `/billing/store/google/purchases` | signed in | `{ "kind": "plan" or "pack", "product_id": "plan_plus", "purchase_token": "..." }` | `200` purchase answer |
+| POST | `/billing/store/apple/notifications` | none | `{ "signedPayload": "..." }` | `200 { "received": true, "notification_type": "...", "handled": true }` |
+| POST | `/billing/store/apple/notifications/sandbox` | none | same | same |
+| POST | `/billing/store/google/rtdn?token=...` | push token | Pub/Sub push envelope | `200 { "received": true, "kind": "...", "handled": true }` |
+
+Call preflight before every purchase. It checks that the store is on, that the account has no other open plan, and the first-purchase limit, then returns the product id to buy and the account's `account_token`. iPhone passes the token to StoreKit as `appAccountToken`. The token is the same on every call for one account.
+
+**Purchase answer** (both purchase routes):
+
+```json
+{
+  "granted": true,
+  "subscription": {
+    "plan_id": "plus",
+    "label": "Plus",
+    "status": "active",
+    "billing_provider": "apple",
+    "renews_at": "2026-12-17T00:00:00Z",
+    "manage_url": "https://apps.apple.com/account/subscriptions",
+    "conflict": false
+  },
+  "balance_usd": 22.0,
+  "idempotent_replay": false
+}
+```
+
+`subscription` appears for plans, `balance_usd` for packs. `idempotent_replay: true` means this transaction was granted before and nothing was added this time. When nothing is granted, `granted` is `false` and the answer carries `reason` (and sometimes `message`): `sandbox_not_granted`, `refunded`, `unknown_account`, `account_closed` for Apple, or `unclaimed` for a Google notification nobody has claimed yet. Clients must not consume a Play pack on the device; the server consumes it after the grant.
+
+### Errors
+
+Every error is `{ "error": "<code>", "message": "..." }`.
+
+| Status | Code | Routes | Meaning |
+| --- | --- | --- | --- |
+| 400 | `BAD_REQUEST` (standard API error) | preflight | Unknown store, environment, kind or id |
+| 400 | `invalid_transaction_id` | Apple transactions | `transaction_id` is not an App Store transaction id |
+| 400 | `account_token_missing` | Apple transactions | The purchase carries no `appAccountToken`; sign in to the account that bought it and restore |
+| 400 | `wrong_app` | Apple transactions | Bought in a different app (bundle id) |
+| 400 | `unknown_product` | both purchase routes | Not an Allternit product id |
+| 400 | `invalid_purchase_token` | Google purchases | Token is not shaped like a Play purchase token |
+| 400 | `invalid_purchase` | Google purchases | Google did not accept the token |
+| 400 | `invalid_notification` | Apple notifications | Body is not `{ "signedPayload": "..." }` |
+| 401 | `invalid_token` | Google rtdn | `?token=` missing or wrong |
+| 403 | `first_purchase_limit` | preflight | Production purchase above the first-purchase cap for an untrusted account. The cap applies to the credits granted, so the $29.99 pack ($25 of credits) passes a $25 cap. Sandbox skips it |
+| 404 | `transaction_not_found` | Apple transactions | The App Store has no such transaction |
+| 404 | `purchase_not_found` | Google purchases | Play has no such purchase |
+| 409 | `already_subscribed` | preflight | The account already has an open plan (see double billing below). Carries `current_plan_id`, `billing_provider`, `manage_url` |
+| 409 | `owned_by_another_account` | both purchase routes | The purchase belongs to a different account. Purchases never move between accounts |
+| 502 | `store_unavailable` | purchase routes | The store could not be reached; try again |
+| 503 | `store_billing_not_configured` | all | That store's secrets are not set. Carries `provider` |
+| 503 | `store_unavailable` | notification routes | Store unreachable; the store retries |
+
+Notification routes answer `200` with `handled: false` for a notification that cannot be applied (unknown account, unsupported type), so the store stops retrying. They answer 5xx only for failures worth retrying.
+
+### Additive fields on existing routes
+
+All additions are optional for old clients.
+
+- `GET /billing/plans` and `GET /billing/packs`: each item gains `store`:
+
+  ```json
+  {
+    "reference_price_usd": 24.99,
+    "apple": { "enabled": false, "product_id": "com.allternit.mobile.plan.plus.monthly" },
+    "google": { "enabled": false, "product_id": "plan_plus" }
+  }
+  ```
+
+  `enabled` is true only when that store's secrets are set. `reference_price_usd` is the intended store price for reference; clients show the store's own localized price, not this number.
+- `GET /billing/subscription`: adds `billing_provider` (`stripe`, `apple`, `google` or `null` on Free), `manage_url` (where to change or cancel) and `conflict` (`true` when the account has more than one open plan). For an Apple or Google plan whose period end has passed, this route first re-reads the plan from the store, at most once per 10 minutes per plan, so a missed notification heals itself.
+- `POST /billing/subscribe`: the existing 409 `already_subscribed` now also carries `billing_provider` and `manage_url`.
+- `POST /billing/portal`: answers 409 `store_billed` (with `current_plan_id`, `billing_provider`, `manage_url`) when the plan is billed by Apple or Google. The Stripe portal cannot manage it.
+
+### Products
+
+Store prices are set in App Store Connect and Play Console. Credits are the same as web.
+
+| Item | Apple product id | Play product id | Store price | Credits |
+| --- | --- | --- | --- | --- |
+| Plus (monthly) | `com.allternit.mobile.plan.plus.monthly` | `plan_plus` | $24.99 | $22 a month |
+| Max (monthly, id `super`) | `com.allternit.mobile.plan.max.monthly` | `plan_max` | $124.99 | $110 a month |
+| Ultra (monthly) | `com.allternit.mobile.plan.ultra.monthly` | `plan_ultra` | $249.99 | $220 a month |
+| Pack $10 | `com.allternit.mobile.credits.10` | `credits_10` | $11.99 | $10 |
+| Pack $25 | `com.allternit.mobile.credits.25` | `credits_25` | $29.99 | $25 |
+| Pack $50 | `com.allternit.mobile.credits.50` | `credits_50` | $59.99 | $50 |
+| Pack $100 | `com.allternit.mobile.credits.100` | `credits_100` | $119.99 | $100 |
+
+Plan credits use the same rollover cap as Stripe plans. Each renewal grants once, keyed by the store transaction. A store plan sets the same plan tier as a Stripe plan and suspends a cloud computer the same way when it goes unpaid or is canceled.
+
+### Plan states
+
+Apple grace period and Google grace map to `past_due` (access stays). Grace expired or on hold maps to `unpaid` (default tier, cloud computer stopped). Expired maps to `canceled`. A change inside the Apple subscription group, or a Play replacement purchase, updates the same plan.
+
+### Sandbox rule
+
+Sandbox and test purchases reach the production server. A sandbox purchase grants credits and a plan only for accounts listed in `STORE_SANDBOX_GRANT_USER_IDS` (the App Review demo account and the internal test account). For anyone else the purchase is recorded and answers `granted: false`, `reason: "sandbox_not_granted"`, `message: "Test purchase. No credits were added."`.
+
+### Refunds
+
+An Apple `REFUND` or `REVOKE`, or a Google voided purchase, writes a negative ledger entry for the credits granted from that transaction, once. A refunded plan drops to the default tier. If the store later reverses the refund (Apple `REFUND_REVERSED`), the credits are given back once. A refund recorded for a transaction that never granted anything takes nothing; if that refund is later reversed, the transaction goes back to pending and the grant that follows adds its credits. The balance can go negative when the credits were already spent, as with Stripe disputes.
+
+### Double billing
+
+An account never needs two plans. Preflight and `POST /billing/subscribe` answer 409 `already_subscribed` when any plan is open, naming who bills it. A change inside the same store (for example Plus to Max on Apple) is allowed. If two plans exist anyway, for example a purchase made on the device without preflight, the server records both, grants what was paid, sets `conflict: true` on `GET /billing/subscription`, and alerts the team. Clients then show "You have two plans. Cancel one."
+
 ## Tables
 
 Migration `103_auto_topup.sql`:
@@ -153,6 +272,12 @@ Migration `103_auto_topup.sql`:
 Migration `106_billing_disputes.sql`:
 
 - `billing_disputes`: one row per Stripe dispute (`stripe_dispute_id`, `user_id` or null when unmatched, charge, PaymentIntent and customer ids, `amount_cents`, `held_usd`, `hold_transaction_id`, `release_transaction_id`, `status` of `open`, `unmatched`, `won`, `lost` or `closed`).
+
+Migration `148_store_billing.sql` (see [Store billing](/operations/store-billing)):
+
+- `billing_subscriptions` gains `provider`, `store_product_id`, `store_environment`, `store_checked_at` and `store_purchase_token`.
+- `billing_store_accounts`: one store account token per person.
+- `billing_store_transactions`: the store ledger, one row per store transaction.
 
 ## Plans
 
