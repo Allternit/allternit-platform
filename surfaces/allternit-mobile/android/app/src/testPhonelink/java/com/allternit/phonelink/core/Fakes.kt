@@ -176,8 +176,10 @@ class FakeScreenHost : ScreenHost {
     var tap = true
     var consent = Consent.NEEDED
     var fg = true
+    var keyboard: JSONObject? = null
     override fun onScreenRequest() { requests++ }
     override fun canTap() = tap
     override fun consent() = consent
     override fun foreground() = fg
+    override fun keyboard() = keyboard
 }

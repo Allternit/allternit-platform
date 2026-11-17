@@ -8,7 +8,7 @@
  * and adb is only fetched the first time an Android phone is used.
  */
 
-import { app, dialog, nativeImage, Notification } from 'electron';
+import { app, dialog, nativeImage, Notification, shell } from 'electron';
 import log from 'electron-log';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -38,7 +38,7 @@ import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
 import { btAndroidLane } from './phone-bt-android.js';
 import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, appPlatformOf, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
 import { decodeStillInWindow } from './phone-app-still.js';
-import { BtHidClient, btHidBinaryPath, btMacLane, btMacSettings, type BtMacSettings } from './phone-bt-mac.js';
+import { BtHidClient, btHidBinaryPath, btMacLane, btMacSettings, resumeBtMacAtLaunch, type BtMacSettings } from './phone-bt-mac.js';
 import { btAppleLane } from './phone-bt-apple.js';
 import { IosVideoSession } from './phone-ios-video.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
@@ -83,7 +83,7 @@ import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
 import { meshManager } from './mesh-manager.js';
 import { PhoneLinkHealthMonitor } from './phone-link-health.js';
-import { MirrorClient, mirrorBinaryPath, mirrorLane, onlyIphone } from './phone-mirror.js';
+import { MirrorClient, mirrorBinaryPath, mirrorImageReader, mirrorLane, onlyIphone } from './phone-mirror.js';
 import { PhoneChannelReader, type ChannelConversation, type ReaderResult, type ScreenRecorder } from './phone-channel-readers.js';
 import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
 import { checkLinkedApp, openLinkedApp, type PhoneLinkAppResult } from './phone-app-signin.js';
@@ -810,6 +810,8 @@ class PhoneService {
             save: (serial, c) => writeJson(this.btAppleCalibrationFile(serial), c),
           }),
         },
+        // phone.read_ui on an iPhone whose broadcast extension is out of memory: OCR its frame here (Mac).
+        readImage: () => (this.ensureMirrorClient() ? mirrorImageReader(() => this.ensureMirrorClient()) : null),
         guard: () => holds,
         // The owner's dialog here, and "waiting for approval" on the driven Android phone.
         onHold: phoneHoldHandler({
@@ -1025,6 +1027,20 @@ class PhoneService {
     const backend = this.ensureAppBackend();
     await backend.refresh(true);
     return backend.devices();
+  }
+
+  /**
+   * phone:routes: the Phone Use routes for one iPhone (phone-tools.ts `routes`), for the connect kit.
+   * Null for a phone no route serves, a bad serial, or before the phone tools started.
+   */
+  async phoneRoutes(serial: unknown): Promise<Awaited<ReturnType<PhoneToolRunner['routes']>>> {
+    if (typeof serial !== 'string' || !serial || serial.length > 128) return null;
+    try {
+      await this.ensureGatewayServer();
+    } catch {
+      return null;
+    }
+    return this.runner?.routes(serial) ?? null;
   }
 
   /** phone:app-pair-decision: the person approved or denied a pairing request on this Desktop. */
@@ -1672,6 +1688,13 @@ class PhoneService {
     }
     this.startCloudPhoneSync();
     this.startAppPhoneCheck();
+    // Control my iPhone by Bluetooth left on: advertise now so the iPhone can reconnect (phone-bt-mac.ts).
+    void resumeBtMacAtLaunch({
+      platform: process.platform,
+      enabled: this.btMacEnabled(),
+      client: () => this.ensureBtHidClient(),
+      log: (message) => log.warn(`[Phone] ${message}`),
+    });
   }
 
   /**
@@ -1927,16 +1950,25 @@ class PhoneService {
     }
   }
 
-  /** Pair: publish "Allternit Keyboard" and keep it published (asks for Bluetooth permission the first time). */
+  /**
+   * Pair: publish "Allternit Keyboard" and keep it published (asks for Bluetooth
+   * permission the first time). macOS never asks again after a denial, so when
+   * the permission is missing this click opens Privacy & Security > Bluetooth.
+   */
   async btMacPair(): Promise<BtMacSettings> {
     const client = this.ensureBtHidClient();
     if (!client) return btMacSettings({ platform: process.platform, hasBinary: false, enabled: false, state: null });
     writeJson(this.btMacFile(), { enabled: true });
+    let row: BtMacSettings;
     try {
-      return btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: await client.pair() });
+      row = btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: await client.pair() });
     } catch (error) {
-      return btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: client.lastState(), error: error instanceof Error ? error.message : String(error) });
+      row = btMacSettings({ platform: process.platform, hasBinary: true, enabled: true, state: client.lastState(), error: error instanceof Error ? error.message : String(error) });
     }
+    if (row.needs_you === 'MAC_PERMISSION_MISSING' && row.settingsUrl) {
+      shell.openExternal(row.settingsUrl).catch((error) => log.debug(`[Phone] Could not open Bluetooth settings: ${error instanceof Error ? error.message : String(error)}`));
+    }
+    return row;
   }
 
   /** Disconnect: stop the keyboard; the iPhone drops the link (its pairing stays until the person forgets it there). */

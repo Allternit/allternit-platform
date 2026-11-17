@@ -36,7 +36,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { HidCore, HidError, hidRouteHealth, senderFromTransport, type Calibration, type HidTransport, type Point } from './phone-hid-core.js';
-import { needsYou, type RouteHealth } from './phone-link-health.js';
+import { needsYou, type NeedsYou, type RouteHealth } from './phone-link-health.js';
 import type { Capability, LaneContext, LaneTool, PhoneLane } from './phone-route.js';
 import type { ToolErrorCode, ToolResult } from './phone-tools.js';
 import type { Gray } from './phone-usb-agent-vision.js';
@@ -51,7 +51,10 @@ export const BT_MAC_REFUSED = 'Not available: macOS refused the keyboard service
 export const BT_MAC_NOT_ON_THIS_OS = 'Bluetooth keyboard and mouse from a computer needs a Mac. On Windows and Linux, use the Allternit Android app or the USB Agent.';
 export const BT_MAC_NOT_IN_BUILD = 'Bluetooth keyboard and mouse from this Mac is not in this build of Allternit Desktop.';
 export const BT_MAC_OFF = 'Turn on Control my iPhone by Bluetooth in Settings → Computers → Phones, then pair your iPhone with "Allternit Keyboard".';
-const PERMISSION = 'Allow Allternit to use Bluetooth in System Settings > Privacy & Security > Bluetooth.';
+/** The System Settings > Privacy & Security pane macOS keeps the Bluetooth permission in. */
+export const BT_MAC_PERMISSION_PANE = 'Bluetooth';
+/** Opens that pane (System Settings > Privacy & Security > Bluetooth). */
+export const BT_MAC_PERMISSION_URL = 'x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth';
 const RADIO_OFF = 'Turn on Bluetooth on this Mac.';
 const NO_BLE = 'This Mac has no Bluetooth Low Energy.';
 
@@ -430,10 +433,20 @@ export interface BtMacHealthInput {
   locked: boolean | null;
 }
 
+/** macOS has not given Allternit the Bluetooth permission (denied, or blocked by a profile). */
+function permissionMissing(s: BtHidState): boolean {
+  return s.authorization === 'denied' || s.authorization === 'restricted' || s.bluetooth === 'unauthorized';
+}
+
+/** MAC_PERMISSION_MISSING naming the Bluetooth pane (contract §5). */
+export function btMacPermissionNeed(): NeedsYou {
+  return needsYou('MAC_PERMISSION_MISSING', { name: BT_MAC_PERMISSION_PANE });
+}
+
 /** Why the Mac's radio or permission stops the keyboard, or null when they are fine. */
 function blocked(s: BtHidState): string | null {
   if (s.refused) return BT_MAC_REFUSED;
-  if (s.authorization === 'denied' || s.authorization === 'restricted' || s.bluetooth === 'unauthorized') return PERMISSION;
+  if (permissionMissing(s)) return btMacPermissionNeed().message;
   if (s.bluetooth === 'unsupported') return NO_BLE;
   if (s.bluetooth === 'off') return RADIO_OFF;
   if (s.bluetooth !== 'on') return s.lastError?.message ?? 'Bluetooth on this Mac is still starting. Try again in a moment.';
@@ -443,8 +456,9 @@ function blocked(s: BtHidState): string | null {
 
 /**
  * The route's health, most blocking first: not a Mac / turned off / helper
- * unreadable / refused / permission / radio → unavailable (with the
- * sentence); then the shared Bluetooth rules (phone-hid-core.ts
+ * unreadable / refused → unavailable (with the sentence); the Bluetooth
+ * permission denied → MAC_PERMISSION_MISSING naming the Bluetooth pane;
+ * radio → unavailable; then the shared Bluetooth rules (phone-hid-core.ts
  * hidRouteHealth): no iPhone connected → BT_NOT_PAIRED, locked →
  * unavailable, no broadcast → BROADCAST_STOPPED, pointer missing →
  * ASSISTIVETOUCH_OFF.
@@ -453,6 +467,7 @@ export function btMacHealth(i: BtMacHealthInput): RouteHealth {
   if (i.platform !== 'darwin') return { state: 'unavailable', reason: BT_MAC_NOT_ON_THIS_OS };
   if (!i.enabled) return { state: 'unavailable', reason: BT_MAC_OFF };
   if (!i.state) return { state: 'unavailable', reason: i.reason ?? 'The Bluetooth keyboard helper did not answer.' };
+  if (!i.state.refused && permissionMissing(i.state)) return { state: 'needs_you', needsYou: btMacPermissionNeed() };
   const why = blocked(i.state);
   if (why) return { state: 'unavailable', reason: why };
   const link = { paired: i.state.connected, connected: i.state.connected, ...(i.state.name ? { name: i.state.name } : {}) };
@@ -460,6 +475,33 @@ export function btMacHealth(i: BtMacHealthInput): RouteHealth {
 }
 
 /** The "Control my iPhone by Bluetooth" row in Settings → Computers → Phones. */
+/**
+ * At Desktop launch: if the person left "Control my iPhone by Bluetooth" on,
+ * start the helper and publish "Allternit Keyboard" now, so the iPhone can
+ * reconnect before the first call (it reconnects to a bonded keyboard only
+ * while that keyboard advertises). Mac only; never throws. Turning it on the
+ * first time is still the person's Pair click, which is when macOS asks for
+ * Bluetooth.
+ */
+export async function resumeBtMacAtLaunch(i: {
+  platform: NodeJS.Platform;
+  enabled: boolean;
+  client: () => Pick<BtHidClient, 'pair'> | null;
+  log?: (message: string) => void;
+}): Promise<'started' | 'off' | 'unavailable' | 'failed'> {
+  if (i.platform !== 'darwin') return 'unavailable';
+  if (!i.enabled) return 'off';
+  const client = i.client();
+  if (!client) return 'unavailable';
+  try {
+    await client.pair();
+    return 'started';
+  } catch (error) {
+    i.log?.(`Bluetooth keyboard did not start at launch: ${error instanceof Error ? error.message : String(error)}`);
+    return 'failed';
+  }
+}
+
 export interface BtMacSettings {
   /** This Mac and this build can do it; when false, the row shows `message` and no buttons. */
   available: boolean;
@@ -471,6 +513,10 @@ export interface BtMacSettings {
   deviceName: string;
   /** One plain sentence for the row. */
   message: string;
+  /** Contract §5 code when the person must act on the Mac: MAC_PERMISSION_MISSING (Bluetooth). */
+  needs_you?: 'MAC_PERMISSION_MISSING';
+  /** The System Settings pane to open for `needs_you`. */
+  settingsUrl?: string;
 }
 
 export function btMacSettings(i: { platform: NodeJS.Platform; hasBinary: boolean; enabled: boolean; state: BtHidState | null; error?: string }): BtMacSettings {
@@ -482,6 +528,9 @@ export function btMacSettings(i: { platform: NodeJS.Platform; hasBinary: boolean
   }
   if (!i.state) return { ...base, available: true, status: 'blocked', message: i.error ?? 'The Bluetooth keyboard helper did not answer.' };
   if (i.state.refused) return { ...base, available: true, status: 'refused', message: BT_MAC_REFUSED };
+  if (permissionMissing(i.state)) {
+    return { ...base, available: true, status: 'blocked', message: btMacPermissionNeed().message, needs_you: 'MAC_PERMISSION_MISSING', settingsUrl: BT_MAC_PERMISSION_URL };
+  }
   const why = blocked(i.state);
   if (why) return { ...base, available: true, status: 'blocked', message: why };
   if (i.state.connected) {

@@ -6,7 +6,9 @@ import {
   mirrorBinaryPath,
   mirrorLane,
   MirrorUnavailable,
+  onlyIphone,
   probeHealth,
+  replyFailure,
   type MirrorProcess,
   type OcrElement,
 } from './phone-mirror.js';
@@ -79,12 +81,20 @@ describe('probe → route health', () => {
     expect(probeHealth({ ok: true, health: 'healthy' }, { locked: false })).toMatchObject({ state: 'needs_you', needsYou: { code: 'MIRROR_PHONE_IN_USE' } });
   });
 
-  it('names the System Settings pane for a missing permission', () => {
+  it('asks for a missing Mac permission with MAC_PERMISSION_MISSING, naming the System Settings pane', () => {
     const pane = 'System Settings > Privacy & Security > Screen & System Audio Recording';
     const h = probeHealth({ ok: true, health: 'NEEDS_SCREEN_RECORDING', needs_you: { permission: 'screen_recording', pane } }, { locked: null });
-    expect(h).toEqual({ state: 'unavailable', reason: `Allow Allternit in ${pane} so I can see iPhone Mirroring.` });
+    expect(h).toEqual({
+      state: 'needs_you',
+      needsYou: { code: 'MAC_PERMISSION_MISSING', message: 'Allow Allternit in System Settings > Privacy & Security > Screen & System Audio Recording on your Mac.' },
+    });
     const ax = probeHealth({ ok: true, health: 'NEEDS_ACCESSIBILITY' }, { locked: null });
-    expect(ax.state === 'unavailable' && ax.reason).toContain('Privacy & Security > Accessibility');
+    expect(ax).toMatchObject({ state: 'needs_you', needsYou: { code: 'MAC_PERMISSION_MISSING', message: expect.stringContaining('Privacy & Security > Accessibility on your Mac') } });
+  });
+
+  it('turns a permission_missing reply into MAC_PERMISSION_MISSING', () => {
+    const r = replyFailure({ ok: false, error: 'permission_missing', health: 'NEEDS_ACCESSIBILITY', pane: 'System Settings > Privacy & Security > Accessibility', message: 'Allow Accessibility.' });
+    expect(r).toMatchObject({ ok: false, error: 'needs_you', needs_you: { code: 'MAC_PERMISSION_MISSING', message: 'Allow Allternit in System Settings > Privacy & Security > Accessibility on your Mac.' } });
   });
 });
 
@@ -237,5 +247,14 @@ describe('the mirror lane behind the router', () => {
       expect(await lane.health({ serial: SERIAL, locked: true })).toEqual({ state: 'unavailable', reason: 'iPhone Mirroring works only on a Mac.' });
     }
     expect(spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('which iPhone Mirroring shows', () => {
+  it('does not count a second iPhone or iPad in keyboard mode as another iPhone', () => {
+    const device = (serial: string, extra: Record<string, unknown> = {}) => ({ serial, platform: 'ios', via: 'allternit-app', route: 'iphone-app-store', name: serial, canTap: false, screen: true, note: '', ...extra });
+    const apps = (list: Array<Record<string, unknown>>) => ({ devices: () => list }) as unknown as Parameters<typeof onlyIphone>[1]['apps'];
+    expect(onlyIphone('app:main', { usb: null, links: null, apps: apps([device('app:main'), device('app:pad', { keyboard_for: 'app:main' })]) })).toBe(true);
+    expect(onlyIphone('app:main', { usb: null, links: null, apps: apps([device('app:main'), device('app:other')]) })).toBe(false);
   });
 });

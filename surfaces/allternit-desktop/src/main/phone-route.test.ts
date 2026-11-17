@@ -5,6 +5,8 @@ import type { AppRpcResult } from './phone-app-store.js';
 import {
   approvalClass,
   deriveActionKind,
+  FALLBACK_FRAME_STALE,
+  FALLBACK_FRAME_WAIT_MS,
   legacyHelperLane,
   officialLane,
   officialResult,
@@ -213,7 +215,7 @@ describe('phone.describe', () => {
     expect(res).toMatchObject({ ok: true, route: 'usb-agent', verified: true, detail: { locked: true, foreground_app: null, shortcuts: [], home: { available: false } } });
     const routes = res.detail.routes as Array<Record<string, unknown>>;
     expect(routes.map((r) => r.route)).toEqual([...ROUTE_ORDER]);
-    expect(routes[1]).toEqual({ route: 'mirror', healthy: false, available: true, needs_you: 'MAC_LOCKED', covers: TAP });
+    expect(routes[1]).toEqual({ route: 'mirror', healthy: false, available: true, needs_you: 'MAC_LOCKED', message: 'Unlock your Mac so I can use your iPhone through it.', covers: TAP });
     expect(routes[5]).toEqual({ route: 'usb-agent', healthy: true, available: true, covers: ['screenshot', 'tap'] });
     expect(routes[0]).toMatchObject({ route: 'official', healthy: false, available: false });
     expect(mirror.calls).toHaveLength(0);
@@ -379,6 +381,9 @@ describe('official route: the phone\'s envelope and refusals', () => {
   it('turns runtime refusals into states the person can act on', () => {
     expect(officialResult('phone.shortcuts.run', { ok: false, status: 409, code: 'app_not_open', message: '' })).toMatchObject({ error: 'needs_you', needs_you: { code: 'APP_NOT_FOREGROUND', message: 'Open the Allternit app on your iPhone.' } });
     expect(officialResult('phone.home.set', { ok: false, status: 200, code: 'device_access_off', message: '' })).toMatchObject({ error: 'device_access_off', message: expect.stringContaining('Turn on Home in the Allternit app') });
+    expect(officialResult('phone.home.set', { ok: false, status: 200, code: 'device_access_off', message: '' })).toMatchObject({
+      needs_you: { code: 'DEVICE_ACCESS_OFF', message: 'Turn on Home in the Allternit app on your iPhone (Settings > Device Access).' },
+    });
     expect(officialResult('phone.actions.run', { ok: false, status: 200, code: 'device_access_off', message: '' })).toMatchObject({ message: expect.stringContaining('Turn on Shortcuts') });
     expect(officialResult('phone.home.list', { ok: false, status: 200, code: 'permission_denied', message: '' })).toMatchObject({ error: 'device_access_off', detail: { error: 'permission_denied' } });
     expect(officialResult('phone.shortcuts.run', { ok: false, status: 504, code: 'app_timeout', message: '' })).toMatchObject({ error: 'timeout', message: expect.stringContaining('may still have done it') });
@@ -399,6 +404,73 @@ describe('official route lane', () => {
     const read = await new PhoneRouter({ lanes: { official: officialLane(() => sharing.apps) } }).run('phone.read_ui', SERIAL, { filter: { label: 'Send' } });
     expect(read).toMatchObject({ ok: true, route: 'official', verified: true, text: 'Send', detail: { width: 1170 } });
     expect(sharing.calls).toEqual([{ method: 'device.screen.read', params: { filter: { label: 'Send' } }, timeoutMs: 40_000 }]);
+  });
+
+  it('reads the broadcast frame on the computer when the extension has no memory to read it', async () => {
+    const outOfMemory = (fallback: string): AppRpcResult => ({
+      ok: true,
+      result: { ok: false, route: 'official', verified: false, detail: { error: 'unavailable', message: 'Not enough memory.', fallback, available_mb: 9 } },
+    });
+    // A clock the waits move: the request goes out at t = 10 000.
+    let t = 10_000;
+    const waits: number[] = [];
+    const read: string[] = [];
+    const run = async (fallback: string, ages: number[]) => {
+      const node = appNode({ appOpen: false, screen: true, answer: () => outOfMemory(fallback) });
+      const shots: number[] = [];
+      node.apps.call = async () => {
+        shots.push(t);
+        const ageMs = ages[Math.min(shots.length - 1, ages.length - 1)];
+        return { ok: true, dataBase64: 'anBlZw==', mimeType: 'image/jpeg', width: 1170, height: 2532, ageMs } as ToolResult;
+      };
+      const lane = officialLane(() => node.apps, () => t, {
+        sleep: async (ms) => {
+          waits.push(ms);
+          t += ms;
+        },
+        readImage: () => async (b64) => {
+          read.push(b64);
+          return {
+            elements: [{ class: 'Text', label: 'Messages', id: '', bounds: [10, 20, 200, 60] }, { class: 'Text', label: 'Send', id: '', bounds: [900, 2400, 1100, 2460] }],
+            text: 'Messages\nSend',
+            width: 1170,
+            height: 2532,
+          };
+        },
+      });
+      const res = await new PhoneRouter({ lanes: { official: lane } }).run('phone.read_ui', SERIAL, { filter: { label: 'send' } });
+      return { res, shots };
+    };
+
+    // A fresh frame was sent: the still from before the request is passed over until the new one arrives.
+    const sent = await run('frame_sent', [500, 100]);
+    expect(sent.res).toMatchObject({ ok: true, route: 'official', text: 'Send', elements: [{ label: 'Send', bounds: [900, 2400, 1100, 2460] }], detail: { read_by: 'desktop', width: 1170 } });
+    expect(sent.shots).toEqual([10_000, 10_150]);
+    expect(waits).toEqual([150]);
+    expect(read).toEqual(['anBlZw==']);
+
+    // The new frame never comes: refuse the old still, after a few seconds at most.
+    t = 20_000;
+    waits.length = 0;
+    read.length = 0;
+    const stale = await run('frame_sent', [60_000]);
+    expect(stale.res).toMatchObject({ ok: false, error: 'no_screen', message: FALLBACK_FRAME_STALE, detail: { error: 'stale_frame' } });
+    expect(t - 20_000).toBeGreaterThanOrEqual(FALLBACK_FRAME_WAIT_MS);
+    expect(t - 20_000).toBeLessThan(FALLBACK_FRAME_WAIT_MS + 500);
+    expect(read).toEqual([]);
+
+    // No fresh frame promised: the newest still is the screen now, read at once.
+    t = 30_000;
+    waits.length = 0;
+    const latest = await run('runtime_reads_frames', [60_000]);
+    expect(latest.res).toMatchObject({ ok: true, text: 'Send', detail: { read_by: 'desktop' } });
+    expect(latest.shots).toEqual([30_000]);
+    expect(waits).toEqual([]);
+
+    // No OCR in this build (Windows, Linux): the phone's own answer stands.
+    const node = appNode({ appOpen: false, screen: true, answer: () => outOfMemory('frame_sent') });
+    const plain = await new PhoneRouter({ lanes: { official: officialLane(() => node.apps) } }).run('phone.read_ui', SERIAL, {});
+    expect(plain).toMatchObject({ ok: false, detail: { error: 'unavailable' } });
   });
 
   it('sends Home ids as device_id / scene_id and keeps the phone\'s read-back as verified', async () => {
@@ -436,6 +508,43 @@ describe('official route lane', () => {
     expect(node.calls.at(-1)?.params).toMatchObject({ name: 'Allternit Slack', input: { action: 'SendMessageIntent' } });
     expect(await router.run('phone.actions.run', SERIAL, { app: 'nope', action: 'x' })).toMatchObject({ ok: false, error: 'unknown_action' });
     expect(await router.run('phone.actions.run', SERIAL, { app: 'allternit', action: 'wallet.pay' })).toMatchObject({ ok: false, error: 'unknown_action' });
+  });
+
+  it('lists every third-party action from device.describe\'s action_list and refuses an unknown id', async () => {
+    const detail = {
+      ...DESCRIBE.detail,
+      catalog: {
+        ...DESCRIBE.detail.catalog,
+        actions_shortcut: { ...DESCRIBE.detail.catalog.actions_shortcut, action_list: [{ id: 'notes.create', title: 'Create a note', kind: 'create', params: ['title'] }] },
+        apps: [{
+          ...DESCRIBE.detail.catalog.apps[0],
+          shortcut_known: true,
+          action_list: [
+            { id: 'SendMessageIntent', title: 'Send Message', kind: 'send', params: ['channel', 'text'], opens_app: false, source: 'app_intent' },
+            { id: 'SearchMessages', title: 'Search Messages', kind: 'search', params: ['query'], source: 'app_intent' },
+            { id: 'set status', title: 'set status', kind: 'control', params: ['text'], confidence: 'medium', source: 'web_research' },
+          ],
+        }],
+      },
+    };
+    const node = appNode({ answer: (method) => (method === 'device.describe' ? okEnv(detail) : okEnv({ output: 'done', returned_via: 'x_callback' })) });
+    const router = new PhoneRouter({ lanes: { official: officialLane(() => node.apps) } });
+    const list = await router.run('phone.actions.list', SERIAL, { app: 'slack' });
+    expect(list?.detail.apps).toEqual([{
+      id: 'slack', name: 'Slack', category: 'Social', shortcut: 'Allternit Slack', installed: true, action_count: 3,
+      actions: [
+        { id: 'SendMessageIntent', title: 'Send Message', kind: 'send', params: ['channel', 'text'], opens_app: false, dispatch: 'app_shortcut', installed: true, guarded: true },
+        { id: 'SearchMessages', title: 'Search Messages', kind: 'search', params: ['query'], dispatch: 'app_shortcut', installed: true, guarded: false },
+        { id: 'set status', title: 'set status', kind: 'control', params: ['text'], confidence: 'medium', dispatch: 'app_shortcut', installed: true, guarded: true },
+      ],
+    }]);
+    // A kind filter now reaches third-party apps too.
+    const sends = await router.run('phone.actions.list', SERIAL, { kind: 'send' });
+    expect((sends?.detail.apps as Array<{ id: string; actions: Array<{ id: string }> }>).map((a) => [a.id, a.actions.map((x) => x.id)])).toEqual([['slack', ['SendMessageIntent']]]);
+
+    expect(await router.run('phone.actions.run', SERIAL, { app: 'slack', action: 'DeleteWorkspace' })).toMatchObject({ ok: false, error: 'unknown_action' });
+    expect(node.calls.some((c) => c.method === 'device.shortcuts.run')).toBe(false);
+    expect(await router.run('phone.actions.run', SERIAL, { app: 'slack', action: 'SearchMessages', params: { query: 'lunch' } })).toMatchObject({ ok: true, detail: { dispatched_as: 'app_shortcut' } });
   });
 
   it('phone.describe reports the app\'s facts when the app is open', async () => {

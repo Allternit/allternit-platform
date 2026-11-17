@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BT_APPLE_NO_SECOND_DEVICE,
   BT_APPLE_OPEN_APP,
+  BT_APPLE_PICKED_ANOTHER,
   BT_APPLE_SEVERAL_KEYBOARDS,
   BT_APPLE_SEVERAL_TARGETS,
   BT_APPLE_UPDATE_APP,
@@ -129,6 +130,26 @@ describe('bt-apple health (contract §5)', () => {
       ],
     });
     expect(await targets.lane.health({ serial: MAIN, locked: false })).toEqual({ state: 'unavailable', reason: BT_APPLE_SEVERAL_TARGETS });
+  });
+
+  it('follows the iPhone the person picked on the keyboard device', async () => {
+    const WORK = 'app:work-iphone';
+    const devices = (forMain: string, other = CONNECTED) => [
+      { serial: MAIN, screen: true },
+      { serial: IPAD, screen: false, status: { ...CONNECTED, keyboard_for: forMain } },
+      { serial: 'app:old-iphone', screen: false, status: other },
+      { serial: WORK, screen: true },
+    ];
+    // Two keyboards connected and two iPhones broadcasting: the pick settles it.
+    const picked = setup({ devices: devices(MAIN) });
+    expect(await picked.lane.health({ serial: MAIN, locked: false })).toEqual({ state: 'healthy' });
+    await picked.lane.act('phone.type', MAIN, { text: 'hi' });
+    expect(picked.sent.map((r) => r.phoneId)).toEqual(['second-ipad']);
+
+    // The only keyboard is picked for another iPhone: never used here.
+    const elsewhere = setup({ devices: [{ serial: MAIN, screen: true }, { serial: IPAD, screen: false, status: { ...CONNECTED, keyboard_for: WORK } }, { serial: WORK, screen: true }] });
+    expect(await elsewhere.lane.health({ serial: MAIN, locked: false })).toEqual({ state: 'unavailable', reason: BT_APPLE_PICKED_ANOTHER });
+    expect(await elsewhere.lane.health({ serial: WORK, locked: false })).toEqual({ state: 'healthy' });
   });
 });
 

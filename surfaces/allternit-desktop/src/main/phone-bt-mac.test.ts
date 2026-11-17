@@ -13,6 +13,7 @@ import {
   btMacSettings,
   btMacTransport,
   readBtHidState,
+  resumeBtMacAtLaunch,
   type BtHidProcess,
   type BtHidState,
 } from './phone-bt-mac.js';
@@ -80,8 +81,11 @@ describe('state → route health', () => {
   });
 
   it('names the permission pane and the radio', () => {
-    const denied = health({ state: state({ authorization: 'denied' }) });
-    expect(denied.state === 'unavailable' && denied.reason).toContain('Privacy & Security > Bluetooth');
+    // The Bluetooth permission is the person's to give: MAC_PERMISSION_MISSING with the Bluetooth pane.
+    const need = { state: 'needs_you', needsYou: { code: 'MAC_PERMISSION_MISSING', message: 'Allow Allternit in System Settings > Privacy & Security > Bluetooth on your Mac.' } };
+    expect(health({ state: state({ authorization: 'denied' }) })).toEqual(need);
+    expect(health({ state: state({ authorization: 'restricted' }) })).toEqual(need);
+    expect(health({ state: state({ bluetooth: 'unauthorized', connected: false }) })).toEqual(need);
     expect(health({ state: state({ bluetooth: 'off', connected: false }) })).toEqual({ state: 'unavailable', reason: 'Turn on Bluetooth on this Mac.' });
     expect(health({ state: null, reason: 'helper crashed' })).toEqual({ state: 'unavailable', reason: 'helper crashed' });
   });
@@ -120,6 +124,20 @@ describe('the settings row', () => {
     expect(row({ platform: 'win32' })).toMatchObject({ available: false, status: 'unavailable', message: BT_MAC_NOT_ON_THIS_OS });
     expect(row({ hasBinary: false })).toMatchObject({ available: false, message: BT_MAC_NOT_IN_BUILD });
     expect(row({ state: state({ refused: true }) })).toMatchObject({ status: 'refused', message: BT_MAC_REFUSED });
+  });
+
+  it('says which System Settings pane gives the Bluetooth permission', () => {
+    expect(row({ state: state({ authorization: 'denied', connected: false }) })).toEqual({
+      available: true,
+      enabled: true,
+      status: 'blocked',
+      connected: false,
+      deviceName: 'Allternit Keyboard',
+      message: 'Allow Allternit in System Settings > Privacy & Security > Bluetooth on your Mac.',
+      needs_you: 'MAC_PERMISSION_MISSING',
+      settingsUrl: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth',
+    });
+    expect(row({ state: state({ bluetooth: 'off', connected: false }) }).needs_you).toBeUndefined();
   });
 });
 
@@ -243,5 +261,34 @@ describe('the lane', () => {
   it('refuses text the keyboard cannot type before sending anything', async () => {
     const res = await lane().act('phone.type', 'app:ip1', { text: 'café' });
     expect(res).toMatchObject({ ok: false, error: 'invalid_args' });
+  });
+});
+
+describe('Control my iPhone by Bluetooth at launch', () => {
+  it('publishes the keyboard at launch when the person left it on, so the iPhone can reconnect', async () => {
+    const bin = fakeBinary(() => STATE_ON);
+    const client = new BtHidClient({ binary: () => '/bin/allternit-bthid', spawn: bin.spawn, wanted: true });
+    expect(await resumeBtMacAtLaunch({ platform: 'darwin', enabled: true, client: () => client })).toBe('started');
+    expect(bin.spawned).toHaveLength(1);
+    expect(bin.spawned[0]!.requests.map((r) => r.cmd)).toContain('pair');
+    client.close();
+  });
+
+  it('starts nothing when it is off, off a Mac, or not in this build', async () => {
+    const bin = fakeBinary(() => STATE_ON);
+    const client = new BtHidClient({ binary: () => '/bin/allternit-bthid', spawn: bin.spawn });
+    expect(await resumeBtMacAtLaunch({ platform: 'darwin', enabled: false, client: () => client })).toBe('off');
+    expect(await resumeBtMacAtLaunch({ platform: 'win32', enabled: true, client: () => client })).toBe('unavailable');
+    expect(await resumeBtMacAtLaunch({ platform: 'darwin', enabled: true, client: () => null })).toBe('unavailable');
+    expect(bin.spawned).toHaveLength(0);
+  });
+
+  it('logs and carries on when the helper refuses at launch', async () => {
+    const bin = fakeBinary(() => ({ ok: false, error: 'unauthorized', message: 'Bluetooth is not allowed.' }));
+    const client = new BtHidClient({ binary: () => '/bin/allternit-bthid', spawn: bin.spawn, wanted: true });
+    const logged: string[] = [];
+    expect(await resumeBtMacAtLaunch({ platform: 'darwin', enabled: true, client: () => client, log: (m) => logged.push(m) })).toBe('failed');
+    expect(logged[0]).toContain('Bluetooth is not allowed.');
+    client.close();
   });
 });

@@ -248,32 +248,35 @@ export async function grantTaskPermission(
   return JSON.parse(text) as TaskGrantResult
 }
 
-/** Gating cache: tool assembly runs every turn; the answer rarely changes. */
+/**
+ * Gating cache: tool assembly and the prompt run every turn; the answer
+ * rarely changes. One roster read per session per minute answers
+ * isAppBotSession, isAppBotMainChat and appBotCaller alike. A failed read
+ * (no account, not a bot chat, timeout) caches as "not an app bot".
+ */
 const TTL_MS = 60_000
-const cache = new Map<string, { at: number; ok: boolean }>()
+const cache = new Map<string, { at: number; caller: AppRoster["caller"] | null }>()
 
-export async function isAppBotSession(sessionID: string): Promise<boolean> {
-  if (!sessionID) return false
+/** The calling app bot (with its thread's project and main-chat flag), or null when the session isn't an app bot's chat. Never throws. */
+export async function appBotCaller(sessionID: string): Promise<AppRoster["caller"] | null> {
+  if (!sessionID) return null
   const hit = cache.get(sessionID)
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.ok
-  const ok = (await fetchAppRoster(sessionID, 2_000).catch(() => null)) !== null
-  cache.set(sessionID, { at: Date.now(), ok })
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.caller
+  const roster = await fetchAppRoster(sessionID, 2_000).catch(() => null)
+  const caller = roster ? (roster.caller ?? { id: "", name: "" }) : null
+  cache.delete(sessionID)
+  cache.set(sessionID, { at: Date.now(), caller })
   if (cache.size > 500) cache.delete(cache.keys().next().value!)
-  return ok
+  return caller
 }
 
-const mainChatCache = new Map<string, { at: number; ok: boolean }>()
+export async function isAppBotSession(sessionID: string): Promise<boolean> {
+  return (await appBotCaller(sessionID)) !== null
+}
 
 /** A bot's main chat (or a person's chat running as their main bot), not a task thread. */
 export async function isAppBotMainChat(sessionID: string): Promise<boolean> {
-  if (!sessionID) return false
-  const hit = mainChatCache.get(sessionID)
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.ok
-  const roster = await fetchAppRoster(sessionID, 2_000).catch(() => null)
-  const ok = roster?.caller?.mainChat === true
-  mainChatCache.set(sessionID, { at: Date.now(), ok })
-  if (mainChatCache.size > 500) mainChatCache.delete(mainChatCache.keys().next().value!)
-  return ok
+  return (await appBotCaller(sessionID))?.mainChat === true
 }
 
 /* Sending work to another project. Server: allternit-api project_send_tools.rs. */
@@ -304,5 +307,4 @@ export async function sendToAppProject(sessionID: string, projectId: string, mes
 /** Tests only. */
 export function resetAppBotSessionCache() {
   cache.clear()
-  mainChatCache.clear()
 }

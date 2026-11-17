@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BroadcastScreen, BtAndroidLane, POINTER_RECHECK_MS, type BtAndroidPhones, type BtRpcResult } from './phone-bt-android.js';
+import { BtAndroidLane, POINTER_RECHECK_MS, type BtAndroidPhones, type BtRpcResult } from './phone-bt-android.js';
+import { BroadcastStills } from './phone-broadcast-stills.js';
 import type { Calibration } from './phone-hid-core.js';
 import type { Gray } from './phone-usb-agent-vision.js';
 
@@ -169,7 +170,7 @@ describe('the broadcast as the pointer screen', () => {
   it('waits for a still newer than the action and settles when two stills match', async () => {
     let t = 0;
     let shot = 0;
-    const screen = new BroadcastScreen(
+    const screen = new BroadcastStills(
       async () => ({ jpeg: Buffer.from([shot++]), ageMs: 0, width: 10, height: 10 }),
       () => true,
       () => flat(shot < 3 ? 0 : 200),
@@ -187,7 +188,7 @@ describe('the broadcast as the pointer screen', () => {
   it('gives up on a frozen broadcast after the timeout', async () => {
     let t = 0;
     // Same picture, older each time (age grows as fast as the clock): never newer.
-    const frozen = new BroadcastScreen(async () => ({ jpeg: Buffer.from([1]), ageMs: t, width: 1, height: 1 }), () => true, () => flat(1), {
+    const frozen = new BroadcastStills(async () => ({ jpeg: Buffer.from([1]), ageMs: t, width: 1, height: 1 }), () => true, () => flat(1), {
       now: () => t,
       sleep: async (ms) => void (t += ms),
     });

@@ -64,6 +64,32 @@ final class KeyboardModeTests: XCTestCase {
         XCTAssertNil(s.json["message"])
     }
 
+    func testStatusNamesTheIPhoneThePersonPicked() {
+        var s = KeyboardLinkState.from(mode: .on, status: published(subscribers: 1))
+        XCTAssertNil(s.json["keyboard_for"])
+        s.keyboardFor = "app:main"
+        XCTAssertEqual(s.json["keyboard_for"] as? String, "app:main")
+    }
+
+    // MARK: - Which iPhone this is the keyboard for
+
+    func testOneIPhoneIsPickedForThePerson() {
+        let main = KeyboardTarget(serial: "app:main", name: "Sam's iPhone")
+        XCTAssertEqual(KeyboardTarget.resolve(saved: nil, iphones: [main]), main)
+        XCTAssertNil(KeyboardTarget.resolve(saved: nil, iphones: []))
+    }
+
+    func testSeveralIPhonesWaitForThePersonAndKeepTheirPick() {
+        let a = KeyboardTarget(serial: "app:a", name: "Work iPhone")
+        let b = KeyboardTarget(serial: "app:b", name: "Sam's iPhone")
+        XCTAssertNil(KeyboardTarget.resolve(saved: nil, iphones: [a, b]), "two iPhones: ask, never guess")
+        // The pick stays, and follows a rename.
+        let renamed = KeyboardTarget(serial: "app:b", name: "Sam's iPhone 17")
+        XCTAssertEqual(KeyboardTarget.resolve(saved: b, iphones: [a, renamed]), renamed)
+        // The picked iPhone was removed from the account: ask again.
+        XCTAssertNil(KeyboardTarget.resolve(saved: KeyboardTarget(serial: "app:gone", name: "Old"), iphones: [a, b]))
+    }
+
     func testRefusedServiceSaysNotAvailableOnThisDevice() {
         var st = published()
         st.refused = true

@@ -300,6 +300,11 @@ final class AppPhoneService: ObservableObject {
         sendState()
     }
 
+    /// Keyboard mode started or stopped, or an iPhone connected to it: tell the node.
+    func keyboardModeChanged() {
+        sendState()
+    }
+
     /// Sends the `state` event when the ACI browser opens or closes.
     func browserStateChanged() {
         sendState()
@@ -357,7 +362,8 @@ final class AppPhoneService: ObservableObject {
     /// it closes. `onOpen` runs once the first frame went through.
     private func runControl(_ socket: URLSessionWebSocketTask, key: Data, onOpen: () -> Void) async throws {
         try await sendSealed(["type": "state", "foreground": true, "browserOpen": ACIBrowserBridge.shared.isBrowserOpen,
-                              "deviceAccess": DeviceAccessStore.shared.allowedSnapshot],
+                              "deviceAccess": DeviceAccessStore.shared.allowedSnapshot,
+                              "keyboard": KeyboardModeService.shared.stateSnapshot],
                              on: socket, key: key)
         isControlConnected = true
         onOpen()
@@ -473,7 +479,8 @@ final class AppPhoneService: ObservableObject {
         guard isControlConnected, let socket = controlSocket, let key = credentials?.sessionKey else { return }
         let state: [String: Any] = ["type": "state", "foreground": isForeground,
                                     "browserOpen": ACIBrowserBridge.shared.isBrowserOpen,
-                                    "deviceAccess": DeviceAccessStore.shared.allowedSnapshot]
+                                    "deviceAccess": DeviceAccessStore.shared.allowedSnapshot,
+                                    "keyboard": KeyboardModeService.shared.stateSnapshot]
         Task { try? await sendSealed(state, on: socket, key: key) }
     }
 }

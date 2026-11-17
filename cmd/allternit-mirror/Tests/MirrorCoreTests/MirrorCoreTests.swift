@@ -158,4 +158,18 @@ final class KeyTests: XCTestCase {
         XCTAssertEqual(try parseCombo("home").get(), KeyStroke(keyCode: 18, flags: Modifier.command))
         XCTAssertEqual(try parseCombo("spotlight").get(), KeyStroke(keyCode: 20, flags: Modifier.command))
     }
+
+    func testReadImageTakesAnImageAndNoWindow() {
+        let png = Data([0x89, 0x50, 0x4E, 0x47])
+        XCTAssertEqual(try parseCommand(["cmd": "read_image", "image_base64": png.base64EncodedString()]).get(), .readImage(png))
+        XCTAssertFalse(Command.readImage(png).isInput)
+        guard case .failure(let e) = parseCommand(["cmd": "read_image"]) else { return XCTFail("needs image_base64") }
+        XCTAssertEqual(e.code, "bad_request")
+        guard case .failure = parseCommand(["cmd": "read_image", "image_base64": "%%%"]) else { return XCTFail("bad base64") }
+    }
+
+    func testPixelBoxFlipsVisionBoxesToTopLeftPixels() {
+        XCTAssertEqual(pixelBox(normalized: CGRect(x: 0.1, y: 0.8, width: 0.5, height: 0.1), width: 1000, height: 2000), [100, 200, 600, 400])
+        XCTAssertEqual(pixelBox(normalized: CGRect(x: -0.1, y: 0.95, width: 0.5, height: 0.2), width: 100, height: 100), [0, 0, 40, 5])
+    }
 }
