@@ -25,6 +25,16 @@ struct FriendlyStateView: View {
 
     private var effectiveStyle: Style { shown.isNoComputer ? .empty : style }
 
+    /// The connect kit, from the no-computer state's Connect (contract C4).
+    @State private var isConnectPresented = false
+
+    /// No computer: Connect opens the connect kit instead of the caller's
+    /// Retry (a retry can't help until a computer answers).
+    private var shownActionTitle: String? { shown.isNoComputer ? "Connect" : actionTitle }
+    private var shownAction: (() -> Void)? {
+        shown.isNoComputer ? { isConnectPresented = true } : action
+    }
+
     var body: some View {
         let shown = self.shown
         VStack(spacing: 16) {
@@ -51,7 +61,7 @@ struct FriendlyStateView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
 
-            if let actionTitle, let action {
+            if let actionTitle = shownActionTitle, let action = shownAction {
                 Button(action: {
                     let generator = UIImpactFeedbackGenerator(style: .light)
                     generator.impactOccurred()
@@ -73,6 +83,7 @@ struct FriendlyStateView: View {
         .padding(.top, 48)
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity)
+        .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
     }
 
     private var foregroundColor: Color {
@@ -123,6 +134,13 @@ struct FriendlyInlineStateView: View {
 
     private var effectiveStyle: Style { shown.isNoComputer ? .empty : style }
 
+    /// Same Connect as `FriendlyStateView` on the no-computer state.
+    @State private var isConnectPresented = false
+    private var shownActionTitle: String? { shown.isNoComputer ? "Connect" : actionTitle }
+    private var shownAction: (() -> Void)? {
+        shown.isNoComputer ? { isConnectPresented = true } : action
+    }
+
     var body: some View {
         let shown = self.shown
         VStack(alignment: .leading, spacing: 10) {
@@ -148,7 +166,7 @@ struct FriendlyInlineStateView: View {
                 Spacer(minLength: 0)
             }
 
-            if let actionTitle, let action {
+            if let actionTitle = shownActionTitle, let action = shownAction {
                 Button(action: {
                     let generator = UIImpactFeedbackGenerator(style: .light)
                     generator.impactOccurred()
@@ -168,6 +186,7 @@ struct FriendlyInlineStateView: View {
         }
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
     }
 
     private var foregroundColor: Color {

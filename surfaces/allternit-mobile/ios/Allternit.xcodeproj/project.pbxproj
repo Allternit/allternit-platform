@@ -125,6 +125,7 @@
 		22587EBF84FC873F64DD20B8 /* FormSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88BF1E2601384E006590B918 /* FormSchema.swift */; };
 		22C24DCDF816EE4CF16B7CF8 /* VoiceKeySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09FAB80CEB319BEEBF9730C6 /* VoiceKeySync.swift */; };
 		2315EB066AC8D48D2CA3855D /* StorePurchaseViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 455E1A4A7569BDBD36AB748E /* StorePurchaseViews.swift */; };
+		238990DB0C02F7F81E9F86BA /* ComputerChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6281CD4D20CECB809EA057DF /* ComputerChip.swift */; };
 		239DD97E2CE53C524C621776 /* ACIAgentRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7AEC5CF2FBE0926C09D8DDF /* ACIAgentRunView.swift */; };
 		23CE1271CE8D9186281FC6C6 /* SampleConnections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95C3DC79ABF3A975A524B4F9 /* SampleConnections.swift */; };
 		240917A25FCDF5B82CE154C3 /* DirectoryPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 658E02CA129B540E7FB1C35B /* DirectoryPages.swift */; };
@@ -559,6 +560,7 @@
 		A5E37AA99CDB05A6DAD774DB /* StatusWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7E02EBDAD27261BA0319ABA /* StatusWidget.swift */; };
 		A5E478A5820FDBDA922AF091 /* DeviceAccessStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C68F042FE0F94AA953526DE0 /* DeviceAccessStore.swift */; };
 		A633C52EC726A05E9B538B32 /* OfficeArtifactClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD52DC6C0A49D52FAD379FBA /* OfficeArtifactClient.swift */; };
+		A6597ED70130F9FBC2E15D84 /* ComputerChipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 745B726A32A25866A67C8D4E /* ComputerChipTests.swift */; };
 		A67D98FC63E0EDD3F065335C /* DelegateIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EC6EDF88BCC99A466446F44 /* DelegateIntents.swift */; };
 		A6C391F0CA6F3270CDF268CB /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3353E5E8F5B2720B71723A38 /* Haptics.swift */; };
 		A6E8E33922CFD1BB2C33689F /* StatusSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CF9E241C88BE3895072E07B /* StatusSnapshot.swift */; };
@@ -1280,6 +1282,7 @@
 		62550D4C0982A7AFB282DE9D /* SignInStageScenes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInStageScenes.swift; sourceTree = "<group>"; };
 		625E147AE3464E852EE5E863 /* StageBackdropModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StageBackdropModel.swift; sourceTree = "<group>"; };
 		62812584F5287A455C87B152 /* CoworkSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkSession.swift; sourceTree = "<group>"; };
+		6281CD4D20CECB809EA057DF /* ComputerChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerChip.swift; sourceTree = "<group>"; };
 		62925FBA474E5C451AE3596C /* StoreBillingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreBillingClient.swift; sourceTree = "<group>"; };
 		62A327B10C3C4DCBB221AC28 /* AllternitScreen.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AllternitScreen.entitlements; sourceTree = "<group>"; };
 		62A63A32019B982AEB95024D /* AppMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMode.swift; sourceTree = "<group>"; };
@@ -1346,6 +1349,7 @@
 		71DCBD7B3A0D4FD2336DBBDF /* SelfHostedSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelfHostedSettingsView.swift; sourceTree = "<group>"; };
 		72EA55CB4A396D7E9F587349 /* MotionKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionKit.swift; sourceTree = "<group>"; };
 		7355CA3620D382F4B41E9531 /* VPSServersManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VPSServersManagerView.swift; sourceTree = "<group>"; };
+		745B726A32A25866A67C8D4E /* ComputerChipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerChipTests.swift; sourceTree = "<group>"; };
 		74AAFC624B283761154C5E82 /* ChangesetReviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangesetReviewSheet.swift; sourceTree = "<group>"; };
 		75A24205D073310C5B9E68EB /* WordmarkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WordmarkView.swift; sourceTree = "<group>"; };
 		75DC1AEC3708DB2C11B17049 /* AgentRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRecord.swift; sourceTree = "<group>"; };
@@ -2598,6 +2602,7 @@
 				87918A785F9680BF0238ED4D /* AppearanceClientTests.swift */,
 				209871E45703181D6EB7229F /* CalmErrorTests.swift */,
 				200400EF6B620633834145F4 /* CloudCreditsTests.swift */,
+				745B726A32A25866A67C8D4E /* ComputerChipTests.swift */,
 				03F7D2D2E6E654FB036596F2 /* ConnectionsMergeTests.swift */,
 				BE44ED582CA4DA23E6DADFBB /* DecideDelegateIntentRulesTests.swift */,
 				6D1CF76A3B4AF38B5A019D23 /* DeepLinkTests.swift */,
@@ -3492,6 +3497,7 @@
 			children = (
 				AC1278B175922C3190124C76 /* CloudCreditsSheet.swift */,
 				77AECD9F187CE85C55C5BED2 /* ComputeGateView.swift */,
+				6281CD4D20CECB809EA057DF /* ComputerChip.swift */,
 				324344A5DC94AD9D1F524C6F /* ConnectComputerView.swift */,
 				49C7586613A1AF683C0AF1C1 /* DesktopArtwork.swift */,
 				A6354FE83459A7C8C1555749 /* ImpactMapView.swift */,
@@ -4082,6 +4088,7 @@
 				EB20AD81DCE4D386834E7DBF /* AppearanceClientTests.swift in Sources */,
 				1426A892E38F70A415822BC6 /* CalmErrorTests.swift in Sources */,
 				81E63CDCE547316DEA0DFD05 /* CloudCreditsTests.swift in Sources */,
+				A6597ED70130F9FBC2E15D84 /* ComputerChipTests.swift in Sources */,
 				E57F469D9F0EF53B3D433EE1 /* ConnectionsMergeTests.swift in Sources */,
 				5C2093288994F432DB8B4804 /* DecideDelegateIntentRulesTests.swift in Sources */,
 				7A8A041B3D2EB92063AC4836 /* DeepLinkTests.swift in Sources */,
@@ -4328,6 +4335,7 @@
 				1F010EB98323D25EEFB22CB6 /* ComputeBillingView.swift in Sources */,
 				CB75971075C518A40D5884CD /* ComputeGateView.swift in Sources */,
 				F640CECEE9AFB8C0E214D26A /* ComputeStatusStore.swift in Sources */,
+				238990DB0C02F7F81E9F86BA /* ComputerChip.swift in Sources */,
 				7A1FBF2AE79890A4770B8B66 /* ComputerDriveViews.swift in Sources */,
 				9B9B6B7FEB6A399693D7624F /* ConnectAPI.swift in Sources */,
 				E739501E6E791B31021747A3 /* ConnectComputerView.swift in Sources */,

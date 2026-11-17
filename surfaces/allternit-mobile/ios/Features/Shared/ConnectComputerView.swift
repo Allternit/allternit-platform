@@ -1,115 +1,32 @@
 import SwiftUI
 
-/// One plain "no computer online" state for the surfaces that run on the
-/// user's computer (Code, Automation) — the native twin of the PWA's
-/// `PhoneNoComputer` (allternit-ai src/fabric-session/phone/PhoneNoComputer.tsx):
-///
-/// - No computer paired → "Connect a computer or Allternit Cloud" · Connect
-/// - Paired but none answers → "Can't reach your computer" · Fix
-/// - A sleeping cloud computer waking up → "Waking your computer…"
-/// - Reachable (relay, mesh or a registered tunnel instance) → nothing.
-///
-/// Tapping the action opens `ConnectComputerSheet`, the computer picker.
+/// The old "Connect a computer or Allternit Cloud · Connect" strip is gone
+/// (phone calm pass, contract C4). The chip above the composer
+/// (`ComputerChipSlot`, Features/Shared/ComputerChip.swift) says it in Chat,
+/// Bots and Code, and screens with no composer say it in their empty state
+/// (`FriendlyStateView`, with a Connect action). The screens that still mount
+/// this view (Code, Routines, Loops, Tasks) only get the data refresh: the
+/// compute status, the computer list and the tunnel instances, so the chip
+/// and the empty states read fresh values. It draws nothing.
 struct ConnectComputerView: View {
-    /// The shell's own copy, above every section (PhoneShell `phone-main`).
-    /// Section copies stand down while the shell shows it.
-    var isShellBanner = false
-
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var instances = InstanceStore.shared
-    @Environment(\.shellShowsNoComputer) private var shellShowsNoComputer
     @ObservedObject private var compute = ComputeStatusStore.shared
-    @State private var isSheetPresented = false
-
-    /// The compute gate (or its check failing) takes the banner's place.
-    private var gateVisible: Bool {
-        if compute.loadFailed && compute.status == nil { return true }
-        guard let s = compute.status else { return false }
-        return s.gate || ComputeGateNotice.text(s) != nil
-    }
 
     var body: some View {
-        Group {
-            if shellShowsNoComputer && !isShellBanner {
-                EmptyView()
-            } else if gateVisible {
-                ComputeGateStrip()
-            } else if relay.isWaking {
-                row(text: "Waking your computer…", action: nil, showsProgress: true)
-            } else if shouldShow {
-                row(
-                    text: isPaired ? "Can't reach your computer" : "Connect a computer or Allternit Cloud",
-                    action: isPaired ? "Fix" : "Connect",
-                    showsProgress: false
-                )
+        Color.clear
+            .frame(height: 0)
+            .accessibilityHidden(true)
+            .task {
+                await compute.refreshIfNeeded()
+                await relay.refresh()
+                await instances.refreshIfNeeded()
             }
-        }
-        .task {
-            await compute.refreshIfNeeded()
-            await relay.refresh()
-            await instances.refreshIfNeeded()
-        }
-        .sheet(isPresented: $isSheetPresented) {
-            ConnectComputerSheet()
-        }
-    }
-
-    /// A paired computer exists (online or not).
-    private var isPaired: Bool { !relay.devices.isEmpty }
-
-    private var shouldShow: Bool {
-        #if DEBUG
-        if UserDefaults.standard.string(forKey: "gizzi-url") != nil { return false }
-        #endif
-        // A registered `gizzi serve --tunnel` instance that is online is a
-        // direct target of its own (InstanceConnection.resolve).
-        if instances.instances.contains(where: \.isOnline) { return false }
-        switch relay.availability {
-        case .unknown, .available: return false
-        case .unreachable, .none: return true
-        }
-    }
-
-    /// `phone-no-computer`: a rounded neutral strip, 8pt under the top and
-    /// 16pt in from the sides, 14pt text and a plain semibold action.
-    private func row(text: String, action: String?, showsProgress: Bool) -> some View {
-        HStack(spacing: 12) {
-            if showsProgress {
-                ProgressView().controlSize(.small)
-            }
-            Text(text)
-                .font(.system(size: 14))
-                .foregroundColor(Color("TextPrimary"))
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let action {
-                Button(action: { isSheetPresented = true }) {
-                    Text(action)
-                        .font(.system(size: 14, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(Color("TextPrimary"))
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isStaticText)
     }
 }
 
-extension EnvironmentValues {
-    /// True under MainWorkspaceView, which shows the one no-computer banner
-    /// above every section, as the web phone shell does.
-    @Entry var shellShowsNoComputer: Bool = false
-}
-
-/// The computer picker behind `ConnectComputerView`: the account's runtime
+/// The connect kit's computer picker (the chip's Connect / Fix, the + sheet,
+/// the empty states' Connect): the account's runtime
 /// devices (`GET /api/v1/runtime-devices`), tap one to relay through it, or
 /// leave it on Automatic (the account's default computer, else the first
 /// online one — `RuntimeRelayStore.pick`).

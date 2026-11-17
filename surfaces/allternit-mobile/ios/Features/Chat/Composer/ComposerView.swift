@@ -79,6 +79,9 @@ struct ComposerView: View {
     var allowsPhoneRun: Bool = false
     var armedPhoneName: String? = nil
     var onClearPhone: (() -> Void)? = nil
+    /// The computer chip above the card (contract C4). On in every chat,
+    /// Bots and bot thread composer.
+    var showsComputerChip: Bool = true
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -136,6 +139,13 @@ struct ComposerView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 6)
+            }
+
+            // The computer chip (C4): no computer, can't reach it, waking, or a
+            // compute gate notice. ✕ folds it into the dot on +.
+            if showsComputerChip {
+                ComputerChipSlot(dismissible: showsAttach)
+                    .zIndex(1)
             }
 
             card
@@ -264,6 +274,10 @@ struct ComposerView: View {
                             .rotationEffect(.degrees(isPlusSheetPresented ? 45 : 0))
                             .frame(width: 44, height: 44)
                             .background(Color("FillNeutral"), in: Circle())
+                            // The folded computer chip.
+                            .overlay(alignment: .topTrailing) {
+                                if showsComputerChip { ComputerChipDot().offset(x: -3, y: 3) }
+                            }
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Add files")

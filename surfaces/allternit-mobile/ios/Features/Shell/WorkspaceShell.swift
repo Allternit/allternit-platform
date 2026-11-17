@@ -4,7 +4,8 @@ import SwiftUI
 
 /// Top-level shell (the PWA phone shell, allternit-ai
 /// src/fabric-session/phone/PhoneShell.tsx): one section fills the screen,
-/// no bottom bar, with the one no-computer banner above it. The menu is the
+/// no bottom bar and no banner above it (the computer chip rides above the
+/// composer, ComputerChipSlot). The menu is the
 /// Arc drawer (HistorySidebarView): min(92% of the screen, 440) wide, it
 /// springs in OVER the screen from the left edge with a 16% scrim on the
 /// strip that stays visible; the screen itself doesn't move. It closes with
@@ -54,10 +55,9 @@ struct MainWorkspaceView: View {
                 .edgesIgnoringSafeArea(.all)
 
             VStack(spacing: 0) {
-                // `phone-main`: the banner, then the section.
-                ConnectComputerView(isShellBanner: true)
+                // `phone-main`: the section alone. No top strip (C4): the
+                // computer chip sits above each composer instead.
                 activeSection
-                    .environment(\.shellShowsNoComputer, true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(Color("BgPrimary"))

@@ -19,6 +19,25 @@ func launchArgumentEnabled(_ key: String) -> Bool {
     }
 }
 
+/// The value of a `key=value` launch argument (`-key=value`, `--key=value`),
+/// or of `-key value` passed as two arguments. nil when absent.
+func launchArgumentValue(_ key: String) -> String? {
+    let args = CommandLine.arguments
+    for (index, arg) in args.enumerated() {
+        var normalized = arg
+        while normalized.hasPrefix("-") {
+            normalized = String(normalized.dropFirst())
+        }
+        if normalized.hasPrefix("\(key)=") {
+            return String(normalized.dropFirst(key.count + 1))
+        }
+        if normalized == key, index + 1 < args.count, !args[index + 1].hasPrefix("-") {
+            return args[index + 1]
+        }
+    }
+    return nil
+}
+
 /// Launch argument keys read through `launchArgumentEnabled(_:)` outside
 /// AllternitApp.
 enum LaunchArgument {
@@ -30,4 +49,9 @@ enum LaunchArgument {
 
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
+
+    /// `-calm-chip=<none|noComputer|cantReach|waking|gate>` (DEBUG only):
+    /// force the no-computer chip above the composer into one state for
+    /// screenshots (`ComputerChipStore`).
+    static let calmChip = "calm-chip"
 }
