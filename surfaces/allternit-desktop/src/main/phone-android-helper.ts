@@ -49,7 +49,6 @@ export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   // Same release key (cert 3f8a3951…). versionCode 14.
   '0.5.4': '727dfbdea87ebb859a6e5a58c286bea11a6c6e556165efe7c1d6d7504e77204b',
 };
-// 0.6.0 pin is added at gate G1 (android-screen-share plan) after upload
 export const ANDROID_HELPER_VERSION: string | null = '0.5.4';
 
 export interface AndroidHelperManifest {

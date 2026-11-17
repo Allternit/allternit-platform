@@ -1550,7 +1550,6 @@
       "touches": [
         "allternit-ai/src/components/appearance",
         "allternit-ai/src/lib/appearance",
-        "allternit-ai/src/lib/projects",
         "allternit-ai/src/components/projects",
         "allternit-ai/src/components/threads",
         "allternit-ai/src/views/project",
@@ -1592,15 +1591,10 @@
         {
           "on": "2026-10-30",
           "note": "Eoj: a project's background is changed from the Customize appearance icon. The dialog has a Background section (Same as Settings, ASCII / Classic tiles) that saves one look per project on Save (BackdropScope project:<mode>:<id>); the banner and the bot project home show it. Cancel discards the pick."
-        },
-        {
-          "on": "2026-11-16",
-          "note": "Eoj approved project folders and the project pad: folder covers (optional cover object, cover.v 2, top-level version stays 1), a free-grid pad with 13 tiles and five starter templates, pad on the runtime (GET/PUT /api/v1/project-pad/:scope), templates and per-mode defaults on cloud-api (/api/v1/account/pad-templates, account_prefs table). Desktop, phone layout, PWA, iOS and Gizzi Code text view. Docs: guides/project-pad.mdx. Platform PRs 2457 2458 2459 2461 2464 2465 2466 2467; ai PRs 1093 1095-1100 1102-1104."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/project-appearance.mdx",
-        "allternit/surfaces/docs/guides/project-pad.mdx",
         "allternit/surfaces/docs/architecture/project-appearance.mdx",
         "allternit-ai/src/views/BaseProjectView.tsx",
         "allternit-ai/src/components/appearance/AppearanceQuickPicker.tsx",

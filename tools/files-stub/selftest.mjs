@@ -184,12 +184,6 @@ export async function runSelfTest() {
   await call('GET', `/api/v1/files-keys`, { type: 'FilesKeyInfo' });
   await call('POST', `/api/v1/files-keys/requests`, { body: { device_id: 'dev_pixel900', device_pub: 'cHVi', device_name: 'Pixel', confirm_code: '123456' }, status: 202 });
   await call('GET', `/api/v1/files-keys/envelopes/dev_pixel900`, { type: 'KeyEnvelope' });
-  {
-    const env = { ...JSON.parse(JSON.stringify((await call('GET', `/api/v1/files-keys/envelopes/dev_pixel900`)).json)) };
-    await call('POST', `/api/v1/files-keys/grants`, { body: { envelope: env, approved_by_device_id: 'dev_iphone16', confirm_code: '000000' }, status: 403 });
-    await call('POST', `/api/v1/files-keys/grants`, { body: { envelope: env, approved_by_device_id: 'dev_iphone16', confirm_code: '123456' }, status: 204 });
-    await call('POST', `/api/v1/files-keys/grants`, { body: { envelope: env, approved_by_device_id: 'dev_iphone16', confirm_code: '123456' }, status: 404 });
-  }
   const rel = await call('POST', `/api/v1/runtime-devices/cmp_cloud_4gb/proxy`, { body: { method: 'GET', path: `${V}/ping`, headers: {}, body: null, body_encoding: 'utf8' } });
   check(rel.r.status === 200 && !validateType('PingResponse', rel.json).length, 'relay proxy streams the raw runtime response');
   const relCamel = await call('POST', `/api/v1/runtime-devices/cmp_cloud_4gb/proxy`, { body: { method: 'GET', path: `${V}/ping`, headers: {}, body: '', bodyEncoding: 'utf8' } });

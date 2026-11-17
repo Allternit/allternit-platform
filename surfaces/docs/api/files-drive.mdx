@@ -187,8 +187,7 @@ The relay passes these request headers through to the runtime:
 | `x-allternit-wake-ticket` | The wake ticket from the consent call. |
 | `range` | Partial reads of `content`. |
 | `if-match` | Revision precondition. |
-| `x-allternit-unlock` | Proof of a fresh device unlock (Face ID, Touch ID, fingerprint, or a click on the web): a 5-minute `fut1` token from cloud-api `POST /api/v1/computer-files/{computer_id}/unlock` (see [Files drive on cloud-api](/api/files-drive-cloud#protected-root-unlock)). The runtime checks it offline. Protected roots and `PUT /replicas/key` answer `403 protected_root_locked` without a valid token. |
-| `x-allternit-device-name` | Names the device in conflict-copy names when the request does not say. |
+| `x-allternit-unlock` | Unlock proof for a protected root. |
 | `x-allternit-device-id` | Which of the owner's devices is calling. |
 
 The relay caps a request body at 5 MiB, measured as the decoded size. Live change-feed sockets use the existing socket-ticket flow.

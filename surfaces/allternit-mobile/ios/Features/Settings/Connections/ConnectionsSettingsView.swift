@@ -2,7 +2,7 @@ import SwiftUI
 
 /// A settings page a row opens (the existing flow for that kind of connection).
 enum ConnPage: String, Identifiable, Hashable {
-    case voice, phoneControl, androidScreen, pairComputer, cloudComputer, billing, gizzi
+    case voice, phoneControl, pairComputer, cloudComputer, billing, gizzi
     var id: String { rawValue }
 }
 
@@ -17,7 +17,7 @@ enum ConnRoute {
     /// Rows that live in their own settings page show a chevron.
     @MainActor
     static func opensPage(_ entry: ConnEntry, store: ConnectionsStore) -> Bool {
-        ["openai-voice", "elevenlabs", "phone-control", "android-screen", "this-mac", "server", "gizzi"].contains(entry.id)
+        ["openai-voice", "elevenlabs", "phone-control", "this-mac", "server", "gizzi"].contains(entry.id)
             || entry.group == .apps || entry.group == .channels
             // No cloud computer yet: the row says "See plans" instead.
             || (entry.id == "cloud-computer" && store.state(entry.id) == .on)
@@ -31,7 +31,6 @@ enum ConnRoute {
         switch id {
         case "openai-voice", "elevenlabs": return .page(.voice)
         case "phone-control": return .page(.phoneControl)
-        case "android-screen": return .page(.androidScreen)
         case "this-mac", "server": return .page(.pairComputer)
         case "cloud-computer": return .page(store.state(id) == .on ? .cloudComputer : .billing)
         case "gizzi": return .page(.gizzi)
@@ -291,7 +290,6 @@ struct ConnPageView: View {
         switch page {
         case .voice: VoiceSettingsPage()
         case .phoneControl: AppPhonesSettingsView()
-        case .androidScreen: AndroidScreenPairingView()
         case .pairComputer: DevicePairingView()
         case .cloudComputer: CloudInstancesManagerView()
         case .billing: ComputeBillingView(title: "Billing")

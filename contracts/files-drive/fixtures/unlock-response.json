@@ -1,9 +1,0 @@
-{
-  "type": "UnlockResponse",
-  "valid": true,
-  "case": "Minted unlock token.",
-  "message": {
-    "token": "fut1.eyJ2IjoxfQ.c2ln",
-    "expires_at": "2026-11-16T18:05:00Z"
-  }
-}

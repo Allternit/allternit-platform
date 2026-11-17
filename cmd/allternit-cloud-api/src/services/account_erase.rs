@@ -53,11 +53,6 @@ pub const RETAIN: &[(&str, &str)] = &[
 pub const ERASE: &[(&str, &str)] = &[
     // Files drive (migrations 143, 144). Drops before their share; guests and
     // the access log cascade from files_shares.
-    // Files keys (migration 146): envelopes and requests before the devices and keys they name.
-    ("files_key_envelopes", USER),
-    ("files_key_requests", USER),
-    ("files_key_devices", USER),
-    ("files_keys", USER),
     ("files_queued_drops", "owner_user_id = $1"),
     ("files_shares", "owner_user_id = $1"),
     ("computer_files_wake_tickets", USER),
@@ -246,9 +241,6 @@ pub const ERASE: &[(&str, &str)] = &[
 const SCRUB: &[&str] = &[
     // A share on someone else's computer keeps working; only who made it goes.
     "UPDATE files_shares SET created_by = 'deleted' WHERE created_by = $1",
-    // Approvals on another account's Files key keep working; only who approved goes.
-    "UPDATE files_key_devices SET approved_by = 'deleted' WHERE approved_by = $1",
-    "UPDATE files_key_requests SET granted_by = 'deleted' WHERE granted_by = $1",
     "UPDATE artifact_versions SET author_id = 'deleted' WHERE author_id = $1",
     "UPDATE artifact_shares SET invited_by = 'deleted' WHERE invited_by = $1",
     "UPDATE phone_invites SET joined_user_id = NULL WHERE joined_user_id = $1",

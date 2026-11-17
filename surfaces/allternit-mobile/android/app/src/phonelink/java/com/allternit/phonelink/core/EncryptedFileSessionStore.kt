@@ -2,6 +2,13 @@ package com.allternit.phonelink.core
 
 import java.io.File
 
+/** Encrypts/decrypts a blob (Android Keystore AES-GCM on device). */
+interface BlobSealer {
+    fun seal(plain: ByteArray): ByteArray
+    /** Throws if the blob was not sealed by this key or was tampered with. */
+    fun open(sealed: ByteArray): ByteArray
+}
+
 /**
  * Sessions (the pairing keys) as one sealed JSON blob in app-private storage.
  * Written to a temp file and renamed, so a crash mid-write never leaves half a file.
