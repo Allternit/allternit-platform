@@ -48,6 +48,8 @@ Each bot works its delegated tasks **one at a time**. A task given to a bot that
 
 What a bot runs now is in **Working**; what waits behind it is in **To do**, marked **Next in line**. A blocked thread sits in **Needs you** until you answer it.
 
+A worker keeps its own bot instructions on server-started turns, so a delegated task runs in that bot's voice and with its rules, plus the project thread's. A worker reports evidence, not just a claim, and marks only the items it checked as done. The first line of its report becomes the task's summary on the card, so it states the result in one plain line.
+
 The coordinator's own plans are separate. Threads that Al plans with dependencies still wait for those dependencies. Delegate only orders the tasks you handed out.
 
 ## Auto
