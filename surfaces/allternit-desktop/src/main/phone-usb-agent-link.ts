@@ -40,7 +40,7 @@ const MAX_UNAUTHENTICATED = 8;
 
 export type SendResult =
   | { ok: true }
-  | { ok: false; error: 'offline' | 'invalid' | 'disarmed' | 'usb_asleep' | 'rejected'; message: string }
+  | { ok: false; error: 'offline' | 'invalid' | 'disarmed' | 'usb_asleep' | 'bt_not_connected' | 'rejected'; message: string }
   | { ok: false; error: 'uncertain'; message: string };
 
 export interface BoardSessionInfo {
@@ -175,6 +175,9 @@ export class UsbAgentLink extends EventEmitter {
           if (reply.reason.startsWith('phone usb asleep')) {
             return resolve({ ok: false, error: 'usb_asleep', message: 'The phone is locked or asleep. Unlock it to continue.' });
           }
+          if (reply.reason.startsWith('bt not connected')) {
+            return resolve({ ok: false, error: 'bt_not_connected', message: 'The iPhone isn’t connected to the board over Bluetooth. Pair “Allternit Keyboard” in Settings > Bluetooth.' });
+          }
           resolve({ ok: false, error: 'rejected', message: `The USB Agent refused: ${reply.reason}.` });
         },
       };
@@ -249,7 +252,7 @@ export class UsbAgentLink extends EventEmitter {
         firmware: hello.firmware,
         resetReason: hello.resetReason,
         address,
-        state: { armed: false, usb: 'none' },
+        state: { armed: false, usb: 'none', mode: 'cable', bt: 'off' },
         connectedAt: (this.opts.now ?? Date.now)(),
       },
       socket,

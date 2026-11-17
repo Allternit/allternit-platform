@@ -12,7 +12,8 @@
  *   desk  → ready
  *   desk  → c <seq> <command…> <tag>                      tag = HMAC(SK, "c|seq|command")[:32 hex]
  *   board → r <seq> ok | r <seq> err <reason>
- *   board → s armed=<0|1> usb=<mounted|asleep|none>       on change, unsolicited
+ *   board → s armed=<0|1> usb=<mounted|asleep|none> [mode=<cable|bt> bt=<off|pairing|bonded|connected>]
+ *                                                         on change, unsolicited (mode/bt from firmware 1.1.0)
  *
  * K is a 32-byte key per board, written over USB at setup (physical
  * presence). SK = HMAC(K, "ses|bn|sn") is fresh per connection, so a recorded
@@ -79,14 +80,29 @@ export function parseAuth(line: string): string | null {
 
 export type UsbStatus = 'mounted' | 'asleep' | 'none';
 
+/** Where input goes: the USB cable to the phone, or Bluetooth LE ("Allternit Keyboard"). */
+export type BoardMode = 'cable' | 'bt';
+/**
+ * Bluetooth side of the board. `off` in cable mode; `pairing` advertising with no
+ * bonded host; `bonded` a host is bonded but not connected; `connected` ready for reports.
+ */
+export type BtStatus = 'off' | 'pairing' | 'bonded' | 'connected';
+
 export interface BoardState {
   armed: boolean;
   usb: UsbStatus;
+  /** Older firmware (before 1.1.0) has no Bluetooth mode and reports neither field. */
+  mode: BoardMode;
+  bt: BtStatus;
 }
 
 export function parseState(line: string): BoardState | null {
-  const m = /^s armed=([01]) usb=(mounted|asleep|none)$/.exec(line.trim());
-  return m ? { armed: m[1] === '1', usb: m[2] as UsbStatus } : null;
+  const m = /^s armed=([01]) usb=(mounted|asleep|none)(?: mode=(cable|bt) bt=(off|pairing|bonded|connected))?$/.exec(line.trim());
+  return m ? { armed: m[1] === '1', usb: m[2] as UsbStatus, mode: (m[3] as BoardMode | undefined) ?? 'cable', bt: (m[4] as BtStatus | undefined) ?? 'off' } : null;
+}
+
+export function stateLine(s: BoardState): string {
+  return `s armed=${s.armed ? 1 : 0} usb=${s.usb} mode=${s.mode} bt=${s.bt}`;
 }
 
 export type Reply = { seq: number; ok: true } | { seq: number; ok: false; reason: string };
@@ -103,6 +119,9 @@ export function parseReply(line: string): Reply | null {
 export type BoardCommand =
   | { op: 'ping' }
   | { op: 'disarm' }
+  | { op: 'mode'; mode: BoardMode }
+  | { op: 'btpair' }
+  | { op: 'btforget' }
   | { op: 'home' }
   | { op: 'move'; dx: number; dy: number }
   | { op: 'press' }
@@ -132,6 +151,12 @@ export function encodeCommand(cmd: BoardCommand): string | null {
     case 'release':
     case 'click':
       return cmd.op;
+    case 'mode':
+      return cmd.mode === 'cable' || cmd.mode === 'bt' ? `mode ${cmd.mode}` : null;
+    case 'btpair':
+      return 'bt pair';
+    case 'btforget':
+      return 'bt forget';
     case 'move':
       return int(cmd.dx, MOVE_LIMIT) && int(cmd.dy, MOVE_LIMIT) ? `move ${cmd.dx} ${cmd.dy}` : null;
     case 'scroll':
@@ -159,12 +184,27 @@ export function commandLine(sk: string, seq: number, command: string): string {
 export class ReferenceBoard {
   armed = false;
   usb: UsbStatus = 'mounted';
+  mode: BoardMode = 'cable';
+  bt: BtStatus = 'off';
+  /** Whether a bonded host exists; survives mode changes, cleared by `bt forget`. */
+  bonded = false;
   readonly log: string[] = [];
   private bn = newNonceHex();
   private sk: string | null = null;
   private lastSeq = 0;
 
-  constructor(readonly boardId: string, private readonly keyHex: string, readonly firmware = '1.0.0') {}
+  constructor(readonly boardId: string, private readonly keyHex: string, readonly firmware = '1.1.0') {}
+
+  stateLine(): string {
+    return stateLine({ armed: this.armed, usb: this.usb, mode: this.mode, bt: this.bt });
+  }
+
+  /** The host connected or dropped (a test hook; the real link is Bluetooth). */
+  setBtConnected(connected: boolean): void {
+    if (this.mode !== 'bt') return;
+    if (connected) this.bonded = true;
+    this.bt = connected ? 'connected' : this.bonded ? 'bonded' : 'pairing';
+  }
 
   hello(): string {
     this.bn = newNonceHex();
@@ -184,7 +224,7 @@ export class ReferenceBoard {
       this.sk = sessionKey(this.keyHex, this.bn, sn);
       return [`auth ${boardProof(this.keyHex, this.boardId, this.bn, sn)}`];
     }
-    if (trimmed === 'ready') return [`s armed=${this.armed ? 1 : 0} usb=${this.usb}`];
+    if (trimmed === 'ready') return [this.stateLine()];
     const m = /^c (\d{1,10}) (.+) ([0-9a-f]{32})$/.exec(trimmed);
     if (!m) return 'drop';
     const seq = Number(m[1]);
@@ -196,10 +236,28 @@ export class ReferenceBoard {
     if (op === 'ping') return [`r ${seq} ok`];
     if (op === 'disarm') {
       this.armed = false;
-      return [`r ${seq} ok`, 's armed=0 usb=' + this.usb];
+      return [`r ${seq} ok`, this.stateLine()];
+    }
+    // Mode and pairing move no input, so they work disarmed. Switching mode disarms.
+    if (command === 'mode cable' || command === 'mode bt') {
+      this.mode = command === 'mode bt' ? 'bt' : 'cable';
+      this.armed = false;
+      this.bt = this.mode === 'cable' ? 'off' : this.bonded ? 'bonded' : 'pairing';
+      return [`r ${seq} ok`, this.stateLine()];
+    }
+    if (command === 'bt pair' || command === 'bt forget') {
+      if (this.mode !== 'bt') return [`r ${seq} err not in bluetooth mode`];
+      if (command === 'bt forget') {
+        this.bonded = false;
+        this.armed = false;
+        this.bt = 'pairing';
+      }
+      return [`r ${seq} ok`, this.stateLine()];
     }
     if (!this.armed) return [`r ${seq} err disarmed`];
-    if (this.usb !== 'mounted') return [`r ${seq} err phone usb asleep`];
+    if (this.mode === 'bt') {
+      if (this.bt !== 'connected') return [`r ${seq} err bt not connected`];
+    } else if (this.usb !== 'mounted') return [`r ${seq} err phone usb asleep`];
     this.log.push(command);
     return [`r ${seq} ok`];
   }
