@@ -219,11 +219,18 @@ final class BrainStore: ObservableObject {
         if hasBrain, pendingPush { await pushPending() }
         let fm = FileManager.default
         if fm.fileExists(atPath: repoURL.path) {
-            if pendingPush, let aside = Self.unsentDirectory() {
+            if pendingPush {
+                // Unsent notes are never deleted. Move the clone aside; if
+                // Application Support can't take it, rename it next to itself
+                // so the next person's brain still starts from an empty folder.
+                // If both fail it stays put (notes kept over a clean slate).
                 let stamp = Int(Date().timeIntervalSince1970)
-                try? fm.moveItem(at: repoURL, to: aside.appendingPathComponent("brain-\(stamp)"))
+                let targets = [Self.unsentDirectory(), repoURL.deletingLastPathComponent()]
+                    .compactMap { $0?.appendingPathComponent("brain-unsent-\(stamp)") }
+                for target in targets where (try? fm.moveItem(at: repoURL, to: target)) != nil { break }
+            } else {
+                try? fm.removeItem(at: repoURL)
             }
-            try? fm.removeItem(at: repoURL)
         }
         clearPersisted()
         defaults.removeObject(forKey: Keys.pendingPush)
