@@ -35,6 +35,7 @@ import {
   type PhoneStreamStatus,
 } from './phone-scrcpy.js';
 import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
+import { btAndroidLane } from './phone-bt-android.js';
 import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, appPlatformOf, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
 import { decodeStillInWindow } from './phone-app-still.js';
 import { IosVideoSession } from './phone-ios-video.js';
@@ -768,6 +769,17 @@ class PhoneService {
           onError: (error) => log.debug(`[Phone] run history step not recorded: ${error instanceof Error ? error.message : String(error)}`),
         }),
         api: () => phoneApi,
+        // Phone Use route 2d: the person's Android phone as the iPhone's Bluetooth keyboard and mouse (phone-bt-android.ts).
+        lanes: {
+          'bt-android': btAndroidLane({
+            phones: () => this.ensureAppBackend(),
+            rpc: (phoneId, method, params, timeoutMs) =>
+              httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).rpc(phoneId, method, params, timeoutMs),
+            decode: decodeGray,
+            load: (serial) => readJson<Calibration | null>(this.btCalibrationFile(serial), null),
+            save: (serial, c) => writeJson(this.btCalibrationFile(serial), c),
+          }),
+        },
         guard: () => holds,
         // The owner's dialog here, and "waiting for approval" on the driven Android phone.
         onHold: phoneHoldHandler({
@@ -947,6 +959,11 @@ class PhoneService {
       log: (message) => log.info(message),
     });
     return this.appBackend;
+  }
+
+  /** Pointer calibration for one iPhone on the bt-android route. */
+  private btCalibrationFile(serial: string): string {
+    return path.join(this.dir(), `bt-android-calibration-${serial.replace(/[^a-zA-Z0-9-]/g, '')}.json`);
   }
 
   /** The desktop credential plus the signed-in user, as the node maps it to the account. */

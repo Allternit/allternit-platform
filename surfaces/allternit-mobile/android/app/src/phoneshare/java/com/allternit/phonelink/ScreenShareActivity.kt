@@ -2,6 +2,7 @@ package com.allternit.phonelink
 
 import android.Manifest
 import android.app.Activity
+import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -20,6 +21,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.allternit.app.R
+import com.allternit.phonelink.core.HidAvailability
+import com.allternit.phonelink.core.HidState
 import com.allternit.phonelink.core.SharePhase
 
 /**
@@ -33,11 +36,24 @@ import com.allternit.phonelink.core.SharePhase
  * Taps need the Accessibility service; Google Play policy (and plain honesty)
  * wants a prominent disclosure first, so "Turn on taps" shows it and only
  * "Agree and open Settings" opens Accessibility settings.
+ *
+ * "Control my iPhone by Bluetooth" (Phone Use route `bt-android`) is a row
+ * here that opens its own panel in this screen: turn it on, pair the iPhone
+ * once from its Settings › Bluetooth, pick or disconnect the iPhone.
  */
 class ScreenShareActivity : Activity() {
+    private companion object {
+        const val REQ_BLUETOOTH = 43
+        const val REQ_DISCOVERABLE = 44
+    }
+
     private lateinit var root: LinearLayout
     private lateinit var codeInput: EditText
     private var showingDisclosure = false
+    private var showingBluetooth = false
+    /** Pairing instructions stay up after the person asked to make this phone visible. */
+    private var pairingHelp = false
+    private var turnOnAfterPermission = false
     private val refresh: () -> Unit = { runOnUiThread { render() } }
 
     private val dark: Boolean
@@ -85,6 +101,8 @@ class ScreenShareActivity : Activity() {
     override fun onResume() {
         super.onResume()
         AppLink.addListener(refresh)
+        BluetoothRemote.init(this)
+        BluetoothRemote.addListener(refresh)
         AppLink.ensureControl()
         AppLink.shareStateChanged()
         if (AppLink.isPaired && Build.VERSION.SDK_INT >= 33 &&
@@ -97,18 +115,25 @@ class ScreenShareActivity : Activity() {
 
     override fun onPause() {
         AppLink.removeListener(refresh)
+        BluetoothRemote.removeListener(refresh)
         super.onPause()
         AppLink.shareStateChanged()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_BLUETOOTH && turnOnAfterPermission) {
+            turnOnAfterPermission = false
+            if (BluetoothRemote.hasPermissions(this)) BluetoothRemoteService.start(this)
+        }
         render()
     }
 
     @Deprecated("Back without AndroidX")
     override fun onBackPressed() {
-        if (showingDisclosure) { showingDisclosure = false; render() } else {
+        if (showingDisclosure) { showingDisclosure = false; render() }
+        else if (showingBluetooth) { showingBluetooth = false; pairingHelp = false; render() }
+        else {
             @Suppress("DEPRECATION")
             super.onBackPressed()
         }
@@ -149,6 +174,7 @@ class ScreenShareActivity : Activity() {
     private fun render() {
         root.removeAllViews()
         if (showingDisclosure) { renderDisclosure(); return }
+        if (showingBluetooth && AppLink.isPaired) { renderBluetooth(); return }
         root.addView(text("Share this phone's screen", 22f, bold = true))
         root.addView(text("Let your own Allternit account see this screen, and tap on it if you allow that. " +
             "Nothing is shared until you tap Share screen and say yes to Android's prompt.", 14f, color = muted))
@@ -226,7 +252,12 @@ class ScreenShareActivity : Activity() {
         }
 
         root.addView(gap())
-        root.addView(button("Disconnect this phone") { AppLink.unpair(this); render() })
+        root.addView(text("Control my iPhone by Bluetooth", 17f, bold = true))
+        root.addView(text(bluetoothSummary(), 14f))
+        root.addView(button("Set up") { showingBluetooth = true; render() })
+
+        root.addView(gap())
+        root.addView(button("Disconnect this phone") { BluetoothRemoteService.stop(this); AppLink.unpair(this); render() })
         root.addView(text("Removes the connection from this phone. Remove it in Allternit too (Settings › Connections › Phones).", 13f, color = muted))
     }
 
@@ -240,6 +271,109 @@ class ScreenShareActivity : Activity() {
             button("Agree and open Settings") { showingDisclosure = false; openAccessibilitySettings() },
             button("Not now") { showingDisclosure = false; render() },
         ))
+    }
+
+    // ── Control my iPhone by Bluetooth (Phone Use `bt-android`) ──────────────
+
+    private fun bluetoothSummary(): String {
+        val s = BluetoothRemote.state()
+        return when {
+            BluetoothRemote.deviceUnsupported() || s.availability == HidAvailability.UNSUPPORTED -> HidState.NOT_AVAILABLE_MESSAGE
+            s.connected -> "On. Connected to ${s.name ?: "your iPhone"}."
+            BluetoothRemote.isOn -> "On. Waiting for your iPhone to connect."
+            else -> "Off. Use this phone as a Bluetooth keyboard and mouse for your iPhone."
+        }
+    }
+
+    private fun renderBluetooth() {
+        root.addView(text("Control my iPhone by Bluetooth", 22f, bold = true))
+        root.addView(text("This phone becomes a Bluetooth keyboard and mouse for your own iPhone. Your Allternit assistant " +
+            "(Desktop or cloud) can then move the pointer, tap and type on the iPhone, and sees the result through the " +
+            "Allternit screen broadcast on the iPhone. Anything that sends a message, spends money or changes security " +
+            "still waits for your approval.", 14f, color = muted))
+        root.addView(gap())
+        if (BluetoothRemote.deviceUnsupported() || BluetoothRemote.state().availability == HidAvailability.UNSUPPORTED) {
+            root.addView(text(HidState.NOT_AVAILABLE_MESSAGE, 15f, bold = true))
+            root.addView(button("Back") { showingBluetooth = false; render() })
+            return
+        }
+        val s = BluetoothRemote.state()
+        if (!BluetoothRemote.isOn) {
+            root.addView(text(when (s.availability) {
+                HidAvailability.BLUETOOTH_OFF -> "Bluetooth is off on this phone. Turn it on, then tap Turn on."
+                HidAvailability.NO_PERMISSION -> "Off. Allternit asks for Nearby devices so it can be a Bluetooth keyboard and mouse."
+                else -> "Off."
+            }, 15f, bold = true))
+            root.addView(row(
+                button("Turn on") { turnOnBluetoothRemote() },
+                button("Back") { showingBluetooth = false; render() },
+            ))
+            return
+        }
+
+        root.addView(text(when {
+            s.connected -> "Connected to ${s.name ?: "your iPhone"}."
+            s.availability == HidAvailability.BLUETOOTH_OFF -> "Bluetooth is off on this phone. Turn it on to reconnect."
+            else -> "On. Waiting for your iPhone to connect."
+        }, 15f, bold = true))
+        if (s.connected) {
+            root.addView(text("On the iPhone, turn on AssistiveTouch so a pointer shows: Settings › Accessibility › Touch › AssistiveTouch.", 13f, color = muted))
+            root.addView(button("Disconnect iPhone") { BluetoothRemote.disconnect(); render() })
+        }
+
+        root.addView(gap())
+        root.addView(text("Pair a new iPhone", 17f, bold = true))
+        if (pairingHelp) {
+            val me = BluetoothRemote.ownName()?.let { "\"$it\"" } ?: "this phone"
+            root.addView(text("1. On your iPhone, open Settings › Bluetooth.\n" +
+                "2. Under Other Devices, tap $me. Accept the pairing on both phones.\n" +
+                "3. Turn on AssistiveTouch: Settings › Accessibility › Touch › AssistiveTouch.\n" +
+                "4. In the Allternit app on the iPhone, start the screen broadcast.", 14f))
+            root.addView(text("This phone stays visible for 2 minutes.", 13f, color = muted))
+        }
+        root.addView(button("Make this phone visible") { makeDiscoverable() })
+
+        val bonded = BluetoothRemote.bondedDevices()
+        if (bonded.isNotEmpty()) {
+            root.addView(gap())
+            root.addView(text("Already paired", 17f, bold = true))
+            val current = BluetoothRemote.connectedDevice()?.address
+            bonded.forEach { d ->
+                val name = BluetoothRemote.safeName(d) ?: d.address
+                if (d.address == current) root.addView(text("$name · connected", 14f))
+                else root.addView(button("Use $name") { BluetoothRemote.connect(d); render() })
+            }
+        }
+
+        root.addView(gap())
+        root.addView(row(
+            button("Turn off") { BluetoothRemoteService.stop(this); pairingHelp = false; render() },
+            button("Back") { showingBluetooth = false; pairingHelp = false; render() },
+        ))
+    }
+
+    private fun turnOnBluetoothRemote() {
+        val needed = BluetoothRemote.neededPermissions().filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (needed.isNotEmpty()) {
+            turnOnAfterPermission = true
+            requestPermissions(needed.toTypedArray(), REQ_BLUETOOTH)
+            return
+        }
+        BluetoothRemoteService.start(this)
+        render()
+    }
+
+    /** Android's own "make visible" prompt; the iPhone starts the pairing from its Settings › Bluetooth. */
+    private fun makeDiscoverable() {
+        pairingHelp = true
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(
+                Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120),
+                REQ_DISCOVERABLE,
+            )
+        } catch (_: Exception) {}
+        render()
     }
 
     private fun openAccessibilitySettings() {

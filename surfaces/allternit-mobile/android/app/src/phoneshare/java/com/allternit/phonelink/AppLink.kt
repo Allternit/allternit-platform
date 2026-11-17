@@ -76,6 +76,8 @@ object AppLink : ScreenHost, LinkListener {
             input = input,
             deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
             listener = this,
+            // Phone Use `bt-android`: Desktop's hid.* commands, sent to the iPhone as Bluetooth keyboard/mouse reports.
+            hid = BluetoothRemote.also { it.init(app) }.commands,
         )
         initialized = true
     }
