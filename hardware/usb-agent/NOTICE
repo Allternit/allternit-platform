@@ -40,5 +40,13 @@ is built from firmware/usb_agent with the arduino-esp32 core (LGPL-2.1) and ESP-
 can be rebuilt and relinked with hardware/usb-agent/build-firmware.sh. Desktop flashes
 it with esptool-js (Apache-2.0, Espressif).
 
+Bluetooth mode (firmware/usb_agent/bt_hid.cpp) is Allternit's own code, written from the
+Bluetooth HID over GATT profile and the HID 1.11 specification. It calls the BLE library
+that ships with the arduino-esp32 core (libraries/BLE, Apache-2.0, over the NimBLE host in
+ESP-IDF, Apache-2.0). No external BLE HID library was added, so there is nothing new to pin
+in build-firmware.sh. Glisse (github.com/Snouzy/glisse, MIT) was looked at as an approach
+reference; none of its code is used. The HID report map is byte for byte the one the Android
+app and the Mac tool use.
+
 UxPlay (https://github.com/FDH2/UxPlay, GPL-3.0) is NOT included. Allternit
 Desktop starts a separately installed `uxplay` program as its own process.

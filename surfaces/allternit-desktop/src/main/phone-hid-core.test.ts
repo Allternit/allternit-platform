@@ -215,6 +215,29 @@ describe('the USB Agent board as a sender', () => {
     ]);
   });
 
+  it('in Bluetooth mode the same sender sends the same commands, and reports pairing as the link state', async () => {
+    const { sent, send } = recordingBoard();
+    let bt: { paired: boolean; connected: boolean } | null = { paired: false, connected: false };
+    const s = boardSender({ send, linkGeneration: () => 0, connected: () => true, bluetooth: () => bt });
+    expect(await s.status()).toEqual({ paired: false, connected: false, name: 'USB Agent (Bluetooth)' });
+    // Bonded but away: paired, not connected. Both read as BT_NOT_PAIRED in hidRouteHealth.
+    bt = { paired: true, connected: false };
+    const away = await s.status();
+    expect(hidRouteHealth({ link: away, broadcast: true, pointerSeen: true, locked: false })).toMatchObject({ needsYou: { code: 'BT_NOT_PAIRED' } });
+    bt = { paired: true, connected: true };
+    expect(await s.status()).toEqual({ paired: true, connected: true, name: 'USB Agent (Bluetooth)' });
+    // The board's Wi-Fi link down means the commands can't arrive, whatever Bluetooth says.
+    const offline = boardSender({ send, linkGeneration: () => 0, connected: () => false, bluetooth: () => bt });
+    expect((await offline.status()).connected).toBe(false);
+    await s.pointerMove(5, 5);
+    await s.scroll(-2);
+    await s.typeText('ok');
+    expect(sent).toEqual([{ op: 'move', dx: 5, dy: 5 }, { op: 'scroll', v: -2, h: 0 }, { op: 'type', text: 'ok' }]);
+    // Cable mode (bluetooth() is null) is always paired.
+    bt = null;
+    expect(await s.status()).toEqual({ paired: true, connected: true, name: 'USB Agent' });
+  });
+
   it('a failed board command throws BoardError with the link’s result', async () => {
     const { send } = recordingBoard('home');
     const s = boardSender({ send, linkGeneration: () => 0 });

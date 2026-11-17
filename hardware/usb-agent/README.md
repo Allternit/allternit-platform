@@ -52,6 +52,29 @@ Pressing the button disarms the board at once, including in the middle of a swip
 
 The board can't tell what a tap *means*. A pointer can open a payment sheet as easily as a settings page. Keep the board disarmed when it isn't working for you, and watch the live view when the bot does anything that matters.
 
+## Bluetooth mode (firmware 1.1.0)
+
+By default the board is a USB keyboard and mouse in the iPhone's port. In Bluetooth mode it pairs with the iPhone as a Bluetooth LE keyboard and mouse named **Allternit Keyboard**, so no cable to the iPhone is needed. Everything else is unchanged: the board still dials Desktop over Wi-Fi (power it from the computer, a charger or any USB port), uses the same authenticated USBA/1 link, and still needs its button to arm. It uses the same keyboard and mouse report map as the Android app and the Mac tool, so Desktop's shared core treats every sender alike. This gives Windows and Linux Desktop a Bluetooth route (they have none of their own) and is the fallback if the Mac route stops working.
+
+Pairing:
+
+1. Set the board to Bluetooth mode in Desktop. The board restarts disarmed and starts advertising. Until an iPhone is bonded, Desktop reports **BT_NOT_PAIRED**.
+2. On the iPhone: Settings > Bluetooth > **Allternit Keyboard** (within about 10 m of the board). Pairing is Just Works; nothing to type.
+3. Press the board's button to arm it. Turn on AssistiveTouch on the iPhone (Settings > Accessibility > Touch > AssistiveTouch) so it shows the pointer.
+
+Rules in Bluetooth mode:
+
+- **One iPhone.** Once bonded, the board only keeps the bonded iPhone connected. To pair a different one, run `bt pair` (Desktop: pair again; opens a 2-minute window), or `bt forget`. Then also choose "Forget This Device" in the iPhone's Bluetooth list.
+- **Disarmed means silence.** No Bluetooth report is sent while disarmed, after a lost Wi-Fi link or lease, or when no iPhone is connected (`err bt not connected`). Releasing keys and buttons applies to Bluetooth too.
+- **Switching mode disarms** and restarts the board, so a mode change never leaves input live. The mode is stored on the board. `prov wipe` returns it to cable mode.
+- Scroll is vertical only (the shared report map has no horizontal wheel). Reports go out at the same pace as the cable. Range is about 10 m in open air.
+- The arm button only arms and disarms. It does not switch modes.
+- Firmware headroom: the image is about 93% of the app partition. A larger change needs a bigger partition scheme.
+
+Commands (all authenticated, work while disarmed because they move no input): `mode cable|bt`, `bt pair`, `bt forget`. The state line gains the mode and the Bluetooth state: `s armed=<0|1> usb=<mounted|asleep|none> mode=<cable|bt> bt=<off|pairing|bonded|connected>` (older firmware sends only the first two fields; Desktop reads that as cable mode).
+
+Desktop maps the state to its health: in Bluetooth mode, pairing or bonded-but-away is `BT_NOT_PAIRED`, and the USB cable state is ignored.
+
 ## Protocol (USBA/1)
 
 The protocol is defined in `surfaces/allternit-desktop/src/main/phone-usb-agent-protocol.ts`. `ReferenceBoard` in that file is this firmware's logic in TypeScript, and the Desktop tests run against it. If you change the firmware, change `ReferenceBoard` in the same commit.
@@ -70,4 +93,4 @@ Over Wi-Fi, the board looks for Desktop over mDNS (`_allternit-usba._tcp`, TXT `
 
 ## Licenses
 
-The firmware and the pointer and vision code are adapted from esp32-iphone-agent (MIT); see [NOTICE](NOTICE). UxPlay is GPL-3.0 and is not included: Desktop starts a `uxplay` you installed. Homebrew has no `uxplay` formula, so on macOS UxPlay is built from source: run [install-uxplay.sh](install-uxplay.sh).
+The firmware and the pointer and vision code are adapted from esp32-iphone-agent (MIT); see [NOTICE](NOTICE). Bluetooth mode uses the BLE library bundled with the arduino-esp32 core (NimBLE, Apache-2.0); no third-party BLE code was added. UxPlay is GPL-3.0 and is not included: Desktop starts a `uxplay` you installed. Homebrew has no `uxplay` formula, so on macOS UxPlay is built from source: run [install-uxplay.sh](install-uxplay.sh).

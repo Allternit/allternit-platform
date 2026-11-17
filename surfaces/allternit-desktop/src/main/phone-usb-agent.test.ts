@@ -217,7 +217,7 @@ describe('UsbAgentManager end to end (simulated board + iPhone)', () => {
 });
 
 describe('statusOf', () => {
-  const session = (armed: boolean, usb: 'mounted' | 'asleep' | 'none') => ({ boardId: BOARD, firmware: '1', resetReason: 'x', address: 'a', connectedAt: 0, state: { armed, usb } });
+  const session = (armed: boolean, usb: 'mounted' | 'asleep' | 'none', mode: 'cable' | 'bt' = 'cable', bt: 'off' | 'pairing' | 'bonded' | 'connected' = 'off') => ({ boardId: BOARD, firmware: '1', resetReason: 'x', address: 'a', connectedAt: 0, state: { armed, usb, mode, bt } });
   it('reports the most blocking step first', () => {
     expect(statusOf(null, 'mirroring', true)).toBe('board_offline');
     expect(statusOf(session(true, 'none'), 'mirroring', true)).toBe('phone_not_connected');
@@ -226,5 +226,12 @@ describe('statusOf', () => {
     expect(statusOf(session(true, 'mounted'), 'mirroring', false)).toBe('not_calibrated');
     expect(statusOf(session(false, 'mounted'), 'mirroring', true)).toBe('disarmed');
     expect(statusOf(session(true, 'mounted'), 'mirroring', true)).toBe('ready');
+  });
+
+  it('in Bluetooth mode the cable is irrelevant and an unpaired phone is BT_NOT_PAIRED', () => {
+    expect(statusOf(session(true, 'none', 'bt', 'pairing'), 'mirroring', true)).toBe('bt_not_paired');
+    expect(statusOf(session(true, 'none', 'bt', 'bonded'), 'mirroring', true)).toBe('bt_not_paired');
+    expect(statusOf(session(true, 'none', 'bt', 'connected'), 'mirroring', true)).toBe('ready');
+    expect(statusOf(session(false, 'none', 'bt', 'connected'), 'mirroring', true)).toBe('disarmed');
   });
 });
