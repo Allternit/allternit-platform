@@ -347,6 +347,8 @@ export const AgentCompatRoutes = () =>
               request_id: props.id ?? null,
               session_id: props.sessionID ?? null,
               questions: props.questions ?? null,
+              // ask_user_later: the turn did not wait; the answer starts a new turn.
+              ...(props.async ? { async: true, assumption: props.assumption ?? null } : {}),
             }
           case "pane_browser.requested":
             return {
@@ -500,6 +502,8 @@ export const AgentCompatRoutes = () =>
     })
     .get("/v1/questions", async (c) => {
       const sessionId = c.req.query("sessionId")
+      // Blocking questions plus persisted ask_user_later asks (`async: true`,
+      // `assumption`), so a card shows on an idle session and after a restart.
       const all = await Question.list()
       return c.json({ questions: all.filter((r) => !sessionId || r.sessionID === sessionId) })
     })

@@ -17,6 +17,7 @@ import { GlanceTool } from "@/runtime/tools/builtins/glance"
 import { CurrentTimeTool } from "@/runtime/tools/builtins/current-time"
 import { SendUserMessageTool } from "@/runtime/tools/builtins/send-user-message"
 import { AutomationTool } from "@/runtime/tools/builtins/automation"
+import { AskUserLaterTool } from "@/runtime/tools/builtins/ask-user-later"
 import { WebFetchTool } from "@/runtime/tools/builtins/webfetch"
 import { WriteTool } from "@/runtime/tools/builtins/write"
 import { InvalidTool } from "@/runtime/tools/builtins/invalid"
@@ -203,6 +204,9 @@ export namespace ToolRegistry {
       SendUserMessageTool,
       // The user's scheduled tasks: every client, not bot-gated (list allowed, writes ask).
       AutomationTool,
+      // A question that doesn't stop the turn; the answer starts a new one.
+      // Every client, not bot-gated (routines, workers and subagents ask too).
+      AskUserLaterTool,
       CreateGoalTool,
       GetGoalTool,
       SetGoalBudgetTool,

@@ -142,6 +142,9 @@ export namespace Agent {
         "*": "ask",
         list: "allow",
       },
+      // A question that doesn't block: it waits in the thread; the turn goes on.
+      // Allowed for every agent, unlike the blocking `question` (denied by default).
+      ask_user_later: "allow",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",
