@@ -168,6 +168,17 @@ pub static REGISTRY: &[EventType] = &[
         runtime_aliases: &["message.received", "channel.message.received"],
     },
     EventType {
+        name: "agent.message.sent",
+        title: "Messages from your agents",
+        description: "An agent sent its owner a message and asked for a push (send_user_message): a result, a file, an update. Any session the owner runs: a bot's chat, a chat, a Gizzi Code session. Quiet hours apply.",
+        platform: false,
+        agents: true,
+        bot: false,
+        filters: &[BOT, THREAD],
+        payload: &[P_BOT, P_THREAD, ("sessionId", "The agent session that sent it."), ("sessionTitle", "The session's name when it has no bot."), ("kind", "message or question."), ("text", "Preview of the message (at most 200 characters)."), ("ref", "What the message points at, when given (a file id, a page).")],
+        runtime_aliases: &["agent.message.sent"],
+    },
+    EventType {
         name: "message.status",
         title: "Text delivery updates",
         description: "Platform API: an outbound text changed delivery status.",
@@ -593,6 +604,8 @@ mod tests {
         assert_eq!(from_runtime("files.task.result", &json!({})), Some("files.task.result"));
         assert_eq!(from_runtime("files.conflict", &json!({})), Some("files.conflict"));
         assert_eq!(from_runtime("files.changed", &json!({})), None);
+        // An agent's message to its owner (send_user_message).
+        assert_eq!(from_runtime("agent.message.sent", &json!({ "kind": "message" })), Some("agent.message.sent"));
         assert_eq!(from_runtime("approval.resolved", &json!({})), Some("approval.resolved"));
         // Platform-only events can't be injected by a runtime.
         assert_eq!(from_runtime("approval.expired", &json!({})), None);
