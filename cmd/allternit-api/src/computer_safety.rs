@@ -478,6 +478,12 @@ pub struct Context {
     pub elements: HashMap<String, Elem>,
     /// Whether the app (and page, for browsers) could be observed.
     pub known: bool,
+    /// This platform can't report the app in front at all (no probe for it,
+    /// or the probe can't run) — not the same as an app that couldn't be
+    /// identified. The per-app tier check is skipped and audited as
+    /// `tier_check=unavailable`; the lists, classes and approvals still apply.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub tier_unavailable: bool,
 }
 
 const BROWSER_APPS: [&str; 10] = [
@@ -600,28 +606,7 @@ pub async fn observe(target: &Target, toolset: Toolset, member: &str, scaled: &V
             }
             ctx
         }
-        Target::ThisDevice if toolset == Toolset::Computer && cfg!(target_os = "macos") => {
-            let mut params = json!({});
-            if let Some(p) = scaled.get("coordinate").and_then(Value::as_array).filter(|a| a.len() == 2) {
-                params["point"] = json!(p);
-            }
-            let ids = step_ids(member, scaled);
-            if !ids.is_empty() {
-                params["ids"] = json!(ids);
-            }
-            for k in ["app", "pid", "window_id"] {
-                if let Some(v) = scaled.get(k) {
-                    params[k] = v.clone();
-                }
-            }
-            match crate::this_device_input::call_driver_timed("context", params, Duration::from_secs(3)).await {
-                Ok(v) => context_from_driver(&v),
-                Err(e) => {
-                    tracing::debug!("safety context unavailable: {}", String::from(e));
-                    Context::default()
-                }
-            }
-        }
+        Target::ThisDevice if toolset == Toolset::Computer => this_device_context(member, scaled).await,
         Target::Guest { os, .. } if os != "windows" => {
             // Title and window class of the active X window (one exec).
             match crate::computer_toolset::guest_exec(target, "xdotool getactivewindow getwindowname getwindowclassname 2>/dev/null").await {
@@ -635,6 +620,114 @@ pub async fn observe(target: &Target, toolset: Toolset, member: &str, scaled: &V
             }
         }
         _ => Context::default(),
+    }
+}
+
+/// The app in front on this device, per platform:
+///
+/// - macOS: the Allternit Driver's `context` op (app, bundle id, element at
+///   the point). A failure stays an unknown app, which fails closed.
+/// - Linux: the active X window's title and class through xdotool on the
+///   display this device's input goes to (the same `local_x_exec` path).
+/// - Windows: the driver's `context` op when it answers, else the foreground
+///   window's process (GetForegroundWindow + GetWindowThreadProcessId through
+///   PowerShell).
+/// - Anything else, or a Linux/Windows probe that can't run: the platform
+///   can't report it (`tier_unavailable`).
+async fn this_device_context(member: &str, scaled: &Value) -> Context {
+    if cfg!(target_os = "macos") || cfg!(windows) {
+        let mut params = json!({});
+        if let Some(p) = scaled.get("coordinate").and_then(Value::as_array).filter(|a| a.len() == 2) {
+            params["point"] = json!(p);
+        }
+        let ids = step_ids(member, scaled);
+        if !ids.is_empty() {
+            params["ids"] = json!(ids);
+        }
+        for k in ["app", "pid", "window_id"] {
+            if let Some(v) = scaled.get(k) {
+                params[k] = v.clone();
+            }
+        }
+        match crate::this_device_input::call_driver_timed("context", params, Duration::from_secs(3)).await {
+            Ok(v) => {
+                let ctx = context_from_driver(&v);
+                if ctx.known || cfg!(target_os = "macos") {
+                    return ctx;
+                }
+            }
+            Err(e) => {
+                tracing::debug!("safety context unavailable: {}", String::from(e));
+                if cfg!(target_os = "macos") {
+                    return Context::default();
+                }
+            }
+        }
+        return windows_front_app().await;
+    }
+    if cfg!(target_os = "linux") {
+        let probe = crate::computer_toolset::local_x_exec("xdotool getactivewindow getwindowname getwindowclassname 2>/dev/null");
+        return match tokio::time::timeout(Duration::from_secs(3), probe).await {
+            Ok(Ok(out)) => context_from_window_lines(&out),
+            Ok(Err(e)) => {
+                tracing::debug!("active window unavailable on this device: {e}");
+                Context { tier_unavailable: true, ..Default::default() }
+            }
+            Err(_) => Context { tier_unavailable: true, ..Default::default() },
+        };
+    }
+    Context { tier_unavailable: true, ..Default::default() }
+}
+
+/// `title` / `class` lines (xdotool getwindowname getwindowclassname).
+fn context_from_window_lines(out: &str) -> Context {
+    let mut lines = out.lines();
+    let title = lines.next().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let class = lines.next().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    Context { known: class.is_some(), app: class, title, ..Default::default() }
+}
+
+/// PowerShell probe of the foreground window's process: process name,
+/// file description, window title, one per line.
+const WINDOWS_FRONT_APP_PS: &str = r#"$ErrorActionPreference='Stop'
+Add-Type -Name FG -Namespace AllternitSafety -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint p);'
+$h=[AllternitSafety.FG]::GetForegroundWindow()
+if ($h -eq [System.IntPtr]::Zero) { exit 3 }
+$p=0; [void][AllternitSafety.FG]::GetWindowThreadProcessId($h,[ref]$p)
+$pr=Get-Process -Id $p
+$d=''; try { $d=$pr.MainModule.FileVersionInfo.FileDescription } catch {}
+Write-Output $pr.ProcessName; Write-Output $d; Write-Output $pr.MainWindowTitle"#;
+
+/// The foreground app on Windows. A probe that can't run is "platform can't
+/// report" (`tier_unavailable`), never a guess.
+async fn windows_front_app() -> Context {
+    let mut cmd = tokio::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_FRONT_APP_PS]).kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        // CREATE_NO_WINDOW: no console flashes on the person's screen.
+        cmd.creation_flags(0x0800_0000);
+    }
+    match tokio::time::timeout(Duration::from_secs(4), cmd.output()).await {
+        Ok(Ok(out)) if out.status.success() => context_from_windows_probe(&String::from_utf8_lossy(&out.stdout)),
+        _ => Context { tier_unavailable: true, ..Default::default() },
+    }
+}
+
+/// Process name / description / title lines from the Windows probe. The
+/// executable name stands in for a bundle id (`chrome.exe`).
+fn context_from_windows_probe(out: &str) -> Context {
+    let mut lines = out.lines().map(str::trim);
+    let process = lines.next().filter(|s| !s.is_empty()).map(str::to_string);
+    let description = lines.next().filter(|s| !s.is_empty()).map(str::to_string);
+    let title = lines.next().filter(|s| !s.is_empty()).map(str::to_string);
+    let Some(process) = process else { return Context { tier_unavailable: true, ..Default::default() } };
+    Context {
+        app: Some(description.unwrap_or_else(|| process.clone())),
+        bundle_id: Some(format!("{}.exe", process.to_lowercase())),
+        title,
+        known: true,
+        ..Default::default()
     }
 }
 
@@ -653,6 +746,7 @@ fn context_from_driver(v: &Value) -> Context {
         at_point: v.get("at_point").filter(|e| e.is_object()).map(elem),
         elements: v.get("elements").and_then(Value::as_object).map(|m| m.iter().map(|(k, e)| (k.clone(), elem(e))).collect()).unwrap_or_default(),
         known: s("app").is_some() || s("bundle_id").is_some(),
+        tier_unavailable: false,
     }
 }
 
@@ -943,7 +1037,10 @@ impl Assessment {
             s.push_str(&format!(" monitor={}", m.verdict));
         }
         if let Some(x) = &self.access {
-            s.push_str(&format!(" tier={}/{}", x.required.as_str(), x.granted.as_str()));
+            match x.tier_check {
+                "checked" => s.push_str(&format!(" tier={}/{}", x.required.as_str(), x.granted.as_str())),
+                other => s.push_str(&format!(" tier_check={other}")),
+            }
         }
         if let Some(p) = &self.project_id {
             s.push_str(&format!(" project={p}"));

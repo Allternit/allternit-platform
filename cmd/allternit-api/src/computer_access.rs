@@ -176,7 +176,7 @@ const KNOWN_APPS: &[(&str, &str)] = &[
 ];
 
 const BROWSER_WORDS: &[&str] = &[
-    "safari", "chrome", "chromium", "firefox", "edge", "edgemac", "brave", "opera", "vivaldi", "arc", "browser", "orion", "comet",
+    "safari", "chrome", "chromium", "firefox", "edge", "edgemac", "msedge", "iexplore", "brave", "opera", "vivaldi", "arc", "browser", "orion", "comet",
     "dia", "zen", "atlas", "duckduckgo", "librewolf", "waterfox", "tor",
 ];
 const TERMINAL_WORDS: &[&str] = &[
@@ -186,7 +186,7 @@ const TERMINAL_WORDS: &[&str] = &[
 const IDE_WORDS: &[&str] = &[
     "vscode", "vscodium", "cursor", "windsurf", "zed", "xcode", "intellij", "pycharm", "webstorm", "goland", "rider", "clion",
     "rubymine", "phpstorm", "datagrip", "fleet", "sublime", "sublimetext", "nova", "bbedit", "macvim", "emacs", "kiro", "trae",
-    "antigravity", "jetbrains", "eclipse", "netbeans",
+    "antigravity", "jetbrains", "eclipse", "netbeans", "devenv", "idea64", "pycharm64", "webstorm64", "rider64", "clion64",
 ];
 /// Multi-word IDE names ("Visual Studio Code", "Android Studio").
 const IDE_PHRASES: &[&str] = &["visual studio", "android studio"];
@@ -391,6 +391,9 @@ pub struct AccessCheck {
     pub required: Tier,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub exempt: bool,
+    /// "checked", "exempt" (sandbox/cloud) or "unavailable" (this platform
+    /// can't report the app in front, so the per-app check was skipped).
+    pub tier_check: &'static str,
 }
 
 /// The tier an app in front holds: the session grant or the standing
@@ -425,6 +428,25 @@ pub fn decide(ctx: &Context, settings: &SafetySettings, grants: &[Grant], requir
             granted: Tier::Full,
             required,
             exempt: true,
+            tier_check: "exempt",
+        };
+        return (check, Ok(()));
+    }
+    if ctx.tier_unavailable && !ctx.known {
+        // The platform can't name the app in front (no probe on this OS, or
+        // the probe can't run). Refusing everything would make the guard
+        // Mac-only, so the per-app check is skipped and audited; deny/allow
+        // lists (which fail closed on an unidentified app), the action
+        // classes, approvals and the host safety mode all still apply.
+        let check = AccessCheck {
+            app: None,
+            bundle_id: None,
+            category: Category::Unknown,
+            max_tier: Tier::Full,
+            granted: required,
+            required,
+            exempt: false,
+            tier_check: "unavailable",
         };
         return (check, Ok(()));
     }
@@ -438,6 +460,7 @@ pub fn decide(ctx: &Context, settings: &SafetySettings, grants: &[Grant], requir
         granted,
         required,
         exempt: false,
+        tier_check: "checked",
     };
     if required <= granted {
         return (check, Ok(()));
@@ -1180,6 +1203,36 @@ mod tests {
         assert_eq!(check.granted, Tier::Read);
         assert!(out.unwrap_err().contains("couldn't be identified"));
         assert!(decide(&unknown, &s, &[], Tier::Read, false).1.is_ok(), "reading stays allowed");
+    }
+
+    #[test]
+    fn platform_that_cannot_name_the_app_skips_the_tier_check_but_not_the_lists() {
+        let blind = Context { tier_unavailable: true, ..Default::default() };
+        let (check, out) = decide(&blind, &SafetySettings::default(), &[], Tier::Full, false);
+        assert!(out.is_ok(), "no blanket refusal on Windows/Linux");
+        assert_eq!(check.tier_check, "unavailable");
+        // Deny/allow lists still block: an unidentified app can't be cleared.
+        let deny = SafetySettings { deny_apps: Some(vec!["Terminal".into()]), ..Default::default() };
+        assert!(crate::computer_safety::check_lists(&blind, &deny, true).is_err());
+        // An app the platform did name is checked as usual.
+        let named = Context { tier_unavailable: false, ..ctx("Terminal", "com.apple.Terminal") };
+        assert!(decide(&named, &deny, &[], Tier::Click, false).1.is_err());
+    }
+
+    #[test]
+    fn identified_but_uncategorized_app_is_read_only_until_granted() {
+        let tool = ctx("SomeTool", "com.example.sometool");
+        let s = SafetySettings::default();
+        let (check, out) = decide(&tool, &s, &[], Tier::Click, false);
+        assert_eq!((check.category, check.granted, check.tier_check), (Category::Other, Tier::Read, "checked"));
+        assert!(out.unwrap_err().contains("request_access"));
+        assert!(decide(&tool, &s, &[], Tier::Read, false).1.is_ok());
+        assert!(decide(&tool, &s, &[grant("com.example.sometool", Tier::Full)], Tier::Full, false).1.is_ok());
+        // Windows probe names: the exe stands in for a bundle id.
+        assert_eq!(categorize(Some("Microsoft Edge"), Some("msedge.exe")), Category::Browser);
+        assert_eq!(categorize(Some("Windows Terminal"), Some("windowsterminal.exe")), Category::Terminal);
+        assert_eq!(categorize(Some("Microsoft Visual Studio 2022"), Some("devenv.exe")), Category::Ide);
+        assert_eq!(categorize(Some("Notepad"), Some("notepad.exe")), Category::Other);
     }
 
     #[test]

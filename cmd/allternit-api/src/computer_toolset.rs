@@ -1296,7 +1296,7 @@ async fn ensure_local_display() -> Result<String, String> {
 }
 
 /// Run an X shell command (xdotool / scrot) on this Linux computer.
-async fn local_x_exec(script: &str) -> Result<String, String> {
+pub(crate) async fn local_x_exec(script: &str) -> Result<String, String> {
     let display = ensure_local_display().await?;
     let out = tokio::time::timeout(
         Duration::from_secs(45),
