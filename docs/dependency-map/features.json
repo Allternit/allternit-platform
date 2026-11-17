@@ -1454,7 +1454,9 @@
         "allternit/cmd/allternit-api",
         "allternit/domains/computer-use/driver/packaging",
         "allternit/cmd/allternit-computer-cloud/guest",
-        "allternit/drivers/firecracker"
+        "allternit/drivers/firecracker",
+        "allternit/contracts/action-classes",
+        "allternit/cmd/gizzi-code/src/runtime/tools/guard/permission"
       ],
       "decisions": [
         {
@@ -1500,6 +1502,10 @@
         {
           "on": "2026-10-10",
           "note": "D1b (task K5): the Allternit Driver ships in every guest image (Linux systemd service, Windows logon task, container, tart VMs, Firecracker rootfs), and allternit-api routes the structured members (read_ui, act, run_batch, verify) for Target::Guest through the guest exec channel via the in-guest forwarder (cmd/allternit-api/src/guest_driver.rs). The static \"unimplemented until the guest driver image ships\" refusals are gone: a guest whose driver does not answer fails as driver_unavailable, and pixel members use the driver path first with xdotool/scrot/PowerShell as the explicit fallback."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Wave C: per-app access tiers (read/click/full) with category ceilings and 12 h session grants (resolve_access, request_access); four action classes enforced in every permission path (confirm_now asks even in bypass); folder_access with a _to_delete redirect. Docs: tools/computer-access, tools/action-review."
         }
       ],
       "evidence": [
