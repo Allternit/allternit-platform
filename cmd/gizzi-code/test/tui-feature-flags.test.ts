@@ -11,6 +11,7 @@ import { join } from 'path'
 import { gizziGateDefault } from '../src/constants/gizziGates'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../src/cli/ui/ink-app/services/analytics/growthbook'
 import { modelSupportsAutoMode } from '../src/cli/ui/ink-app/utils/betas'
+import '../src/cli/devMacro' // getSystemPrompt reads the build-time MACRO global
 import { getSystemPrompt } from '../src/cli/ui/ink-app/constants/prompts'
 import {
   buildDefaultExternalSystemPrompt,
@@ -41,6 +42,8 @@ describe('gate defaults', () => {
 describe('system prompt vendor strip', () => {
   test('default external prompts name no outside vendor', async () => {
     const classifier = buildDefaultExternalSystemPrompt()
+    // The REPL prompt lists commands, which needs a credential to be configured (any value).
+    process.env.GIZZI_CODE_OAUTH_TOKEN ??= 'test-token'
     const repl = (await getSystemPrompt([] as never, 'gizzi-test-model')).join('\n')
     for (const text of [classifier, repl]) {
       expect(text).not.toMatch(/Claude|Anthropic|Allternit Shell/)
