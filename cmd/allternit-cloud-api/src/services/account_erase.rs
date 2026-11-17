@@ -40,6 +40,8 @@ pub const RETAIN: &[(&str, &str)] = &[
     ("billing_entitlement_events", "finance: what a payment granted"),
     ("billing_subscriptions", "finance: subscription mirror, marked canceled"),
     ("user_billing_accounts", "finance: links the id to the Stripe customer"),
+    ("billing_store_accounts", "finance: links the id to App Store / Play purchases (account token)"),
+    ("billing_store_transactions", "finance: App Store / Play purchase ledger, refund reference"),
     ("billing_disputes", "finance: chargebacks and disputes"),
     ("billing_auto_topup_attempts", "finance: charge attempts"),
     ("voice_billing_periods", "finance: voice invoices, unbilled ones closed"),

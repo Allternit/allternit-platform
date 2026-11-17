@@ -1180,20 +1180,52 @@ fn map_dispute_event(event_type: &str, event_id: String, dispute: &Value) -> Res
     })
 }
 
-/// The outcome of processing one credit-purchase Stripe event.
-struct CreditPurchaseOutcome {
+/// The outcome of processing one credit purchase (a Stripe event or a store
+/// transaction).
+pub(crate) struct CreditPurchaseOutcome {
     /// Where the grant landed: the allternit-api fabric ledger when the
     /// bridge consumed it, the local cloud wallet otherwise.
-    target: String,
+    pub(crate) target: String,
     /// True when the event id was already processed and nothing was granted.
-    idempotent_replay: bool,
+    pub(crate) idempotent_replay: bool,
     /// Cloud-wallet balance after the grant (fabric grants have no local
     /// balance to report).
-    balance_usd: Option<f64>,
+    pub(crate) balance_usd: Option<f64>,
+}
+
+/// Who took the money for a credit purchase. It names the grant keys:
+/// the wallet ledger row is `<prefix>-<id>` (`stripe-<event id>`,
+/// `apple-<transactionId>`, `google-<orderId>`), the fabric idempotency key is
+/// the same string, and `credit_transactions.source` says who billed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CreditSource {
+    Stripe,
+    Apple,
+    Google,
+}
+
+impl CreditSource {
+    fn key_prefix(self) -> &'static str {
+        match self {
+            CreditSource::Stripe => "stripe",
+            CreditSource::Apple => "apple",
+            CreditSource::Google => "google",
+        }
+    }
+
+    /// The `webhook_events` id. Stripe keeps the bare event id (unchanged
+    /// since before store billing); store ids are namespaced so an Apple
+    /// transaction id can never collide with a Google order id.
+    fn dedupe_id(self, id: &str) -> String {
+        match self {
+            CreditSource::Stripe => id.to_string(),
+            _ => format!("{}-{id}", self.key_prefix()),
+        }
+    }
 }
 
 /// Which ledger receives a credit-pack grant.
-enum CreditGrantTarget<'a> {
+pub(crate) enum CreditGrantTarget<'a> {
     /// Grant into the allternit-api org fabric credits ledger via the
     /// internal bridge (requires the target org from the session metadata).
     Fabric(&'a dyn crate::services::fabric_ledger::FabricLedger, String),
@@ -1308,6 +1340,24 @@ async fn process_credit_purchase(
     user_id: &str,
     amount_usd: f64,
 ) -> Result<CreditPurchaseOutcome, ApiError> {
+    process_credit_purchase_from(db, target, CreditSource::Stripe, event_type, event_id, user_id, amount_usd).await
+}
+
+/// [`process_credit_purchase`] for any [`CreditSource`]: the same three
+/// idempotency layers and fabric-ledger rule for Stripe packs and store
+/// packs (`services::store_billing`). `id` is the Stripe event id, the Apple
+/// transaction id or the Google order id.
+pub(crate) async fn process_credit_purchase_from(
+    db: &PgPool,
+    target: CreditGrantTarget<'_>,
+    source: CreditSource,
+    event_type: &str,
+    id: &str,
+    user_id: &str,
+    amount_usd: f64,
+) -> Result<CreditPurchaseOutcome, ApiError> {
+    let dedupe_id = source.dedupe_id(id);
+    let event_id = dedupe_id.as_str();
     let existing_target: Option<String> = sqlx::query_scalar(
         "SELECT target FROM webhook_events WHERE id = $1",
     )
@@ -1323,19 +1373,19 @@ async fn process_credit_purchase(
         });
     }
 
-    let transaction_id = format!("stripe-{event_id}");
+    let transaction_id = format!("{}-{id}", source.key_prefix());
     let (target_name, balance_usd) = match target {
         CreditGrantTarget::Fabric(ledger, organization_id) => {
             let amount_cents = (amount_usd * 100.0).round() as i64;
             ledger
-                .grant_pack_credits(&organization_id, amount_cents, &transaction_id, event_id)
+                .grant_pack_credits(&organization_id, amount_cents, &transaction_id, id)
                 .await?;
             ("fabric_ledger".to_string(), None)
         }
         CreditGrantTarget::CloudWallet => {
             let cost_service = crate::services::CostServiceImpl::new(db.clone());
             let balance_usd = cost_service
-                .add_credits(user_id, amount_usd, &transaction_id, "stripe")
+                .add_credits(user_id, amount_usd, &transaction_id, source.key_prefix())
                 .await?;
             ("cloud_wallet".to_string(), Some(balance_usd))
         }

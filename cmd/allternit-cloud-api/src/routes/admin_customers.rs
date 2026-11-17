@@ -14,6 +14,11 @@ use std::sync::Arc;
 
 use crate::{error::ApiError, services::customer_emails::recipient_from_clerk_user, ApiState};
 
+/// Real customer plan rows: Stripe subscriptions (`sub_…`) and store plans
+/// (`apple:…`, `google:…`, services::store_billing). Other keys are test or
+/// hand-made rows.
+const PLAN_ROWS: &str = r"(stripe_subscription_id LIKE 'sub\_%' OR stripe_subscription_id LIKE 'apple:%' OR stripe_subscription_id LIKE 'google:%')";
+
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new().route("/api/v1/admin/customers", get(list_customers))
 }
@@ -27,8 +32,10 @@ pub struct CustomerRow {
     pub signed_up_at: Option<DateTime<Utc>>,
     /// plus / super / ultra, or None when the account has no paid plan.
     pub plan_id: Option<String>,
-    /// Stripe status mirror: active, trialing, past_due, unpaid, canceled…
+    /// Status mirror: active, trialing, past_due, unpaid, canceled…
     pub plan_status: Option<String>,
+    /// Who bills the plan: stripe, apple or google; None without a plan.
+    pub billing_provider: Option<String>,
     pub stripe_customer_id: Option<String>,
     pub computer_status: Option<String>,
     pub emails_sent: Vec<String>,
@@ -79,20 +86,23 @@ async fn clerk_users() -> Result<Vec<serde_json::Value>, ApiError> {
 pub async fn customer_rows(db: &PgPool) -> Result<Vec<CustomerRow>, ApiError> {
     let users = clerk_users().await?;
 
-    // Newest subscription per user (open ones first).
-    let subscriptions: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
-        r#"
-        SELECT DISTINCT ON (user_id) user_id, plan_id, status, stripe_customer_id
+    // Newest subscription per user (open ones first): Stripe plans and
+    // App Store / Play plans (keys `apple:` / `google:`).
+    let subscriptions: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
+        &format!(
+            r#"
+        SELECT DISTINCT ON (user_id) user_id, plan_id, status, COALESCE(provider, 'stripe'), stripe_customer_id
         FROM billing_subscriptions
-        WHERE stripe_subscription_id LIKE 'sub\_%'
+        WHERE {PLAN_ROWS}
         ORDER BY user_id, (status IN ('active', 'trialing', 'past_due', 'unpaid')) DESC, updated_at DESC
-        "#,
+        "#
+        ),
     )
     .fetch_all(db)
     .await?;
-    let subscriptions: HashMap<String, (String, String, Option<String>)> = subscriptions
+    let subscriptions: HashMap<String, (String, String, String, Option<String>)> = subscriptions
         .into_iter()
-        .map(|(user, plan, status, customer)| (user, (plan, status, customer)))
+        .map(|(user, plan, status, provider, customer)| (user, (plan, status, provider, customer)))
         .collect();
 
     let computers: Vec<(String, String)> = sqlx::query_as(
@@ -132,9 +142,10 @@ pub async fn customer_rows(db: &PgPool) -> Result<Vec<CustomerRow>, ApiError> {
                 email: recipient.map(|r| r.email),
                 name: (!name.trim().is_empty()).then_some(name),
                 signed_up_at: user["created_at"].as_i64().and_then(|ms| Utc.timestamp_millis_opt(ms).single()),
-                plan_id: subscription.map(|(plan, _, _)| plan.clone()),
-                plan_status: subscription.map(|(_, status, _)| status.clone()),
-                stripe_customer_id: subscription.and_then(|(_, _, customer)| customer.clone()),
+                plan_id: subscription.map(|(plan, _, _, _)| plan.clone()),
+                plan_status: subscription.map(|(_, status, _, _)| status.clone()),
+                billing_provider: subscription.map(|(_, _, provider, _)| provider.clone()),
+                stripe_customer_id: subscription.and_then(|(_, _, _, customer)| customer.clone()),
                 computer_status: computers.get(&user_id).cloned(),
                 emails_sent: emails_by_user.remove(&user_id).unwrap_or_default(),
                 user_id,
@@ -233,13 +244,13 @@ pub fn start_daily_customer_summary_task(state: Arc<ApiState>) {
 
 async fn send_daily_summary(db: &PgPool) -> Result<(), ApiError> {
     let rows = customer_rows(db).await?;
-    let cancelled: Vec<(String, String)> = sqlx::query_as(
+    let cancelled: Vec<(String, String)> = sqlx::query_as(&format!(
         r#"
         SELECT user_id, plan_id FROM billing_subscriptions
         WHERE status = 'canceled' AND updated_at >= now() - interval '24 hours'
-          AND stripe_subscription_id LIKE 'sub\_%'
-        "#,
-    )
+          AND {PLAN_ROWS}
+        "#
+    ))
     .fetch_all(db)
     .await?;
     let emails: HashMap<String, String> = rows
@@ -268,6 +279,7 @@ mod tests {
             signed_up_at: Some(now - Duration::hours(hours_ago)),
             plan_id: plan.map(|(p, _)| p.to_string()),
             plan_status: plan.map(|(_, s)| s.to_string()),
+            billing_provider: plan.map(|_| "stripe".to_string()),
             stripe_customer_id: None,
             computer_status: computer.map(str::to_string),
             emails_sent: vec![],

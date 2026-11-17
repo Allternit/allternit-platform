@@ -10,14 +10,20 @@
 //! - `GET /api/v1/billing/plans` (public): the catalog WITHOUT Stripe price ids, plus a
 //!   top-level `freeweights` block listing the Freeweights plan perks
 //!   (`routes::freeweights::PerkConfig::listing`; `status` is `not_offered` unless
-//!   `FREEWEIGHTS_PERKS_ENABLED` is on).
+//!   `FREEWEIGHTS_PERKS_ENABLED` is on). Each plan carries a `store` block
+//!   (`services::store_billing::StoreOffers`): its App Store and Play product ids and
+//!   whether that store is switched on.
 //! - `GET /api/v1/billing/subscription` (Clerk session or API token): the caller's
-//!   current Free / Plus / Max / Ultra plan (active Stripe row, else Free).
+//!   current Free / Plus / Max / Ultra plan (open row, else Free), with
+//!   `billing_provider` (`stripe` / `apple` / `google` / null), `manage_url` and
+//!   `conflict` (more than one open plan).
 //! - `POST /api/v1/billing/subscribe` (Clerk session or API token): Checkout Session `mode=subscription` whose
 //!   `subscription_data[metadata]` carries `clerk_user_id` / `allternit_plan_tier` /
-//!   `allternit_plan_id` — the contract `routes::billing_webhooks` consumes.
+//!   `allternit_plan_id` — the contract `routes::billing_webhooks` consumes. 409
+//!   `already_subscribed` (with `billing_provider`, `manage_url`) when any plan is open.
 //! - `POST /api/v1/billing/portal` (Clerk session or API token): billing-portal session for the user's Stripe
-//!   customer, resolved through `user_billing_accounts`.
+//!   customer, resolved through `user_billing_accounts`. 409 `store_billed` when the
+//!   account's plan is billed by Apple or Google (`routes::billing_store`).
 //!
 //! This module also owns the subscription bookkeeping tables (created in
 //! `migrations_pg/005_billing_subscriptions.sql`): the upsert/lookup helpers that `routes::billing_webhooks` calls so monthly
@@ -62,12 +68,21 @@ pub struct SubscriptionPlan {
     /// Photo avatars Allternit pays for each UTC calendar month (`routes::photo_avatars`).
     /// No active subscription gets 0.
     pub photo_avatars_per_month: i64,
+    /// App Store auto-renewable subscription product id (group "Allternit Plans").
+    /// Permanent once created in App Store Connect.
+    pub apple_product_id: &'static str,
+    /// Google Play subscription product id; its one base plan is `monthly`.
+    pub google_product_id: &'static str,
+    /// The store's US reference price. Store plans grant the same monthly
+    /// credits as web; the price is higher to cover the store fee. Clients show
+    /// the store's own localized price, never this figure.
+    pub store_price_usd: f64,
 }
 
 const SUBSCRIPTION_PLANS: &[SubscriptionPlan] = &[
-    SubscriptionPlan { id: "plus", label: "Plus", price_usd: 20.00, monthly_credits_usd: 22.00, rollover_cap_usd: 10.00, plan_tier: "pro", price_env: "STRIPE_PRICE_PLUS", photo_avatars_per_month: 5 },
-    SubscriptionPlan { id: "super", label: "Max", price_usd: 100.00, monthly_credits_usd: 110.00, rollover_cap_usd: 50.00, plan_tier: "team", price_env: "STRIPE_PRICE_SUPER", photo_avatars_per_month: 25 },
-    SubscriptionPlan { id: "ultra", label: "Ultra", price_usd: 200.00, monthly_credits_usd: 220.00, rollover_cap_usd: 100.00, plan_tier: "team", price_env: "STRIPE_PRICE_ULTRA", photo_avatars_per_month: 50 },
+    SubscriptionPlan { id: "plus", label: "Plus", price_usd: 20.00, monthly_credits_usd: 22.00, rollover_cap_usd: 10.00, plan_tier: "pro", price_env: "STRIPE_PRICE_PLUS", photo_avatars_per_month: 5, apple_product_id: "com.allternit.mobile.plan.plus.monthly", google_product_id: "plan_plus", store_price_usd: 24.99 },
+    SubscriptionPlan { id: "super", label: "Max", price_usd: 100.00, monthly_credits_usd: 110.00, rollover_cap_usd: 50.00, plan_tier: "team", price_env: "STRIPE_PRICE_SUPER", photo_avatars_per_month: 25, apple_product_id: "com.allternit.mobile.plan.max.monthly", google_product_id: "plan_max", store_price_usd: 124.99 },
+    SubscriptionPlan { id: "ultra", label: "Ultra", price_usd: 200.00, monthly_credits_usd: 220.00, rollover_cap_usd: 100.00, plan_tier: "team", price_env: "STRIPE_PRICE_ULTRA", photo_avatars_per_month: 50, apple_product_id: "com.allternit.mobile.plan.ultra.monthly", google_product_id: "plan_ultra", store_price_usd: 249.99 },
 ];
 
 /// Wire shape of the plan catalog — Stripe price ids deliberately stay server-side.
@@ -79,6 +94,8 @@ pub struct SubscriptionPlanResponse {
     monthly_credits_usd: f64,
     rollover_cap_usd: f64,
     plan_tier: &'static str,
+    /// Where the apps can buy this plan. Additive: older clients ignore it.
+    store: crate::services::store_billing::StoreOffers,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,6 +132,33 @@ pub struct CurrentSubscriptionResponse {
     renews_at: Option<String>,
 }
 
+/// `GET /api/v1/billing/subscription`: the plan plus who bills it. The three
+/// added fields are additive (older clients ignore them) and always present.
+#[derive(Debug, Serialize)]
+pub struct SubscriptionStatusResponse {
+    #[serde(flatten)]
+    plan: CurrentSubscriptionResponse,
+    /// `stripe`, `apple`, `google`, or null when no paid plan is open.
+    billing_provider: Option<String>,
+    /// Where the person manages or cancels the plan: the App Store or Play
+    /// subscriptions page for store plans, the platform billing page for
+    /// Stripe. Null without a paid plan.
+    manage_url: Option<String>,
+    /// True when the account has more than one open plan (for example a
+    /// Stripe plan and an App Store plan bought on the device). Clients show
+    /// "You have two plans. Cancel one."
+    conflict: bool,
+}
+
+/// One open (`active`, `trialing`, `past_due`, `unpaid`) plan row with who
+/// bills it.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub(crate) struct OpenSubscription {
+    pub plan_id: String,
+    /// `stripe`, `apple` or `google`.
+    pub provider: String,
+}
+
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/billing/plans", get(list_plans))
@@ -135,11 +179,30 @@ fn product_label(plan_id: &str) -> &'static str {
 async fn get_current_subscription(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
-) -> Result<Json<CurrentSubscriptionResponse>, ApiError> {
+) -> Result<Json<SubscriptionStatusResponse>, ApiError> {
     let user_id = crate::auth::resolve_user_scoped(&state.db, &headers, "billing")
         .await?
         .id;
-    Ok(Json(current_subscription_for(&state.db, &user_id).await?))
+    let plan = current_subscription_for(&state.db, &user_id).await?;
+    // Admins read as Ultra without a row; they have no provider.
+    let open = if crate::auth::is_admin_user(&user_id) {
+        Vec::new()
+    } else {
+        open_subscriptions(&state.db, &user_id).await?
+    };
+    Ok(Json(subscription_status(plan, &open)))
+}
+
+/// The subscription response from the plan and the open rows (newest-first,
+/// the order [`open_subscriptions`] returns).
+fn subscription_status(plan: CurrentSubscriptionResponse, open: &[OpenSubscription]) -> SubscriptionStatusResponse {
+    let current = open.first();
+    SubscriptionStatusResponse {
+        billing_provider: current.map(|sub| sub.provider.clone()),
+        manage_url: current.and_then(|sub| crate::services::store_billing::manage_url(&sub.provider, &sub.plan_id)),
+        conflict: open.len() > 1,
+        plan,
+    }
 }
 
 /// The plan id an account is on now (`free`, `plus`, `super` (Max) or `ultra`): the same answer
@@ -150,7 +213,7 @@ pub(crate) async fn current_plan_id(db: &PgPool, user_id: &str) -> Result<String
 }
 
 /// Source of truth for "which plan is this account on": admins read as Ultra, else the newest
-/// open Stripe subscription row (active/trialing first), else Free.
+/// open subscription row (Stripe or store, active/trialing first), else Free.
 async fn current_subscription_for(
     db: &PgPool,
     user_id: &str,
@@ -199,7 +262,11 @@ async fn current_subscription_for(
 }
 
 async fn list_plans() -> Json<PlansResponse> {
-    Json(PlansResponse {
+    Json(plans_response(&crate::services::store_billing::StoreConfig::from_env()))
+}
+
+fn plans_response(config: &crate::services::store_billing::StoreConfig) -> PlansResponse {
+    PlansResponse {
         plans: SUBSCRIPTION_PLANS
             .iter()
             .map(|plan| SubscriptionPlanResponse {
@@ -209,10 +276,11 @@ async fn list_plans() -> Json<PlansResponse> {
                 monthly_credits_usd: plan.monthly_credits_usd,
                 rollover_cap_usd: plan.rollover_cap_usd,
                 plan_tier: plan.plan_tier,
+                store: config.offers(plan.apple_product_id, plan.google_product_id, plan.store_price_usd),
             })
             .collect(),
         freeweights: crate::routes::freeweights::PerkConfig::from_env().listing(),
-    })
+    }
 }
 
 async fn create_subscription(
@@ -250,20 +318,14 @@ async fn create_subscription(
             Err(error) => return error.into_response(),
         };
     // One subscription per account: a second checkout would bill twice and
-    // create a second cloud computer. Plan changes go through the portal.
-    match open_subscription_plan(&state.db, &user_id).await {
-        Ok(Some(current_plan_id)) => {
-            return (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({
-                    "error": "already_subscribed",
-                    "current_plan_id": current_plan_id,
-                    "message": "This account already has a plan. Change or cancel it in Manage billing.",
-                })),
-            )
-                .into_response();
+    // create a second cloud computer. Plan changes go through the portal, or
+    // through the store that bills a store plan.
+    match open_subscriptions(&state.db, &user_id).await {
+        Ok(open) => {
+            if let Some(current) = open.first() {
+                return already_subscribed_response(current);
+            }
         }
-        Ok(None) => {}
         Err(error) => return error.into_response(),
     }
     let customer_id: Option<String> = match sqlx::query_scalar(
@@ -304,6 +366,17 @@ async fn create_portal_session(
         Ok(user) => user.id,
         Err(error) => return error.into_response(),
     };
+    // A plan billed by Apple or Google is managed in that store: the Stripe
+    // portal cannot change or cancel it. Checked before the Stripe config so
+    // the answer is the same on every deployment.
+    match open_subscriptions(&state.db, &user_id).await {
+        Ok(open) => {
+            if let Some(store_plan) = store_billed_plan(&open) {
+                return store_billed_response(store_plan);
+            }
+        }
+        Err(error) => return error.into_response(),
+    }
     let Ok(secret_key) = std::env::var("STRIPE_SECRET_KEY") else {
         return billing_not_configured_response();
     };
@@ -332,6 +405,11 @@ async fn create_portal_session(
 /// grant in the webhook — the server never invents plan terms for ids it does not sell.
 pub(crate) fn find_plan(plan_id: &str) -> Option<&'static SubscriptionPlan> {
     SUBSCRIPTION_PLANS.iter().find(|plan| plan.id == plan_id)
+}
+
+/// Every plan in the catalog (store product id lookups in `services::store_billing`).
+pub(crate) fn subscription_plans() -> &'static [SubscriptionPlan] {
+    SUBSCRIPTION_PLANS
 }
 
 /// The plan a Stripe subscription is on *now*: its item's price id, mapped
@@ -403,6 +481,72 @@ pub(crate) async fn open_subscription_plan(db: &PgPool, user_id: &str) -> Result
     .bind(user_id)
     .fetch_optional(db)
     .await?)
+}
+
+/// Every open plan row of an account, newest first (active/trialing before
+/// past_due/unpaid, then by `updated_at`), the same order
+/// [`current_subscription_for`] picks the current plan by. More than one row
+/// is a double-billing conflict (plan D5).
+pub(crate) async fn open_subscriptions(db: &PgPool, user_id: &str) -> Result<Vec<OpenSubscription>, ApiError> {
+    Ok(sqlx::query_as::<_, OpenSubscription>(
+        r#"
+        SELECT plan_id, COALESCE(provider, 'stripe') AS provider
+        FROM billing_subscriptions
+        WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due', 'unpaid')
+        ORDER BY (status IN ('active', 'trialing')) DESC, updated_at DESC
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?)
+}
+
+/// The store plan that makes the Stripe portal useless: the account's open
+/// plans are all store-billed. With a Stripe plan open too (a conflict), the
+/// portal stays open so the person can cancel the Stripe one.
+pub(crate) fn store_billed_plan(open: &[OpenSubscription]) -> Option<&OpenSubscription> {
+    if open.iter().any(|sub| sub.provider == "stripe") {
+        return None;
+    }
+    open.first()
+}
+
+/// 409 `already_subscribed`: the account has an open plan. Names who bills it
+/// and where to manage it, so a client can send the person to the right place
+/// (shared by `POST /billing/subscribe` and `POST /billing/store/preflight`).
+pub(crate) fn already_subscribed_response(current: &OpenSubscription) -> Response {
+    let message = match current.provider.as_str() {
+        "apple" => "This account already has a plan billed by Apple. Change or cancel it in your App Store subscriptions.",
+        "google" => "This account already has a plan billed by Google Play. Change or cancel it in your Play Store subscriptions.",
+        _ => "This account already has a plan. Change or cancel it in Manage billing.",
+    };
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "error": "already_subscribed",
+            "current_plan_id": current.plan_id,
+            "billing_provider": current.provider,
+            "manage_url": crate::services::store_billing::manage_url(&current.provider, &current.plan_id),
+            "message": message,
+        })),
+    )
+        .into_response()
+}
+
+/// 409 `store_billed` from `POST /billing/portal` for a plan Apple or Google bills.
+fn store_billed_response(plan: &OpenSubscription) -> Response {
+    let store = if plan.provider == "apple" { "App Store" } else { "Play Store" };
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "error": "store_billed",
+            "current_plan_id": plan.plan_id,
+            "billing_provider": plan.provider,
+            "manage_url": crate::services::store_billing::manage_url(&plan.provider, &plan.plan_id),
+            "message": format!("This plan is billed by the {store}. Change or cancel it in your {store} subscriptions."),
+        })),
+    )
+        .into_response()
 }
 
 /// Form fields for a subscription Checkout Session. The metadata lives under
@@ -861,6 +1005,67 @@ mod tests {
             value["freeweights"]["plans"]["free"][0],
             serde_json::json!({"key": "public_storage_bytes", "label": "Public upload storage", "value": 10_000_000_000u64, "unit": "bytes"})
         );
+    }
+
+    /// An old client decodes plans into a struct with only the fields it knew
+    /// before store billing; the added `store` block must not break it.
+    #[test]
+    fn plans_with_store_block_still_parse_for_old_clients() {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        #[allow(dead_code)]
+        struct OldPlan {
+            id: String,
+            label: String,
+            price_usd: f64,
+            monthly_credits_usd: f64,
+            rollover_cap_usd: f64,
+            plan_tier: String,
+        }
+        let config = crate::services::store_billing::StoreConfig { apple: false, google: true };
+        let mut value = serde_json::to_value(plans_response(&config)).unwrap();
+        let plans = value["plans"].as_array_mut().unwrap();
+        assert_eq!(plans.len(), 3);
+        let stores: Vec<serde_json::Value> = plans
+            .iter_mut()
+            .map(|plan| plan.as_object_mut().unwrap().remove("store").unwrap())
+            .collect();
+        // Without the new block every plan is exactly the old shape.
+        let old: Vec<OldPlan> = serde_json::from_value(value["plans"].clone()).unwrap();
+        assert_eq!(old[1].id, "super");
+        assert_eq!(old[1].price_usd, 100.0, "web price is unchanged");
+        assert_eq!(stores[1]["apple"], serde_json::json!({ "enabled": false, "product_id": "com.allternit.mobile.plan.max.monthly" }));
+        assert_eq!(stores[1]["google"], serde_json::json!({ "enabled": true, "product_id": "plan_max" }));
+        assert_eq!(stores[1]["reference_price_usd"], serde_json::json!(124.99));
+        assert_eq!(stores[0]["reference_price_usd"], serde_json::json!(24.99));
+        assert_eq!(stores[2]["reference_price_usd"], serde_json::json!(249.99));
+    }
+
+    #[test]
+    fn subscription_status_names_who_bills_and_flags_two_plans() {
+        let plan = || CurrentSubscriptionResponse {
+            plan_id: "plus".to_string(),
+            label: "Plus".to_string(),
+            plan_tier: "pro".to_string(),
+            status: "active".to_string(),
+            renews_at: None,
+        };
+        let free = serde_json::to_value(subscription_status(plan(), &[])).unwrap();
+        assert_eq!(free["billing_provider"], serde_json::Value::Null);
+        assert_eq!(free["manage_url"], serde_json::Value::Null);
+        assert_eq!(free["conflict"], false);
+        let both = [
+            OpenSubscription { plan_id: "plus".to_string(), provider: "google".to_string() },
+            OpenSubscription { plan_id: "super".to_string(), provider: "stripe".to_string() },
+        ];
+        let value = serde_json::to_value(subscription_status(plan(), &both)).unwrap();
+        assert_eq!(value["plan_id"], "plus", "the plan fields stay at the top level");
+        assert_eq!(value["billing_provider"], "google");
+        assert_eq!(
+            value["manage_url"],
+            "https://play.google.com/store/account/subscriptions?sku=plan_plus&package=com.allternit.app"
+        );
+        assert_eq!(value["conflict"], true);
     }
 
     #[tokio::test]
