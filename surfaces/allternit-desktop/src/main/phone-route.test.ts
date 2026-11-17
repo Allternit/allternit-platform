@@ -215,7 +215,7 @@ describe('phone.describe', () => {
     expect(res).toMatchObject({ ok: true, route: 'usb-agent', verified: true, detail: { locked: true, foreground_app: null, shortcuts: [], home: { available: false } } });
     const routes = res.detail.routes as Array<Record<string, unknown>>;
     expect(routes.map((r) => r.route)).toEqual([...ROUTE_ORDER]);
-    expect(routes[1]).toEqual({ route: 'mirror', healthy: false, available: true, needs_you: 'MAC_LOCKED', covers: TAP });
+    expect(routes[1]).toEqual({ route: 'mirror', healthy: false, available: true, needs_you: 'MAC_LOCKED', message: 'Unlock your Mac so I can use your iPhone through it.', covers: TAP });
     expect(routes[5]).toEqual({ route: 'usb-agent', healthy: true, available: true, covers: ['screenshot', 'tap'] });
     expect(routes[0]).toMatchObject({ route: 'official', healthy: false, available: false });
     expect(mirror.calls).toHaveLength(0);
