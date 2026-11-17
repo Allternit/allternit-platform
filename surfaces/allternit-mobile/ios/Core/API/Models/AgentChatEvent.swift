@@ -102,6 +102,8 @@ enum AgentChatEvent: Decodable, Sendable {
         var output: String? = nil
         /// send_user_message: the message card (the tool part's `metadata`).
         var userMessage: AgentUserMessage? = nil
+        /// automation: the scheduled-task card (the tool part's `metadata`).
+        var automation: AgentAutomationResult? = nil
     }
 
     struct ToolCall: Sendable {
@@ -279,10 +281,16 @@ enum AgentChatEvent: Decodable, Sendable {
             let userMessage = toolName == AgentUserMessage.toolName
                 ? ((try? container.decodeIfPresent(AgentUserMessage.self, forKey: .metadata)) ?? nil)
                 : nil
+            // automation: the scheduled-task card, from the same `metadata`.
+            let automation = toolName == AgentAutomationResult.toolName
+                ? ((try? container.decodeIfPresent(AgentAutomationResult.self, forKey: .metadata)) ?? nil)
+                : nil
             self = .toolResult(ToolResult(
                 toolCallId: try container.decodeIfPresent(String.self, forKey: .toolCallId) ?? "",
                 toolName: toolName,
-                detail: userMessage.map { ToolDetail(userMessage: $0) },
+                detail: (userMessage != nil || automation != nil)
+                    ? ToolDetail(userMessage: userMessage, automation: automation)
+                    : nil,
                 runCode: (try? RunCodeKeys(from: decoder))?.result
             ))
 

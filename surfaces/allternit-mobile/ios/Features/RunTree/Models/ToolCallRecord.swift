@@ -26,6 +26,8 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
     var runCode: RunCodeResult? = nil
     /// send_user_message: the message and files the agent sent its user.
     var userMessage: AgentUserMessage? = nil
+    /// automation: the scheduled task the call made or changed.
+    var automation: AgentAutomationResult? = nil
 
     /// How long the call ran; live calls count up to `now`.
     func elapsed(now: Date = Date()) -> TimeInterval? {
@@ -86,7 +88,8 @@ extension ToolCallRecord {
                 finishedAt: part.state?.finishedAt,
                 output: part.state?.output?.value as? String,
                 runCode: name == "run_code" ? RunCodeResult(files: part.files, run: part.run) : nil,
-                userMessage: name == AgentUserMessage.toolName ? part.state?.userMessage : nil
+                userMessage: name == AgentUserMessage.toolName ? part.state?.userMessage : nil,
+                automation: name == AgentAutomationResult.toolName ? part.state?.automation : nil
             )
         }
     }
@@ -109,6 +112,7 @@ extension MessageRecord {
                 call.startedAt = detail.startedAt ?? call.startedAt
                 call.finishedAt = detail.finishedAt ?? call.finishedAt
                 if let message = detail.userMessage { call.userMessage = message }
+                if let automation = detail.automation { call.automation = automation }
             }
             if state != .running, call.finishedAt == nil { call.finishedAt = now }
             if let runCode { call.runCode = runCode }
@@ -124,7 +128,8 @@ extension MessageRecord {
                 startedAt: detail?.startedAt ?? now,
                 finishedAt: detail?.finishedAt ?? (state == .running ? nil : now),
                 runCode: runCode,
-                userMessage: detail?.userMessage
+                userMessage: detail?.userMessage,
+                automation: detail?.automation
             ))
         }
     }
@@ -330,5 +335,90 @@ struct AgentUserMessage: Decodable, Equatable, Sendable {
         text = try c.decode(String.self, forKey: .text)
         files = try c.decode(LossyArray<File>.self, forKey: .files).elements
         push = (try? c.decodeIfPresent(String.self, forKey: .push)) ?? nil
+    }
+}
+
+// MARK: - automation
+
+/// What the `automation` tool returned (gizzi runtime/tools/builtins/
+/// automation.ts `AutomationMetadata`): the tool part's `metadata`,
+/// `{action, status, automation?, automations?, id?, approval?, via?}`.
+/// The chat draws a create or update as a scheduled-task card.
+struct AgentAutomationResult: Decodable, Equatable, Sendable {
+    static let toolName = "automation"
+
+    /// One scheduled task (`AutomationInfo`, gizzi runtime/bots/app-bot-routing.ts).
+    struct Info: Decodable, Equatable, Sendable {
+        struct Schedule: Decodable, Equatable, Sendable {
+            /// "once" (`at`, an instant) or "cron" (`expression`, read in the task's zone).
+            let type: String
+            let at: String?
+            let expression: String?
+        }
+
+        let id: String
+        let title: String
+        /// "message" or "heartbeat".
+        let kind: String
+        /// "this_thread" or "new_session".
+        let target: String?
+        /// "active", "paused" or "completed".
+        let status: String
+        let schedule: Schedule?
+        /// The user's IANA zone the schedule is read in.
+        let timezone: String?
+        /// Nil when nothing more is due.
+        let nextRunAt: String?
+        let lastRunAt: String?
+        let lastRunStatus: String?
+        let maxRuns: Int?
+        let runCount: Int?
+        let until: String?
+        let sessionId: String?
+        /// "agent" or "user".
+        let origin: String?
+        let initiation: String?
+        let createdAt: String?
+
+        var kindLabel: String { kind == "heartbeat" ? "Check" : "Reminder" }
+        var targetLabel: String? {
+            switch target {
+            case "this_thread": return "Posts in this chat"
+            case "new_session": return "New chat each run"
+            default: return nil
+            }
+        }
+    }
+
+    /// "create", "update", "list", "delete" or "run_now".
+    let action: String
+    /// "ok", "no_platform" or "no_scheduler".
+    let status: String
+    let automation: Info?
+    let automations: [Info]?
+    let id: String?
+    /// The sentence about approvals for unattended runs.
+    let approval: String?
+    /// "platform" (allternit-api routine) or "cron" (this computer's scheduler).
+    let via: String?
+
+    private enum CodingKeys: String, CodingKey { case action, status, automation, automations, id, approval, via }
+
+    /// Needs `action` and `status`, so another tool's metadata never reads as one.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        action = try c.decode(String.self, forKey: .action)
+        status = try c.decode(String.self, forKey: .status)
+        automation = (try? c.decodeIfPresent(Info.self, forKey: .automation)) ?? nil
+        automations = (try? c.decodeIfPresent(LossyArray<Info>.self, forKey: .automations))??.elements
+        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? nil
+        approval = (try? c.decodeIfPresent(String.self, forKey: .approval)) ?? nil
+        via = (try? c.decodeIfPresent(String.self, forKey: .via)) ?? nil
+    }
+
+    /// The task a card shows: a create or update that went through.
+    var card: Info? {
+        guard status == "ok", action == "create" || action == "update" else { return nil }
+        return automation
     }
 }
