@@ -178,6 +178,18 @@ class AppPhoneLinkTest {
         assertFalse(next.getBoolean("canTap")); assertEquals("denied", next.getString("consent"))
     }
 
+    @Test fun stateCarriesTheBluetoothKeyboardForTheIPhoneListing() {
+        paired()
+        val (l, s) = openControl()
+        assertFalse(appOpen(s.texts[0]).has("keyboard"))
+
+        host.keyboard = JSONObject().put("on", true).put("paired", true).put("connected", true).put("host", "Sam's iPhone")
+        l.stateChanged()
+        val kb = appOpen(s.texts[1]).getJSONObject("keyboard")
+        assertTrue(kb.getBoolean("on")); assertTrue(kb.getBoolean("connected"))
+        assertEquals("Sam's iPhone", kb.getString("host"))
+    }
+
     @Test fun inputEventsRunAndAreAnswered() {
         paired()
         val (_, s) = openControl()

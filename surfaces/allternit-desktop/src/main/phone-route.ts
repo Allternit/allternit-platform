@@ -419,8 +419,15 @@ export function actionsRunRequest(detail: Record<string, unknown>, args: Record<
 /** OCR of an image Desktop already has (phone-mirror.ts `mirrorImageReader`). Elements use the contract's Element shape. */
 export type ImageReader = (imageBase64: string) => Promise<{ elements: Array<{ class: string; label: string; id: string; bounds: [number, number, number, number] }>; text: string; width: number; height: number } | null>;
 
-/** After the extension says it sent a fresh keyframe, wait this long for it to reach the node. */
-const FALLBACK_FRAME_WAIT_MS = 400;
+/**
+ * After the extension says it sent a fresh frame (`fallback:"frame_sent"`),
+ * wait at most this long for a still newer than the request, asking every
+ * FALLBACK_FRAME_POLL_MS.
+ */
+export const FALLBACK_FRAME_WAIT_MS = 3_000;
+const FALLBACK_FRAME_POLL_MS = 150;
+export const FALLBACK_FRAME_STALE =
+  "The iPhone's newest screen picture is older than this request, so I did not read it. Check that the Allternit screen broadcast is still running on the iPhone, then try again.";
 
 export interface OfficialLaneOptions {
   /** OCR for the broadcast's fallback frame; null/absent = no OCR in this build (Windows, Linux). */
@@ -443,14 +450,29 @@ export function officialLane(apps: () => AppPhoneLane | null, now: () => number 
    * `error:"unavailable"`, `fallback` = `frame_sent` or `runtime_reads_frames`):
    * read the latest broadcast still here instead. Null = keep the phone's answer.
    */
-  const readFallbackFrame = async (a: AppPhoneLane, serial: string, res: ToolResult, args: Record<string, unknown>): Promise<ToolResult | null> => {
+  const readFallbackFrame = async (a: AppPhoneLane, serial: string, res: ToolResult, args: Record<string, unknown>, askedAt: number): Promise<ToolResult | null> => {
     const detail = asObj((res as { detail?: unknown }).detail);
     const reader = opts.readImage?.();
     if (res.ok || detail.error !== 'unavailable' || !reader) return null;
-    if (detail.fallback === 'frame_sent') await sleep(FALLBACK_FRAME_WAIT_MS);
-    const shot = await a.call('phone.screenshot', serial, {});
-    if (!shot.ok || typeof shot.dataBase64 !== 'string') return null;
-    const seen = await reader(shot.dataBase64);
+    // `frame_sent`: a fresh frame is on its way, so only a still taken after the
+    // request shows what the phone shows now; an older one is refused. Without
+    // it (`runtime_reads_frames`) the broadcast sends a frame on every screen
+    // change, so its newest still is the screen now.
+    const fresh = detail.fallback === 'frame_sent';
+    const deadline = now() + FALLBACK_FRAME_WAIT_MS;
+    let shot: ToolResult;
+    for (;;) {
+      shot = await a.call('phone.screenshot', serial, {});
+      if (!shot.ok || typeof shot.dataBase64 !== 'string') return null;
+      if (!fresh) break;
+      const age = Number((shot as { ageMs?: unknown }).ageMs);
+      if (Number.isFinite(age) && now() - Math.max(0, age) >= askedAt) break;
+      if (now() >= deadline) {
+        return { ok: false, error: 'no_screen', message: FALLBACK_FRAME_STALE, detail: { error: 'stale_frame', read_by: 'desktop' } } as ToolResult;
+      }
+      await sleep(FALLBACK_FRAME_POLL_MS);
+    }
+    const seen = await reader(shot.dataBase64 as string);
     if (!seen) return null;
     const filter = asObj(args.filter);
     const label = typeof filter.label === 'string' ? filter.label.toLowerCase() : '';
@@ -506,8 +528,9 @@ export function officialLane(apps: () => AppPhoneLane | null, now: () => number 
       }
       const req = officialRequest(tool, args);
       if (!req) return { ok: false, error: 'not_supported', message: `${tool} does not run on the official route.` };
+      const askedAt = now();
       const res = officialResult(tool, await a.rpc(serial, req.method, req.params, officialTimeoutMs(args.timeout_s)));
-      if (!res.ok && tool === 'phone.read_ui') return (await readFallbackFrame(a, serial, res, args)) ?? res;
+      if (!res.ok && tool === 'phone.read_ui') return (await readFallbackFrame(a, serial, res, args, askedAt)) ?? res;
       if (res.ok && tool === 'phone.read_ui') {
         // Existing readers take elements and text at the top level (phone-verify.ts PhoneUseResult).
         const detail = asObj(res.detail);

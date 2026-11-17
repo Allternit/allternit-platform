@@ -5,6 +5,8 @@ import type { AppRpcResult } from './phone-app-store.js';
 import {
   approvalClass,
   deriveActionKind,
+  FALLBACK_FRAME_STALE,
+  FALLBACK_FRAME_WAIT_MS,
   legacyHelperLane,
   officialLane,
   officialResult,
@@ -405,37 +407,68 @@ describe('official route lane', () => {
   });
 
   it('reads the broadcast frame on the computer when the extension has no memory to read it', async () => {
-    const outOfMemory: AppRpcResult = {
+    const outOfMemory = (fallback: string): AppRpcResult => ({
       ok: true,
-      result: { ok: false, route: 'official', verified: false, detail: { error: 'unavailable', message: 'Not enough memory.', fallback: 'frame_sent', available_mb: 9 } },
-    };
-    const node = appNode({ appOpen: false, screen: true, answer: () => outOfMemory });
-    const shots: string[] = [];
-    node.apps.call = async (name, serial) => {
-      shots.push(`${name} ${serial}`);
-      return { ok: true, dataBase64: 'anBlZw==', mimeType: 'image/jpeg', width: 1170, height: 2532 } as ToolResult;
-    };
-    const read: string[] = [];
-    const waits: number[] = [];
-    const lane = officialLane(() => node.apps, Date.now, {
-      sleep: async (ms) => void waits.push(ms),
-      readImage: () => async (b64) => {
-        read.push(b64);
-        return {
-          elements: [{ class: 'Text', label: 'Messages', id: '', bounds: [10, 20, 200, 60] }, { class: 'Text', label: 'Send', id: '', bounds: [900, 2400, 1100, 2460] }],
-          text: 'Messages\nSend',
-          width: 1170,
-          height: 2532,
-        };
-      },
+      result: { ok: false, route: 'official', verified: false, detail: { error: 'unavailable', message: 'Not enough memory.', fallback, available_mb: 9 } },
     });
-    const res = await new PhoneRouter({ lanes: { official: lane } }).run('phone.read_ui', SERIAL, { filter: { label: 'send' } });
-    expect(res).toMatchObject({ ok: true, route: 'official', text: 'Send', elements: [{ label: 'Send', bounds: [900, 2400, 1100, 2460] }], detail: { read_by: 'desktop', width: 1170 } });
-    expect(shots).toEqual([`phone.screenshot ${SERIAL}`]);
+    // A clock the waits move: the request goes out at t = 10 000.
+    let t = 10_000;
+    const waits: number[] = [];
+    const read: string[] = [];
+    const run = async (fallback: string, ages: number[]) => {
+      const node = appNode({ appOpen: false, screen: true, answer: () => outOfMemory(fallback) });
+      const shots: number[] = [];
+      node.apps.call = async () => {
+        shots.push(t);
+        const ageMs = ages[Math.min(shots.length - 1, ages.length - 1)];
+        return { ok: true, dataBase64: 'anBlZw==', mimeType: 'image/jpeg', width: 1170, height: 2532, ageMs } as ToolResult;
+      };
+      const lane = officialLane(() => node.apps, () => t, {
+        sleep: async (ms) => {
+          waits.push(ms);
+          t += ms;
+        },
+        readImage: () => async (b64) => {
+          read.push(b64);
+          return {
+            elements: [{ class: 'Text', label: 'Messages', id: '', bounds: [10, 20, 200, 60] }, { class: 'Text', label: 'Send', id: '', bounds: [900, 2400, 1100, 2460] }],
+            text: 'Messages\nSend',
+            width: 1170,
+            height: 2532,
+          };
+        },
+      });
+      const res = await new PhoneRouter({ lanes: { official: lane } }).run('phone.read_ui', SERIAL, { filter: { label: 'send' } });
+      return { res, shots };
+    };
+
+    // A fresh frame was sent: the still from before the request is passed over until the new one arrives.
+    const sent = await run('frame_sent', [500, 100]);
+    expect(sent.res).toMatchObject({ ok: true, route: 'official', text: 'Send', elements: [{ label: 'Send', bounds: [900, 2400, 1100, 2460] }], detail: { read_by: 'desktop', width: 1170 } });
+    expect(sent.shots).toEqual([10_000, 10_150]);
+    expect(waits).toEqual([150]);
     expect(read).toEqual(['anBlZw==']);
-    expect(waits).toEqual([400]);
+
+    // The new frame never comes: refuse the old still, after a few seconds at most.
+    t = 20_000;
+    waits.length = 0;
+    read.length = 0;
+    const stale = await run('frame_sent', [60_000]);
+    expect(stale.res).toMatchObject({ ok: false, error: 'no_screen', message: FALLBACK_FRAME_STALE, detail: { error: 'stale_frame' } });
+    expect(t - 20_000).toBeGreaterThanOrEqual(FALLBACK_FRAME_WAIT_MS);
+    expect(t - 20_000).toBeLessThan(FALLBACK_FRAME_WAIT_MS + 500);
+    expect(read).toEqual([]);
+
+    // No fresh frame promised: the newest still is the screen now, read at once.
+    t = 30_000;
+    waits.length = 0;
+    const latest = await run('runtime_reads_frames', [60_000]);
+    expect(latest.res).toMatchObject({ ok: true, text: 'Send', detail: { read_by: 'desktop' } });
+    expect(latest.shots).toEqual([30_000]);
+    expect(waits).toEqual([]);
 
     // No OCR in this build (Windows, Linux): the phone's own answer stands.
+    const node = appNode({ appOpen: false, screen: true, answer: () => outOfMemory('frame_sent') });
     const plain = await new PhoneRouter({ lanes: { official: officialLane(() => node.apps) } }).run('phone.read_ui', SERIAL, {});
     expect(plain).toMatchObject({ ok: false, detail: { error: 'unavailable' } });
   });

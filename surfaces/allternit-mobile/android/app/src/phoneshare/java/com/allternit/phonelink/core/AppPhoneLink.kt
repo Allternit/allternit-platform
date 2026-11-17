@@ -89,6 +89,12 @@ interface ScreenHost {
     fun canTap(): Boolean
     fun consent(): Consent
     fun foreground(): Boolean
+    /**
+     * Phone Use `bt-android`: this phone as a Bluetooth keyboard and mouse for an
+     * iPhone, as the `keyboard` part of the state frame: `{on, paired, connected,
+     * host?}` (`host` = the iPhone's Bluetooth name). Null = not offered here.
+     */
+    fun keyboard(): JSONObject? = null
 }
 
 enum class PairFailure { DENIED, TIMED_OUT, CLOSED, KEY_MISMATCH, NETWORK, REFUSED }
@@ -337,7 +343,7 @@ class AppPhoneLink(
         old?.let { it.dead = true; it.link?.close(1001, "stop"); if (it.open) listener.onControlConnected(false) }
     }
 
-    /** Accessibility, consent or foreground changed: tell the node. */
+    /** Accessibility, consent, foreground or the Bluetooth keyboard changed: tell the node. */
     fun stateChanged() {
         val c = synchronized(lock) { control }
         if (c != null && c.open) sendSealed(c, stateFrame())
@@ -346,6 +352,7 @@ class AppPhoneLink(
     private fun stateFrame() = JSONObject()
         .put("type", "state").put("foreground", host.foreground()).put("browserOpen", false)
         .put("canTap", host.canTap()).put("consent", host.consent().wire)
+        .apply { host.keyboard()?.let { put("keyboard", it) } }
 
     private fun connectControl() {
         runtime.background {

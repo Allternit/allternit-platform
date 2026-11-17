@@ -8,6 +8,8 @@ struct KeyboardModeSettingsSection: View {
     @ObservedObject private var keyboard = KeyboardModeService.shared
     @ObservedObject private var phone = AppPhoneService.shared
     @Environment(\.openURL) private var openURL
+    /// The account's other iPhones with the Allternit app; nil until read.
+    @State private var iphones: [KeyboardTarget]?
 
     var body: some View {
         SettingsSectionHeading(text: "Be a keyboard for another iPhone")
@@ -26,6 +28,10 @@ struct KeyboardModeSettingsSection: View {
                 }
             }
 
+            if phone.isPaired, let iphones, !iphones.isEmpty {
+                targetRow(iphones)
+            }
+
             if case .failed(let e) = keyboard.mode, e.code == "unauthorized" {
                 Button("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
@@ -39,6 +45,8 @@ struct KeyboardModeSettingsSection: View {
                 step("Keep Allternit open on this device while your assistant works. The screen stays on until you stop.")
                 if !phone.isPaired {
                     step("Connect this device to your computer first under Let your bots use this iPhone; that is how your assistant reaches the keyboard.")
+                } else if iphones?.isEmpty == true {
+                    step("Connect your main iPhone too (Let your bots use this iPhone, on that iPhone), so your assistant knows which iPhone this keyboard is for.")
                 }
             }
 
@@ -47,6 +55,41 @@ struct KeyboardModeSettingsSection: View {
                 .foregroundColor(Color("TextSecondary"))
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .task(id: phone.credentials?.phoneId) { await loadIphones() }
+    }
+
+    /// "Which iPhone is this the keyboard for?": asked once when the account
+    /// has more than one iPhone; with one, it is picked for the person.
+    @ViewBuilder
+    private func targetRow(_ iphones: [KeyboardTarget]) -> some View {
+        let picked = keyboard.target
+        SettingsLabeledRow(title: picked == nil ? "Which iPhone is this the keyboard for?" : "Keyboard for",
+                           detail: picked?.name ?? "Pick the iPhone you paired with \(KeyboardModeService.localName).") {
+            if iphones.count > 1 {
+                Menu {
+                    ForEach(iphones) { t in
+                        Button(t.name) { keyboard.setTarget(t) }
+                    }
+                } label: {
+                    Text(picked == nil ? "Choose" : "Change")
+                        .font(.system(size: 15, weight: .medium))
+                }
+                .accessibilityLabel(picked == nil ? "Choose the iPhone this is the keyboard for" : "Change the iPhone this is the keyboard for")
+            }
+        }
+    }
+
+    /// The account's app iPhones other than this device (and other keyboards),
+    /// then keep or make the pick (KeyboardTarget.resolve).
+    private func loadIphones() async {
+        guard let own = phone.credentials?.serial else { iphones = nil; return }
+        guard let listed = try? await ACIComputersClient.shared.listPhones() else { return }
+        let others = listed
+            .filter { $0.isAppPhone && !$0.isKeyboard && $0.serial != own }
+            .map { KeyboardTarget(serial: $0.serial, name: $0.name) }
+        iphones = others
+        let pick = KeyboardTarget.resolve(saved: keyboard.target, iphones: others)
+        if pick != keyboard.target { keyboard.setTarget(pick) }
     }
 
     private func step(_ text: String) -> some View {
