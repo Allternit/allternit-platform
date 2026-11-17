@@ -136,6 +136,9 @@ dependencies {
     // build only. See ondevice/README.md. ReviewLauncherActivity extends its
     // BridgedLauncherActivity.
     "playImplementation"(project(":ondevice"))
+    // Files key crypto (files/FilesKeyCrypto.kt): X25519, HKDF-SHA256 and
+    // ChaCha20-Poly1305 from BouncyCastle (MIT), the same version :ondevice uses.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM tests (android.jar only ships stubs). Public domain
     // since 20231013.

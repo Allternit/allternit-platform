@@ -1,6 +1,5 @@
 package com.allternit.app.files
 
-import com.allternit.phonelink.core.X25519
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -29,7 +28,7 @@ class FilesKeyVectorsTest {
     fun envelopeVectorOpensToTheRootKey() {
         val e = v.getJSONObject("envelope")
         val secret = b(e.getString("device_secret"))
-        assertArrayEquals(b(e.getString("device_pub")), X25519.publicKey(secret))
+        assertArrayEquals(b(e.getString("device_pub")), FilesKeyCrypto.x25519Public(secret))
         val env = FilesKeyCrypto.Envelope.fromJson(e.getJSONObject("envelope"))
         val frk = FilesKeyCrypto.unwrap(env, secret)
         assertEquals("fk_vector1", frk.keyId)
@@ -51,9 +50,9 @@ class FilesKeyVectorsTest {
 
     @Test
     fun wrapThenUnwrapRoundTrips() {
-        val secret = X25519.generatePrivateKey()
+        val secret = FilesKeyCrypto.x25519Secret()
         val frk = FilesKeyCrypto.RootKey.generate()
-        val env = FilesKeyCrypto.wrap(frk, X25519.publicKey(secret), "dev_round_trip", "2026-11-16T00:00:00Z")
+        val env = FilesKeyCrypto.wrap(frk, FilesKeyCrypto.x25519Public(secret), "dev_round_trip", "2026-11-16T00:00:00Z")
         assertEquals(48, FilesKeyCrypto.unb64url(env.wrappedKey)!!.size)
         assertArrayEquals(frk.bytes, FilesKeyCrypto.unwrap(env, secret).bytes)
     }
@@ -86,5 +85,16 @@ class FilesKeyVectorsTest {
         val sealed = XChaCha20Poly1305.seal("hello".toByteArray(), key, nonce, "aad".toByteArray())
         sealed[0] = (sealed[0].toInt() xor 1).toByte()
         assertNull(XChaCha20Poly1305.open(sealed, key, nonce, "aad".toByteArray()))
+    }
+
+    @Test
+    fun hchacha20MatchesTheXChaChaDraftVector() {
+        // draft-irtf-cfrg-xchacha-03 section 2.2.1 (HChaCha20 test vector).
+        val key = ByteArray(32) { it.toByte() }
+        val nonce = FilesKeyCrypto.unhex("000000090000004a0000000031415927")!!
+        assertEquals(
+            "82413b4227b27bfed30e42508a877d73a0f9e4d58a74a853c12ec41326d3ecdc",
+            Blake3.hex(XChaCha20Poly1305.hchacha20(key, nonce)),
+        )
     }
 }

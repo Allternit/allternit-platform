@@ -8,7 +8,6 @@ import com.allternit.files.contract.FilesKeyInfo
 import com.allternit.files.contract.Item
 import com.allternit.files.contract.PendingKeyRequest
 import com.allternit.phonelink.KeystoreSealer
-import com.allternit.phonelink.core.X25519
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -24,8 +23,12 @@ import java.util.TimeZone
  * DocumentsProvider: with it, a file on a sleeping computer opens from a sealed replica
  * on another of the user's computers instead of waking it.
  *
- * - This phone's X25519 secret is sealed with an Android Keystore AES key (never leaves
- *   the phone, no backup); envelopes are stored next to it.
+ * - This phone's long-lived X25519 secret lives only as ciphertext: AES-256-GCM under the
+ *   non-exportable, app-private Android Keystore key `files_key_device_v1` (KeystoreSealer),
+ *   stored in the app's private SharedPreferences `files_keys` (key `device_secret`,
+ *   `<device id>|<base64 sealed blob>`). App backup is off (`allowBackup="false"`), and a
+ *   blob that no longer opens (Keystore key gone) is replaced by a new key pair. The
+ *   envelopes (sealed to that key, useless without it) are stored next to it.
  * - cloud-api routes: `GET /files-keys`, `POST /files-keys/requests`, `DELETE
  *   /files-keys/requests/:device_id` (decline), `POST /files-keys/grants`, `POST
  *   /files-keys/rotations`, `GET /files-keys/envelopes/:device_id`, `DELETE
@@ -71,7 +74,7 @@ internal class FilesKeys(private val drive: FilesDrive) {
                 // Keystore key gone (restore to a new phone, or the user cleared it): make a new one.
             }
         }
-        val secret = X25519.generatePrivateKey()
+        val secret = FilesKeyCrypto.x25519Secret()
         prefs.edit()
             .putString("device_secret", deviceId + "|" + Base64.encodeToString(sealer.seal(secret), Base64.NO_WRAP))
             .remove("envelopes")
@@ -79,7 +82,7 @@ internal class FilesKeys(private val drive: FilesDrive) {
         return secret
     }
 
-    private fun devicePub(): ByteArray = X25519.publicKey(deviceSecret())
+    private fun devicePub(): ByteArray = FilesKeyCrypto.x25519Public(deviceSecret())
 
     private fun envelopes(): List<FilesKeyCrypto.Envelope> {
         val arr = try { JSONArray(prefs.getString("envelopes", "[]")) } catch (e: Exception) { JSONArray() }
