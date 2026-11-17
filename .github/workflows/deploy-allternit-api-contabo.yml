@@ -73,7 +73,12 @@ jobs:
       # cloud-api workflow's test gate.
       # Test databases start as a copy of one migrated template (db.rs
       # test_template): running all migrations per test took 42 of the 76 min.
+      # A build-train merge (a PR merged from a train/ branch) skips this step: the build
+      # train built and ran this suite on the same tree before merging, and only the build
+      # agent merges train/ branches (tools/train-guard.py). Eoj, 2026-11-16. The boot
+      # smoke test below still runs on every deploy.
       - name: Test
+        if: ${{ !contains(github.event.head_commit.message, 'from Allternit/train/') }}
         env:
           CARGO_BUILD_JOBS: "2"
         # Two test threads: with four, the 3,000+ test suite starved the hosted
