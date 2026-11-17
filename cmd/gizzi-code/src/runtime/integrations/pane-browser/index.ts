@@ -234,7 +234,8 @@ export namespace PaneBrowser {
     if (!raw) return undefined
     let host: string
     try {
-      host = new URL(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`).hostname
+      // host:port (localhost:3000) is not a scheme: a scheme's colon is never followed by a digit.
+      host = new URL(/^[a-z][a-z0-9+.-]*:(?!\d)/i.test(raw) ? raw : `https://${raw}`).hostname
     } catch {
       return undefined
     }
