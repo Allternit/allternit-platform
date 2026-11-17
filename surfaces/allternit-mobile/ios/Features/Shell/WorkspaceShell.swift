@@ -218,7 +218,7 @@ struct MainWorkspaceView: View {
                 modeStore.selectBarItem(.projects)
             }
             if launchArgumentEnabled("open-artifacts") || launchArgumentValue("calm-artifacts-filter") != nil
-                || launchArgumentEnabled("calm-artifacts-list") {
+                || launchArgumentEnabled("calm-artifacts-list") || CalmArtifactLaunch.isActive {
                 modeStore.selectBarItem(.artifacts)
             }
             if launchArgumentEnabled("open-automation") {

@@ -143,6 +143,10 @@ struct ArtifactsLibraryView: View {
             if let idx = args.firstIndex(of: "-open-office-document-id"), args.indices.contains(idx + 1) {
                 debugOfficeDocumentId = .init(wrappedValue: args[idx + 1])
             }
+            // `-calm-artifact-viewer|comments|share[=<id>]` (phone calm I12).
+            if CalmArtifactLaunch.isActive {
+                debugOfficeDocumentId = .init(wrappedValue: CalmArtifactLaunch.artifactId)
+            }
         }
         #endif
         .task {
