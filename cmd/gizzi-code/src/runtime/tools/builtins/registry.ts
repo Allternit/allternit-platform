@@ -1,7 +1,7 @@
 import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
 import { CaptureScreenContextTool } from "@/runtime/tools/builtins/capture-screen-context"
-import { BrowserTasksTool, browserTasksAvailable } from "@/runtime/tools/builtins/browser-tasks"
+import { BrowserTasksTool, browserTasksAvailableNow } from "@/runtime/tools/builtins/browser-tasks"
 import { PaneArtifactTool } from "@/runtime/tools/builtins/pane-artifact"
 import { MediaGenerateTool } from "@/runtime/tools/builtins/media-generate"
 import { ArtifactCheckTool } from "@/runtime/tools/builtins/artifact-check"
@@ -165,8 +165,9 @@ export namespace ToolRegistry {
     // terminal (cli) has neither.
     const appClient = ["app", "desktop"].includes(Flag.GIZZI_CLIENT)
     // Hidden browser tasks need a local executor with its browser driver up
-    // (a remote company API is never one); checked only for app clients, cached 30 s.
-    const browserTasks = appClient && (await browserTasksAvailable()).ok
+    // (a remote company API is never one). Reads the last background check only,
+    // so resolving tools never waits on the executor; unknown counts as off.
+    const browserTasks = appClient && browserTasksAvailableNow()
 
     return [
       InvalidTool,

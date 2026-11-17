@@ -10,9 +10,11 @@
  * own browser session, and only the browser members a hidden task may use
  * plus `finish`. It runs on the parent turn's model.
  *
- * Registration: `browserTasksAvailable()` says whether a local executor with
- * a running browser driver answers. The registry offers the tool only then;
- * `execute` checks again and fails with a clear reason otherwise.
+ * Registration: `browserTasksAvailableNow()` reads the last check (run in the
+ * background on a timer and on first use) of whether a local executor with a
+ * running browser driver answers. The registry offers the tool only then and
+ * never waits for the check; `execute` checks again and fails with a clear
+ * reason otherwise.
  */
 import z from "zod/v4"
 import { generateText, jsonSchema, stepCountIs, tool, type Tool as AITool } from "ai"
@@ -29,18 +31,47 @@ import { Log } from "@/shared/util/log"
 const log = Log.create({ service: "tool.browser_tasks" })
 
 let cached: { at: number; value: BrowserTasks.Availability } | undefined
+let inflight: Promise<BrowserTasks.Availability> | undefined
+let timer: ReturnType<typeof setInterval> | undefined
 const CACHE_MS = 30_000
 
-/** Whether hidden browser tasks can run here now (cached 30 s). W2 registers the tool only when this is ok. */
-export async function browserTasksAvailable(options: { fresh?: boolean } = {}): Promise<BrowserTasks.Availability> {
-  if (!options.fresh && cached && Date.now() - cached.at < CACHE_MS) return cached.value
-  const value = await BrowserTasks.availability({
+/** One executor probe at a time; the result replaces the cached value. */
+function probe(): Promise<BrowserTasks.Availability> {
+  inflight ??= BrowserTasks.availability({
     executor: httpExecutor,
     computerId: targetComputer(),
     signal: AbortSignal.timeout(3_000),
-  }).catch((e): BrowserTasks.Availability => ({ ok: false, reason: e instanceof Error ? e.message : String(e) }))
-  cached = { at: Date.now(), value }
-  return value
+  })
+    .catch((e): BrowserTasks.Availability => ({ ok: false, reason: e instanceof Error ? e.message : String(e) }))
+    .then((value) => {
+      cached = { at: Date.now(), value }
+      return value
+    })
+    .finally(() => {
+      inflight = undefined
+    })
+  return inflight
+}
+
+/**
+ * Whether hidden browser tasks can run here, from the last check only: never
+ * waits. Tool resolution (registry, Ink) reads this. The first read starts a
+ * background check and a 30 s refresh timer; until a check has answered, the
+ * value is unknown and counts as unavailable.
+ */
+export function browserTasksAvailableNow(): boolean {
+  if (!timer) {
+    timer = setInterval(() => void probe(), CACHE_MS)
+    timer.unref?.()
+  }
+  if (!cached || Date.now() - cached.at >= CACHE_MS) void probe()
+  return cached?.value.ok ?? false
+}
+
+/** Whether hidden browser tasks can run here now (waits for a check; cached 30 s). `execute` passes `fresh`. */
+export async function browserTasksAvailable(options: { fresh?: boolean } = {}): Promise<BrowserTasks.Availability> {
+  if (!options.fresh && cached && Date.now() - cached.at < CACHE_MS) return cached.value
+  return probe()
 }
 
 /* ---------------------------------------------------------------------- */

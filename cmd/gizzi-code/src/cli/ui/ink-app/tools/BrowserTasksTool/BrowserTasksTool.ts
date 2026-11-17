@@ -1,6 +1,6 @@
 import { z } from 'zod/v4'
 import { BrowserTasks } from '@/runtime/primitives/browser-tasks'
-import { BrowserTasksTool as RuntimeBrowserTasksTool, browserTasksAvailable } from '@/runtime/tools/builtins/browser-tasks'
+import { BrowserTasksTool as RuntimeBrowserTasksTool, browserTasksAvailableNow } from '@/runtime/tools/builtins/browser-tasks'
 import { Provider } from '@/runtime/providers/provider'
 import { buildTool, type ToolDef } from '../../Tool.js'
 import { lazySchema } from '../../utils/lazySchema.js'
@@ -20,19 +20,9 @@ const outputSchema = lazySchema(() =>
 type OutputSchema = ReturnType<typeof outputSchema>
 export type Output = z.infer<OutputSchema>
 
-// isEnabled() is sync: the core's cached availability check runs in the
-// background and the tool appears only once it reports a local executor.
-let available = false
-function probe(): void {
-  browserTasksAvailable()
-    .then(a => {
-      available = a.ok
-    })
-    .catch(() => {
-      available = false
-    })
-}
-
+// isEnabled() is sync: it reads the core's last availability check, which runs
+// in the background (timer + first use); the tool appears once it reports a
+// local executor.
 export const BrowserTasksTool = buildTool({
   name: BROWSER_TASKS_TOOL_NAME,
   searchHint: 'run several hidden browser tasks in parallel',
@@ -45,8 +35,7 @@ export const BrowserTasksTool = buildTool({
     return outputSchema()
   },
   isEnabled() {
-    probe()
-    return available
+    return browserTasksAvailableNow()
   },
   isReadOnly() {
     return false
