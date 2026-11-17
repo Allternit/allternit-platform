@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 2.15.0 (2026-11-16)
+
+2.14.0 on npm and Homebrew carried the right code (main f2f120791) but reported `2.13.0` from `gizzi --version`, because its version was not bumped first. 2.15.0 replaces it.
+
+- **Files drive in the terminal.** `gizzi files` commands, `/files` in the TUI, `/context files`, and `allternit-files-mount` on Linux. Shown only when your account has the Files drive turned on.
+- **Project pad in `/projects`.** The project list shows each project's pad text.
+- **Android phones without adb.** Android phones running the Allternit app show up as app phones, with the screen-sharing state; taps work after you allow them on the phone.
+- **Freeweights.** `gizzi models publish` uploads a model; usage comes from your account and community status shows in the list.
 - **Allternit Cloud models need credits.** Free accounts no longer include about $2 a month of Cloud usage. On an account with no Cloud credits, `gizzi models` and `/model` keep Cloud rows listed and tag them `needs credits` (a row served through an API key you connected stays unlocked); choosing one in `/model` keeps your current model and prints the packs ($10, $25, $50, $100) and https://ai.allternit.com/settings/billing. Cloud's 402 `credits_required` / `credits_exhausted` is matched by its code, not its text, in the TUI and on the session error (`metadata.code`), so Desktop and web can show the same disclosure. `/keep-going` with no credits shows the packs and opens Settings › Billing.
 
 - Fix: a `gizzi serve` whose paired credential was revoked on the server no longer calls the platform forever. Instance registration stops its refresh loop on the first 401 and logs one warning to run `gizzi pair`; the subagent catalog sync skips tokens the server rejected (401/403) for the rest of the process. Network errors and 5xx keep retrying.
