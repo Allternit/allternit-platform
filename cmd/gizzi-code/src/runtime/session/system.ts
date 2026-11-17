@@ -1,5 +1,6 @@
 import { Instance } from "@/runtime/context/project/instance"
 import { MemoryDrive } from "@/runtime/memory/drive/drive"
+import { Clock } from "@/runtime/primitives/clock"
 
 import PROMPT_BASE_CHAT from "@/runtime/session/prompt/base-chat.txt"
 import PROMPT_BASE_CODE from "@/runtime/session/prompt/base-code.txt"
@@ -243,8 +244,16 @@ export namespace SystemPrompt {
     return "# Memory\n\nPersistent memory is turned off for this session (GIZZI_MEMORY_DRIVE=0)."
   }
 
-  export async function environment(model: Provider.Model) {
+  /**
+   * The environment section. The date is the user's (the zone resolved by
+   * Clock: this turn's `metadata.time_zone`, else the last client zone, else
+   * this machine's), with a `Time zone:` line. Never the time of day, so the
+   * cached prefix holds across turns; `current_time` gives the exact time.
+   */
+  export async function environment(model: Provider.Model, turn: { turnZone?: string } = {}) {
     const project = Instance.project
+    const clock = await Clock.resolveTimeZone({ turnZone: turn.turnZone })
+    const zoneNote = clock.source === "process" ? " (this machine's; may not be the user's)" : ""
     return [
       [
         `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
@@ -253,7 +262,8 @@ export namespace SystemPrompt {
         `  Working directory: ${Instance.workdir}`,
         `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
         `  Platform: ${process.platform}`,
-        `  Today's date: ${new Date().toDateString()}`,
+        `  Today's date: ${Clock.dateString(clock.zone)}`,
+        `  Time zone: ${clock.zone}${zoneNote}`,
         `</env>`,
       ].join("\n"),
       await memoryPrompt(),

@@ -1007,9 +1007,12 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// on the computer toolset for that turn only; the lease and confirm gates in
 /// computer_toolset.rs / computer_safety.rs still decide every call.
 ///
-/// Two prompt hints also pass, each only with its one allowed value:
-/// `form_factor: "phone"` and `reply_mode: "voice"`. The runtime reads them to
-/// add its small-screen and spoken-reply prompt blocks. Anything else is dropped.
+/// Three prompt hints also pass. Two only with their one allowed value:
+/// `form_factor: "phone"` and `reply_mode: "voice"`, which the runtime reads to
+/// add its small-screen and spoken-reply prompt blocks. The third is
+/// `time_zone`, the client's IANA zone (see `turn_time_zone`), which the
+/// runtime uses for the date in its environment section and the
+/// `current_time` tool. Anything else is dropped.
 fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     let meta = body.get("metadata")?;
     let mut out = serde_json::Map::new();
@@ -1021,7 +1024,21 @@ fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
             out.insert(key.to_string(), json!(allowed));
         }
     }
+    if let Some(zone) = turn_time_zone(meta) {
+        out.insert("time_zone".to_string(), json!(zone));
+    }
     if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
+}
+
+/// The turn hint `metadata.time_zone`: the client's IANA zone name, at most
+/// 64 characters, kept only when it parses as a `chrono_tz::Tz` (trimmed, in
+/// the spelling chrono_tz names it). Separate from the opt-in `client_location`.
+pub(crate) fn turn_time_zone(meta: &serde_json::Value) -> Option<String> {
+    let zone = meta.get("time_zone")?.as_str()?.trim();
+    if zone.is_empty() || zone.len() > 64 {
+        return None;
+    }
+    zone.parse::<chrono_tz::Tz>().ok().map(|tz| tz.name().to_string())
 }
 
 /// Compose the final system-instructions block for an agent-chat request.
@@ -3191,11 +3208,26 @@ mod tests {
     }
 
     #[test]
-    fn stored_turn_metadata_keeps_only_the_two_prompt_hints() {
-        let body = json!({ "metadata": { "form_factor": "phone", "reply_mode": "voice", "x": 1 } });
-        assert_eq!(stored_turn_metadata(&body), Some(json!({ "form_factor": "phone", "reply_mode": "voice" })));
+    fn stored_turn_metadata_keeps_only_the_three_prompt_hints() {
+        let body = json!({ "metadata": {
+            "form_factor": "phone", "reply_mode": "voice", "time_zone": "America/Chicago", "x": 1
+        } });
+        assert_eq!(
+            stored_turn_metadata(&body),
+            Some(json!({ "form_factor": "phone", "reply_mode": "voice", "time_zone": "America/Chicago" }))
+        );
         let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud" } });
         assert_eq!(stored_turn_metadata(&body), None);
+    }
+
+    #[test]
+    fn stored_turn_metadata_passes_only_a_valid_time_zone() {
+        let zone = |value: serde_json::Value| stored_turn_metadata(&json!({ "metadata": { "time_zone": value } }));
+        assert_eq!(zone(json!("Asia/Kolkata")), Some(json!({ "time_zone": "Asia/Kolkata" })));
+        assert_eq!(zone(json!(" UTC ")), Some(json!({ "time_zone": "UTC" })));
+        for bad in [json!("Mars/Olympus"), json!("+05:00"), json!(""), json!(7), json!("A".repeat(65))] {
+            assert_eq!(zone(bad), None);
+        }
     }
 
     #[test]

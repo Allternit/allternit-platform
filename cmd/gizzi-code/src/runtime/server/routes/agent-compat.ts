@@ -55,6 +55,7 @@ import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { Session } from "@/runtime/session"
 import { SessionPrompt } from "@/runtime/session/prompt"
+import { Clock } from "@/runtime/primitives/clock"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { SessionTasks } from "@/runtime/session/session-tasks"
 import { LinkedPRs } from "@/runtime/session/linked-prs"
@@ -822,16 +823,20 @@ export const AgentCompatRoutes = () =>
       // account offers one (model-thinking.json `fast`); llm.ts sends it on.
       const fast = body?.fast === true && modelRef && ModelThinking.of(modelRef.modelID)?.fast === true
       // Prompt hints the runtime reads from the user message (system.ts PromptContext):
-      // a phone client sends form_factor "phone", a voice turn reply_mode "voice".
+      // a phone client sends form_factor "phone", a voice turn reply_mode "voice",
+      // and every client sends its IANA time_zone (only a valid name passes;
+      // SessionPrompt.prompt remembers it for turns without a client).
       const formFactor = body?.metadata?.form_factor === "phone" ? "phone" : undefined
       const replyMode = body?.metadata?.reply_mode === "voice" ? "voice" : undefined
+      const timeZone = Clock.validZone(body?.metadata?.time_zone)
       const metadata =
-        (tools && typeof tools === "object") || fast || formFactor || replyMode
+        (tools && typeof tools === "object") || fast || formFactor || replyMode || timeZone
           ? {
               ...(tools && typeof tools === "object" ? { tools } : {}),
               ...(fast ? { service_tier: "priority" } : {}),
               ...(formFactor ? { form_factor: formFactor } : {}),
               ...(replyMode ? { reply_mode: replyMode } : {}),
+              ...(timeZone ? { time_zone: timeZone } : {}),
             }
           : undefined
       // The picker's thinking level, kept only when this model takes it.

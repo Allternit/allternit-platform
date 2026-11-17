@@ -26,6 +26,7 @@ import { Instance } from "@/runtime/context/project/instance"
 import { Bus } from "@/shared/bus"
 import { ProviderTransform } from "@/runtime/providers/adapters/transform"
 import { SystemPrompt } from "@/runtime/session/system"
+import { Clock } from "@/runtime/primitives/clock"
 import { InstructionPrompt } from "@/runtime/session/instruction"
 import { Plugin } from "@/runtime/integrations/plugin"
 import PROMPT_PLAN from "@/runtime/session/prompt/plan.txt"
@@ -250,6 +251,10 @@ export namespace SessionPrompt {
   export type PromptInput = z.infer<typeof PromptInput>
 
   export const prompt = fn(PromptInput, async (input) => {
+    // The client's time zone (`metadata.time_zone`, a hint like form_factor):
+    // kept as the runtime's last client zone for turns that carry none
+    // (routines, workers). Invalid names are ignored; never throws.
+    await Clock.rememberClientZone(input.metadata?.["time_zone"])
     // A live terminal session runs its turns in the terminal: hand the text over (TerminalLive).
     const { TerminalLive } = await import("@/runtime/session/terminal-live")
     if (TerminalLive.attached(input.sessionID)) {
@@ -1212,7 +1217,7 @@ const message = await createUserMessage(input)
         const system = await composeTurnSystem({
           userSystem: lastUser.system ?? (answerGuard.required ? answerGuard.system : undefined),
           bot: botTurn,
-          environment: () => SystemPrompt.environment(model),
+          environment: () => SystemPrompt.environment(model, { turnZone: Clock.turnZoneOf(lastUser.metadata) }),
           instructions: () => InstructionPrompt.system(),
           workspace: async () => {
             const workspaceSystemPrompt = await WorkspaceContext.getWorkspaceSystemPrompt(session.directory)

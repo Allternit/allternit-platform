@@ -132,6 +132,7 @@ export namespace Agent {
       task_output: "allow",
       task_stop: "ask",
       goal_budget: "allow",
+      current_time: "allow",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",
