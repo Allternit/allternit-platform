@@ -19,6 +19,11 @@ import { SendUserMessageTool } from './tools/SendUserMessageTool/SendUserMessage
 // Scheduled tasks (replaced the Ink CronCreate/CronList/CronDelete tools).
 import { AutomationTool } from './tools/AutomationTool/AutomationTool.js'
 import { AskUserLaterTool } from './tools/AskUserLaterTool/AskUserLaterTool.js'
+// Primitives Wave B (agent control + context): same tool ids as the runtime builtins.
+import { WaitAgentsTool } from './tools/WaitAgentsTool/WaitAgentsTool.js'
+import { AgentControlTool } from './tools/AgentControlTool/AgentControlTool.js'
+import { GetContextRemainingTool } from './tools/GetContextRemainingTool/GetContextRemainingTool.js'
+import { HistoryRecallTool } from './tools/HistoryRecallTool/HistoryRecallTool.js'
 // Dead code elimination: conditional import for ant-only tools
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 function safeRequire(path: string) {
@@ -193,6 +198,10 @@ export function getAllBaseTools(): Tools {
     SendUserMessageTool,
     AutomationTool,
     AskUserLaterTool,
+    WaitAgentsTool,
+    AgentControlTool,
+    GetContextRemainingTool,
+    HistoryRecallTool,
     SkillTool,
     EnterPlanModeTool,
     ...(process.env.USER_TYPE === 'ant' ? [ConfigTool] : []),

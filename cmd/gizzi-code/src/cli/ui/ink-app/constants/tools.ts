@@ -30,6 +30,9 @@ import { CURRENT_TIME_TOOL_NAME } from '../tools/CurrentTimeTool/prompt.js'
 import { SEND_USER_MESSAGE_TOOL_NAME } from '../tools/SendUserMessageTool/prompt.js'
 import { AUTOMATION_TOOL_NAME } from '../tools/AutomationTool/prompt.js'
 import { ASK_USER_LATER_TOOL_NAME } from '../tools/AskUserLaterTool/prompt.js'
+import { WAIT_AGENTS_TOOL_NAME } from '../tools/WaitAgentsTool/prompt.js'
+import { AGENT_CONTROL_TOOL_NAME } from '../tools/AgentControlTool/prompt.js'
+import { GET_CONTEXT_REMAINING_TOOL_NAME } from '../tools/GetContextRemainingTool/prompt.js'
 
 export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   TASK_OUTPUT_TOOL_NAME,
@@ -39,6 +42,9 @@ export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   ...(process.env.USER_TYPE === 'ant' ? [] : [AGENT_TOOL_NAME]),
   ASK_USER_QUESTION_TOOL_NAME,
   TASK_STOP_TOOL_NAME,
+  // Wave B: these act on the main thread's agents (subagents start none).
+  WAIT_AGENTS_TOOL_NAME,
+  AGENT_CONTROL_TOOL_NAME,
 ])
 
 export const CUSTOM_AGENT_DISALLOWED_TOOLS = new Set([
@@ -69,6 +75,8 @@ export const ASYNC_AGENT_ALLOWED_TOOLS = new Set([
   SEND_USER_MESSAGE_TOOL_NAME,
   // A question that doesn't block: a worker's ask lands in the main session's thread.
   ASK_USER_LATER_TOOL_NAME,
+  // history_recall stays main-thread: it reads the main session's transcript.
+  GET_CONTEXT_REMAINING_TOOL_NAME,
 ])
 /**
  * Tools allowed only for in-process teammates (not general async agents).
@@ -108,4 +116,6 @@ export const COORDINATOR_MODE_ALLOWED_TOOLS = new Set([
   TASK_STOP_TOOL_NAME,
   SEND_MESSAGE_TOOL_NAME,
   SYNTHETIC_OUTPUT_TOOL_NAME,
+  WAIT_AGENTS_TOOL_NAME,
+  AGENT_CONTROL_TOOL_NAME,
 ])

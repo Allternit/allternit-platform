@@ -27,6 +27,7 @@ import type { CacheSafeParams } from '../../utils/forkedAgent';
 import { lazySchema } from '../../utils/lazySchema';
 import { createUserMessage, extractTextContent, isSyntheticMessage, normalizeMessages } from '../../utils/messages';
 import { getAgentModel } from '../../utils/model/agent';
+import { TASK_EFFORT_VALUES } from '@/runtime/primitives/wave-b-types';
 import { permissionModeSchema } from '../../utils/permissions/PermissionMode';
 import type { PermissionResult } from '../../utils/permissions/PermissionResult';
 import { filterDeniedAgents, getDenyRuleForAgent } from '../../utils/permissions/permissions';
@@ -86,7 +87,11 @@ const baseInputSchema = lazySchema(() => z.object({
   prompt: z.string().describe('The task for the agent to perform'),
   subagent_type: z.string().optional().describe('The type of specialized agent to use for this task'),
   model: z.enum(['sonnet', 'opus', 'haiku']).optional().describe("Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent."),
-  run_in_background: z.boolean().optional().describe('Set to true to run this agent in the background. You will be notified when it completes.')
+  run_in_background: z.boolean().optional().describe('Set to true to run this agent in the background. You will be notified when it completes.'),
+  // Primitives Wave B: same values as the runtime task tool's `effort`
+  // (runtime/primitives/task-name.ts maps it to the model variant; here it
+  // is the agent's effort level, the same field agent files set).
+  effort: z.enum(TASK_EFFORT_VALUES).optional().describe('How hard the agent thinks: low, medium or high. Leave it out to use the agent definition\'s effort, or your own. Not available when forking (no subagent_type), which keeps your own effort.')
 }));
 
 // Full schema combining base + multi-agent params + isolation
@@ -243,6 +248,7 @@ export const AgentTool = buildTool({
     subagent_type,
     description,
     model: modelParam,
+    effort,
     run_in_background,
     name,
     team_name,
@@ -355,6 +361,20 @@ export const AgentTool = buildTool({
         throw new Error(`Agent type '${effectiveType}' not found. Available agents: ${agents.map(a => a.agentType).join(', ')}`);
       }
       selectedAgent = found;
+    }
+
+    // Wave B effort: the agent definition's effort is what runAgent applies
+    // (agentDefinition.effort over the session's), so an override rides on a
+    // copy of the definition. A fork keeps the parent's model and effort, the
+    // same rule as the runtime's fork: "all".
+    if (effort) {
+      if (isForkPath) {
+        throw new Error(`A fork keeps your own model and effort, so it cannot take effort: ${effort}. Drop the override, or pass a subagent_type and put the context the agent needs in the prompt.`);
+      }
+      selectedAgent = {
+        ...selectedAgent,
+        effort
+      };
     }
 
     // Same lifecycle constraint as the run_in_background guard above, but for
