@@ -31,6 +31,10 @@ The `tools/agent-swarm/` directory contains three reference tool implementations
 
 The registry also references tools implemented elsewhere — kernel file-system tools, Canvas connectors, Office local handlers, desktop automation, and the [ACI computer tool](/tools/computer-use). At execution time the dispatcher resolves the `entrypoint` to the right backend.
 
+## Names, effort and control
+
+Each swarm item takes an optional `name`, `model` and `effort`, like the `task` tool. After the swarm starts, the parent can wait on, pause, resume, message and close its children. See [Agent control](/tools/agent-control).
+
 ## Registry schema
 
 Each tool in `tool_registry.json` follows this shape:

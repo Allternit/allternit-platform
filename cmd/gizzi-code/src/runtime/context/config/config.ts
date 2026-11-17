@@ -1634,10 +1634,6 @@ export namespace Config {
             .array(z.string())
             .optional()
             .describe("Tools that should only be available to primary agents."),
-          dynamic_tool_selection: z
-            .boolean()
-            .optional()
-            .describe("Defer MCP tool schemas until the agent loads them with select_tools."),
           continue_loop_on_deny: z.boolean().optional().describe("Continue the agent loop when a tool call is denied"),
           retry_max_attempts: z
             .number()

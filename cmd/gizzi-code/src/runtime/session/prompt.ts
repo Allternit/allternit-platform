@@ -20,7 +20,9 @@ import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema }
 import { ToolDispatcher } from "@/runtime/tools/dispatch"
 import { RemoteToolHost } from "@/runtime/tools/remote-host"
 import { ToolDedupe } from "@/runtime/tools/dedupe"
-import { ToolSelection } from "@/runtime/tools/selection"
+import { ToolFamilies } from "@/runtime/primitives/tool-families"
+import { ContextNotice } from "@/runtime/primitives/context-notice"
+import { SteerSignal } from "@/runtime/primitives/steer-signal"
 import { SessionCompaction } from "@/runtime/session/compaction"
 import { Instance } from "@/runtime/context/project/instance"
 import { Bus } from "@/shared/bus"
@@ -716,6 +718,10 @@ const message = await createUserMessage(input)
         const callbacks = state()[sessionID].callbacks
         callbacks.push({ resolve, reject })
         state()[sessionID].queuedTurns += 1
+        // Primitives Wave B: a message queued behind the running turn wakes a
+        // wait_agents call in that turn. This bump also fires for background
+        // completions, so the core checks its targets first (settled before steer).
+        SteerSignal.notify(sessionID)
       })
     }
 
@@ -1332,6 +1338,13 @@ const message = await createUserMessage(input)
       const validationReminder = ToolValidationRetry.reminder(sessionID)
       if (validationReminder) tail.push(validationReminder)
       if (wrapUp) tail.push(wrapUpReminder(wrapUp.window))
+      // Primitives Wave B: context left (25% / 10% / after a compaction), as a
+      // temporary tail part; each threshold fires once (primitives/context-notice.ts).
+      const contextNotice = await ContextNotice.forTurn({ sessionID, model, messages: msgs }).catch((error) => {
+        log.warn("context notice failed", { sessionID, error })
+        return undefined
+      })
+      if (contextNotice) tail.push(contextNotice)
       // WP9: Context Compiler, shadow mode behind GIZZI_KERNEL_COMPILERS (off by
       // default). Records a ContextProjectionV1; never changes `system`.
       if (KernelTurn.enabled())
@@ -1793,49 +1806,9 @@ const message = await createUserMessage(input)
 
     const mcpCatalog = await mcpToolCatalog(input.session.id)
     const mcpTools = Object.entries(mcpCatalog.tools)
-    const config = await Config.get()
-    const dynamicSelection =
-      Flag.GIZZI_DYNAMIC_TOOL_SELECTION || config.experimental?.dynamic_tool_selection === true
-    const mcpNames = mcpTools.map(([name]) => name).sort()
-    const loadedMcpTools = ToolSelection.loaded(input.session.id, input.messages)
-    if (dynamicSelection && mcpNames.length) {
-      tools["select_tools"] = tool({
-        id: "select_tools" as any,
-        description: [
-          "Load one or more MCP tool schemas for the next model step. Use this when a required integration tool is not currently available.",
-          `Loadable tools: ${mcpNames.join(", ")}`,
-        ].join("\n"),
-        inputSchema: jsonSchema({
-          type: "object",
-          additionalProperties: false,
-          required: ["names"],
-          properties: {
-            names: { type: "array", items: { type: "string" }, minItems: 1 },
-          },
-        }),
-        execute: async (args: { names: string[] }, options) => {
-          const ctx = context(args, options)
-          return ToolDedupe.execute({
-            sessionID: ctx.sessionID,
-            messageID: ctx.messageID,
-            tool: "select_tools",
-            args,
-            run: () => ToolDispatcher.executeInitialized("select_tools", args, ctx, async (nextArgs) => {
-              const result = ToolSelection.load(input.session.id, nextArgs.names, mcpNames)
-              return {
-                title: "MCP tools selected",
-                metadata: result,
-                output: JSON.stringify(result),
-              }
-            }),
-          })
-        },
-      })
-    }
     // A bot's Capabilities page: MCP connectors it has off are not offered to it.
     const turnBot = BotTurn.get(input.session.id)
     for (const [key, item] of mcpTools) {
-      if (dynamicSelection && !loadedMcpTools.has(key)) continue
       if (!BotTurn.mcpOnForBot(turnBot, mcpCatalog.descriptors[key]?.connectorId)) continue
       const execute = item.execute
       if (!execute) continue
@@ -2053,6 +2026,12 @@ const message = await createUserMessage(input)
       const keys = Object.keys(tools).filter((k) => k !== "invalid")
       for (const key of PermissionNext.hidden(keys, ruleset)) delete tools[key]
     }
+    // Primitives Wave B: deferred tool families (built-in groups and MCP tools)
+    // stay out until tool_search or a call by name loads them; applied last so
+    // it only narrows what every gate above allowed. GIZZI_DISABLE_TOOL_SEARCH
+    // turns it off (primitives/tool-families.ts).
+    const deferral = ToolFamilies.filter({ sessionID: input.session.id, tools, messages: input.messages })
+    for (const key of Object.keys(tools)) if (!(key in deferral.tools)) delete tools[key]
     const schemaBytes = Object.values(tools).reduce((n, t) => {
       try {
         return n + JSON.stringify((t as any).inputSchema?.jsonSchema ?? (t as any).parameters ?? {}).length
@@ -2060,7 +2039,12 @@ const message = await createUserMessage(input)
         return n
       }
     }, 0)
-    log.info("resolved tools", { count: Object.keys(tools).length, schemaBytes, sessionRules: input.session.permission?.length ?? 0 })
+    log.info("resolved tools", {
+      count: Object.keys(tools).length,
+      deferred: deferral.deferred.length,
+      schemaBytes,
+      sessionRules: input.session.permission?.length ?? 0,
+    })
 
     return tools
   }

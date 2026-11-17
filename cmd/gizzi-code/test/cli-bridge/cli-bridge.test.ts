@@ -46,6 +46,8 @@ describe("CliBridge MCP server", () => {
       "send_user_message",
       "current_time",
       "automation",
+      "get_context_remaining",
+      "history_recall",
       "question",
     ])
     const question = list.result.tools.find((t: any) => t.name === "question")

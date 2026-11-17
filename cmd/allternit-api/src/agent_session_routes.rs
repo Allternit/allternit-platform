@@ -185,6 +185,14 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
             "/agent-sessions/:id/background-tasks/:task_id/cancel",
             post(cancel_background_task),
         )
+        .route(
+            "/agent-sessions/:id/background-tasks/:task_id/interrupt",
+            post(interrupt_background_task),
+        )
+        .route(
+            "/agent-sessions/:id/background-tasks/:task_id/resume",
+            post(resume_background_task),
+        )
         .route("/agent-sessions/sync", get(sync_sessions))
         // Answers to gizzi's in-chat questions (the question tool). Without
         // these the app's reply never reached gizzi and the turn waited forever.
@@ -2138,6 +2146,42 @@ async fn cancel_background_task(
         urlencoding::encode(&task_id)
     );
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(json!({}))).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn interrupt_background_task(
+    headers: HeaderMap,
+    Path((session_id, task_id)): Path<(String, String)>,
+    body: Option<Json<serde_json::Value>>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!(
+        "/v1/session/{}/background-tasks/{}/interrupt",
+        urlencoding::encode(&session_id),
+        urlencoding::encode(&task_id)
+    );
+    let payload = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn resume_background_task(
+    headers: HeaderMap,
+    Path((session_id, task_id)): Path<(String, String)>,
+    body: Option<Json<serde_json::Value>>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!(
+        "/v1/session/{}/background-tasks/{}/resume",
+        urlencoding::encode(&session_id),
+        urlencoding::encode(&task_id)
+    );
+    let payload = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(result) => Json(result).into_response(),
         Err(response) => response,
     }

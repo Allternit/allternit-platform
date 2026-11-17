@@ -57,6 +57,7 @@ import { Session } from "@/runtime/session"
 import { SessionPrompt } from "@/runtime/session/prompt"
 import { Clock } from "@/runtime/primitives/clock"
 import { BackgroundTask } from "@/runtime/session/background-task"
+import { AgentControl } from "@/runtime/primitives/agent-control"
 import { SessionTasks } from "@/runtime/session/session-tasks"
 import { LinkedPRs } from "@/runtime/session/linked-prs"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
@@ -724,7 +725,14 @@ export const AgentCompatRoutes = () =>
     .post("/v1/agent-sessions/:sessionID/background-tasks/:taskID/cancel", async (c) => {
       const task = await BackgroundTask.get(c.req.param("taskID"))
       if (!task || task.parentSessionID !== c.req.param("sessionID")) return c.json({ error: "Background task not found" }, 404)
-      if (task.childSessionID) SessionPrompt.cancel(task.childSessionID)
+      if (task.childSessionID) {
+        await AgentControl.stopSubtree(task.childSessionID, {
+          reason: "Its parent task was cancelled",
+          includeRoot: false,
+          archive: false,
+        })
+        SessionPrompt.cancel(task.childSessionID)
+      }
       return c.json(await BackgroundTask.cancel(task.id))
     })
     .post("/v1/agent-sessions/:sessionID/abort", async (c) => {

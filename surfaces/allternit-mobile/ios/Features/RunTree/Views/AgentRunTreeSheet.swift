@@ -7,7 +7,9 @@ import SwiftUI
 /// task, spend (dollars, or tokens for $0 subscription brains) and time.
 /// Anything a subagent spawned stacks under it on a rail. A failed card's
 /// status opens the reason with Dismiss and Retry; Retry asks the parent
-/// agent to run the task again, so it shows in the chat.
+/// agent to run the task again, so it shows in the chat. A background
+/// subagent's card shows its name path and, while it runs, Pause and Stop;
+/// once paused (interrupted) it offers Resume, which continues the same child.
 struct AgentRunTreeSheet: View {
     /// The reply's tool calls; agent steps become the tree's children.
     let steps: [ToolCallRecord]
@@ -47,10 +49,18 @@ struct AgentRunTreeSheet: View {
                             VStack(alignment: .leading, spacing: 10) {
                                 RunNodeCard(node: tree, isRoot: true, now: context.date, onRetry: nil)
                                 ForEach(tree.children) { child in
-                                    RunBranch(node: child, now: context.date, onRetry: retryHandler)
+                                    RunBranch(node: child, now: context.date, onRetry: retryHandler,
+                                              control: controlHandler, busyTaskIds: tasksStore.busyTaskIds)
                                 }
                             }
                         }
+                    }
+                    if let note = tasksStore.actionError {
+                        Text(note)
+                            .font(.footnote)
+                            .foregroundColor(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.updatesFrequently)
                     }
                     if let note = tasksStore.loadError, tree.children.isEmpty {
                         Text(note)
@@ -81,10 +91,20 @@ struct AgentRunTreeSheet: View {
         }
     }
 
+    private var controlHandler: ((SessionTaskAction, RunNode) -> Void)? {
+        guard sessionId != nil else { return nil }
+        let store = tasksStore
+        return { action, node in
+            guard let taskId = node.taskId else { return }
+            Task { await store.perform(action, taskId: taskId) }
+        }
+    }
+
     private func totalsLine(_ tree: RunNode) -> some View {
         let totals = RunTotals(root: tree)
         var parts = ["\(totals.agents) \(totals.agents == 1 ? "agent" : "agents")"]
         if totals.running > 0 { parts.append("\(totals.running) running") }
+        if totals.interrupted > 0 { parts.append("\(totals.interrupted) interrupted") }
         if totals.failed > 0 { parts.append("\(totals.failed) failed") }
         if let money = RunFormat.spend(cost: totals.cost, tokens: totals.tokens) { parts.append(money) }
         return Text(parts.joined(separator: " · "))
@@ -116,17 +136,19 @@ private struct RunBranch: View {
     let node: RunNode
     let now: Date
     let onRetry: ((RunNode) -> Void)?
+    var control: ((SessionTaskAction, RunNode) -> Void)? = nil
+    var busyTaskIds: Set<String> = []
     @State private var isOpen = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             RunNodeCard(node: node, isRoot: false, now: now, onRetry: onRetry, isOpen: isOpen, onToggle: node.children.isEmpty ? nil : {
                 withAnimation(.easeInOut(duration: 0.2)) { isOpen.toggle() }
-            })
+            }, control: control, isBusy: node.taskId.map(busyTaskIds.contains) ?? false)
             if isOpen, !node.children.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(node.children) { child in
-                        RunBranch(node: child, now: now, onRetry: onRetry)
+                        RunBranch(node: child, now: now, onRetry: onRetry, control: control, busyTaskIds: busyTaskIds)
                     }
                 }
                 .padding(.leading, 16)
@@ -148,6 +170,9 @@ private struct RunNodeCard: View {
     let onRetry: ((RunNode) -> Void)?
     var isOpen = true
     var onToggle: (() -> Void)? = nil
+    /// Stop / Pause / Resume for a background subagent. No buttons when nil.
+    var control: ((SessionTaskAction, RunNode) -> Void)? = nil
+    var isBusy = false
 
     @State private var showsFailure = false
 
@@ -176,6 +201,22 @@ private struct RunNodeCard: View {
                 Spacer(minLength: 4)
                 statusPill
             }
+            if let path = node.path {
+                HStack(spacing: 6) {
+                    Text(path)
+                        .font(.caption.monospaced())
+                        .foregroundColor(Color("TextSecondary"))
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    if node.runs > 1 {
+                        Text("\(node.runs) runs")
+                            .font(.caption)
+                            .foregroundColor(Color("TextTertiary"))
+                    }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Name path \(Self.spokenPath(path))" + (node.runs > 1 ? ", \(node.runs) runs" : ""))
+            }
             if let model = node.model {
                 Text(model)
                     .font(.caption)
@@ -189,6 +230,7 @@ private struct RunNodeCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             footer
+            controls
             if showsFailure {
                 failureBox
             }
@@ -257,6 +299,7 @@ private struct RunNodeCard: View {
         case .done: Image(systemName: "checkmark.circle.fill")
         case .failed: Image(systemName: "exclamationmark.circle.fill")
         case .stopped: Image(systemName: "stop.circle")
+        case .interrupted: Image(systemName: "pause.circle")
         }
     }
 
@@ -266,6 +309,58 @@ private struct RunNodeCard: View {
         case .done: return Color("TextSecondary")
         case .failed: return .orange
         case .stopped: return Color("TextTertiary")
+        case .interrupted: return Color("TextSecondary")
+        }
+    }
+
+    /// "/root/build/tests" → "root, build, tests" for VoiceOver.
+    static func spokenPath(_ path: String) -> String {
+        path.split(separator: "/").joined(separator: ", ")
+    }
+
+    /// Pause and Stop while a background subagent runs; Resume once it is
+    /// paused. Shells, foreground children and older runtimes get none.
+    @ViewBuilder
+    private var controls: some View {
+        if let control, node.isControllable, node.taskId != nil,
+           node.status.isLive || node.status == .interrupted {
+            HStack(spacing: 8) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { controlButtons(control) }
+                    VStack(alignment: .leading, spacing: 8) { controlButtons(control) }
+                }
+                .disabled(isBusy)
+                if isBusy {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Working on \(node.name)")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func controlButtons(_ control: @escaping (SessionTaskAction, RunNode) -> Void) -> some View {
+        if node.status == .interrupted {
+            Button { control(.resume, node) } label: {
+                Label("Resume", systemImage: "play.fill")
+            }
+            .buttonStyle(QuestionCardButtonStyle(kind: .primary))
+            .accessibilityLabel("Resume \(node.name)")
+            .accessibilityHint("Continues the agent where it stopped.")
+        } else {
+            Button { control(.pause, node) } label: {
+                Label("Pause", systemImage: "pause.fill")
+            }
+            .buttonStyle(QuestionCardButtonStyle(kind: .quiet))
+            .accessibilityLabel("Pause \(node.name)")
+            .accessibilityHint("Stops its current turn. You can resume it later.")
+            Button { control(.stop, node) } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .buttonStyle(QuestionCardButtonStyle(kind: .destructive))
+            .accessibilityLabel("Stop \(node.name)")
+            .accessibilityHint("Ends the agent's run for good.")
         }
     }
 
