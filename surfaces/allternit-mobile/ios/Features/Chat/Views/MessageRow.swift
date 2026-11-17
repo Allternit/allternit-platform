@@ -1,6 +1,8 @@
 import SwiftUI
 import MarkdownView
 import UIKit
+import QuickLook
+import AllternitFilesKit
 
 struct MessageRow: View {
     let message: MessageRecord
@@ -95,6 +97,13 @@ struct MessageRow: View {
                 ForEach(message.toolCalls) { call in
                     if let result = call.runCode, call.toolName == "run_code" {
                         RunCodeFilesView(result: result)
+                    }
+                }
+
+                // send_user_message: the agent's message to you, with its files.
+                ForEach(message.toolCalls) { call in
+                    if let sent = call.userMessage, call.toolName == AgentUserMessage.toolName {
+                        AgentUserMessageCard(message: sent)
                     }
                 }
 
@@ -422,6 +431,146 @@ struct MessageRow: View {
             )
         }
         .transition(.slide)
+    }
+}
+
+// MARK: - An agent's message to you (send_user_message)
+
+/// The card for a `send_user_message` call: the text, then one row per
+/// file. A file with a Files drive id opens in Quick Look (the same
+/// download the Files screens use); one without stays a plain row that
+/// says where it is.
+struct AgentUserMessageCard: View {
+    let message: AgentUserMessage
+
+    @ObservedObject private var files = FilesDrive.shared
+    @State private var openingIndex: Int?
+    @State private var previewURL: URL?
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "paperplane")
+                    .foregroundColor(Color("AccentPrimary"))
+                Text(message.push == "sent" ? "Sent to you · Notified" : "Sent to you")
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            .font(.caption.weight(.semibold))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(message.push == "sent" ? "Message from your agent. Your devices were notified." : "Message from your agent")
+
+            if !message.text.isEmpty {
+                Text(message.text)
+                    .font(.body)
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+
+            ForEach(Array(message.files.enumerated()), id: \.offset) { index, file in
+                fileRow(file, index: index)
+            }
+
+            if let problem {
+                Text(problem)
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("BgPrimary"))
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color("BorderSubtle"), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .quickLookPreview($previewURL)
+    }
+
+    /// Opens by id only when this phone has Files for a computer to fetch it from.
+    private func canOpen(_ file: AgentUserMessage.File) -> Bool {
+        file.id != nil && files.isEnabled
+    }
+
+    private func detail(_ file: AgentUserMessage.File) -> String {
+        var parts = [FilesFormat.bytes(file.size)]
+        if !canOpen(file) { parts.append("Saved on your computer") }
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func fileRow(_ file: AgentUserMessage.File, index: Int) -> some View {
+        let row = HStack(spacing: 10) {
+            Image(systemName: "doc.text")
+                .font(.body)
+                .foregroundColor(Color("AccentPrimary"))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(file.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                Text(detail(file))
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+                if let caption = file.caption {
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundColor(Color("TextSecondary"))
+                }
+            }
+            Spacer(minLength: 0)
+            if canOpen(file) {
+                if openingIndex == index {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(Color("TextSecondary"))
+                        .accessibilityHidden(true)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+
+        let label = [file.name, detail(file), file.caption].compactMap { $0 }.joined(separator: ", ")
+        if let id = file.id, canOpen(file) {
+            Button {
+                Task { await open(file, id: id, index: index) }
+            } label: { row }
+            .buttonStyle(.plain)
+            .disabled(openingIndex != nil)
+            .accessibilityLabel(label)
+            .accessibilityHint("Opens a preview")
+        } else {
+            row
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(label)
+        }
+    }
+
+    /// Finds the item on this phone's Files computers (the id says nothing
+    /// about which one) and downloads it for Quick Look.
+    @MainActor
+    private func open(_ file: AgentUserMessage.File, id: String, index: Int) async {
+        openingIndex = index
+        problem = nil
+        defer { openingIndex = nil }
+        for computer in files.computers {
+            let model = FilesComputerModel(computerId: computer.id, name: computer.name)
+            guard let item = try? await model.client.stat(id).item else { continue }
+            if let url = try? await model.localCopy(of: item) {
+                previewURL = url
+                return
+            }
+        }
+        problem = "Couldn't open \(file.name) right now. It's in Agent Output in Files on your computer."
     }
 }
 

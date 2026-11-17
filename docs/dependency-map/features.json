@@ -1801,6 +1801,8 @@
       "status": "building",
       "description": "artifact_create / artifact_update / artifact_read (plus artifact_suggest, list, comment, share, delete, storage) built into gizzi-code for every model, and for CLI agents over the session MCP bridge. They save to cloud-api /api/v2/artifacts with the session's credential; without one, the result carries the full payload with persisted:false and the app saves it under the same id. artifact_check has the app render a page or design at each width (pane_render kind check, allternit-ai src/lib/artifacts/check.ts) and returns pictures, problems and a likeness to a reference, and says stop when refining stalls.",
       "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/primitives",
+        "allternit/cmd/allternit-api/src/agent_user_tools.rs",
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
         "allternit/cmd/allternit-cloud-api/src/routes/mod_*",

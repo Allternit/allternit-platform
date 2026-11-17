@@ -1,0 +1,15 @@
+Get the current time where the user is.
+
+Today's date is already in the environment section, so you do not need this tool for the date alone. Call it when the exact time matters:
+- the user asks what time it is, or how long until or since something
+- you work out a relative date or time ("in 3 hours", "tomorrow morning", "next Friday at 9")
+- you check a deadline, an opening hour, or whether something is late
+- before you schedule anything or name a time to the user
+
+The zone comes from the user's device when their client sends it. Pass `timezone` (an IANA name such as "Europe/Berlin") only to get the time in another place.
+
+The result has `iso` (local time with offset), `time_zone`, `utc_offset`, `weekday` and `source`:
+- argument: the zone you passed
+- client: the zone the user's device sent with this message
+- last_client: the zone the user's device sent most recently
+- process: this machine's zone; it may not be the user's, so say which zone you mean when you give a time

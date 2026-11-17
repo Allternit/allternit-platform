@@ -55,6 +55,7 @@ import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { Session } from "@/runtime/session"
 import { SessionPrompt } from "@/runtime/session/prompt"
+import { Clock } from "@/runtime/primitives/clock"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { SessionTasks } from "@/runtime/session/session-tasks"
 import { LinkedPRs } from "@/runtime/session/linked-prs"
@@ -163,6 +164,25 @@ function extractReasoning(parts: any[]): string | null {
     .filter(Boolean)
     .join("\n")
   return reasoning === "" ? null : reasoning
+}
+
+
+/**
+ * Prompt hints a client may put on a user message (system.ts PromptContext): a phone
+ * client sends form_factor "phone", a voice turn reply_mode "voice", and every client
+ * its IANA time_zone. Only these keys and values pass; SessionPrompt.prompt remembers
+ * the zone for turns without a client. Shared by every message route here.
+ */
+function promptHints(raw: any): Record<string, string> | undefined {
+  const formFactor = raw?.form_factor === "phone" ? "phone" : undefined
+  const replyMode = raw?.reply_mode === "voice" ? "voice" : undefined
+  const timeZone = Clock.validZone(raw?.time_zone)
+  if (!formFactor && !replyMode && !timeZone) return undefined
+  return {
+    ...(formFactor ? { form_factor: formFactor } : {}),
+    ...(replyMode ? { reply_mode: replyMode } : {}),
+    ...(timeZone ? { time_zone: timeZone } : {}),
+  }
 }
 
 /** The message a `message.updated` event names (by id); the newest one when it names none. */
@@ -646,6 +666,7 @@ export const AgentCompatRoutes = () =>
         sessionID,
         parts: [{ type: "text", text: String(body.text ?? ""), ...(source ? { metadata: { source } } : {}) }],
         model: selectModel(body.metadata),
+        ...(promptHints(body?.metadata) ? { metadata: promptHints(body?.metadata) } : {}),
         ...(body.noReply === true ? { noReply: true } : {}),
       })
       return c.json(transformMessage(result))
@@ -822,16 +843,16 @@ export const AgentCompatRoutes = () =>
       // account offers one (model-thinking.json `fast`); llm.ts sends it on.
       const fast = body?.fast === true && modelRef && ModelThinking.of(modelRef.modelID)?.fast === true
       // Prompt hints the runtime reads from the user message (system.ts PromptContext):
-      // a phone client sends form_factor "phone", a voice turn reply_mode "voice".
-      const formFactor = body?.metadata?.form_factor === "phone" ? "phone" : undefined
-      const replyMode = body?.metadata?.reply_mode === "voice" ? "voice" : undefined
+      // a phone client sends form_factor "phone", a voice turn reply_mode "voice",
+      // and every client sends its IANA time_zone (only a valid name passes;
+      // SessionPrompt.prompt remembers it for turns without a client).
+      const hints = promptHints(body?.metadata)
       const metadata =
-        (tools && typeof tools === "object") || fast || formFactor || replyMode
+        (tools && typeof tools === "object") || fast || hints
           ? {
               ...(tools && typeof tools === "object" ? { tools } : {}),
               ...(fast ? { service_tier: "priority" } : {}),
-              ...(formFactor ? { form_factor: formFactor } : {}),
-              ...(replyMode ? { reply_mode: replyMode } : {}),
+              ...(hints ?? {}),
             }
           : undefined
       // The picker's thinking level, kept only when this model takes it.

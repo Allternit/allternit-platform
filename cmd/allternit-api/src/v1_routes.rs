@@ -1007,9 +1007,12 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// on the computer toolset for that turn only; the lease and confirm gates in
 /// computer_toolset.rs / computer_safety.rs still decide every call.
 ///
-/// Two prompt hints also pass, each only with its one allowed value:
-/// `form_factor: "phone"` and `reply_mode: "voice"`. The runtime reads them to
-/// add its small-screen and spoken-reply prompt blocks. Anything else is dropped.
+/// Three prompt hints also pass. Two only with their one allowed value:
+/// `form_factor: "phone"` and `reply_mode: "voice"`, which the runtime reads to
+/// add its small-screen and spoken-reply prompt blocks. The third is
+/// `time_zone`, the client's IANA zone (see `turn_time_zone`), which the
+/// runtime uses for the date in its environment section and the
+/// `current_time` tool. Anything else is dropped.
 fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     let meta = body.get("metadata")?;
     let mut out = serde_json::Map::new();
@@ -1021,7 +1024,21 @@ fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
             out.insert(key.to_string(), json!(allowed));
         }
     }
+    if let Some(zone) = turn_time_zone(meta) {
+        out.insert("time_zone".to_string(), json!(zone));
+    }
     if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
+}
+
+/// The turn hint `metadata.time_zone`: the client's IANA zone name, at most
+/// 64 characters, kept only when it parses as a `chrono_tz::Tz` (trimmed, in
+/// the spelling chrono_tz names it). Separate from the opt-in `client_location`.
+pub(crate) fn turn_time_zone(meta: &serde_json::Value) -> Option<String> {
+    let zone = meta.get("time_zone")?.as_str()?.trim();
+    if zone.is_empty() || zone.len() > 64 {
+        return None;
+    }
+    zone.parse::<chrono_tz::Tz>().ok().map(|tz| tz.name().to_string())
 }
 
 /// Compose the final system-instructions block for an agent-chat request.
@@ -1182,6 +1199,9 @@ enum ToolFrameState {
     Ended,
 }
 
+/// Tools whose settled `tool_result` frame carries the part's `state.metadata`.
+const METADATA_CARD_TOOLS: &[&str] = &["send_user_message"];
+
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`
 /// or `tool_error` when it settles — the wire the workspace client parses.
@@ -1219,13 +1239,22 @@ fn tool_frames_for_part(
         frames.push(if status == "completed" {
             // run_code's `files[]` + `run` are added by the caller off the
             // async stream (gizzi_chat_stream::run_code_payload_async).
-            json!({
+            let mut frame = json!({
                 "type": "tool_result",
                 "messageId": msg_id,
                 "toolCallId": call_id,
                 "toolName": tool_name,
                 "result": part.pointer("/state/output").cloned().unwrap_or_else(|| json!("")),
-            })
+            });
+            // Tools whose client card reads the part's metadata (send_user_message:
+            // text + files + push) get it on the live frame too, so the card shows
+            // while the reply streams, not only after a reload.
+            if METADATA_CARD_TOOLS.contains(&tool_name) {
+                if let Some(meta) = part.pointer("/state/metadata").filter(|m| m.is_object()) {
+                    frame["metadata"] = meta.clone();
+                }
+            }
+            frame
         } else {
             json!({
                 "type": "tool_error",
@@ -3191,11 +3220,26 @@ mod tests {
     }
 
     #[test]
-    fn stored_turn_metadata_keeps_only_the_two_prompt_hints() {
-        let body = json!({ "metadata": { "form_factor": "phone", "reply_mode": "voice", "x": 1 } });
-        assert_eq!(stored_turn_metadata(&body), Some(json!({ "form_factor": "phone", "reply_mode": "voice" })));
+    fn stored_turn_metadata_keeps_only_the_three_prompt_hints() {
+        let body = json!({ "metadata": {
+            "form_factor": "phone", "reply_mode": "voice", "time_zone": "America/Chicago", "x": 1
+        } });
+        assert_eq!(
+            stored_turn_metadata(&body),
+            Some(json!({ "form_factor": "phone", "reply_mode": "voice", "time_zone": "America/Chicago" }))
+        );
         let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud" } });
         assert_eq!(stored_turn_metadata(&body), None);
+    }
+
+    #[test]
+    fn stored_turn_metadata_passes_only_a_valid_time_zone() {
+        let zone = |value: serde_json::Value| stored_turn_metadata(&json!({ "metadata": { "time_zone": value } }));
+        assert_eq!(zone(json!("Asia/Kolkata")), Some(json!({ "time_zone": "Asia/Kolkata" })));
+        assert_eq!(zone(json!(" UTC ")), Some(json!({ "time_zone": "UTC" })));
+        for bad in [json!("Mars/Olympus"), json!("+05:00"), json!(""), json!(7), json!("A".repeat(65))] {
+            assert_eq!(zone(bad), None);
+        }
     }
 
     #[test]
@@ -3289,6 +3333,25 @@ mod tests {
         assert_eq!(end[0]["type"], "tool_result");
         assert_eq!(end[0]["result"], "3 results");
         assert!(tool_frames_for_part(&done, "m1", &mut sent).is_empty());
+    }
+
+    #[test]
+    fn send_user_message_frames_carry_the_card_metadata() {
+        let mut sent = HashMap::new();
+        let meta = json!({"text": "Report ready", "files": [{"name": "r.md", "size": 5, "display": "render"}], "push": "sent"});
+        let done = json!({"type": "tool", "tool": "send_user_message", "callID": "c2",
+            "state": {"status": "completed", "input": {}, "output": "Delivered", "metadata": meta}});
+        let frames = tool_frames_for_part(&done, "m1", &mut sent);
+        let end = frames.iter().find(|f| f["type"] == "tool_result").unwrap();
+        assert_eq!(end["metadata"]["text"], "Report ready");
+        assert_eq!(end["metadata"]["files"][0]["name"], "r.md");
+
+        // Other tools keep their frames unchanged (no metadata leak).
+        let mut sent = HashMap::new();
+        let other = json!({"type": "tool", "tool": "bash", "callID": "c3",
+            "state": {"status": "completed", "input": {}, "output": "ok", "metadata": {"secret": 1}}});
+        let frames = tool_frames_for_part(&other, "m1", &mut sent);
+        assert!(frames.iter().find(|f| f["type"] == "tool_result").unwrap().get("metadata").is_none());
     }
 
     #[test]

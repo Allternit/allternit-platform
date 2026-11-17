@@ -548,7 +548,7 @@ export namespace PermissionNext {
   )
 
   const READONLY_PERMISSIONS = new Set([
-    "read", "glob", "grep", "list", "websearch", "codesearch", "question", "todoread", "lsp",
+    "read", "glob", "grep", "list", "websearch", "codesearch", "question", "todoread", "lsp", "current_time",
   ])
 
   const EDIT_PERMISSIONS = new Set([

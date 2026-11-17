@@ -1767,11 +1767,16 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
         payload["system"] = json!(system);
     }
     // Prompt hints the runtime reads (small-screen and spoken-reply blocks):
-    // only these two keys, each with its one allowed value, pass through.
+    // only these two keys, each with its one allowed value, pass through,
+    // plus the client's IANA `time_zone` when it is a real zone (the same
+    // allow-list as v1_routes::stored_turn_metadata).
     for (key, allowed) in [("form_factor", "phone"), ("reply_mode", "voice")] {
         if body.metadata.as_ref().and_then(|m| m.get(key)).and_then(|v| v.as_str()) == Some(allowed) {
             payload["metadata"][key] = json!(allowed);
         }
+    }
+    if let Some(zone) = body.metadata.as_ref().and_then(crate::v1_routes::turn_time_zone) {
+        payload["metadata"]["time_zone"] = json!(zone);
     }
     payload
 }
@@ -2890,6 +2895,23 @@ mod send_message_payload_tests {
         assert!(payload.get("noReply").is_none());
         assert!(payload["parts"][0].get("metadata").is_none());
         assert_eq!(payload["parts"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn prompt_hints_pass_only_with_allowed_values() {
+        let payload = send_message_payload(&body(serde_json::json!({
+            "text": "hi",
+            "metadata": { "form_factor": "phone", "reply_mode": "loud", "time_zone": "Europe/Berlin", "x": 1 }
+        })));
+        assert_eq!(
+            payload["metadata"],
+            serde_json::json!({ "form_factor": "phone", "time_zone": "Europe/Berlin" })
+        );
+        let payload = send_message_payload(&body(serde_json::json!({
+            "text": "hi",
+            "metadata": { "time_zone": "Mars/Olympus" }
+        })));
+        assert!(payload.get("metadata").is_none());
     }
 
     #[test]
