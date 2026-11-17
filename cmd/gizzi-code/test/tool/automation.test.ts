@@ -353,12 +353,13 @@ describe("tool.automation", () => {
     expect(calls).toEqual([])
   })
 
-  test("no platform: no credential, API down or too old returns no_platform with the request", async () => {
+  test("no platform and no scheduler running here: says so and gives the start command", async () => {
     delete process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN
     delete process.env.ALLTERNIT_API_TOKEN
     let result = await run({ action: "create", prompt: "Call Sam", schedule: { delay_minutes: 30 } })
-    expect(result.metadata).toMatchObject({ status: "no_platform", reason: "no_credential", built: { action: "create" } })
+    expect(result.metadata).toMatchObject({ status: "no_scheduler", reason: "no_credential", built: { action: "create" } })
     expect(result.output).toMatch(/^Not scheduled: /)
+    expect(result.output).toContain("gizzi jobs start")
     expect(calls).toEqual([])
 
     process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN = "internal-test"
@@ -366,11 +367,11 @@ describe("tool.automation", () => {
       throw new TypeError("fetch failed")
     }
     result = await run({ action: "list" })
-    expect(result.metadata).toMatchObject({ status: "no_platform", reason: "unreachable" })
+    expect(result.metadata).toMatchObject({ status: "no_scheduler", reason: "unreachable" })
 
     route = () => new Response("Not Found", { status: 404 })
     result = await run({ action: "list" })
-    expect(result.metadata).toMatchObject({ status: "no_platform", reason: "no_route" })
+    expect(result.metadata).toMatchObject({ status: "no_scheduler", reason: "no_route" })
 
     // A refusal from the server is an error the model reads, not a fallback.
     route = () => new Response(JSON.stringify({ error: "You already have 25 active scheduled tasks.", code: "cap_reached" }), { status: 429 })
@@ -379,3 +380,78 @@ describe("tool.automation", () => {
     )
   })
 })
+
+describe("tool.automation on this computer's scheduler (no platform)", () => {
+  test("create, list, update and delete go to the CronService the /cron routes use", async () => {
+    const { CronService } = await import("../../src/runtime/automation/cron/service")
+    const dir = mkdtempSync(path.join(osTmpdir(), "gizzi-automation-cron-"))
+    CronService.initialize({ dbPath: path.join(dir, "cron.db"), checkIntervalMs: 3_600_000 })
+    CronService.start()
+    try {
+      delete process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN
+      delete process.env.ALLTERNIT_API_TOKEN
+      const before = Date.now()
+      const created = await run(
+        {
+          action: "create",
+          kind: "heartbeat",
+          title: "Watch the deploy",
+          prompt: "Check whether the production deploy of PR #12 finished.",
+          schedule: { delay_minutes: 90 },
+        },
+        ctx({ metadata: { time_zone: "America/Chicago" } }),
+      )
+      expect(calls).toEqual([])
+      expect(created.metadata).toMatchObject({ status: "ok", via: "cron", automation: { title: "Watch the deploy", kind: "heartbeat", status: "active" } })
+      expect(created.output).toContain("this computer's scheduler")
+
+      const jobs = CronService.list()
+      expect(jobs).toHaveLength(1)
+      const job = jobs[0]
+      expect(job.type).toBe("agent")
+      expect(job.config).toMatchObject({
+        kind: "heartbeat",
+        target: "this_thread",
+        targetSessionId: "ses_auto",
+        delivery: "ephemeral",
+        origin: "agent",
+        initiation: "user_request",
+        timezone: "America/Chicago",
+        automationSchedule: { type: "once" },
+      })
+      // The scheduler fires at the instant asked for: 90 minutes from now.
+      const due = Date.parse(job.nextRunAt) - before
+      expect(due).toBeGreaterThan(89 * 60_000)
+      expect(due).toBeLessThan(91 * 60_000)
+
+      const listed = await run({ action: "list" })
+      expect(listed.metadata).toMatchObject({ status: "ok", via: "cron" })
+      expect(listed.metadata.automations.map((a) => a.id)).toContain(job.id)
+      expect(listed.output).toContain("Watch the deploy")
+
+      const paused = await run({ action: "update", id: job.id, status: "paused" })
+      expect(paused.metadata.automation.status).toBe("paused")
+      expect(CronService.get(job.id).status).toBe("paused")
+
+      const deleted = await run({ action: "delete", id: job.id })
+      expect(deleted.metadata).toMatchObject({ status: "ok", id: job.id })
+      expect(CronService.get(job.id)).toBeNull()
+    } finally {
+      CronService.close()
+    }
+  })
+
+  test("a recurring task is armed at its next run in its own zone, not the machine's", async () => {
+    // 09:00 in Tokyo on weekdays, from Tue 2026-11-17 12:00 UTC (21:00 Tokyo): next is Wed 09:00 Tokyo = 00:00 UTC.
+    const next = Automation.nextCronRun("0 9 * * 1-5", "Asia/Tokyo", new Date("2026-11-17T12:00:00Z"))
+    expect(next.toISOString()).toBe("2026-11-18T00:00:00.000Z")
+    // Friday evening skips the weekend.
+    expect(Automation.nextCronRun("0 9 * * 1-5", "Asia/Tokyo", new Date("2026-11-20T12:00:00Z")).toISOString()).toBe("2026-11-23T00:00:00.000Z")
+    // The hour the clocks skip (Chicago, 2027-03-14 02:30) is skipped, not moved.
+    expect(Automation.nextCronRun("30 2 * * *", "America/Chicago", new Date("2027-03-13T12:00:00Z")).toISOString()).toBe("2027-03-15T07:30:00.000Z")
+    // UNTIL ends it.
+    const config = { automationSchedule: { type: "cron", expression: "0 9 * * *" }, timezone: "UTC", until: "2026-11-18T08:00:00.000Z" }
+    expect(Automation.nextFire(config, new Date("2026-11-17T10:00:00Z"))).toBeNull()
+  })
+})
+

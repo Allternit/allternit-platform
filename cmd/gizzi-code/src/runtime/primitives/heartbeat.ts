@@ -76,7 +76,7 @@ export namespace Heartbeat {
     "- DONE: <one short line for the user>  when the reason for this check is over (the thing finished or no longer matters). The user is told, and this scheduled task stops.",
     "",
     "Stay quiet unless it matters. Do not send routine status updates. Write the line so it makes sense on a phone lock screen, without the rest of your reply.",
-    "Anything that needs the user's approval stops this run and asks them, so do not start work that needs approval.",
+    "Anything that needs the user's approval stops this run (the user is told), so do not start work that needs approval.",
   ].join("\n")
 
   /** Appended to a heartbeat run's prompt: the verdict contract, in our words. */

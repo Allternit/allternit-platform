@@ -7,7 +7,8 @@
  * request; allternit-api stores and runs them as local routines
  * (POST /api/v1/bot-routing/automation/{create,list,update,delete,run}).
  * With no platform API or credential the call returns `no_platform` with the
- * built request, so the caller can fall back to the runtime's /cron.
+ * built request, and the caller falls back to this computer's scheduler (the
+ * runtime CronService behind /cron) through `cronFallback` below.
  *
  * Schedules: exactly one of
  *   at             local wall time "YYYY-MM-DDTHH:mm" read in the user's zone
@@ -32,7 +33,10 @@ import {
   updateAutomation,
   type AutomationCreateRequest,
   type AutomationInfo,
+  type AutomationKind,
   type AutomationRunResult,
+  type AutomationStatus,
+  type AutomationTarget,
   type AutomationSchedule,
   type AutomationScheduleInput,
   type AutomationUpdateRequest,
@@ -40,6 +44,7 @@ import {
 import { Clock } from "@/runtime/primitives/clock"
 import { RRule } from "@/runtime/primitives/rrule"
 import { ROUTINE_MARKER_PREFIX } from "@/runtime/bots/bot-routines"
+import type { AgentJob, CreateJobInput, CronJob, CronRun, UpdateJobInput } from "@/runtime/automation/cron/types"
 
 export namespace Automation {
   export const MAX_TITLE_CHARS = 80
@@ -51,7 +56,7 @@ export namespace Automation {
   export const MAX_ACTIVE = 25
 
   /** The one sentence every create and update result carries about approvals. */
-  export const APPROVAL_SENTENCE = "Runs unattended: any step that needs your approval stops the run and asks you."
+  export const APPROVAL_SENTENCE = "Runs unattended: a step that needs your approval stops the run, and you get a notice to handle it yourself."
 
   /**
    * User-message metadata key a scheduler sets on every turn it starts
@@ -390,12 +395,17 @@ export namespace Automation {
   /** Why the platform API can't take the call; the caller may fall back to the runtime /cron. */
   export type NoPlatformReason = "no_credential" | "unreachable" | "no_route"
 
+  /** Where an `ok` outcome was stored: allternit-api (default) or this computer's scheduler (`cron`). */
+  export type Via = "platform" | "cron"
+
   export type Outcome =
-    | { status: "ok"; action: "create" | "update"; automation: AutomationInfo; zone: Zone; recurring?: boolean }
-    | { status: "ok"; action: "list"; automations: AutomationInfo[] }
-    | { status: "ok"; action: "delete"; id: string }
-    | { status: "ok"; action: "run_now"; run: AutomationRunResult }
+    | { status: "ok"; action: "create" | "update"; automation: AutomationInfo; zone: Zone; recurring?: boolean; via?: Via }
+    | { status: "ok"; action: "list"; automations: AutomationInfo[]; via?: Via }
+    | { status: "ok"; action: "delete"; id: string; via?: Via }
+    | { status: "ok"; action: "run_now"; run: AutomationRunResult; via?: Via }
     | { status: "no_platform"; reason: NoPlatformReason; built: Built }
+    /** No platform, and this computer's scheduler isn't running either. */
+    | { status: "no_scheduler"; reason: NoPlatformReason; built: Built }
 
   function noPlatform(error: unknown): NoPlatformReason | undefined {
     if (error instanceof AppRoutingError) {
@@ -468,6 +478,272 @@ export namespace Automation {
   }
 
   /* ---------------------------------------------------------------------- */
+  /* Fallback: this computer's scheduler (runtime CronService, /cron)        */
+  /* ---------------------------------------------------------------------- */
+
+  /** Tag on every job the fallback makes. */
+  export const CRON_TAG = "automation"
+  /** A run due more than this long ago is logged as missed instead of run (laptop asleep, scheduler off). */
+  export const LATE_LIMIT_MS = 12 * 60 * 60_000
+  /** How the user starts this computer's scheduler. */
+  export const START_COMMAND = "gizzi jobs start"
+
+  /**
+   * The CronService calls the fallback uses (the same service the /cron
+   * routes use). The runtime builtin passes the in-process service; tests may
+   * pass it too, with a temporary database.
+   */
+  export interface CronBackend {
+    running(): boolean
+    create(input: CreateJobInput): CronJob
+    list(): CronJob[]
+    get(id: string): CronJob | null
+    update(id: string, input: UpdateJobInput): CronJob
+    delete(id: string): boolean
+    /** Start a run now. The tool never waits on it: a this_thread run queues behind the turn that asked. */
+    run(id: string): Promise<CronRun>
+  }
+
+  export function isAutomationJob(job: CronJob): job is AgentJob {
+    return job.type === "agent" && !!(job.config as AgentJob["config"]).kind
+  }
+
+  const pad2 = (n: number) => String(n).padStart(2, "0")
+
+  /**
+   * The next run of a 5-field cron line read in `zone`, strictly after `from`;
+   * null when none falls within 5 years. Day-of-month and day-of-week both
+   * restricted means either matches (cron's rule). Times the clocks skip are
+   * skipped; a repeated time runs at its first occurrence.
+   */
+  export function nextCronRun(expression: string, zone: string, from: Date = new Date()): Date | null {
+    const parsed = RRule.parseCron(expression)
+    const fields = expression.trim().split(/\s+/)
+    const domAny = fields[2] === "*"
+    const dowAny = fields[4] === "*"
+    const local = Clock.now(zone, from).iso
+    const start = Date.UTC(Number(local.slice(0, 4)), Number(local.slice(5, 7)) - 1, Number(local.slice(8, 10)))
+    const months = new Set(parsed.months)
+    const doms = new Set(parsed.daysOfMonth)
+    const dows = new Set(parsed.daysOfWeek)
+    for (let i = 0; i <= 366 * 5; i++) {
+      const day = new Date(start + i * 86_400_000)
+      if (!months.has(day.getUTCMonth() + 1)) continue
+      const domHit = doms.has(day.getUTCDate())
+      const dowHit = dows.has(day.getUTCDay())
+      const hit = domAny && dowAny ? true : domAny ? dowHit : dowAny ? domHit : domHit || dowHit
+      if (!hit) continue
+      const date = `${String(day.getUTCFullYear()).padStart(4, "0")}-${pad2(day.getUTCMonth() + 1)}-${pad2(day.getUTCDate())}`
+      for (const h of parsed.hours) {
+        for (const m of parsed.minutes) {
+          const at = RRule.localToInstant(`${date}T${pad2(h)}:${pad2(m)}`, zone)
+          if (at.ok && at.at.getTime() > from.getTime()) return at.at
+        }
+      }
+    }
+    return null
+  }
+
+  /** When the task runs next after `from`; null when nothing more is due (a one-shot that passed, past UNTIL). */
+  export function nextFire(config: AgentJob["config"], from: Date = new Date()): Date | null {
+    const schedule = config.automationSchedule
+    if (!schedule) return null
+    let next: Date | null
+    if (schedule.type === "once") {
+      const at = new Date(schedule.at)
+      next = at.getTime() > from.getTime() ? at : null
+    } else {
+      next = nextCronRun(schedule.expression, config.timezone || "UTC", from)
+    }
+    if (next && config.until && next.getTime() > new Date(config.until).getTime()) return null
+    return next
+  }
+
+  /**
+   * The schedule the CronService stores for a fallback job: a rolling
+   * one-shot interval from `now` to `at`. The service reads cron lines in the
+   * process zone only, so the executor re-arms this after every run from the
+   * real schedule (`config.automationSchedule` read in `config.timezone`).
+   */
+  export function intervalUntil(at: Date, now: Date = new Date()): { type: "interval"; seconds: number } {
+    return { type: "interval", seconds: Math.max(1, Math.ceil((at.getTime() - now.getTime()) / 1000)) }
+  }
+
+  /** A fallback job as the tool and the apps show scheduled tasks. */
+  export function jobInfo(job: AgentJob): AutomationInfo {
+    const c = job.config
+    const status: AutomationStatus = job.status === "active" ? "active" : job.status === "paused" ? "paused" : "completed"
+    return {
+      id: job.id,
+      title: c.title ?? job.name,
+      kind: c.kind ?? "message",
+      target: c.target ?? (c.delivery === "session" ? "this_thread" : "new_session"),
+      status,
+      schedule: c.automationSchedule ?? { type: "once", at: job.nextRunAt ?? job.createdAt },
+      timezone: c.timezone ?? "UTC",
+      nextRunAt: job.status === "active" ? (job.nextRunAt ?? null) : null,
+      lastRunAt: job.lastRunAt ?? null,
+      lastRunStatus: c.lastRunStatus ?? null,
+      maxRuns: job.maxRuns ?? null,
+      runCount: job.runCount,
+      until: c.until ?? null,
+      sessionId: c.targetSessionId ?? null,
+      origin: c.origin ?? "agent",
+      initiation: c.initiation ?? null,
+      createdAt: job.createdAt,
+    }
+  }
+
+  /** Where runs deliver: a this_thread message is a turn in the thread; heartbeat notices post to the thread that made it. */
+  function routing(kind: AutomationKind, target: AutomationTarget, sessionID: string, current?: string) {
+    const targetSessionId = target === "this_thread" || kind === "heartbeat" ? (current ?? sessionID) : undefined
+    const delivery: "session" | "ephemeral" = kind === "message" && target === "this_thread" ? "session" : "ephemeral"
+    return { targetSessionId, delivery }
+  }
+
+  /**
+   * Do a call the platform couldn't take on this computer's scheduler. Same
+   * rules as allternit-api: the active cap, the duplicate check, only
+   * scheduled tasks (never other cron jobs) can be changed. Returns
+   * `no_scheduler` when the scheduler isn't running in this process.
+   */
+  export async function cronFallback(input: {
+    sessionID: string
+    built: Built
+    reason: NoPlatformReason
+    backend: CronBackend | undefined
+    /** The folder runs work in (the calling session's project). */
+    directory?: string
+    now?: Date
+  }): Promise<Outcome> {
+    const { built, backend, sessionID } = input
+    if (!backend || !backend.running()) return { status: "no_scheduler", reason: input.reason, built }
+    const now = input.now ?? new Date()
+    const via = "cron" as const
+    const own = (id: string): AgentJob => {
+      const job = backend.get(id)
+      if (!job || !isAutomationJob(job)) {
+        throw new AutomationError("invalid", `There's no scheduled task with id ${id} on this computer (use action list).`)
+      }
+      return job
+    }
+    switch (built.action) {
+      case "list":
+        return { status: "ok", action: "list", automations: backend.list().filter(isAutomationJob).map(jobInfo), via }
+      case "delete": {
+        own(built.request.id)
+        backend.delete(built.request.id)
+        return { status: "ok", action: "delete", id: built.request.id, via }
+      }
+      case "run_now": {
+        const job = own(built.request.id)
+        // The run record carries any failure; the tool doesn't wait (a this_thread turn queues behind this one).
+        void backend.run(job.id).catch(() => {})
+        const queued = job.config.delivery === "session" && job.config.targetSessionId === sessionID
+        return { status: "ok", action: "run_now", run: { id: job.id, status: queued ? "queued" : "started" }, via }
+      }
+      case "create": {
+        const r = built.request
+        const active = backend.list().filter(isAutomationJob).filter((job) => job.status === "active")
+        if (active.length >= MAX_ACTIVE) {
+          throw new AutomationError(
+            "invalid",
+            `There are already ${MAX_ACTIVE} active scheduled tasks on this computer. Delete or pause one first (use action list).`,
+          )
+        }
+        const { targetSessionId, delivery } = routing(r.kind, r.target, sessionID)
+        const duplicate = active.find(
+          (job) =>
+            job.config.prompt === r.prompt &&
+            job.config.kind === r.kind &&
+            job.config.targetSessionId === targetSessionId &&
+            JSON.stringify(job.config.automationSchedule) === JSON.stringify(r.schedule),
+        )
+        if (duplicate) {
+          throw new AutomationError(
+            "invalid",
+            `A scheduled task like this already exists (id ${duplicate.id}, "${jobInfo(duplicate).title}"). Update it instead of making another.`,
+          )
+        }
+        const config: AgentJob["config"] = {
+          prompt: r.prompt,
+          kind: r.kind,
+          target: r.target,
+          delivery,
+          origin: "agent",
+          initiation: r.initiation,
+          title: r.title,
+          automationSchedule: r.schedule,
+          timezone: r.timezone,
+          scheduleInput: r.scheduleInput,
+          ...(targetSessionId ? { targetSessionId } : {}),
+          ...(r.until ? { until: r.until } : {}),
+          ...(input.directory ? { directory: input.directory } : {}),
+        }
+        const first = nextFire(config, now)
+        if (!first) throw new AutomationError("out_of_window", "That schedule has no run left.")
+        const job = backend.create({
+          name: r.title,
+          description: `Scheduled task (${r.kind}) made by the agent`,
+          type: "agent",
+          schedule: intervalUntil(first, now),
+          config,
+          ...(r.maxRuns !== undefined ? { maxRuns: r.maxRuns } : {}),
+          tags: [CRON_TAG, `${CRON_TAG}:${r.kind}`],
+          metadata: { origin: "agent", sourceSessionId: sessionID },
+          scope: "persistent",
+          catchUpMissed: false,
+        })
+        return { status: "ok", action: "create", automation: jobInfo(job as AgentJob), zone: built.zone, recurring: built.recurring, via }
+      }
+      case "update": {
+        const r = built.request
+        const job = own(r.id)
+        const config: AgentJob["config"] = { ...job.config }
+        const patch: UpdateJobInput = {}
+        if (r.title !== undefined) {
+          config.title = r.title
+          patch.name = r.title
+        }
+        if (r.prompt !== undefined) config.prompt = r.prompt
+        if (r.kind) config.kind = r.kind
+        if (r.target) config.target = r.target
+        const kind = config.kind ?? "message"
+        const target = config.target ?? "this_thread"
+        Object.assign(config, routing(kind, target, sessionID, config.targetSessionId))
+        if (r.schedule) {
+          config.automationSchedule = r.schedule
+          config.timezone = r.timezone
+          config.scheduleInput = r.scheduleInput
+          config.until = r.until ?? undefined
+          // null clears the run limit (the service stores what it is given).
+          patch.maxRuns = (r.maxRuns ?? null) as unknown as number
+        }
+        const wantActive = r.status ? r.status === "active" : job.status === "active" || (!!r.schedule && job.status !== "paused")
+        if (wantActive) {
+          const next = nextFire(config, now)
+          if (!next) throw new AutomationError("out_of_window", "Nothing more is due on that schedule; send a new schedule to turn it back on.")
+          config.ended = undefined
+          patch.schedule = intervalUntil(next, now)
+          patch.status = "active"
+        } else if (r.status === "paused") {
+          patch.status = "paused"
+        }
+        patch.config = config
+        const updated = backend.update(job.id, patch) as AgentJob
+        return {
+          status: "ok",
+          action: "update",
+          automation: jobInfo(updated),
+          zone: built.zone ?? { zone: config.timezone ?? "UTC", source: "argument" },
+          recurring: built.recurring,
+          via,
+        }
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------------------- */
   /* What the model reads back                                               */
   /* ---------------------------------------------------------------------- */
 
@@ -485,6 +761,10 @@ export namespace Automation {
   const PROCESS_ZONE_LINE =
     "The zone used is this machine's, which may not be the user's. Tell the user which zone the time is in, or ask where they are and update it."
 
+  /** Said once on create/update when the task went to this computer's scheduler. */
+  const CRON_NOTE =
+    "It is saved on this computer's scheduler, not the user's Allternit account: it runs only while Gizzi is running here, and the user's other devices don't list it."
+
   export const NO_PLATFORM_TEXT: Record<NoPlatformReason, string> = {
     no_credential: "this runtime isn't connected to an Allternit account",
     unreachable: "the Allternit API on this computer can't be reached",
@@ -495,6 +775,13 @@ export namespace Automation {
   export function summary(outcome: Outcome): string {
     if (outcome.status === "no_platform") {
       return `Not scheduled: ${NO_PLATFORM_TEXT[outcome.reason]}. Tell the user plainly; don't say it is scheduled.`
+    }
+    if (outcome.status === "no_scheduler") {
+      return (
+        `Not scheduled: ${NO_PLATFORM_TEXT[outcome.reason]}, and this computer's scheduler isn't running. ` +
+        `Tell the user plainly; don't say it is scheduled. They can start the scheduler with \`${START_COMMAND}\` ` +
+        `(or keep Gizzi Code open, which runs it), then ask again.`
+      )
     }
     switch (outcome.action) {
       case "list":
@@ -517,6 +804,7 @@ export namespace Automation {
         if (a.kind === "heartbeat") {
           lines.push("Each run is a fresh session that tells the user only on NOTIFY or DONE.")
         }
+        if (outcome.via === "cron") lines.push(CRON_NOTE)
         lines.push(`Tell the user in one sentence which approval setting it got: "${APPROVAL_SENTENCE}"`)
         if (outcome.zone.source === "process") lines.push(PROCESS_ZONE_LINE)
         return lines.join("\n")
@@ -526,7 +814,7 @@ export namespace Automation {
 
   /** Short title for the tool card. */
   export function title(outcome: Outcome): string {
-    if (outcome.status === "no_platform") return "Scheduled task not created"
+    if (outcome.status === "no_platform" || outcome.status === "no_scheduler") return "Scheduled task not created"
     switch (outcome.action) {
       case "list":
         return `Scheduled tasks (${outcome.automations.length})`

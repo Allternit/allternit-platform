@@ -17,6 +17,6 @@ Schedule (exactly one):
 - cron: 5 fields read in the user's zone, for example "0 9 * * 1-5".
 One-time tasks can be 1 minute to 365 days ahead. Repeating tasks run at most every 15 minutes. If you don't know the user's time zone or the current time, call current_time first.
 
-Runs are unattended: any step that needs the user's approval stops the run and asks them. After you create or change a scheduled task, tell the user in one sentence what approval setting it got (the result gives you the sentence) and when it runs next, in their time zone.
+Runs are unattended: a step that needs the user's approval is refused, the run stops, and the user gets a notice. Don't schedule work that needs approval. After you create or change a scheduled task, tell the user in one sentence what approval setting it got (the result gives you the sentence) and when it runs next, in their time zone.
 
 A run that a scheduled task started cannot create scheduled tasks.

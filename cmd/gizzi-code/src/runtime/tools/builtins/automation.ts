@@ -11,10 +11,16 @@
  * Input is checked before the permission ask, so the user is never asked to
  * approve a request that would be refused. A turn started by a scheduled task
  * can't create one: refused outright, never asked.
+ *
+ * No platform (Gizzi Code without an account, allternit-api down or too old):
+ * the call goes to this process's CronService, the scheduler behind /cron
+ * (Automation.cronFallback). When that isn't running either, the result says
+ * so and gives the start command.
  */
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { Automation } from "@/runtime/primitives/automation"
 import { Clock } from "@/runtime/primitives/clock"
+import { Instance } from "@/runtime/context/project/instance"
 import type { AutomationInfo, AutomationRunResult } from "@/runtime/bots/app-bot-routing"
 import DESCRIPTION from "@/runtime/tools/builtins/automation.txt"
 
@@ -33,6 +39,30 @@ export type AutomationMetadata = {
   built?: Automation.Built
   /** create, update: the sentence about approvals the card shows. */
   approval?: string
+  /** "cron": stored on this computer's scheduler (no platform). */
+  via?: Automation.Via
+}
+
+/** The in-process CronService (the one /cron serves), or undefined when it was never set up here. */
+async function runtimeCronBackend(): Promise<Automation.CronBackend | undefined> {
+  const { CronService } = await import("@/runtime/automation/cron/service")
+  return {
+    running: () => CronService.getStatus().running,
+    create: (input) => CronService.create(input),
+    list: () => CronService.list(),
+    get: (id) => CronService.get(id),
+    update: (id, input) => CronService.update(id, input),
+    delete: (id) => CronService.delete(id),
+    run: (id) => CronService.run(id),
+  }
+}
+
+function directoryOf(): string | undefined {
+  try {
+    return Instance.directory
+  } catch {
+    return undefined
+  }
 }
 
 export const AutomationTool = Tool.define("automation", {
@@ -56,9 +86,19 @@ export const AutomationTool = Tool.define("automation", {
         ...(built.action === "delete" || built.action === "run_now" ? { id: built.request.id } : {}),
       },
     })
-    const outcome = await Automation.send({ sessionID: ctx.sessionID, built })
-    const metadata: AutomationMetadata = { action: params.action, status: outcome.status }
+    let outcome = await Automation.send({ sessionID: ctx.sessionID, built })
     if (outcome.status === "no_platform") {
+      outcome = await Automation.cronFallback({
+        sessionID: ctx.sessionID,
+        built: outcome.built,
+        reason: outcome.reason,
+        backend: await runtimeCronBackend(),
+        directory: directoryOf(),
+      })
+    }
+    const metadata: AutomationMetadata = { action: params.action, status: outcome.status }
+    if ("via" in outcome && outcome.via) metadata.via = outcome.via
+    if (outcome.status === "no_platform" || outcome.status === "no_scheduler") {
       metadata.reason = outcome.reason
       metadata.built = outcome.built
     } else if (outcome.action === "create" || outcome.action === "update") {

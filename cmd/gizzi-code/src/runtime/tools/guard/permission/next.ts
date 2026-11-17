@@ -4,8 +4,8 @@ import { Config } from "@/runtime/context/config/config"
 import { Flag } from "@/runtime/context/flag/flag"
 import { Identifier } from "@/shared/id/id"
 import { Instance } from "@/runtime/context/project/instance"
-import { Database, eq } from "@/runtime/session/storage/db"
-import { PermissionTable, SessionTable } from "@/runtime/session/session.sql"
+import { Database, desc, eq } from "@/runtime/session/storage/db"
+import { MessageTable, PartTable, PermissionTable, SessionTable } from "@/runtime/session/session.sql"
 import { fn } from "@/shared/util/fn"
 import { Log } from "@/shared/util/log"
 import { Wildcard } from "@/shared/util/wildcard"
@@ -297,6 +297,16 @@ export namespace PermissionNext {
           throw new DeniedError(ruleset.filter((r) => Wildcard.match(request.permission, r.permission)))
         }
         if (rule.action === "ask") {
+          // A turn a scheduler started has nobody to answer: refuse now
+          // instead of leaving the run waiting until its timeout, tell the
+          // owner once per run, and let the processor end the turn (an
+          // UnattendedError is a RejectedError). Never an approval.
+          const unattended = await unattendedTurn(request.sessionID, request.tool?.messageID)
+          if (unattended) {
+            KernelTurn.noteGateDecision(callID, { permission: request.permission, pattern, action: "deny", source: "unattended" })
+            raiseNeedsYou(unattended, request)
+            throw new UnattendedError()
+          }
           const id = askID!
           await HookDispatcher.emit({
             name: "PermissionRequest",
@@ -334,6 +344,139 @@ export namespace PermissionNext {
       }
     },
   )
+
+  /* ---------------------------------------------------------------------- */
+  /* Unattended turns (scheduled tasks, bot routines)                        */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * A turn a scheduler started: the user message carries
+   * `metadata.automation_run` (gizzi's /cron fallback, allternit-api's
+   * scheduler) or begins with a routine's "[routine: <label>]" marker.
+   * `key` is that user message; `sessionID` the session it is in.
+   */
+  export type UnattendedTurn = { key: string; sessionID: string; jobId?: string; runId?: string; label?: string }
+
+  /** After this many refusals in one run its session is stopped (only reached when continue_loop_on_deny is on). */
+  export const MAX_UNATTENDED_DENIALS = 5
+  const ROUTINE_LABEL = /^\[routine: ([^\]]*)\]/
+  const unattendedDenials = new Map<string, number>()
+  const unattendedBlocks = new Map<string, string>()
+
+  function remember<V>(map: Map<string, V>, key: string, value: V) {
+    map.delete(key)
+    map.set(key, value)
+    if (map.size > 500) map.delete(map.keys().next().value!)
+  }
+
+  type MessageRow = typeof MessageTable.$inferSelect
+
+  /** The user message a tool call answers: the assistant message's parent, else the session's latest user message. */
+  function turnUserRow(sessionID: string, messageID?: string): MessageRow | undefined {
+    const byId = (id: string) => Database.use((db) => db.select().from(MessageTable).where(eq(MessageTable.id, id)).get())
+    if (messageID) {
+      const row = byId(messageID)
+      const data = row?.data as { role?: string; parentID?: string } | undefined
+      if (row && data?.role === "user") return row
+      if (data?.role === "assistant" && data.parentID) {
+        const parent = byId(data.parentID)
+        if (parent && (parent.data as { role?: string }).role === "user") return parent
+      }
+    }
+    const rows = Database.use((db) =>
+      db
+        .select()
+        .from(MessageTable)
+        .where(eq(MessageTable.session_id, sessionID))
+        .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
+        .limit(20)
+        .all(),
+    )
+    return rows.find((row) => (row.data as { role?: string }).role === "user")
+  }
+
+  async function markedTurn(row: MessageRow): Promise<UnattendedTurn | undefined> {
+    const metadata = (row.data as { metadata?: Record<string, unknown> }).metadata
+    const parts = Database.use((db) =>
+      db.select().from(PartTable).where(eq(PartTable.message_id, row.id)).orderBy(PartTable.id).all(),
+    )
+    const text = parts
+      .map((part) => part.data as { type?: string; text?: string; synthetic?: boolean })
+      .find((part) => part.type === "text" && !part.synthetic)?.text
+    const { Automation } = await import("@/runtime/primitives/automation")
+    if (!Automation.isAutomationRun(metadata, text)) return undefined
+    const run = metadata?.[Automation.RUN_METADATA_KEY] as { id?: string; runId?: string } | undefined
+    return {
+      key: row.id,
+      sessionID: row.session_id,
+      ...(typeof run?.id === "string" ? { jobId: run.id } : {}),
+      ...(typeof run?.runId === "string" ? { runId: run.runId } : {}),
+      ...(text && ROUTINE_LABEL.test(text) ? { label: ROUTINE_LABEL.exec(text)![1] } : {}),
+    }
+  }
+
+  /**
+   * Whether the turn that made this tool call was started by a scheduler. A
+   * subagent's session has no marker of its own, so its parent's turn
+   * decides. Never throws: on a read error the ask goes ahead as usual.
+   */
+  export async function unattendedTurn(sessionID: string, messageID?: string): Promise<UnattendedTurn | undefined> {
+    try {
+      let session: string | undefined = sessionID
+      let message = messageID
+      for (let depth = 0; session && depth < 4; depth++) {
+        const row = turnUserRow(session, message)
+        if (row) {
+          const hit = await markedTurn(row)
+          if (hit) return hit
+        }
+        const current: string = session
+        const parent = Database.use((db) =>
+          db.select({ parent: SessionTable.parent_id }).from(SessionTable).where(eq(SessionTable.id, current)).get(),
+        )
+        session = parent?.parent ?? undefined
+        message = undefined
+      }
+    } catch (error) {
+      log.warn("unattended check failed; asking as usual", { sessionID, error: String(error) })
+    }
+    return undefined
+  }
+
+  function describeAsk(request: { permission: string; patterns?: string[] }): string {
+    const patterns = (request.patterns ?? []).filter((p) => p && p !== "*")
+    const text = `use ${request.permission}${patterns.length ? ` (${patterns.join(", ")})` : ""}`
+    return text.length > 140 ? text.slice(0, 139).trimEnd() + "…" : text
+  }
+
+  /** needs_you once per run; the run's scheduler reads the block back (takeUnattendedBlock). */
+  function raiseNeedsYou(turn: UnattendedTurn, request: { sessionID: string; permission: string; patterns?: string[] }) {
+    const count = (unattendedDenials.get(turn.key) ?? 0) + 1
+    remember(unattendedDenials, turn.key, count)
+    const action = describeAsk(request)
+    if (turn.runId && !unattendedBlocks.has(turn.runId)) remember(unattendedBlocks, turn.runId, action)
+    if (count === 1) {
+      const who = turn.label ? `Scheduled task "${turn.label}"` : "A scheduled task"
+      const preview = `${who} stopped: it needs your approval to ${action}.`
+      void import("@/runtime/bots/app-bot-routing")
+        .then(({ notifyUser }) =>
+          notifyUser(turn.sessionID, { kind: "message", level: "needs_you", preview: preview.slice(0, 200) }),
+        )
+        .catch((error) => log.warn("needs_you push not sent", { sessionID: turn.sessionID, error: String(error) }))
+    }
+    if (count >= MAX_UNATTENDED_DENIALS) {
+      void import("@/runtime/session/prompt")
+        .then(({ SessionPrompt }) => SessionPrompt.cancel(request.sessionID))
+        .catch(() => {})
+    }
+  }
+
+  /** The approval a scheduled run stopped at (its run id from `metadata.automation_run.runId`), read once. */
+  export function takeUnattendedBlock(runId: string): string | undefined {
+    const action = unattendedBlocks.get(runId)
+    unattendedBlocks.delete(runId)
+    return action
+  }
 
   function approvalsFor(s: { approved: Ruleset; task: Record<string, Ruleset> }, sessionID: string): Ruleset {
     const task = s.task[sessionID]
@@ -804,6 +947,19 @@ export namespace PermissionNext {
   export class RejectedError extends Error {
     constructor() {
       super(`The user rejected permission to use this specific tool call.`)
+    }
+  }
+
+  /**
+   * Refused because nobody is there to ask: the turn was started by a
+   * scheduled task or routine. A RejectedError, so the processor ends the
+   * turn after this step instead of letting the model keep trying.
+   */
+  export class UnattendedError extends RejectedError {
+    constructor() {
+      super()
+      this.message =
+        "This step needs the owner's approval. Unattended scheduled runs can't ask; the owner has been notified."
     }
   }
 
