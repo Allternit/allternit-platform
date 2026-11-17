@@ -173,7 +173,7 @@ describe('USBA/1 Bluetooth mode', () => {
     const c = connect();
     c.send('mode bt');
     c.board.setBtConnected(true);
-    expect(c.send('mode cable')).toEqual(['r 3 ok', 's armed=0 usb=mounted mode=cable bt=off']);
-    expect(c.send('mode bt')).toEqual(['r 4 ok', 's armed=0 usb=mounted mode=bt bt=bonded']);
+    expect(c.send('mode cable')).toEqual(['r 2 ok', 's armed=0 usb=mounted mode=cable bt=off']);
+    expect(c.send('mode bt')).toEqual(['r 3 ok', 's armed=0 usb=mounted mode=bt bt=bonded']);
   });
 });
