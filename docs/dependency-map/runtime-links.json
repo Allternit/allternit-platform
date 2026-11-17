@@ -31,6 +31,18 @@
       "path": "allternit/cmd/allternit-api/src/agent_user_tools.rs"
     },
     {
+      "id": "allternit/cmd/allternit-api/src/agent_automation_tools.rs",
+      "label": "Agent scheduled-task routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/agent_automation_tools.rs"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/automation.ts",
+      "label": "automation tool",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/automation.ts"
+    },
+    {
       "id": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
       "label": "Agent session execution and cancellation",
       "kind": "module",
@@ -1428,6 +1440,15 @@
       "evidence": [
         "allternit/cmd/allternit-api/src/agent_user_tools.rs",
         "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/tools/builtins/automation.ts",
+      "target": "allternit/cmd/allternit-api/src/agent_automation_tools.rs",
+      "kind": "HTTP (POST /bot-routing/automation/create|list|update|delete|run): the automation tool makes scheduled tasks for a linked account; routine_local_scheduler.rs fires them",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/automation.ts",
+        "allternit/cmd/allternit-api/src/agent_automation_tools.rs"
       ]
     },
     {
