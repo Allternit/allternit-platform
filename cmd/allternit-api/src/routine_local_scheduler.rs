@@ -821,7 +821,7 @@ pub fn heartbeat_prompt(prompt: &str) -> String {
 /// The user-message metadata every scheduled turn carries, so gizzi refuses
 /// its approval asks (nobody is there to answer) and records which run stopped.
 pub fn run_marker(routine_id: &str, run_id: &str) -> Value {
-    json!({ "automation_run": { "id": routine_id, "runId": run_id } })
+    json!({ "automation_run": { "id": routine_id, "runId": run_id, "by": "scheduler" } })
 }
 
 // ─── Delivery ───────────────────────────────────────────────────────────────
@@ -2898,7 +2898,7 @@ mod tests {
         let fake = Fake::default();
         assert_eq!(run_due(&state.db, &fake, Utc::now()).await, 1);
         let run_id: String = state.db.connect().unwrap().query_row("SELECT id FROM routine_runs WHERE routine_id = 'r-bot'", [], |r| r.get(0)).unwrap();
-        assert_eq!(fake.metas.lock().unwrap()[0], json!({ "automation_run": { "id": "r-bot", "runId": run_id } }));
+        assert_eq!(fake.metas.lock().unwrap()[0], json!({ "automation_run": { "id": "r-bot", "runId": run_id, "by": "scheduler" } }));
         // A task in a session with no bot: posted straight into it, marked the same way.
         insert_task(&state, "t-msg", "message", ("interval", "1h"), "ses_plain", json!({}), None);
         force_due(&state, "t-msg");

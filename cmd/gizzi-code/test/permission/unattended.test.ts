@@ -111,6 +111,25 @@ test("a scheduled run's ask is refused at once, the owner is told once, and noth
   })
 })
 
+test("a run the API scheduler started is refused without a second notice", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const session = await Session.create({})
+      const assistantID = await turn(session.id, {
+        metadata: { automation_run: { id: "job_3", runId: "run_3", by: "scheduler" } },
+        text: "[routine: Nightly deploy] Deploy the site.",
+      })
+      await expect(ask(session.id, assistantID, "./deploy.sh")).rejects.toBeInstanceOf(PermissionNext.UnattendedError)
+      await settle()
+      expect(notifies).toHaveLength(0)
+      expect(PermissionNext.takeUnattendedBlock("run_3")).toBe("use bash (./deploy.sh)")
+      await Session.remove(session.id)
+    },
+  })
+})
+
 test("a routine turn from allternit-api's scheduler (text marker only) is refused too", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({

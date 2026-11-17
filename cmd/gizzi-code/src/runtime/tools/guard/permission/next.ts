@@ -355,7 +355,7 @@ export namespace PermissionNext {
    * scheduler) or begins with a routine's "[routine: <label>]" marker.
    * `key` is that user message; `sessionID` the session it is in.
    */
-  export type UnattendedTurn = { key: string; sessionID: string; jobId?: string; runId?: string; label?: string }
+  export type UnattendedTurn = { key: string; sessionID: string; jobId?: string; runId?: string; by?: string; label?: string }
 
   /** After this many refusals in one run its session is stopped (only reached when continue_loop_on_deny is on). */
   export const MAX_UNATTENDED_DENIALS = 5
@@ -405,12 +405,13 @@ export namespace PermissionNext {
       .find((part) => part.type === "text" && !part.synthetic)?.text
     const { Automation } = await import("@/runtime/primitives/automation")
     if (!Automation.isAutomationRun(metadata, text)) return undefined
-    const run = metadata?.[Automation.RUN_METADATA_KEY] as { id?: string; runId?: string } | undefined
+    const run = metadata?.[Automation.RUN_METADATA_KEY] as { id?: string; runId?: string; by?: string } | undefined
     return {
       key: row.id,
       sessionID: row.session_id,
       ...(typeof run?.id === "string" ? { jobId: run.id } : {}),
       ...(typeof run?.runId === "string" ? { runId: run.runId } : {}),
+      ...(typeof run?.by === "string" ? { by: run.by } : {}),
       ...(text && ROUTINE_LABEL.test(text) ? { label: ROUTINE_LABEL.exec(text)![1] } : {}),
     }
   }
@@ -455,7 +456,8 @@ export namespace PermissionNext {
     remember(unattendedDenials, turn.key, count)
     const action = describeAsk(request)
     if (turn.runId && !unattendedBlocks.has(turn.runId)) remember(unattendedBlocks, turn.runId, action)
-    if (count === 1) {
+    // allternit-api's scheduler raises its own attention item for this run; one notice, not two.
+    if (count === 1 && turn.by !== "scheduler") {
       const who = turn.label ? `Scheduled task "${turn.label}"` : "A scheduled task"
       const preview = `${who} stopped: it needs your approval to ${action}.`
       void import("@/runtime/bots/app-bot-routing")
