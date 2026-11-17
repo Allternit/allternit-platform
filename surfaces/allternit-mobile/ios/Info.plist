@@ -108,6 +108,14 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
+	<!-- Phone Use (plan step 5): HomeKit. Stays false until the owner enables
+	     the HomeKit capability on the App ID (gate G2) and the
+	     com.apple.developer.homekit entitlement in Allternit.entitlements is
+	     uncommented; HomeAccessService reports Home unavailable meanwhile. -->
+	<key>AllternitHomeKitEnabled</key>
+	<false/>
+	<key>NSHomeKitUsageDescription</key>
+	<string>Allternit lets your bots see your Home accessories and scenes, switch lights and run scenes, only after you turn on Home in Device Access. Locks, garage doors and alarms need your approval each time.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Allternit uses Face ID to unlock the app when you turn on the app lock in Settings.</string>
 	<key>NSAppTransportSecurity</key>

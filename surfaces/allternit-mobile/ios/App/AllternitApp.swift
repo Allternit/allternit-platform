@@ -98,6 +98,9 @@ struct AllternitApp: App {
                 }
             }
             .onOpenURL { url in
+                // A shortcut a bot ran finished (x-callback,
+                // allternit://shortcut-result): answer that run, open nothing.
+                if ShortcutBridge.shared.handle(url: url) { return }
                 // Universal Links (ai./m.allternit.com) and allternit:// open
                 // in the workspace; anything else is a document to view.
                 if DeepLinkRouter.shared.open(url: url) { return }

@@ -1,6 +1,7 @@
 import Contacts
 import EventKit
 import Foundation
+import UIKit
 
 /// Answers the bot's `device.*` requests on the control socket (see
 /// cmd/allternit-api phone_app.rs). Runs only while the app is in the
@@ -10,9 +11,24 @@ import Foundation
 /// switch must be on (`device_access_off`) and iOS must have granted access
 /// (`permission_denied`). Errors go back as `AppPhoneRPCError` codes the
 /// Desktop turns into messages the bot can explain.
+///
+/// Phone Use (docs/contracts/CONTRACT-phone-use-2026-11-16.md §9.1) adds
+/// `device.shortcuts.run`, `device.home.list|set|scene` (behind the same two
+/// gates), and two reads with no switch: `device.describe` and
+/// `device.screen.read`. Those answer with the contract envelope
+/// (`PhoneUseEnvelope`) as the result. Approval is never decided on the
+/// phone: sends, purchases and Home security changes are approved on the
+/// person's computer before the request is sent (phone-tools.ts
+/// `phoneUseApproval`, the same gate as calendar and reminder writes).
 @MainActor
 enum DeviceAccessService {
     static func handle(method: String, params: [String: Any]) async throws -> Any {
+        // Reads with no switch: what this phone can do, and the screen.
+        switch method {
+        case "device.describe": return describe()
+        case "device.screen.read": return screenReadFromApp()
+        default: break
+        }
         guard let kind = kind(of: method) else {
             throw AppPhoneRPCError(code: "unknown_method", message: "Unknown method \(method)")
         }
@@ -29,6 +45,19 @@ enum DeviceAccessService {
         case "device.reminders.list": return try await listReminders(params)
         case "device.reminders.create": return try createReminder(params)
         case "device.contacts.search": return try searchContacts(params)
+        case "device.shortcuts.run": return try await runShortcut(params)
+        case "device.home.list":
+            let filter = params["kind"] as? String
+            if params["kind"] != nil, filter == nil { throw bad("kind must be a string.") }
+            return try await HomeAccessService.shared.list(kind: filter)
+        case "device.home.set":
+            guard let id = homeId(params, "device_id"), let state = params["state"] as? [String: Any] else {
+                throw bad("device_id and state (an object) are required.")
+            }
+            return try await HomeAccessService.shared.set(deviceId: id, state: state)
+        case "device.home.scene":
+            guard let id = homeId(params, "scene_id") else { throw bad("scene_id is required.") }
+            return try await HomeAccessService.shared.runScene(id: id)
         default: throw AppPhoneRPCError(code: "unknown_method", message: "Unknown method \(method)")
         }
     }
@@ -164,6 +193,76 @@ enum DeviceAccessService {
                 "emails": c.emailAddresses.map { String($0.value) },
             ]
         }]
+    }
+
+    // MARK: - Phone Use
+
+    private static func runShortcut(_ p: [String: Any]) async throws -> Any {
+        guard let name = p["name"] as? String else { throw bad("name is required.") }
+        let timeout: Int
+        switch p["timeout_s"] {
+        case nil: timeout = ShortcutBridge.defaultTimeout
+        case let n as Int where (1...120).contains(n): timeout = n
+        default: throw bad("timeout_s must be a whole number of seconds, 1-120.")
+        }
+        return await ShortcutBridge.shared.run(name: name, input: p["input"], timeoutSeconds: timeout)
+    }
+
+    /// The contract names the socket field (`device_id`, `scene_id`); `id`
+    /// is accepted too, as the tool itself calls it.
+    private static func homeId(_ p: [String: Any], _ field: String) -> String? {
+        let raw = (p[field] as? String) ?? (p["id"] as? String)
+        guard let id = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty, id.count <= 64 else { return nil }
+        return id
+    }
+
+    /// `device.describe`: what this phone can do now. The app answers only
+    /// while it is open, so it is in front and the phone is unlocked.
+    private static func describe() -> Any {
+        let store = DeviceAccessStore.shared
+        let catalog = PhoneActionsCatalog.shared
+        let known = Set(ShortcutBridge.shared.knownShortcuts)
+        let foreground = UIApplication.shared.applicationState == .active
+        let apps: [[String: Any]] = catalog.apps.map { app in
+            [
+                "id": app.id,
+                "name": app.name,
+                "category": app.category,
+                "actions": app.intents.count,
+                "web_actions": app.web.count,
+                "shortcut": app.shortcut,
+                "shortcut_known": known.contains(app.shortcut),
+                "shortcut_link": app.link ?? NSNull(),
+            ]
+        }
+        return PhoneUseEnvelope.ok([
+            "foreground": foreground,
+            "foreground_app": foreground ? "Allternit" : NSNull(),
+            "locked": foreground ? false : NSNull(),
+            "shortcuts": Array(known).sorted(),
+            "home": ["available": store.isAllowed(.home)],
+            "broadcast": AppPhoneSharedState.isLive,
+            "access": store.allowedSnapshot,
+            "catalog": [
+                "built": catalog.built,
+                "actions_shortcut": [
+                    "name": catalog.actions.name,
+                    "known": known.contains(catalog.actions.name),
+                    "link": catalog.actions.link ?? NSNull(),
+                    "actions": catalog.actions.actions.map(\.id),
+                ] as [String: Any],
+                "apps": apps,
+            ] as [String: Any],
+        ])
+    }
+
+    /// `device.screen.read` reaching the app: the frames live in the
+    /// broadcast extension (AllternitScreen/ScreenReader.swift), which
+    /// answers the same request on its own socket. Here, only say why not.
+    private static func screenReadFromApp() -> Any {
+        guard AppPhoneSharedState.isLive else { return PhoneUseEnvelope.needsYou(.broadcastStopped, error: "broadcast_stopped") }
+        return PhoneUseEnvelope.failure("unavailable", "The screen is read from the live broadcast, not the app. Read the latest frame instead.",
+                                        extra: ["fallback": "runtime_reads_frames"])
     }
 
     // MARK: - Helpers

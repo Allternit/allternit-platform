@@ -33,6 +33,14 @@
 	<array>
 		<string>group.com.allternit.mobile</string>
 	</array>
+	<!-- Phone Use Home (Core/Device/HomeAccessService.swift): NOT enabled
+	     yet. Enabling HomeKit on the App ID is owner gate G2; with automatic
+	     signing this key would register it on the production App ID, so it
+	     stays commented until Eoj enables it. Then uncomment it and set
+	     AllternitHomeKitEnabled to true in Info.plist.
+	<key>com.apple.developer.homekit</key>
+	<true/>
+	-->
 	<!-- On-device models (Core/OnDevice): NOT enabled. The production App
 	     ID does not have the Increased Memory Limit capability (Eoj decision
 	     + App Review note pending, spec/on-device/ios-memory-spike.md).

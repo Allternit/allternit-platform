@@ -46,6 +46,12 @@ final class AppPhoneService: ObservableObject {
     /// nonce twice either).
     private var seenNonces: [String: Date] = [:]
     private var screenPoll: Timer?
+    /// Replies finished after their socket closed. Running a shortcut puts
+    /// Shortcuts in front, which closes the control socket; the answer then
+    /// goes out on the next one, when the app is back (oldest first).
+    private var lateReplies: [(reply: [String: Any], at: Date)] = []
+    private static let lateReplyLimit = 16
+    private static let lateReplyMaxAge: TimeInterval = 120
 
     var isPaired: Bool { credentials != nil }
 
@@ -101,6 +107,7 @@ final class AppPhoneService: ObservableObject {
         let creds = credentials
         DeviceAccessStore.shared.disableAll()
         stopControl()
+        lateReplies = []
         AppPhoneSharedState.post(AppPhoneSharedState.stopNotification)
         AppPhoneKeychain.clear()
         credentials = nil
@@ -349,6 +356,7 @@ final class AppPhoneService: ObservableObject {
                              on: socket, key: key)
         isControlConnected = true
         onOpen()
+        await flushLateReplies(on: socket, key: key)
         let pinger = Task { [weak socket] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(20))
@@ -373,6 +381,8 @@ final class AppPhoneService: ObservableObject {
             Task { [weak self] in
                 guard let self else { return }
                 var reply: [String: Any] = ["id": id]
+                // Phone Use replies carry their type (contract §9).
+                if Self.phoneUseMethods.contains(method) { reply["type"] = "\(method).result" }
                 do {
                     reply["result"] = try await self.handle(method: method, params: params)
                 } catch let error as AppPhoneRPCError {
@@ -380,7 +390,38 @@ final class AppPhoneService: ObservableObject {
                 } catch {
                     reply["error"] = ["code": "internal", "message": error.localizedDescription]
                 }
-                try? await self.sendSealed(reply, on: socket, key: key)
+                await self.reply(reply, on: socket, key: key)
+            }
+        }
+    }
+
+    static let phoneUseMethods: Set<String> = [
+        "device.describe", "device.shortcuts.run", "device.home.list", "device.home.set",
+        "device.home.scene", "device.screen.read",
+    ]
+
+    /// Sends on the live control socket (the one the request came in on, or
+    /// a newer one), or keeps the reply for the next socket when none is up.
+    private func reply(_ reply: [String: Any], on socket: URLSessionWebSocketTask, key: Data) async {
+        if let current = controlSocket, isControlConnected, current.state == .running {
+            do {
+                try await sendSealed(reply, on: current, key: current === socket ? key : (credentials?.sessionKey ?? key))
+                return
+            } catch {}
+        }
+        lateReplies.append((reply, Date()))
+        if lateReplies.count > Self.lateReplyLimit { lateReplies.removeFirst(lateReplies.count - Self.lateReplyLimit) }
+    }
+
+    private func flushLateReplies(on socket: URLSessionWebSocketTask, key: Data) async {
+        let now = Date()
+        let waiting = lateReplies.filter { now.timeIntervalSince($0.at) < Self.lateReplyMaxAge }
+        lateReplies = []
+        for (index, item) in waiting.enumerated() {
+            do { try await sendSealed(item.reply, on: socket, key: key) } catch {
+                // This socket died too: keep the rest for the next one.
+                lateReplies = Array(waiting[index...]) + lateReplies
+                return
             }
         }
     }
