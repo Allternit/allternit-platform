@@ -2576,6 +2576,15 @@ async fn transform_bus_event(
             "session_id": props.get("sessionID"),
             "ok": props.get("ok"),
         })),
+        // capture_screen_context (runtime integrations/screen-context): the app
+        // answers with POST /screen-context/:id/reply.
+        "screen.context.request" => Some(json!({
+            "type": "screen_context_requested",
+            "request_id": props.get("requestId").or_else(|| props.get("requestID")).or_else(|| props.get("id")),
+            "session_id": props.get("sessionId").or_else(|| props.get("sessionID")),
+            "reason": props.get("reason"),
+            "time": props.get("time"),
+        })),
         "pane_render.requested" => Some(json!({
             "type": "pane_render_requested",
             "request_id": props.get("id"),

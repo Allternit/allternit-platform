@@ -352,6 +352,15 @@ export const AgentCompatRoutes = () =>
               // ask_user_later: the turn did not wait; the answer starts a new turn.
               ...(props.async ? { async: true, assumption: props.assumption ?? null } : {}),
             }
+          case "screen.context.request":
+            // capture_screen_context: the app answers POST /screen-context/:id/reply.
+            return {
+              type: "screen_context_requested",
+              request_id: props.id ?? null,
+              session_id: props.sessionID ?? null,
+              reason: props.reason ?? null,
+              time: props.time ?? null,
+            }
           case "pane_browser.requested":
             return {
               type: "pane_browser_requested",
