@@ -16,6 +16,8 @@ interface CustomerRow {
   signedUpAt: string | null;
   planId: string | null;
   planStatus: string | null;
+  /** Who bills the plan: stripe, apple or google. Absent on older servers. */
+  billingProvider?: string | null;
   stripeCustomerId: string | null;
   computerStatus: string | null;
   emailsSent: string[];
@@ -49,6 +51,13 @@ function formatDate(value: string | null) {
   return Number.isNaN(date.getTime())
     ? "—"
     : date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function billedByLabel(row: CustomerRow) {
+  if (!row.planId) return "—";
+  if (row.billingProvider === "apple") return "Apple";
+  if (row.billingProvider === "google") return "Google";
+  return "Stripe";
 }
 
 function planLabel(row: CustomerRow) {
@@ -143,12 +152,13 @@ export function AdminCustomersPage() {
       ) : (
         data && (
           <div className="overflow-x-auto rounded-xl border border-[var(--border-subtle)]">
-            <table className="w-full min-w-[760px] text-left text-[13px]">
+            <table className="w-full min-w-[840px] text-left text-[13px]">
               <thead className="bg-[var(--bg-secondary)] text-[11px] uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
                 <tr>
                   <th className="px-3 py-2 font-medium">Customer</th>
                   <th className="px-3 py-2 font-medium">Signed up</th>
                   <th className="px-3 py-2 font-medium">Plan</th>
+                  <th className="px-3 py-2 font-medium">Billed by</th>
                   <th className="px-3 py-2 font-medium">Cloud computer</th>
                   <th className="px-3 py-2 font-medium">Emails sent</th>
                 </tr>
@@ -175,6 +185,7 @@ export function AdminCustomersPage() {
                         planLabel(row)
                       )}
                     </td>
+                    <td className="px-3 py-2">{billedByLabel(row)}</td>
                     <td className="px-3 py-2">{row.computerStatus ?? "—"}</td>
                     <td className="px-3 py-2 text-[var(--text-secondary)]">
                       {row.emailsSent.length ? row.emailsSent.map((kind) => EMAIL_LABELS[kind] ?? kind).join(", ") : "—"}
@@ -183,7 +194,7 @@ export function AdminCustomersPage() {
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-3 py-6 text-center text-[var(--text-secondary)]">
+                    <td colSpan={6} className="px-3 py-6 text-center text-[var(--text-secondary)]">
                       No customers here yet.
                     </td>
                   </tr>
