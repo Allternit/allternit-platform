@@ -484,6 +484,7 @@
               "tools/artifact-tools",
               "tools/current-time",
               "tools/automation",
+              "tools/lookup",
               "tools/send-user-message",
               "tools/ask-user-later",
               "tools/project-status",

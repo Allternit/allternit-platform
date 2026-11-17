@@ -108,9 +108,10 @@ Hints are optional keys in the user message metadata. Any other value is ignored
 | `reply_mode` | `"voice"` | Adds the spoken-reply block: short sentences, no markup | allternit-api, on phone-call turns |
 | `form_factor` | `"phone"` | Adds the small-screen block: shorter replies, less layout | The phone layout on ai.allternit.com, the m.allternit.com app, and the iOS app |
 | `time_zone` | An IANA zone such as `"America/Chicago"` | Adds the `Time zone:` line to the environment and sets the zone `current_time` reports ([current_time](/tools/current-time)) | Every client: web `Intl`, iOS `TimeZone`, the TUI process zone |
+| `answer_cards` | `"widgets"` | Adds the short writing-block manual, for clients that draw writing blocks and lookup cards | iOS and Gizzi Code (the TUI) |
 | `project_role` | `"thread"` | Adds the project thread block | allternit-api (server hint), stamped from the session bag's `projectRole` |
 
-`reply_mode`, `form_factor` and `time_zone` are the three client hints; allternit-api passes only those exact keys (and, for `time_zone`, a valid zone name) through the chat bridge and the session message route. `project_role` is a server hint: clients do not send it. The runtime reads all three in `SystemPrompt.context()`.
+`reply_mode`, `form_factor`, `time_zone` and `answer_cards` are the client hints; allternit-api passes only those exact keys (and, for `time_zone`, a valid zone name) through the chat bridge and the session message route. `project_role` is a server hint: clients do not send it. The runtime reads them in `SystemPrompt.context()`.
 
 ## Server-started bot turns
 

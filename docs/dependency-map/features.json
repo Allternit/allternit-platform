@@ -223,6 +223,7 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/share-location.mdx",
+        "allternit/surfaces/docs/tools/lookup.mdx",
         "allternit/surfaces/docs/api/agent-chat.mdx",
         "allternit/cmd/allternit-api/src/client_location.rs"
       ]
