@@ -3,8 +3,8 @@ import SwiftUI
 // MARK: - Chat surface (Home)
 
 /// Home chrome (allternit-ai src/fabric-session/phone/screens/ChatsScreen.tsx):
-/// the phone header — ☰, the open chat's name (else "Allternit"), the
-/// open-chats count button and New chat — above the shared chat content.
+/// the phone header — ☰, the open chat's name (else "Allternit"), the chat
+/// ⋯ menu and New chat — above the shared chat content.
 /// The Code tab hosts the same `ChatContentView` inside its own navigation
 /// chrome (CodeModeView), so code threads reuse the chat UI.
 struct ChatView: View {
@@ -13,7 +13,26 @@ struct ChatView: View {
 
     @StateObject private var viewModel = ChatViewModel()
     @ObservedObject private var sessions = ShellSessionsStore.shared
+    @ObservedObject private var pins = RailPinsStore.shared
+    @ObservedObject private var brain = BrainStore.shared
     @State private var isShareLinkPresented = false
+    /// The chat ⋯ menu (phone calm pass step 22; web PhoneChatMenu).
+    @State private var isChatMenuOpen = false
+    /// A ⋯ row that opens a sheet waits for the menu to close first.
+    @State private var pendingMenuItem: ChatMenuItem?
+    @State private var isBrainCapturePresented = false
+    @State private var menuError: String?
+
+    private var menuItems: [ChatMenuItem] {
+        let id = viewModel.currentSessionId
+        return chatMenuItems(ChatMenuInput(
+            hasSession: id != nil,
+            hasMessages: !viewModel.messages.isEmpty,
+            pinned: id.map { pins.isPinned($0) } ?? false,
+            allowsPhoneRun: true,
+            hasBrain: brain.hasBrain
+        ))
+    }
 
     /// The open chat's name, else "Allternit" (ChatsScreen `activeChat?.name`).
     private var title: String {
@@ -30,10 +49,13 @@ struct ChatView: View {
                 onMenu: { isSidebarOpen = true }
             ) {
                 HStack(spacing: 0) {
-                    if viewModel.currentSessionId != nil, !viewModel.messages.isEmpty {
-                        PhoneIconButton(systemName: "link", label: "Share link") {
-                            isShareLinkPresented = true
-                        }
+                    // Share link moved into ⋯ so ⋯ fits beside New chat.
+                    PhoneIconButton(systemName: "ellipsis", label: "Chat options") {
+                        isChatMenuOpen = true
+                    }
+                    .popover(isPresented: $isChatMenuOpen, arrowEdge: .top) {
+                        ChatMenuPopover(items: menuItems, onSelect: selectMenuItem, onClose: { isChatMenuOpen = false })
+                            .presentationCompactAdaptation(.popover)
                     }
                     PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
                         startNewChat()
@@ -45,12 +67,48 @@ struct ChatView: View {
             ChatContentView(
                 sessionId: selectedSessionId,
                 viewModel: viewModel,
-                launchStyle: true
+                launchStyle: true,
+                chatMenuHoldsExtras: true
             )
         }
         .background(Color("BgPrimary"))
         .sheet(isPresented: $isShareLinkPresented) {
             ThreadShareSheet(sessionId: viewModel.currentSessionId, title: title, messages: viewModel.messages)
+        }
+        .sheet(isPresented: $isBrainCapturePresented) {
+            BrainCaptureSheet()
+        }
+        .onChange(of: isChatMenuOpen) { _, open in
+            guard !open, let item = pendingMenuItem else { return }
+            pendingMenuItem = nil
+            Task { @MainActor in
+                // Let the popover finish closing before a sheet comes up.
+                try? await Task.sleep(for: .milliseconds(300))
+                switch item {
+                case .shareLink: isShareLinkPresented = true
+                case .captureToBrain: isBrainCapturePresented = true
+                default: break
+                }
+            }
+        }
+        .alert("Couldn't archive this chat", isPresented: Binding(
+            get: { menuError != nil },
+            set: { if !$0 { menuError = nil } }
+        )) {
+            Button("OK", role: .cancel) { menuError = nil }
+        } message: {
+            Text(menuError ?? "")
+        }
+        .onAppear {
+            #if DEBUG
+            // `-open-chat-menu` (DEBUG only): the ⋯ menu for screenshots.
+            if launchArgumentEnabled(LaunchArgument.openChatMenu) {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(600))
+                    isChatMenuOpen = true
+                }
+            }
+            #endif
         }
         // The drawer's New chat / New pill: start fresh even when the
         // selection was already nil (a just-sent chat has no selection).
@@ -74,6 +132,96 @@ struct ChatView: View {
     private func startNewChat() {
         selectedSessionId = nil
         viewModel.startNewSession()
+    }
+
+    private func selectMenuItem(_ item: ChatMenuItem) {
+        switch item {
+        case .runOnPhone:
+            // RunOnPhoneRow draws and runs itself inside the menu.
+            break
+        case .captureToBrain, .shareLink:
+            pendingMenuItem = item
+            isChatMenuOpen = false
+        case .pin, .unpin:
+            guard let id = viewModel.currentSessionId else { return }
+            Haptics.selection()
+            pins.toggle(id: id, kind: "chat", mode: "chat")
+            isChatMenuOpen = false
+        case .archive:
+            guard let id = viewModel.currentSessionId else { return }
+            Haptics.light()
+            isChatMenuOpen = false
+            Task {
+                do {
+                    try await sessions.archive(id: id)
+                    startNewChat()
+                } catch {
+                    menuError = plainErrorText(error)
+                }
+            }
+        }
+    }
+}
+
+/// The chat ⋯ menu's rows (web PhoneChatMenu): Run on my phone and Capture
+/// to brain (moved from the + sheet), Share link (from the header), then
+/// Pin / Unpin and Archive while a saved chat is open. A popover, so it
+/// grows from ⋯; glass on iOS 26.
+private struct ChatMenuPopover: View {
+    let items: [ChatMenuItem]
+    let onSelect: (ChatMenuItem) -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(items, id: \.self) { item in
+                if item == .runOnPhone {
+                    RunOnPhoneRow(onArmed: onClose)
+                } else {
+                    Button(action: { onSelect(item) }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: icon(item))
+                                .font(.system(size: 16))
+                                .foregroundColor(Color("TextPrimary"))
+                                .frame(width: 24)
+                                .accessibilityHidden(true)
+                            Text(label(item))
+                                .font(.system(size: 15))
+                                .foregroundColor(Color("TextPrimary"))
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(8)
+        .frame(width: 300)
+    }
+
+    private func label(_ item: ChatMenuItem) -> String {
+        switch item {
+        case .runOnPhone: return "Run on my phone"
+        case .captureToBrain: return "Capture to brain"
+        case .shareLink: return "Share link"
+        case .pin: return "Pin"
+        case .unpin: return "Unpin"
+        case .archive: return "Archive"
+        }
+    }
+
+    private func icon(_ item: ChatMenuItem) -> String {
+        switch item {
+        case .runOnPhone: return "iphone"
+        case .captureToBrain: return "brain.head.profile"
+        case .shareLink: return "link"
+        case .pin: return "pin"
+        case .unpin: return "pin.slash"
+        case .archive: return "archivebox"
+        }
     }
 }
 
@@ -111,6 +259,9 @@ struct ChatContentView: View {
     var artifactStudio: ArtifactStudioSession? = nil
     /// Artifacts ▾ → All artifacts, in an artifact session.
     var onAllArtifacts: (() -> Void)? = nil
+    /// The host has a chat ⋯ menu (ChatView), so Run on my phone and Capture
+    /// to brain leave the + sheet. Other hosts keep them in the sheet.
+    var chatMenuHoldsExtras: Bool = false
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -495,7 +646,7 @@ struct ChatContentView: View {
         .padding(.bottom, 4)
         .background(backdropUnderneath ? Color.clear : (terminal ? TerminalPalette.background : Color("BgPrimary")))
         .sheet(isPresented: $isCodePlusSheetPresented) {
-            ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: viewModel.currentSessionId)
+            ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: viewModel.currentSessionId, showsPermission: false)
         }
     }
 
@@ -553,6 +704,7 @@ struct ChatContentView: View {
             artifactKind: artifactStudio?.kind,
             onAllArtifacts: onAllArtifacts,
             allowsPhoneRun: artifactStudio == nil,
+            chatMenuHoldsExtras: chatMenuHoldsExtras,
             armedPhoneName: phoneRuns.armed?.name,
             onClearPhone: { phoneRuns.armed = nil }
         )

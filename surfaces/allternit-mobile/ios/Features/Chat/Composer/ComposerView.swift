@@ -61,7 +61,8 @@ struct ComposerView: View {
     var placeholderOverride: String? = nil
     /// The picked bot's colour on the card's border (Bots home To: chip).
     var accentBorder: Color? = nil
-    /// The Auto / Ask / Read-only pill (chat only; the Bots home has none).
+    /// "Permission · Auto ›" in the + sheet (chat only; the Bots home and bot
+    /// threads have none). The composer row has no permission pill (C2).
     var showsPermission: Bool = true
     /// The tray above the card (ThreadComposer `topDeck`): a bot thread's
     /// tabs — the open thread · Threads · Tasks · Bot.
@@ -76,8 +77,12 @@ struct ComposerView: View {
     var artifactKind: ArtifactStudioKind? = nil
     /// Artifacts ▾ → All artifacts, in an artifact session.
     var onAllArtifacts: (() -> Void)? = nil
-    /// "Run on my phone" in the "+" sheet, and the "On <phone>" chip while armed.
+    /// "Run on my phone" (chat ⋯ menu, or the + sheet when the host has no
+    /// ⋯ menu), and the "On <phone>" chip while armed.
     var allowsPhoneRun: Bool = false
+    /// The host's chat ⋯ menu holds Run on my phone and Capture to brain, so
+    /// the + sheet leaves them out (ChatView's Home chat).
+    var chatMenuHoldsExtras: Bool = false
     var armedPhoneName: String? = nil
     var onClearPhone: (() -> Void)? = nil
     /// The computer chip above the card (contract C4). On in every chat,
@@ -110,6 +115,8 @@ struct ComposerView: View {
     @State private var dictationBase = ""
     @ObservedObject private var chipStore = ComputerChipStore.shared
     @ReducedMotion private var reduceMotion
+    /// The + sheet grows from the + (iOS 18 zoom).
+    @Namespace private var plusZoom
 
     private var mode: AppMode { artifactKind != nil ? .chat : modeStore.mode }
     private var agentOn: Bool { agentModeStore.isAgentEnabled(for: mode) }
@@ -256,7 +263,15 @@ struct ComposerView: View {
             inputText = dictationBase + transcript
         }
         .sheet(isPresented: $isPlusSheetPresented) {
-            ComposerPlusSheet(attachmentStore: attachmentStore, sessionId: sessionId, allowsPhoneRun: allowsPhoneRun)
+            ComposerPlusSheet(
+                attachmentStore: attachmentStore,
+                sessionId: sessionId,
+                allowsPhoneRun: allowsPhoneRun,
+                showsPermission: plusShowsPermission,
+                chatMenuHoldsExtras: chatMenuHoldsExtras,
+                fadesIn: reduceMotion
+            )
+            .composerPlusZoomDestination(plusZoom, enabled: !reduceMotion)
         }
         .sheet(isPresented: $isModelPickerPresented) {
             ModelPickerSheet(modelStore: modelStore)
@@ -277,7 +292,12 @@ struct ComposerView: View {
             // `-open-plus-sheet` / `-open-model-picker` (DEBUG only): jump
             // straight to a composer sheet for screenshots (simctl has no
             // tap injection).
-            if launchArgumentEnabled("open-plus-sheet") { isPlusSheetPresented = true }
+            if showsAttach,
+               launchArgumentEnabled(LaunchArgument.openPlusSheet)
+                || launchArgumentEnabled(LaunchArgument.openPlusPermission)
+                || launchArgumentEnabled(LaunchArgument.openPlusComputer) {
+                isPlusSheetPresented = true
+            }
             if launchArgumentEnabled("open-model-picker") { isModelPickerPresented = true }
             if launchArgumentEnabled("open-mic-priming") { isMicPrimingPresented = true }
             // `-enable-agent-mode` (DEBUG only): arm the first deck mode.
@@ -357,14 +377,29 @@ struct ComposerView: View {
         .shadow(color: .black.opacity(0.03), radius: 4, y: 2)
     }
 
+    /// The + sheet shows "Permission · Auto ›" where the pill used to show.
+    private var plusShowsPermission: Bool {
+        showsPermission && (mode == .chat || mode == .cowork)
+    }
+
+    /// + opens "Add to chat": it grows from the + (iOS 18+); under reduced
+    /// motion it appears without the slide and fades in.
+    private func openPlusSheet() {
+        Haptics.light()
+        if reduceMotion {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { isPlusSheetPresented = true }
+        } else {
+            isPlusSheetPresented = true
+        }
+    }
+
     private var controlsRow: some View {
         HStack(spacing: 6) {
             HStack(spacing: 4) {
                 if showsAttach {
-                    Button(action: {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        isPlusSheetPresented = true
-                    }) {
+                    Button(action: openPlusSheet) {
                         Image(systemName: "plus")
                             .font(.system(size: 20, weight: .medium))
                             .foregroundColor(Color("TextSecondary"))
@@ -375,15 +410,12 @@ struct ComposerView: View {
                             .overlay(alignment: .topTrailing) {
                                 if showsComputerChip { ComputerChipDot().offset(x: -3, y: 3) }
                             }
+                            .composerPlusZoomSource(plusZoom, enabled: !reduceMotion)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Add files")
+                    .accessibilityLabel("Add to chat")
                 }
-
-                // How freely this chat works: Auto · Ask · Read-only (chat only).
-                if showsPermission, mode == .chat || mode == .cowork {
-                    ChatPermissionPill(sessionId: sessionId)
-                }
+                // Permission (Auto · Ask · Read-only) lives in the + sheet (C2).
             }
             .fixedSize()
 

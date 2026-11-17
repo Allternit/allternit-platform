@@ -159,6 +159,12 @@ final class ComputerChipStore: ObservableObject {
         dismissedKey = state.key
     }
 
+    /// Brings a closed chip back above the composer. The + sheet's Computer
+    /// page calls it: that page is where the folded dot leads.
+    func restore() {
+        dismissedKey = nil
+    }
+
     /// Brings the sources up to date (each call is cheap when fresh).
     func refreshSources() async {
         guard forced == nil, AuthManager.shared.isSignedIn else { return }

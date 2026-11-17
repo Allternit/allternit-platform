@@ -54,4 +54,20 @@ enum LaunchArgument {
     /// force the no-computer chip above the composer into one state for
     /// screenshots (`ComputerChipStore`).
     static let calmChip = "calm-chip"
+
+    /// `-open-plus-sheet` (DEBUG only): open the composer's + sheet
+    /// ("Add to chat") on launch. Combine with `-chat`.
+    static let openPlusSheet = "open-plus-sheet"
+
+    /// `-open-plus-permission` (DEBUG only): open the + sheet on its
+    /// Permission page (Auto / Ask / Read-only).
+    static let openPlusPermission = "open-plus-permission"
+
+    /// `-open-plus-computer` (DEBUG only): open the + sheet on its Computer
+    /// page (the computer list, the fix action).
+    static let openPlusComputer = "open-plus-computer"
+
+    /// `-open-chat-menu` (DEBUG only): open the chat's ⋯ menu (Run on my
+    /// phone, Capture to brain, Share link, Pin, Archive).
+    static let openChatMenu = "open-chat-menu"
 }
