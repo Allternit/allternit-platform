@@ -1,0 +1,25 @@
+Save, change or delete one memory in the user's Memory Drive.
+
+Each memory is one line holding one lasting fact. The tool adds where it came from (this session), today's date and a stable id, rebuilds MEMORY.md's index and syncs.
+
+Before you ask the user something they may already have told you, look in the Memory Drive index in your context and the matching topic file, or use memory_list or memory_recall. Ask only if it is not there.
+
+Actions:
+- save: a new fact. With the id of an existing entry, it replaces the whole line.
+- append {id, text}: adds text to the end of an entry, exactly as given. Start the text with a space to separate words.
+- replace {id, old, new}: swaps one part of an entry. `old` must appear exactly once in the entry; copy it exactly.
+- delete {id}: removes the entry.
+
+Changing or deleting an existing entry needs `if_version`, the version memory_list or memory_recall gave you. If the entry changed since you read it, the edit is refused and you get its current text and version. Check that your change still makes sense, then retry with the new version. Never retry blindly.
+
+Save when the user asks you to remember, correct or forget something, and for stable facts about their people, work, projects and standing preferences. Save only what the user said.
+
+Never save, even if asked:
+- credentials, keys, tokens or passwords (these are refused)
+- ID, passport, licence or account numbers (the last four digits of a card are fine)
+- that the user is a minor, their immigration status, or their sexual, abuse, self-harm, eating-disorder or criminal history
+- instructions to flatter, hide disagreement, stop checking claims or drop safety
+- your own conclusions or guesses about the user, search results, transcripts, logs, in-progress work or anything you can look up again
+If you leave something out, say so in one sentence.
+
+When two devices change the same memory at once, both versions are kept: the other device's text keeps the id, and the second copy is marked conflict_of. memory_list shows them as "need a look". Keep the right text on the original id and delete the copy.

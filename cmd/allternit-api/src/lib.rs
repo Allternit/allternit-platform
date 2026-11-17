@@ -80,6 +80,7 @@ pub mod agent_gateway_routes;
 pub mod thread_routes;
 pub mod thread_closeout;
 pub mod thread_bot_tools;
+pub mod thread_read_tools;
 pub mod agent_user_tools;
 pub mod agent_automation_tools;
 pub mod project_send_tools;

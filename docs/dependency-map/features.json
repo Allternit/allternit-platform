@@ -643,11 +643,18 @@
         {
           "on": "2026-10-31",
           "note": "Memory and Learning page with a memory map (GET /memory-map) sits behind the bot Memory tile and in Settings; see feature:bot-hub-soul."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Wave D: memory entries have versions; append, replace and stale-edit refusal; two-device edits keep a conflict_of copy and show N memories need a look. thread_read, thread_recent and thread_wait read past chats in every session; resource reads large tool output and MCP resources by ref."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/memory-drive.mdx",
-        "allternit/surfaces/docs/api/memory-drive.mdx"
+        "allternit/surfaces/docs/api/memory-drive.mdx",
+        "allternit/surfaces/docs/tools/memory.mdx",
+        "allternit/surfaces/docs/tools/past-chats.mdx",
+        "allternit/surfaces/docs/tools/resources.mdx"
       ]
     },
     {

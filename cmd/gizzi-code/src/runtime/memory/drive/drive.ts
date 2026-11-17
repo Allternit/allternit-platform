@@ -20,12 +20,21 @@ import { DriveCheckout, type DriveRemote, type DriveStatus, type SearchHit, type
 import {
   boundedEntrypoint,
   collectEntries,
+  CONFLICT_KEY,
+  conflictEntries,
   deriveEntryId,
   ENTRYPOINT,
+  entryVersion,
+  EntryVersionError,
+  needsLookLine,
+  readEntries,
+  renderEntry,
   today,
   validatePath,
   validateSource,
+  type DriveFiles,
   type Entry,
+  type LocatedEntry,
   type Operation,
 } from "./format"
 import {
@@ -72,7 +81,100 @@ export interface RememberInput {
   ref?: string
   /** Project directory, used for the default `projects/<name>` topic. */
   projectDir?: string
+  /** The version the caller last read (memory_list / memory_recall). A different current version refuses the write. */
+  ifVersion?: string
+  /** Refuse to change an existing entry when no `ifVersion` is given (the memory_write tool sets this). */
+  requireVersion?: boolean
 }
+
+/** append adds text to the end of an entry; replace swaps `old` (must occur exactly once) for `new`. */
+export type EditInput = {
+  id: string
+  ifVersion?: string
+  requireVersion?: boolean
+  sessionId?: string
+  ref?: string
+} & ({ action: "append"; text: string } | { action: "replace"; old: string; new: string })
+
+export interface EditOutcome {
+  entry: Entry
+  path: string
+  ref: string
+  /** Version of the entry's line after the write (pass it as if_version next time). */
+  version?: string
+  result: WriteResult
+  /** Another device changed the same entry at the same time: our text was kept under this sibling id. */
+  conflict?: string
+}
+
+/** No entry with that id in the drive. */
+export class EntryMissingError extends Error {
+  constructor(
+    readonly id: string,
+    readonly ref: string,
+  ) {
+    super(`No memory with id ${id} in ${ref}. Find it with memory_list or memory_recall.`)
+    this.name = "EntryMissingError"
+  }
+}
+
+/** `replace` found `old` zero times or more than once. */
+export class ReplaceMatchError extends Error {
+  constructor(readonly matches: number) {
+    super(
+      matches === 0
+        ? "The old text does not appear in that memory; copy it exactly from memory_list."
+        : `The old text appears ${matches} times in that memory; include more words so it matches once.`,
+    )
+    this.name = "ReplaceMatchError"
+  }
+}
+
+export interface ListedEntry {
+  id: string
+  version: string
+  text: string
+  added: string
+  /** Set on a sibling that holds one side of a conflicting edit. */
+  conflictOf?: string
+}
+
+export interface TopicListing {
+  ref: string
+  topics: { path: string; count: number; needsLook: number }[]
+  needsLook: ListedEntry[]
+}
+
+export interface EntryListing {
+  ref: string
+  path: string
+  entries: ListedEntry[]
+  total: number
+  /** Pass as `after` for the next page. */
+  next?: string
+}
+
+function listed(e: LocatedEntry): ListedEntry {
+  const conflictOf = e.entry.metadata[CONFLICT_KEY]
+  return { id: e.entry.id, version: entryVersion(e.line), text: e.entry.text, added: e.entry.added, ...(conflictOf ? { conflictOf } : {}) }
+}
+
+/** Refuse when the caller's version is not the entry's current one (or none was given and one is required). */
+function checkVersion(found: LocatedEntry, ifVersion: string | undefined, required: boolean): void {
+  const version = entryVersion(found.line)
+  const given = ifVersion?.trim()
+  if (given ? given !== version : required) {
+    throw new EntryVersionError(found.entry.id, found.entry.text, version, given ? "stale" : "missing")
+  }
+}
+
+function countMatches(haystack: string, needle: string): number {
+  let count = 0
+  for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + needle.length)) count++
+  return count
+}
+
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim()
 
 function author() {
   const host = os.hostname().replace(/[<>\n\r]/g, "").slice(0, 60) || "this computer"
@@ -315,57 +417,127 @@ export namespace MemoryDrive {
   }
 
   /** Save (or update by id) one fact as a spec bullet. */
-  export async function remember(input: RememberInput): Promise<{ entry: Entry; path: string; ref: string; result: WriteResult }> {
+  /**
+   * Save (or update by id) one fact as a spec bullet. Updating an existing id
+   * checks `ifVersion` against the latest head inside the write lock; saving
+   * over an entry settles a conflict, so `conflict_of` is dropped.
+   */
+  export async function remember(input: RememberInput): Promise<{ entry: Entry; path: string; ref: string; result: WriteResult; version?: string; conflict?: string }> {
     const ref = input.ref ?? "personal"
-    const text = input.text.replace(/\s+/g, " ").trim()
+    const text = oneLine(input.text)
     const source = sessionSource(input.sessionId)
     validateSource(source)
     const added = today()
     const checkout = await open(ref)
     await checkout.ensure()
-    let target = input.topic || !input.id ? topicPath(input.topic, input.type, input.projectDir) : undefined
-    let existing: Entry | undefined
-    if (input.id) {
-      const { files } = await checkout.workingFiles()
-      const found = safeCollect(files).get(input.id)
-      if (found) {
-        existing = found.entry
-        target ??= found.path
-      }
-      target ??= topicPath(undefined, input.type, input.projectDir)
-    }
     const id = input.id ?? deriveEntryId(text, source, added)
-    const entry: Entry = {
-      id,
-      text,
-      source,
-      added,
-      metadata: {
-        ...(existing?.metadata ?? {}),
-        memory_type: memoryTypeFor(input.type ?? existing?.metadata.memory_type),
-        agent: "gizzi",
-      },
-    }
+    let entry!: Entry
+    let target!: string
+    let line = ""
     contextCache = undefined
-    const result = await checkout.write([{ UpsertEntry: { path: target!, entry } }], {
-      message: existing ? `Update memory: ${summary(text)}` : `Remember: ${summary(text)}`,
-      source,
-    })
-    return { entry, path: target!, ref, result }
+    const result = await checkout.write(
+      (files) => {
+        const existing = input.id ? safeCollect(files).get(input.id) : undefined
+        if (existing) checkVersion(existing, input.ifVersion, !!input.requireVersion)
+        target = input.topic || !existing ? topicPath(input.topic, input.type, input.projectDir) : existing.path
+        const kept = { ...(existing?.entry.metadata ?? {}) }
+        delete kept[CONFLICT_KEY]
+        entry = {
+          id,
+          text,
+          source,
+          added,
+          metadata: { ...kept, memory_type: memoryTypeFor(input.type ?? existing?.entry.metadata.memory_type), agent: "gizzi" },
+        }
+        line = renderEntry(entry)
+        return {
+          operations: [{ UpsertEntry: { path: target, entry } }],
+          message: existing ? `Update memory: ${summary(text)}` : `Remember: ${summary(text)}`,
+        }
+      },
+      { message: `Remember: ${summary(text)}`, source },
+    )
+    return { entry, path: target, ref, result, ...(await afterWrite(checkout, id, line)) }
   }
 
-  export async function forget(id: string, options: { ref?: string; sessionId?: string } = {}): Promise<{ found: boolean; result?: WriteResult }> {
-    const checkout = await open(options.ref ?? "personal")
+  export async function forget(
+    id: string,
+    options: { ref?: string; sessionId?: string; ifVersion?: string; requireVersion?: boolean } = {},
+  ): Promise<{ found: boolean; result?: WriteResult }> {
+    const ref = options.ref ?? "personal"
+    const checkout = await open(ref)
     await checkout.ensure()
-    const { files } = await checkout.workingFiles()
-    const found = safeCollect(files).get(id)
-    if (!found) return { found: false }
     contextCache = undefined
-    const result = await checkout.write([{ DeleteEntry: { id } }], {
-      message: `Forget: ${summary(found.entry.text)}`,
-      source: sessionSource(options.sessionId),
-    })
-    return { found: true, result }
+    try {
+      const result = await checkout.write(
+        (files) => {
+          const found = safeCollect(files).get(id)
+          if (!found) throw new EntryMissingError(id, ref)
+          checkVersion(found, options.ifVersion, !!options.requireVersion)
+          return { operations: [{ DeleteEntry: { id } }], message: `Forget: ${summary(found.entry.text)}` }
+        },
+        { message: `Forget: ${id}`, source: sessionSource(options.sessionId) },
+      )
+      return { found: true, result }
+    } catch (error) {
+      if (error instanceof EntryMissingError) return { found: false }
+      throw error
+    }
+  }
+
+  /**
+   * Partial edit of one entry: `append` adds text exactly as given (start it
+   * with a space to separate words); `replace` swaps `old`, which must occur
+   * exactly once, for `new`. The secret gate runs on the resulting line, so
+   * fragments that only spell a credential together are refused.
+   */
+  export async function edit(input: EditInput): Promise<EditOutcome> {
+    const ref = input.ref ?? "personal"
+    const source = sessionSource(input.sessionId)
+    validateSource(source)
+    const checkout = await open(ref)
+    await checkout.ensure()
+    let entry!: Entry
+    let target!: string
+    let line = ""
+    contextCache = undefined
+    const result = await checkout.write(
+      (files) => {
+        const found = safeCollect(files).get(input.id)
+        if (!found) throw new EntryMissingError(input.id, ref)
+        checkVersion(found, input.ifVersion, !!input.requireVersion)
+        let text: string
+        if (input.action === "append") {
+          if (!input.text) throw new Error("Pass the text to add.")
+          text = oneLine(found.entry.text + input.text)
+        } else {
+          if (!input.old) throw new Error("Pass the exact old text to replace.")
+          const matches = countMatches(found.entry.text, input.old)
+          if (matches !== 1) throw new ReplaceMatchError(matches)
+          const at = found.entry.text.indexOf(input.old)
+          text = oneLine(found.entry.text.slice(0, at) + input.new + found.entry.text.slice(at + input.old.length))
+        }
+        if (!text) throw new Error("That edit would leave the memory empty; delete it instead.")
+        target = found.path
+        entry = { id: input.id, text, source, added: today(), metadata: { ...found.entry.metadata, agent: "gizzi" } }
+        line = renderEntry(entry)
+        return { operations: [{ UpsertEntry: { path: target, entry } }], message: `Update memory: ${summary(text)}` }
+      },
+      { message: `Update memory: ${input.id}`, source },
+    )
+    return { entry, path: target, ref, result, ...(await afterWrite(checkout, input.id, line)) }
+  }
+
+  /**
+   * The entry's version as it stands after a write, and whether a concurrent
+   * edit from another device turned our write into a `conflict_of` sibling.
+   */
+  async function afterWrite(checkout: DriveCheckout, id: string, line: string): Promise<{ version?: string; conflict?: string }> {
+    const { files } = await checkout.workingFiles()
+    const now = safeCollect(files).get(id)
+    if (!now || now.line === line) return { version: now ? entryVersion(now.line) : undefined }
+    const sibling = conflictEntries(files).find((e) => e.entry.metadata[CONFLICT_KEY] === id && e.entry.text === parseText(line))
+    return { version: entryVersion(now.line), conflict: sibling?.entry.id }
   }
 
   /** Fold edits made with file tools / an editor into a commit and sync. */
@@ -451,6 +623,66 @@ export namespace MemoryDrive {
     return out
   }
 
+  /** Resolve a drive given as a ref (`project:<id>`) or a mounted drive's name; personal when empty. */
+  export async function resolveRef(drive?: string): Promise<string> {
+    const wanted = drive?.trim()
+    if (!wanted || wanted.toLowerCase() === "personal") return "personal"
+    const mounted = await mounts()
+    const match = mounted.find((m) => m.ref === wanted) ?? mounted.find((m) => m.name.toLowerCase() === wanted.toLowerCase())
+    if (!match) {
+      const names = mounted.map((m) => `${m.name} (${m.ref})`).join(", ")
+      throw new Error(`No mounted drive named ${wanted}.${names ? ` Mounted: ${names}.` : " Only the personal drive is available."}`)
+    }
+    return match.ref
+  }
+
+  async function readFiles(ref: string): Promise<DriveFiles> {
+    const checkout = await open(ref)
+    if (ref === "personal") await checkout.ensure()
+    else if (!existsSync(path.join(checkout.dir, ".git"))) return {}
+    return (await checkout.workingFiles()).files
+  }
+
+  /** Topic files with their entry counts, plus every entry that needs a look. */
+  export async function listTopics(ref = "personal"): Promise<TopicListing> {
+    const entries = readEntries(await readFiles(ref))
+    const byPath = new Map<string, { count: number; needsLook: number }>()
+    for (const e of entries) {
+      const row = byPath.get(e.path) ?? { count: 0, needsLook: 0 }
+      row.count++
+      if (e.entry.metadata[CONFLICT_KEY]) row.needsLook++
+      byPath.set(e.path, row)
+    }
+    return {
+      ref,
+      topics: [...byPath].map(([p, row]) => ({ path: p, ...row })),
+      needsLook: entries.filter((e) => e.entry.metadata[CONFLICT_KEY]).map(listed),
+    }
+  }
+
+  /** One topic's entries in file order, `limit` per page after the entry id `after`. */
+  export async function listEntries(ref: string, topic: string, options: { after?: string; limit?: number } = {}): Promise<EntryListing> {
+    const files = await readFiles(ref)
+    const raw = topic.trim().replace(/^\/+/, "")
+    const rel = raw.endsWith(".md") ? raw : `${raw}.md`
+    validatePath(rel)
+    if (!(rel in files)) {
+      const known = Object.keys(files).sort().join(", ")
+      throw new Error(`No topic ${rel} in ${ref}.${known ? ` Topics: ${known}.` : ""}`)
+    }
+    const all = readEntries({ [rel]: files[rel]! })
+    let start = 0
+    if (options.after) {
+      const at = all.findIndex((e) => e.entry.id === options.after)
+      if (at < 0) throw new Error(`No entry ${options.after} in ${rel}; list the topic again without after.`)
+      start = at + 1
+    }
+    const limit = Math.max(1, Math.min(options.limit ?? 200, 200))
+    const page = all.slice(start, start + limit)
+    const more = start + limit < all.length
+    return { ref, path: rel, entries: page.map(listed), total: all.length, ...(more ? { next: page[page.length - 1]!.entry.id } : {}) }
+  }
+
   /**
    * The system-prompt section for a session: each drive's MEMORY.md with its
    * checkout path, how to read topic files and how to save. Waits a bounded
@@ -498,7 +730,7 @@ export namespace MemoryDrive {
   }
 
   export function toolSaveInstructions(writeTool: string): string {
-    return `Save, update or delete memories with the \`${writeTool}\` tool. It adds the source, date and id, regenerates the index and syncs; do not edit MEMORY.md's index by hand. Never store credentials, transcripts or raw logs.`
+    return `Save, update or delete memories with the \`${writeTool}\` tool. It adds the source, date and id, regenerates the index and syncs; do not edit MEMORY.md's index by hand. To change or delete an entry, pass the version memory_list or memory_recall gave you as if_version. Never store credentials, transcripts or raw logs.`
   }
 
   /** For harnesses whose agent edits files directly (the interactive TUI). */
@@ -516,6 +748,7 @@ export namespace MemoryDrive {
       "",
       "Your long-term memory is a git-backed Memory Drive in the Agent Memory Repo format: MEMORY.md is a short index, and each topic file holds one-line facts written as `- <fact> [source: <where it came from>; added: YYYY-MM-DD; id: <id>]`.",
       `Topic files listed under "## Index" as [[topic]] live at <checkout>/<topic>.md. Read them with your normal file tools when they are relevant to the task; they are not loaded automatically.`,
+      "Before you ask the user something they may already have told you (a preference, a person, a project detail), check this index and the matching topic file first.",
       saveInstructions,
       "",
     ]
@@ -526,6 +759,11 @@ export namespace MemoryDrive {
       if (status?.pending) lines.push(`Sync: ${status.ahead} local change(s) not yet on the server${status.lastError ? ` — ${status.lastError}` : ""}.`)
       else if (status?.lastError) lines.push(`Sync problem: ${status.lastError}`)
       if (status?.rejected) lines.push(`Not saved: ${status.rejected}`)
+      if (status?.needsLook) {
+        lines.push(
+          `${needsLookLine(status.needsLook)}: two devices changed the same memory, so both versions were kept (the copy is marked conflict_of). List them with memory_list and keep the right one.`,
+        )
+      }
       lines.push("", block.entrypoint ? block.entrypoint : "(MEMORY.md is empty — nothing saved yet.)", "")
     }
     return lines.join("\n").trimEnd()
@@ -552,6 +790,13 @@ export namespace MemoryDrive {
   }
 
   export const LOCAL = LOCAL_ACCOUNT
+}
+
+/** The text part of a rendered entry line (`- <text> [meta]`). */
+function parseText(line: string): string {
+  const body = line.slice(2)
+  const cut = body.lastIndexOf(" [")
+  return cut < 0 ? body : body.slice(0, cut)
 }
 
 function summary(text: string): string {

@@ -185,6 +185,19 @@ enum ToolDescriber {
             let detail = s("description").isEmpty ? String(s("prompt", "message", "task").prefix(80)) : s("description")
             return ToolDescription(verb: SubagentNames.title(for: subagent.isEmpty ? nil : subagent), detail: detail, symbol: "person.2.fill", subagent: subagent.isEmpty ? "agent" : subagent)
         }
+        if name == "memorylist" {
+            return ToolDescription(verb: "Listed memories", detail: s("path", "query"), symbol: "brain")
+        }
+        if name == "memorywrite" || name == "memoryedit" {
+            if call.state == .failed || (call.error ?? "").lowercased().contains("stale") || (call.error ?? "").lowercased().contains("changed") {
+                return ToolDescription(verb: "Memory edit refused \u{2014} it changed", detail: s("path"), symbol: "brain")
+            }
+            return ToolDescription(verb: running ? "Editing a memory" : "Edited a memory", detail: s("path", "text"), symbol: "brain")
+        }
+        if name == "threadread" { return ToolDescription(verb: "Read a past chat", detail: s("thread_id", "id"), symbol: "bubble.left.and.text.bubble.right") }
+        if name == "threadrecent" { return ToolDescription(verb: "Checked recent chats", detail: "", symbol: "bubble.left.and.text.bubble.right") }
+        if name == "threadwait" { return ToolDescription(verb: "Waited on chats", detail: "", symbol: "bubble.left.and.text.bubble.right") }
+        if name == "resource" { return ToolDescription(verb: "Read saved output", detail: s("id", "uri", "path"), symbol: "doc.text") }
         if name.contains("websearch") || name.contains("googlesearch") || name == "search" {
             return ToolDescription(verb: running ? "Searching the web" : "Searched the web", detail: query, symbol: "globe")
         }

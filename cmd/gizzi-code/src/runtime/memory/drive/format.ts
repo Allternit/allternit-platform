@@ -546,9 +546,24 @@ export function applyOperations(original: DriveFiles, operations: ReplayOperatio
  * after a rejected (non-fast-forward) push and for the first-login merge.
  */
 export function diffOperations(base: DriveFiles, ours: DriveFiles): ReplayOperation[] {
-  const ops: ReplayOperation[] = []
+  const ops: ReplayOperation[] = fileCreateOperations(base, ours)
   const baseEntries = collectEntries(base)
   const ourEntries = collectEntries(ours)
+  for (const [id, mine] of ourEntries) {
+    const theirs = baseEntries.get(id)
+    if (!theirs || theirs.line !== mine.line || theirs.path !== mine.path) {
+      ops.push({ UpsertEntry: { path: mine.path, entry: mine.entry } })
+    }
+  }
+  for (const id of baseEntries.keys()) {
+    if (!ourEntries.has(id)) ops.push({ DeleteEntry: { id } })
+  }
+  return [...ops, ...fileRemoveOperations(base, ours)]
+}
+
+/** New topic files and heading edits that turn `base` into `ours`. */
+function fileCreateOperations(base: DriveFiles, ours: DriveFiles): ReplayOperation[] {
+  const ops: ReplayOperation[] = []
   for (const path of sortedFiles(ours)) {
     if (path === ENTRYPOINT || path in base) continue
     ops.push({ EnsureFile: { path, content: `${headerBlock(ours[path]!)}\n` } })
@@ -559,20 +574,150 @@ export function diffOperations(base: DriveFiles, ours: DriveFiles): ReplayOperat
     const after = headerBlock(ours[path]!)
     if (before !== after) ops.push({ SetHeader: { path, base: before, header: after } })
   }
-  for (const [id, mine] of ourEntries) {
-    const theirs = baseEntries.get(id)
-    if (!theirs || theirs.line !== mine.line || theirs.path !== mine.path) {
-      ops.push({ UpsertEntry: { path: mine.path, entry: mine.entry } })
-    }
-  }
-  for (const id of baseEntries.keys()) {
-    if (!ourEntries.has(id)) ops.push({ DeleteEntry: { id } })
-  }
+  return ops
+}
+
+/** Topic files `ours` removed since `base` (removed only if the target still matches). */
+function fileRemoveOperations(base: DriveFiles, ours: DriveFiles): ReplayOperation[] {
+  const ops: ReplayOperation[] = []
   for (const path of sortedFiles(base)) {
     if (path === ENTRYPOINT || path in ours) continue
     ops.push({ DeleteFileIfUnchanged: { path, base: base[path]! } })
   }
   return ops
+}
+
+// ── versions and conflicts (Wave D) ──────────────────────────────────────────
+
+/** Metadata key on the entry that holds this device's side of a conflicting edit. */
+export const CONFLICT_KEY = "conflict_of"
+
+/**
+ * An entry's version: the first 12 hex characters of SHA-256 over its line
+ * exactly as stored (UTF-8, no newline). Any change to the text or metadata
+ * changes it. Edits pass it back as `if_version`.
+ */
+export function entryVersion(line: string): string {
+  return createHash("sha256").update(line, "utf8").digest("hex").slice(0, 12)
+}
+
+/** Id of the sibling entry that keeps our side of a conflict on `id`. */
+export function conflictSiblingId(id: string, line: string): string {
+  return `${id.slice(0, 100)}-conflict-${entryVersion(line).slice(0, 8)}`
+}
+
+/** An edit named a version that is not the entry's current one (or named none). */
+export class EntryVersionError extends Error {
+  constructor(
+    readonly id: string,
+    readonly current: string,
+    readonly version: string,
+    readonly reason: "stale" | "missing",
+  ) {
+    super(
+      reason === "missing"
+        ? `Memory ${id} already exists; pass its version (${version}) as if_version to change it.`
+        : `Memory ${id} changed since you read it; its version is now ${version}.`,
+    )
+    this.name = "EntryVersionError"
+  }
+}
+
+/**
+ * Three-way, per-entry replay of local work (`base` → `ours`) onto a newer
+ * head (`theirs`). Unlike {@link diffOperations}, the other device's change
+ * is never overwritten:
+ * - only we changed an entry → our version applies
+ * - both sides made the same text → theirs stays as is
+ * - both changed it differently → theirs stays; ours is kept as a sibling
+ *   entry (new id, metadata `conflict_of: <id>`)
+ * - we edited, they deleted → our edit comes back (an edit beats a delete)
+ * - we deleted, they edited → their edit stays
+ * `conflicts` maps an id to its sibling id across the steps of one replay,
+ * so later local commits that touch the same entry update the same sibling.
+ */
+export function mergeOperations(
+  base: DriveFiles,
+  ours: DriveFiles,
+  theirs: DriveFiles,
+  conflicts: Map<string, string> = new Map(),
+): ReplayOperation[] {
+  const ops: ReplayOperation[] = fileCreateOperations(base, ours)
+  const baseEntries = collectEntries(base)
+  const ourEntries = collectEntries(ours)
+  const theirEntries = collectEntries(theirs)
+  const sibling = (mine: LocatedEntry, id: string, siblingId: string): ReplayOperation => ({
+    UpsertEntry: {
+      path: mine.path,
+      entry: { ...mine.entry, id: siblingId, metadata: { ...mine.entry.metadata, [CONFLICT_KEY]: id } },
+    },
+  })
+  for (const [id, mine] of ourEntries) {
+    const was = baseEntries.get(id)
+    if (was && was.line === mine.line && was.path === mine.path) continue
+    const known = conflicts.get(id)
+    if (known) {
+      ops.push(sibling(mine, id, known))
+      continue
+    }
+    const now = theirEntries.get(id)
+    if (!now) {
+      // New on our side, or they deleted what we edited: the edit wins.
+      ops.push({ UpsertEntry: { path: mine.path, entry: mine.entry } })
+      continue
+    }
+    if (now.entry.text === mine.entry.text && now.path === mine.path) continue
+    if (was && now.line === was.line && now.path === was.path) {
+      ops.push({ UpsertEntry: { path: mine.path, entry: mine.entry } })
+      continue
+    }
+    const siblingId = conflictSiblingId(id, mine.line)
+    conflicts.set(id, siblingId)
+    ops.push(sibling(mine, id, siblingId))
+  }
+  for (const [id, was] of baseEntries) {
+    if (ourEntries.has(id)) continue
+    const now = theirEntries.get(id)
+    // Already gone, or they edited it meanwhile (their edit beats our delete).
+    if (!now || now.line !== was.line || now.path !== was.path) continue
+    ops.push({ DeleteEntry: { id } })
+  }
+  return [...ops, ...fileRemoveOperations(base, ours)]
+}
+
+/**
+ * Every entry in the tree, tolerant of malformed lines (they are skipped).
+ * For reads and listings; writes go through the strict validators.
+ */
+export function readEntries(files: DriveFiles): LocatedEntry[] {
+  const out: LocatedEntry[] = []
+  const seen = new Set<string>()
+  for (const path of sortedFiles(files)) {
+    let inIndex = false
+    for (const line of rustLines(files[path]!)) {
+      if (path === ENTRYPOINT && line === "## Index") inIndex = true
+      if (inIndex || !isEntryLine(line)) continue
+      let entry: Entry
+      try {
+        entry = parseEntry(line)
+      } catch {
+        continue
+      }
+      if (seen.has(entry.id)) continue
+      seen.add(entry.id)
+      out.push({ path, line, entry })
+    }
+  }
+  return out
+}
+
+/** Entries holding one side of a conflict: the "N memories need a look" count. */
+export function conflictEntries(files: DriveFiles): LocatedEntry[] {
+  return readEntries(files).filter((e) => !!e.entry.metadata[CONFLICT_KEY])
+}
+
+export function needsLookLine(count: number): string {
+  return `${count} ${count === 1 ? "memory needs" : "memories need"} a look`
 }
 
 /**

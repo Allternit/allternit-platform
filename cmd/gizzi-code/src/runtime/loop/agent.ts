@@ -159,6 +159,14 @@ export namespace Agent {
       tool_search: "allow",
       get_context_remaining: "allow",
       history_recall: "allow",
+      // Wave D recall: reads of the user's own memory, past chats and this
+      // session's saved outputs. thread_wait only waits; it changes nothing.
+      memory_list: "allow",
+      thread_search: "allow",
+      thread_read: "allow",
+      thread_recent: "allow",
+      thread_wait: "allow",
+      resource: "allow",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",

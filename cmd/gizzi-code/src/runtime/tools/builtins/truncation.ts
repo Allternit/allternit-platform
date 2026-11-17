@@ -19,6 +19,18 @@ export namespace Truncate {
   const RETENTION_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
   const HOUR_MS = 60 * 60 * 1000
 
+  /**
+   * A saved output's id (`tool_<ulid>`). The `resource` tool resolves
+   * `out:<id>` to DIR/<id> only when the id matches this and the session's
+   * own tool parts name it (runtime/primitives/resource.ts).
+   */
+  export const ID = /^tool_[0-9A-Za-z]{8,64}$/
+
+  /** The session-scoped ref the truncation notice names: `out:<id>`. */
+  export function outRef(id: string): string {
+    return `out:${id}`
+  }
+
   export type Result = { content: string; truncated: false } | { content: string; truncated: true; outputPath: string }
 
   export type ModelContentItem = {
@@ -120,9 +132,10 @@ export namespace Truncate {
     const filepath = path.join(DIR, id)
     await Filesystem.write(filepath, text)
 
+    const ref = outRef(id)
     const hint = hasTaskTool(agent)
-      ? `The tool call succeeded but the output was truncated. Full output saved to: ${filepath}\nUse the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
-      : `The tool call succeeded but the output was truncated. Full output saved to: ${filepath}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+      ? `The tool call succeeded but the output was truncated. Full output saved as ref ${ref} (file: ${filepath}).\nUse the Task tool to have an explore agent process it with the resource tool (find with a pattern, read with offset/limit) or Grep and Read on the file. Do NOT read the full output yourself - delegate to save context.`
+      : `The tool call succeeded but the output was truncated. Full output saved as ref ${ref} (file: ${filepath}).\nUse the resource tool on ${ref} (find with a pattern, read with offset/limit), or Grep/Read with offset/limit on the file.`
     const message =
       direction === "head"
         ? `${preview}\n\n...${removed} ${unit} truncated...\n\n${hint}`
