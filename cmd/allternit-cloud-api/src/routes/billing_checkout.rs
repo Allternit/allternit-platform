@@ -50,13 +50,21 @@ pub struct CreditPack {
     pub id: &'static str,
     pub label: &'static str,
     pub credits_usd: f64,
+    /// App Store consumable product id (permanent once created in App Store Connect).
+    pub apple_product_id: &'static str,
+    /// Google Play one-time product id (permanent once created in the Play Console).
+    pub google_product_id: &'static str,
+    /// The store's US reference price. The pack grants the same `credits_usd` as
+    /// web; the store price is higher to cover the store fee. Clients show the
+    /// store's own localized price, never this figure.
+    pub store_price_usd: f64,
 }
 
 const CREDIT_PACKS: &[CreditPack] = &[
-    CreditPack { id: "credits_10", label: "$10", credits_usd: 10.00 },
-    CreditPack { id: "credits_25", label: "$25", credits_usd: 25.00 },
-    CreditPack { id: "credits_50", label: "$50", credits_usd: 50.00 },
-    CreditPack { id: "credits_100", label: "$100", credits_usd: 100.00 },
+    CreditPack { id: "credits_10", label: "$10", credits_usd: 10.00, apple_product_id: "com.allternit.mobile.credits.10", google_product_id: "credits_10", store_price_usd: 11.99 },
+    CreditPack { id: "credits_25", label: "$25", credits_usd: 25.00, apple_product_id: "com.allternit.mobile.credits.25", google_product_id: "credits_25", store_price_usd: 29.99 },
+    CreditPack { id: "credits_50", label: "$50", credits_usd: 50.00, apple_product_id: "com.allternit.mobile.credits.50", google_product_id: "credits_50", store_price_usd: 59.99 },
+    CreditPack { id: "credits_100", label: "$100", credits_usd: 100.00, apple_product_id: "com.allternit.mobile.credits.100", google_product_id: "credits_100", store_price_usd: 119.99 },
 ];
 
 #[derive(Debug, Serialize)]
@@ -67,9 +75,19 @@ pub struct CreditPackResponse {
     price_usd: f64,
 }
 
+/// One `GET /api/v1/billing/packs` item: the pack plus where the apps can buy
+/// it (`store`, additive: older clients ignore it). The Cloud credits 402 body
+/// keeps the plain [`CreditPackResponse`].
+#[derive(Debug, Serialize)]
+pub struct PackListing {
+    #[serde(flatten)]
+    pack: CreditPackResponse,
+    store: crate::services::store_billing::StoreOffers,
+}
+
 #[derive(Debug, Serialize)]
 pub struct PacksResponse {
-    packs: Vec<CreditPackResponse>,
+    packs: Vec<PackListing>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,19 +169,33 @@ pub fn routes() -> Router<Arc<ApiState>> {
 /// Cloud credits 402 body (`inference_settlement::credits_required_body`)
 /// carries the same list.
 pub(crate) fn credit_pack_catalog() -> Vec<CreditPackResponse> {
-    CREDIT_PACKS
-        .iter()
-        .map(|pack| CreditPackResponse {
-            id: pack.id,
-            label: pack.label,
-            credits_usd: pack.credits_usd,
-            price_usd: pack.credits_usd,
-        })
-        .collect()
+    CREDIT_PACKS.iter().map(pack_response).collect()
+}
+
+fn pack_response(pack: &CreditPack) -> CreditPackResponse {
+    CreditPackResponse {
+        id: pack.id,
+        label: pack.label,
+        credits_usd: pack.credits_usd,
+        price_usd: pack.credits_usd,
+    }
 }
 
 async fn list_packs() -> Json<PacksResponse> {
-    Json(PacksResponse { packs: credit_pack_catalog() })
+    let config = crate::services::store_billing::StoreConfig::from_env();
+    Json(packs_response(&config))
+}
+
+fn packs_response(config: &crate::services::store_billing::StoreConfig) -> PacksResponse {
+    PacksResponse {
+        packs: CREDIT_PACKS
+            .iter()
+            .map(|pack| PackListing {
+                pack: pack_response(pack),
+                store: config.offers(pack.apple_product_id, pack.google_product_id, pack.store_price_usd),
+            })
+            .collect(),
+    }
 }
 
 async fn create_checkout(
@@ -293,8 +325,13 @@ pub(crate) fn pack_sizes_usd() -> Vec<f64> {
 
 /// Look up a pack in the static catalog. Unknown ids are a 400: the client asked for a pack the
 /// server does not sell, and charging a wrong amount silently is worse than failing fast.
-fn find_pack(pack_id: &str) -> Option<&'static CreditPack> {
+pub(crate) fn find_pack(pack_id: &str) -> Option<&'static CreditPack> {
     CREDIT_PACKS.iter().find(|pack| pack.id == pack_id)
+}
+
+/// Every pack in the catalog (store product id lookups in `services::store_billing`).
+pub(crate) fn credit_packs() -> &'static [CreditPack] {
+    CREDIT_PACKS
 }
 
 /// The slice of the Stripe API this surface needs, abstracted so the orchestration is testable
@@ -611,29 +648,64 @@ mod tests {
         .is_err());
     }
 
-    #[tokio::test]
-    async fn pack_catalog_is_the_four_static_packs_at_1_to_1_pricing() {
-        let Json(packs) = list_packs().await;
-        assert_eq!(packs.packs.len(), 4);
+    #[test]
+    fn pack_catalog_is_the_four_static_packs_at_1_to_1_pricing() {
+        let packs = credit_pack_catalog();
+        assert_eq!(packs.len(), 4);
         assert_eq!(
-            packs.packs.iter().map(|pack| pack.id).collect::<Vec<_>>(),
+            packs.iter().map(|pack| pack.id).collect::<Vec<_>>(),
             vec!["credits_10", "credits_25", "credits_50", "credits_100"]
         );
-        for (pack, expected) in packs.packs.iter().zip([10.0, 25.0, 50.0, 100.0]) {
+        for (pack, expected) in packs.iter().zip([10.0, 25.0, 50.0, 100.0]) {
             assert_eq!(pack.credits_usd, expected);
             assert_eq!(pack.price_usd, pack.credits_usd, "price is 1:1 with credits");
         }
     }
 
-    #[tokio::test]
-    async fn packs_endpoint_serializes_the_public_shape() {
-        let Json(packs) = list_packs().await;
-        let value = serde_json::to_value(&packs).unwrap();
+    #[test]
+    fn packs_endpoint_serializes_the_public_shape() {
+        let value = serde_json::to_value(packs_response(&crate::services::store_billing::StoreConfig::default())).unwrap();
         let first = &value["packs"][0];
         assert_eq!(first["id"], serde_json::json!("credits_10"));
         assert_eq!(first["credits_usd"], serde_json::json!(10.0));
         assert_eq!(first["price_usd"], serde_json::json!(10.0));
         assert!(first["label"].is_string());
+    }
+
+    /// An old client decodes packs into a struct with only the fields it knew
+    /// before store billing; the added `store` block must not break it.
+    #[test]
+    fn packs_with_store_block_still_parse_for_old_clients() {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        #[allow(dead_code)]
+        struct OldPack {
+            id: String,
+            label: String,
+            credits_usd: f64,
+            price_usd: f64,
+        }
+        #[derive(serde::Deserialize)]
+        struct OldPacks {
+            packs: Vec<serde_json::Value>,
+        }
+        let config = crate::services::store_billing::StoreConfig { apple: true, google: false };
+        let body = serde_json::to_string(&packs_response(&config)).unwrap();
+        let parsed: OldPacks = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed.packs.len(), 4);
+        for mut pack in parsed.packs {
+            // Only the store block is new; everything else is the old shape exactly.
+            let store = pack.as_object_mut().unwrap().remove("store").unwrap();
+            let old: OldPack = serde_json::from_value(pack).unwrap();
+            assert_eq!(old.price_usd, old.credits_usd, "web price is unchanged");
+            assert_eq!(store["apple"]["enabled"], serde_json::json!(true));
+            assert_eq!(store["google"]["enabled"], serde_json::json!(false));
+        }
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["packs"][1]["store"]["apple"]["product_id"], "com.allternit.mobile.credits.25");
+        assert_eq!(value["packs"][1]["store"]["google"]["product_id"], "credits_25");
+        assert_eq!(value["packs"][1]["store"]["reference_price_usd"], serde_json::json!(29.99));
+        assert_eq!(value["packs"][1]["credits_usd"], serde_json::json!(25.0), "same credits as web");
     }
 
     #[test]

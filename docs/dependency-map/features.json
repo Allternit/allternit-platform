@@ -1071,6 +1071,10 @@
         {
           "on": "2026-11-15",
           "note": "Allternit Cloud models need credits (CONTRACT-cloud-credits-2026-11-15): the $2 a month free allowance, its email check and its rate limit are gone. /v1/chat/completions and the artifact-runtime model call allow a positive user_credits balance only; no row is 402 credits_required, a row at or below 0 is 402 credits_exhausted, with a billing_error body carrying the four packs and billing_url. GET /api/v1/billing/credits (free_inference removed) and GET /api/v1/me/usage carry the same cloud_models {allowed, reason, balance_usd, byok_providers}; /me/usage for a Free account with no row reports credits 0, weekly 0/0. /v1/models rows add pricing {input_per_1m_usd, output_per_1m_usd} (retail). Setup checks and the Connections Cloud row ('Free \u00b7 needs credits' / 'Free \u00b7 $X credits') follow the same rule."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Store purchases backend (PR-1): plans and credit packs can be bought through Apple In-App Purchase and Google Play Billing at store prices with the same credits. Routes /api/v1/billing/store/{preflight,apple/transactions,apple/notifications(+/sandbox),google/purchases,google/rtdn}; store plans live in billing_subscriptions (provider column), ledger billing_store_transactions, migration 148; additive store block on /billing/plans and /packs, billing_provider/manage_url/conflict on /billing/subscription, 409 store_billed on /billing/portal. Dark until APPLE_IAP_* / GOOGLE_PLAY_* secrets are set; sandbox grants only to STORE_SANDBOX_GRANT_USER_IDS."
         }
       ],
       "evidence": [
@@ -1080,7 +1084,8 @@
         "allternit/surfaces/docs/guides/credits-and-auto-top-up.mdx",
         "allternit/surfaces/docs/guides/subscriptions.mdx",
         "allternit/surfaces/docs/api/cloud-billing.mdx",
-        "allternit/surfaces/docs/operations/upstream-funding.mdx"
+        "allternit/surfaces/docs/operations/upstream-funding.mdx",
+        "allternit/surfaces/docs/operations/store-billing.mdx"
       ]
     },
     {

@@ -399,6 +399,80 @@ impl CostServiceImpl {
         transfer_gb * cost_per_gb
     }
 
+    /// The body of [`CostService::grant_subscription_credits`] with the
+    /// ledger key and source named by the caller: a plan's monthly credits
+    /// with the rollover cap, once per `ledger_key` (ON CONFLICT DO NOTHING).
+    /// Stripe invoices use `stripe-invoice-<id>` / `stripe_subscription`;
+    /// store renewals (`services::store_billing`) use
+    /// `apple-<transactionId>` / `google-<orderId>` with their own source, so
+    /// the ledger tells who billed each grant.
+    pub async fn grant_plan_credits_keyed(
+        &self,
+        user_id: &str,
+        ledger_key: &str,
+        source: &str,
+        amount_usd: f64,
+        rollover_cap_usd: f64,
+    ) -> Result<f64, ApiError> {
+        if amount_usd <= 0.0 {
+            return self.get_credit_balance(user_id).await;
+        }
+
+        let mut tx = self.db.begin().await.map_err(ApiError::DatabaseError)?;
+
+        // Idempotency: the ledger key is the grant key, so a replayed delivery
+        // for an already-granted invoice or transaction conflicts and touches
+        // nothing.
+        let ledger = sqlx::query(
+            r#"
+            INSERT INTO credit_transactions (id, user_id, amount_usd, transaction_id, source, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (transaction_id) DO NOTHING
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(user_id)
+        .bind(amount_usd)
+        .bind(ledger_key)
+        .bind(source)
+        .bind(Utc::now())
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+
+        if ledger.rows_affected() == 0 {
+            tx.commit().await.map_err(ApiError::DatabaseError)?;
+            return self.get_credit_balance(user_id).await;
+        }
+
+        // Rollover: only the capped remainder carries into the new month, then
+        // the full monthly grant is added on top. A fresh balance row starts at
+        // the grant itself — the cap clips leftovers, never the first grant.
+        sqlx::query(
+            r#"
+            INSERT INTO user_credits (user_id, balance_usd)
+            VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE SET
+                balance_usd = LEAST(user_credits.balance_usd, $3) + excluded.balance_usd
+            "#,
+        )
+        .bind(user_id)
+        .bind(amount_usd)
+        .bind(rollover_cap_usd)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+
+        tx.commit().await.map_err(ApiError::DatabaseError)?;
+
+        let new_balance = self.get_credit_balance(user_id).await?;
+        info!(
+            "Granted ${:.2} subscription credits to user {} for {}; new balance ${:.2}",
+            amount_usd, user_id, ledger_key, new_balance
+        );
+        Ok(new_balance)
+    }
+
     /// Send alert notification (placeholder for actual notification logic)
     async fn send_alert(&self, alert: &CostAlert) -> Result<(), ApiError> {
         // TODO: Integrate with notification service (email, webhook, etc.)
@@ -1283,61 +1357,14 @@ impl CostService for CostServiceImpl {
         amount_usd: f64,
         rollover_cap_usd: f64,
     ) -> Result<f64, ApiError> {
-        if amount_usd <= 0.0 {
-            return self.get_credit_balance(user_id).await;
-        }
-
-        let mut tx = self.db.begin().await.map_err(ApiError::DatabaseError)?;
-
-        // Idempotency: the invoice id is the grant key, so a replayed Stripe
-        // delivery for an already-granted invoice conflicts and touches nothing.
-        let ledger = sqlx::query(
-            r#"
-            INSERT INTO credit_transactions (id, user_id, amount_usd, transaction_id, source, created_at)
-            VALUES ($1, $2, $3, $4, 'stripe_subscription', $5)
-            ON CONFLICT (transaction_id) DO NOTHING
-            "#,
+        self.grant_plan_credits_keyed(
+            user_id,
+            &format!("stripe-invoice-{invoice_id}"),
+            "stripe_subscription",
+            amount_usd,
+            rollover_cap_usd,
         )
-        .bind(Uuid::new_v4().to_string())
-        .bind(user_id)
-        .bind(amount_usd)
-        .bind(format!("stripe-invoice-{invoice_id}"))
-        .bind(Utc::now())
-        .execute(&mut *tx)
         .await
-        .map_err(ApiError::DatabaseError)?;
-
-        if ledger.rows_affected() == 0 {
-            tx.commit().await.map_err(ApiError::DatabaseError)?;
-            return self.get_credit_balance(user_id).await;
-        }
-
-        // Rollover: only the capped remainder carries into the new month, then
-        // the full monthly grant is added on top. A fresh balance row starts at
-        // the grant itself — the cap clips leftovers, never the first grant.
-        sqlx::query(
-            r#"
-            INSERT INTO user_credits (user_id, balance_usd)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id) DO UPDATE SET
-                balance_usd = LEAST(user_credits.balance_usd, $3) + excluded.balance_usd
-            "#,
-        )
-        .bind(user_id)
-        .bind(amount_usd)
-        .bind(rollover_cap_usd)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::DatabaseError)?;
-
-        tx.commit().await.map_err(ApiError::DatabaseError)?;
-
-        let new_balance = self.get_credit_balance(user_id).await?;
-        info!(
-            "Granted ${:.2} subscription credits to user {} for invoice {}; new balance ${:.2}",
-            amount_usd, user_id, invoice_id, new_balance
-        );
-        Ok(new_balance)
     }
 
     async fn debit_credits_for_transfer(
