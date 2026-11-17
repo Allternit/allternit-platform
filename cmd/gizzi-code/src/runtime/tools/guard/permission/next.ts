@@ -694,6 +694,8 @@ export namespace PermissionNext {
 
   const READONLY_PERMISSIONS = new Set([
     "read", "glob", "grep", "list", "websearch", "codesearch", "question", "todoread", "lsp", "current_time",
+    // Primitives Wave B: read-only, so plan mode keeps them.
+    "get_context_remaining", "history_recall", "tool_search", "wait_agents",
   ])
 
   const EDIT_PERMISSIONS = new Set([
