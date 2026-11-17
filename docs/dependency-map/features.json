@@ -51,9 +51,14 @@
         {
           "on": "2026-11-17",
           "note": "System prompts modernized: chat and code stacks chosen by session surface, one model-family addendum, voice and phone blocks from turn metadata (reply_mode voice from allternit-api voice turns; form_factor phone from the phone layout, PWA and iOS). Docs: core/system-prompts.mdx."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Bot prompt blocks by signal: suggestions (duet.txt), delegation, project-thread and computer-use blocks join bot.txt from the turn's tool set; server hint project_role thread stamped by allternit-api agent_session_routes.rs from the session bag's projectRole; server-started bot turns keep the bot's own prompt first and the thread prompt under This thread. Docs: core/system-prompts.mdx, guides/project-delegate.mdx, guides/bot-threads.mdx."
         }
       ],
       "evidence": [
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
         "allternit/surfaces/docs/api/agent-chat.mdx",
         "allternit/cmd/allternit-api/src/chat_routes.rs",
         "allternit/surfaces/docs/guides/chat-composer.mdx",
