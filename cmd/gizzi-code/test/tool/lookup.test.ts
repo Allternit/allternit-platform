@@ -1,8 +1,11 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { checkAnswerResponse, selectAnswerPolicy } from "../../src/runtime/integrations/artifacts/answer-policy"
 import { ANSWER_WIDGETS_MANUAL } from "../../src/runtime/integrations/artifacts/answer-contract"
 import { AnswerTurnGuard, answerWidgetsManual, toolDeliveredCard } from "../../src/runtime/session/answer-policy"
-import { LookupTool } from "../../src/runtime/tools/builtins/lookup"
+import { LookupTool, TurnLocations, parseTurnLocation } from "../../src/runtime/tools/builtins/lookup"
+import { clearLookupCache, transport } from "../../src/runtime/primitives/lookup/http"
+import { CliBridgeResults } from "../../src/runtime/integrations/cli-bridge/results"
+import { promptHints } from "../../src/runtime/server/routes/agent-compat"
 
 const WEATHER_CARD = {
   version: 1,
@@ -33,8 +36,9 @@ function user(extra: Record<string, unknown> = {}) {
   return { id: "msg_u", sessionID: "ses_1", role: "user", time: { created: 0 }, agent: "build", model: { providerID: "p", modelID: "m" }, ...extra } as any
 }
 
-function ctx(asks: any[], deny = false) {
+function ctx(asks: any[], deny = false, extra?: Record<string, unknown>) {
   return {
+    ...(extra ? { extra } : {}),
     sessionID: "ses_lookup",
     messageID: "msg_assistant",
     callID: "call_1",
@@ -115,5 +119,118 @@ describe("lookup permissions", () => {
       expect(asks[0].permission).toBe(permission)
       expect(asks[0].metadata).toMatchObject({ lookup: params.kind })
     }
+  })
+})
+
+// allternit-api client_location::location_layer, after the answer-template line in turnSystem.
+const LAYER =
+  "Use the weather template for this answer.\n\nWhere the user is (shared from their device just now, approximate): about 40.71, -74.01, within roughly 1 km. Their time zone: America/New_York. Use this only when it helps, for local time, nearby places, weather or directions. Don't mention it otherwise, and don't save it to memory."
+
+describe("lookup: the shared location for \"here\"", () => {
+  const realFetch = transport.fetch
+  let urls: string[] = []
+  function stubNetwork() {
+    clearLookupCache()
+    urls = []
+    transport.fetch = (async (input: string | URL | Request) => {
+      const u = String(input)
+      urls.push(u)
+      const body = u.includes("api.met.no")
+        ? { properties: { timeseries: [{ time: "2026-11-17T15:00:00Z", data: { instant: { details: { air_temperature: 7, relative_humidity: 60, wind_speed: 3 } }, next_1_hours: { summary: { symbol_code: "cloudy" } } } }] } }
+        : [{ name: "Cafe A", display_name: "Cafe A, 1 Main St", lat: "40.71", lon: "-74.0", category: "amenity", type: "cafe" }]
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })
+    }) as typeof transport.fetch
+  }
+  afterEach(() => {
+    transport.fetch = realFetch
+    TurnLocations.release("ses_lookup", TurnLocations.get("ses_lookup")!)
+  })
+
+  test("the turnSystem location line parses into a structured value; other text does not", () => {
+    expect(parseTurnLocation(LAYER)).toEqual({ lat: 40.71, lon: -74.01, accuracyKm: 1, timeZone: "America/New_York" })
+    expect(parseTurnLocation("Use the weather template for this answer.")).toBeUndefined()
+    expect(parseTurnLocation(undefined)).toBeUndefined()
+    expect(parseTurnLocation("Where the user is (approximate): about 140.00, 10.00, within roughly 1 km.")).toBeUndefined()
+  })
+
+  test("weather for \"here\" uses the location on the tool context", async () => {
+    stubNetwork()
+    const tool = await LookupTool.init()
+    const asks: any[] = []
+    const result = await tool.execute({ kind: "weather", query: "here" }, ctx(asks, false, { location: parseTurnLocation(LAYER) }))
+    expect(urls.some((u) => u.includes("api.met.no") && u.includes("lat=40.71") && u.includes("lon=-74.01"))).toBe(true)
+    expect(result.metadata.card?.template).toBe("weather")
+    expect((result.metadata.card as any).data.location).toBe("your location")
+    expect(asks).toHaveLength(1)
+  })
+
+  test("places \"near me\" uses the session's turn location (the CLI-bridge path, no extra)", async () => {
+    stubNetwork()
+    TurnLocations.set("ses_lookup", parseTurnLocation(LAYER)!)
+    const tool = await LookupTool.init()
+    const result = await tool.execute({ kind: "places", query: "coffee", place: "near me" }, ctx([]))
+    const search = urls.find((u) => u.includes("viewbox="))
+    expect(search).toBeDefined()
+    expect(search).toContain("bounded=1")
+    expect(result.metadata.error).toBeUndefined()
+  })
+
+  test("without a shared location, \"here\" asks for a place: no permission prompt, no fetch", async () => {
+    stubNetwork()
+    const tool = await LookupTool.init()
+    for (const params of [
+      { kind: "weather", query: "here" },
+      { kind: "weather", query: "", place: "near me" },
+      { kind: "places", query: "coffee", place: "near me" },
+    ] as const) {
+      const asks: any[] = []
+      const result = await tool.execute(params as any, ctx(asks))
+      expect(result.metadata.error).toContain("Which place?")
+      expect(result.metadata.card).toBeUndefined()
+      expect(asks).toEqual([])
+    }
+    expect(urls).toEqual([])
+  })
+})
+
+describe("answer_cards hint", () => {
+  test("promptHints keeps answer_cards \"widgets\" beside the other hints, and only that value", () => {
+    expect(promptHints({ answer_cards: "widgets" })).toEqual({ answer_cards: "widgets" })
+    expect(promptHints({ answer_cards: "widgets", form_factor: "phone", time_zone: "America/Chicago" })).toEqual({
+      form_factor: "phone",
+      time_zone: "America/Chicago",
+      answer_cards: "widgets",
+    })
+    expect(promptHints({ answer_cards: "all" })).toBeUndefined()
+    expect(promptHints({ answer_cards: ["widgets"] })).toBeUndefined()
+  })
+
+  test("the widgets hint, carried on the user message, gives the turn the writing-only manual", () => {
+    const metadata = promptHints({ answer_cards: "widgets", time_zone: "America/Chicago" })
+    const guard = new AnswerTurnGuard("msg_u", "What's the weather in Chicago?", user({ metadata }))
+    expect(guard.widgetsManual).toBe(ANSWER_WIDGETS_MANUAL)
+    expect(new AnswerTurnGuard("msg_u", "What's the weather in Chicago?", user({ metadata: promptHints({ time_zone: "America/Chicago" }) })).widgetsManual).toBeUndefined()
+  })
+})
+
+describe("lookup cards survive CLI-brain turns", () => {
+  test("vendor names for the bridged lookup map back to \"lookup\"", () => {
+    for (const name of ["mcp__allternit__lookup", "allternit__lookup", "allternit_lookup", "allternit.lookup", "lookup (allternit MCP Server)", "lookup"]) {
+      expect(CliBridgeResults.canonicalTool(name)).toBe("lookup")
+    }
+    expect(CliBridgeResults.isCanonical("lookup")).toBe(true)
+    expect(CliBridgeResults.canonicalTool("mcp__other__lookup")).toBe("mcp__other__lookup")
+  })
+
+  test("the stashed result keeps metadata.card, so the merged part passes the answer guard", () => {
+    const args = { kind: "weather", query: "Chicago" }
+    CliBridgeResults.put("ses_cli", "lookup", args, { title: "Weather in Chicago", metadata: { kind: "weather", card: WEATHER_CARD, credit: "Weather data: MET Norway" } })
+    // The CLI reports the call back with its args re-serialized (key order differs).
+    const taken = CliBridgeResults.take("ses_cli", CliBridgeResults.canonicalTool("mcp__allternit__lookup"), { query: "Chicago", kind: "weather" })
+    expect(taken?.metadata.card).toEqual(WEATHER_CARD)
+    // What processor.ts builds for the observed result: the canonical name, the merged metadata.
+    const part = lookupPart(undefined)
+    part.state.metadata = { ...taken!.metadata }
+    expect(toolDeliveredCard(part, "weather")).toBe(true)
   })
 })

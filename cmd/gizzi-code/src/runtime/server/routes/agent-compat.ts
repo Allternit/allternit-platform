@@ -171,19 +171,23 @@ function extractReasoning(parts: any[]): string | null {
 
 /**
  * Prompt hints a client may put on a user message (system.ts PromptContext): a phone
- * client sends form_factor "phone", a voice turn reply_mode "voice", and every client
- * its IANA time_zone. Only these keys and values pass; SessionPrompt.prompt remembers
- * the zone for turns without a client. Shared by every message route here.
+ * client sends form_factor "phone", a voice turn reply_mode "voice", every client
+ * its IANA time_zone, and a client that draws no catalog cards (iOS, the Ink REPL)
+ * answer_cards "widgets" (AnswerTurnGuard.widgetsManual). Only these keys and values
+ * pass; SessionPrompt.prompt remembers the zone for turns without a client. Shared by
+ * every message route here.
  */
-function promptHints(raw: any): Record<string, string> | undefined {
+export function promptHints(raw: any): Record<string, string> | undefined {
   const formFactor = raw?.form_factor === "phone" ? "phone" : undefined
   const replyMode = raw?.reply_mode === "voice" ? "voice" : undefined
   const timeZone = Clock.validZone(raw?.time_zone)
-  if (!formFactor && !replyMode && !timeZone) return undefined
+  const answerCards = raw?.answer_cards === "widgets" ? "widgets" : undefined
+  if (!formFactor && !replyMode && !timeZone && !answerCards) return undefined
   return {
     ...(formFactor ? { form_factor: formFactor } : {}),
     ...(replyMode ? { reply_mode: replyMode } : {}),
     ...(timeZone ? { time_zone: timeZone } : {}),
+    ...(answerCards ? { answer_cards: answerCards } : {}),
   }
 }
 
@@ -870,8 +874,9 @@ export const AgentCompatRoutes = () =>
       const fast = body?.fast === true && modelRef && ModelThinking.of(modelRef.modelID)?.fast === true
       // Prompt hints the runtime reads from the user message (system.ts PromptContext):
       // a phone client sends form_factor "phone", a voice turn reply_mode "voice",
-      // and every client sends its IANA time_zone (only a valid name passes;
-      // SessionPrompt.prompt remembers it for turns without a client).
+      // every client sends its IANA time_zone (only a valid name passes;
+      // SessionPrompt.prompt remembers it for turns without a client), and a
+      // client that draws no catalog cards sends answer_cards "widgets".
       const hints = promptHints(body?.metadata)
       const metadata =
         (tools && typeof tools === "object") || fast || hints
