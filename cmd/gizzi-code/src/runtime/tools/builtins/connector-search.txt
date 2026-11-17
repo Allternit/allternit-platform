@@ -1,0 +1,8 @@
+Find the user's connectors (Gmail, Calendar, Slack, Linear, Drive and others) by what they do, and mount the tools of connected ones.
+
+Use it when the task needs an outside app and you don't see a tool for it. Search by the job, not only the app name ("calendar", "send a message to the team").
+
+Each hit has an id, name, group, state (connected, not_connected, needs_reconnect) and whether the user can connect it here.
+
+- load: true mounts the tools of up to 3 connected hits for the rest of this session. Call them as usual; their normal permissions apply.
+- A hit that is not connected can't be used yet. Offer it with connector_suggest; never ask for passwords, keys or codes.

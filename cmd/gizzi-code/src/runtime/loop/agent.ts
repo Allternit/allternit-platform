@@ -153,6 +153,12 @@ export namespace Agent {
       thread_recent: "allow",
       thread_wait: "allow",
       resource: "allow",
+      // Wave D connect and settings. Tools a connector_search load mounts keep
+      // their own rules. settings: the action is the pattern; the risk gate
+      // (confirm/locked keys) is on the server. The plan agent denies write.
+      connector_search: "allow",
+      connector_suggest: "allow",
+      settings: "allow",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",
@@ -201,6 +207,8 @@ export namespace Agent {
           PermissionNext.fromConfig({
             question: "allow",
             plan_exit: "allow",
+            // Plan mode changes nothing: settings reads work, writes are refused.
+            settings: { write: "deny" },
             external_directory: {
               [path.join(Global.Path.data, "plans", "*")]: "allow",
             },

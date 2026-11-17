@@ -52,6 +52,8 @@ import { MemoryRecallTool } from "@/runtime/tools/builtins/memory-recall"
 import { MemoryListTool } from "@/runtime/tools/builtins/memory-list"
 import { ThreadReadTool, ThreadRecentTool, ThreadWaitTool } from "@/runtime/tools/builtins/thread-read"
 import { ResourceTool } from "@/runtime/tools/builtins/resource"
+import { ConnectorSearchTool, ConnectorSuggestTool } from "@/runtime/tools/builtins/connector"
+import { SettingsTool } from "@/runtime/tools/builtins/settings"
 import { VaultQueryTool } from "@/runtime/tools/builtins/vault-query"
 import { VaultWriteTool } from "@/runtime/tools/builtins/vault-write"
 import { Glob } from "@/shared/util/glob"
@@ -244,6 +246,11 @@ export namespace ToolRegistry {
       ThreadRecentTool,
       ThreadWaitTool,
       ResourceTool,
+      // Wave D connect and settings: find and load connectors, offer one to
+      // connect (Connect kit card), and read or change settings. Every client.
+      ConnectorSearchTool,
+      ConnectorSuggestTool,
+      SettingsTool,
       VaultQueryTool,
       VaultWriteTool,
       SendAgentEmailTool,

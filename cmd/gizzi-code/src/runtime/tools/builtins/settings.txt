@@ -1,0 +1,12 @@
+Read or change the user's Allternit settings: theme, chat font, answer style, links and browser, notifications, model and more.
+
+When the user asks for a change, make it (action write) instead of explaining where the setting is. Read first (action read) when you don't know the key or its allowed values.
+
+Each change comes back as one of:
+- applied: done; the user sees a card with Undo
+- apply_on_device: their app applies it (theme, chat font)
+- needs_confirmation: security, privacy or instructions; the user confirms it on the card
+- locked: plan, billing, email, password, keys; the card links to Settings, you can't change it
+- invalid: unknown key or a value it doesn't take; the reason says why
+
+Up to 5 changes per call. Say what changed in plain words. Writes are refused in plan mode.
