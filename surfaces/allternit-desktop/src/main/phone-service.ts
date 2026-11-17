@@ -35,6 +35,7 @@ import {
   type PhoneStreamStatus,
 } from './phone-scrcpy.js';
 import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
+import { btAndroidLane } from './phone-bt-android.js';
 import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, appPlatformOf, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
 import { decodeStillInWindow } from './phone-app-still.js';
 import { IosVideoSession } from './phone-ios-video.js';
@@ -80,6 +81,7 @@ import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
 import { meshManager } from './mesh-manager.js';
 import { PhoneLinkHealthMonitor } from './phone-link-health.js';
+import { MirrorClient, mirrorBinaryPath, mirrorLane, onlyIphone } from './phone-mirror.js';
 import { PhoneChannelReader, type ChannelConversation, type ReaderResult, type ScreenRecorder } from './phone-channel-readers.js';
 import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
 import { checkLinkedApp, openLinkedApp, type PhoneLinkAppResult } from './phone-app-signin.js';
@@ -298,6 +300,8 @@ class PhoneService {
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
   private runner: PhoneToolRunner | null = null;
+  /** The iPhone Mirroring helper process (macOS; phone-mirror.ts). Started on first use. */
+  private mirror: MirrorClient | null = null;
   private linkedBackend: PhoneLinkBackend | null = null;
   private appBackend: AppPhoneBackend | null = null;
   private appPhoneTimer: ReturnType<typeof setInterval> | null = null;
@@ -768,6 +772,23 @@ class PhoneService {
           onError: (error) => log.debug(`[Phone] run history step not recorded: ${error instanceof Error ? error.message : String(error)}`),
         }),
         api: () => phoneApi,
+        // Phone Use lanes: route 2a, iPhone Mirroring on this Mac (health comes from a real probe; on
+        // Windows/Linux it is unavailable), and route 2d, the person's Android phone as the iPhone's
+        // Bluetooth keyboard and mouse (phone-bt-android.ts).
+        lanes: {
+          mirror: mirrorLane({
+            client: () => this.ensureMirrorClient(),
+            serves: (serial) => onlyIphone(serial, { usb: this.usbAgents, links: this.ensureLinkedBackend(), apps: this.ensureAppBackend() }),
+          }),
+          'bt-android': btAndroidLane({
+            phones: () => this.ensureAppBackend(),
+            rpc: (phoneId, method, params, timeoutMs) =>
+              httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).rpc(phoneId, method, params, timeoutMs),
+            decode: decodeGray,
+            load: (serial) => readJson<Calibration | null>(this.btCalibrationFile(serial), null),
+            save: (serial, c) => writeJson(this.btCalibrationFile(serial), c),
+          }),
+        },
         guard: () => holds,
         // The owner's dialog here, and "waiting for approval" on the driven Android phone.
         onHold: phoneHoldHandler({
@@ -947,6 +968,11 @@ class PhoneService {
       log: (message) => log.info(message),
     });
     return this.appBackend;
+  }
+
+  /** Pointer calibration for one iPhone on the bt-android route. */
+  private btCalibrationFile(serial: string): string {
+    return path.join(this.dir(), `bt-android-calibration-${serial.replace(/[^a-zA-Z0-9-]/g, '')}.json`);
   }
 
   /** The desktop credential plus the signed-in user, as the node maps it to the account. */
@@ -1842,7 +1868,18 @@ class PhoneService {
     return this.runner?.call('phone.home', { serial }) ?? { ok: false, error: 'device_offline', message: 'Phones are not set up yet.' };
   }
 
+  /** The allternit-mirror client, or null when this build has no binary (and on Windows/Linux). */
+  private ensureMirrorClient(): MirrorClient | null {
+    if (this.mirror) return this.mirror;
+    const binary = mirrorBinaryPath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
+    if (!binary) return null;
+    this.mirror = new MirrorClient({ binary: () => binary });
+    return this.mirror;
+  }
+
   shutdown(): void {
+    this.mirror?.close();
+    this.mirror = null;
     this.callBridge?.stop();
     this.callBridgeWindow?.destroy();
     this.callBridge = null;

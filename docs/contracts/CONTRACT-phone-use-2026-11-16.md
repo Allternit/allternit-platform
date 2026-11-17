@@ -228,8 +228,11 @@ interface HidTransport {
   pointerReset(): Promise<void>;                          // large negative moves to the corner
   key(usage: number, modifiers: number, down: boolean): Promise<void>; // USB HID usage page 0x07
   typeText(text: string): Promise<void>;
+  scroll?(lines: number): Promise<void>;                  // wheel lines, positive = down
 }
 ```
+`scroll` is optional: the core (`phone-hid-core.ts`) reports scrolling as unsupported for a sender without it; `bt-android` has it (`hid.scroll`).
+
 Mac: our own code in `cmd/allternit-bthid` (P2 decides if the Mac can act as a HID device; UNVERIFIED). Android: our own code, `BluetoothHidDevice`, under `phoneshare/.../core/`. Second Apple device: our own code in the iOS app (public Bluetooth API, P5). Board: existing firmware path.
 
 ## 7. Action catalog
@@ -317,8 +320,11 @@ The sending device receives these and drives its Bluetooth HID link to the targe
 | `hid.pointer.reset` | `id` (drive to the corner) | `{}` |
 | `hid.key` | `id`, `usage:int` (HID usage page 0x07), `modifiers:int` (bitmask: 1 ctrl, 2 shift, 4 alt, 8 cmd), `down:boolean` | `{}` |
 | `hid.type` | `id`, `text:string` (max 500, ASCII) | `{ sent:int }` |
+| `hid.scroll` | `id`, `lines:int` (positive = down) | `{}` |
 
-Errors: `ok:false, needs_you.code` `BT_NOT_PAIRED` when no paired host, else `detail.error:"hid_failed"`. A sender MUST release all keys and buttons when the link drops or the app is backgrounded.
+Errors: `ok:false, needs_you.code` `BT_NOT_PAIRED` when no paired host, else `detail.error:"hid_failed"`.
+
+On the Android app-phone control socket these travel in the existing RPC shape: `{id, method:"hid.…", params}` answered by `{id, result}` or `{id, error:{code,message}}` (codes `bt_not_paired`, `hid_unavailable`, `hid_failed`, `invalid_params`, `bad_params`), sent by Desktop through the node's `POST /api/v1/phones/app/:id/rpc`. The phone does not send `hid.pair.status` unprompted there (the node keeps only `state` frames); Desktop asks for it. A sender MUST release all keys and buttons when the link drops or the app is backgrounded.
 
 The Mac sender and the board are not on this lane (local to Desktop), but implement the same `HidTransport` (section 6).
 

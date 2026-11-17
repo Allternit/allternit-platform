@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { needsYou, NEEDS_YOU_CODES, NEEDS_YOU_SENTENCES, type RouteHealth } from './phone-link-health.js';
 import { IOS_HELPER_RETIRED_INSTRUCTION, PhoneLinkManager } from './phone-link.js';
+import type { AppRpcResult } from './phone-app-store.js';
 import {
   approvalClass,
   deriveActionKind,
   legacyHelperLane,
+  officialLane,
+  officialResult,
   PhoneRouter,
   ROUTE_ORDER,
   usbAgentLane,
@@ -13,7 +16,7 @@ import {
   type PhoneLane,
   type RouteId,
 } from './phone-route.js';
-import type { PhoneLinkBackend, ToolResult } from './phone-tools.js';
+import type { AppPhoneLane, PhoneLinkBackend, ToolResult } from './phone-tools.js';
 
 const TAP: Capability[] = ['screenshot', 'read_ui', 'tap', 'type', 'swipe', 'key'];
 const SERIAL = 'app:iphone-1';
@@ -120,7 +123,7 @@ describe('needs you', () => {
 
   it('has one fixed sentence per code, with <name> and <date> filled', () => {
     expect(Object.keys(NEEDS_YOU_SENTENCES)).toEqual([...NEEDS_YOU_CODES]);
-    expect(needsYou('SHORTCUT_NOT_INSTALLED', { name: 'Allternit Actions' }).message).toBe('Add the "Allternit Actions" shortcut in Allternit Settings > Shortcuts.');
+    expect(needsYou('SHORTCUT_NOT_INSTALLED', { name: 'Allternit Actions' }).message).toBe('Add the "Allternit Actions" shortcut in Allternit Settings > Device Access > iPhone actions.');
     expect(needsYou('HELPER_RETIRING', { date: '2026-12-16T00:00:00Z' }).message).toContain('before December 16, 2026.');
   });
 });
@@ -310,5 +313,143 @@ describe('approval classes (contract §8)', () => {
     const router = new PhoneRouter({ lanes: { official: official.lane } });
     await router.run('phone.home.list', SERIAL, {});
     expect(approvalClass('phone.home.set', { id: 'a1', state: { on: true } }, router.hints(SERIAL, 'phone.home.set', { id: 'a1' }))).toBe('security');
+  });
+});
+
+// ── The official route (the Allternit iPhone app through allternit-api) ─────
+
+const DESCRIBE = {
+  ok: true,
+  route: 'official',
+  verified: true,
+  detail: {
+    foreground: true,
+    foreground_app: 'Allternit',
+    locked: false,
+    shortcuts: ['Allternit Actions'],
+    home: { available: true },
+    broadcast: false,
+    catalog: {
+      built: '2026-11-16',
+      actions_shortcut: { name: 'Allternit Actions', known: true, link: null, actions: ['messages.send', 'notes.create'] },
+      apps: [{ id: 'slack', name: 'Slack', category: 'Social', actions: 3, web_actions: 1, shortcut: 'Allternit Slack', shortcut_known: false, shortcut_link: null }],
+    },
+  },
+};
+
+const okEnv = (detail: Record<string, unknown>, verified = true): AppRpcResult => ({ ok: true, result: { ok: true, route: 'official', verified, detail } });
+
+/** The node's /phones/app/:id/rpc, faked at the HTTP edge; the app's state as the node lists it. */
+function appNode(opts: { appOpen?: boolean | (() => boolean); screen?: boolean; answer?: (method: string, params: Record<string, unknown>) => AppRpcResult } = {}) {
+  const calls: Array<{ method: string; params: Record<string, unknown>; timeoutMs: number }> = [];
+  let refreshes = 0;
+  const open = () => (typeof opts.appOpen === 'function' ? opts.appOpen() : opts.appOpen ?? true);
+  const apps: AppPhoneLane = {
+    has: (s) => s === SERIAL,
+    serials: () => [SERIAL],
+    call: async () => ({ ok: false, error: 'not_supported', message: 'no taps here' }),
+    refresh: async () => {
+      refreshes += 1;
+    },
+    devices: () => [{ serial: SERIAL, platform: 'ios', via: 'allternit-app', route: 'iphone-app-store', name: 'iPhone', canTap: false, screen: opts.screen ?? false, note: '' }],
+    officialState: () => ({ appOpen: open(), screen: opts.screen ?? false, deviceAccess: { shortcuts: true, home: true } }),
+    rpc: async (_serial, method, params, timeoutMs) => {
+      calls.push({ method, params, timeoutMs });
+      if (opts.answer) return opts.answer(method, params);
+      return method === 'device.describe' ? { ok: true, result: DESCRIBE } : okEnv({ output: 'done', returned_via: 'app_intent' });
+    },
+  };
+  return { apps, calls, refreshes: () => refreshes };
+}
+
+describe('official route: the phone\'s envelope and refusals', () => {
+  it('keeps the phone\'s detail and verified, and passes its needs_you through', () => {
+    expect(officialResult('phone.home.set', okEnv({ id: 'lamp', state: { on: true } }))).toEqual({ ok: true, verified: true, detail: { id: 'lamp', state: { on: true } } });
+    const missing = officialResult('phone.shortcuts.run', {
+      ok: true,
+      result: { ok: false, route: 'official', verified: false, detail: { error: 'shortcut_not_installed', message: 'x' }, needs_you: { code: 'SHORTCUT_NOT_INSTALLED', message: 'Add the "Standup" shortcut in Allternit Settings > Device Access > iPhone actions.' } },
+    });
+    expect(missing).toMatchObject({ ok: false, error: 'needs_you', needs_you: { code: 'SHORTCUT_NOT_INSTALLED', message: expect.stringContaining('"Standup"') }, detail: { error: 'shortcut_not_installed' } });
+    // The phone's own timeout (no answer from Shortcuts) comes as SHORTCUT_NOT_INSTALLED with error "timeout".
+    const late = officialResult('phone.shortcuts.run', { ok: true, result: { ok: false, verified: false, detail: { error: 'timeout' }, needs_you: { code: 'SHORTCUT_NOT_INSTALLED', message: '' } } });
+    expect(late).toMatchObject({ error: 'needs_you', needs_you: { code: 'SHORTCUT_NOT_INSTALLED', message: 'Add the "Allternit Actions" shortcut in Allternit Settings > Device Access > iPhone actions.' }, detail: { error: 'timeout' } });
+    expect(officialResult('phone.home.set', { ok: true, result: { ok: false, detail: { error: 'unreachable', message: 'Lamp is not responding.' } } })).toMatchObject({ ok: false, error: 'phone_failed', message: 'Lamp is not responding.', detail: { error: 'unreachable' } });
+  });
+
+  it('turns runtime refusals into states the person can act on', () => {
+    expect(officialResult('phone.shortcuts.run', { ok: false, status: 409, code: 'app_not_open', message: '' })).toMatchObject({ error: 'needs_you', needs_you: { code: 'APP_NOT_FOREGROUND', message: 'Open the Allternit app on your iPhone.' } });
+    expect(officialResult('phone.home.set', { ok: false, status: 200, code: 'device_access_off', message: '' })).toMatchObject({ error: 'device_access_off', message: expect.stringContaining('Turn on Home in the Allternit app') });
+    expect(officialResult('phone.actions.run', { ok: false, status: 200, code: 'device_access_off', message: '' })).toMatchObject({ message: expect.stringContaining('Turn on Shortcuts') });
+    expect(officialResult('phone.home.list', { ok: false, status: 200, code: 'permission_denied', message: '' })).toMatchObject({ error: 'device_access_off', detail: { error: 'permission_denied' } });
+    expect(officialResult('phone.shortcuts.run', { ok: false, status: 504, code: 'app_timeout', message: '' })).toMatchObject({ error: 'timeout', message: expect.stringContaining('may still have done it') });
+  });
+});
+
+describe('official route lane', () => {
+  it('needs the app open for shortcuts and Home, and the broadcast for a screen read', async () => {
+    const closed = appNode({ appOpen: false });
+    const router = new PhoneRouter({ lanes: { official: officialLane(() => closed.apps) } });
+    const res = await router.run('phone.home.list', SERIAL, {});
+    expect(res).toMatchObject({ ok: false, route: 'official', needs_you: { code: 'APP_NOT_FOREGROUND' } });
+    expect(closed.refreshes()).toBe(1);
+    expect(closed.calls).toHaveLength(0);
+    expect(await router.run('phone.read_ui', SERIAL, {})).toMatchObject({ ok: false, needs_you: { code: 'BROADCAST_STOPPED' } });
+
+    const sharing = appNode({ appOpen: false, screen: true, answer: () => okEnv({ elements: [{ class: 'Text', label: 'Send', id: '' }], text: 'Send', width: 1170, height: 2532 }) });
+    const read = await new PhoneRouter({ lanes: { official: officialLane(() => sharing.apps) } }).run('phone.read_ui', SERIAL, { filter: { label: 'Send' } });
+    expect(read).toMatchObject({ ok: true, route: 'official', verified: true, text: 'Send', detail: { width: 1170 } });
+    expect(sharing.calls).toEqual([{ method: 'device.screen.read', params: { filter: { label: 'Send' } }, timeoutMs: 40_000 }]);
+  });
+
+  it('sends Home ids as device_id / scene_id and keeps the phone\'s read-back as verified', async () => {
+    const node = appNode({ answer: (method, params) => okEnv(method === 'device.home.set' ? { id: params.device_id, state: { on: true } } : { id: params.scene_id, ran: true }) });
+    const router = new PhoneRouter({ lanes: { official: officialLane(() => node.apps) } });
+    expect(await router.run('phone.home.set', SERIAL, { id: 'lamp', state: { on: true } })).toMatchObject({ ok: true, verified: true, detail: { id: 'lamp' } });
+    await router.run('phone.home.scene', SERIAL, { id: 'evening' });
+    await router.run('phone.home.list', SERIAL, { kind: 'lock' });
+    expect(node.calls.map((c) => [c.method, c.params])).toEqual([
+      ['device.home.set', { device_id: 'lamp', state: { on: true } }],
+      ['device.home.scene', { scene_id: 'evening' }],
+      ['device.home.list', { kind: 'lock' }],
+    ]);
+  });
+
+  it('waits the shortcut\'s timeout_s plus a margin for the runtime', async () => {
+    const node = appNode();
+    const router = new PhoneRouter({ lanes: { official: officialLane(() => node.apps) } });
+    await router.run('phone.shortcuts.run', SERIAL, { name: 'Note', input: 'hi', timeout_s: 90 });
+    expect(node.calls).toEqual([{ method: 'device.shortcuts.run', params: { name: 'Note', input: 'hi', timeout_s: 90 }, timeoutMs: 100_000 }]);
+  });
+
+  it('lists actions from device.describe and runs one through its shortcut', async () => {
+    const node = appNode();
+    const router = new PhoneRouter({ lanes: { official: officialLane(() => node.apps) } });
+    const list = await router.run('phone.actions.list', SERIAL, {});
+    expect(list).toMatchObject({ ok: true, detail: { apps: [{ id: 'allternit', installed: true, actions: [{ id: 'messages.send', kind: 'send', guarded: true }, { id: 'notes.create', kind: 'create', guarded: false }] }, { id: 'slack', shortcut: 'Allternit Slack', installed: false, action_count: 4 }] } });
+    expect((await router.run('phone.actions.list', SERIAL, { installed_only: true }))?.detail.apps).toHaveLength(1);
+
+    const run = await router.run('phone.actions.run', SERIAL, { app: 'allternit', action: 'notes.create', params: { title: 'Milk' } });
+    expect(run).toMatchObject({ ok: true, route: 'official', detail: { output: 'done', dispatched_as: 'actions_shortcut' } });
+    expect(node.calls.filter((c) => c.method === 'device.describe')).toHaveLength(1);
+    expect(node.calls.at(-1)).toMatchObject({ method: 'device.shortcuts.run', params: { name: 'Allternit Actions', input: { action: 'notes.create', params: { title: 'Milk' } } } });
+    await router.run('phone.actions.run', SERIAL, { app: 'slack', action: 'SendMessageIntent', params: { text: 'hi' } });
+    expect(node.calls.at(-1)?.params).toMatchObject({ name: 'Allternit Slack', input: { action: 'SendMessageIntent' } });
+    expect(await router.run('phone.actions.run', SERIAL, { app: 'nope', action: 'x' })).toMatchObject({ ok: false, error: 'unknown_action' });
+    expect(await router.run('phone.actions.run', SERIAL, { app: 'allternit', action: 'wallet.pay' })).toMatchObject({ ok: false, error: 'unknown_action' });
+  });
+
+  it('phone.describe reports the app\'s facts when the app is open', async () => {
+    const node = appNode();
+    const res = await new PhoneRouter({ lanes: { official: officialLane(() => node.apps) } }).describe(SERIAL);
+    expect(res).toMatchObject({ ok: true, route: 'official', detail: { locked: false, foreground_app: 'Allternit', shortcuts: ['Allternit Actions'], home: { available: true } } });
+    expect((res.detail.routes as Array<Record<string, unknown>>)[0]).toMatchObject({ route: 'official', healthy: true, covers: ['shortcuts', 'actions', 'home', 'read_ui'] });
+  });
+
+  it('find_and_tap never lands on the official route (it reads but cannot tap)', async () => {
+    const node = appNode({ screen: true });
+    const mirror = fakeLane('mirror');
+    const router = new PhoneRouter({ lanes: { official: officialLane(() => node.apps), mirror: mirror.lane } });
+    expect(await router.run('phone.find_and_tap', SERIAL, { element_id: 'send' })).toMatchObject({ ok: true, route: 'mirror' });
+    expect(node.calls).toHaveLength(0);
   });
 });

@@ -18,14 +18,20 @@
  *      to another route;
  *   5. a pinned route (`route` arg) never falls back: unhealthy = its needs_you.
  *
- * Routes not built yet (official, mirror, bt-*) are stubs that report
- * "unavailable", so the router skips them; later plan steps register real
- * lanes in their place. The USB Agent and the old iCTRL helper are wrapped
- * as the `usb-agent` and `legacy-helper` lanes without changing them.
+ * `official` is the Allternit iPhone app (officialLane: Shortcuts, the action
+ * catalog, Home, and on-phone reads of the broadcast frame), through
+ * allternit-api's `/phones/app/:id/rpc`. `mirror` is phone-mirror.ts (iPhone
+ * Mirroring on a Mac), registered by phone-service.ts through
+ * PhoneToolDeps.lanes; its stub remains for runners built without it. Routes
+ * not built yet (bt-*) are stubs that report "unavailable", so the router skips
+ * them; later plan steps register real lanes in their place. The USB Agent and the old iCTRL
+ * helper are wrapped as the `usb-agent` and `legacy-helper` lanes without
+ * changing them.
  */
 
-import { legacyHelperRouteHealth, type NeedsYou, type NeedsYouCode, type RouteHealth } from './phone-link-health.js';
-import type { PhoneLinkBackend, ToolErrorCode, ToolResult, UsbPhoneBackend } from './phone-tools.js';
+import type { AppRpcResult } from './phone-app-store.js';
+import { legacyHelperRouteHealth, needsYou, isNeedsYouCode, type NeedsYou, type NeedsYouCode, type RouteHealth } from './phone-link-health.js';
+import type { AppPhoneLane, PhoneLinkBackend, ToolErrorCode, ToolResult, UsbPhoneBackend } from './phone-tools.js';
 import { actThenVerify, failEnvelope, READ_TOOLS, toEnvelope, VERIFIED_TOOLS, type PhoneUseResult, type VerifyFrame } from './phone-verify.js';
 
 export type { PhoneUseResult } from './phone-verify.js';
@@ -91,6 +97,9 @@ const NEEDS: Readonly<Record<LaneTool, Capability>> = {
   'phone.open_app': 'key',
 };
 
+/** Tools that need a second capability as well: find_and_tap reads, then taps (the official route reads but cannot tap). */
+const ALSO_NEEDS: Partial<Record<LaneTool, Capability>> = { 'phone.find_and_tap': 'tap' };
+
 export const isOfficialTool = (name: string): name is OfficialTool => (OFFICIAL_TOOLS as readonly string[]).includes(name);
 export const isTapTool = (name: string): name is TapTool => (TAP_TOOLS as readonly string[]).includes(name);
 
@@ -104,6 +113,8 @@ export interface LaneContext {
   serial: string;
   /** true = locked, false = unlocked, null = unknown. Mirroring needs it locked; Bluetooth needs it unlocked. */
   locked: boolean | null;
+  /** The tool about to run; absent for phone.describe. The official route's health depends on it (a screen read needs the broadcast, the rest need the app). */
+  tool?: LaneTool;
 }
 
 /** Facts only the official route (the Allternit app on the phone) knows, for phone.describe. */
@@ -139,9 +150,11 @@ export interface PhoneLane {
 }
 
 const NOT_BUILT: Partial<Record<RouteId, string>> = {
-  official: 'Shortcuts, actions and Home need the next Allternit iPhone app update.',
+  official: 'Shortcuts, actions and Home need the next version of Allternit Desktop.',
   mirror: 'iPhone Mirroring is not available in this version of Allternit Desktop.',
-  'bt-mac': 'Bluetooth keyboard and mouse from this Mac is not available in this version of Allternit Desktop.',
+  // Plan step 10 finding (2026-11-17): macOS has no supported public API for an app to act as a
+  // Bluetooth keyboard/mouse (classic HID PSMs and the HID GATT service 0x1812 are reserved).
+  'bt-mac': 'Your Mac can’t act as a Bluetooth keyboard and mouse for your iPhone: macOS has no supported way for apps to do that. Use iPhone Mirroring, the Allternit Android app or the USB Agent instead.',
   'bt-apple': 'Bluetooth keyboard and mouse from a second iPhone or iPad is not available yet.',
   'bt-android': 'Bluetooth keyboard and mouse from the Allternit Android app is not available yet.',
 };
@@ -170,6 +183,256 @@ export function usbAgentLane(backend: () => UsbPhoneBackend | null): PhoneLane {
     act: async (tool, serial, args) => {
       const b = backend();
       return b ? b.call(tool, serial, args) : { ok: false, error: 'device_offline', message: 'The USB Agent is not connected.' };
+    },
+  };
+}
+
+// ── The official route: the Allternit iPhone app ────────────────────────────
+
+/** Seconds the runtime and the phone wait by default (contract §3.1). */
+const OFFICIAL_TIMEOUT_S = 30;
+/** The runtime waits timeout_s + 5 s; this HTTP call waits 5 s longer so the runtime's answer arrives first. */
+const OFFICIAL_HTTP_MARGIN_S = 10;
+/** device.describe is asked again after this (phone.actions.* reuse it). */
+const DESCRIBE_TTL_MS = 10_000;
+
+const officialTimeoutMs = (timeoutS: unknown) => ((Number.isInteger(timeoutS) ? (timeoutS as number) : OFFICIAL_TIMEOUT_S) + OFFICIAL_HTTP_MARGIN_S) * 1000;
+
+/** The Device Access switch a tool needs on the phone (Settings > Device Access in the Allternit app). */
+function switchOf(tool: string): 'Shortcuts' | 'Home' | null {
+  if (tool.startsWith('phone.home.')) return 'Home';
+  if (tool === 'phone.shortcuts.run' || tool.startsWith('phone.actions.')) return 'Shortcuts';
+  return null;
+}
+
+const asObj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+
+/**
+ * The phone's answer as a lane result (contract §4/§5). A Phone Use reply's
+ * `result` is the phone's own envelope `{ok, route, verified, detail, needs_you?}`:
+ * its detail and needs_you are kept as they are. Runtime refusals become the
+ * plain states the bot can explain: the app is closed (APP_NOT_FOREGROUND),
+ * a switch is off, the phone did not answer in time.
+ */
+export function officialResult(tool: string, res: AppRpcResult): ToolResult {
+  if (res.ok) {
+    const env = res.result;
+    const detail = asObj(env.detail);
+    if (env.ok === true) return { ok: true, verified: env.verified === true, detail };
+    const ny = asObj(env.needs_you);
+    if (isNeedsYouCode(ny.code)) {
+      const filled: NeedsYou = typeof ny.message === 'string' && ny.message ? { code: ny.code, message: ny.message } : needsYou(ny.code, { name: typeof detail.name === 'string' ? detail.name : 'Allternit Actions' });
+      return { ok: false, error: 'needs_you', message: filled.message, needs_you: filled, detail } as ToolResult;
+    }
+    const code = typeof detail.error === 'string' ? detail.error : 'phone_failed';
+    const message = typeof detail.message === 'string' && detail.message ? detail.message : 'The iPhone could not do that.';
+    const error: ToolErrorCode = code === 'timeout' ? 'timeout' : code === 'bad_params' ? 'bad_params' : code === 'unknown_action' ? 'unknown_action' : code === 'busy' ? 'rate_limited' : 'phone_failed';
+    return { ok: false, error, message, detail } as ToolResult;
+  }
+  const sw = switchOf(tool);
+  switch (res.code) {
+    case 'app_not_open': {
+      const ny = needsYou('APP_NOT_FOREGROUND');
+      return { ok: false, error: 'needs_you', message: ny.message, needs_you: ny, detail: { error: 'app_not_open' } } as ToolResult;
+    }
+    case 'device_access_off':
+      return { ok: false, error: 'device_access_off', message: `Turn on ${sw ?? 'this'} in the Allternit app on your iPhone (Settings > Device Access). Do not retry until the person says it is on.`, detail: { error: 'device_access_off' } } as ToolResult;
+    case 'permission_denied':
+      return { ok: false, error: 'device_access_off', message: `iOS does not allow Allternit to use ${sw ?? 'this'}. Allow it for Allternit in the iPhone Settings app, then turn it on in Allternit Settings > Device Access.`, detail: { error: 'permission_denied' } } as ToolResult;
+    case 'not_supported':
+      return { ok: false, error: 'not_supported', message: res.message || 'This iPhone app version cannot do that yet. Update the Allternit app.', detail: { error: 'not_supported' } } as ToolResult;
+    case 'app_timeout':
+      return { ok: false, error: 'timeout', message: 'The iPhone did not answer in time. It may still have done it: check the phone before trying again.', detail: { error: 'timeout' } } as ToolResult;
+    case 'busy':
+      return { ok: false, error: 'rate_limited', message: 'Too many calls are waiting for this iPhone. Wait for them to finish.', detail: { error: 'busy' } } as ToolResult;
+    case 'bad_request':
+      return { ok: false, error: 'invalid_args', message: res.message || 'The iPhone call was not valid.', detail: { error: 'bad_request' } } as ToolResult;
+    default:
+      if (res.status === 409) return officialResult(tool, { ok: false, status: 409, code: 'app_not_open', message: '' });
+      if (res.status === 504) return officialResult(tool, { ok: false, status: 504, code: 'app_timeout', message: '' });
+      if (res.status === 404) return { ok: false, error: 'device_offline', message: 'This iPhone is not paired with this computer any more. Pair it again in the Allternit app (Settings > Phones).' };
+      return { ok: false, error: 'phone_failed', message: res.message || `The Allternit app answered ${res.code || res.status}.`, detail: { error: res.code || 'phone_failed' } } as ToolResult;
+  }
+}
+
+/** The bot's arguments as the phone's socket fields (contract §9.1): Home ids go as device_id / scene_id. */
+export function officialRequest(tool: LaneTool, args: Record<string, unknown>): { method: string; params: Record<string, unknown> } | null {
+  const pick = (...keys: string[]) => Object.fromEntries(keys.filter((k) => args[k] !== undefined).map((k) => [k, args[k]]));
+  switch (tool) {
+    case 'phone.shortcuts.run':
+      return { method: 'device.shortcuts.run', params: pick('name', 'input', 'timeout_s') };
+    case 'phone.home.list':
+      return { method: 'device.home.list', params: pick('kind') };
+    case 'phone.home.set':
+      return { method: 'device.home.set', params: { device_id: args.id, state: args.state } };
+    case 'phone.home.scene':
+      return { method: 'device.home.scene', params: { scene_id: args.id } };
+    case 'phone.read_ui':
+      return { method: 'device.screen.read', params: pick('filter') };
+    default:
+      return null;
+  }
+}
+
+interface ActionCatalog {
+  built?: string;
+  builtIn: { name: string; known: boolean; actions: string[] };
+  apps: Array<{ id: string; name: string; category: string; shortcut: string; installed: boolean; link: string | null; actionCount: number }>;
+}
+
+/** The action catalog from device.describe's `catalog` (contract §7). */
+function catalogOf(detail: Record<string, unknown>): ActionCatalog {
+  const cat = asObj(detail.catalog);
+  const built = asObj(cat.actions_shortcut);
+  const str = (v: unknown, d = '') => (typeof v === 'string' ? v : d);
+  return {
+    built: typeof cat.built === 'string' ? cat.built : undefined,
+    builtIn: {
+      name: str(built.name, 'Allternit Actions'),
+      known: built.known === true,
+      actions: Array.isArray(built.actions) ? built.actions.filter((a): a is string => typeof a === 'string') : [],
+    },
+    apps: (Array.isArray(cat.apps) ? cat.apps : []).map((raw) => {
+      const a = asObj(raw);
+      return {
+        id: str(a.id),
+        name: str(a.name),
+        category: str(a.category),
+        shortcut: str(a.shortcut),
+        installed: a.shortcut_known === true,
+        link: typeof a.shortcut_link === 'string' ? a.shortcut_link : null,
+        actionCount: (Number(a.actions) || 0) + (Number(a.web_actions) || 0),
+      };
+    }).filter((a) => a.id && a.shortcut),
+  };
+}
+
+/**
+ * phone.actions.list over device.describe. The built-in "Allternit Actions"
+ * entries come with their ids, a derived kind and whether they are guarded;
+ * a third-party app comes with its shortcut, whether it is added and how many
+ * actions it has (device.describe sends the per-intent list only as a count).
+ */
+export function actionsListFromDescribe(detail: Record<string, unknown>, args: Record<string, unknown>): Record<string, unknown> {
+  const cat = catalogOf(detail);
+  const wantKind = typeof args.kind === 'string' ? args.kind : undefined;
+  const wantApp = typeof args.app === 'string' ? args.app.toLowerCase() : undefined;
+  const installedOnly = args.installed_only === true;
+  const builtIn = cat.builtIn.actions
+    .map((id) => {
+      const kind = deriveActionKind(id);
+      return { id, title: actionWords(id), kind, params: [] as string[], dispatch: 'actions_shortcut', installed: cat.builtIn.known, guarded: approvalClass('phone.actions.run', { app: 'allternit', action: id }, { action: { kind } }) !== null };
+    })
+    .filter((a) => !wantKind || a.kind === wantKind);
+  const apps: Array<Record<string, unknown>> = [];
+  if ((!wantApp || wantApp === 'allternit') && (!installedOnly || cat.builtIn.known)) {
+    apps.push({ id: 'allternit', name: cat.builtIn.name, category: 'Built in', shortcut: cat.builtIn.name, installed: cat.builtIn.known, actions: builtIn });
+  }
+  if (!wantKind) {
+    for (const a of cat.apps) {
+      if (wantApp && a.id.toLowerCase() !== wantApp) continue;
+      if (installedOnly && !a.installed) continue;
+      apps.push({ id: a.id, name: a.name, category: a.category, shortcut: a.shortcut, installed: a.installed, action_count: a.actionCount, actions: [] });
+    }
+  }
+  return {
+    apps,
+    ...(cat.built ? { built: cat.built } : {}),
+    note: 'Third-party apps run through their own Allternit shortcut, which the person adds once in the Allternit app (Settings > Device Access > iPhone actions).',
+  };
+}
+
+/** phone.actions.run as a device.shortcuts.run call (contract §3.1, §7.2), or a ToolResult when it cannot run. */
+export function actionsRunRequest(detail: Record<string, unknown>, args: Record<string, unknown>): { name: string; input: Record<string, unknown>; dispatched_as: string } | ToolResult {
+  const cat = catalogOf(detail);
+  const app = String(args.app ?? '').toLowerCase();
+  const action = String(args.action ?? '');
+  const input = { action, params: asObj(args.params) };
+  const unknown = (what: string): ToolResult => ({ ok: false, error: 'unknown_action', message: `${what} Call phone.actions.list to see what this iPhone can do.`, detail: { error: 'unknown_action' } } as ToolResult);
+  if (app === 'allternit') {
+    if (!cat.builtIn.actions.includes(action)) return unknown(`"${action}" is not an Allternit Actions action.`);
+    return { name: cat.builtIn.name, input, dispatched_as: 'actions_shortcut' };
+  }
+  const entry = cat.apps.find((a) => a.id.toLowerCase() === app);
+  if (!entry) return unknown(`No catalog app has the id "${String(args.app)}".`);
+  return { name: entry.shortcut, input, dispatched_as: 'app_shortcut' };
+}
+
+/**
+ * The `official` route: the Allternit iPhone app, through allternit-api's
+ * `/phones/app/:id/rpc` (contract §9.1). Health comes from the app's last
+ * state frame as the node lists it: the app must be open for shortcuts,
+ * actions and Home; a screen read needs the broadcast instead. The approval
+ * check (phone-tools.ts phoneUseApproval) runs before act is called.
+ */
+export function officialLane(apps: () => AppPhoneLane | null, now: () => number = Date.now): PhoneLane {
+  const described = new Map<string, { at: number; detail: Record<string, unknown> }>();
+  const live = (serial: string) => {
+    const a = apps();
+    if (!a?.has(serial) || !a.rpc || !a.officialState) return null;
+    if (a.devices().find((d) => d.serial === serial)?.platform === 'android') return null;
+    return a as AppPhoneLane & Required<Pick<AppPhoneLane, 'rpc' | 'officialState'>>;
+  };
+  const describe = async (a: NonNullable<ReturnType<typeof live>>, serial: string): Promise<ToolResult> => {
+    const hit = described.get(serial);
+    if (hit && now() - hit.at < DESCRIBE_TTL_MS) return { ok: true, detail: hit.detail };
+    const res = officialResult('phone.describe', await a.rpc(serial, 'device.describe', {}, officialTimeoutMs(undefined)));
+    if (res.ok) described.set(serial, { at: now(), detail: asObj(res.detail) });
+    return res;
+  };
+  return {
+    id: 'official',
+    covers: [...OFFICIAL_CAPS, 'read_ui'],
+    verify: 'self',
+    health: async ({ serial, tool }) => {
+      const a = live(serial);
+      if (!a) {
+        return apps()?.has(serial) && !apps()?.rpc
+          ? { state: 'unavailable', reason: NOT_BUILT.official! }
+          : { state: 'unavailable', reason: 'This iPhone is not connected with the Allternit app.' };
+      }
+      if (tool === 'phone.read_ui') {
+        return a.officialState(serial)?.screen ? { state: 'healthy' } : { state: 'needs_you', needsYou: needsYou('BROADCAST_STOPPED') };
+      }
+      if (!a.officialState(serial)?.appOpen) await a.refresh(true);
+      return a.officialState(serial)?.appOpen ? { state: 'healthy' } : { state: 'needs_you', needsYou: needsYou('APP_NOT_FOREGROUND') };
+    },
+    act: async (tool, serial, args) => {
+      const a = live(serial);
+      if (!a) return { ok: false, error: 'route_unavailable', message: 'This iPhone is not connected with the Allternit app.' };
+      if (tool === 'phone.actions.list' || tool === 'phone.actions.run') {
+        const d = await describe(a, serial);
+        if (!d.ok) return d;
+        const detail = asObj(d.detail);
+        if (tool === 'phone.actions.list') return { ok: true, verified: true, detail: actionsListFromDescribe(detail, args) };
+        const run = actionsRunRequest(detail, args);
+        if ('ok' in run) return run;
+        const params: Record<string, unknown> = { name: run.name, input: run.input, ...(args.timeout_s !== undefined ? { timeout_s: args.timeout_s } : {}) };
+        const res = officialResult(tool, await a.rpc(serial, 'device.shortcuts.run', params, officialTimeoutMs(args.timeout_s)));
+        return res.ok ? { ...res, detail: { output: asObj(res.detail).output ?? null, returned_via: asObj(res.detail).returned_via, dispatched_as: run.dispatched_as } } : res;
+      }
+      const req = officialRequest(tool, args);
+      if (!req) return { ok: false, error: 'not_supported', message: `${tool} does not run on the official route.` };
+      const res = officialResult(tool, await a.rpc(serial, req.method, req.params, officialTimeoutMs(args.timeout_s)));
+      if (res.ok && tool === 'phone.read_ui') {
+        // Existing readers take elements and text at the top level (phone-verify.ts PhoneUseResult).
+        const detail = asObj(res.detail);
+        return { ...res, text: detail.text ?? '', elements: detail.elements ?? [], width: detail.width, height: detail.height };
+      }
+      return res;
+    },
+    facts: async (serial) => {
+      const a = live(serial);
+      if (!a) return {};
+      const d = await describe(a, serial);
+      if (!d.ok) return {};
+      const detail = asObj(d.detail);
+      return {
+        locked: typeof detail.locked === 'boolean' ? detail.locked : null,
+        foreground_app: typeof detail.foreground_app === 'string' ? detail.foreground_app : null,
+        shortcuts: Array.isArray(detail.shortcuts) ? detail.shortcuts.filter((x): x is string => typeof x === 'string') : [],
+        home: { available: asObj(detail.home).available === true },
+      };
     },
   };
 }
@@ -304,6 +567,8 @@ const FINAL_ERRORS = new Set<string>([
   'unknown_action',
   'rate_limited',
   'timeout',
+  // A Device Access switch is off: the person has to turn it on, no other route has it.
+  'device_access_off',
 ]);
 
 export interface PhoneRouterDeps {
@@ -346,7 +611,7 @@ export class PhoneRouter {
 
   /** A lane's health for a phone, cached for HEALTH_TTL_MS. A throw counts as unavailable. */
   async health(id: RouteId, ctx: LaneContext): Promise<RouteHealth> {
-    const key = `${id}\u0000${ctx.serial}`;
+    const key = `${id}\u0000${ctx.serial}\u0000${ctx.tool ?? ''}`;
     const hit = this.cache.get(key);
     if (hit && this.now() - hit.at < this.ttl) return hit.health;
     let health: RouteHealth;
@@ -360,7 +625,8 @@ export class PhoneRouter {
   }
 
   invalidate(id: RouteId, serial: string): void {
-    this.cache.delete(`${id}\u0000${serial}`);
+    const prefix = `${id}\u0000${serial}\u0000`;
+    for (const key of [...this.cache.keys()]) if (key.startsWith(prefix)) this.cache.delete(key);
   }
 
   /** Hints for the approval check, from the last phone.actions.list / phone.home.list on this phone. */
@@ -383,11 +649,12 @@ export class PhoneRouter {
    */
   async run(tool: LaneTool, serial: string, args: Record<string, unknown>, opts: RunOptions = {}): Promise<PhoneUseResult | null> {
     const cap = NEEDS[tool];
-    const order = (opts.route ? [opts.route] : ROUTE_ORDER).filter((id) => this.lanes[id].covers.includes(cap));
+    const also = ALSO_NEEDS[tool];
+    const order = (opts.route ? [opts.route] : ROUTE_ORDER).filter((id) => this.lanes[id].covers.includes(cap) && (!also || this.lanes[id].covers.includes(also)));
     if (opts.route && order.length === 0) {
       return failEnvelope(opts.route, 'not_supported', `${tool} does not run on the ${opts.route} route.`, { detail: { error: 'not_supported' } });
     }
-    const ctx = await this.context(serial);
+    const ctx: LaneContext = { ...(await this.context(serial)), tool };
     let firstNeed: { route: RouteId; needsYou: NeedsYou } | null = null;
     let lastFailure: PhoneUseResult | null = null;
     let approved = false;
@@ -506,7 +773,9 @@ export class PhoneRouter {
     } catch (error) {
       raw = { ok: false, error: 'phone_failed' as ToolErrorCode, message: error instanceof Error ? error.message : String(error) };
     }
-    return toEnvelope(lane.id, tool, raw);
+    // A lane that checked its own effect says so (the official route: the phone read the state back).
+    const own = (raw as Record<string, unknown>).verified;
+    return toEnvelope(lane.id, tool, raw, raw.ok && typeof own === 'boolean' ? { verified: own } : {});
   }
 
   /** Remember action kinds and Home device kinds from list results, for the approval check. */

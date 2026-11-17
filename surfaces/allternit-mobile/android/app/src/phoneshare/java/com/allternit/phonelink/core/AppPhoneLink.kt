@@ -10,8 +10,8 @@ import javax.crypto.spec.SecretKeySpec
 // The Android end of the app-phone lane (the iPhone app's AppPhoneService /
 // AppPhoneRelay / IngestSocket in one JVM-testable class): redeem the owner's
 // claim code, pair with the runtime (pair socket: X25519 + 6-digit code the
-// owner approves), keep the control socket (state frames out, input.events and
-// screen_request in) and open the ingest socket the screen packets go out on.
+// owner approves), keep the control socket (state frames out, input.events,
+// hid.* and screen_request in) and open the ingest socket the screen packets go out on.
 // No Android classes: everything the platform provides sits behind the small
 // interfaces below. Every socket message is a SecureEnvelope (same
 // construction both ways), exactly like iOS.
@@ -121,6 +121,8 @@ class AppPhoneLink(
     private val input: InputEvents,
     private val deviceModel: String,
     private val listener: LinkListener = object : LinkListener {},
+    /** Phone Use `bt-android`: the `hid.*` methods (this phone as the iPhone's Bluetooth keyboard and mouse); null = not offered. */
+    private val hid: HidCommands? = null,
     private val newPrivateKey: () -> ByteArray = { X25519.generatePrivateKey() },
 ) {
     private val lock = Any()
@@ -412,6 +414,8 @@ class AppPhoneLink(
         override fun onClosed() {
             val was = open
             open = false
+            // Nobody can send the matching key-up or button-up now (contract §9.2).
+            hid?.releaseAll()
             val mine = synchronized(lock) { if (control === this) { control = null; true } else false }
             if (!mine || dead) return
             dead = true
@@ -431,6 +435,10 @@ class AppPhoneLink(
                 "screen.prompt" -> {
                     host.onScreenRequest()
                     out.put("result", JSONObject().put("shown", true).put("live", host.consent() == Consent.GRANTED))
+                }
+                in HidCommands.METHODS -> {
+                    val h = hid ?: throw RpcException(RpcException.METHOD_NOT_FOUND, "Unknown method $method", "unknown_method")
+                    out.put("result", h.handle(method, params))
                 }
                 else -> out.put("error", JSONObject().put("code", "unknown_method").put("message", "Unknown method $method"))
             }

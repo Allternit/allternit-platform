@@ -330,6 +330,10 @@ function checkPackagingDryRun(jobs) {
   // cleanly without the binary (phone-link-ipc.ts passes binary: null). Make it
   // `advisory: false, optional: false` once anisette.allternit.com is live.
   bins.push({ name: 'allternit-sideload', optional: true, advisory: true, flag: null, darwinOnly: true });
+  // The iPhone Mirroring helper for the `mirror` Phone Use route
+  // (cmd/allternit-mirror, SwiftPM, staged by prepare-mirror.cjs, which
+  // hard-fails on macOS without it). Windows and Linux have no such route.
+  bins.push({ name: 'allternit-mirror', optional: false, flag: null, darwinOnly: true });
 
   // Platform jobs = jobs that invoke electron-builder. Jobs that invoke it
   // via an npm script (build:electron / dist / pack) run the

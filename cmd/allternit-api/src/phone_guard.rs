@@ -315,6 +315,39 @@ pub fn rule_effect(a: &Action<'_>) -> Option<&'static str> {
         "call.dial" | "call_dial" | "dial" => Some("call"),
         // Texts carry one-time codes.
         "sms.read" | "sms_read" => Some("credential"),
+        "shortcuts.run" | "actions.run" | "home.set" | "home.scene" => phone_use_effect(t, el, a.args),
+        _ => None,
+    }
+}
+
+/// Phone Use's official tools (docs/contracts/CONTRACT-phone-use-2026-11-16.md
+/// §8). The Desktop names the class it found as the element class's last word
+/// (`"phone.shortcuts.run send"`): send, purchase or security. Without one,
+/// the arguments decide: an unknown shortcut can send anything, an action is
+/// judged by its app and id, a Home change by the state it sets.
+fn phone_use_effect(tool: &str, el: Option<&El>, args: &Map<String, Value>) -> Option<&'static str> {
+    match el.and_then(|e| e.class.split_whitespace().last()) {
+        Some("send") => return Some("send"),
+        Some("purchase") => return Some("pay"),
+        Some("security") => return Some("security_setting"),
+        _ => {}
+    }
+    match tool {
+        "shortcuts.run" => {
+            let named = El { class: String::new(), label: arg(args, &["name"]).unwrap_or_default().to_string(), id: String::new() };
+            Some(label_effect(&named).unwrap_or("send"))
+        }
+        "actions.run" => {
+            let app = arg(args, &["app"]).unwrap_or_default();
+            let action = El { class: String::new(), label: String::new(), id: arg(args, &["action"]).unwrap_or_default().to_string() };
+            label_effect(&action).or_else(|| is_money_app(app).then_some("money_app"))
+        }
+        "home.set" => {
+            let state = args.get("state").and_then(Value::as_object);
+            state
+                .is_some_and(|s| ["locked", "armed", "alarm", "door", "lock"].iter().any(|k| s.contains_key(*k)))
+                .then_some("security_setting")
+        }
         _ => None,
     }
 }
@@ -1116,6 +1149,31 @@ mod tests {
         assert_eq!(rule("find_and_tap", json!({ "element_id": "com.mail:id/delete" }), None, None), Some("delete"));
         assert_eq!(rule("phone.find_and_tap", json!({ "element_id": "title", "match": "Inbox" }), None, None), None);
         assert_eq!(rule("phone.find_and_tap", json!({ "element_id": "x" }), Some(&el("Button", "Send", "x")), None), Some("send"));
+    }
+
+    /// Contract §8 for Phone Use: the class the Desktop found holds the call
+    /// here, so the owner approves once (the hold) and the Desktop does not ask again.
+    #[test]
+    fn phone_use_classes_hold_sends_purchases_and_security() {
+        let classed = |tool: &str, class: &str| rule(tool, json!({}), Some(&el(&format!("{tool} {class}"), "Run it", "")), None);
+        assert_eq!(classed("phone.shortcuts.run", "send"), Some("send"));
+        assert_eq!(classed("phone.actions.run", "purchase"), Some("pay"));
+        assert_eq!(classed("phone.home.set", "security"), Some("security_setting"));
+        assert_eq!(classed("phone.home.scene", "security"), Some("security_setting"));
+        // No class: an unknown shortcut may send; its name can say worse.
+        assert_eq!(rule("phone.shortcuts.run", json!({ "name": "Morning" }), None, None), Some("send"));
+        assert_eq!(rule("phone.shortcuts.run", json!({ "name": "Delete old photos" }), None, None), Some("delete"));
+        // Actions by id and app; Home by the state it sets.
+        assert_eq!(rule("phone.actions.run", json!({ "app": "slack", "action": "SendMessageIntent" }), None, None), Some("send"));
+        assert_eq!(rule("phone.actions.run", json!({ "app": "allternit", "action": "messages.send" }), None, None), Some("send"));
+        assert_eq!(rule("phone.actions.run", json!({ "app": "Venmo", "action": "OpenIntent" }), None, None), Some("money_app"));
+        assert_eq!(rule("phone.actions.run", json!({ "app": "allternit", "action": "notes.create" }), None, None), None);
+        assert_eq!(rule("phone.home.set", json!({ "id": "front", "state": { "locked": false } }), None, None), Some("security_setting"));
+        assert_eq!(rule("phone.home.set", json!({ "id": "lamp", "state": { "on": true } }), None, None), None);
+        assert_eq!(rule("phone.home.scene", json!({ "id": "evening" }), None, None), None);
+        // Reads are never held.
+        assert_eq!(rule("phone.home.list", json!({}), None, None), None);
+        assert_eq!(rule("phone.describe", json!({}), None, None), None);
     }
 
     #[test]

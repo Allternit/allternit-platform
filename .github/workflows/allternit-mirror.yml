@@ -1,0 +1,29 @@
+name: iPhone Mirroring helper
+
+# Plan step 7 done check: cmd/allternit-mirror builds as a universal binary
+# (arm64 + x86_64) and its unit tests pass (command parsing, refusing points
+# outside the window, probe → health). The shipped copy is built in
+# release-desktop.yml (build-macos). Nothing here touches iPhone Mirroring
+# itself: device checks are the owner's (plan check P1).
+# Not on every push or PR: the build train dispatches or calls it.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - name: Unit tests
+        run: swift test --package-path cmd/allternit-mirror
+      - name: Universal release build
+        run: |
+          swift build -c release --arch arm64 --arch x86_64 --package-path cmd/allternit-mirror
+          lipo -info cmd/allternit-mirror/.build/apple/Products/Release/allternit-mirror
+          lipo -info cmd/allternit-mirror/.build/apple/Products/Release/allternit-mirror | grep -q 'x86_64 arm64\|arm64 x86_64'

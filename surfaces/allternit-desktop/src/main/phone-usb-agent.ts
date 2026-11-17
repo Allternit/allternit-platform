@@ -8,7 +8,9 @@
  *          Wi-Fi through the authenticated link (phone-usb-agent-link.ts)
  *   eyes:  the phone's AirPlay screen mirror, received here by UxPlay
  *          (phone-airplay.ts), one PIN-protected receiver per board
- *   aim:   calibration and closed-loop aiming (phone-usb-agent-pointer.ts)
+ *   aim:   calibration and closed-loop aiming, from the shared keyboard/mouse
+ *          core (phone-hid-core.ts); the board is its `usb-agent` sender
+ *          (phone-usb-agent-pointer.ts)
  *
  * The board starts disarmed and only a press of its button arms it, so
  * nothing on the network can start driving the phone on its own; Stop here
@@ -23,7 +25,8 @@ import { AirplayScreen, AIRPLAY_BASE_PORT, AIRPLAY_NAME, type AirplayState, type
 import { UsbAgentLink, type BoardSessionInfo } from './phone-usb-agent-link.js';
 import { USBA_DEFAULT_PORT, newKeyHex, type BoardCommand } from './phone-usb-agent-protocol.js';
 import { BoardError, UsbPointer, type Calibration, type PointerScreen } from './phone-usb-agent-pointer.js';
-import { changed, type Gray } from './phone-usb-agent-vision.js';
+import { HidError } from './phone-hid-core.js';
+import type { Gray } from './phone-usb-agent-vision.js';
 import { compareVersions } from './phone-usb-agent-firmware.js';
 import { provision, readIdentity, validateProvision, type SerialPort } from './phone-usb-agent-provision.js';
 import type { ToolErrorCode, ToolResult } from './phone-tools.js';
@@ -373,11 +376,7 @@ export class UsbAgentManager extends EventEmitter {
           }
           // Spotlight from a hardware keyboard: ⌘Space, type the name, Return.
           return await this.act(b, async () => {
-            await b.pointer.key('cmd+space');
-            await sleep(600);
-            await b.pointer.type((a.app as string).trim());
-            await sleep(500);
-            await b.pointer.key('enter');
+            await b.pointer.openApp((a.app as string).trim());
             return [];
           }, { needCalibration: false });
         }
@@ -440,18 +439,13 @@ export class UsbAgentManager extends EventEmitter {
     const blocked = this.blocker(b, { needCalibration: opts.needCalibration, needScreen: opts.needCalibration });
     if (blocked) return blocked;
     const frame = b.screen.latest();
-    const beforeGray = frame ? this.deps.decode(frame.jpeg, DECODE_WIDTH) : null;
-    const from = b.pointer.where();
-    const visited = await run(frame ?? { width: 1, height: 1 });
-    // The pointer's own trip (from where it was to where it went) is masked out of the comparison.
-    const ignore: Point[] = [...(from ? [from] : []), ...visited];
-    if (!frame) return { ok: true, screenChanged: null };
-    await b.screen.settled(350, 300, 3_000);
-    const after = b.screen.latest();
-    const afterGray = after && after !== frame ? this.deps.decode(after.jpeg, DECODE_WIDTH) : beforeGray;
+    // The core reads its "before" frame in this same tick, so it is this frame;
+    // the pointer's own trip (from where it was to where it went) is masked out.
+    const screenChanged = await b.pointer.actAndCompare(() => run(frame ?? { width: 1, height: 1 }));
+    if (screenChanged === null) return { ok: true, screenChanged: null };
     return {
       ok: true,
-      screenChanged: changed(beforeGray, afterGray, ignore),
+      screenChanged,
       note: 'screenChanged=false usually means the action missed; look again before retrying. Coordinates are only valid for the frame they came from.',
     };
   }
@@ -460,6 +454,10 @@ export class UsbAgentManager extends EventEmitter {
     if (error instanceof BoardError) {
       const map: Record<string, ToolErrorCode> = { offline: 'device_offline', disarmed: 'disarmed', usb_asleep: 'device_locked', uncertain: 'uncertain', invalid: 'invalid_args', rejected: 'adb_failed' };
       return fail(map[error.result.error] ?? 'adb_failed', error.message);
+    }
+    if (error instanceof HidError) {
+      const map: Record<HidError['code'], ToolErrorCode> = { bad_params: 'invalid_args', not_calibrated: 'not_calibrated', unsupported: 'unsupported' };
+      return fail(map[error.code], error.message);
     }
     return fail('adb_failed', error instanceof Error ? error.message : String(error));
   }
@@ -505,6 +503,7 @@ export class UsbAgentManager extends EventEmitter {
       load: () => this.deps.store.loadCalibration(stored.boardId),
       save: (c) => this.deps.store.saveCalibration(stored.boardId, c),
       linkGeneration: () => board.generation,
+      connected: () => this.link.session(stored.boardId) !== null,
       now: this.now,
     });
     this.boards.set(stored.boardId, board);
@@ -532,7 +531,6 @@ export class UsbAgentManager extends EventEmitter {
 
 class ArgError extends Error {}
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isCoord = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 20_000;
 
 export function serialOf(boardId: string): string {
