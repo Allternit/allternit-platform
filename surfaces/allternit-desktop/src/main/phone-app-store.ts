@@ -92,6 +92,18 @@ export interface AppPhoneRow {
   canTap?: boolean;
   /** Android screen-share consent as the app last reported it. */
   consent?: string;
+  /** The app holds its control socket (it is open on the phone). */
+  appOpen?: boolean;
+  /** Device Access switches from the app's last state frame; absent on older nodes or while the app is closed. */
+  deviceAccess?: Record<string, boolean>;
+}
+
+/** What the node last heard from an iPhone's app, for the Phone Use official route's health (phone-route.ts). */
+export interface AppOfficialState {
+  appOpen: boolean;
+  /** The broadcast extension is sending (device.screen.read can run). */
+  screen: boolean;
+  deviceAccess: Record<string, boolean> | null;
 }
 
 export type AppRpcResult =
@@ -703,6 +715,18 @@ export class AppPhoneBackend implements UsbPhoneBackend {
     return this.rows.find((r) => r.serial === serial);
   }
 
+  /** Phone Use official route: what the node last heard from this phone's app (its state frame). */
+  officialState(serial: string): AppOfficialState | null {
+    const r = this.row(serial);
+    if (!r) return null;
+    return { appOpen: r.appOpen === true, screen: r.online, deviceAccess: r.deviceAccess ?? null };
+  }
+
+  /** Phone Use official route: one call to the app (device.*), or to the broadcast for device.screen.read. */
+  rpc(serial: string, method: string, params: Record<string, unknown>, timeoutMs: number): Promise<AppRpcResult> {
+    return this.deps.node.rpc(appPhoneId(serial), method, params, timeoutMs);
+  }
+
   devices(): AppPhoneDevice[] {
     return this.rows.map((r): AppPhoneDevice => {
       const platform = appPlatformOf(r);
@@ -910,7 +934,10 @@ export function httpAppPhoneNode(deps: HttpAppPhoneNodeDeps): AppPhoneNode {
       const json = (await res.json().catch(() => ({}))) as { phones?: unknown };
       const rows = Array.isArray(json.phones) ? json.phones : [];
       return rows.flatMap((row): AppPhoneRow[] => {
-        const r = row as { serial?: unknown; name?: unknown; model?: unknown; online?: unknown; screen?: unknown; route?: unknown; platform?: unknown; canTap?: unknown; consent?: unknown };
+        const r = row as { serial?: unknown; name?: unknown; model?: unknown; online?: unknown; screen?: unknown; route?: unknown; platform?: unknown; canTap?: unknown; consent?: unknown; appOpen?: unknown; deviceAccess?: unknown };
+        const access = r.deviceAccess && typeof r.deviceAccess === 'object' && !Array.isArray(r.deviceAccess)
+          ? Object.fromEntries(Object.entries(r.deviceAccess as Record<string, unknown>).filter(([, v]) => typeof v === 'boolean')) as Record<string, boolean>
+          : undefined;
         if (!isAppSerial(r.serial)) return [];
         if (r.route !== undefined && r.route !== APP_PHONE_ROUTE && r.route !== ANDROID_APP_ROUTE) return [];
         return [{
@@ -920,6 +947,8 @@ export function httpAppPhoneNode(deps: HttpAppPhoneNodeDeps): AppPhoneNode {
           platform: r.platform === 'android' ? 'android' : 'ios',
           canTap: r.platform === 'android' && r.canTap === true,
           ...(typeof r.consent === 'string' ? { consent: r.consent } : {}),
+          ...(typeof r.appOpen === 'boolean' ? { appOpen: r.appOpen } : {}),
+          ...(access ? { deviceAccess: access } : {}),
           // `screen` is the ingest socket; older rows only carry `online`.
           online: r.screen === undefined ? r.online === true : r.screen === true && r.online !== false,
         }];

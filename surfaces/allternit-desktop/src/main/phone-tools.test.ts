@@ -662,6 +662,32 @@ describe('Phone Use tools (contract §3)', () => {
     expect(official.calls).toHaveLength(0);
   });
 
+  it('the real official lane asks the owner before a send reaches the phone, and not for a light', async () => {
+    const rpcs: Array<{ method: string; params: Record<string, unknown> }> = [];
+    for (const decision of ['denied', 'approved'] as const) {
+      const { adb } = makeAdb();
+      const asked: ApprovalRequest[] = [];
+      const apps: AppPhoneLane = {
+        ...appPhones(),
+        officialState: () => ({ appOpen: true, screen: false, deviceAccess: { shortcuts: true, home: true } }),
+        rpc: async (_s, method, params) => (rpcs.push({ method, params }), { ok: true, result: { ok: true, route: 'official', verified: true, detail: { output: null, returned_via: 'x_callback' } } }),
+      };
+      const r = new PhoneToolRunner({ adb, gate: { request: async (req) => (asked.push(req), decision) }, rates: memoryRates(), artemis: () => null, onlineSerials: () => [], apps: () => apps });
+      const res = await r.call('phone.shortcuts.run', { name: 'Text Mom', input: 'on my way' });
+      expect(asked).toHaveLength(1);
+      if (decision === 'denied') {
+        expect(res).toMatchObject({ ok: false, error: 'approval_denied', route: 'official', detail: { error: 'denied' } });
+        expect(rpcs).toHaveLength(0);
+      } else {
+        expect(res).toMatchObject({ ok: true, route: 'official', verified: true });
+        expect(rpcs).toEqual([{ method: 'device.shortcuts.run', params: { name: 'Text Mom', input: 'on my way' } }]);
+        expect(await r.call('phone.home.set', { id: 'lamp', state: { on: true } })).toMatchObject({ ok: true, route: 'official' });
+        expect(asked).toHaveLength(1);
+        expect(rpcs.at(-1)).toEqual({ method: 'device.home.set', params: { device_id: 'lamp', state: { on: true } } });
+      }
+    }
+  });
+
   it('turning on a light runs without asking', async () => {
     const official = officialLane({ ok: true, detail: { id: 'lamp', state: { on: true } } });
     const { r, asked } = iphoneRunner({ lanes: { official: official.lane } });

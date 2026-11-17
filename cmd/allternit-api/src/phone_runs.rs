@@ -167,6 +167,10 @@ fn label_of(tool: &str, args: &Value) -> String {
         "phone.swipe" => args.get("direction").and_then(Value::as_str).map(str::to_string),
         "phone.find_and_tap" => args.get("match").or_else(|| args.get("element_id")).and_then(Value::as_str).map(str::to_string),
         "phone.task" => args.get("goal").or_else(|| args.get("task")).and_then(Value::as_str).map(|s| clip(s, 80)),
+        // Phone Use, official route (contract §3.1).
+        "phone.shortcuts.run" => args.get("name").and_then(Value::as_str).map(|s| clip(s, 80)),
+        "phone.actions.run" => args.get("action").and_then(Value::as_str).map(|s| clip(s, 80)),
+        "phone.home.set" | "phone.home.scene" => args.get("id").and_then(Value::as_str).map(|s| clip(s, 80)),
         _ => None,
     };
     match detail {
