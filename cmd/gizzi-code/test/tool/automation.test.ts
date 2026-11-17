@@ -359,7 +359,7 @@ describe("tool.automation", () => {
     let result = await run({ action: "create", prompt: "Call Sam", schedule: { delay_minutes: 30 } })
     expect(result.metadata).toMatchObject({ status: "no_scheduler", reason: "no_credential", built: { action: "create" } })
     expect(result.output).toMatch(/^Not scheduled: /)
-    expect(result.output).toContain("gizzi jobs start")
+    expect(result.output).toContain("gizzi serve")
     expect(calls).toEqual([])
 
     process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN = "internal-test"

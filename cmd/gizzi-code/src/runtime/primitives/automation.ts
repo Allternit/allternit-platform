@@ -485,8 +485,12 @@ export namespace Automation {
   export const CRON_TAG = "automation"
   /** A run due more than this long ago is logged as missed instead of run (laptop asleep, scheduler off). */
   export const LATE_LIMIT_MS = 12 * 60 * 60_000
-  /** How the user starts this computer's scheduler. */
-  export const START_COMMAND = "gizzi jobs start"
+  /**
+   * How the user starts this computer's scheduler: the in-process CronService the
+   * gizzi server runs (server.ts). Not `gizzi jobs start` — that daemon keeps its
+   * own job database, so tasks this tool creates would never run there.
+   */
+  export const START_COMMAND = "gizzi serve"
 
   /**
    * The CronService calls the fallback uses (the same service the /cron
@@ -779,8 +783,8 @@ export namespace Automation {
     if (outcome.status === "no_scheduler") {
       return (
         `Not scheduled: ${NO_PLATFORM_TEXT[outcome.reason]}, and this computer's scheduler isn't running. ` +
-        `Tell the user plainly; don't say it is scheduled. They can start the scheduler with \`${START_COMMAND}\` ` +
-        `(or keep Gizzi Code open, which runs it), then ask again.`
+        `Tell the user plainly; don't say it is scheduled. Scheduled tasks run while the Gizzi server is up: keep Gizzi Code open, or run \`${START_COMMAND}\` ` +
+        `and leave it running, then ask again.`
       )
     }
     switch (outcome.action) {
