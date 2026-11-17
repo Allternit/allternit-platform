@@ -28,6 +28,8 @@ on:
 
 jobs:
   test:
+    # Build-train merges skip the suite: the train ran it on the same tree (Eoj, 2026-11-16).
+    if: ${{ !contains(github.event.head_commit.message, 'from Allternit/train/') }}
     # A newer commit supersedes an in-flight test run: cancel the older one.
     concurrency:
       group: deploy-cloud-api-test-${{ github.ref }}
@@ -84,7 +86,7 @@ jobs:
     concurrency:
       group: deploy-cloud-api-contabo
       cancel-in-progress: false
-    if: github.ref == 'refs/heads/main'
+    if: ${{ always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
