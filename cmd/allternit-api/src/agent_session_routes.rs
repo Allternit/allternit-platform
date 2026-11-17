@@ -2569,7 +2569,12 @@ async fn sync_sessions(
     }
 
     let remote_targets = crate::placement::sync_targets(&state.db);
+    // Dropped when the gizzi stream below ends (or the client goes away), so
+    // the never-ending flags stream stops too and the SSE closes: clients
+    // reconnect with Last-Event-ID instead of sitting on a silent stream.
+    let (upstream_done_tx, upstream_done_rx) = tokio::sync::oneshot::channel::<()>();
     let stream = async_stream::stream! {
+        let _upstream_alive = upstream_done_tx;
         yield Ok(axum::response::sse::Event::default().comment("connected"));
 
         let mut buffer = String::new();
@@ -2628,10 +2633,16 @@ async fn sync_sessions(
     let remote = futures::StreamExt::map(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)), Ok::<_, std::convert::Infallible>);
     // Status flag changes (needsInput / readyForReview) written by the
     // always-on watcher (`code_session_status`), as `session_flags` events.
+    // Ends with the gizzi stream (see `upstream_done_tx`).
     let mut flags_rx = crate::code_session_status::subscribe();
+    let mut upstream_done_rx = upstream_done_rx;
     let flags = async_stream::stream! {
         loop {
-            match flags_rx.recv().await {
+            let next = tokio::select! {
+                _ = &mut upstream_done_rx => break,
+                next = flags_rx.recv() => next,
+            };
+            match next {
                 Ok(payload) => {
                     yield Ok::<_, std::convert::Infallible>(
                         axum::response::sse::Event::default().data(payload.to_string()),
