@@ -457,6 +457,15 @@ struct CodeModeView: View {
     private func open(sessionId: String) {
         thread = CodeThreadTarget(sessionId: sessionId)
         activeSessionId = sessionId
+        markReviewed(sessionId)
+    }
+
+    /// Opening a session clears its "Ready for review" flag (C6). Only
+    /// when it is set, so a plain open makes no extra write; a failure is
+    /// silent (the flag just stays until the next open).
+    private func markReviewed(_ sessionId: String) {
+        if let known = sessions.first(where: { $0.id == sessionId }), !known.readyForReview { return }
+        Task { try? await CodeSessionsClient().markReviewed(sessionId: sessionId) }
     }
 
     private func sessionChanged(_ id: String?) {

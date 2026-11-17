@@ -249,6 +249,10 @@ struct UpdateSessionBody {
     active: Option<bool>,
     origin_surface: Option<String>,
     metadata: Option<serde_json::Value>,
+    /// The user opened the session: clears the server-owned
+    /// `readyForReview` flag (the only client way to clear it).
+    #[serde(default, rename = "markReviewed", alias = "mark_reviewed")]
+    mark_reviewed: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1284,6 +1288,7 @@ async fn create_session(
     // object plus flattened agent fields; stored metadata wins on read.
     if let Some(metadata) = body.metadata {
         let mut bag = metadata.as_object().cloned().unwrap_or_default();
+        crate::code_session_status::strip_server_owned(&mut bag);
         if let Some(ref agent_id) = body.agent_id {
             bag.entry("agentId".to_string())
                 .or_insert_with(|| json!(agent_id));
@@ -1364,23 +1369,28 @@ async fn update_session(
                 let _ = state.db.set_session_origin_surface(&session.id, s);
             }
             // Merge the client metadata bag into the stored one (new keys
-            // win, previously stored keys are preserved).
+            // win, previously stored keys are preserved). The status flags
+            // (needsInput, readyForReview, …) are server-owned: dropped from
+            // the client bag so a stale full-bag write can't set or clear
+            // them. Same lock as the status watcher's writes.
             if let Some(metadata) = body.metadata {
                 if let Some(object) = metadata.as_object() {
-                    let mut bag = state
-                        .db
-                        .get_session_metadata(&session.id)
-                        .ok()
-                        .flatten()
-                        .and_then(|value| value.as_object().cloned())
-                        .unwrap_or_default();
-                    for (key, value) in object {
-                        bag.insert(key.clone(), value.clone());
-                    }
-                    let _ = state
-                        .db
-                        .set_session_metadata(&session.id, &serde_json::Value::Object(bag));
+                    let mut object = object.clone();
+                    crate::code_session_status::strip_server_owned(&mut object);
+                    crate::code_session_status::update_bag(&state.db, &session.id, |bag| {
+                        for (key, value) in object {
+                            bag.insert(key, value);
+                        }
+                        true
+                    });
                 }
+            }
+            if body.mark_reviewed == Some(true) {
+                crate::code_session_status::write_flags(
+                    &state.db,
+                    &session.id,
+                    &crate::code_session_status::FlagWrite::Reviewed,
+                );
             }
             Json(transform_session(session, &state.db)).into_response()
         }
@@ -2559,7 +2569,12 @@ async fn sync_sessions(
     }
 
     let remote_targets = crate::placement::sync_targets(&state.db);
+    // Dropped when the gizzi stream below ends (or the client goes away), so
+    // the never-ending flags stream stops too and the SSE closes: clients
+    // reconnect with Last-Event-ID instead of sitting on a silent stream.
+    let (upstream_done_tx, upstream_done_rx) = tokio::sync::oneshot::channel::<()>();
     let stream = async_stream::stream! {
+        let _upstream_alive = upstream_done_tx;
         yield Ok(axum::response::sse::Event::default().comment("connected"));
 
         let mut buffer = String::new();
@@ -2616,7 +2631,32 @@ async fn sync_sessions(
     }
     drop(tx);
     let remote = futures::StreamExt::map(futures::stream::poll_fn(move |cx| rx.poll_recv(cx)), Ok::<_, std::convert::Infallible>);
-    let merged = futures::stream::select(Box::pin(stream), Box::pin(remote));
+    // Status flag changes (needsInput / readyForReview) written by the
+    // always-on watcher (`code_session_status`), as `session_flags` events.
+    // Ends with the gizzi stream (see `upstream_done_tx`).
+    let mut flags_rx = crate::code_session_status::subscribe();
+    let mut upstream_done_rx = upstream_done_rx;
+    let flags = async_stream::stream! {
+        loop {
+            let next = tokio::select! {
+                _ = &mut upstream_done_rx => break,
+                next = flags_rx.recv() => next,
+            };
+            match next {
+                Ok(payload) => {
+                    yield Ok::<_, std::convert::Infallible>(
+                        axum::response::sse::Event::default().data(payload.to_string()),
+                    );
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+    let merged = futures::stream::select(
+        futures::stream::select(Box::pin(stream), Box::pin(remote)),
+        Box::pin(flags),
+    );
 
     Ok(Sse::new(merged).keep_alive(axum::response::sse::KeepAlive::default()))
 }
