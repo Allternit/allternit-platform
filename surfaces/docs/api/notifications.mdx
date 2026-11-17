@@ -180,6 +180,10 @@ When a sink push for an inbox item reaches at least one iPhone, cloud records th
 
 `agent.message.sent` ("Messages from your agents") is written when an agent calls [send_user_message](/tools/send-user-message) with a push. It is on by default, at level Normal, so quiet hours hold it, and it is `private` by default. It takes the `AGENT_MESSAGE` category and shares the per-thread message limiter with `message.received`. Agent pushes are also limited at the source to 4 per thread per hour and 20 per user per day. The 12-hour stale rule above applies. A runtime that is not linked to the person's account forwards nothing, so an unpaired runtime never pushes. An incognito chat never pushes. Tapping the push opens the thread or session.
 
+## Scheduled-task approvals
+
+When a scheduled run started by the local API scheduler stops at an approval, the scheduler raises one attention item (needs you, with Retry). The runtime sees `automation_run.by` equal to `scheduler` and sends no second notice. A run started by gizzi's own `/cron` fallback has no `by` and notifies from the runtime. See [automation](/tools/automation).
+
 ## Quiet hours
 
 ### Levels

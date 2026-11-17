@@ -107,6 +107,13 @@ struct MessageRow: View {
                     }
                 }
 
+                // automation: the scheduled task the agent made or changed, with Cancel.
+                ForEach(message.toolCalls) { call in
+                    if call.toolName == AgentAutomationResult.toolName, let result = call.automation, let task = result.card {
+                        AgentAutomationCard(task: task, via: result.via)
+                    }
+                }
+
                 // Message Bubble — markdown for the assistant, plain text for the user.
                 // Skipped when the message is nothing but an error card.
                 if let run = hostedRun, message.role == "assistant" {
@@ -571,6 +578,145 @@ struct AgentUserMessageCard: View {
             }
         }
         problem = "Couldn't open \(file.name) right now. It's in Agent Output in Files on your computer."
+    }
+}
+
+/// A scheduled task from the `automation` tool: title, kind (Reminder or
+/// Check), the next run in the task's own zone (the user's), status, and
+/// Cancel. Cancel deletes the task where it lives: the allternit-api routine
+/// (AutomationClient, the same delete the Automation Tasks rows use) or, when
+/// it fell back to this computer's scheduler (`via: "cron"`), the cron job.
+struct AgentAutomationCard: View {
+    let task: AgentAutomationResult.Info
+    let via: String?
+
+    @State private var cancelled = false
+    @State private var isCancelling = false
+    @State private var confirmCancel = false
+    @State private var problem: String?
+
+    private var statusLabel: String {
+        if cancelled { return "Cancelled" }
+        switch task.status {
+        case "active": return "Scheduled"
+        case "paused": return "Paused"
+        case "completed": return "Done"
+        default: return task.status.capitalized
+        }
+    }
+
+    private var canCancel: Bool { !cancelled && task.status != "completed" }
+
+    /// "Runs once" / "Every weekday at 9:00 AM".
+    private var scheduleLine: String? {
+        guard let schedule = task.schedule else { return nil }
+        if schedule.type == "cron", let expression = schedule.expression {
+            return CronWords.describe(type: "cron", expression: expression)
+        }
+        return nil
+    }
+
+    private var nextLine: String? {
+        if cancelled { return nil }
+        guard let next = Self.inZone(task.nextRunAt, zone: task.timezone) else {
+            return task.status == "completed" ? "Nothing more scheduled" : nil
+        }
+        return "Next: \(next)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: task.kind == "heartbeat" ? "waveform.path.ecg" : "alarm")
+                    .foregroundColor(Color("AccentPrimary"))
+                    .accessibilityHidden(true)
+                Text(task.kindLabel)
+                    .foregroundColor(Color("TextSecondary"))
+                Spacer(minLength: 0)
+                Text(statusLabel)
+                    .foregroundColor(cancelled ? Theme.statusWarning : Color("TextSecondary"))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color("FillNeutral")))
+            }
+            .font(.caption.weight(.semibold))
+
+            Text(task.title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .strikethrough(cancelled)
+
+            VStack(alignment: .leading, spacing: 2) {
+                if let nextLine { Text(nextLine) }
+                if let scheduleLine { Text(scheduleLine) }
+                if let target = task.targetLabel { Text(target) }
+            }
+            .font(.caption)
+            .foregroundColor(Color("TextSecondary"))
+
+            if let problem {
+                Text(problem)
+                    .font(.caption)
+                    .foregroundColor(Theme.statusError)
+            }
+
+            if canCancel {
+                Button(role: .destructive) { confirmCancel = true } label: {
+                    if isCancelling {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Cancel", systemImage: "xmark").font(.caption.weight(.semibold))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isCancelling)
+                .frame(minHeight: 32)
+                .accessibilityLabel("Cancel \(task.title)")
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("BgPrimary"))
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color("BorderSubtle"), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .confirmationDialog("Cancel \(task.title)?", isPresented: $confirmCancel, titleVisibility: .visible) {
+            Button("Cancel scheduled task", role: .destructive) { Task { await cancel() } }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("It won't run again.")
+        }
+    }
+
+    @MainActor
+    private func cancel() async {
+        isCancelling = true
+        problem = nil
+        defer { isCancelling = false }
+        do {
+            if via == "cron" {
+                try await CronJobStore.shared.deleteJob(id: task.id)
+            } else {
+                try await AutomationClient.shared.deleteRoutine(id: task.id)
+            }
+            cancelled = true
+        } catch {
+            problem = "Couldn't cancel it. \(FriendlyErrorMessage.from(error.localizedDescription))"
+        }
+    }
+
+    /// "Wed, Nov 18, 9:00 AM CST": the instant in the task's zone.
+    static func inZone(_ raw: String?, zone: String?) -> String? {
+        guard let raw, let date = DevicePairingView.parseDate(raw) else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.timeZone = zone.flatMap { TimeZone(identifier: $0) } ?? .current
+        formatter.setLocalizedDateFormatFromTemplate("EEE MMM d jmm zzz")
+        return formatter.string(from: date)
     }
 }
 

@@ -1200,7 +1200,7 @@ enum ToolFrameState {
 }
 
 /// Tools whose settled `tool_result` frame carries the part's `state.metadata`.
-const METADATA_CARD_TOOLS: &[&str] = &["send_user_message"];
+const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation"];
 
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`
@@ -3345,6 +3345,15 @@ mod tests {
         let end = frames.iter().find(|f| f["type"] == "tool_result").unwrap();
         assert_eq!(end["metadata"]["text"], "Report ready");
         assert_eq!(end["metadata"]["files"][0]["name"], "r.md");
+
+        // The automation card (Cancel needs the routine id) shows live too.
+        let mut sent = HashMap::new();
+        let meta = json!({"action": "create", "status": "ok", "automation": {"id": "routine-1", "title": "Call the bank"}});
+        let made = json!({"type": "tool", "tool": "automation", "callID": "c4",
+            "state": {"status": "completed", "input": {}, "output": "Scheduled", "metadata": meta}});
+        let frames = tool_frames_for_part(&made, "m1", &mut sent);
+        let end = frames.iter().find(|f| f["type"] == "tool_result").unwrap();
+        assert_eq!(end["metadata"]["automation"]["id"], "routine-1");
 
         // Other tools keep their frames unchanged (no metadata leak).
         let mut sent = HashMap::new();

@@ -360,6 +360,9 @@ struct AgentSessionMessage: Decodable, Sendable, Identifiable {
             /// `state.metadata` read as a send_user_message card; nil when it
             /// isn't one (the record keeps it only for that tool).
             let userMessage: AgentUserMessage?
+            /// `state.metadata` read as an automation result; nil when it
+            /// isn't one (the record keeps it only for that tool).
+            let automation: AgentAutomationResult?
 
             private enum CodingKeys: String, CodingKey { case status, input, title, error, time, output, metadata }
             private struct Time: Decodable { let start: Double?; let end: Double? }
@@ -373,6 +376,7 @@ struct AgentSessionMessage: Decodable, Sendable, Identifiable {
                 rawInput = raw
                 output = (try? c?.decodeIfPresent(AnyCodable.self, forKey: .output)) ?? nil
                 userMessage = (try? c?.decodeIfPresent(AgentUserMessage.self, forKey: .metadata)) ?? nil
+                automation = (try? c?.decodeIfPresent(AgentAutomationResult.self, forKey: .metadata)) ?? nil
                 input = SessionWorkerEvent.PartInfo.PartState.flatten(raw)
                 let time = (try? c?.decodeIfPresent(Time.self, forKey: .time)) ?? nil
                 startedAt = time?.start.map { Date(timeIntervalSince1970: $0 / 1000) }

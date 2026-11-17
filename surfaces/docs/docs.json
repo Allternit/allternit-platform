@@ -484,6 +484,7 @@
               "tools/tool-belt",
               "tools/artifact-tools",
               "tools/current-time",
+              "tools/automation",
               "tools/send-user-message",
               "tools/project-status",
               "tools/mdx-graphs",

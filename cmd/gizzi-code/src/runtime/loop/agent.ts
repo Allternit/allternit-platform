@@ -136,6 +136,12 @@ export namespace Agent {
       current_time: "allow",
       // Reaches only the session's owner; push is opt-in per call and rate-limited server side.
       send_user_message: "allow",
+      // Scheduled tasks: the action is the pattern. Reading the list is free;
+      // create, update, delete and run_now ask (not ALWAYS_ASK, so "always" holds).
+      automation: {
+        "*": "ask",
+        list: "allow",
+      },
       doom_loop: "ask",
       external_directory: {
         "*": "ask",

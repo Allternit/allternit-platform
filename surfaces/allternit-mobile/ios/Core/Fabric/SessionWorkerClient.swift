@@ -62,8 +62,12 @@ enum SessionWorkerEvent: Decodable, Sendable {
             let finishedAt: Date?
             /// The tool's result text, when the tool has finished.
             let output: String?
+            /// `metadata` read as a send_user_message card (nil otherwise).
+            let userMessage: AgentUserMessage?
+            /// `metadata` read as an automation result (nil otherwise).
+            let automation: AgentAutomationResult?
 
-            private enum CodingKeys: String, CodingKey { case status, input, title, error, time, output }
+            private enum CodingKeys: String, CodingKey { case status, input, title, error, time, output, metadata }
             private struct Time: Decodable { let start: Double?; let end: Double? }
 
             init(from decoder: Decoder) throws {
@@ -72,6 +76,8 @@ enum SessionWorkerEvent: Decodable, Sendable {
                 title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? nil
                 error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
                 output = (try? c.decodeIfPresent(String.self, forKey: .output)) ?? nil
+                userMessage = (try? c.decodeIfPresent(AgentUserMessage.self, forKey: .metadata)) ?? nil
+                automation = (try? c.decodeIfPresent(AgentAutomationResult.self, forKey: .metadata)) ?? nil
                 let raw = (try? c.decodeIfPresent([String: AnyCodable].self, forKey: .input)) ?? nil
                 input = PartState.flatten(raw)
                 let time = (try? c.decodeIfPresent(Time.self, forKey: .time)) ?? nil
@@ -108,7 +114,9 @@ enum SessionWorkerEvent: Decodable, Sendable {
                 error: state.error,
                 startedAt: state.startedAt,
                 finishedAt: state.finishedAt,
-                output: state.output
+                output: state.output,
+                userMessage: tool == AgentUserMessage.toolName ? state.userMessage : nil,
+                automation: tool == AgentAutomationResult.toolName ? state.automation : nil
             )
         }
     }

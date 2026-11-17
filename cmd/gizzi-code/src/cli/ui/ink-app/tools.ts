@@ -16,6 +16,8 @@ import { BriefTool } from './tools/BriefTool/BriefTool.js'
 // Primitives (shared cores in runtime/primitives, same names as the runtime builtins).
 import { CurrentTimeTool } from './tools/CurrentTimeTool/CurrentTimeTool.js'
 import { SendUserMessageTool } from './tools/SendUserMessageTool/SendUserMessageTool.js'
+// Scheduled tasks (replaced the Ink CronCreate/CronList/CronDelete tools).
+import { AutomationTool } from './tools/AutomationTool/AutomationTool.js'
 // Dead code elimination: conditional import for ant-only tools
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 function safeRequire(path: string) {
@@ -39,15 +41,6 @@ const SleepTool =
   feature('PROACTIVE') || feature('KAIROS')
     ? safeRequire('./tools/SleepTool/SleepTool.js')?.SleepTool
     : null
-// Static require() so the bundler includes these (safeRequire's variable
-// path is invisible to it and resolves to null in compiled binaries).
-const cronTools = feature('AGENT_TRIGGERS')
-  ? [
-      require('./tools/ScheduleCronTool/CronCreateTool.js').CronCreateTool,
-      require('./tools/ScheduleCronTool/CronDeleteTool.js').CronDeleteTool,
-      require('./tools/ScheduleCronTool/CronListTool.js').CronListTool,
-    ]
-  : []
 const RemoteTriggerTool = feature('AGENT_TRIGGERS_REMOTE')
   ? safeRequire('./tools/RemoteTriggerTool/RemoteTriggerTool.js')
       ?.RemoteTriggerTool
@@ -197,6 +190,7 @@ export function getAllBaseTools(): Tools {
     AskUserQuestionTool,
     CurrentTimeTool,
     SendUserMessageTool,
+    AutomationTool,
     SkillTool,
     EnterPlanModeTool,
     ...(process.env.USER_TYPE === 'ant' ? [ConfigTool] : []),
@@ -215,7 +209,6 @@ export function getAllBaseTools(): Tools {
       : []),
     ...(process.env.USER_TYPE === 'ant' && REPLTool ? [REPLTool] : []),
     ...(SleepTool ? [SleepTool] : []),
-    ...cronTools,
     ...(RemoteTriggerTool ? [RemoteTriggerTool] : []),
     BriefTool,
     ...(SendUserFileTool ? [SendUserFileTool] : []),
