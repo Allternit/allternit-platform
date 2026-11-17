@@ -9,6 +9,7 @@ import { Flag } from "../../src/runtime/context/flag/flag"
 import { THREAD_TOOL_IDS } from "../../src/runtime/tools/builtins/thread-tools"
 import { WORKER_BOT_TOOL_IDS } from "../../src/runtime/tools/builtins/worker-bot-tools"
 import { PROJECT_SEND_TOOL_IDS } from "../../src/runtime/tools/builtins/project-send"
+import { WAVE_B_TOOL_IDS } from "../../src/runtime/primitives/wave-b-types"
 
 describe("tool.registry", () => {
   test("loads tools from .gizzi/tool (singular)", async () => {
@@ -171,6 +172,32 @@ describe("tool.registry", () => {
               expect(ids).toContain(id)
               expect(botOnly.has(id)).toBe(false)
             }
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
+  test("Wave B tools reach every client; select_tools is gone (tool_search replaces it)", async () => {
+    const botOnly = new Set<string>([...THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli", "desktop"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            expect(WAVE_B_TOOL_IDS).toEqual(["wait_agents", "agent_control", "tool_search", "get_context_remaining", "history_recall"])
+            for (const id of WAVE_B_TOOL_IDS) {
+              expect(ids).toContain(id)
+              expect(botOnly.has(id)).toBe(false)
+            }
+            expect(ids).not.toContain("select_tools")
           },
         })
       }

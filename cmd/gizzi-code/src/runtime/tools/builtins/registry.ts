@@ -18,6 +18,11 @@ import { CurrentTimeTool } from "@/runtime/tools/builtins/current-time"
 import { SendUserMessageTool } from "@/runtime/tools/builtins/send-user-message"
 import { AutomationTool } from "@/runtime/tools/builtins/automation"
 import { AskUserLaterTool } from "@/runtime/tools/builtins/ask-user-later"
+import { WaitAgentsTool } from "@/runtime/tools/builtins/wait-agents"
+import { AgentControlTool } from "@/runtime/tools/builtins/agent-control"
+import { ToolSearchTool } from "@/runtime/tools/builtins/tool-search"
+import { GetContextRemainingTool } from "@/runtime/tools/builtins/context-remaining"
+import { HistoryRecallTool } from "@/runtime/tools/builtins/history-recall"
 import { WebFetchTool } from "@/runtime/tools/builtins/webfetch"
 import { WriteTool } from "@/runtime/tools/builtins/write"
 import { InvalidTool } from "@/runtime/tools/builtins/invalid"
@@ -192,6 +197,14 @@ export namespace ToolRegistry {
       BackgroundTaskListTool,
       BackgroundTaskOutputTool,
       BackgroundTaskStopTool,
+      // Primitives Wave B: every client, not bot-gated. wait_agents and
+      // agent_control act on the session's own descendants only.
+      WaitAgentsTool,
+      AgentControlTool,
+      // Loads deferred tool families (primitives/tool-families.ts); replaces select_tools.
+      ToolSearchTool,
+      GetContextRemainingTool,
+      HistoryRecallTool,
       ...(Flag.GIZZI_DISABLE_SCRATCHPAD
         ? []
         : [ScratchpadListTool, ScratchpadReadTool, ScratchpadWriteTool, ScratchpadRemoveTool]),

@@ -145,6 +145,16 @@ export namespace Agent {
       // A question that doesn't block: it waits in the thread; the turn goes on.
       // Allowed for every agent, unlike the blocking `question` (denied by default).
       ask_user_later: "allow",
+      // Primitives Wave B. agent_control: the action is the pattern; closing an
+      // agent (and everything under it) asks, the rest act on own children freely.
+      wait_agents: "allow",
+      agent_control: {
+        "*": "allow",
+        close: "ask",
+      },
+      tool_search: "allow",
+      get_context_remaining: "allow",
+      history_recall: "allow",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",
