@@ -106,6 +106,11 @@ android {
             // Link-time stub from :ondevice; phones use their own /vendor libOpenCL.so.
             excludes += "**/libOpenCL.so"
         }
+        resources {
+            // Two dependencies (Play Billing's tree) ship the same OSGi manifest;
+            // Android never reads it, and AGP 8.9 refuses the duplicate.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
     }
 
     lint {
