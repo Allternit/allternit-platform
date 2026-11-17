@@ -3379,7 +3379,7 @@
       "label": "Decision trees (branching agent questions + Tasks Decisions deck)",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other\u2026 takes text, the answer is a path ('Branch \u2192 Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions \u00b7 N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA. The gizzi terminal's AskUserQuestion takes the same fields: risk/context line, 'Agent's pick' and caution marks, and a picked option's follow-up as a 'Then' step; the answer is the same path.",
+      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other\u2026 takes text, the answer is a path ('Branch \u2192 Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions \u00b7 N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA. The gizzi terminal's AskUserQuestion takes the same fields: risk/context line, 'Agent's pick' and caution marks, and a picked option's follow-up as a 'Then' step; the answer is the same path. Non-blocking asks: gizzi's ask_user_later (1-3 questions plus a required assumption, saved in the question_async table, max 3 pending per thread, 7-day expiry, subagent asks go to the root session) shows in the thread dock with an Assumed line, in the iOS Decisions deck and the TUI (/answer <id>); the answer starts a new turn.",
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/lib/agents",
@@ -3395,6 +3395,9 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/decisions.mdx",
+        "allternit/surfaces/docs/tools/ask-user-later.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/ask-user-later.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/question/question.sql.ts",
         "allternit-ai/src/components/agent-elements/question/decision-tree.tsx",
         "allternit-ai/src/components/decisions/DecisionsDeck.tsx"
       ]

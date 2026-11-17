@@ -1,0 +1,45 @@
+---
+title: 'ask_user_later'
+description: 'The built-in tool an agent uses to ask its user a question without stopping its work'
+---
+
+## Overview
+
+`ask_user_later` lets an agent ask a question and keep going. The agent gets an id back at once, states what it will assume until you answer, and continues. When you answer, the answer starts a new turn that begins with `[answer to your question <id>]`, and the agent checks it against its assumption and adjusts if they differ.
+
+It is for work you are not watching: a scheduled task, a long job, a subagent. Use the [`question` tool](/guides/decisions) instead when the agent cannot continue without your answer. That tool blocks the turn until you reply.
+
+## What an ask holds
+
+| Part | Meaning |
+|---|---|
+| Questions | 1 to 3, each with a few options (label, description, and the same optional fields as the `question` tool). |
+| `assumption` | Required, up to 300 characters. What the agent will do until you answer. The card shows it as "Assumed:". |
+
+## Limits
+
+- At most 3 unanswered asks per thread. A 4th is refused, and the agent continues on its assumptions.
+- An ask nobody answers expires after 7 days. The agent is not told, so its assumption stands. The card shows **Expired**.
+- You can dismiss an ask. A dismissed ask is closed the same way.
+- A subagent's ask goes to the root session, the thread you see, not to the subagent.
+
+## Push
+
+A new ask marks the thread as needing you (`thread.needs_user`) and sends a push to your devices. [Quiet hours](/api/notifications#quiet-hours) apply. An agent cannot page through quiet hours.
+
+## Where it shows
+
+| Surface | What you see |
+|---|---|
+| Desktop, ai.allternit.com, phone layout, m.allternit.com PWA | The thread's dock shows the ask with its **Assumed:** line, **Answer** and **Dismiss**. |
+| iOS | The Decisions deck. |
+| Gizzi terminal | A block in the thread. Reply with `/answer <id>`. |
+
+## Difference from `question`
+
+| | `question` | `ask_user_later` |
+|---|---|---|
+| Turn | Waits for your answer | Keeps working on an assumption |
+| Answer arrives | In the same turn | As a new turn |
+| Lives | In memory, with the session | Saved, until answered, dismissed or 7 days |
+| Use when | You are here and the agent is stuck | You are away and a good guess is enough |
