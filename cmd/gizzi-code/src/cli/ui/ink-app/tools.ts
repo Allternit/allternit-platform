@@ -15,6 +15,7 @@ import { TaskStopTool } from './tools/TaskStopTool/TaskStopTool.js'
 import { BriefTool } from './tools/BriefTool/BriefTool.js'
 // Primitives (shared cores in runtime/primitives, same names as the runtime builtins).
 import { CurrentTimeTool } from './tools/CurrentTimeTool/CurrentTimeTool.js'
+import { FolderAccessTool } from './tools/FolderAccessTool/FolderAccessTool.js'
 import { SendUserMessageTool } from './tools/SendUserMessageTool/SendUserMessageTool.js'
 // Scheduled tasks (replaced the Ink CronCreate/CronList/CronDelete tools).
 import { AutomationTool } from './tools/AutomationTool/AutomationTool.js'
@@ -190,6 +191,7 @@ export function getAllBaseTools(): Tools {
     TaskStopTool,
     AskUserQuestionTool,
     CurrentTimeTool,
+    FolderAccessTool,
     SendUserMessageTool,
     AutomationTool,
     AskUserLaterTool,
