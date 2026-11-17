@@ -154,6 +154,52 @@ describe("tool.registry", () => {
     })
   })
 
+  test("capture_screen_context is offered to app clients, never the terminal", async () => {
+    // A terminal has no app view to capture; the CLI bridge offers neither tool either.
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const [client, offered] of [["app", true], ["desktop", true], ["cli", false]] as const) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            if (offered) expect(ids).toContain("capture_screen_context")
+            else expect(ids).not.toContain("capture_screen_context")
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
+  test("browser_tasks is offered only when an app client has a local executor", async () => {
+    // No executor answers in tests (or the API base is remote): the tool stays out.
+    const { browserTasksAvailable } = await import("../../src/runtime/tools/builtins/browser-tasks")
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            const available = (await browserTasksAvailable()).ok
+            if (client === "app" && available) expect(ids).toContain("browser_tasks")
+            else expect(ids).not.toContain("browser_tasks")
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
   test("current_time, send_user_message, lookup, sleep, agent_batch and folder_access reach every client, not only bot chats", async () => {
     // Primitives Wave A (current_time, send_user_message) and Wave E (lookup, sleep, agent_batch), Wave C (folder_access):
     // Gizzi Code and plain app chats need them. The bot-only

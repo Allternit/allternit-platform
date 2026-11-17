@@ -176,6 +176,10 @@ export namespace Agent {
       // deny rules for WORKER_DENIED_TOOLS (task, agent_swarm, agent_batch,
       // batch, sleep...), which come after these and win.
       agent_batch: "ask",
+      // Seeing the user's screen: the tool asks once per session ("always" holds).
+      screen_context: "ask",
+      // Hidden browser tasks: every call asks, naming the sites and goals.
+      browser_tasks: "ask",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",

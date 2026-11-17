@@ -198,7 +198,14 @@ enum AgentChatEvent: Decodable, Sendable {
         case status, metadata
         // artifact
         case artifactId, id, kind, title, url, content
+        // tool_result: the tool's output text (v1_routes.rs `result`)
+        case result
     }
+
+    /// Tools whose live card reads the result text (history reads it from
+    /// the part): browser_tasks → task cards, capture_screen_context → the
+    /// "Looked at your screen" chip.
+    static let resultCardTools: Set<String> = ["browser_tasks", "capture_screen_context"]
 
     private struct DeltaPayload: Decodable {
         let type: String?
@@ -300,6 +307,14 @@ enum AgentChatEvent: Decodable, Sendable {
             var detail: ToolDetail? = nil
             if userMessage != nil || automation != nil || lookupCard != nil {
                 detail = ToolDetail(userMessage: userMessage, automation: automation, lookupCard: lookupCard)
+            }
+            var detail: ToolDetail? = (userMessage != nil || automation != nil)
+                ? ToolDetail(userMessage: userMessage, automation: automation)
+                : nil
+            if Self.resultCardTools.contains(toolName),
+               let result = (try? container.decodeIfPresent(String.self, forKey: .result)) ?? nil {
+                detail = detail ?? ToolDetail()
+                detail?.output = result
             }
             self = .toolResult(ToolResult(
                 toolCallId: try container.decodeIfPresent(String.self, forKey: .toolCallId) ?? "",

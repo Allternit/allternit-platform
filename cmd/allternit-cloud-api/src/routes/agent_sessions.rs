@@ -24,7 +24,7 @@
 //! sessions.
 
 use axum::{
-    extract::{Path, RawQuery, State},
+    extract::{DefaultBodyLimit, Path, RawQuery, State},
     http::HeaderMap,
     response::Response,
     routing::{get, post},
@@ -35,6 +35,11 @@ use std::sync::Arc;
 
 use super::data_plane::{relay_data_plane_request, with_query};
 use crate::{ApiError, ApiState};
+
+/// Body cap for replies that carry a picture as a data URL (a pane
+/// screenshot, a window capture); axum's default is 2 MB. Same cap as the
+/// node's allternit-api.
+const PANE_REPLY_BODY_LIMIT: usize = 16 * 1024 * 1024;
 
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
@@ -65,14 +70,24 @@ pub fn routes() -> Router<Arc<ApiState>> {
             post(cancel_background_task),
         )
         // Replies the app sends back to the node's gizzi runtime: answers to
-        // in-chat questions, and pane_browser / pane_artifact / pane_render results.
+        // in-chat questions, pane_browser / pane_artifact / pane_render results,
+        // and capture_screen_context captures.
         // The question card polls this list (by sessionId) so it shows up
         // even when the sync channel missed the question.asked event.
         .route("/api/v1/questions", get(list_questions))
         .route("/api/v1/permissions", get(list_permissions))
         .route("/api/v1/questions/:id/reply", post(reply_question))
         .route("/api/v1/questions/:id/reject", post(reject_question))
-        .route("/api/v1/pane-browser/:id/reply", post(reply_pane_browser))
+        .route(
+            "/api/v1/pane-browser/:id/reply",
+            post(reply_pane_browser).layer(DefaultBodyLimit::max(PANE_REPLY_BODY_LIMIT)),
+        )
+        // capture_screen_context: the node's allternit-api redacts secrets and
+        // marks the text untrusted before its runtime sees the capture.
+        .route(
+            "/api/v1/screen-context/:id/reply",
+            post(reply_screen_context).layer(DefaultBodyLimit::max(PANE_REPLY_BODY_LIMIT)),
+        )
         .route("/api/v1/pane-artifact/:id/reply", post(reply_pane_artifact))
         .route("/api/v1/pane-render/:id/reply", post(reply_pane_render))
         .route("/api/v1/agent-sessions/:id/revert", post(revert_session))
@@ -228,6 +243,15 @@ async fn reply_pane_browser(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     relay_agent_sessions_request(&state, &headers, "POST", format!("/api/v1/pane-browser/{id}/reply"), &body).await
+}
+
+async fn reply_screen_context(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(&state, &headers, "POST", format!("/api/v1/screen-context/{id}/reply"), &body).await
 }
 
 async fn reply_pane_artifact(
@@ -498,6 +522,7 @@ mod tests {
             ("GET", "/api/v1/native-sessions/harnesses"),
             ("POST", "/api/v1/native-sessions/pickup"),
             ("GET", "/api/v1/native-sessions/claude/abc"),
+            ("POST", "/api/v1/screen-context/que_1/reply"),
             ("POST", "/api/v1/agent-sessions/sess_1/export-native"),
         ] {
             let request = Request::builder()
@@ -574,6 +599,7 @@ mod tests {
                 MockGateway::json(StatusCode::OK, "[]"),
                 MockGateway::json(StatusCode::OK, "{}"),
                 MockGateway::json(StatusCode::OK, "{}"),
+                MockGateway::json(StatusCode::OK, "true"),
             ],
         ));
         let state = test_state(gateway.clone()).await;
@@ -583,6 +609,12 @@ mod tests {
             ("GET", "/api/v1/agent-sessions?originSurface=chat", "/api/v1/agent-sessions?originSurface=chat", ""),
             ("PATCH", "/api/v1/agent-sessions/sess_1", "/api/v1/agent-sessions/sess_1", r#"{"name":"x"}"#),
             ("DELETE", "/api/v1/agent-sessions/sess_1", "/api/v1/agent-sessions/sess_1", ""),
+            (
+                "POST",
+                "/api/v1/screen-context/que_1/reply",
+                "/api/v1/screen-context/que_1/reply",
+                r#"{"kind":"app_view","app":"Allternit","title":"Chat","text":"hi"}"#,
+            ),
         ];
         for (method, uri, _, body) in cases.iter().copied() {
             let response = router
@@ -594,7 +626,7 @@ mod tests {
         }
 
         let recorded = gateway.recorded();
-        assert_eq!(recorded.len(), 3);
+        assert_eq!(recorded.len(), 4);
         for (call, (method, _, expected_path, body)) in recorded.iter().zip(cases.iter()) {
             assert_eq!(call.user_id, DEV_USER);
             assert_eq!(call.device_id, "rt_default");

@@ -996,11 +996,6 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
     }
 }
 
-/// Prompt hints that pass a turn's metadata allow-list only with their one
-/// allowed value (also used by agent_session_routes::send_message_payload).
-pub(crate) const TURN_HINTS: [(&str, &str); 3] =
-    [("form_factor", "phone"), ("reply_mode", "voice"), ("answer_cards", "widgets")];
-
 /// The `metadata` sent to gizzi for a turn, which gizzi stores on the user
 /// message: only the composer's `metadata.tools`, never anything else from
 /// the send body (in particular never `client_location`).
@@ -1012,20 +1007,22 @@ pub(crate) const TURN_HINTS: [(&str, &str); 3] =
 /// on the computer toolset for that turn only; the lease and confirm gates in
 /// computer_toolset.rs / computer_safety.rs still decide every call.
 ///
-/// Four prompt hints also pass. Three only with their one allowed value:
-/// `form_factor: "phone"` and `reply_mode: "voice"`, which the runtime reads to
-/// add its small-screen and spoken-reply prompt blocks, and
-/// `answer_cards: "widgets"` (sent by iOS and the Ink REPL), which adds the
-/// short `writing` card manual. The fourth is `time_zone`, the client's IANA
-/// zone (see `turn_time_zone`), which the runtime uses for the date in its
-/// environment section and the `current_time` tool. Anything else is dropped.
+/// Five prompt hints also pass. Four only with their one allowed value
+/// ([`VALUED_TURN_HINTS`]): `form_factor: "phone"` and `reply_mode: "voice"`,
+/// which the runtime reads to add its small-screen and spoken-reply prompt
+/// blocks; `answer_cards: "widgets"` (sent by iOS and the Ink REPL), which adds
+/// the short `writing` card manual; and `screen_context: "available"`, sent by
+/// a client that answers `capture_screen_context` requests. The fifth is
+/// `time_zone`, the client's IANA zone (see `turn_time_zone`), which the
+/// runtime uses for the date in its environment section and the
+/// `current_time` tool. Anything else is dropped.
 fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     let meta = body.get("metadata")?;
     let mut out = serde_json::Map::new();
     if let Some(tools) = meta.get("tools").filter(|t| t.is_object()) {
         out.insert("tools".to_string(), tools.clone());
     }
-    for (key, allowed) in TURN_HINTS {
+    for (key, allowed) in VALUED_TURN_HINTS {
         if meta.get(key).and_then(|v| v.as_str()) == Some(allowed) {
             out.insert(key.to_string(), json!(allowed));
         }
@@ -1035,6 +1032,16 @@ fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     }
     if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
 }
+
+/// Turn hints that pass only with their one allowed value (the fifth hint,
+/// `time_zone`, is checked by [`turn_time_zone`]). Shared by this route and
+/// agent_session_routes' message send.
+pub(crate) const VALUED_TURN_HINTS: [(&str, &str); 4] = [
+    ("form_factor", "phone"),
+    ("reply_mode", "voice"),
+    ("answer_cards", "widgets"),
+    ("screen_context", "available"),
+];
 
 /// The turn hint `metadata.time_zone`: the client's IANA zone name, at most
 /// 64 characters, kept only when it parses as a `chrono_tz::Tz` (trimmed, in
@@ -3273,18 +3280,22 @@ mod tests {
     }
 
     #[test]
-    fn stored_turn_metadata_keeps_only_the_four_prompt_hints() {
+    fn stored_turn_metadata_keeps_only_the_five_prompt_hints() {
         let body = json!({ "metadata": {
             "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets",
-            "time_zone": "America/Chicago", "x": 1
+            "time_zone": "America/Chicago", "screen_context": "available", "x": 1
         } });
         let kept = stored_turn_metadata(&body).unwrap();
         assert_eq!(
             kept,
-            json!({ "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets", "time_zone": "America/Chicago" })
+            json!({
+                "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets",
+                "time_zone": "America/Chicago", "screen_context": "available"
+            })
         );
-        assert_eq!(kept.as_object().unwrap().len(), 4);
-        let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud", "answer_cards": "all" } });
+        assert_eq!(kept.as_object().unwrap().len(), 5);
+        assert_eq!(super::VALUED_TURN_HINTS.len() + 1, 5, "four valued hints plus time_zone");
+        let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud", "answer_cards": "all", "screen_context": "yes" } });
         assert_eq!(stored_turn_metadata(&body), None);
         let body = json!({ "metadata": { "answer_cards": true } });
         assert_eq!(stored_turn_metadata(&body), None);

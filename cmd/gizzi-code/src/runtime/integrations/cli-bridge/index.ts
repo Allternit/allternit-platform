@@ -67,6 +67,11 @@ export namespace CliBridge {
   // a tool call long before a batch of rows finishes.
   // folder_access: the person's grant for folders outside the project (always
   // asks). It governs gizzi's own tools; the CLI's own file tools follow the CLI.
+  // Not bridged: capture_screen_context and browser_tasks. Both need the app:
+  // the screen capture is the app's own view, answered over its event stream,
+  // and browser_tasks runs its hidden tasks on the gizzi turn's model and opens
+  // them in the app's pane (a CLI turn has neither). The registry offers them
+  // to app clients only.
   export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool, RunCodeTool, SendUserMessageTool, CurrentTimeTool, AutomationTool, GetContextRemainingTool, HistoryRecallTool, LookupTool, ThreadReadTool, ThreadRecentTool, ResourceTool, MemoryListTool, SleepTool, FolderAccessTool]
 
   /** gizzi's id for a bridged tool reported under a CLI's vendor name (run_code only; see CliBridgeResults). */

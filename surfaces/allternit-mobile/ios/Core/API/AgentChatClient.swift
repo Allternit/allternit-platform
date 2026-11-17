@@ -279,8 +279,10 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         /// `answer_cards: "widgets"` says this app draws the `writing` draft card
         /// (and lookup cards from tool results), so the runtime adds only that
         /// short card manual instead of the full answer catalog.
+        /// `screen_context: "available"` says this app can answer capture_screen_context
+        /// with its own view (ScreenContextResponder); sent only while the app is in front.
         /// Optional fields are omitted when nil.
-        struct Metadata: Encodable { let tools: ToolOptions?; let form_factor: String?; let time_zone: String?; let answer_cards: String? }
+        struct Metadata: Encodable { let tools: ToolOptions?; let form_factor: String?; let time_zone: String?; let screen_context: String?; let answer_cards: String? }
         let chatId: String
         let message: String
         let agentId: String?
@@ -323,6 +325,9 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                     // would kill slow generations between frames.
                     request.timeoutInterval = 600
                     let formFactor: String? = await MainActor.run { UIDevice.current.userInterfaceIdiom == .phone ? "phone" : nil }
+                    // A send from the background (an intent, a share) has no chat on
+                    // screen to answer a screen context request, so no hint then.
+                    let screenContext: String? = await MainActor.run { UIApplication.shared.applicationState == .active ? "available" : nil }
                     request.httpBody = try JSONEncoder().encode(AgentChatRequest(
                         chatId: sessionId,
                         message: text,
@@ -332,7 +337,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         effort: effort,
                         fast: UserDefaults.standard.bool(forKey: "allternit-model-fast") ? true : nil,
                         attachments: attachments,
-                        metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, answer_cards: "widgets"),
+                        metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, screen_context: screenContext, answer_cards: "widgets"),
                         workdir: workdir
                     ))
 
@@ -424,9 +429,19 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         // Most of this stream is every session's reply text;
                         // only these frames get decoded.
                         guard line.hasPrefix("data:"),
-                              line.contains("pane_artifact_requested") || line.contains("pane_render_requested") || line.contains("handed_off") else { continue }
+                              line.contains("pane_artifact_requested") || line.contains("pane_render_requested") || line.contains("handed_off")
+                                || ScreenContextRequest.mayMatch(line) else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         guard let frame = try? decoder.decode(SessionSyncFrame.self, from: Data(payload.utf8)) else { continue }
+                        // capture_screen_context: answered here from the app's own
+                        // view (ScreenContextResponder), on any chat screen running
+                        // this stream; the responder takes each request once.
+                        if ScreenContextRequest.frameTypes.contains(frame.type) {
+                            if let request = ScreenContextRequest(payload: payload) {
+                                Task { await ScreenContextResponder.shared.answer(request, client: self) }
+                            }
+                            continue
+                        }
                         switch frame.type {
                         case "pane_artifact_requested":
                             guard let requestId = frame.requestId, let sessionId = frame.sessionId else { continue }
@@ -495,6 +510,33 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }
             request.httpBody = try JSONEncoder().encode(result)
+            let (_, response) = try await InstanceConnection.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            if (200...299).contains(http.statusCode) { return true }
+            if http.statusCode != 404 {
+                throw APIError.httpError(statusCode: http.statusCode, message: nil)
+            }
+        }
+        return false
+    }
+
+    /// Answers a capture_screen_context request with the app's view, on the
+    /// computer that asked; same two routes as `replyPaneArtifact`. False when
+    /// neither knows the request (it timed out, or another app answered first).
+    @discardableResult
+    func replyScreenContext(requestId: String, reply: ScreenContextReply) async throws -> Bool {
+        guard let resolved = await InstanceConnection.resolve() else {
+            throw AgentChatClientError.noReachableNode
+        }
+        let paths = ["api/v1/screen-context/\(requestId)/reply", "v1/screen-context/\(requestId)/reply"]
+        for path in resolved.isRelay ? paths : paths.reversed() {
+            var request = URLRequest(url: resolved.baseURL.appendingPathComponent(path))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let token = try await AuthManager.shared.getToken(), !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            request.httpBody = try JSONEncoder().encode(reply)
             let (_, response) = try await InstanceConnection.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             if (200...299).contains(http.statusCode) { return true }

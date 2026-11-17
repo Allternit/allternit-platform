@@ -302,7 +302,7 @@ The contract for this option is `turnOptions.computer` in `contracts/pet-offers/
 
 - **gizzi `browser` tool** (ACU gateway, goal-driven `execute`). It is replaced by the toolset `browser` tool under the same `GIZZI_DISABLE_BROWSER_TOOL` switch. Goal-driven browsing was a second agent loop, so it is gone.
 - **gizzi `desktop` tool.** Removed on 2026-10-09. Screen input is the `computer` tool; provisioning and files are the `computers` tool, which calls allternit-api's `computer_*` tools. Both are on with `GIZZI_ENABLE_COMPUTER_TOOL`.
-- **`pane_browser`** is unchanged. It drives the page the person can see in the app's browser pane. That pane is a different target from the headless gateway session, so the two stay separate.
+- **`pane_browser`** is unchanged. It drives the page the person can see in the app's browser pane. That pane is a different target from the headless gateway session, so the two stay separate. See [Browser pane](/tools/pane-browser) and [Browser tasks](/tools/browser-tasks).
 - **allternit-api `computer_screenshot` / `computer_mouse` / `computer_keyboard` tools** (`/tools/execute`). These stay as compatibility aliases on the shared control plane. New work uses the toolset.
 
 ## Contract files and generated types

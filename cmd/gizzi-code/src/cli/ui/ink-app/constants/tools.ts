@@ -30,6 +30,7 @@ import { CURRENT_TIME_TOOL_NAME } from '../tools/CurrentTimeTool/prompt.js'
 import { LOOKUP_TOOL_NAME } from '../tools/LookupTool/prompt.js'
 import { THREAD_READ_TOOL_NAME, THREAD_RECENT_TOOL_NAME, THREAD_WAIT_TOOL_NAME } from '../tools/ThreadReadTool/prompt.js'
 import { RESOURCE_TOOL_NAME } from '../tools/ResourceTool/prompt.js'
+import { BROWSER_TASKS_TOOL_NAME } from '../tools/BrowserTasksTool/prompt.js'
 import { SEND_USER_MESSAGE_TOOL_NAME } from '../tools/SendUserMessageTool/prompt.js'
 import { AUTOMATION_TOOL_NAME } from '../tools/AutomationTool/prompt.js'
 import { ASK_USER_LATER_TOOL_NAME } from '../tools/AskUserLaterTool/prompt.js'
@@ -84,6 +85,7 @@ export const ASYNC_AGENT_ALLOWED_TOOLS = new Set([
   THREAD_RECENT_TOOL_NAME,
   THREAD_WAIT_TOOL_NAME,
   RESOURCE_TOOL_NAME,
+  BROWSER_TASKS_TOOL_NAME,
   SEND_USER_MESSAGE_TOOL_NAME,
   // A question that doesn't block: a worker's ask lands in the main session's thread.
   ASK_USER_LATER_TOOL_NAME,

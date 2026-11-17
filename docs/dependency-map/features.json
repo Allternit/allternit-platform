@@ -1534,6 +1534,10 @@
         {
           "on": "2026-11-17",
           "note": "Wave C: per-app access tiers (read/click/full) with category ceilings and 12 h session grants (resolve_access, request_access); four action classes enforced in every permission path (confirm_now asks even in bypass); folder_access with a _to_delete redirect. Docs: tools/computer-access, tools/action-review."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Wave C browser: pane_browser works by element ref (read_page, find, page text, console, tabs, plan approval scoped to listed hosts, spotlighted page text); browser_tasks runs up to 6 hidden isolated browser tasks (4 at once, 10 min each, any non-free step stops with needs_user); capture_screen_context sees the front window or the Allternit screen (asks once per session, redacted by the API, screen_context hint). Docs: tools/pane-browser, tools/browser-tasks, tools/screen-context."
         }
       ],
       "evidence": [
@@ -1547,6 +1551,9 @@
         "allternit/cmd/allternit-api/src/computer_safety.rs",
         "allternit/cmd/allternit-api/src/computer_ocr.rs",
         "allternit/surfaces/docs/tools/computer-use-replay.mdx",
+        "allternit/surfaces/docs/tools/pane-browser.mdx",
+        "allternit/surfaces/docs/tools/browser-tasks.mdx",
+        "allternit/surfaces/docs/tools/screen-context.mdx",
         "allternit/cmd/allternit-api/src/computer_replay.rs"
       ]
     },

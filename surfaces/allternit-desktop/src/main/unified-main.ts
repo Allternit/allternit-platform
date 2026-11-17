@@ -145,6 +145,7 @@ import { coworkDeviceHeaders, coworkDeviceInfo, isInAppBrowsableUrl } from './co
 import { isProvisionedMode } from './provisioned-bootstrap.js';
 import { startIdleApply } from './provisioned-runtime-apply.js';
 import { buildAppMenu, type AppMenuCommand } from './app-menu.js';
+import { registerScreenContextIpc } from './screen-context.js';
 import {
   broadcastToMainWindows,
   getFocusedMainWindow,
@@ -3372,6 +3373,7 @@ ipcMain.handle('sdk:get-backend-url', () => activeBackendUrl);
 
 // Voice call-mode native dictation bridge
 voiceManager.registerIpcHandlers();
+registerScreenContextIpc();
 
 // Backend management
 ipcMain.handle('backend:get-status', () => backendManager.getStatus());
