@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Google Play build: merged on top of src/main. Adds the screen-share
          lane (src/phoneshare): claim + share screen, MediaProjection capture,
@@ -20,8 +21,60 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Google Play Billing for the TWA (store purchases D15). The Play Billing Library
+         declares it too; named here so the play build never depends on that. The
+         phonelink build must not have it (it does not ship billing:1.2.0). -->
+    <uses-permission android:name="com.android.vending.BILLING" />
 
     <application>
+        <!-- ============ Google Play Billing (store purchases D15, play flavor only) ============
+             androidbrowserhelper billing:1.2.0 (Play Billing Library 8.3.0). The page uses the
+             Digital Goods API (PlayDelegationService below) and PaymentRequest with the method
+             https://play.google.com/billing (PaymentActivity / PaymentService). The play build
+             launches with ?src=play (ReviewLauncherActivity + PlayLaunchUrl). -->
+
+        <!-- Replaces src/main's stock DelegationService, so Chrome binds to exactly one
+             TRUSTED_WEB_ACTIVITY_SERVICE in this package. -->
+        <service
+            android:name="com.google.androidbrowserhelper.trusted.DelegationService"
+            tools:node="remove" />
+
+        <!-- Notification delegation (as the stock service) plus the Digital Goods handler. -->
+        <service
+            android:name="com.allternit.app.PlayDelegationService"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <!-- Chrome's PaymentRequest for https://play.google.com/billing opens this; it runs
+             the Play purchase sheet. It checks at runtime that the caller is the browser
+             the TWA was last launched in. -->
+        <activity
+            android:name="com.google.androidbrowserhelper.playbilling.provider.PaymentActivity"
+            android:configChanges="keyboardHidden|keyboard|orientation|screenLayout|screenSize"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="org.chromium.intent.action.PAY" />
+            </intent-filter>
+            <meta-data
+                android:name="org.chromium.default_payment_method_name"
+                android:value="https://play.google.com/billing" />
+        </activity>
+
+        <!-- PaymentRequest.canMakePayment(). Also checks its caller at runtime. -->
+        <service
+            android:name="com.google.androidbrowserhelper.playbilling.provider.PaymentService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.chromium.intent.action.IS_READY_TO_PAY" />
+            </intent-filter>
+        </service>
+
         <!-- Share screen: claim code, pairing, Share / Stop, taps (with the
              Accessibility disclosure). Opened from the "Share screen" shortcut,
              the request notification and allternit://phone-share?code=… -->

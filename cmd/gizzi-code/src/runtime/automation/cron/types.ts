@@ -115,9 +115,47 @@ export interface HttpJob extends BaseJob {
   };
 }
 
+/**
+ * Scheduled tasks the `automation` tool made on this computer's scheduler
+ * (the fallback when no Allternit API takes them; runtime/primitives/automation.ts).
+ * `kind` marks the job as one. The cron schedule the job carries is a rolling
+ * one-shot interval the executor re-arms after every run; the real schedule
+ * (an instant, or cron read in `timezone`) is `automationSchedule`.
+ */
+export interface AutomationJobFields {
+  /** message: the prompt runs at the scheduled time. heartbeat: an isolated check that ends with a verdict line. */
+  kind?: "message" | "heartbeat";
+  /** this_thread: results land in `targetSessionId`. new_session: each run gets its own session. */
+  target?: "this_thread" | "new_session";
+  /** The session a `this_thread` message is delivered into, and where heartbeat notices post. */
+  targetSessionId?: string;
+  /** session: a marked user turn in `targetSessionId` (queued while it is busy). ephemeral: a session of its own. */
+  delivery?: "session" | "ephemeral";
+  /** "agent" for tasks the tool made, "user" for ones made in an app. */
+  origin?: "agent" | "user";
+  initiation?: "user_request" | "own_followup";
+  /** Name the user sees. */
+  title?: string;
+  /** The real schedule: `once` is an instant (UTC), `cron` is 5 fields read in `timezone`. */
+  automationSchedule?: { type: "once"; at: string } | { type: "cron"; expression: string };
+  timezone?: string;
+  /** What the model wrote ("FREQ=WEEKLY;…"), kept for display. */
+  scheduleInput?: { at?: string; delayMinutes?: number; rrule?: string; cron?: string };
+  /** No run after this instant (RRULE UNTIL). */
+  until?: string;
+  /** The folder runs work in (the project of the session that made it). */
+  directory?: string;
+  /** Set by the executor when the task stops for good (job status becomes "disabled"). */
+  ended?: "completed" | "missed";
+  /** The last run's outcome: delivered, notify, quiet, done, failed, missed, needs_you. */
+  lastRunStatus?: string;
+  /** Failed runs in a row; at 3 the executor pauses the task and says so in its thread. */
+  failStreak?: number;
+}
+
 export interface AgentJob extends BaseJob {
   type: "agent";
-  config: {
+  config: AutomationJobFields & {
     prompt: string;
     agentId?: string;      // Specific agent, or auto-assign
     model?: string;        // Model to use

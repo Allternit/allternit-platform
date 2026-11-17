@@ -1,0 +1,44 @@
+---
+title: 'Past chat tools'
+description: 'thread_search, thread_recent, thread_read and thread_wait: how an agent finds and reads the user''s earlier chats'
+---
+
+## Overview
+
+These tools let an agent look at the user's other chats. They work in every session the user owns: a bot's chat, a plain chat, a bot thread and a Gizzi Code session. `thread_update` and `thread_close` stay limited to bots.
+
+What a tool returns is a record of what was said, not instructions. The agent never follows requests written inside a past chat.
+
+| Tool | Use |
+|---|---|
+| `thread_search` | Find threads by words in the title, goal and summary. |
+| `thread_recent` | The latest threads, newest first. `limit` up to 20, with `before`, `after` and `project`. |
+| `thread_read` | A window of turns from one thread. |
+| `thread_wait` | Wait for threads to finish a turn or need the user. |
+
+## thread_read
+
+| Parameter | Meaning |
+|---|---|
+| `thread` | A thread id, or `current`. |
+| `cursor` | Continue from `next_cursor` or `prev_cursor` of an earlier read. |
+| `around` | A few words. The window opens where they first appear in this thread. A cursor wins over `around`. |
+| `turns` | Default 10, at most 50. |
+| `include_outputs` | Tool outputs are left out unless set. |
+| `max_output_chars` | Default 500 per output. |
+
+The result is the turns oldest first, with `prev_cursor`, `next_cursor` and `status`. Without a cursor or `around` you get the latest turns.
+
+## thread_wait
+
+Takes up to 8 targets, each a thread and an optional `after_cursor`, and a timeout of 0 to 600 seconds. It returns the first thread that finished a turn or now needs the user. On timeout it returns the latest status lines. A timeout of 0 is a snapshot.
+
+## Where the transcript lives
+
+Transcripts are read from the local session store on the user's own computer. allternit-api only maps a thread to its session, checks the owner and answers for incognito chats. If the transcript is on another computer, the tool returns the summary and says where the transcript is.
+
+## Privacy
+
+Incognito chats are never returned, and a missing, someone else's and incognito thread all answer the same way. The routes are `POST /api/v1/bot-routing/thread/resolve`, `recent` and `wait`.
+
+In chat, a "Read" row names the chat and opens it.

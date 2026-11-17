@@ -1,0 +1,822 @@
+{
+  "id": "allternit.action-classes.v1",
+  "doc": "contracts/action-classes/README.md",
+  "classes": [
+    "hand_off",
+    "confirm_now",
+    "confirm_unless_named",
+    "free"
+  ],
+  "input": {
+    "tool": "computer | browser | pane_browser | bash | write | mcp",
+    "action": "The member, op or verb (computer/browser member, pane_browser action, 'run' for bash, 'write' for write, 'call' for mcp).",
+    "args": "A summary of what the reviewer sees, not the full call: label and role of the control acted on, secure for a password field, key chord in text, command, path, host, app, mcp tool name."
+  },
+  "vectors": [
+    {
+      "id": "shell-wipe-root",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "rm -rf /"
+        }
+      },
+      "expected": "hand_off",
+      "why": "Deletes the whole disk."
+    },
+    {
+      "id": "shell-wipe-home",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "rm -rf ~"
+        }
+      },
+      "expected": "hand_off",
+      "why": "Deletes the home folder."
+    },
+    {
+      "id": "shell-format-disk",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "diskutil eraseDisk APFS Blank disk2"
+        }
+      },
+      "expected": "hand_off",
+      "why": "Formats a disk."
+    },
+    {
+      "id": "shell-dd-disk",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "dd if=/dev/zero of=/dev/disk0"
+        }
+      },
+      "expected": "hand_off",
+      "why": "Overwrites a raw disk."
+    },
+    {
+      "id": "shell-fork-bomb",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": ":(){ :|:& };:"
+        }
+      },
+      "expected": "hand_off",
+      "why": "Fork bomb takes the machine down."
+    },
+    {
+      "id": "computer-captcha",
+      "input": {
+        "tool": "computer",
+        "action": "left_click",
+        "args": {
+          "label": "I'm not a robot",
+          "role": "checkbox"
+        }
+      },
+      "expected": "hand_off",
+      "why": "Human checks are for the person: use request_human."
+    },
+    {
+      "id": "computer-pay-now",
+      "input": {
+        "tool": "computer",
+        "action": "left_click",
+        "args": {
+          "label": "Pay now",
+          "role": "button"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Money."
+    },
+    {
+      "id": "computer-buy-now",
+      "input": {
+        "tool": "computer",
+        "action": "act",
+        "args": {
+          "op": "click",
+          "label": "Buy now",
+          "role": "button"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Money: a purchase."
+    },
+    {
+      "id": "browser-place-order",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Place your order",
+          "role": "button",
+          "host": "amazon.com"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Money: a purchase."
+    },
+    {
+      "id": "browser-subscribe",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Subscribe",
+          "role": "button",
+          "host": "example.com"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Money: a recurring charge."
+    },
+    {
+      "id": "computer-transfer",
+      "input": {
+        "tool": "computer",
+        "action": "left_click",
+        "args": {
+          "label": "Transfer",
+          "role": "button",
+          "app": "Chase"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Money: moves funds."
+    },
+    {
+      "id": "pane-send-money",
+      "input": {
+        "tool": "pane_browser",
+        "action": "click",
+        "args": {
+          "ref": "e12",
+          "label": "Send money",
+          "role": "button",
+          "host": "venmo.com"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Money: 'send money' is a transfer, not a send."
+    },
+    {
+      "id": "browser-wire",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Wire",
+          "role": "button",
+          "host": "bank.example"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Money: a wire transfer."
+    },
+    {
+      "id": "shell-stripe-payout",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "stripe payouts create --amount 5000 --currency usd"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Money: a payout."
+    },
+    {
+      "id": "mcp-stripe-send-invoice",
+      "input": {
+        "tool": "mcp",
+        "action": "call",
+        "args": {
+          "name": "stripe_send_invoice"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Money: bills a customer."
+    },
+    {
+      "id": "computer-type-password",
+      "input": {
+        "tool": "computer",
+        "action": "type",
+        "args": {
+          "text": "<redacted>",
+          "secure": true,
+          "role": "AXSecureTextField"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Typing into a password field."
+    },
+    {
+      "id": "computer-act-set-password",
+      "input": {
+        "tool": "computer",
+        "action": "act",
+        "args": {
+          "op": "set_value",
+          "secure": true,
+          "role": "AXSecureTextField",
+          "label": "Password"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Setting a password field."
+    },
+    {
+      "id": "browser-type-password",
+      "input": {
+        "tool": "browser",
+        "action": "type",
+        "args": {
+          "text": "<redacted>",
+          "secure": true,
+          "role": "textbox",
+          "host": "accounts.example.com"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Typing into a password field."
+    },
+    {
+      "id": "computer-use-credential",
+      "input": {
+        "tool": "computer",
+        "action": "use_credential",
+        "args": {
+          "domain": "github.com"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Fills a saved secret."
+    },
+    {
+      "id": "computer-change-password",
+      "input": {
+        "tool": "computer",
+        "action": "left_click",
+        "args": {
+          "label": "Change password",
+          "role": "button"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Changes a credential."
+    },
+    {
+      "id": "browser-create-api-key",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Create secret key",
+          "role": "button",
+          "host": "platform.openai.com"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Mints an API key."
+    },
+    {
+      "id": "browser-reveal-api-key",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Reveal API key",
+          "role": "button",
+          "host": "dashboard.stripe.com"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Puts an API key on screen."
+    },
+    {
+      "id": "shell-read-aws-creds",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "cat ~/.aws/credentials"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Reads stored keys."
+    },
+    {
+      "id": "shell-export-api-key",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "export OPENAI_API_KEY=sk-<redacted>"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Handles an API key."
+    },
+    {
+      "id": "write-env-key",
+      "input": {
+        "tool": "write",
+        "action": "write",
+        "args": {
+          "path": ".env",
+          "text": "STRIPE_SECRET_KEY=sk_live_<redacted>"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Writes an API key to a file."
+    },
+    {
+      "id": "computer-delete-permanently",
+      "input": {
+        "tool": "computer",
+        "action": "left_click",
+        "args": {
+          "label": "Delete Immediately",
+          "role": "button",
+          "app": "Finder"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Skips the Trash."
+    },
+    {
+      "id": "computer-empty-trash",
+      "input": {
+        "tool": "computer",
+        "action": "act",
+        "args": {
+          "op": "menu",
+          "path": [
+            "Finder",
+            "Empty Trash"
+          ]
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Permanent delete."
+    },
+    {
+      "id": "computer-delete-button",
+      "input": {
+        "tool": "computer",
+        "action": "left_click",
+        "args": {
+          "label": "Delete",
+          "role": "button"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "A plain Delete: the rules cannot tell Trash from permanent, so the stricter class wins."
+    },
+    {
+      "id": "computer-cmd-backspace",
+      "input": {
+        "tool": "computer",
+        "action": "key",
+        "args": {
+          "text": "cmd+BackSpace"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "The delete chord."
+    },
+    {
+      "id": "browser-delete-account",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Delete account",
+          "role": "button",
+          "host": "example.com"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Deletes an account for good."
+    },
+    {
+      "id": "shell-rm-outside-project",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "rm -rf ~/Documents/taxes-2024"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Deletes files outside the project."
+    },
+    {
+      "id": "browser-docusign-sign",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Adopt and Sign",
+          "role": "button",
+          "host": "app.docusign.com"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Signs a document."
+    },
+    {
+      "id": "pane-sign-contract",
+      "input": {
+        "tool": "pane_browser",
+        "action": "click",
+        "args": {
+          "ref": "e7",
+          "label": "Sign contract",
+          "role": "button",
+          "host": "app.pandadoc.com"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Signs a document."
+    },
+    {
+      "id": "computer-sign-pdf",
+      "input": {
+        "tool": "computer",
+        "action": "act",
+        "args": {
+          "op": "click",
+          "label": "Sign",
+          "role": "button",
+          "app": "Preview"
+        }
+      },
+      "expected": "confirm_now",
+      "why": "Puts a signature on a document."
+    },
+    {
+      "id": "computer-send-mail",
+      "input": {
+        "tool": "computer",
+        "action": "left_click",
+        "args": {
+          "label": "Send",
+          "role": "button",
+          "app": "Mail"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Send."
+    },
+    {
+      "id": "computer-send-chord",
+      "input": {
+        "tool": "computer",
+        "action": "key",
+        "args": {
+          "text": "cmd+Return",
+          "app": "Mail"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "The send chord."
+    },
+    {
+      "id": "browser-reply-all",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Reply all",
+          "role": "button",
+          "host": "mail.google.com"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Send."
+    },
+    {
+      "id": "pane-post",
+      "input": {
+        "tool": "pane_browser",
+        "action": "click",
+        "args": {
+          "ref": "e3",
+          "label": "Post",
+          "role": "button",
+          "host": "x.com"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Publish."
+    },
+    {
+      "id": "browser-publish",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Publish",
+          "role": "button",
+          "host": "medium.com"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Publish."
+    },
+    {
+      "id": "browser-merge-pr",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Merge pull request",
+          "role": "button",
+          "host": "github.com"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Publish: a merge."
+    },
+    {
+      "id": "browser-file-upload",
+      "input": {
+        "tool": "browser",
+        "action": "file_upload",
+        "args": {
+          "ref": "e9",
+          "path": "~/Desktop/report.pdf",
+          "host": "drive.google.com"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Upload."
+    },
+    {
+      "id": "pane-upload",
+      "input": {
+        "tool": "pane_browser",
+        "action": "click",
+        "args": {
+          "ref": "e5",
+          "label": "Upload",
+          "role": "button",
+          "host": "dropbox.com"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Upload."
+    },
+    {
+      "id": "shell-git-push",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "git push origin main"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Publish code."
+    },
+    {
+      "id": "shell-npm-publish",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "npm publish"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Publish a package."
+    },
+    {
+      "id": "shell-wrangler-deploy",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "wrangler pages deploy dist --project-name site"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Deploy."
+    },
+    {
+      "id": "shell-gh-merge",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "gh pr merge 12 --squash"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Publish: a merge."
+    },
+    {
+      "id": "mcp-send-email",
+      "input": {
+        "tool": "mcp",
+        "action": "call",
+        "args": {
+          "name": "gmail_send_message"
+        }
+      },
+      "expected": "confirm_unless_named",
+      "why": "Send."
+    },
+    {
+      "id": "computer-screenshot",
+      "input": {
+        "tool": "computer",
+        "action": "screenshot",
+        "args": {}
+      },
+      "expected": "free",
+      "why": "Read."
+    },
+    {
+      "id": "computer-read-ui",
+      "input": {
+        "tool": "computer",
+        "action": "read_ui",
+        "args": {
+          "app": "Mail"
+        }
+      },
+      "expected": "free",
+      "why": "Read."
+    },
+    {
+      "id": "browser-get-page-text",
+      "input": {
+        "tool": "browser",
+        "action": "get_page_text",
+        "args": {
+          "host": "example.com"
+        }
+      },
+      "expected": "free",
+      "why": "Read."
+    },
+    {
+      "id": "pane-find",
+      "input": {
+        "tool": "pane_browser",
+        "action": "find",
+        "args": {
+          "query": "price",
+          "host": "example.com"
+        }
+      },
+      "expected": "free",
+      "why": "Read."
+    },
+    {
+      "id": "pane-read-console",
+      "input": {
+        "tool": "pane_browser",
+        "action": "read_console",
+        "args": {
+          "pattern": "error",
+          "host": "localhost"
+        }
+      },
+      "expected": "free",
+      "why": "Read."
+    },
+    {
+      "id": "computer-scroll",
+      "input": {
+        "tool": "computer",
+        "action": "scroll",
+        "args": {
+          "direction": "down"
+        }
+      },
+      "expected": "free",
+      "why": "No effect outside the view."
+    },
+    {
+      "id": "computer-click-inbox",
+      "input": {
+        "tool": "computer",
+        "action": "left_click",
+        "args": {
+          "label": "Inbox",
+          "role": "link",
+          "app": "Mail"
+        }
+      },
+      "expected": "free",
+      "why": "Navigation."
+    },
+    {
+      "id": "browser-click-sign-in",
+      "input": {
+        "tool": "browser",
+        "action": "left_click",
+        "args": {
+          "label": "Sign in",
+          "role": "button",
+          "host": "github.com"
+        }
+      },
+      "expected": "free",
+      "why": "'Sign in' is not signing."
+    },
+    {
+      "id": "computer-postal-code",
+      "input": {
+        "tool": "computer",
+        "action": "left_click",
+        "args": {
+          "label": "Postal code",
+          "role": "textfield"
+        }
+      },
+      "expected": "free",
+      "why": "A text field. Labels match on whole words, so Postal is not Post."
+    },
+    {
+      "id": "browser-type-search",
+      "input": {
+        "tool": "browser",
+        "action": "type",
+        "args": {
+          "text": "running shoes",
+          "secure": false,
+          "role": "searchbox",
+          "host": "example.com"
+        }
+      },
+      "expected": "free",
+      "why": "Ordinary text in an ordinary field."
+    },
+    {
+      "id": "computer-resolve-access",
+      "input": {
+        "tool": "computer",
+        "action": "resolve_access",
+        "args": {
+          "apps": [
+            "Safari"
+          ]
+        }
+      },
+      "expected": "free",
+      "why": "Read: looks up access, grants nothing."
+    },
+    {
+      "id": "shell-ls",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "ls -la"
+        }
+      },
+      "expected": "free",
+      "why": "Read."
+    },
+    {
+      "id": "shell-git-status",
+      "input": {
+        "tool": "bash",
+        "action": "run",
+        "args": {
+          "command": "git status"
+        }
+      },
+      "expected": "free",
+      "why": "Read."
+    },
+    {
+      "id": "mcp-read",
+      "input": {
+        "tool": "mcp",
+        "action": "call",
+        "args": {
+          "name": "stripe_list_recent_invoices"
+        }
+      },
+      "expected": "free",
+      "why": "Read: lists, changes nothing."
+    }
+  ]
+}

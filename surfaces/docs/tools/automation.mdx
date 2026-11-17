@@ -1,0 +1,67 @@
+---
+title: 'automation'
+description: 'The built-in tool that lets an agent make, change and run scheduled tasks for you: reminders, follow-ups and quiet checks'
+---
+
+## Overview
+
+`automation` is a built-in gizzi tool. It replaces the retired `CronCreate`, `CronList` and `CronDelete` tools (the `AGENT_TRIGGERS` flag now turns this tool on). When you say "remind me at 3pm" or "tell me when the deploy finishes", the agent makes a scheduled task. Scheduled tasks run on your own computer or your cloud computer, never on company servers.
+
+Older file-based tasks from the retired tools still fire, list and delete as before.
+
+## Actions
+
+| Action | What it does |
+|---|---|
+| `create` | Makes a scheduled task |
+| `list` | Shows the existing ones; the agent lists before it creates, so it does not make a duplicate |
+| `update` | Changes the prompt, title, schedule or pause state |
+| `delete` | Removes one |
+| `run_now` | Runs one now |
+
+## Kinds
+
+**message** (the default) runs a prompt at the scheduled time and posts the result into the conversation, or into a new session each time.
+
+**heartbeat** is a quiet check. Each run starts in a fresh session that cannot see the conversation, so its prompt must stand alone. A run must end with one verdict:
+
+| Verdict | Result |
+|---|---|
+| `NOTIFY: line` | Posts the line and pushes it to you |
+| `DONT_NOTIFY` | Nothing worth saying; the run is recorded as a quiet run |
+| `DONE: line` | Tells you, then the scheduled task stops |
+
+A run with no verdict is a failed run. After 3 failed runs in a row the task pauses on its own.
+
+## Schedules
+
+Give exactly one of:
+
+- `at`: a local time such as `2026-11-18T15:00` in your time zone (a different zone can be named). A time that does not exist because of daylight saving time is refused.
+- `delay_minutes`: "in 20 minutes".
+- `rrule` or `cron`: a repeating schedule. Repeating tasks run at most every 15 minutes. End an rrule with `COUNT` or `UNTIL`; `max_runs` and `until` stop a task after a number of runs or a date.
+
+One-time tasks can be 1 minute to 365 days ahead.
+
+## Unattended runs
+
+A scheduled run has nobody to ask. A step that needs your approval is refused at once, the run stops, and you get one notice with a Retry action. The scheduler raises that notice; the runtime does not send a second one. A run started by a scheduled task cannot create scheduled tasks.
+
+## Limits
+
+- 25 active agent-made tasks per computer.
+- A task that matches an existing one is refused; the agent updates the existing task.
+- A run more than 12 hours late (the computer was off) is skipped, not run.
+- Only create what you asked for. The one exception is the agent's own follow-up, and only after you said yes to it in the conversation.
+
+## Where it runs
+
+With a linked Allternit account, tasks go through the local API's scheduler on your computer or cloud computer. Gizzi Code without an account uses this computer's own scheduler, so `gizzi serve` must be running for tasks to fire.
+
+## Where you see it
+
+- Chat cards show the task when it is made or changed.
+- A **Scheduled** pill marks threads a task writes to.
+- Tasks appear in [Bot routines](/guides/bot-routines) with a badge for who made them.
+- Quiet runs show in the run history without a notice.
+- On iOS the same tasks and notices appear in the app and as pushes; see [Notifications](/api/notifications).

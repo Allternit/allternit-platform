@@ -126,7 +126,9 @@ struct PlanUsageRows: View {
 
 /// "Choose a plan" / "Buy credits" rows. On the US storefront they link out to
 /// allternit.com; elsewhere the App Store doesn't allow the link, so nothing
-/// is shown (the caller shows plan status only).
+/// is shown (the caller shows plan status only, and the In-App Purchase
+/// rows where the App Store sells). A plan Apple or Google bills is managed
+/// in that store (StoreBilledByView), so "Manage billing" is web plans only.
 struct PayLinkRows: View {
     @ObservedObject private var storefront = StorefrontGate.shared
     @ObservedObject private var plan = AccountPlanStore.shared
@@ -138,7 +140,7 @@ struct PayLinkRows: View {
                 linkRow("Choose a plan", systemImage: "star") { openURL(plan.upgradeURL) }
             }
             linkRow("Buy credits", systemImage: "creditcard") { openURL(StorefrontGate.creditsURL) }
-            if plan.subscription?.isPaid == true {
+            if plan.subscription?.isPaid == true, (plan.subscription?.billingProvider ?? "stripe") == "stripe" {
                 linkRow("Manage billing", systemImage: "doc.text") { openURL(StorefrontGate.creditsURL) }
             }
         }

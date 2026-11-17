@@ -28,7 +28,7 @@ export const FEATURES = [
   "COMPACTION_REMINDERS",
   "BUILTIN_EXPLORE_PLAN_AGENTS", // Explore + Plan subagents
   "FORK_SUBAGENT", // fork subagent (inherits parent context)
-  "AGENT_TRIGGERS", // CronCreate / CronDelete / CronList tools
+  "AGENT_TRIGGERS", // the automation tool's in-session queue (this_thread in the TUI) + its scheduler; older .claude/scheduled_tasks.json tasks still fire
   // Owner-approved beyond the parity set (2026-09-26)
   "EXTRACT_MEMORIES", // background auto-memory extraction
   "TRANSCRIPT_CLASSIFIER", // auto mode

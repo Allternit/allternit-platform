@@ -101,6 +101,12 @@ Applies a batch as one commit, only if the drive is still at `expected_revision`
 Returns `{ revision, changed }`. `MEMORY.md`'s `## Index` is regenerated from the topic
 files on every write. `twin/` is managed by Allternit and can't be written.
 
+### Versions and conflict copies
+
+An entry's version is the first 12 hex characters of a SHA-256 hash of its stored line (UTF-8, no trailing newline). Clients that edit entries compute it the same way. The server needs no change for it: gizzi checks the version against the latest head before it sends a write with `expected_revision`.
+
+When gizzi replays local work after a rejected write, it merges per entry. If both sides changed the same entry differently, the other side keeps the id and the local text is written as a sibling entry with the id `<id>-conflict-<8 hex>` and the ordinary metadata key `conflict_of: <id>`. An edit beats a delete. The count of entries with `conflict_of` is the "N memories need a look" figure. See [Memory tools](/tools/memory).
+
 ### `POST /memory/drive/remember`
 
 Saves one memory without building an entry yourself.

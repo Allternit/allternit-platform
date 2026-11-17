@@ -211,15 +211,40 @@ export function answerWithState(code: string, state: Record<string, unknown>): s
   return canonicalAnswer(JSON.stringify(answer));
 }
 
-export const ANSWER_TEMPLATE_MANUAL = `## Enforced answer templates
-Interactive answers use a data-only JSON object inside a fenced code block tagged \`openui\`. Raw OpenUI programs are not accepted for new cards.
-Use exactly {"version":1,"template":"…","title":"…","data":{…}} with optional summary. No components, CSS, HTML or executable code.
-Templates and required data:
-quick-answer: {text}; comparison: {columns:[{title,points:[string]}],recommendation?}; decision: {question,options:[string],recommendation?}; plan: {items:[string],checked?:[string]}; how-to: {steps:[string],verification}; troubleshooting: {cause,fix:[string],verify}; status-report: {done:[string],inProgress:[string],blocked:[string],next:[string]}; research-brief: {findings:[{text,url:https}],openQuestions:[string]}; table: {headers:[string],rows:[[scalar]],source,query?:{tool:connector__tool,args,rowsPath?}}; chart: {kind:bar|line|area|pie,labels:[string],values:[number],source}; form: {fields:[{id,type:text|date|number|select|toggle,label,value,options?:[string],min?,max?,step?}],submitLabel}; calculator: {inputs:[{id,label,value:number,min,max,step?}],results:[{label,value:number|{input:id}|{op:add|subtract|multiply|divide,left:number|{input:id},right:number|{input:id}},format?:number|currency|percent|compact,unit?,note}]}.
-Calculation operands may themselves be expression objects; the envelope depth limit still applies.
-Use only real data with its source. Empty arrays are allowed for empty data. Chart arrays must match; table rows must match headers. Input IDs are unique lowercase identifiers. Do not add keys. A form asks the next assistant turn; it never performs a connector write. Table queries use read-only tools only. Other connector actions belong in the existing approval flow.
-Example: {"version":1,"template":"decision","title":"Choose a format","data":{"question":"Which format?","options":["PDF","DOCX"]}}
-If a card is not needed, write the answer in Markdown. The app renders prose through its fixed text template. Invalid cards fall back to readable text; they never execute model-written layouts.
+/** Starts the catalog part of the manual; allternit-api's gateway splits the manual here. */
+export const CATALOG_MANUAL_HEADING = '### Catalog templates';
 
-Additional catalog templates (same envelope and validation rules; examples in UI Forge are synthetic):
+export const ANSWER_TEMPLATE_MANUAL = `## Enforced answer templates
+An interactive answer is one data-only JSON object in a fenced code block tagged \`openui\`: exactly {"version":1,"template":"…","title":"…","data":{…}}, summary optional. No components, CSS, HTML or executable code. Raw OpenUI programs are refused.
+Core templates (data):
+quick-answer: {text}; comparison: {columns:[{title,points:[string]}],recommendation?}; decision: {question,options:[string],recommendation?}; plan: {items:[string],checked?:[string]}; how-to: {steps:[string],verification}; troubleshooting: {cause,fix:[string],verify}; status-report: {done:[string],inProgress:[string],blocked:[string],next:[string]}; research-brief: {findings:[{text,url:https}],openQuestions:[string]}; table: {headers:[string],rows:[[scalar]],source,query?:{tool:connector__tool,args,rowsPath?}}; chart: {kind:bar|line|area|pie,labels:[string],values:[number],source}; form: {fields:[{id,type:text|date|number|select|toggle,label,value,options?:[string],min?,max?,step?}],submitLabel}; calculator: {inputs:[{id,label,value:number,min,max,step?}],results:[{label,value:number|{input:id}|{op:add|subtract|multiply|divide,left:number|{input:id},right:number|{input:id}},format?:number|currency|percent|compact,unit?,note}]}.
+Rules:
+- Real data with its source only; empty arrays for no data. No extra keys.
+- Chart labels and values are the same length; table rows match headers. Input ids are unique and lowercase. Calculation operands may nest (the envelope depth limit applies).
+- A form asks the next assistant turn; it never writes to a connector. Table queries use read-only tools only. Other connector actions go through the approval flow.
+- Fact cards (weather, time-zones, conversion, places, link-preview, image-gallery) come only from a tool result in this turn, never memory. If the lookup tool already returned the card, don't write it again. One card per fact. Also state the fact in words, since some apps show text only. Keep every credit, licence and source link. "Here" or "near me": use the shared location only when this turn has one; otherwise ask for a place.
+- writing is for a draft the user will send or keep (email, text message, social post, document, note): body is the draft, to and subject when known, at most 2 labelled alternatives, at most 3 writing cards per reply. There is no send action: never say a draft was sent.
+- No card when nothing needs picking, adjusting or exploring: decision and option-grid only for a real pick this turn; calculator only when the user will change inputs (state a fixed result in words; use conversion for units and currencies). Otherwise write Markdown.
+- Invalid cards fall back to readable text; model-written layouts never run.
+Example: {"version":1,"template":"decision","title":"Choose a format","data":{"question":"Which format?","options":["PDF","DOCX"]}}
+
+${CATALOG_MANUAL_HEADING} (same envelope and rules; fields are strings unless typed, ? = optional)
 ${catalogManual()}`;
+
+/** A complete, valid writing envelope; the widgets manual shows it and the tests parse it. */
+export const WRITING_EXAMPLE = { version: 1, template: 'writing', title: 'Reply to Sam', data: { variant: 'email', to: 'Sam', subject: 'Friday works', body: 'Hi Sam,\n\nFriday at 2 works for me. See you then.\n\nThanks', alternatives: [{ label: 'Shorter', body: 'Friday at 2 works. See you then!' }] } } as const;
+
+/**
+ * The short manual for clients that draw no catalog cards (iOS, the Ink
+ * REPL). They send the turn hint `answer_cards: "widgets"` and the runtime
+ * adds this instead of the full manual. It covers writing only: lookup fact
+ * cards reach those clients as tool results, never as model-written fences.
+ * It never contains the "## Enforced answer templates" heading, so the turn
+ * guard does not force a template on these clients.
+ */
+export const ANSWER_WIDGETS_MANUAL = `## Draft blocks
+This app draws one kind of card: a writing draft. When the user asks you to write something they will send or keep (an email, text message, social post, document or note), put the draft in a fenced code block tagged \`openui\` containing only a JSON object like:
+${JSON.stringify(WRITING_EXAMPLE)}
+variant is one of email, text_message, social_post, document, note. to and subject are optional; alternatives is optional, at most 2, each with a label and body. At most 3 drafts per reply. Add one plain sentence outside the block saying what the draft is for. No other templates, components or HTML.
+The app offers Copy, Edit, Open in Mail or Messages and Save as doc. It never sends anything, so never say a draft was sent.
+Fact cards from the lookup tool appear on their own; still state the fact in words and name its source.`;

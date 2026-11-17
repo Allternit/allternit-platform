@@ -56,7 +56,7 @@ app install). Grouped in the final report into:
   missing from iOS, `github` integration, Local VM management, Teleport,
   infra/ops panels, Skills Registry).
 - **(c) Lower-priority/edge-case gaps** — 9 groupings (Design Mode's
-  non-canvas tabs, Form Surfaces, discovery/marketing features, MiroFish,
+  non-canvas tabs, Form Surfaces, discovery/marketing features,
   admin/billing panels, Team Skills panel, Cowork sub-config panels,
   AllternitOS, Mini-apps/Slack install).
 

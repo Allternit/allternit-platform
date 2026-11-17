@@ -7,6 +7,7 @@ import { hashContent } from '../utils/hash';
 import { configureMarked, formatToken } from '../utils/markdown';
 import { stripPromptXMLTags } from '../utils/syntheticMessages.js';
 import { MarkdownTable } from './MarkdownTable';
+import { parseWritingDraft, WritingDraft } from '../tools/LookupTool/WritingDraft';
 // TODO(types): Ansi is still a compiler artifact whose memo-wrapped props
 // don't typecheck; cast to the Props shape it actually accepts at runtime.
 const AnsiView = Ansi as React.ComponentType<{
@@ -117,9 +118,14 @@ function MarkdownBody(t0) {
       }
     };
   for (const token of tokens) {
+      // A writing answer card (```openui fence holding a valid writing envelope) draws as a draft block.
+      const draft = token.type === "code" ? parseWritingDraft((token as Tokens.Code).lang, (token as Tokens.Code).text) : undefined;
       if (token.type === "table") {
         flushNonTableContent();
         elements.push(<MarkdownTable key={elements.length} token={token as Tokens.Table} highlight={highlight} />);
+      } else if (draft) {
+        flushNonTableContent();
+        elements.push(<WritingDraft key={elements.length} card={draft} />);
       } else {
         nonTableContent = nonTableContent + formatToken(token, theme, 0, null, null, highlight);
         nonTableContent;

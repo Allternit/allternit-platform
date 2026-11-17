@@ -270,6 +270,18 @@ describe("byte caps (PLAN.md token budgets)", () => {
   }
 })
 
+describe("wave C2 rules", () => {
+  test("computer-use names pane_browser refs and the plan step", () => {
+    expect(COMPUTER_USE).toContain("refs from `read_page` or `find`")
+    expect(COMPUTER_USE).toContain("send `plan` first")
+  })
+  test("voice captures the screen before asking and never drives the computer", () => {
+    expect(VOICE).toContain("capture the screen before asking the user to describe what they see")
+    expect(VOICE).toContain("again after it changes")
+    expect(VOICE).toContain("Voice never drives the computer.")
+  })
+})
+
 describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
   const SIGNAL_BLOCKS = [DUET, DELEGATION, PROJECT_THREAD, COMPUTER_USE]
   const all = { appBot: true, projectSend: true, projectThread: true, computerUse: true }
@@ -337,7 +349,7 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
     expect(SystemPrompt.context("chat", {}, { toolIds: ["project_send"] }).projectSend).toBe(true)
     // project_list alone is not project_send.
     expect(SystemPrompt.context("chat", {}, { toolIds: ["project_list"] }).projectSend).toBeUndefined()
-    for (const id of ["pane_browser", "browser", "computer", "computer_v2", "computers"]) {
+    for (const id of ["pane_browser", "browser", "computer", "computer_v2", "computers", "browser_tasks"]) {
       expect(SystemPrompt.context("code", {}, { toolIds: [id] }).computerUse).toBe(true)
     }
     // Exact ids, not substrings: toolset members are actions, never tool ids.

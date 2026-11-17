@@ -250,21 +250,13 @@ struct CodeBackgroundTasksPane: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(2)
-                    Text("\(task.kindLabel) · \(task.status) · \(duration(task))")
+                    Text("\(task.kindLabel) · \(task.status == "interrupted" ? "Paused" : task.status) · \(duration(task))")
                         .font(.system(size: 11))
                         .foregroundColor(Color("TextSecondary"))
                 }
                 Spacer(minLength: 4)
-                if task.isActive, let sessionId {
-                    Button("Stop") {
-                        Task {
-                            try? await AgentChatClient().cancelBackgroundTask(sessionId: sessionId, taskId: task.id)
-                            await load()
-                        }
-                    }
-                    .font(.system(size: 13, weight: .semibold))
-                    .buttonStyle(.bordered)
-                    .accessibilityLabel("Stop \(task.description)")
+                if let sessionId {
+                    controls(task, sessionId: sessionId)
                 }
             }
             if let text = task.error ?? task.output, !text.isEmpty {
@@ -281,6 +273,47 @@ struct CodeBackgroundTasksPane: View {
         .padding(.vertical, 4)
     }
 
+    /// Stop (and Pause for a background subagent) while running; Resume once
+    /// paused. Same calls as the RunTree sheet (SessionTasksClient).
+    @ViewBuilder
+    private func controls(_ task: SessionTask, sessionId: String) -> some View {
+        let name = task.description.isEmpty ? task.kindLabel : task.description
+        if task.isActive || (task.isControllable && task.status == "interrupted") {
+            HStack(spacing: 6) {
+                if task.isControllable && task.status == "interrupted" {
+                    Button("Resume") { control(.resume, task, sessionId) }
+                        .accessibilityLabel("Resume \(name)")
+                } else {
+                    if task.isControllable {
+                        Button("Pause") { control(.pause, task, sessionId) }
+                            .accessibilityLabel("Pause \(name)")
+                    }
+                    Button("Stop") { control(.stop, task, sessionId) }
+                        .accessibilityLabel("Stop \(name)")
+                }
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private func control(_ action: SessionTaskAction, _ task: SessionTask, _ sessionId: String) {
+        Task {
+            let client = SessionTasksClient.shared
+            do {
+                switch action {
+                case .stop: try await client.cancel(sessionId: sessionId, taskId: task.id)
+                case .pause: try await client.interrupt(sessionId: sessionId, taskId: task.id, reason: "Paused from the iOS app")
+                case .resume: try await client.resume(sessionId: sessionId, taskId: task.id)
+                }
+                error = nil
+            } catch {
+                self.error = "Couldn't \(action.label.lowercased()) the agent: \(FriendlyErrorMessage.from(error.localizedDescription))"
+            }
+            await load()
+        }
+    }
+
     @ViewBuilder
     private func statusIcon(_ status: String) -> some View {
         switch status {
@@ -288,6 +321,8 @@ struct CodeBackgroundTasksPane: View {
             ProgressView().controlSize(.small).frame(width: 16)
         case "completed":
             Image(systemName: "checkmark.circle.fill").foregroundColor(Theme.statusSuccess)
+        case "interrupted":
+            Image(systemName: "pause.circle").foregroundColor(Color("TextSecondary"))
         case "failed":
             Image(systemName: "xmark.circle.fill").foregroundColor(Theme.statusError)
         default:
@@ -448,10 +483,18 @@ struct CodeSessionPanel: View {
                     ForEach(steps) { step in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             stepIcon(step.status)
-                            Text(step.status == .inProgress ? (step.activeForm ?? step.content) : step.content)
-                                .font(.system(size: 13, weight: step.status == .inProgress ? .semibold : .regular))
-                                .foregroundColor(step.status == .completed ? Color("TextSecondary") : Color("TextPrimary"))
-                                .strikethrough(step.status == .completed, color: Color("TextTertiary"))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(step.title)
+                                    .font(.system(size: 13, weight: step.status == .inProgress ? .semibold : .regular))
+                                    .foregroundColor(step.status == .completed || step.stop == .cancelled ? Color("TextSecondary") : Color("TextPrimary"))
+                                    .strikethrough(step.status == .completed || step.stop == .cancelled, color: Color("TextTertiary"))
+                                if let label = step.stopLabel {
+                                    Text(label).font(.system(size: 11)).foregroundColor(Color("TextTertiary"))
+                                }
+                                if let blocked = CodeProgress.blockedLine(for: step, in: steps) {
+                                    Text(blocked).font(.system(size: 11)).foregroundColor(Color("TextTertiary"))
+                                }
+                            }
                         }
                     }
                 } header: {

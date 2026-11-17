@@ -46,6 +46,10 @@ The gizzi terminal asks the same decision one step at a time:
 
 The agent gets the same path as in the app, for example "Roll back to #481 → No notice". In the terminal, the agent asks with the `AskUserQuestion` tool, which takes the same fields as the table below.
 
+## Asks that do not block
+
+When you are away, an agent can use `ask_user_later` instead. It asks up to 3 questions and keeps working on a stated assumption. These asks show in the thread dock with an **Assumed:** line, **Answer** and **Dismiss**, and in the Decisions deck on iOS. Your answer starts a new turn. See [ask_user_later](/tools/ask-user-later).
+
 ## For agents
 
 Decision trees use the `question` tool's optional fields:

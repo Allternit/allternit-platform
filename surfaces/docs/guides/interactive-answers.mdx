@@ -49,6 +49,23 @@ The catalog includes weather, stock summaries, task review, itineraries, flights
 | Form | Labelled fields and a button that sends current values into the conversation |
 | Calculator | Bounded numeric inputs and arithmetic results that update locally |
 
+## Lookup cards and writing blocks
+
+Facts come from the [lookup tool](/tools/lookup), not from the model's memory. These templates are drawn from the tool result:
+
+| Template | What it shows |
+| --- | --- |
+| Weather | Current conditions and up to 7 forecast days, with a credit |
+| Time zones | One moment in several places |
+| Conversion | A unit or currency conversion; currency shows the rate date |
+| Link preview | Title, description and image of one page |
+| Places | Up to 10 places with a credit |
+| Image gallery | 3 to 5 freely licensed images, each with credit, licence and source link |
+
+The **writing** block holds a draft: an email, text message, social post, document or note, with optional recipient and subject and up to two alternatives. At most three appear in a reply. Its actions are **Copy**, **Edit**, **Open in Mail** or **Open in Messages**, and **Save as doc**. Open in Mail or Messages only opens your own app with the draft filled in. Allternit never sends the message for you.
+
+iOS and Gizzi Code draw these cards too. They send the `answer_cards: "widgets"` hint so the runtime adds the short writing manual. In the terminal, cards are aligned text and a writing draft is a bordered block with a copy action.
+
 A card cannot add arbitrary HTML, CSS, JavaScript or component trees. Calculator expressions support only numbers, declared inputs, and addition, subtraction, multiplication and division. Division by zero shows an explanation.
 
 ## When a template is required

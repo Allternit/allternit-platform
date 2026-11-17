@@ -1,0 +1,57 @@
+---
+title: 'lookup'
+description: 'The built-in tool that fetches weather, time zones, conversions, link previews, places and credited images and returns them as text plus a card'
+---
+
+## Overview
+
+`lookup` is a built-in gizzi tool. Models guess at weather, exchange rates and local times, so they call `lookup` instead. It fetches or computes the fact and returns text plus a validated card. The app draws the card from the tool result, so the model never retypes the numbers. Every card shows its source credit.
+
+The reply text must still make sense on its own, because some clients draw text only. There is at most one card per fact.
+
+## Kinds
+
+| Kind | Source | Cache | Notes |
+|---|---|---|---|
+| `weather` | MET Norway (CC BY 4.0) | 30 minutes | Current conditions and up to 7 forecast days |
+| `places` | Nominatim (OpenStreetMap, ODbL) | 24 hours | Up to 10 places. One request per second at most. Runs only on a finished request, never as type-ahead |
+| `convert` (currency) | Frankfurter (ECB reference rates) | 12 hours | The card shows the rate date |
+| `convert` (units) | Computed locally | none | Length, mass, temperature, volume and more |
+| `time` | Computed locally | none | The same moment in several zones, with daylight saving applied |
+| `link` | The page itself | none | Title, description and image of one https page. Private and local addresses are refused |
+| `images` | Wikimedia Commons only | none | 3 to 5 images. Credit and licence on every image. Explicit content is filtered |
+
+Wikimedia Commons has no safe-search setting, so Allternit filters explicit results itself. If a provider fails, the model says so and falls back to web search with a cited source.
+
+## Permissions
+
+| Kind | Permission |
+|---|---|
+| `time` and unit `convert` | Allowed, since they change nothing and use no network |
+| `weather`, `places`, currency `convert`, `images` | Follow the `websearch` permission |
+| `link` | Follows the `webfetch` permission |
+
+## "Here" and "near me"
+
+`weather` and `places` accept "here" only when the user has turned on [Share my location with bots](/guides/share-location). The position arrives as a structured, turn-only field, is used for that one call, and is never stored. If location is off, the model asks "Which place?" instead of guessing.
+
+## Where cards appear
+
+| Surface | How the card shows |
+|---|---|
+| ai.allternit.com, the phone layout, the m.allternit.com app and Allternit Desktop | A card drawn from the tool result |
+| iOS | A native card in the message row |
+| Gizzi Code (terminal) | Aligned text tables; writing drafts as a bordered block |
+| Android | Through the m.allternit.com app |
+
+Turns run by a CLI brain keep their cards. Older clients that do not know a card type show the text.
+
+## Credits and licences
+
+Weather credits MET Norway under CC BY 4.0. Place data is from OpenStreetMap contributors under the ODbL. Currency rates are ECB reference rates through Frankfurter. Each image shows its author, licence and a link to its Commons page. These credits are part of the card and are not removed.
+
+## Related pages
+
+- [Interactive answers](/guides/interactive-answers)
+- [Share my location with bots](/guides/share-location)
+- [current_time](/tools/current-time)

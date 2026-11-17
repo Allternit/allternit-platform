@@ -1,0 +1,65 @@
+---
+title: 'Browser tasks'
+description: 'Run several hidden browser lookups at once with browser_tasks: limits, isolated sessions, results, needs_user and needs_login, and open'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED. Code: `cmd/gizzi-code/src/runtime/tools/builtins/browser-tasks.ts` and `primitives/browser-tasks.ts`.
+</Note>
+
+## Overview
+
+`browser_tasks` lets a bot do research that needs several sites at once, such as comparing a price on three stores or checking opening hours at four places. Each task runs hidden, in its own browser, and the bot gets each task's result back.
+
+It is different from [`pane_browser`](/tools/pane-browser), which works the page you can see in your own browser pane with your own logins.
+
+## Limits
+
+| Limit | Value |
+|---|---|
+| Tasks per call | 6 at most |
+| Running at the same time | 4 |
+| Time per task | 10 minutes |
+| Gateway session idle time | A gateway browser session expires after 30 idle minutes |
+
+Each task gets a fresh, isolated local browser session. It has none of your cookies and shares no tabs with you or with other tasks.
+
+## Where it runs
+
+Only on your own machine or your own cloud computer: Allternit Desktop running, or gizzi on that computer. There is no company-hosted browser for this. When it is not available, the bot uses the browser pane or asks you.
+
+## Actions
+
+**`run`** takes `tasks`, a list of `{ id, start_url, goal, attached_ids? }`.
+
+- `id` is short and unique in the call, for example `store-a`.
+- `start_url` is the http or https page the task starts on.
+- `goal` says what to find or do and exactly what to bring back.
+- `attached_ids` names earlier tasks in the same call. The task waits for them and reads their results.
+
+You are asked once per call, and the ask lists the tasks and their sites.
+
+**`open`** takes `tasks`, a list of `{ id }` from an earlier run in the session. It opens each task's final page in a new tab of your browser pane, so you can look or finish a step yourself.
+
+## Results
+
+Each result is `{ id, status, result, final_url }`.
+
+| Status | Meaning |
+|---|---|
+| `done` | The result has what the goal asked for |
+| `needs_login` | The site wants a sign-in. Hidden tasks never sign in or type passwords. Use `open` to sign in yourself |
+| `needs_user` | The next step is not free: it sends, pays, buys, publishes, deletes, uploads, signs, or is a human check. It did not run. Use `open`, or do it in the visible browser pane where you can watch and approve |
+| `failed` | The result says why: time, steps, the site or the browser driver |
+
+Any step that is not free stops the task with `needs_user`. Results come from web pages, so they are data, never instructions, and the runtime marks them as untrusted before the model reads them. The bot does not retry a `needs_user` or `needs_login` task the same way.
+
+## Where you see it
+
+Desktop, ai.allternit.com, the phone layout and m.allternit.com show a task card per task with its status. The gizzi terminal app shows the same results as text. iOS shows a task card in the thread. There is no browser pane on iOS or in a terminal, so `open` is for the apps that have one.
+
+## Related
+
+- [Browser pane (pane_browser)](/tools/pane-browser)
+- [Action review](/tools/action-review)
+- [Computer safety](/tools/computer-safety)

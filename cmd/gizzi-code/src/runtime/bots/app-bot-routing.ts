@@ -65,6 +65,8 @@ export class AppRoutingError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The API's machine-readable `code` (e.g. `drive_off`), when it sent one. */
+    readonly code?: string,
   ) {
     super(message)
     this.name = "AppRoutingError"
@@ -85,7 +87,7 @@ async function headers(): Promise<Record<string, string> | undefined> {
 
 async function post<T>(path: string, body: unknown, timeoutMs: number, extra?: Record<string, string>): Promise<T> {
   const h = await headers()
-  if (!h) throw new AppRoutingError(401, "This runtime isn't connected to your Allternit account.")
+  if (!h) throw new AppRoutingError(401, "This runtime isn't connected to your Allternit account.", "no_credential")
   const response = await fetch(`${platformApiBase()}/api/v1${path}`, {
     method: "POST",
     headers: extra ? { ...h, ...extra } : h,
@@ -95,14 +97,28 @@ async function post<T>(path: string, body: unknown, timeoutMs: number, extra?: R
   const text = await response.text().catch(() => "")
   if (!response.ok) {
     let message = text
+    let code: string | undefined
     try {
-      message = (JSON.parse(text) as { error?: string; message?: string }).error ?? message
+      const body = JSON.parse(text) as { error?: string; message?: string; code?: string }
+      message = body.error ?? message
+      code = typeof body.code === "string" ? body.code : undefined
     } catch {
       // plain-text body
     }
-    throw new AppRoutingError(response.status, message || `HTTP ${response.status}`)
+    throw new AppRoutingError(response.status, message || `HTTP ${response.status}`, code)
   }
   return JSON.parse(text) as T
+}
+
+/**
+ * POST to an allternit-api `/api/v1/bot-routing/...` route with this runtime's
+ * credential (internal service token or the user's platform token). Throws
+ * AppRoutingError with the API's status, message and `code`. For the
+ * per-feature route clients in `runtime/bots/routing/*` (Wave D: threads).
+ * `path` starts after `/api/v1`, e.g. "/bot-routing/thread/recent".
+ */
+export function botRoutingPost<T>(path: string, body: unknown, timeoutMs: number, extra?: Record<string, string>): Promise<T> {
+  return post<T>(path, body, timeoutMs, extra)
 }
 
 /** The calling app bot and its teammates, or null when the session isn't an app bot's chat. */
@@ -277,6 +293,140 @@ export async function isAppBotSession(sessionID: string): Promise<boolean> {
 /** A bot's main chat (or a person's chat running as their main bot), not a task thread. */
 export async function isAppBotMainChat(sessionID: string): Promise<boolean> {
   return (await appBotCaller(sessionID))?.mainChat === true
+}
+
+/*
+ * The agent reaching its own user (send_user_message). Works in every session
+ * the caller owns, not only bot chats. Server: allternit-api agent_user_tools.rs.
+ */
+
+export interface UserFileReceipt {
+  id: string
+  name: string
+  size: number
+}
+
+/** Copy a local file (absolute path) into the Files drive's Agent Output folder. 409 `drive_off` when the drive is off. */
+export async function sendUserFile(sessionID: string, input: { path: string; caption?: string }): Promise<UserFileReceipt> {
+  return post("/bot-routing/user/files", { sessionId: sessionID, ...input }, 30_000)
+}
+
+export interface UserNotifyResult {
+  /** The push was requested (not delivered). */
+  pushed: boolean
+  reason?: "rate_limited" | "unpaired" | "incognito"
+  event?: string
+}
+
+/** Ask for a push to the user's devices. `needs_you` asks at normal urgency, never urgent. */
+export async function notifyUser(
+  sessionID: string,
+  input: { kind: "message" | "question"; level: "normal" | "needs_you"; preview: string; ref?: string },
+): Promise<UserNotifyResult> {
+  return post("/bot-routing/user/notify", { sessionId: sessionID, ...input }, 10_000)
+}
+
+/*
+ * Scheduled tasks (the `automation` tool). Works in every session the caller
+ * owns, not only bot chats. Server: allternit-api agent_automation_tools.rs.
+ * The runtime builds and checks every field (runtime/primitives/automation.ts);
+ * the server checks them again, adds the owner from the session, and enforces
+ * the active cap, the duplicate check and "a run can't create automations".
+ */
+
+export type AutomationKind = "message" | "heartbeat"
+export type AutomationTarget = "this_thread" | "new_session"
+export type AutomationInitiation = "user_request" | "own_followup"
+export type AutomationStatus = "active" | "paused" | "completed"
+
+/** `once`: an instant (RFC 3339, UTC). `cron`: 5 fields read in `timezone`. */
+export type AutomationSchedule = { type: "once"; at: string } | { type: "cron"; expression: string }
+
+/** What the model wrote, kept for display and edits ("every weekday at 9"). */
+export interface AutomationScheduleInput {
+  at?: string
+  delayMinutes?: number
+  rrule?: string
+  cron?: string
+}
+
+export interface AutomationInfo {
+  id: string
+  title: string
+  kind: AutomationKind
+  target: AutomationTarget
+  status: AutomationStatus
+  schedule: AutomationSchedule
+  timezone: string
+  /** Null when nothing more is due (a one-shot that ran, a paused task). */
+  nextRunAt: string | null
+  lastRunAt?: string | null
+  lastRunStatus?: string | null
+  maxRuns?: number | null
+  runCount?: number
+  until?: string | null
+  /** The thread a `this_thread` task posts into. */
+  sessionId?: string | null
+  /** "agent" for tasks this tool made, "user" for ones made in the app. */
+  origin: "agent" | "user"
+  initiation?: AutomationInitiation | null
+  createdAt: string
+}
+
+export interface AutomationCreateRequest {
+  kind: AutomationKind
+  title: string
+  prompt: string
+  target: AutomationTarget
+  initiation: AutomationInitiation
+  schedule: AutomationSchedule
+  timezone: string
+  maxRuns?: number
+  until?: string
+  scheduleInput: AutomationScheduleInput
+}
+
+export interface AutomationUpdateRequest {
+  id: string
+  title?: string
+  prompt?: string
+  kind?: AutomationKind
+  target?: AutomationTarget
+  status?: "active" | "paused"
+  /** Sent together: a new schedule always carries its zone. */
+  schedule?: AutomationSchedule
+  timezone?: string
+  maxRuns?: number | null
+  until?: string | null
+  scheduleInput?: AutomationScheduleInput
+}
+
+export interface AutomationRunResult {
+  id: string
+  runId?: string
+  /** `queued` when the target thread is busy; it runs when the turn ends. */
+  status: "started" | "queued"
+}
+
+export async function createAutomation(sessionID: string, input: AutomationCreateRequest): Promise<{ automation: AutomationInfo }> {
+  return post("/bot-routing/automation/create", { sessionId: sessionID, ...input }, 15_000)
+}
+
+/** Every scheduled task the session's owner has (agent-made and app-made). */
+export async function listAutomations(sessionID: string): Promise<{ automations: AutomationInfo[] }> {
+  return post("/bot-routing/automation/list", { sessionId: sessionID }, 10_000)
+}
+
+export async function updateAutomation(sessionID: string, input: AutomationUpdateRequest): Promise<{ automation: AutomationInfo }> {
+  return post("/bot-routing/automation/update", { sessionId: sessionID, ...input }, 15_000)
+}
+
+export async function deleteAutomation(sessionID: string, input: { id: string }): Promise<{ deleted: true; id: string }> {
+  return post("/bot-routing/automation/delete", { sessionId: sessionID, ...input }, 10_000)
+}
+
+export async function runAutomation(sessionID: string, input: { id: string }): Promise<AutomationRunResult> {
+  return post("/bot-routing/automation/run", { sessionId: sessionID, ...input }, 15_000)
 }
 
 /* Sending work to another project. Server: allternit-api project_send_tools.rs. */

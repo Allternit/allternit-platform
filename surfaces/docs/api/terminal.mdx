@@ -15,7 +15,7 @@ https://api.allternit.com/terminal
 
 All endpoints require a valid Bearer token in the `Authorization` header. See [Authentication](/api/authentication) for details.
 
-The API reaches the pane engine over its Unix domain socket. It finds the socket with `allternit-factory pane tty ensure`, which also starts the pane engine when it isn't running. `ALLTERNIT_FACTORY_BIN` names the binary (default: `allternit-factory` next to allternit-api, then on `PATH`; Allternit Desktop sets it), and `ALLTERNIT_FACTORY_PANE_SOCKET` names the socket directly. See [allternit-mux (folded into the Factory)](/cli/allternit-mux) for the socket methods.
+The API reaches the pane engine over its Unix domain socket (on Windows, a named pipe: `\\.\pipe\` followed by the path `ensure` reports). It finds the socket with `allternit-factory pane tty ensure`, which also starts the pane engine when it isn't running. To check terminals on Windows against a released Desktop installer, run the `windows-terminal-smoke.yml` workflow (`gh workflow run windows-terminal-smoke.yml -R Allternit/allternit-platform`). `ALLTERNIT_FACTORY_BIN` names the binary (default: `allternit-factory` next to allternit-api, then on `PATH`; Allternit Desktop sets it), and `ALLTERNIT_FACTORY_PANE_SOCKET` names the socket directly. See [allternit-mux (folded into the Factory)](/cli/allternit-mux) for the socket methods.
 
 ## Endpoints
 

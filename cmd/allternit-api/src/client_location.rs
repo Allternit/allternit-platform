@@ -3,12 +3,15 @@
 //! When the user turns on Settings → Privacy → "Share my location with bots"
 //! (off by default), the client adds `client_location` to each chat send:
 //! `{ lat, lon, accuracy_m, time_zone, at }`, lat/lon already rounded to two
-//! decimals (about 1 km). The server checks it again and turns it into one
-//! short system layer for that turn only.
+//! decimals (about 1 km). The server checks it again and sends it to gizzi
+//! twice, for that turn only: as one short system layer for the model
+//! ([`location_layer`], in the turn-only `turnSystem` field) and as a
+//! structured value for tools ([`turn_value`], in the turn-only
+//! `turnLocation` field; lookup's "here" reads it, never the prose).
 //!
-//! Never stored: the layer is not part of the composed `system` block (gizzi
-//! keeps that on the user message); it goes to gizzi as the turn-only
-//! `turnSystem` field, which is held in memory for the turn and dropped. The
+//! Never stored: neither is part of the composed `system` block or the
+//! forwarded `metadata` (gizzi keeps both on the user message); gizzi holds
+//! `turnSystem` and `turnLocation` in memory for the turn and drops them. The
 //! values are never logged. Anything invalid is ignored; a bad location never
 //! fails a send.
 
@@ -40,6 +43,8 @@ pub struct SharedLocation {
     pub lon: f64,
     pub km: u64,
     pub time_zone: String,
+    /// When the device took it (RFC 3339, UTC).
+    pub at: String,
 }
 
 fn round2(x: f64) -> f64 {
@@ -87,6 +92,21 @@ pub fn validate(loc: &ClientLocation, now: DateTime<Utc>) -> Option<SharedLocati
         lon,
         km: (accuracy / 1000.0).round().max(1.0) as u64,
         time_zone: tz.to_string(),
+        at: at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    })
+}
+
+/// The structured `turnLocation` value gizzi gets for the turn:
+/// `{ lat, lon, accuracy_m, time_zone, at }`, the same rounded values and
+/// radius as [`location_layer`] states (accuracy_m = the stated km × 1000).
+/// gizzi's lookup tool reads this for "here"; it never parses the layer text.
+pub fn turn_value(loc: &SharedLocation) -> serde_json::Value {
+    serde_json::json!({
+        "lat": loc.lat,
+        "lon": loc.lon,
+        "accuracy_m": loc.km * 1000,
+        "time_zone": loc.time_zone,
+        "at": loc.at,
     })
 }
 
@@ -133,6 +153,28 @@ mod tests {
         assert_eq!(
             location_layer(&loc),
             "Where the user is (shared from their device just now, approximate): about 40.71, -74.01, within roughly 1 km. Their time zone: America/New_York. Use this only when it helps, for local time, nearby places, weather or directions. Don't mention it otherwise, and don't save it to memory."
+        );
+    }
+
+    #[test]
+    fn turn_value_is_the_rounded_structured_location() {
+        let loc = from_body(
+            &body(
+                40.712_8,
+                -74.006_1,
+                4600.0,
+                "America/New_York",
+                "2026-10-24T11:55:00Z",
+            ),
+            now(),
+        )
+        .unwrap();
+        assert_eq!(
+            turn_value(&loc),
+            json!({
+                "lat": 40.71, "lon": -74.01, "accuracy_m": 5000,
+                "time_zone": "America/New_York", "at": "2026-10-24T11:55:00Z"
+            })
         );
     }
 

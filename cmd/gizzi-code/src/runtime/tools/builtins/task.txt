@@ -21,7 +21,10 @@ Usage notes:
 3. Each agent invocation starts with a fresh context unless you provide task_id to resume the same subagent session (which continues with its previous messages and tool outputs). When starting fresh, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
 4. The agent's outputs should generally be trusted
 5. Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent. Tell it how to verify its work if possible (e.g., relevant test commands).
-6. If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
+6. Name tasks you will want to address later: name="tests" gives the child a path such as /root/tests (a child of a named child gets /root/build/tests, at most 3 levels). Pass that path, or the plain name relative to you, as task_id to resume it; a taken name gets -2.
+7. Pick the model class for the work: small is haiku-class (lookups, searches, checks), standard is sonnet-class (normal building), deep is opus-class. Use deep only for risky work: many files, migrations, auth, billing, or a bug with no known cause. effort (low, medium, high) sets how hard that model thinks.
+8. fork="all" hands the child a copy of this conversation up to your last finished message, so you need not restate context. It runs on your own model, so it takes no model or effort. Leave fork unset (none) for a fresh child with only your prompt; that is cheaper and the right default.
+9. If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
 
 Example usage (NOTE: The agents below are fictional examples for illustration only - use the actual agents listed above):
 

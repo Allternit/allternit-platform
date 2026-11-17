@@ -491,6 +491,10 @@ async fn main() {
     // to the REST run surface within one tick (same contract as the route
     // mirror in fabric_transport_routes::submit_intent).
     spawn_al_orchestrator(db.clone(), cowork_run_manager.clone());
+    // Phone calm 9a: Code session status flags (needsInput, readyForReview)
+    // from gizzi's global event stream, whether or not a client is on
+    // `/agent-sessions/sync`.
+    allternit_api::code_session_status::spawn(db.clone());
     // Consumer-packaged Cowork P4.2: routines tick — due routines fire one
     // canonical intent each onto Fabric Transport (claimed/leased like any
     // other run).
@@ -1137,6 +1141,11 @@ async fn main() {
         .merge(allternit_api::bot_routing::bot_routing_router())
         .merge(allternit_api::bot_suggestions::bot_suggestions_router())
         .merge(allternit_api::thread_bot_tools::thread_bot_tools_router())
+        .merge(allternit_api::thread_read_tools::thread_read_tools_router())
+        .merge(allternit_api::agent_connector_tools::agent_connector_tools_router())
+        .merge(allternit_api::agent_settings_tools::agent_settings_tools_router())
+        .merge(allternit_api::agent_user_tools::agent_user_tools_router())
+        .merge(allternit_api::agent_automation_tools::agent_automation_tools_router())
         .merge(allternit_api::worker_bot_tools::worker_bot_tools_router())
         .merge(allternit_api::project_send_tools::project_send_tools_router())
         .merge(allternit_api::events_feed::events_feed_router())

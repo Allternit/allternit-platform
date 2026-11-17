@@ -19,6 +19,7 @@ import { SessionSummary } from "@/runtime/session/summary"
 import { Todo } from "@/runtime/session/todo"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { SessionTasks } from "@/runtime/session/session-tasks"
+import { AgentControl } from "@/runtime/primitives/agent-control"
 import { Agent } from "@/runtime/loop/agent"
 import { Snapshot } from "@/runtime/session/snapshot"
 import { Log } from "@/shared/util/log"
@@ -340,8 +341,87 @@ export const SessionRoutes = lazy(() =>
         const { sessionID, taskID } = c.req.valid("param")
         const task = await BackgroundTask.get(taskID)
         if (!task || task.parentSessionID !== sessionID) return c.json({ error: "Background task not found" }, 404)
-        if (task.childSessionID) SessionPrompt.cancel(task.childSessionID)
+        // Cascade like task_stop: the subagent's own agents and shells stop first, deepest first.
+        if (task.childSessionID) {
+          await AgentControl.stopSubtree(task.childSessionID, {
+            reason: "Its parent task was cancelled",
+            includeRoot: false,
+            archive: false,
+          })
+          SessionPrompt.cancel(task.childSessionID)
+        }
         return c.json(await BackgroundTask.cancel(taskID))
+      },
+    )
+    .post(
+      "/:sessionID/background-tasks/:taskID/interrupt",
+      describeRoute({
+        summary: "Interrupt a session background task",
+        description:
+          "Stop a background subagent's current turn and settle its run as interrupted. The child session stays, so it can be resumed; the parent is not told it failed.",
+        operationId: "session.backgroundTasks.interrupt",
+        responses: {
+          200: { description: "The run, settled as interrupted (or as it already was)", content: { "application/json": { schema: resolver(BackgroundTask.Info) } } },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string(), taskID: z.string() })),
+      async (c) => {
+        const { sessionID, taskID } = c.req.valid("param")
+        // The body is optional (clients mirror cancel, which sends none).
+        const body = z
+          .object({ reason: z.string().max(500).optional() })
+          .safeParse(await c.req.json().catch(() => ({}))).data
+        const task = await BackgroundTask.get(taskID)
+        if (!task || task.parentSessionID !== sessionID) return c.json({ error: "Background task not found" }, 404)
+        if (!task.childSessionID) return c.json({ error: "Only a background subagent can be interrupted" }, 400)
+        // The child's newest run is the one to stop (a resumed child has several rows).
+        await AgentControl.run({
+          sessionID,
+          abort: c.req.raw.signal,
+          action: "interrupt",
+          target: task.childSessionID,
+          reason: body?.reason ?? "Interrupted by user",
+        })
+        const latest = (await BackgroundTask.latestForChild(task.childSessionID)) ?? task
+        return c.json(latest)
+      },
+    )
+    .post(
+      "/:sessionID/background-tasks/:taskID/resume",
+      describeRoute({
+        summary: "Resume a session background task",
+        description:
+          "Start a new background run on the same child session (a new task record) that continues where the interrupted run stopped. Returns the child's running run when it is already running.",
+        operationId: "session.backgroundTasks.resume",
+        responses: {
+          200: { description: "The new (or still running) run", content: { "application/json": { schema: resolver(BackgroundTask.Info) } } },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string(), taskID: z.string() })),
+      async (c) => {
+        const { sessionID, taskID } = c.req.valid("param")
+        const body = z
+          .object({ message: z.string().max(20_000).optional() })
+          .safeParse(await c.req.json().catch(() => ({}))).data
+        const task = await BackgroundTask.get(taskID)
+        if (!task || task.parentSessionID !== sessionID) return c.json({ error: "Background task not found" }, 404)
+        if (!task.childSessionID) return c.json({ error: "Only a background subagent can be resumed" }, 400)
+        try {
+          const result = await AgentControl.run({
+            sessionID,
+            abort: c.req.raw.signal,
+            action: "resume",
+            target: task.childSessionID,
+            message: body?.message,
+          })
+          const runID = result.action === "resume" ? result.run_id : undefined
+          const run = runID ? await BackgroundTask.get(runID) : await BackgroundTask.latestForChild(task.childSessionID)
+          return c.json(run ?? task)
+        } catch (error) {
+          return c.json({ error: error instanceof Error ? error.message : String(error) }, 400)
+        }
       },
     )
     .get(

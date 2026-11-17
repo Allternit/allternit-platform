@@ -200,6 +200,26 @@ Updates the session title, archived state, permission, or surface.
 | `active` | boolean | `false` archives the session. |
 | `origin_surface` | string | New original surface. |
 | `metadata.permission` | object | Permission policy. |
+| `metadata` | object | Client keys merged into the stored metadata bag. The server-owned status keys (below) are dropped from it. |
+| `markReviewed` | boolean | `true` clears `readyForReview`. Clients send it when the user opens a session. |
+
+#### Session status flags
+
+The server keeps two status flags in `metadata` and returns them on every session read. A missing key means `false`. Clients can't set or clear them through `metadata`.
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `needsInput` | boolean | The agent is waiting on the user: a permission prompt or a question. |
+| `needsInputKind` | string | `permission` or `question`. |
+| `needsInputAt` | string | ISO 8601 time the wait started. |
+| `readyForReview` | boolean | The last run changed files or made an artifact, and nobody has opened the session since. |
+| `readyForReviewAt` | string | ISO 8601 time the run ended. |
+
+Rules:
+
+- `needsInput` turns on when the runtime asks for permission or asks a question. It turns off when the last open ask of that session is answered or dismissed, when the run errors or ends, and when a new run starts.
+- `readyForReview` turns on when a run ends after a file write or edit (the `file.edited` runtime event) or a completed `artifact_create` / `artifact_update` tool call. It turns off when a new run starts or a client sends `markReviewed: true`.
+- The API server watches the runtime's event stream all the time, so the flags change while no app is open. Each change is also sent on the sync stream as `session_flags`.
 
 #### Example request
 
@@ -416,11 +436,14 @@ Opens a server-sent event stream that forwards Gizzi bus events in a frontend-fr
 | `permission_asked` | The runtime is asking for permission. |
 | `permission_replied` | A permission request was answered. |
 | `question_asked` | The runtime asked a clarifying question. |
+| `question_replied` | A question was answered. |
+| `question_rejected` | A question was dismissed. |
 | `part_updated` | A message part was updated. |
 | `part_delta` | A streaming delta for a message part. |
 | `part_removed` | A message part was removed. |
 | `session_environment` | A code environment changed status: `{ session_id, environment: { id, name, status, error? } }`. |
 | `session_prs` | A session's linked pull requests changed (new link or new status): `{ session_id, prs: LinkedPR[] }`. |
+| `session_flags` | A session's status flags changed: `{ session_id, metadata: { needsInput, needsInputKind, needsInputAt, readyForReview, readyForReviewAt } }`. Cleared values are `false` or `null`. |
 
 ### Linked pull requests
 

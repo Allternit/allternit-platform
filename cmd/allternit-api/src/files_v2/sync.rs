@@ -844,6 +844,11 @@ pub(crate) fn register_process(files: &Arc<FilesV2>) {
     let _ = PROCESS.set(files.clone());
 }
 
+/// This process's drive, once [`super::router`] built it (`routing::import_agent_output`).
+pub(crate) fn process() -> Option<Arc<FilesV2>> {
+    PROCESS.get().cloned()
+}
+
 /// What the presence heartbeat carries for the Files drive under
 /// `filesStorage` (SPEC section 15): this computer's `StorageDiscovery`
 /// (volumes, bytes per root, replica-host capacity), or `None` when the drive

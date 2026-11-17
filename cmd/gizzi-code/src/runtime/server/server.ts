@@ -52,6 +52,7 @@ import { HTTPException } from "hono/http-exception"
 import { errors } from "@/runtime/server/error"
 import { QuestionRoutes } from "@/runtime/server/routes/question"
 import { PaneBrowserRoutes } from "@/runtime/server/routes/pane-browser"
+import { ScreenContextRoutes } from "@/runtime/server/routes/screen-context"
 import { PaneArtifactRoutes } from "@/runtime/server/routes/pane-artifact"
 import { PaneRenderRoutes } from "@/runtime/server/routes/pane-render"
 import { CliBridgeRoutes } from "@/runtime/server/routes/cli-bridge"
@@ -410,6 +411,7 @@ export namespace Server {
         .route("/permission", PermissionRoutes())
         .route("/question", QuestionRoutes())
         .route("/pane-browser", PaneBrowserRoutes())
+        .route("/screen-context", ScreenContextRoutes())
         .route("/pane-artifact", PaneArtifactRoutes())
         .route("/pane-render", PaneRenderRoutes())
         .route("/cli-bridge", CliBridgeRoutes())
@@ -521,6 +523,7 @@ export namespace Server {
             .route("/permission", PermissionRoutes())
             .route("/question", QuestionRoutes())
             .route("/pane-browser", PaneBrowserRoutes())
+            .route("/screen-context", ScreenContextRoutes())
             .route("/pane-artifact", PaneArtifactRoutes())
             .route("/pane-render", PaneRenderRoutes())
             .route("/file", FileRoutes())

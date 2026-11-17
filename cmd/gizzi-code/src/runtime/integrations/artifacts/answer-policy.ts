@@ -30,6 +30,9 @@ export const ANSWER_POLICY_ALIASES: Record<string, string[]> = {
   form: ['input form'], comparison: ['compare', 'versus'], decision: ['help me choose', 'help me decide'],
   plan: ['make a plan', 'create a plan', 'project plan'], 'how-to': ['step by step instructions'],
   troubleshooting: ['troubleshooting guide'], 'research-brief': ['research brief'],
+  'time-zones': ['time zones', 'world clock'], conversion: ['unit conversion', 'currency conversion', 'exchange rate'],
+  'link-preview': ['link preview', 'preview this link'], places: ['nearby places', 'places near'],
+  writing: ['email draft', 'draft email', 'draft an email', 'text message draft', 'social post draft'],
 };
 export type AnswerPolicy =
   | { version: 1; mode: 'text'; reason: 'text-only' | 'artifact-output' | 'structured-output' | 'conversation' }

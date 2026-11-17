@@ -5,7 +5,7 @@ import Foundation
 // to the gizzi session tasks (`GET /api/v1/agent-sessions/:id/tasks`).
 
 enum RunStatus: String, Sendable, Equatable {
-    case queued, running, done, failed, stopped
+    case queued, running, done, failed, stopped, interrupted
 
     var label: String {
         switch self {
@@ -14,6 +14,7 @@ enum RunStatus: String, Sendable, Equatable {
         case .done: return "Done"
         case .failed: return "Failed"
         case .stopped: return "Stopped"
+        case .interrupted: return "Interrupted"
         }
     }
 
@@ -33,6 +34,14 @@ struct RunNode: Identifiable, Equatable, Sendable {
     var finishedAt: Date? = nil
     var error: String? = nil
     var childSessionId: String? = nil
+    /// The gizzi task row behind this card (Stop / Pause / Resume target).
+    var taskId: String? = nil
+    /// The child's name path from the root ("/root/build/tests"), when named.
+    var path: String? = nil
+    /// Background runs of this child; resume and follow-up add one each.
+    var runs: Int = 1
+    /// A background subagent: the runtime can stop, pause and resume it.
+    var isControllable: Bool = false
     var children: [RunNode] = []
 
     func elapsed(now: Date) -> TimeInterval? {
@@ -74,17 +83,19 @@ struct RunTotals: Equatable {
     var agents = 0
     var running = 0
     var failed = 0
+    var interrupted = 0
     var cost: Double? = nil
     var tokens = 0
 
     init(root: RunNode) {
-        var agents = 0, running = 0, failed = 0, tokens = 0
+        var agents = 0, running = 0, failed = 0, interrupted = 0, tokens = 0
         var cost: Double? = nil
         root.walk { node, depth in
             if depth > 0 {
                 agents += 1
                 if node.status.isLive { running += 1 }
                 if node.status == .failed { failed += 1 }
+                if node.status == .interrupted { interrupted += 1 }
             }
             if let c = node.cost { cost = (cost ?? 0) + c }
             tokens += node.tokens
@@ -92,6 +103,7 @@ struct RunTotals: Equatable {
         self.agents = agents
         self.running = running
         self.failed = failed
+        self.interrupted = interrupted
         self.cost = cost
         self.tokens = tokens
     }
@@ -182,6 +194,14 @@ struct SessionTask: Decodable, Sendable, Equatable, Identifiable {
     let description: String
     let agent: String?
     let childSessionID: String?
+    /// The child's own name and its name path from the root (newer runtimes).
+    let name: String?
+    let path: String?
+    /// Background runs of this child (resume and follow-up add one each).
+    let runs: Int
+    /// Started in the background (a task row the runtime can stop, pause
+    /// and resume); foreground children are listed but not controllable.
+    let background: Bool
     let error: String?
     /// A finished shell's output (the Tasks pane).
     let output: String?
@@ -192,7 +212,7 @@ struct SessionTask: Decodable, Sendable, Equatable, Identifiable {
     let children: [SessionTask]
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, status, description, agent, childSessionID, error, output, time, model, cost, tokens, children
+        case id, kind, status, description, agent, childSessionID, name, path, runs, background, error, output, time, model, cost, tokens, children
     }
 
     init(from decoder: Decoder) throws {
@@ -203,6 +223,10 @@ struct SessionTask: Decodable, Sendable, Equatable, Identifiable {
         description = ((try? c.decodeIfPresent(String.self, forKey: .description)) ?? nil) ?? ""
         agent = (try? c.decodeIfPresent(String.self, forKey: .agent)) ?? nil
         childSessionID = (try? c.decodeIfPresent(String.self, forKey: .childSessionID)) ?? nil
+        name = ((try? c.decodeIfPresent(String.self, forKey: .name)) ?? nil).flatMap { $0.isEmpty ? nil : $0 }
+        path = ((try? c.decodeIfPresent(String.self, forKey: .path)) ?? nil).flatMap { $0.isEmpty ? nil : $0 }
+        runs = max(1, ((try? c.decodeIfPresent(Int.self, forKey: .runs)) ?? nil) ?? 1)
+        background = ((try? c.decodeIfPresent(Bool.self, forKey: .background)) ?? nil) ?? false
         error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
         output = (try? c.decodeIfPresent(String.self, forKey: .output)) ?? nil
         time = ((try? c.decodeIfPresent(Time.self, forKey: .time)) ?? nil) ?? Time(created: 0, finished: nil)
@@ -218,11 +242,16 @@ struct SessionTask: Decodable, Sendable, Equatable, Identifiable {
         case "running": return .running
         case "completed": return .done
         case "cancelled": return .stopped
+        case "interrupted": return .interrupted
         default: return .failed
         }
     }
 
     var isLive: Bool { status == "queued" || status == "running" }
+
+    /// Stop, Pause and Resume act on background subagent rows only (the
+    /// interrupt / resume routes 400 on shells and 404 on foreground children).
+    var isControllable: Bool { background && kind == "subagent" && childSessionID != nil }
 }
 
 enum RunTreeBuilder {
@@ -244,6 +273,10 @@ enum RunTreeBuilder {
             finishedAt: task.time.finished.map { Date(timeIntervalSince1970: $0 / 1000) },
             error: task.error,
             childSessionId: task.childSessionID,
+            taskId: task.id,
+            path: task.path ?? task.name,
+            runs: task.runs,
+            isControllable: task.isControllable,
             children: subagentTasks(task.children).map(node(from:))
         )
     }
@@ -275,8 +308,9 @@ enum RunTreeBuilder {
                 }) {
                     used.insert(match.id)
                     var n = node(from: match)
-                    // The step is the live truth for this reply (the task list polls).
-                    if step.state == .running && !n.status.isLive { n.status = .running }
+                    // The step is the live truth for this reply (the task list polls),
+                    // except a run the user paused: the task row knows that first.
+                    if step.state == .running && !n.status.isLive && n.status != .interrupted { n.status = .running }
                     if step.state == .failed && n.status == .done {
                         n.status = .failed
                         n.error = n.error ?? step.error

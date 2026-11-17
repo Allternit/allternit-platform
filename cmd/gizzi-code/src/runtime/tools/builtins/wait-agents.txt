@@ -1,0 +1,10 @@
+Wait for your background agents instead of polling them.
+
+Use it after you start agents with `task` or `agent_swarm` in the background and have nothing useful to do until one of them finishes. It returns as soon as one of these happens:
+- settled: at least one of the agents you wait on finished, failed, was cancelled or was interrupted
+- steer: the user sent you a message; read it and answer before you wait again
+- timeout: neither happened in time
+
+Pass `targets` (agent ids or name paths such as "/root/tests") to wait on some agents only. Leave it out to wait on all of your running agents. `timeout_ms` is 10000 to 3600000; the default is 300000 (5 minutes).
+
+The result lists the agents that settled, with a short summary of each, and the ones still running. Call it again to keep waiting. Don't loop on `task_list` or `task_output` to watch for a finish.

@@ -181,9 +181,13 @@ import {
 import { logForDebugging } from './debug.js'
 import {
   extractTextContent,
+  findLastCompactBoundaryIndex,
   getUserMessageText,
   isThinkingMessage,
 } from './messages.js'
+import { contextRoom } from '../tools/GetContextRemainingTool/room.js'
+import { GET_CONTEXT_REMAINING_TOOL_NAME } from '../tools/GetContextRemainingTool/prompt.js'
+import { HISTORY_RECALL_TOOL_NAME } from '../tools/HistoryRecallTool/prompt.js'
 import { isHumanTurn } from './messagePredicates.js'
 import { isEnvTruthy, getGizziConfigHomeDir } from './envUtils.js'
 import { feature } from 'bun:bundle'
@@ -926,6 +930,14 @@ export async function getAttachments(
         maybe('token_usage', async () =>
           Promise.resolve(
             getTokenUsageAttachment(
+              messages ?? [],
+              toolUseContext.options.mainLoopModel,
+            ),
+          ),
+        ),
+        maybe('context_notice', async () =>
+          Promise.resolve(
+            getContextNoticeAttachment(
               messages ?? [],
               toolUseContext.options.mainLoopModel,
             ),
@@ -3769,6 +3781,127 @@ function getTokenUsageAttachment(
       used: usedTokens,
       total: contextWindow,
       remaining: contextWindow - usedTokens,
+    },
+  ]
+}
+
+/**
+ * Context notice (Primitives Wave B, lane L6), on by default. The same
+ * triggers as the runtime's ContextNotice (runtime/primitives/context-notice.ts):
+ * once when about 25% and once when about 10% of the room before
+ * auto-compaction is left (each once per session; the deepest one crossed
+ * speaks), and once after each compaction. Room is measured the way Ink's
+ * auto-compact measures it (tools/GetContextRemainingTool/room.ts).
+ *
+ * The raw per-turn "Token usage" line above stays behind
+ * GIZZI_CODE_ENABLE_TOKEN_USAGE_ATTACHMENT; this notice is the default.
+ * It rides as a critical_system_reminder (rendered to the model wrapped in a
+ * system reminder, hidden in the transcript view). Notices already in the
+ * conversation (a resumed session) count as fired, found by their wording.
+ */
+const CONTEXT_NOTICE_THRESHOLDS = [
+  { trigger: 'remaining_25', left: 0.25, marker: 'Plan the rest of the work to fit' },
+  { trigger: 'remaining_10', left: 0.1, marker: 'Finish the current step, write down' },
+] as const
+const CONTEXT_NOTICE_COMPACTED_MARKER = 'Your context was just compacted'
+/** A boundary older than this (a resumed session) gets no "just compacted" notice. */
+const CONTEXT_NOTICE_COMPACTION_FRESH_MS = 15 * 60 * 1000
+const contextNoticeFired = new Map<
+  string,
+  { thresholds: Set<string>; boundaries: Set<string> }
+>()
+
+function isContextNotice(message: Message, marker: string): boolean {
+  return (
+    message.type === 'attachment' &&
+    message.attachment?.type === 'critical_system_reminder' &&
+    typeof message.attachment.content === 'string' &&
+    message.attachment.content.includes(marker)
+  )
+}
+
+function contextNoticeText(input: {
+  compacted: boolean
+  threshold?: (typeof CONTEXT_NOTICE_THRESHOLDS)[number]['trigger']
+  left: number
+  untilCompaction: number
+}): string {
+  const lines: string[] = []
+  if (input.compacted) {
+    lines.push(
+      `${CONTEXT_NOTICE_COMPACTED_MARKER}: older messages were replaced by the summary above.`,
+      `If you need an exact detail from before (an error message, a file path, a decision), use ${HISTORY_RECALL_TOOL_NAME} to read it instead of guessing.`,
+    )
+  }
+  if (input.threshold) {
+    const percent = `${Math.max(0, Math.round(input.left * 100))}%`
+    const tokens = input.untilCompaction.toLocaleString('en-US')
+    const until = isAutoCompactEnabled()
+      ? 'before older messages are compacted'
+      : 'before the context window is full'
+    lines.push(
+      `About ${percent} of your context is left ${until} (about ${tokens} tokens).`,
+      input.threshold === 'remaining_10'
+        ? 'Finish the current step, write down anything you will need later (decisions, paths, what is left to do), and avoid reading large files or long outputs.'
+        : 'Plan the rest of the work to fit: read only what you need, prefer targeted searches, and hand big pieces to an agent.',
+      `${GET_CONTEXT_REMAINING_TOOL_NAME} gives the exact numbers.`,
+    )
+  }
+  return lines.join('\n')
+}
+
+export function getContextNoticeAttachment(
+  messages: Message[],
+  model: string,
+): Attachment[] {
+  const sessionId = getSessionId()
+  let fired = contextNoticeFired.get(sessionId)
+  if (!fired) {
+    fired = { thresholds: new Set(), boundaries: new Set() }
+    contextNoticeFired.set(sessionId, fired)
+  }
+  for (const message of messages) {
+    for (const t of CONTEXT_NOTICE_THRESHOLDS) {
+      if (isContextNotice(message, t.marker)) fired.thresholds.add(t.trigger)
+    }
+  }
+
+  // Right after a compaction: the latest boundary, once, while it is fresh.
+  let compacted = false
+  const boundaryIndex = findLastCompactBoundaryIndex(messages)
+  if (boundaryIndex >= 0) {
+    const boundary = messages[boundaryIndex]
+    const id = String(boundary.uuid)
+    const at = Date.parse(boundary.timestamp ?? '') || 0
+    const told = messages
+      .slice(boundaryIndex + 1)
+      .some(m => isContextNotice(m, CONTEXT_NOTICE_COMPACTED_MARKER))
+    if (!fired.boundaries.has(id)) {
+      fired.boundaries.add(id)
+      compacted = !told && Date.now() - at < CONTEXT_NOTICE_COMPACTION_FRESH_MS
+    }
+  }
+
+  const room = contextRoom(messages, model)
+  const left = room.until_compaction / room.budget
+  const crossed = CONTEXT_NOTICE_THRESHOLDS.filter(t => left <= t.left)
+  const deepest = crossed[crossed.length - 1]
+  let threshold: (typeof CONTEXT_NOTICE_THRESHOLDS)[number]['trigger'] | undefined
+  if (deepest && !fired.thresholds.has(deepest.trigger)) {
+    threshold = deepest.trigger
+    for (const t of crossed) fired.thresholds.add(t.trigger)
+  }
+
+  if (!compacted && !threshold) return []
+  return [
+    {
+      type: 'critical_system_reminder',
+      content: contextNoticeText({
+        compacted,
+        threshold,
+        left,
+        untilCompaction: room.until_compaction,
+      }),
     },
   ]
 }

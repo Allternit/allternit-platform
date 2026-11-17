@@ -12,7 +12,8 @@
 //! members are the existing lease → policy → approval → audit pipeline in
 //! `computer_toolset::execute` (act's text-entering ops and use_credential
 //! upgrade to a human approval on non-sandbox targets, the same rule as
-//! `type`/`key`).
+//! `type`/`key`). The two access members (`resolve_access`,
+//! `request_access`) also run through here, into `computer_access`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -185,6 +186,9 @@ pub async fn execute_v2(
         "request_human" => request_human(state, user, computer, target, input, run_id).await,
         "use_credential" => use_credential(user, target, input).await,
         "skills" => crate::computer_subtask::skills(state, user, input),
+        // Access tiers: resolve_access looks apps up; request_access records
+        // session grants after the person's approval (computer_access).
+        "resolve_access" | "request_access" => crate::computer_access::execute(state, user, computer, target, member, input, run_id).await,
         other => Err(Fail::from(format!("{other} isn't a v2 member"))),
     }
 }

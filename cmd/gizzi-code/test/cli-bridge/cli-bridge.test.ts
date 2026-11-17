@@ -43,9 +43,28 @@ describe("CliBridge MCP server", () => {
       "artifact_storage",
       "artifact_check",
       "run_code",
+      "send_user_message",
+      "current_time",
+      "lookup",
+      "automation",
+      "get_context_remaining",
+      "history_recall",
+      "thread_read",
+      "thread_recent",
+      "resource",
+      "memory_list",
+      "sleep",
+      "folder_access",
+      "connector_search",
+      "connector_suggest",
+      "settings",
       "question",
     ])
+    // Screen and browser tasks need the app (see CliBridge.TOOLS).
+    expect(names).not.toContain("capture_screen_context")
+    expect(names).not.toContain("browser_tasks")
     const question = list.result.tools.find((t: any) => t.name === "question")
+    expect(names).not.toContain("thread_wait")
     expect(question.description).toContain("no AskUserQuestion")
     expect(question.inputSchema.properties.questions).toBeDefined()
     const media = list.result.tools.find((t: any) => t.name === "media_generate")

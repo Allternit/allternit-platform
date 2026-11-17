@@ -33,6 +33,10 @@ export async function InstanceBootstrap() {
   Vcs.init()
   Snapshot.init()
   Truncate.init()
+  // ask_user_later: start the hourly expiry sweep at boot.
+  void import("@/runtime/integrations/question")
+    .then(({ Question }) => Question.init())
+    .catch((e) => Log.Default.warn("question init failed", { error: e instanceof Error ? e.message : String(e) }))
   // Who is editing what across Code sessions (GET /file-editors, file.contended).
   void import("@/runtime/session/file-editors")
     .then(({ FileEditors }) => FileEditors.init())

@@ -1,0 +1,40 @@
+---
+title: 'Screen context'
+description: 'How capture_screen_context lets a bot see what you mean by "this": when it asks, what each app sends, redaction, the Looked at your screen chip'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED. Code: `cmd/gizzi-code/src/runtime/tools/builtins/capture-screen-context.ts` and `integrations/screen-context/`; reply route in `cmd/allternit-api/src/agent_session_routes.rs`.
+</Note>
+
+## Overview
+
+When you say "this", "that" or "what I'm looking at", often by voice, the bot can capture your screen instead of asking you to describe it. `capture_screen_context` only looks. It never acts on the screen. To act, the bot uses the computer or browser tools, which ask for their own permission.
+
+## When the bot captures
+
+- You refer to something the chat does not name. The bot captures first and asks you to describe it only if the capture does not answer.
+- The screen changed since the last capture. It captures again, because an old capture is stale.
+
+## What each app sends
+
+| App | What is captured |
+|---|---|
+| Allternit Desktop | The front window: app, title, its text, and a picture of the window only if Screen Recording is already granted. Desktop never prompts for that permission |
+| ai.allternit.com, the phone layout, m.allternit.com, iOS | What is on the Allternit screen: the view the app is showing |
+| gizzi terminal app | Not available. A terminal has no screen to capture |
+
+A client that can answer sends the prompt hint `screen_context: "available"` ([System prompts](/core/system-prompts#hints)). Without the hint the tool is not offered.
+
+## Consent and privacy
+
+- The first capture in a session asks you, with a short reason such as "to see which error you mean". After you approve, it does not ask again in that session.
+- The app's capture goes to the API, which redacts personal data and secrets and marks the text as untrusted before the model reads it. Text on the screen is data, never instructions.
+- When a capture happens, the thread shows a **Looked at your screen** chip.
+- If the app does not answer in time, the bot asks you to describe what you see.
+
+## Related
+
+- [Talk to your bots](/guides/voice)
+- [Browser pane (pane_browser)](/tools/pane-browser)
+- [Computer access tiers](/tools/computer-access)

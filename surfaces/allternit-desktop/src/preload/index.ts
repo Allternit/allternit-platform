@@ -1324,6 +1324,11 @@ const teachAPI = {
 
 // ─── Expose ───────────────────────────────────────────────────────────────────
 
+const screenContextAPI = {
+  /** Last-used non-Allternit window as {kind:'window'} or {kind:'unavailable'}; never prompts for permission. */
+  captureWindow: (): Promise<unknown> => ipcRenderer.invoke('screen-context:capture-window'),
+};
+
 const allternitDesktopAPI = {
   /** Main asks Leave or Stay when an editor blocks a close (will-prevent-unload). */
   promptsBeforeUnload: true,
@@ -1370,6 +1375,7 @@ const allternitDesktopAPI = {
   voice: voiceAPI,
   voiceKeys: voiceKeysAPI,
   meetings: meetingsAPI,
+  screenContext: screenContextAPI,
 };
 
 contextBridge.exposeInMainWorld('allternit', allternitDesktopAPI);

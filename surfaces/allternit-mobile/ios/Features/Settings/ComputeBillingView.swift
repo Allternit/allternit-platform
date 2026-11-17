@@ -4,13 +4,18 @@ import SwiftUI
 /// routes (`/api/v1/me/usage`, `/api/v1/hosted-runtimes/entitlement`,
 /// `/api/v1/billing/credits`, `/api/v1/billing/subscription`).
 ///
-/// Purchases happen on the web. The "Choose a plan" / "Buy credits" links show on
-/// the US App Store storefront only (StorefrontGate); elsewhere the page
+/// Where the server has Apple switched on and StoreKit returns the products,
+/// plans and credit packs are bought here with In-App Purchase on every
+/// storefront (StorePurchaseManager), priced by the App Store, with Restore
+/// Purchases and the subscription terms. The web "Choose a plan" / "Buy
+/// credits" links show on the US App Store storefront only (StorefrontGate),
+/// next to the store buttons. Elsewhere, without store buttons, the page
 /// shows plan status with no link and no price.
 struct ComputeBillingView: View {
     @ObservedObject private var usageStore = UsageStore.shared
     @ObservedObject private var plan = AccountPlanStore.shared
     @ObservedObject private var storefront = StorefrontGate.shared
+    @ObservedObject private var store = StorePurchaseManager.shared
     var title: String = "Billing"
     @State private var plans: [CatalogPlan] = []
     @State private var freeweightsPerks: FreeweightsPerks?
@@ -103,6 +108,9 @@ struct ComputeBillingView: View {
                         .font(.caption)
                         .foregroundColor(status == "trialing" ? Color("TextSecondary") : Theme.statusWarning)
                 }
+                if title != "Usage", plan.subscription?.billedByLine != nil {
+                    StoreBilledByView(subscription: plan.subscription)
+                }
             } header: {
                 Text("Plan")
             }
@@ -125,8 +133,21 @@ struct ComputeBillingView: View {
                 Text("Usage")
             }
 
-            // Plan tickets link out to checkout on the web (US storefront only).
-            if storefront.allowsPurchaseLinks && title != "Usage" && !plans.isEmpty {
+            // In-App Purchase: plan tickets priced by the App Store, while no
+            // plan is billed on the web or by Google (D5).
+            if title != "Usage" && storefront.showsStoreButtons(for: .plan)
+                && StorePurchaseManager.planPurchaseAllowed(plan.subscription) {
+                Section {
+                    ForEach(store.plans) { item in
+                        StorePlanTicket(item: item, store: store)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0))
+                    }
+                } header: {
+                    Text(plan.subscription?.isPaid == true ? "Change plan" : "Choose a plan")
+                }
+            } else if storefront.allowsPurchaseLinks && title != "Usage" && !plans.isEmpty {
+                // Plan tickets link out to checkout on the web (US storefront only).
                 Section {
                     ForEach(plans) { p in
                         let current = plan.subscription?.planId == p.id
@@ -150,6 +171,25 @@ struct ComputeBillingView: View {
                 }
             }
 
+            if title != "Usage" && storefront.showsStoreButtons(for: .pack) {
+                Section {
+                    StorePackGrid(store: store)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                } header: {
+                    Text("Buy credits")
+                }
+            }
+
+            if title != "Usage" && storefront.showsStoreButtons {
+                Section {
+                    StorePurchaseNoticeView(store: store)
+                    StoreRestoreButton(store: store)
+                    StoreTermsView(store: store)
+                }
+                .listRowBackground(Color.clear)
+            }
+
             if storefront.allowsPurchaseLinks && title != "Usage" {
                 Section {
                     PayLinkRows()
@@ -171,6 +211,10 @@ struct ComputeBillingView: View {
             UsageStore.shared.fetchUsageIfNeeded(force: true)
             AccountPlanStore.shared.load(force: true)
             StorefrontGate.shared.refresh()
+            if title != "Usage" {
+                StorePurchaseManager.shared.notice = nil
+                await StorePurchaseManager.shared.loadCatalog()
+            }
         }
         .refreshable {
             UsageStore.shared.fetchUsageIfNeeded(force: true)

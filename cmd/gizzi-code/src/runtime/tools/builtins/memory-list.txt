@@ -1,0 +1,7 @@
+List the user's Memory Drive: its topics with their entry counts, or the entries in one topic.
+
+Leave out `topic` to see the topics. Pass a topic (for example `preferences` or `projects/gizzi`) to see its entries. Each entry comes back with its id, version, text and date. Pass the version as if_version to memory_write when you change or delete that entry. A page holds 200 entries; pass `after` to get the next page.
+
+Check the index in your context, then this list, before you ask the user something they may already have told you.
+
+Entries marked "needs a look" hold two versions of the same memory, written on two devices at once. Keep the right text on the original id and delete the copy.

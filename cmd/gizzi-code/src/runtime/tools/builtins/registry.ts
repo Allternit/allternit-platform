@@ -1,5 +1,7 @@
 import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
+import { CaptureScreenContextTool } from "@/runtime/tools/builtins/capture-screen-context"
+import { BrowserTasksTool, browserTasksAvailableNow } from "@/runtime/tools/builtins/browser-tasks"
 import { PaneArtifactTool } from "@/runtime/tools/builtins/pane-artifact"
 import { MediaGenerateTool } from "@/runtime/tools/builtins/media-generate"
 import { ArtifactCheckTool } from "@/runtime/tools/builtins/artifact-check"
@@ -14,6 +16,16 @@ import { ReadTool } from "@/runtime/tools/builtins/read"
 import { TaskTool } from "@/runtime/tools/builtins/task"
 import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
 import { GlanceTool } from "@/runtime/tools/builtins/glance"
+import { CurrentTimeTool } from "@/runtime/tools/builtins/current-time"
+import { LookupTool } from "@/runtime/tools/builtins/lookup"
+import { SendUserMessageTool } from "@/runtime/tools/builtins/send-user-message"
+import { AutomationTool } from "@/runtime/tools/builtins/automation"
+import { AskUserLaterTool } from "@/runtime/tools/builtins/ask-user-later"
+import { WaitAgentsTool } from "@/runtime/tools/builtins/wait-agents"
+import { AgentControlTool } from "@/runtime/tools/builtins/agent-control"
+import { ToolSearchTool } from "@/runtime/tools/builtins/tool-search"
+import { GetContextRemainingTool } from "@/runtime/tools/builtins/context-remaining"
+import { HistoryRecallTool } from "@/runtime/tools/builtins/history-recall"
 import { WebFetchTool } from "@/runtime/tools/builtins/webfetch"
 import { WriteTool } from "@/runtime/tools/builtins/write"
 import { InvalidTool } from "@/runtime/tools/builtins/invalid"
@@ -41,15 +53,23 @@ import { ComputersTool } from "@/runtime/tools/builtins/computers"
 import { Truncate } from "@/runtime/tools/builtins/truncation"
 import { PlanExitTool, PlanEnterTool } from "@/runtime/tools/builtins/plan"
 import { ApplyPatchTool } from "@/runtime/tools/builtins/apply_patch"
+import { FolderAccessTool } from "@/runtime/tools/builtins/folder-access"
 import { NotebookEditTool } from "@/runtime/tools/builtins/notebook"
 import { MemoryWriteTool } from "@/runtime/tools/builtins/memory-write"
 import { ProjectStatusTool } from "@/runtime/tools/builtins/project-status"
 import { MemoryRecallTool } from "@/runtime/tools/builtins/memory-recall"
+import { MemoryListTool } from "@/runtime/tools/builtins/memory-list"
+import { ThreadReadTool, ThreadRecentTool, ThreadWaitTool } from "@/runtime/tools/builtins/thread-read"
+import { ResourceTool } from "@/runtime/tools/builtins/resource"
+import { ConnectorSearchTool, ConnectorSuggestTool } from "@/runtime/tools/builtins/connector"
+import { SettingsTool } from "@/runtime/tools/builtins/settings"
 import { VaultQueryTool } from "@/runtime/tools/builtins/vault-query"
 import { VaultWriteTool } from "@/runtime/tools/builtins/vault-write"
 import { Glob } from "@/shared/util/glob"
 import { CreateGoalTool, GetGoalTool, SetGoalBudgetTool, UpdateGoalTool } from "@/runtime/tools/builtins/goal"
 import { AgentSwarmTool } from "@/runtime/tools/builtins/agent-swarm"
+import { AgentBatchTool } from "@/runtime/tools/builtins/agent-batch"
+import { SleepTool } from "@/runtime/tools/builtins/sleep"
 import {
   BackgroundTaskListTool,
   BackgroundTaskOutputTool,
@@ -81,6 +101,13 @@ import { subscriptionCapabilityTools } from "@/runtime/tools/builtins/subscripti
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
+
+  /**
+   * Thread tools that steer the calling chat's own thread: SessionPrompt.resolveTools
+   * deletes them outside an app bot's chat. thread_search and the past-chat tools
+   * (thread_read, thread_recent, thread_wait) are not here: every session gets them.
+   */
+  export const BOT_THREAD_TOOL_IDS = [ThreadUpdateTool.id, ThreadCloseTool.id] as const
 
   export const state = Instance.state(async () => {
     const custom = [] as Tool.Info[]
@@ -154,12 +181,23 @@ export namespace ToolRegistry {
     const custom = await state().then((x) => x.custom)
     const config = await Config.get()
     const question = ["app", "cli", "desktop"].includes(Flag.GIZZI_CLIENT) || Flag.GIZZI_ENABLE_QUESTION_TOOL
+    // An app client has a view to capture and a pane to open results in; a
+    // terminal (cli) has neither.
+    const appClient = ["app", "desktop"].includes(Flag.GIZZI_CLIENT)
+    // Hidden browser tasks need a local executor with its browser driver up
+    // (a remote company API is never one). Reads the last background check only,
+    // so resolving tools never waits on the executor; unknown counts as off.
+    const browserTasks = appClient && browserTasksAvailableNow()
 
     return [
       InvalidTool,
       ...(question ? [QuestionTool] : []),
       // Acts on the page shown in the app's browser pane; needs an app client.
       ...(question ? [PaneBrowserTool] : []),
+      // Sees what the user sees in the app (asks once per session); app clients only.
+      ...(appClient ? [CaptureScreenContextTool] : []),
+      // Parallel hidden browser tasks on the user's own machine (each call asks).
+      ...(browserTasks ? [BrowserTasksTool] : []),
       // Works on the document open in the app's artifact pane; needs an app client.
       ...(question ? [PaneArtifactTool] : []),
       // Images (native lane renders in the app); needs an app client.
@@ -185,15 +223,45 @@ export namespace ToolRegistry {
       WriteTool,
       TaskTool,
       AgentSwarmTool,
+      // One worker per CSV row with an output schema (sample first, resumable):
+      // every client, not bot-gated. Asks with the row count, concurrency and
+      // model; its workers get no task/agent_swarm/agent_batch (WORKER_DENIED_TOOLS).
+      AgentBatchTool,
       BackgroundTaskListTool,
       BackgroundTaskOutputTool,
       BackgroundTaskStopTool,
+      // Primitives Wave B: every client, not bot-gated. wait_agents and
+      // agent_control act on the session's own descendants only.
+      WaitAgentsTool,
+      AgentControlTool,
+      // Loads deferred tool families (primitives/tool-families.ts); replaces select_tools.
+      ToolSearchTool,
+      GetContextRemainingTool,
+      HistoryRecallTool,
       ...(Flag.GIZZI_DISABLE_SCRATCHPAD
         ? []
         : [ScratchpadListTool, ScratchpadReadTool, ScratchpadWriteTool, ScratchpadRemoveTool]),
       WebFetchTool,
       TodoWriteTool,
       GlanceTool,
+      // The time where the user is: every client (not bot-gated).
+      CurrentTimeTool,
+      // One fact as text plus a card (weather, time, convert, link, places,
+      // images): every client. Time and unit conversion are local; network
+      // kinds ask under websearch/webfetch.
+      LookupTool,
+      // A message (files, optional push) to the session's own user: every client, not bot-gated.
+      SendUserMessageTool,
+      // The user's scheduled tasks: every client, not bot-gated (list allowed, writes ask).
+      AutomationTool,
+      // A question that doesn't stop the turn; the answer starts a new one.
+      // Every client, not bot-gated (routines, workers and subagents ask too).
+      AskUserLaterTool,
+      // A short in-turn wait that wakes on the user's next message: every client, not bot-gated.
+      SleepTool,
+      // Folders outside the project for this session: every client, not
+      // bot-gated. Every call asks the person (an always-ask class).
+      FolderAccessTool,
       CreateGoalTool,
       GetGoalTool,
       SetGoalBudgetTool,
@@ -214,6 +282,18 @@ export namespace ToolRegistry {
       MemoryWriteTool,
       ProjectStatusTool,
       MemoryRecallTool,
+      // Wave D recall: memory topics/entries with versions, windowed reads of
+      // past chats, and id-based views of large output. Every client, not bot-gated.
+      MemoryListTool,
+      ThreadReadTool,
+      ThreadRecentTool,
+      ThreadWaitTool,
+      ResourceTool,
+      // Wave D connect and settings: find and load connectors, offer one to
+      // connect (Connect kit card), and read or change settings. Every client.
+      ConnectorSearchTool,
+      ConnectorSuggestTool,
+      SettingsTool,
       VaultQueryTool,
       VaultWriteTool,
       SendAgentEmailTool,
@@ -224,7 +304,9 @@ export namespace ToolRegistry {
       MessageAgentTool,
       SuggestTaskTool,
       GrantTaskPermissionTool,
-      // Thread tools (W3): gated like suggest_task (app bot chats only).
+      // Thread tools (W3): thread_update / thread_close are gated like
+      // suggest_task (app bot chats only). thread_search reaches every session
+      // (Wave D decision 8, with the past-chat tools above).
       ThreadUpdateTool,
       ThreadCloseTool,
       ThreadSearchTool,

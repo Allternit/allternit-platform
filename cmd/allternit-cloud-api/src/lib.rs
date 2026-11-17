@@ -529,6 +529,11 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // per-request and answer 503 billing_not_configured when STRIPE_SECRET_KEY
         // or the plan's STRIPE_PRICE_* id is unset.
         .merge(routes::billing_subscriptions::routes())
+        // Store purchases (Apple / Google) under the unique prefix
+        // /api/v1/billing/store/*: preflight verifies the Clerk session
+        // per-request and answers 503 store_billing_not_configured while that
+        // store's secrets are unset (services::store_billing::StoreConfig).
+        .merge(routes::billing_store::routes())
         // Freeweights entitlement claim: Clerk session or alt_ key verified per
         // request; 503 entitlement_unavailable when
         // FREEWEIGHTS_ENTITLEMENT_SIGNING_KEY is unset.

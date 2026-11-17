@@ -4,6 +4,7 @@
  * exact strings are unit-testable.
  */
 import type { CommitInfo, DriveStatus, SearchHit } from "./checkout"
+import { needsLookLine } from "./format"
 import type { Dream } from "./platform"
 
 export interface DriveOverview {
@@ -43,6 +44,11 @@ export function formatOverview(o: DriveOverview): string {
   lines.push(`Checkout: ${o.status.dir}`)
   lines.push(syncLine(o.status, o.signedIn))
   if (o.status.rejected) lines.push(`Not saved: ${o.status.rejected}`)
+  if (o.status.needsLook) {
+    lines.push(
+      `${needsLookLine(o.status.needsLook)}: two devices changed the same memory, so both versions were kept (the copy is marked conflict_of). Ask gizzi to tidy them (memory_list shows them) or edit the files in the checkout.`,
+    )
+  }
   if (o.status.dirty) lines.push("Unsaved edits in the checkout will be committed at the end of the next turn (or run `gizzi memory sync`).")
   lines.push("")
   lines.push(`Files (${o.files.length}):`)

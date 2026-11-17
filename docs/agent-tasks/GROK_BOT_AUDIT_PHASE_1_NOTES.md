@@ -183,7 +183,7 @@ Shell-based composer integrated across surfaces. No `/` skill invocation or `@` 
 | Agent marketplace with ratings/installs | Grok Bot has no public marketplace |
 | Rails peer system for agent-to-agent messaging | More structured than Grok's ad-hoc bot messaging |
 | Cowork mode with plan/execute/review/report/automate/sync | More granular workflow modes |
-| Swarm sub-modes (specialist-team, population-simulation) | No equivalent in Grok Bot |
+| Swarm sub-modes (specialist-team) | No equivalent in Grok Bot |
 | Computer use on local machine (macOS AX provider) | Grok is cloud-only |
 
 ### 3.3 Critical UX Gaps to Close

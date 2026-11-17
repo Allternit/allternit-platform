@@ -175,3 +175,20 @@ No tracking. No third-party advertising.
 - [ ] Demo account signs in and its computer is online (fresh accounts get PRECONDITION_REQUIRED without one).
 - [ ] Demo account has a Cloud credit balance above $5 (`GET /api/v1/billing/credits` shows `cloud_models.allowed: true`); at $0 the Cloud demo stops answering.
 - [ ] Apple Developer: if the App Store team is not the personal team MQ85968PQP, delete the identifier `com.allternit.mobile.screen` registered on MQ85968PQP during a device test (identifiers are unique across Apple), then register the app IDs on the paid team.
+
+## Subscription terms
+
+Shown in the app next to the purchase buttons (plan step 6) and pasted at the end of the App Store description when the subscriptions go live. Apple requires the auto-renewal disclosure, the price and period, and working Terms and Privacy links. Both links were checked on 2026-11-17: allternit.com/terms and allternit.com/privacy are real routes in the site.
+
+In the app and in the description:
+
+```
+Allternit Plus is $24.99 per month, Allternit Max is $124.99 per month, and Allternit Ultra is $249.99 per month. Prices are for the United States and may differ elsewhere. Payment is charged to your Apple Account at confirmation of purchase. A subscription renews automatically each month unless you turn off auto-renew at least 24 hours before the end of the current period. Your account is charged for renewal within 24 hours before the period ends, at the same price. Manage or cancel a subscription in Settings > your name > Subscriptions on your iPhone. Cancelling stops the next renewal; you keep the plan until the period ends. Credit packs are one-time purchases. Refunds are handled by Apple at reportaproblem.apple.com.
+
+Terms of Use: https://allternit.com/terms
+Privacy Policy: https://allternit.com/privacy
+```
+
+App Store Connect fields: put the Privacy Policy URL in the Privacy Policy field (already set) and the Terms link in the app description, since the standard Apple license is used. If App Store Connect offers a Terms of Use field, use https://allternit.com/terms.
+
+Products, ids and prices: `store-products.md`. Custom pages: `custom-product-pages.md`. Events: `in-app-events.md`. Accessibility: `accessibility-labels.md`.
