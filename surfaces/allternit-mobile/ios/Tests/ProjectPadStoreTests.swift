@@ -271,3 +271,44 @@ final class ProjectPadStoreTests: XCTestCase {
         XCTAssertNil(ProjectPad.normalize(raw, mode: .chat).template)
     }
 }
+
+final class PadCustomColorsTests: XCTestCase {
+    func testParsesAndSerializesLowercase() throws {
+        let own = try XCTUnwrap(CustomPadColors.parse("#A1B2C3,#00ff7f"))
+        XCTAssertEqual(own.main, 0xA1B2C3)
+        XCTAssertEqual(own.accent, 0x00FF7F)
+        XCTAssertEqual(own.serialized, "#a1b2c3,#00ff7f")
+        XCTAssertEqual(own.serialized.count, 15)
+        XCTAssertEqual(CustomPadColors.parse(own.serialized), own)
+    }
+
+    func testRejectsAnythingElse() {
+        for bad in ["quiet", "", "#fff,#000", "#a1b2c3", "#a1b2c3,#00ff7", "a1b2c3,00ff7f", "#a1b2c3,#00ff7f,", "#a1b2cg,#00ff7f", " #a1b2c3,#00ff7f"] {
+            XCTAssertNil(CustomPadColors.parse(bad), bad)
+        }
+    }
+
+    func testInkFollowsLuminance() {
+        XCTAssertTrue(CustomPadColors.prefersDarkInk(0xFFFFFF))
+        XCTAssertTrue(CustomPadColors.prefersDarkInk(0xFFC31F))
+        XCTAssertFalse(CustomPadColors.prefersDarkInk(0x000000))
+        XCTAssertFalse(CustomPadColors.prefersDarkInk(0x2F54EB))
+        XCTAssertEqual(CustomPadColors.luminance(0xFFFFFF), 1, accuracy: 0.0001)
+    }
+
+    func testMixMatchesTheWebRule() {
+        XCTAssertEqual(CustomPadColors.mix(0xFF0000, over: 0xFFFFFF, amount: 0.28), 0xFFB8B8)
+        XCTAssertEqual(CustomPadColors.mix(0xFFFFFF, over: 0x000000, amount: 0.55), 0x8C8C8C)
+    }
+
+    func testPadKeepsCustomColorsAndFallsBackOnJunk() {
+        let kept = ProjectPad.normalize(["colors": "#a1b2c3,#00ff7f"], mode: .chat)
+        XCTAssertEqual(kept.colors, "#a1b2c3,#00ff7f")
+        XCTAssertEqual(kept.normalized(mode: .chat).colors, "#a1b2c3,#00ff7f")
+        XCTAssertEqual(ProjectPad.normalize(["colors": "#a1b2c3,nope"], mode: .chat).colors, "quiet")
+        let look = ProjectLook.decodeSaved(Data(##"{"layout":"pulse","colors":"#a1b2c3,#00ff7f"}"##.utf8))
+        XCTAssertEqual(look?.colors, "#a1b2c3,#00ff7f")
+        XCTAssertEqual(ProjectColorSet.named("#a1b2c3,#00ff7f").custom?.main, 0xA1B2C3)
+        XCTAssertNil(ProjectColorSet.named("blue").custom)
+    }
+}
