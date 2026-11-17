@@ -150,13 +150,15 @@ $env:ALLTERNIT_SELF_HOSTED = 'false'
 $log = Join-Path $env:RUNNER_TEMP 'allternit-api.log'
 $proc = Start-Process -FilePath $api -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru -WindowStyle Hidden
 $up = $false
-for ($i = 0; $i -lt 90; $i++) {
-  try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 'http://127.0.0.1:8013/health' | Out-Null; $up = $true; break } catch { Start-Sleep -Seconds 1 }
+for ($i = 0; $i -lt 240; $i++) {
+  try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 'http://127.0.0.1:8013/health/live' | Out-Null; $up = $true; break } catch { Start-Sleep -Seconds 1 }
   if ($proc.HasExited) { break }
 }
+Step "allternit-api up: $up (exited: $($proc.HasExited))"
 if (-not $up) {
-  Write-Host 'allternit-api did not answer /health. Log tail:'
-  Get-Content $log, "$log.err" -Tail 60 -ErrorAction SilentlyContinue
+  Write-Host "allternit-api did not answer /health/live in 240 s. Exited: $($proc.HasExited)"
+  Write-Host '--- listening lines:'; Select-String -Path $log, "$log.err" -Pattern 'listening|bind|error|panic' -ErrorAction SilentlyContinue | Select-Object -Last 20 | ForEach-Object { $_.Line }
+  Write-Host '--- last 25 lines:'; Get-Content "$log.err", $log -Tail 25 -ErrorAction SilentlyContinue
   throw 'PART B FAIL: allternit-api did not start'
 }
 $h = @{ 'x-allternit-desktop-access-token' = $token; 'Content-Type' = 'application/json' }
