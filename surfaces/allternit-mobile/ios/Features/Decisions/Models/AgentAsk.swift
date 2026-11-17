@@ -175,13 +175,53 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
     let code: String?
     let language: String?
     let files: [String]
+    /// metadata.review: class hand_off | confirm_now | confirm_unless_named | free.
+    let reviewClass: String?
+    let reviewRisk: String?
+    let reviewAuthorized: Bool?
+    let reviewReason: String?
+    /// computer.access (`metadata.access`, computer-toolset/index.ts): one
+    /// app name and its asked tier per entry, in the same order, plus why.
+    let apps: [String]
+    let tiers: [String]
+    let accessReason: String?
+    /// folder_access (`metadata.folderAccess`, builtins/folder-access.ts):
+    /// the outside folders and action (request | request_delete).
+    let paths: [String]
+    let folderAction: String?
 
     private enum CodingKeys: String, CodingKey { case id, sessionID, sessionId, session_id, permission, patterns, tool, metadata }
+    private struct Review: Decodable {
+        let `class`: String?
+        let risk: String?
+        let authorized: Bool?
+        let reason: String?
+    }
+    /// metadata.access.entries[]: {name, bundle_id, category?, max_tier?, tier}.
+    private struct AccessEntry: Decodable {
+        let name: String?
+        let bundle_id: String?
+        let tier: String?
+    }
+    /// metadata.access: {entries, reason, needed_tier?, granted_tier?, expires_in_secs?}.
+    private struct Access: Decodable {
+        let entries: [AccessEntry]?
+        let reason: String?
+    }
+    /// metadata.folderAccess: {action, paths, reason, scope}.
+    private struct FolderAccess: Decodable {
+        let action: String?
+        let paths: [String]?
+        let reason: String?
+    }
     private struct ToolRef: Decodable { let callID: String? }
     private struct Meta: Decodable {
         let code: String?
         let language: String?
         let files: [String]?
+        let review: Review?
+        let access: Access?
+        let folderAccess: FolderAccess?
     }
 
     init(from decoder: Decoder) throws {
@@ -198,6 +238,16 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
         code = meta?.code
         language = meta?.language
         files = meta?.files ?? []
+        reviewClass = meta?.review?.class
+        reviewRisk = meta?.review?.risk
+        reviewAuthorized = meta?.review?.authorized
+        reviewReason = meta?.review?.reason
+        let entries = (meta?.access?.entries ?? []).filter { !($0.name ?? $0.bundle_id ?? "").isEmpty }
+        apps = entries.map { ($0.name?.isEmpty == false ? $0.name : $0.bundle_id) ?? "" }
+        tiers = entries.map { $0.tier ?? "read" }
+        accessReason = meta?.access?.reason ?? meta?.folderAccess?.reason
+        paths = (meta?.folderAccess?.paths ?? []).filter { !$0.isEmpty }
+        folderAction = meta?.folderAccess?.action
     }
 
     /// "Run a command", "Edit files" — what the agent wants to do.
@@ -209,6 +259,8 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
         case "webfetch", "fetch": return "Open a web page"
         case "run_code": return "Run Python code"
         case "external_directory": return "Work outside the project folder"
+        case "computer.access": return "Use apps on your computer"
+        case "folder_access": return folderAction == "request_delete" ? "Delete from a folder" : "Open a folder"
         default: return "Use \(permission)"
         }
     }
@@ -216,5 +268,28 @@ struct AgentPermissionAsk: Decodable, Sendable, Equatable, Identifiable, Hashabl
     /// The first pattern, as a short detail line ("rm -rf build", "src/App.swift").
     var detail: String? {
         patterns.first(where: { !$0.isEmpty && $0 != "*" })
+    }
+
+    var isComputerAccess: Bool { permission.lowercased() == "computer.access" }
+    var isFolderAccess: Bool { permission.lowercased() == "folder_access" }
+    /// confirm_now asks never offer "Always".
+    var allowsAlways: Bool { reviewClass != "confirm_now" }
+
+    /// One line on why this ask is shown, from metadata.review.
+    var reviewLine: String? {
+        guard let cls = reviewClass, cls != "free" else { return nil }
+        let label: String
+        switch cls {
+        case "hand_off": label = "Hand-off"
+        case "confirm_now": label = "Confirm now"
+        case "confirm_unless_named": label = "Confirm unless named"
+        default: label = cls
+        }
+        var parts = [label]
+        if let r = reviewRisk, !r.isEmpty { parts.append("\(r) risk") }
+        if reviewAuthorized == true { parts.append("authorized") }
+        var line = parts.joined(separator: " · ")
+        if let r = reviewReason, !r.isEmpty { line += ". " + r }
+        return line
     }
 }

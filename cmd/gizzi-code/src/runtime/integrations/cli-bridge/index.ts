@@ -18,6 +18,7 @@ import { ThreadReadTool, ThreadRecentTool } from "@/runtime/tools/builtins/threa
 import { ResourceTool } from "@/runtime/tools/builtins/resource"
 import { MemoryListTool } from "@/runtime/tools/builtins/memory-list"
 import { SleepTool } from "@/runtime/tools/builtins/sleep"
+import { FolderAccessTool } from "@/runtime/tools/builtins/folder-access"
 import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
 import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { TodoWriteTool } from "@/runtime/tools/builtins/todo"
@@ -64,7 +65,9 @@ export namespace CliBridge {
   // in their own process, on the user's own plan; a gizzi batch would start
   // gizzi workers on another model behind the CLI's back, and a CLI gives up on
   // a tool call long before a batch of rows finishes.
-  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool, RunCodeTool, SendUserMessageTool, CurrentTimeTool, AutomationTool, GetContextRemainingTool, HistoryRecallTool, LookupTool, ThreadReadTool, ThreadRecentTool, ResourceTool, MemoryListTool, SleepTool]
+  // folder_access: the person's grant for folders outside the project (always
+  // asks). It governs gizzi's own tools; the CLI's own file tools follow the CLI.
+  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, TodoWriteTool, GlanceTool, BuiltinSkillTool(), ...ARTIFACT_TOOLS, ArtifactCheckTool, RunCodeTool, SendUserMessageTool, CurrentTimeTool, AutomationTool, GetContextRemainingTool, HistoryRecallTool, LookupTool, ThreadReadTool, ThreadRecentTool, ResourceTool, MemoryListTool, SleepTool, FolderAccessTool]
 
   /** gizzi's id for a bridged tool reported under a CLI's vendor name (run_code only; see CliBridgeResults). */
   export const canonicalTool = CliBridgeResults.canonicalTool

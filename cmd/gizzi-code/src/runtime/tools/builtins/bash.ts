@@ -2,6 +2,7 @@ import z from "zod/v4"
 import { spawn } from "child_process"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import path from "path"
+import os from "os"
 import DESCRIPTION from "@/runtime/tools/builtins/bash.txt"
 import { Log } from "@/shared/util/log"
 import { Instance } from "@/runtime/context/project/instance"
@@ -28,6 +29,8 @@ import { VmSession } from "@/runtime/context/vm/vm-session"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { Identifier } from "@/shared/id/id"
 import { EnvironmentRuntime } from "@/runtime/session/environment/runtime-state"
+import { FolderGrants } from "@/runtime/tools/builtins/external-directory"
+import fs, { type Stats } from "fs"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.GIZZI_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -129,7 +132,8 @@ export const BashTool = Tool.define("bash", async () => {
       const floor = Catastrophic.check(params.command, { parseError: tree.rootNode.hasError })
       if (floor) throw new PermissionNext.FloorError(floor.reason, params.command)
       const directories = new Set<string>()
-      if (!Instance.containsPath(cwd)) directories.add(cwd)
+      // Folders granted with folder_access skip the external_directory ask.
+      if (!Instance.containsPath(cwd) && !FolderGrants.find(ctx.sessionID, cwd)) directories.add(cwd)
       const patterns = new Set<string>()
       const always = new Set<string>()
 
@@ -172,7 +176,7 @@ export const BashTool = Tool.define("bash", async () => {
                 process.platform === "win32" && resolved.match(/^\/[a-z]\//)
                   ? resolved.replace(/^\/([a-z])\//, (_, drive) => `${drive.toUpperCase()}:\\`).replace(/\//g, "\\")
                   : resolved
-              if (!Instance.containsPath(normalized)) {
+              if (!Instance.containsPath(normalized) && !FolderGrants.find(ctx.sessionID, normalized)) {
                 const dir = (await Filesystem.isDir(normalized)) ? normalized : path.dirname(normalized)
                 directories.add(dir)
               }
@@ -204,6 +208,42 @@ export const BashTool = Tool.define("bash", async () => {
           always: Array.from(always),
           metadata: {},
         })
+      }
+
+      // Deletes in a folder granted without request_delete move to
+      // <root>/_to_delete/ (decision 10). A plain rm/rmdir/unlink list is
+      // carried out here as moves; any other shape that deletes there is
+      // refused before it runs. Sessions without grants skip this entirely.
+      if (FolderGrants.list(ctx.sessionID).length > 0) {
+        const redirect = trashRedirect(tree.rootNode, cwd, ctx.sessionID)
+        if (redirect) {
+          const output = redirect.output
+          ctx.metadata({ metadata: { output, description: params.description } })
+          return {
+            title: params.description,
+            metadata: { output, exit: redirect.exit, description: params.description },
+            output,
+          }
+        }
+        // The sandbox may write in a granted folder, so a delete the parser
+        // above can't see (an interpreter's remove call, rsync --delete, a
+        // move to /dev/null) would skip _to_delete. When the command reaches
+        // such a folder and names a delete-class verb anywhere, the person
+        // approves it first: `folder_delete` is a permanent-delete class
+        // (confirm_now), asked in every mode, never remembered.
+        const reached = disguisedDelete(params.command, cwd, ctx.sessionID)
+        if (reached) {
+          await ctx.ask({
+            permission: FOLDER_DELETE_PERMISSION,
+            patterns: [params.command],
+            always: [],
+            metadata: {
+              summary: `Run a command that may delete files for good in ${reached.map((r) => path.basename(r) || r).join(", ")}`,
+              command: params.command,
+              folders: reached,
+            },
+          })
+        }
       }
 
       const shellEnv = await Plugin.trigger(
@@ -327,7 +367,14 @@ export const BashTool = Tool.define("bash", async () => {
       // driver is available on a platform that's supposed to support one
       // (Linux without bwrap), this fails closed — it throws rather than
       // silently running the command unsandboxed.
-      const sandboxState = SessionSandbox.ensureDefault(ctx.sessionID, [cwd])
+      let sandboxState = SessionSandbox.ensureDefault(ctx.sessionID, [cwd])
+      // Folders granted with folder_access (here or in the root session) are
+      // writable; a session on the shared default gets its own copy.
+      const grants = FolderGrants.list(ctx.sessionID)
+      if (sandboxState?.enabled && grants.length > 0) {
+        for (const g of grants) FolderGrants.allowSandboxWrites(ctx.sessionID, g.root)
+        sandboxState = SessionSandbox.getEffective(ctx.sessionID) ?? sandboxState
+      }
       const sandboxEnabled = sandboxState?.enabled ?? false
 
       let proc: ReturnType<typeof spawn>
@@ -536,5 +583,359 @@ export async function runInBackground(
       "status: running",
       "The command is running in the background. Use task_output to read its output and task_stop to stop it.",
     ].join("\n"),
+  }
+}
+
+// ── Deletes in granted outside folders (Wave C decision 10) ───────────────
+//
+// A folder the person granted with folder_access but not request_delete
+// keeps its files: a delete there moves the entry to <root>/_to_delete/,
+// keeping its relative path. The bash tool carries out a plain list of
+// rm / rmdir / unlink commands (literal paths, joined by `&&` or `;`) as those
+// moves itself, without running a shell. Any other command shape that deletes
+// in such a folder (globs, variables, pipes, find -delete, xargs rm, git
+// clean, a `cd` into the folder) is refused before it runs, with a message
+// saying what to do. Deletes in the project, in ungranted folders and in
+// folders granted with request_delete run as before. This is an
+// application-layer check: the catastrophic floor and the action reviewer
+// still apply on top of it.
+
+type ShellNode = {
+  type: string
+  text: string
+  isNamed: boolean
+  childCount: number
+  child(index: number): ShellNode | null
+}
+
+const DELETE_PROGRAMS = new Set(["rm", "rmdir", "unlink", "shred", "srm", "trash", "trash-put"])
+/** A nested script (`sh -c "rm ..."`, `eval`) is opaque: a delete mention in it counts. */
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "eval"])
+const DELETE_MENTION = /(^|[^\w.-])(rm|rmdir|unlink|trash(-put)?|shred|srm)([^\w.-]|$)|\bgit\b.*\b(clean|rm)\b|-delete\b/
+const PLAIN_DELETES = new Set(["rm", "rmdir", "unlink"])
+const WRAPPERS = new Set(["sudo", "doas", "env", "command", "nice", "nohup", "time", "exec", "builtin"])
+
+type ShellWord = { raw: string; value?: string }
+type ShellCommand = { name: string; args: ShellWord[]; plain: boolean }
+
+/** The literal value of a word, or undefined when the shell would expand it. */
+function literalWord(node: ShellNode): string | undefined {
+  const text = node.text
+  switch (node.type) {
+    case "command_name": {
+      const inner = node.childCount === 1 ? node.child(0) : null
+      return inner ? literalWord(inner) : undefined
+    }
+    case "word":
+    case "number":
+      if (/[*?[\]{}$`]/.test(text)) return undefined
+      return text.replace(/\\(.)/g, "$1")
+    case "raw_string":
+      return text.slice(1, -1)
+    case "string":
+      if (/[$`]/.test(text)) return undefined
+      return text.slice(1, -1).replace(/\\(["\\$`])/g, "$1")
+    default:
+      return undefined
+  }
+}
+
+function collectCommands(node: ShellNode, out: ShellCommand[]) {
+  if (node.type === "command") {
+    let name = ""
+    const args: ShellWord[] = []
+    let plain = true
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)
+      if (!child) continue
+      if (child.type === "command_name") {
+        const value = literalWord(child)
+        name = path.basename(value ?? child.text)
+        if (value === undefined) plain = false
+        continue
+      }
+      if (child.type === "word" || child.type === "string" || child.type === "raw_string" || child.type === "number") {
+        const value = literalWord(child)
+        if (value === undefined) plain = false
+        args.push({ raw: child.text, value })
+        continue
+      }
+      if (!child.isNamed) continue
+      // variable assignments, expansions, concatenations, here-strings...
+      plain = false
+      args.push({ raw: child.text })
+    }
+    out.push({ name, args, plain })
+  }
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i)
+    if (child) collectCommands(child, out)
+  }
+}
+
+/** Only commands joined by `&&`, `;` or newlines: no pipes, redirects, subshells or `||`. */
+function simpleList(node: ShellNode): boolean {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i)
+    if (!child) continue
+    if (child.type === "command" || child.type === "comment") continue
+    if (child.type === "list") {
+      if (!simpleList(child)) return false
+      continue
+    }
+    if (!child.isNamed && (child.type === "&&" || child.type === ";" || child.type === "\n")) continue
+    return false
+  }
+  return true
+}
+
+function deletes(cmd: ShellCommand): boolean {
+  const words = cmd.args.map((a) => a.value ?? a.raw)
+  const names = words.map((w) => path.basename(w.replace(/^["']|["']$/g, "")))
+  if (DELETE_PROGRAMS.has(cmd.name)) return true
+  if (cmd.name === "find") {
+    if (words.includes("-delete")) return true
+    return words.some((w, i) => ["-exec", "-execdir", "-ok", "-okdir"].includes(w) && DELETE_PROGRAMS.has(names[i + 1] ?? ""))
+  }
+  if (cmd.name === "git") return words.includes("clean") || words.includes("rm")
+  if (SHELLS.has(cmd.name)) return DELETE_MENTION.test(cmd.args.map((a) => a.raw).join(" "))
+  if (cmd.name === "xargs" || WRAPPERS.has(cmd.name)) return names.some((n) => DELETE_PROGRAMS.has(n))
+  return false
+}
+
+export type TrashRedirect = { output: string; exit: number }
+
+/**
+ * Plan (and, for a plain rm list, carry out) the deletes in a command that
+ * touch a folder granted without request_delete. Returns undefined when the
+ * command touches no such folder (it runs as usual). Throws when it does but
+ * isn't a plain rm list, or when a move would leave the folder.
+ */
+export function trashRedirect(root: ShellNode, cwd: string, sessionID: string): TrashRedirect | undefined {
+  const commands: ShellCommand[] = []
+  collectCommands(root, commands)
+  const deleting = commands.filter(deletes)
+  if (!deleting.length) return undefined
+
+  const trashRoot = (target: string): string | undefined => {
+    const d = FolderGrants.disposition(sessionID, target)
+    return d.kind === "trash" ? d.grant.root : undefined
+  }
+  const touched = new Set<string>()
+  const cwdRoot = trashRoot(cwd)
+  const trashRoots = FolderGrants.list(sessionID)
+    .filter((g) => !g.delete)
+    .map((g) => g.root)
+  // Starts with an expansion ($VAR, `cmd`, $(cmd)): it could point anywhere.
+  const anywhere = (raw: string) => /^["']?[$`]/.test(raw)
+  for (const cmd of commands) {
+    if (cmd.name !== "cd") continue
+    for (const arg of cmd.args) {
+      if (arg.value === undefined && anywhere(arg.raw)) {
+        for (const r of trashRoots) touched.add(r)
+        continue
+      }
+      const prefix = arg.value ?? arg.raw.replace(/^["']/, "").split(/[*?[{$`]/)[0] ?? ""
+      const r = trashRoot(FolderGrants.absolute(prefix || ".", cwd))
+      if (r) touched.add(r)
+    }
+  }
+  for (const cmd of deleting) {
+    if (SHELLS.has(cmd.name)) {
+      for (const r of trashRoots) touched.add(r)
+      continue
+    }
+    for (const arg of cmd.args) {
+      if (arg.value !== undefined) {
+        if (arg.value.startsWith("-")) continue
+        const r = trashRoot(FolderGrants.absolute(arg.value, cwd))
+        if (r) touched.add(r)
+        continue
+      }
+      // Not literal: judge by the fixed part before the first expansion or
+      // glob (a leading glob is relative to the working directory).
+      if (anywhere(arg.raw)) {
+        for (const r of trashRoots) touched.add(r)
+        continue
+      }
+      const prefix = arg.raw.replace(/^["']/, "").split(/[*?[{$`]/)[0] ?? ""
+      const dir = !prefix ? "." : prefix.endsWith("/") ? prefix : path.dirname(prefix)
+      const r = trashRoot(FolderGrants.absolute(dir, cwd))
+      if (r) touched.add(r)
+    }
+    // find, xargs rm, git clean and wrapped deletes act on the working
+    // directory when they name no path.
+    if (cwdRoot && !PLAIN_DELETES.has(cmd.name)) touched.add(cwdRoot)
+  }
+  if (!touched.size) return undefined
+
+  const roots = [...touched]
+  const refuse = (why: string) =>
+    new Error(
+      [
+        `${why} ${roots.join(", ")} ${roots.length === 1 ? "was" : "were"} granted without delete permission, so deletes there move files to ${FolderGrants.TRASH_DIR}/ inside that folder instead.`,
+        `Run the delete on its own as plain rm, rmdir or unlink commands with literal paths (no globs, variables, pipes, find, xargs or cd), joined only by && or ;. Or call folder_access with action request_delete for the folder if it must be deleted for real. Nothing ran.`,
+      ].join(" "),
+    )
+
+  const plain =
+    simpleList(root) && commands.every((c) => PLAIN_DELETES.has(c.name) && c.plain && c.args.every((a) => a.value !== undefined))
+  if (!plain) throw refuse("This command deletes in a granted folder in a way that can't be redirected.")
+
+  type Step = { line: string } | { plan: FolderGrants.TrashPlan; target: string }
+  const steps: Step[] = []
+  let exit = 0
+  for (const cmd of commands) {
+    let recursive = false
+    let force = false
+    let dirFlag = false
+    let flags = true
+    for (const arg of cmd.args) {
+      const value = arg.value!
+      if (flags && value === "--") {
+        flags = false
+        continue
+      }
+      if (flags && value.startsWith("-") && value !== "-") {
+        if (value === "--recursive") recursive = true
+        else if (value === "--force") force = true
+        else if (value === "--dir") dirFlag = true
+        else if (!value.startsWith("--")) {
+          if (/[rR]/.test(value)) recursive = true
+          if (value.includes("f")) force = true
+          if (value.includes("d")) dirFlag = true
+        }
+        continue
+      }
+      const target = FolderGrants.absolute(value, cwd)
+      const d = FolderGrants.disposition(sessionID, target)
+      if (d.kind !== "trash") {
+        throw refuse(`${value} is not in a folder granted without delete permission, but this command also deletes in one.`)
+      }
+      let st: Stats | undefined
+      try {
+        st = fs.lstatSync(target)
+      } catch {
+        st = undefined
+      }
+      const fail = (msg: string) => {
+        exit = 1
+        steps.push({ line: `${cmd.name}: ${value}: ${msg}` })
+      }
+      if (!st) {
+        if (cmd.name === "rm" && force) continue
+        fail("No such file or directory")
+        continue
+      }
+      const isDir = st.isDirectory()
+      if (cmd.name === "rmdir") {
+        if (!isDir) {
+          fail("Not a directory")
+          continue
+        }
+        if (!emptyDir(target)) {
+          fail("Directory not empty")
+          continue
+        }
+      } else if (cmd.name === "unlink") {
+        if (isDir) {
+          fail("is a directory")
+          continue
+        }
+      } else if (isDir && !recursive && !(dirFlag && emptyDir(target))) {
+        fail(dirFlag ? "Directory not empty" : "is a directory")
+        continue
+      }
+      // Throws TrashRefused (a symlink out of the folder, a symlinked
+      // _to_delete): planned for every target before anything moves.
+      steps.push({ plan: FolderGrants.planTrash(d.grant.root, target), target: value })
+    }
+  }
+
+  const moved: string[] = []
+  const errors: string[] = []
+  for (const step of steps) {
+    if ("line" in step) {
+      errors.push(step.line)
+      continue
+    }
+    try {
+      const dest = FolderGrants.applyTrash(step.plan)
+      moved.push(`- ${step.plan.from} -> ${dest}`)
+    } catch (error) {
+      exit = 1
+      errors.push(`${step.target}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  const lines: string[] = []
+  if (moved.length) {
+    lines.push(
+      `Moved to ${FolderGrants.TRASH_DIR}/ instead of deleting (the folder was granted without delete permission; nothing was deleted):`,
+      ...moved,
+    )
+  }
+  if (errors.length) lines.push(...errors)
+  lines.push(
+    `Tell the person the files are in ${roots.map((r) => path.join(r, FolderGrants.TRASH_DIR)).join(", ")}. To delete for real, call folder_access with action request_delete for the folder.`,
+  )
+  return { output: lines.join("\n"), exit }
+}
+
+/**
+ * Permission class of the ask for a command that may delete in a folder
+ * granted without request_delete in a way trashRedirect can't see. The
+ * action reviewer classifies the name as a permanent delete (confirm_now).
+ */
+export const FOLDER_DELETE_PERMISSION = "folder_delete"
+
+/** A delete-class verb anywhere in the text: programs, interpreter calls, flags. */
+const DISGUISED_DELETE =
+  /(^|[^\w-])(rm|rmdir|unlink|unlinkSync|rmSync|rmdirSync|rmtree|removedirs|remove_tree|rm_rf|rm_r|rimraf|del|delete|deleteSync|remove|trash|send2trash|shred|srm|truncate)([^\w-]|$)|-delete\b|\bmv\b[^;&|\n]*\s\/dev\/null\b/
+
+/**
+ * The folders granted without request_delete that a command may delete in
+ * without trashRedirect seeing it: it names a delete-class verb (see
+ * DISGUISED_DELETE) and runs in such a folder, names a path in one, or starts
+ * an argument with an expansion that could point anywhere. Undefined when
+ * there is nothing to ask. Paths built at run time inside a script, or a
+ * script file run from disk, are not seen.
+ */
+export function disguisedDelete(command: string, cwd: string, sessionID: string): string[] | undefined {
+  if (!DISGUISED_DELETE.test(command)) return undefined
+  const roots = FolderGrants.list(sessionID)
+    .filter((g) => !g.delete)
+    .map((g) => g.root)
+  if (!roots.length) return undefined
+  const touched = new Set<string>()
+  const trashRoot = (target: string) => {
+    const d = FolderGrants.disposition(sessionID, target)
+    if (d.kind === "trash") touched.add(d.grant.root)
+  }
+  trashRoot(cwd)
+  for (const root of roots) if (command.includes(root)) touched.add(root)
+  const home = os.homedir()
+  const tokens = command.split(/[\s'"`;|&()<>,=]+/).filter(Boolean).slice(0, 400)
+  for (const token of tokens) {
+    if (token.startsWith("-")) continue
+    const expanded = token.replace(/^\$\{?HOME\}?(?=\/|$)/, home)
+    if (expanded.startsWith("$")) {
+      for (const r of roots) touched.add(r)
+      continue
+    }
+    if (/[$*?[\]{}]/.test(expanded)) {
+      const prefix = expanded.split(/[$*?[\]{}]/)[0] ?? ""
+      trashRoot(FolderGrants.absolute(prefix || ".", cwd))
+      continue
+    }
+    trashRoot(FolderGrants.absolute(expanded, cwd))
+  }
+  return touched.size ? [...touched] : undefined
+}
+
+function emptyDir(p: string): boolean {
+  try {
+    return fs.readdirSync(p).length === 0
+  } catch {
+    return false
   }
 }

@@ -154,8 +154,8 @@ describe("tool.registry", () => {
     })
   })
 
-  test("current_time, send_user_message, lookup, sleep and agent_batch reach every client, not only bot chats", async () => {
-    // Primitives Wave A (current_time, send_user_message) and Wave E (lookup, sleep, agent_batch):
+  test("current_time, send_user_message, lookup, sleep, agent_batch and folder_access reach every client, not only bot chats", async () => {
+    // Primitives Wave A (current_time, send_user_message) and Wave E (lookup, sleep, agent_batch), Wave C (folder_access):
     // Gizzi Code and plain app chats need them. The bot-only
     // lists are what SessionPrompt.resolveTools deletes outside an app bot's chat.
     const botOnly = new Set<string>([...ToolRegistry.BOT_THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
@@ -168,7 +168,7 @@ describe("tool.registry", () => {
           directory: tmp.path,
           fn: async () => {
             const ids = await ToolRegistry.ids()
-            for (const id of ["current_time", "send_user_message", "lookup", "sleep", "agent_batch"]) {
+            for (const id of ["current_time", "send_user_message", "lookup", "sleep", "agent_batch", "folder_access"]) {
               expect(ids).toContain(id)
               expect(botOnly.has(id)).toBe(false)
             }

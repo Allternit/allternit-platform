@@ -504,6 +504,8 @@
               "tools/computer-use-suite",
               "tools/computer-use-decisions",
               "tools/computer-safety",
+              "tools/computer-access",
+              "tools/action-review",
               "tools/computer-use-replay",
               "tools/computer-parallel",
               "tools/computer-credentials",

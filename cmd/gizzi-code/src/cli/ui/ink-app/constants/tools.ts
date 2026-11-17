@@ -113,6 +113,7 @@ export const IN_PROCESS_TEAMMATE_ALLOWED_TOOLS = new Set([
  * - ExitPlanModeTool: Plan mode is a main thread abstraction.
  * - TaskStopTool: Requires access to main thread task state.
  * - TungstenTool: Uses singleton virtual terminal abstraction that conflicts between agents.
+ * - folder_access: Always asks the user; async agents have nobody to ask, so it is left out.
  *
  * ENABLE LATER (NEED WORK):
  * - MCPTool: TBD

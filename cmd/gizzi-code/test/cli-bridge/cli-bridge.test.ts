@@ -54,6 +54,7 @@ describe("CliBridge MCP server", () => {
       "resource",
       "memory_list",
       "sleep",
+      "folder_access",
       "question",
     ])
     const question = list.result.tools.find((t: any) => t.name === "question")

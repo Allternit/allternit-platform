@@ -20,6 +20,13 @@ Every call to the [computer toolset](/tools/computer-toolset), and every step a 
 
 Denied and paused steps are written to the policy audit log as denied rows. Allowed and confirmed steps carry a safety note in their audit row (`safety=… irreversible=… watch=… monitor=… host=…`).
 
+## Access tiers and action classes
+
+Two checks sit in front of the verdicts above.
+
+- **Access tier.** On this device and paired computers an app with no grant is read only. The tier check uses the app actually in front and fails with `access_required` or `tier_exceeded`. Where the platform can't name the app, the tier check is skipped and audited, and the deny lists still apply. See [Computer access tiers](/tools/computer-access).
+- **Action class.** Every action is `hand_off`, `confirm_now`, `confirm_unless_named` or `free`. `confirm_now` (money, credentials, permanent delete, signing) asks every time, bypass mode included, and is refused when unattended. See [Action review](/tools/action-review).
+
 ## Untrusted observations (spotlighting)
 
 Everything a model reads back from the screen is data, not instructions. Text results of `read_ui`, `act`, `run_batch`, `verify`, `run_subtask` and the browser members that return page text (`read_page`, `find`, `get_page_text`, `read_console`, `read_network`, `javascript_exec`, the tab members, `navigate`) arrive wrapped like this:
@@ -197,6 +204,8 @@ The prompt-injection benchmarks in the driver spec's D5 row (an RTC-Bench subset
 ## Related pages
 
 - [Computer toolset](/tools/computer-toolset)
+- [Computer access tiers](/tools/computer-access)
+- [Action review](/tools/action-review)
 - [How computer use decides](/tools/computer-use-decisions)
 - [Computer credentials](/tools/computer-credentials)
 - [Allternit Driver](/tools/allternit-driver)

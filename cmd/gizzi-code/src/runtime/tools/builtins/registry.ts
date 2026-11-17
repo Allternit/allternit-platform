@@ -51,6 +51,7 @@ import { ComputersTool } from "@/runtime/tools/builtins/computers"
 import { Truncate } from "@/runtime/tools/builtins/truncation"
 import { PlanExitTool, PlanEnterTool } from "@/runtime/tools/builtins/plan"
 import { ApplyPatchTool } from "@/runtime/tools/builtins/apply_patch"
+import { FolderAccessTool } from "@/runtime/tools/builtins/folder-access"
 import { NotebookEditTool } from "@/runtime/tools/builtins/notebook"
 import { MemoryWriteTool } from "@/runtime/tools/builtins/memory-write"
 import { ProjectStatusTool } from "@/runtime/tools/builtins/project-status"
@@ -243,6 +244,9 @@ export namespace ToolRegistry {
       AskUserLaterTool,
       // A short in-turn wait that wakes on the user's next message: every client, not bot-gated.
       SleepTool,
+      // Folders outside the project for this session: every client, not
+      // bot-gated. Every call asks the person (an always-ask class).
+      FolderAccessTool,
       CreateGoalTool,
       GetGoalTool,
       SetGoalBudgetTool,
