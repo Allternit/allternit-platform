@@ -97,6 +97,9 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
     android: androidDeps,
     ios: iosDeps,
     logger: (message) => log.info(message),
+    // New iCTRL helper setups are retired (Phone Use plan step 4); a computer that already
+    // has a linked iPhone can still re-pair or repair it.
+    iosHelperSetupAllowed: () => fileLinkStore(path.join(app.getPath('userData'), 'phone', 'phone-link-ios.json')).all().length > 0,
   });
   manager.on('status', (status) => {
     // A phone just finished setup: make sure bots get the phone tools now.
