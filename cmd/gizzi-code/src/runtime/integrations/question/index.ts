@@ -167,6 +167,11 @@ export namespace Question {
   // A question waiting for its answer keeps a settings reload from wiping it (Instance.disposeAll).
   Instance.registerBusyCheck(async () => Object.keys((await state()).pending).length > 0)
 
+  /** Starts this instance's question state at boot, so the ask_user_later expiry sweep runs without waiting for the first question. */
+  export async function init() {
+    await state()
+  }
+
   export async function ask(input: {
     sessionID: string
     questions: Info[]
