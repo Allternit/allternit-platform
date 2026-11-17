@@ -411,6 +411,7 @@
             "group": "Core Concepts",
             "pages": [
               "core/gizzi-runtime",
+              "core/system-prompts",
               "core/gizzi-core",
               "core/communication",
               "core/memory-fabric",

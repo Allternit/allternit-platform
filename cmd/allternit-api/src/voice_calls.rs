@@ -199,7 +199,7 @@ pub fn production_turner() -> Arc<dyn VoiceTurner> {
 #[async_trait]
 impl VoiceTurner for ChannelTurner {
     async fn run(&self, db: &DbHandle, session_id: &str, bot_id: &str, text: &str, _events: mpsc::UnboundedSender<Value>) -> Result<TurnReply, String> {
-        crate::agent_session_routes::send_bot_turn(db, session_id, bot_id, text).await.map(TurnReply::Final)
+        crate::agent_session_routes::send_voice_bot_turn(db, session_id, bot_id, text).await.map(TurnReply::Final)
     }
 
     /// What the Stop button does: a vendor-bound session cancels on the vendor,
@@ -271,7 +271,12 @@ impl VoiceTurner for GizziStreamTurner {
             tracing::info!(session_id, "voice turn: session is {why}; answering with the final reply instead of streaming");
             return self.fallback.run(db, session_id, bot_id, text, events).await;
         }
-        let (client, path, payload) = crate::agent_session_routes::native_turn_request(db, session_id, bot_id, text).await?;
+        let (client, path, mut payload) = crate::agent_session_routes::native_turn_request(db, session_id, bot_id, text).await?;
+        // Spoken reply: the runtime adds its voice block when it sees this key.
+        if !payload["metadata"].is_object() {
+            payload["metadata"] = json!({});
+        }
+        payload["metadata"]["reply_mode"] = json!("voice");
         crate::voice_turn_stream::stream_gizzi_turn(&client, &crate::agent_session_routes::gizzi_base(), session_id, &path, payload, &events).await
     }
 

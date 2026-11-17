@@ -47,6 +47,10 @@
         {
           "on": "2026-10-28",
           "note": "A:// orchestrates every chat (Eoj, reverses the main-bot part of ai #871): new chats bind to the main bot (mainBotChat) and get message_agent, so A:// hands work to the user's other bots as task threads (bot_routing::caller_for_session accepts mainBotChat). The chat is never adopted as a bot thread and shows no agent card (card deleted, ai #874). Picking another bot answers directly."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "System prompts modernized: chat and code stacks chosen by session surface, one model-family addendum, voice and phone blocks from turn metadata (reply_mode voice from allternit-api voice turns; form_factor phone from the phone layout, PWA and iOS). Docs: core/system-prompts.mdx."
         }
       ],
       "evidence": [
@@ -55,7 +59,11 @@
         "allternit/surfaces/docs/guides/chat-composer.mdx",
         "allternit/surfaces/docs/guides/chat-sessions.mdx",
         "allternit/surfaces/docs/api/cowork.mdx",
-        "allternit/surfaces/docs/api/cowork-teams.mdx"
+        "allternit/surfaces/docs/api/cowork-teams.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt",
+        "allternit/cmd/gizzi-code/src/runtime/loop/prompts",
+        "allternit/surfaces/docs/core/system-prompts.mdx"
       ]
     },
     {
@@ -3278,7 +3286,11 @@
       "evidence": [
         "allternit/surfaces/docs/cli/code-intelligence.mdx",
         "allternit/cmd/gizzi-code/test/codemap/repo-map.test.ts",
-        "allternit/cmd/gizzi-code/test/codemap/graph-route.test.ts"
+        "allternit/cmd/gizzi-code/test/codemap/graph-route.test.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt",
+        "allternit/cmd/gizzi-code/src/runtime/loop/prompts",
+        "allternit/surfaces/docs/core/system-prompts.mdx"
       ]
     },
     {
