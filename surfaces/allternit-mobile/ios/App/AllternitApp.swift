@@ -92,9 +92,7 @@ struct AllternitApp: App {
                 // SwiftUI may evaluate the content view eagerly. Avoid touching
                 // Clerk.shared unless the SDK is actually configured.
                 if authManager.isClerkConfigured {
-                    AuthView(
-                        mode: authManager.authEntryMode == .signUp ? .signUp : .signIn
-                    )
+                    clerkAuthSheet
                         .environment(Clerk.shared)
                         // Skip Clerk's Create organization step (AuthManager).
                         .task(id: Clerk.shared.session?.status) {
@@ -141,6 +139,18 @@ struct AllternitApp: App {
                     LocalDocumentView(fileURL: url)
                 }
             }
+        }
+    }
+
+    /// Clerk's sheet; after "Switch account" (I14b) it opens with that
+    /// account's email filled in (`AuthView.initialIdentifier`).
+    @ViewBuilder
+    private var clerkAuthSheet: some View {
+        let view = AuthView(mode: authManager.authEntryMode == .signUp ? .signUp : .signIn)
+        if authManager.authEntryMode == .signIn, let email = authManager.pendingSignInEmail {
+            view.initialIdentifier(email)
+        } else {
+            view
         }
     }
 
@@ -352,6 +362,10 @@ struct LoginGateView: View {
         .scrollDismissesKeyboard(.interactively)
         .background(Color(hex: "#141413").ignoresSafeArea())
         .environment(\.colorScheme, .dark)
+        // "Switch account" (I14b): the email form opens with that account's
+        // email filled in; Continue hands it to Clerk (`initialIdentifier`).
+        .onAppear(perform: applyPendingEmail)
+        .onChange(of: auth.pendingSignInEmail) { _, _ in applyPendingEmail() }
         .sheet(item: $emailAuth, onDismiss: { auth.refreshAuthState() }) { start in
             if auth.isClerkConfigured {
                 emailAuthView(start.identifier)
@@ -480,6 +494,12 @@ struct LoginGateView: View {
             }
             .buttonStyle(SignInButtonStyle(kind: .ink))
         }
+    }
+
+    private func applyPendingEmail() {
+        guard let pending = auth.pendingSignInEmail, !pending.isEmpty else { return }
+        email = pending
+        showEmail = true
     }
 
     private func continueWithEmail() {

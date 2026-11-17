@@ -37,6 +37,10 @@ final class AuthManager: ObservableObject {
     /// Set true to present ClerkKitUI's `AuthView` sheet (see AllternitApp).
     @Published var isPresentingAuth = false
     @Published private(set) var authEntryMode: AuthEntryMode = .signIn
+    /// "Switch account" (phone calm I14b): the email the sign-in screen fills
+    /// in after a person switch (clerk-ios `AuthView.initialIdentifier`).
+    /// Nil = empty sign-in. Cleared once someone is signed in.
+    @Published var pendingSignInEmail: String?
 
     private init() {}
 
@@ -55,6 +59,13 @@ final class AuthManager: ObservableObject {
             isSignedIn = true
             OnboardingStore.shared.skipThisLaunch()
         }
+        #if DEBUG
+        // `-calm-signin-prefill` (phone calm I14b): the sign-in screen as it
+        // opens after "Switch account", with a sample email filled in.
+        if launchArgumentEnabled(LaunchArgument.calmSignInPrefill) {
+            pendingSignInEmail = SettingsAccountsSample.prefillEmail
+        }
+        #endif
         guard !publishableKey.isEmpty else {
             #if DEBUG
             debugLog("CLERK_PUBLISHABLE_KEY is empty — Clerk SDK not configured.")
@@ -91,6 +102,10 @@ final class AuthManager: ObservableObject {
                     _ = try? await RuntimePairing.shared.ensurePaired()
                 }
             }
+            // Switch account (I14b): every Clerk-confirmed sign-in goes on
+            // this device's list (no token), and the prefill is used up.
+            if !wasSignedIn || personChanged { rememberSignedInAccount() }
+            pendingSignInEmail = nil
         }
 
         if isSignedIn, !wasSignedIn {
@@ -106,6 +121,17 @@ final class AuthManager: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Puts the signed-in Clerk user on this device's remembered accounts
+    /// (`RememberedAccounts`): id, name, email, photo URL. Skipped for an
+    /// account with no email.
+    private func rememberSignedInAccount() {
+        guard let user = Clerk.shared.user else { return }
+        let email = user.primaryEmailAddress?.emailAddress ?? user.emailAddresses.first?.emailAddress
+        let name = [user.firstName, user.lastName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
+        RememberedAccounts.remember(userId: user.id, name: name, email: email,
+                                    imageUrl: user.hasImage ? user.imageUrl : nil)
     }
 
     private var isFinishingOrganizationTask = false
@@ -488,13 +514,23 @@ final class AuthManager: ObservableObject {
 /// - Per person, only when the person changes: the runtime device credential
 ///   (Keychain key per user id, `RuntimePairing.useAccount`), the Files
 ///   drive keys and Home Screen file domains.
+/// - Org and person (I14b): Decisions, BYOC and Code canvas stores are
+///   reset; saved selections (project, relay runtime, gizzi instance) go back
+///   to automatic.
+/// - Person only (I14b): the Brain clone + git token, the ChatGPT sign-in
+///   (revoked at OpenAI) + its disclosure, voice keys + their sync flag, the
+///   mesh node key, the paired runtime id (`EnvironmentStore`), project
+///   working folders, local project favorite/archived marks.
 /// Kept on an org switch: device preferences, the push token, the runtime
-/// device credential, the share outbox (pending shares), selection ids that
-/// resolve to nothing in another org.
+/// device credential, the share outbox (pending shares).
+/// Never cleared here: `RememberedAccounts.defaultsKey` (the accounts used on
+/// this device). "Switch account" shows that list right after a person
+/// change, and it holds no token or workspace data.
 @MainActor
 enum AccountSwitchCleanup {
     static func run(reason: AccountSwitchReason) async {
         if SampleWorkspace.isEnabled { return }
+        resetLocalState(reason: reason)
         // Plan and credits of the leaving account.
         AccountPlanStore.shared.reset()
         // Widgets: no snapshot of the leaving account; the widget keeps its
@@ -508,6 +544,34 @@ enum AccountSwitchCleanup {
         if reason.clearsPersonData {
             // Files drive keys are per person.
             FilesDriveBridge.shared.clearLocal()
+            // Voice keys and the mesh node key are the leaving person's.
+            VoiceKeySync.shared.forgetLocal()
+            MeshClient.shared.forgetIdentity()
+            // Network (a last brain push, the OpenAI revoke): side by side.
+            let brainStore = BrainStore.shared
+            let chatGPTStore = ChatGPTDeviceStore.shared
+            async let brain: Void = brainStore.forgetLocal()
+            async let chatGPT: Void = chatGPTStore.forgetOnPersonChange()
+            _ = await (brain, chatGPT)
+        }
+    }
+
+    /// The store resets of a switch, no network. Runs inside `run(reason:)`,
+    /// and once more after a person switch's sign-out, so a store that
+    /// refilled while sign-out was in flight is empty again.
+    static func resetLocalState(reason: AccountSwitchReason) {
+        if SampleWorkspace.isEnabled { return }
+        DecisionsStore.shared.reset()
+        BYOCStore.shared.reset()
+        CodeCanvasStore.shared.reset()
+        // Saved selections point into the leaving account; automatic again.
+        ProjectStore.shared.selectedProjectId = nil
+        RuntimeRelayStore.shared.select(nil)
+        InstanceStore.shared.select(nil)
+        if reason.clearsPersonData {
+            EnvironmentStore.shared.unpair()
+            ProjectFolderStore.shared.reset()
+            ProjectsLibraryStore.shared.resetLocalFlags()
         }
     }
 

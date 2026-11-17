@@ -208,6 +208,39 @@ final class BrainStore: ObservableObject {
         Task { await pushPending() }
     }
 
+    // MARK: - Person change (phone calm I14b)
+
+    /// The brain is one person's: on a person change (`AccountSwitchCleanup`)
+    /// the local clone, its ids and the git token leave this phone. Unsent
+    /// captures get one push first; if that fails the clone is moved aside to
+    /// `Application Support/brain-unsent/` (never shown, never pushed) rather
+    /// than deleted, so no note is destroyed. Nothing on the server changes.
+    func forgetLocal() async {
+        if hasBrain, pendingPush { await pushPending() }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: repoURL.path) {
+            if pendingPush, let aside = Self.unsentDirectory() {
+                let stamp = Int(Date().timeIntervalSince1970)
+                try? fm.moveItem(at: repoURL, to: aside.appendingPathComponent("brain-\(stamp)"))
+            }
+            try? fm.removeItem(at: repoURL)
+        }
+        clearPersisted()
+        defaults.removeObject(forKey: Keys.pendingPush)
+        defaults.removeObject(forKey: "allternit-brain-last-error")
+        hasBrain = false
+        pendingPush = false
+        lastError = nil
+    }
+
+    private static func unsentDirectory() -> URL? {
+        guard let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                                         appropriateFor: nil, create: true) else { return nil }
+        let dir = support.appendingPathComponent("brain-unsent", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     // MARK: - Internals
 
     /// Gate for the clone→init fallback: libgit2 surfaces HTTP auth

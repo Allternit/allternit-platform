@@ -24,6 +24,15 @@ final class ProjectFolderStore: ObservableObject {
 
     func folder(for projectId: String) -> Folder? { folders[projectId] }
 
+    /// Person change (phone calm I14b): the working folders are the leaving
+    /// person's (web keeps `allternit-bot-project-device` in
+    /// `PER_PERSON_STORAGE_KEYS`).
+    func reset() {
+        folders = [:]
+        sessionProjects = [:]
+        UserDefaults.standard.removeObject(forKey: Self.storageKey)
+    }
+
     func set(_ folder: Folder?, for projectId: String) {
         folders[projectId] = folder
         if let data = try? JSONEncoder().encode(folders) {

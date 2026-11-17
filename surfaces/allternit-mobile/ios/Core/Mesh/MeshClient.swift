@@ -219,6 +219,18 @@ final class MeshClient: ObservableObject {
         }
     }
 
+    /// Person change (phone calm I14b): the tailnet node key in
+    /// `Application Support/mesh` was enrolled for the leaving person, so the
+    /// node stops and the key is deleted. The next start enrolls a new node
+    /// for whoever is signed in. The DEBUG `mesh-auth-key` override is a
+    /// developer setting and is kept.
+    func forgetIdentity() {
+        stop()
+        guard let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                                         appropriateFor: nil, create: false) else { return }
+        try? FileManager.default.removeItem(at: support.appendingPathComponent("mesh", isDirectory: true))
+    }
+
     // MARK: - Traffic
 
     /// HTTP GET through the tailnet using the node's identity (response body
