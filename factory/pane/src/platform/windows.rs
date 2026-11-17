@@ -868,7 +868,57 @@ pub fn launch_server_daemon_command(command: &mut std::process::Command) -> std:
     if current_job_kills_processes_on_close()? {
         launch_server_daemon_with_wmi(command)
     } else {
+        // CreateProcess hands the child every inheritable handle, and this
+        // process's own stdio usually is one (a caller that reads our output
+        // through a pipe). The daemon's stdio is null, but without this it
+        // would still hold that pipe open for its whole life, so the caller
+        // never sees EOF: `pane tty ensure` run by allternit-api exited at
+        // once yet the read waited out allternit-api's 30 s timeout
+        // (windows-latest smoke run 44107807201, 2026-11-17).
+        let _keep_stdio_out = StdioInheritGuard::clear();
         command.spawn().map(|child| child.id())
+    }
+}
+
+/// Clears `HANDLE_FLAG_INHERIT` on this process's stdin, stdout and stderr,
+/// and sets it back on drop. Rust's `Stdio::inherit` duplicates the handle
+/// it passes, so children that do want our stdio still get it.
+struct StdioInheritGuard(Vec<HANDLE>);
+
+impl StdioInheritGuard {
+    fn clear() -> Self {
+        use windows_sys::Win32::Foundation::{
+            GetHandleInformation, SetHandleInformation, HANDLE_FLAG_INHERIT,
+        };
+        use windows_sys::Win32::System::Console::{
+            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+        let mut cleared = Vec::new();
+        for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            let handle = unsafe { GetStdHandle(id) };
+            if handle.is_null() || handle == INVALID_HANDLE_VALUE || cleared.contains(&handle) {
+                continue;
+            }
+            let mut flags = 0u32;
+            if unsafe { GetHandleInformation(handle, &mut flags) } == 0 {
+                continue;
+            }
+            if flags & HANDLE_FLAG_INHERIT != 0
+                && unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } != 0
+            {
+                cleared.push(handle);
+            }
+        }
+        Self(cleared)
+    }
+}
+
+impl Drop for StdioInheritGuard {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+        for &handle in &self.0 {
+            unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) };
+        }
     }
 }
 
