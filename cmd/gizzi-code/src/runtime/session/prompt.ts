@@ -57,7 +57,7 @@ import { AnswerTurnGuard } from "@/runtime/session/answer-policy"
 import { SessionProcessor } from "@/runtime/session/processor"
 import { Guardrails } from "@/runtime/session/guardrails"
 import { TaskTool } from "@/runtime/tools/builtins/task"
-import { TurnLocations, parseTurnLocation, type TurnLocation } from "@/runtime/tools/builtins/lookup"
+import { TurnLocations, resolveTurnLocation, type TurnLocation } from "@/runtime/tools/builtins/lookup"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { SessionStatus } from "@/runtime/session/status"
@@ -197,6 +197,12 @@ export namespace SessionPrompt {
       .optional()
       .describe(
         "A system layer for this turn only, sent by allternit-api or the app: this turn's answer-template line, the card-repair note, the user's opt-in shared location. Held in memory for the turn and appended after `system`; deliberately not stored on the user message, never logged, never carried to later turns.",
+      ),
+    turnLocation: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "The user's opt-in shared location for this turn only, structured ({ lat, lon, accuracy_m?, time_zone?, place?, at? }; lat/lon rounded to two decimals), sent by allternit-api (client_location::turn_value) beside the prose line in `turnSystem`. Tools read it (lookup \"here\"). Held in memory for the turn like `turnSystem`: deliberately not part of `metadata` (stored on the user message), never logged, never carried to later turns. Invalid values are ignored.",
       ),
     /**
      * Run this turn as one of the user's platform bots (sent by
@@ -404,8 +410,9 @@ const message = await createUserMessage(input)
     // So does the turn-only system layer (answer template, card-repair note, opt-in location).
     const turnLayer = input.turnSystem?.trim()
     if (turnLayer) turnSystemLayers.set(input.sessionID, turnLayer)
-    // The shared location in that layer, structured for tools (lookup "here"); same lifetime.
-    const location = parseTurnLocation(turnLayer)
+    // The shared location, structured for tools (lookup "here"); same lifetime. Read from
+    // the `turnLocation` field; the `turnSystem` text only when an older API sent no field.
+    const location = resolveTurnLocation(input.turnLocation, turnLayer)
     if (location) TurnLocations.set(input.sessionID, location)
     try {
       const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })

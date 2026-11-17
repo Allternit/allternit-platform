@@ -1743,10 +1743,17 @@ async fn agent_chat_bridge(
 
     // Opt-in location (Settings → Privacy → "Share my location with bots",
     // off by default): checked and rounded here, then sent to gizzi as the
-    // turn-only `turnSystem` layer — never in `system` (gizzi stores that on
-    // the user message), never stored, never logged. Invalid → ignored.
-    let location_layer = crate::client_location::from_body(&body_json, chrono::Utc::now())
-        .map(|loc| crate::client_location::location_layer(&loc));
+    // turn-only `turnSystem` layer (prose for the model) and the turn-only
+    // `turnLocation` value (structured, for lookup's "here") — never in
+    // `system` or `metadata` (gizzi stores both on the user message), never
+    // stored, never logged. Invalid → ignored.
+    let shared_location = crate::client_location::from_body(&body_json, chrono::Utc::now());
+    let location_layer = shared_location
+        .as_ref()
+        .map(crate::client_location::location_layer);
+    let turn_location = shared_location
+        .as_ref()
+        .map(crate::client_location::turn_value);
 
     // A resume re-attaches to a turn already running on this chat (the
     // client's stream dropped mid-reply): nothing new is sent to the model.
@@ -2231,6 +2238,11 @@ async fn agent_chat_bridge(
             .reduce(|a, b| format!("{a}\n\n{}", b.trim()))
         {
             gizzi_payload["turnSystem"] = json!(layers);
+        }
+        // The same location, structured, for tools (lookup "here"): turn-only
+        // like `turnSystem`, so gizzi never parses the layer's wording.
+        if let Some(value) = &turn_location {
+            gizzi_payload["turnLocation"] = value.clone();
         }
 
         // Composer tool options (the + menu / mobile "+" sheet):
@@ -3226,6 +3238,38 @@ mod tests {
             .map(|loc| crate::client_location::location_layer(&loc))
             .unwrap();
         assert!(layer.starts_with("Where the user is (shared from their device just now, approximate): about 40.71, -74.01"));
+    }
+
+    #[test]
+    fn turn_location_is_sent_only_when_location_sharing_is_on() {
+        let at = chrono::Utc::now().to_rfc3339();
+        // Sharing on: the client adds `client_location` to the send.
+        let on = json!({
+            "chatId": "c1",
+            "message": "weather here?",
+            "metadata": { "tools": { "webSearch": true } },
+            "client_location": {
+                "lat": 40.712_8, "lon": -74.006_1, "accuracy_m": 30.0,
+                "time_zone": "America/New_York", "at": at
+            }
+        });
+        let value = crate::client_location::from_body(&on, chrono::Utc::now())
+            .map(|loc| crate::client_location::turn_value(&loc))
+            .unwrap();
+        assert_eq!(value["lat"], json!(40.71));
+        assert_eq!(value["lon"], json!(-74.01));
+        assert_eq!(value["accuracy_m"], json!(1000));
+        assert_eq!(value["time_zone"], json!("America/New_York"));
+        assert!(value["at"].as_str().is_some_and(|s| !s.is_empty()));
+        // It never rides the stored metadata, and needs no turn hint.
+        assert_eq!(stored_turn_metadata(&on).unwrap(), json!({ "tools": { "webSearch": true } }));
+        // Sharing off (no `client_location`), or a location the server rejects: no value.
+        let off = json!({ "chatId": "c1", "message": "weather here?", "metadata": { "client_location": { "lat": 40.71, "lon": -74.01 } } });
+        assert_eq!(crate::client_location::from_body(&off, chrono::Utc::now()), None);
+        let stale = json!({ "client_location": {
+            "lat": 40.71, "lon": -74.01, "time_zone": "America/New_York", "at": "2020-01-01T00:00:00Z"
+        } });
+        assert_eq!(crate::client_location::from_body(&stale, chrono::Utc::now()), None);
     }
 
     #[test]

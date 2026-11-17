@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { checkAnswerResponse, selectAnswerPolicy } from "../../src/runtime/integrations/artifacts/answer-policy"
 import { ANSWER_WIDGETS_MANUAL } from "../../src/runtime/integrations/artifacts/answer-contract"
 import { AnswerTurnGuard, answerWidgetsManual, toolDeliveredCard } from "../../src/runtime/session/answer-policy"
-import { LookupTool, TurnLocations, parseTurnLocation } from "../../src/runtime/tools/builtins/lookup"
+import { LookupTool, TurnLocations, parseTurnLocation, resolveTurnLocation, turnLocationFromField } from "../../src/runtime/tools/builtins/lookup"
 import { clearLookupCache, transport } from "../../src/runtime/primitives/lookup/http"
 import { CliBridgeResults } from "../../src/runtime/integrations/cli-bridge/results"
 import { promptHints } from "../../src/runtime/server/routes/agent-compat"
@@ -122,7 +122,10 @@ describe("lookup permissions", () => {
   })
 })
 
-// allternit-api client_location::location_layer, after the answer-template line in turnSystem.
+// allternit-api client_location::turn_value: the turn-only `turnLocation` field.
+const FIELD = { lat: 40.71, lon: -74.01, accuracy_m: 1000, time_zone: "America/New_York", at: "2026-11-17T15:00:00Z" }
+
+// allternit-api client_location::location_layer, after the answer-template line in turnSystem (prose for the model).
 const LAYER =
   "Use the weather template for this answer.\n\nWhere the user is (shared from their device just now, approximate): about 40.71, -74.01, within roughly 1 km. Their time zone: America/New_York. Use this only when it helps, for local time, nearby places, weather or directions. Don't mention it otherwise, and don't save it to memory."
 
@@ -146,18 +149,43 @@ describe("lookup: the shared location for \"here\"", () => {
     TurnLocations.release("ses_lookup", TurnLocations.get("ses_lookup")!)
   })
 
-  test("the turnSystem location line parses into a structured value; other text does not", () => {
+  test("the turnLocation field gives the structured location; a bad field gives none", () => {
+    expect(turnLocationFromField(FIELD)).toEqual({ lat: 40.71, lon: -74.01, accuracyKm: 1, timeZone: "America/New_York" })
+    expect(turnLocationFromField({ ...FIELD, accuracy_m: 4600, place: "Lower Manhattan" })).toEqual({
+      lat: 40.71,
+      lon: -74.01,
+      accuracyKm: 5,
+      timeZone: "America/New_York",
+      place: "Lower Manhattan",
+    })
+    expect(turnLocationFromField({ ...FIELD, lat: 140 })).toBeUndefined()
+    expect(turnLocationFromField({ lat: "40.71", lon: -74.01 })).toBeUndefined()
+    expect(turnLocationFromField(undefined)).toBeUndefined()
+  })
+
+  test("the field wins over the turnSystem text, whatever its wording; the text is read only when the field is absent", () => {
+    const reworded = "Use the weather template for this answer.\n\nThe user is near 51.51, -0.13 (approx.)."
+    expect(resolveTurnLocation(FIELD, reworded)).toEqual({ lat: 40.71, lon: -74.01, accuracyKm: 1, timeZone: "America/New_York" })
+    expect(resolveTurnLocation(FIELD, undefined)?.lat).toBe(40.71)
+    // An invalid field means no location, not a fall back to the prose.
+    expect(resolveTurnLocation({ lat: 999, lon: 0 }, LAYER)).toBeUndefined()
+    // An older allternit-api sends only the prose line.
+    expect(resolveTurnLocation(undefined, LAYER)).toEqual({ lat: 40.71, lon: -74.01, accuracyKm: 1, timeZone: "America/New_York" })
+    expect(resolveTurnLocation(undefined, reworded)).toBeUndefined()
+  })
+
+  test("legacy: the turnSystem location line of an older API parses into a structured value; other text does not", () => {
     expect(parseTurnLocation(LAYER)).toEqual({ lat: 40.71, lon: -74.01, accuracyKm: 1, timeZone: "America/New_York" })
     expect(parseTurnLocation("Use the weather template for this answer.")).toBeUndefined()
     expect(parseTurnLocation(undefined)).toBeUndefined()
     expect(parseTurnLocation("Where the user is (approximate): about 140.00, 10.00, within roughly 1 km.")).toBeUndefined()
   })
 
-  test("weather for \"here\" uses the location on the tool context", async () => {
+  test("weather for \"here\" uses the structured turnLocation on the tool context", async () => {
     stubNetwork()
     const tool = await LookupTool.init()
     const asks: any[] = []
-    const result = await tool.execute({ kind: "weather", query: "here" }, ctx(asks, false, { location: parseTurnLocation(LAYER) }))
+    const result = await tool.execute({ kind: "weather", query: "here" }, ctx(asks, false, { location: resolveTurnLocation(FIELD, undefined) }))
     expect(urls.some((u) => u.includes("api.met.no") && u.includes("lat=40.71") && u.includes("lon=-74.01"))).toBe(true)
     expect(result.metadata.card?.template).toBe("weather")
     expect((result.metadata.card as any).data.location).toBe("your location")
@@ -166,7 +194,7 @@ describe("lookup: the shared location for \"here\"", () => {
 
   test("places \"near me\" uses the session's turn location (the CLI-bridge path, no extra)", async () => {
     stubNetwork()
-    TurnLocations.set("ses_lookup", parseTurnLocation(LAYER)!)
+    TurnLocations.set("ses_lookup", turnLocationFromField(FIELD)!)
     const tool = await LookupTool.init()
     const result = await tool.execute({ kind: "places", query: "coffee", place: "near me" }, ctx([]))
     const search = urls.find((u) => u.includes("viewbox="))
