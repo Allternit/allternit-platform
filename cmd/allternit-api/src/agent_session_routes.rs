@@ -3459,37 +3459,76 @@ pub(crate) fn gizzi_message_error(body: &[u8]) -> Option<String> {
 
 /// Run one user turn in a session and return the assistant's text.
 pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
-    bot_turn_with_brain(db, session_id, bot_id, text, None, false).await
+    bot_turn_with_brain(db, session_id, bot_id, text, None, false, None).await
+}
+
+/// [`send_bot_turn`] with extra user-message metadata (a scheduled run's
+/// `automation_run`, so the runtime refuses its approval asks instead of
+/// waiting), optionally on `"provider/model"` instead of the bot's own model.
+pub(crate) async fn send_bot_turn_marked(
+    db: &DbHandle,
+    session_id: &str,
+    bot_id: &str,
+    text: &str,
+    model: Option<&str>,
+    metadata: &serde_json::Value,
+) -> Result<String, String> {
+    bot_turn_with_brain(db, session_id, bot_id, text, model, false, Some(metadata)).await
 }
 
 /// [`send_bot_turn`] for a spoken reply: the runtime adds its voice prompt block
 /// (`metadata.reply_mode: "voice"`). Used by the phone-call channel fallback.
 pub(crate) async fn send_voice_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
-    bot_turn_with_brain(db, session_id, bot_id, text, None, true).await
+    bot_turn_with_brain(db, session_id, bot_id, text, None, true, None).await
 }
 
 /// [`send_bot_turn`] on `"provider/model"` instead of the bot's own model.
 pub(crate) async fn send_bot_turn_on_model(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, model: &str) -> Result<String, String> {
-    bot_turn_with_brain(db, session_id, bot_id, text, Some(model), false).await
+    bot_turn_with_brain(db, session_id, bot_id, text, Some(model), false, None).await
 }
 
-async fn bot_turn_with_brain(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>, voice: bool) -> Result<String, String> {
+async fn bot_turn_with_brain(
+    db: &DbHandle,
+    session_id: &str,
+    bot_id: &str,
+    text: &str,
+    brain: Option<&str>,
+    voice: bool,
+    extra: Option<&serde_json::Value>,
+) -> Result<String, String> {
     // Vendor-bound bots run through the Agent Gateway; never a native brain,
     // unless the owner opted in to a fallback brain (disclosed in the reply).
     if let Some(vendor) = crate::gateway_runner::intercept_turn_with_fallback(session_id, text, Default::default(), |brain| {
         let db = db.clone();
-        async move { native_turn_on(&db, session_id, bot_id, text, Some(&brain), voice).await }
+        async move { native_turn_on(&db, session_id, bot_id, text, Some(&brain), voice, extra).await }
     })
     .await
     {
         return vendor;
     }
-    native_turn_on(db, session_id, bot_id, text, brain, voice).await
+    native_turn_on(db, session_id, bot_id, text, brain, voice, extra).await
+}
+
+/// Copy `extra`'s keys into `payload.metadata` (a scheduled run's marker).
+fn merge_payload_metadata(payload: &mut serde_json::Value, extra: Option<&serde_json::Value>) {
+    if let Some(map) = extra.and_then(|e| e.as_object()) {
+        for (key, value) in map {
+            set_payload_metadata(payload, key, value.clone());
+        }
+    }
 }
 
 /// The native (placed or local gizzi) half of [`send_bot_turn`]. `brain` =
 /// `"provider/model"` overrides the bot's model for a fallback turn.
-async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>, voice: bool) -> Result<String, String> {
+async fn native_turn_on(
+    db: &DbHandle,
+    session_id: &str,
+    bot_id: &str,
+    text: &str,
+    brain: Option<&str>,
+    voice: bool,
+    extra: Option<&serde_json::Value>,
+) -> Result<String, String> {
     let brain_ref = brain.and_then(|b| b.split_once('/')).map(|(p, m)| json!(GizziModelRef::new(p.to_string(), m.to_string(), None)));
     if let Some(target) = crate::placement::session_target(db, session_id) {
         let model = brain_ref.clone().or_else(|| bot_turn_model(db, session_id, bot_id)).ok_or_else(|| no_brain_turn_error(db, bot_id))?;
@@ -3497,6 +3536,7 @@ async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &st
         if voice {
             body["metadata"]["reply_mode"] = json!("voice");
         }
+        merge_payload_metadata(&mut body, extra);
         if let Some(system) = bot_turn_system(db, session_id, bot_id) {
             body["system"] = json!(format!("+{system}"));
         }
@@ -3508,6 +3548,7 @@ async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &st
     if voice {
         set_payload_metadata(&mut payload, "reply_mode", json!("voice"));
     }
+    merge_payload_metadata(&mut payload, extra);
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => {
             if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {
@@ -4630,7 +4671,14 @@ pub(crate) struct TurnDigest {
     pub steps: Vec<serde_json::Value>,
     /// `provider/model` of the turn's last assistant message.
     pub model: Option<String>,
+    /// The tool a scheduled (unattended) turn stopped at because it needed
+    /// the owner's approval (gizzi `UnattendedError`).
+    pub blocked: Option<String>,
 }
+
+/// The tool error gizzi gives a call refused because an unattended scheduled
+/// turn can't ask (`PermissionNext.UnattendedError`).
+pub(crate) const UNATTENDED_STOP: &str = "Unattended scheduled runs can't ask";
 
 /// [`TurnDigest`] of a session's newest turn: the assistant messages after
 /// its last user message. `None` when the session is not on this runtime's
@@ -4668,6 +4716,10 @@ fn digest_turn(messages: &[GizziMessage]) -> TurnDigest {
                     } else if !digest.tools.iter().any(|t| t == tool) {
                         digest.tools.push(tool.to_string());
                     }
+                    let failed = part.state.as_ref().filter(|s| s["status"] == "error").and_then(|s| s["error"].as_str());
+                    if failed.is_some_and(|e| e.contains(UNATTENDED_STOP)) && digest.blocked.is_none() {
+                        digest.blocked = Some(tool.to_string());
+                    }
                 }
                 _ => {}
             }
@@ -4688,6 +4740,113 @@ pub(crate) async fn abort_automation_session(db:&DbHandle,session_id:&str)->Resu
     }
     let client=gizzi_client(&HeaderMap::new());
     gizzi_no_content(&client,reqwest::Method::POST,&format!("/v1/session/{}/abort",urlencoding::encode(session_id)),Some(json!({}))).await.map_err(|_|"Runtime did not confirm cancellation".into())
+}
+
+/// The `x-gizzi-directory` header for a session that saved its folder.
+fn session_directory_headers(db: &DbHandle, session_id: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    if let Some(directory) = db.get_session_metadata(session_id).ok().flatten().and_then(|bag| bag["directory"].as_str().map(str::to_owned)) {
+        if let Ok(value) = axum::http::HeaderValue::from_str(&directory) {
+            headers.insert("x-gizzi-directory", value);
+        }
+    }
+    headers
+}
+
+/// A user turn posted straight into a session that has no bot (a plain chat,
+/// a Gizzi Code session): a scheduled task's run. With no `model` the runtime
+/// uses the session's own (gizzi `lastModel`); a busy session queues the turn
+/// behind the one running. `metadata` rides on the user message (the
+/// scheduler's `automation_run`). Returns the turn's report like
+/// [`send_bot_turn`].
+pub(crate) async fn send_session_turn(
+    db: &DbHandle,
+    session_id: &str,
+    text: &str,
+    metadata: &serde_json::Value,
+    model: Option<serde_json::Value>,
+) -> Result<String, String> {
+    if let Some(target) = crate::placement::session_target(db, session_id) {
+        let mut body = json!({ "text": text, "metadata": metadata });
+        if let Some(model) = model {
+            body["metadata"]["model"] = model;
+        }
+        let path = format!("/agent-sessions/{}/messages", urlencoding::encode(session_id));
+        let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
+        return placed_turn_report(&reply);
+    }
+    let client = gizzi_client(&session_directory_headers(db, session_id));
+    let path = format!("/v1/session/{}/message", urlencoding::encode(session_id));
+    let mut payload = json!({ "parts": [{ "type": "text", "text": text }] });
+    merge_payload_metadata(&mut payload, Some(metadata));
+    if let Some(model) = model {
+        payload["model"] = model;
+    }
+    match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
+        Ok(message) => {
+            if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {
+                return Err(error);
+            }
+            turn_report(&message.parts)
+        }
+        Err(response) => {
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+                .unwrap_or_default();
+            Err(format!("gizzi turn failed ({status}): {body}"))
+        }
+    }
+}
+
+/// The brain a session last ran on (its newest assistant message), else the
+/// platform default. A scheduled heartbeat's side session runs on the brain
+/// of the thread it reports to.
+pub(crate) async fn session_turn_model(db: &DbHandle, session_id: &str) -> Option<serde_json::Value> {
+    if crate::placement::session_target(db, session_id).is_none() {
+        let client = gizzi_client(&HeaderMap::new());
+        let path = format!("/v1/session/{}/messages?limit=20", urlencoding::encode(session_id));
+        if let Ok(messages) = gizzi_json::<Vec<GizziMessage>>(&client, reqwest::Method::GET, &path, None).await {
+            let last = messages.iter().rev().find_map(|m| match (m.info.provider_id.as_deref(), m.info.model_id.as_deref()) {
+                (Some(p), Some(id)) if !p.is_empty() && !id.is_empty() => Some((p.to_string(), id.to_string())),
+                _ => None,
+            });
+            if let Some((p, id)) = last {
+                return Some(json!(GizziModelRef::new(p, id, None)));
+            }
+        }
+    }
+    default_model_ref()
+}
+
+/// A fresh plain gizzi session (no bot), in the folder `like` works in: a
+/// heartbeat's side session (deleted after the run) or a new-session
+/// scheduled task's run. A bot's side session on another Allternit is made
+/// there ([`create_bot_thread_session`]).
+pub(crate) async fn create_plain_session(db: &DbHandle, title: &str, like: Option<&str>, bot_id: Option<&str>) -> Result<String, String> {
+    if let Some(bot) = bot_id.filter(|b| crate::placement::bot_target(db, b).is_some()) {
+        return create_bot_thread_session(db, bot, title, title, false, None).await;
+    }
+    let headers = like.map(|s| session_directory_headers(db, s)).unwrap_or_default();
+    let client = gizzi_client(&headers);
+    let mut payload = json!({ "title": title, "surface": normalize_surface_for_gizzi("chat") });
+    let model = match (bot_id, like) {
+        (Some(bot), _) => agent_saved_model(db, bot).or_else(default_model_ref),
+        (None, Some(session)) => session_turn_model(db, session).await,
+        (None, None) => default_model_ref(),
+    };
+    if let Some(model) = model {
+        payload["model"] = model;
+    }
+    let session = gizzi_json::<GizziSessionInfo>(&client, reqwest::Method::POST, "/v1/session", Some(payload))
+        .await
+        .map_err(|_| "gizzi runtime refused session create".to_string())?;
+    let _ = db.set_session_origin_surface(&session.id, "chat");
+    if let Some(dir) = headers.get("x-gizzi-directory").and_then(|v| v.to_str().ok()) {
+        let _ = db.set_session_metadata(&session.id, &json!({ "directory": dir }));
+    }
+    Ok(session.id)
 }
 
 /// Best-effort delete of a scratch session (the morning brief's model turn runs in one).

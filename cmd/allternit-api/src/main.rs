@@ -1138,6 +1138,7 @@ async fn main() {
         .merge(allternit_api::bot_suggestions::bot_suggestions_router())
         .merge(allternit_api::thread_bot_tools::thread_bot_tools_router())
         .merge(allternit_api::agent_user_tools::agent_user_tools_router())
+        .merge(allternit_api::agent_automation_tools::agent_automation_tools_router())
         .merge(allternit_api::worker_bot_tools::worker_bot_tools_router())
         .merge(allternit_api::project_send_tools::project_send_tools_router())
         .merge(allternit_api::events_feed::events_feed_router())

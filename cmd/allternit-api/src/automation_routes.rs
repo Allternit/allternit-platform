@@ -194,6 +194,10 @@ pub struct RoutineRun {
     pub attempt: i32,
     pub triggered_by: String,
     pub metadata: Option<serde_json::Value>,
+    /// Why the run ended the way it did (`quiet` for a heartbeat that had nothing
+    /// to say, `missed`, `approval_timeout`, `timeout` …); see `routine_local_scheduler::classify`.
+    #[serde(default)]
+    pub outcome_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -426,7 +430,7 @@ async fn cron_daemon_update_job(
         .map_err(|e| format!("cron daemon update decode failed: {}", e))
 }
 
-async fn cron_daemon_delete_job(
+pub(crate) async fn cron_daemon_delete_job(
     client: &reqwest::Client,
     daemon_job_id: &str,
 ) -> Result<(), String> {
@@ -1167,6 +1171,52 @@ async fn list_routines(
     Ok(Json(out))
 }
 
+/// The one session a scheduled task posts into (`config.delivery.sessionId`):
+/// a routine made by the `automation` tool, which needs no bot.
+pub fn delivery_session(config: &serde_json::Value) -> Option<&str> {
+    config.pointer("/delivery/sessionId").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Store a new routine row (create_routine and the `automation` tool's
+/// create, `agent_automation_tools`). `agent_id` may be NULL only for a row
+/// that posts into one session ([`delivery_session`]); `next_run_at` is
+/// stored as given (NULL lets the local scheduler compute it).
+pub fn insert_routine(conn: &rusqlite::Connection, routine: &Routine) -> rusqlite::Result<()> {
+    let has_agent = routine.agent_id.as_deref().is_some_and(|a| !a.trim().is_empty());
+    if !has_agent && delivery_session(&routine.config).is_none() {
+        return Err(rusqlite::Error::InvalidParameterName(AGENT_REQUIRED_MESSAGE.to_string()));
+    }
+    conn.execute(
+        "INSERT INTO routines (id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at, next_run_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+        params![
+            &routine.id,
+            &routine.user_id,
+            &routine.workspace_id,
+            &routine.agent_id,
+            &routine.goal_id,
+            &routine.gizzi_job_id,
+            &routine.name,
+            &routine.description,
+            &routine.status,
+            &routine.schedule_type,
+            &routine.schedule_expression,
+            &routine.timezone,
+            &routine.execution_domain,
+            routine.config.to_string(),
+            routine.tags.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default()),
+            routine.metadata.as_ref().map(|m| m.to_string()),
+            routine.max_runs,
+            routine.timeout_seconds,
+            routine.max_retries,
+            &routine.created_at,
+            &routine.updated_at,
+            &routine.next_run_at,
+        ],
+    )?;
+    Ok(())
+}
+
 async fn create_routine(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1179,18 +1229,22 @@ async fn create_routine(
     let now = chrono::Utc::now().to_rfc3339();
 
     let execution_domain = normalize_execution_domain(req.execution_domain.clone());
-    // Every routine runs as a bot's turn (local: routine_local_scheduler; cloud and
+    // A routine runs as a bot's turn (local: routine_local_scheduler; cloud and
     // hybrid: the cron daemon posts it to the bot), and a run with no bot used to fail
-    // silently. Refuse it up front.
+    // silently. Refuse it up front, unless it posts into one session itself.
     let agent_id = {
         let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         check_agent(&conn, req.agent_id.as_deref())?
     };
-    if agent_id.is_none() {
+    let config = req.config.unwrap_or_else(|| json!({}));
+    // A scheduled task that posts into one session (`config.delivery.sessionId`)
+    // needs no bot: the scheduler posts the turn there itself. Only on this
+    // computer's scheduler: the cloud daemon still runs routines as a bot.
+    let delivers_itself = delivery_session(&config).is_some() && !uses_cloud_scheduler(&execution_domain);
+    if agent_id.is_none() && !delivers_itself {
         return Err(RoutineApiError::new(StatusCode::BAD_REQUEST, "agent_required", AGENT_REQUIRED_MESSAGE));
     }
 
-    let config = req.config.unwrap_or_else(|| json!({}));
     let job_type = config
         .get("jobType")
         .and_then(|v| v.as_str())
@@ -1254,44 +1308,15 @@ async fn create_routine(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    conn.execute(
-        "INSERT INTO routines (id, user_id, workspace_id, agent_id, goal_id, gizzi_job_id, name, description, status, schedule_type, schedule_expression, timezone, execution_domain, config, tags, metadata, max_runs, timeout_seconds, max_retries, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
-        params![
-            &routine.id,
-            &routine.user_id,
-            &routine.workspace_id,
-            &routine.agent_id,
-            &routine.goal_id,
-            &daemon_job_id,
-            &routine.name,
-            &routine.description,
-            &routine.status,
-            &routine.schedule_type,
-            &routine.schedule_expression,
-            &routine.timezone,
-            &routine.execution_domain,
-            routine.config.to_string(),
-            routine.tags.as_ref().map(|t| serde_json::to_string(t).unwrap_or_default()),
-            routine.metadata.as_ref().map(|m| m.to_string()),
-            routine.max_runs,
-            routine.timeout_seconds,
-            routine.max_retries,
-            &routine.created_at,
-            &routine.updated_at,
-        ],
-    )
-    .map_err(|e| {
+    let routine = Routine { gizzi_job_id: daemon_job_id, ..routine };
+    insert_routine(&conn, &routine).map_err(|e| {
         warn!("insert routine failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    info!("routine created: {} daemon_job_id={:?}", id, daemon_job_id);
+    info!("routine created: {} daemon_job_id={:?}", id, routine.gizzi_job_id);
 
-    Ok(Json(Routine {
-        gizzi_job_id: daemon_job_id,
-        ..routine
-    }))
+    Ok(Json(routine))
 }
 
 async fn get_routine(
@@ -1567,7 +1592,7 @@ async fn run_routine(
         let routine = crate::routine_local_scheduler::get_routine(&state.db, &id)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::NOT_FOUND)?;
-        if routine.agent_id.as_deref().map_or(true, |a| a.trim().is_empty()) {
+        if !routine.runnable() {
             return Err(RoutineApiError::new(StatusCode::CONFLICT, "agent_required", AGENT_REQUIRED_MESSAGE));
         }
         let guard = crate::routine_local_scheduler::FlightGuard::acquire(&id).ok_or_else(|| {
@@ -1642,7 +1667,7 @@ async fn list_routine_runs(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, routine_id, gizzi_run_id, status, scheduled_at, started_at, finished_at, duration_ms, output, error, attempt, triggered_by, metadata
+            "SELECT id, routine_id, gizzi_run_id, status, scheduled_at, started_at, finished_at, duration_ms, output, error, attempt, triggered_by, metadata, outcome_reason
              FROM routine_runs WHERE routine_id = ?1 ORDER BY scheduled_at DESC",
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -1665,6 +1690,7 @@ async fn list_routine_runs(
                 metadata: row
                     .get::<_, Option<String>>(12)?
                     .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null)),
+                outcome_reason: row.get(13)?,
             })
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -1796,7 +1822,7 @@ async fn list_loop_runs(
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, routine_id, gizzi_run_id, status, scheduled_at, started_at, finished_at, duration_ms, output, error, attempt, triggered_by, metadata
+            "SELECT id, routine_id, gizzi_run_id, status, scheduled_at, started_at, finished_at, duration_ms, output, error, attempt, triggered_by, metadata, outcome_reason
              FROM loop_runs WHERE routine_id = ?1 ORDER BY scheduled_at DESC LIMIT 200",
         )
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -1818,6 +1844,7 @@ async fn list_loop_runs(
                 metadata: row
                     .get::<_, Option<String>>(12)?
                     .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null)),
+                outcome_reason: row.get(13)?,
             })
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -2824,6 +2851,49 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ok.0.agent_id.as_deref(), Some("bot-main"));
+    }
+
+    #[tokio::test]
+    async fn a_routine_that_posts_into_one_session_needs_no_bot() {
+        let state = routine_state("delivery").await;
+        let mut req = create_req(None);
+        req.config = Some(json!({ "prompt": "Remind me", "delivery": { "sessionId": "ses_plain" } }));
+        let ok = create_routine(State(state.clone()), user_headers(), Json(req)).await.unwrap().0;
+        assert_eq!((ok.agent_id.as_deref(), ok.execution_domain.as_str()), (None, "local"));
+        let stored: (Option<String>, String) = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT agent_id, json_extract(config, '$.delivery.sessionId') FROM routines WHERE id = ?1", [&ok.id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(stored, (None, "ses_plain".to_string()));
+        // The shared insert refuses a row with neither a bot nor a session to post into.
+        let conn = state.db.connect().unwrap();
+        let bare = Routine { id: "bare".into(), config: json!({}), ..ok.clone() };
+        assert!(insert_routine(&conn, &bare).is_err());
+        // Run now accepts it (no "needs a bot" refusal).
+        let run = run_routine(State(state.clone()), user_headers(), Path(ok.id.clone())).await.unwrap().0;
+        assert_eq!(run["status"], "running");
+    }
+
+    #[tokio::test]
+    async fn run_history_says_why_a_run_was_quiet() {
+        let state = routine_state("runs").await;
+        let conn = state.db.connect().unwrap();
+        conn.execute(
+            "INSERT INTO routines (id, user_id, name, status, schedule_type, schedule_expression, execution_domain, config)
+             VALUES ('hb', 'user-a', 'Watch CI', 'active', 'interval', '1h', 'local', '{\"delivery\":{\"sessionId\":\"ses_a\"},\"kind\":\"heartbeat\"}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, triggered_by, outcome_reason)
+             VALUES ('run-1', 'hb', 'skipped', '2026-11-17T15:00:00+00:00', 'schedule', 'quiet')",
+            [],
+        )
+        .unwrap();
+        let body = list_routine_runs(State(state.clone()), user_headers(), Path("hb".to_string())).await.unwrap().0;
+        assert_eq!((body["runs"][0]["status"].as_str(), body["runs"][0]["outcome_reason"].as_str()), (Some("skipped"), Some("quiet")));
     }
 
     #[tokio::test]
