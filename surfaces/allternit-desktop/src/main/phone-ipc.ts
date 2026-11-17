@@ -357,12 +357,6 @@ export function registerPhoneIpc(handle: Guarded): void {
   handle('phone:usb-stop', async (_e, boardId: unknown) => (await usb()).stop(String(boardId)));
   handle('phone:usb-forget', async (_e, boardId: unknown) => (await usb()).forget(String(boardId)));
 
-  // Control my iPhone by Bluetooth (bt-mac): this Mac as a Bluetooth keyboard and mouse for the person's iPhone.
-  // status never asks for Bluetooth permission; pair asks the first time.
-  handle('phone:bt-mac-status', () => phoneService.btMacStatus());
-  handle('phone:bt-mac-pair', () => phoneService.btMacPair());
-  handle('phone:bt-mac-disconnect', () => phoneService.btMacDisconnect());
-
   handle('phone:artemis-install', async () => {
     await phoneService.ensureReady();
     return phoneService.getArtemis()?.install();

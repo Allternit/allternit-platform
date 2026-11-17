@@ -61,10 +61,9 @@ describe("bot turn system prompt", () => {
     }
   })
 
-  test("non-bot sessions: provider header first, instructions loaded, + text last", async () => {
+  test("non-bot sessions are unchanged: provider header first, instructions loaded, + text last", async () => {
     const { header, loaded } = await turnPrompt({ userSystem: "+standing instructions" })
-    // No surface (gizzi CLI) gets the Gizzi Code stack.
-    expect(header.startsWith("You are Gizzi Code, Allternit's coding agent.")).toBe(true)
+    expect(header.startsWith("You are Allternit Shell (allternit-shell), an AI coding agent.")).toBe(true)
     expect(loaded).toEqual(["instructions", "workspace", "mcpInstructions"])
     expect(header).toContain("my name is Eoj")
     expect(header.trimEnd().endsWith("standing instructions")).toBe(true)

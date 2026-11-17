@@ -1766,13 +1766,6 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     if let Some(system) = body.system.as_deref().filter(|s| !s.trim().is_empty()) {
         payload["system"] = json!(system);
     }
-    // Prompt hints the runtime reads (small-screen and spoken-reply blocks):
-    // only these two keys, each with its one allowed value, pass through.
-    for (key, allowed) in [("form_factor", "phone"), ("reply_mode", "voice")] {
-        if body.metadata.as_ref().and_then(|m| m.get(key)).and_then(|v| v.as_str()) == Some(allowed) {
-            payload["metadata"][key] = json!(allowed);
-        }
-    }
     payload
 }
 
@@ -3399,44 +3392,35 @@ pub(crate) fn gizzi_message_error(body: &[u8]) -> Option<String> {
 
 /// Run one user turn in a session and return the assistant's text.
 pub(crate) async fn send_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
-    bot_turn_with_brain(db, session_id, bot_id, text, None, false).await
-}
-
-/// [`send_bot_turn`] for a spoken reply: the runtime adds its voice prompt block
-/// (`metadata.reply_mode: "voice"`). Used by the phone-call channel fallback.
-pub(crate) async fn send_voice_bot_turn(db: &DbHandle, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
-    bot_turn_with_brain(db, session_id, bot_id, text, None, true).await
+    bot_turn_with_brain(db, session_id, bot_id, text, None).await
 }
 
 /// [`send_bot_turn`] on `"provider/model"` instead of the bot's own model.
 pub(crate) async fn send_bot_turn_on_model(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, model: &str) -> Result<String, String> {
-    bot_turn_with_brain(db, session_id, bot_id, text, Some(model), false).await
+    bot_turn_with_brain(db, session_id, bot_id, text, Some(model)).await
 }
 
-async fn bot_turn_with_brain(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>, voice: bool) -> Result<String, String> {
+async fn bot_turn_with_brain(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>) -> Result<String, String> {
     // Vendor-bound bots run through the Agent Gateway; never a native brain,
     // unless the owner opted in to a fallback brain (disclosed in the reply).
     if let Some(vendor) = crate::gateway_runner::intercept_turn_with_fallback(session_id, text, Default::default(), |brain| {
         let db = db.clone();
-        async move { native_turn_on(&db, session_id, bot_id, text, Some(&brain), voice).await }
+        async move { native_turn_on(&db, session_id, bot_id, text, Some(&brain)).await }
     })
     .await
     {
         return vendor;
     }
-    native_turn_on(db, session_id, bot_id, text, brain, voice).await
+    native_turn_on(db, session_id, bot_id, text, brain).await
 }
 
 /// The native (placed or local gizzi) half of [`send_bot_turn`]. `brain` =
 /// `"provider/model"` overrides the bot's model for a fallback turn.
-async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>, voice: bool) -> Result<String, String> {
+async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, brain: Option<&str>) -> Result<String, String> {
     let brain_ref = brain.and_then(|b| b.split_once('/')).map(|(p, m)| json!(GizziModelRef::new(p.to_string(), m.to_string(), None)));
     if let Some(target) = crate::placement::session_target(db, session_id) {
         let model = brain_ref.clone().or_else(|| bot_turn_model(db, session_id, bot_id)).ok_or_else(|| no_brain_turn_error(db, bot_id))?;
         let mut body = json!({ "text": text, "metadata": { "model": model } });
-        if voice {
-            body["metadata"]["reply_mode"] = json!("voice");
-        }
         if let Some(system) = bot_turn_system(db, session_id, bot_id) {
             body["system"] = json!(format!("+{system}"));
         }
@@ -3444,10 +3428,7 @@ async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &st
         let reply = crate::placement::call(&target, reqwest::Method::POST, &path, Some(body)).await?;
         return placed_turn_report(&reply);
     }
-    let (client, path, mut payload) = native_turn_request_on(db, session_id, bot_id, text, brain_ref).await?;
-    if voice {
-        payload["metadata"] = json!({ "reply_mode": "voice" });
-    }
+    let (client, path, payload) = native_turn_request_on(db, session_id, bot_id, text, brain_ref).await?;
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => {
             if let Some(error) = message.info.error.as_ref().and_then(|e| e.message.clone()) {

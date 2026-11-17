@@ -29,8 +29,6 @@ struct DeviceAccessSettingsView: View {
             SettingsDescription(text: "Bots reach your iPhone only while the Allternit app is open on it. If the app is in the background, a bot is told to ask you to open it. Adding an event or reminder, sending anything and changing a lock always need your approval on your computer first.")
 
             PhoneActionsSettingsSection()
-
-            KeyboardModeSettingsSection()
         }
         .onAppear { access.refresh() }
         .onChange(of: scenePhase) { _, phase in

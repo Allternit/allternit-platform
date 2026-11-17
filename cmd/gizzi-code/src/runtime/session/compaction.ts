@@ -12,7 +12,6 @@ import { Log } from "@/shared/util/log"
 import { SessionProcessor } from "@/runtime/session/processor"
 import { fn } from "@/shared/util/fn"
 import { Agent } from "@/runtime/loop/agent"
-import { SystemPrompt } from "@/runtime/session/system"
 import { Plugin } from "@/runtime/integrations/plugin"
 import { Config } from "@/runtime/context/config/config"
 import { ProviderTransform } from "@/runtime/providers/adapters/transform"
@@ -192,14 +191,34 @@ export namespace SessionCompaction {
       { sessionID: input.sessionID },
       { context: [], prompt: undefined },
     )
-    // The structure (five headings) lives in the compaction agent's prompt
-    // (loop/prompts/compaction.txt); this turn only asks for it, so the two
-    // never disagree.
-    const defaultPrompt =
-      "Summarize the conversation above now, using exactly the five headings from your instructions. Another agent will continue the work from this summary alone."
+    const defaultPrompt = `Provide a detailed prompt for continuing our conversation above.
+Focus on information that would be helpful for continuing the conversation, including what we did, what we're doing, which files we're working on, and what we're going to do next.
+The summary that you construct will be used so that another agent can read it and continue the work.
 
-    const session = await Session.get(input.sessionID).catch(() => undefined)
-    const promptSurface = session ? await SystemPrompt.effectiveSurface(session, (id) => Session.get(id)) : undefined
+When constructing the summary, try to stick to this template:
+---
+## Goal
+
+[What goal(s) is the user trying to accomplish?]
+
+## Instructions
+
+- [What important instructions did the user give you that are relevant]
+- [If there is a plan or spec, include information about it so next agent can continue using it]
+
+## Discoveries
+
+[What notable things were learned during this conversation that would be useful for the next agent to know when continuing the work]
+
+## Accomplished
+
+[What work has been completed, what work is still in progress, and what work is left?]
+
+## Relevant files / directories
+
+[Construct a structured list of relevant files that have been read, edited, or created that pertain to the task at hand. If all the files in a directory are relevant, include the path to the directory.]
+---`
+
     const todos = Todo.get(input.sessionID)
     const todoPrompt = todos.length
       ? ["Preserve this durable TODO list verbatim in the summary:", ...todos.map((todo) => `- [${todo.status}] (${todo.priority}) ${todo.content}`)].join("\n")
@@ -225,7 +244,6 @@ export namespace SessionCompaction {
         ],
         model,
         callType: "compaction",
-        surface: promptSurface,
       })
       const created = (await MessageV2.parts(msg.id)).filter((part) => !before.has(part.id))
       summary = created.filter((part) => part.type === "text").map((part) => part.text).join("").trim()

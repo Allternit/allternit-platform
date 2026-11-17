@@ -5,10 +5,9 @@
  * A bot turn is the bot, not the coding agent and not the user's own Claude
  * Code / gizzi setup:
  *
- * - Identity: the bot's persona leads the system prompt and the base header
- *   (chat or Gizzi Code identity) is replaced by neutral operating guidance,
- *   the shared safety block and, on chat surfaces, the capabilities block
- *   (SystemPrompt.bot; see `system-header.ts`).
+ * - Identity: the bot's persona leads the system prompt and the "Allternit
+ *   Shell … coding agent" header is replaced by neutral operating guidance
+ *   (see `system-header.ts`).
  * - Instructions: no personal instruction files. The user's ~/.claude/CLAUDE.md,
  *   ~/.gizzi/* identity and legacy prompts, and CLAUDE.md / AGENTS.md /
  *   GIZZI.md found by walking up from the session folder are not loaded. The

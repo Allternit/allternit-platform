@@ -55,12 +55,6 @@ export namespace LLM {
     retries?: number
     toolChoice?: "auto" | "required" | "none"
     mode?: 'plan' | 'build'  // Execution mode for system prompt
-    /**
-     * The session's surface for prompt choice (SystemPrompt.effectiveSurface:
-     * the session's own, else its root's). chat/cowork/browser/design get the
-     * chat stack; code or unset get the code stack.
-     */
-    surface?: SystemPrompt.PromptContext["surface"]
     plan?: Provider.AuthPlan
     /** O5: picks the output cap row; omitted = "answer" (the previous default). */
     callType?: OutputCallType
@@ -101,20 +95,16 @@ export namespace LLM {
     // identity header is replaced (runtime/bots/bot-turn.ts).
     const bot = input.user.bot ?? BotTurn.get(input.sessionID)
     if (bot) BotTurn.mark(input.sessionID, bot)
-    // Surface picks the stack; the user message's metadata adds the voice
-    // (`reply_mode: "voice"`) and phone (`form_factor: "phone"`) blocks.
-    const promptContext = SystemPrompt.context(input.surface, input.user.metadata)
     const system = []
     system.push(
       headerParts({
         bot,
         // use agent prompt otherwise provider prompt
         agentPrompt: input.agent.prompt,
-        // Codex OAuth: the header stack (provider or bot guidance) goes in
-        // options.instructions below, so headerParts leaves it out here.
+        // For Codex sessions, skip SystemPrompt.provider() since it's sent via options.instructions
         codex: isCodex,
-        provider: () => SystemPrompt.provider(input.model, input.mode, promptContext),
-        botGuidance: () => SystemPrompt.bot(input.mode, promptContext),
+        provider: () => SystemPrompt.provider(input.model, input.mode),
+        botGuidance: () => SystemPrompt.bot(input.mode),
         // any custom prompt passed into this call — already includes the last
         // user message's system override/append (see prompt.ts's loop(),
         // which folds lastUser.system into this array exactly once; do not
@@ -160,10 +150,7 @@ export namespace LLM {
       options.serviceTier = "priority"
     }
     if (isCodex) {
-      // The same stack a non-Codex turn gets as its header (mode prompt included).
-      options.instructions = bot
-        ? SystemPrompt.bot(input.mode, promptContext).join("\n")
-        : SystemPrompt.instructions(input.model, input.mode, promptContext)
+      options.instructions = bot ? SystemPrompt.bot(input.mode).join("\n") : SystemPrompt.instructions()
     }
     // Forward service tier from API bridges (e.g. OpenAI `service_tier`) into
     // provider-specific options so the AI SDK can set the request body field.
