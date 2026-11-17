@@ -1199,6 +1199,9 @@ enum ToolFrameState {
     Ended,
 }
 
+/// Tools whose settled `tool_result` frame carries the part's `state.metadata`.
+const METADATA_CARD_TOOLS: &[&str] = &["send_user_message"];
+
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`
 /// or `tool_error` when it settles — the wire the workspace client parses.
@@ -1236,13 +1239,22 @@ fn tool_frames_for_part(
         frames.push(if status == "completed" {
             // run_code's `files[]` + `run` are added by the caller off the
             // async stream (gizzi_chat_stream::run_code_payload_async).
-            json!({
+            let mut frame = json!({
                 "type": "tool_result",
                 "messageId": msg_id,
                 "toolCallId": call_id,
                 "toolName": tool_name,
                 "result": part.pointer("/state/output").cloned().unwrap_or_else(|| json!("")),
-            })
+            });
+            // Tools whose client card reads the part's metadata (send_user_message:
+            // text + files + push) get it on the live frame too, so the card shows
+            // while the reply streams, not only after a reload.
+            if METADATA_CARD_TOOLS.contains(&tool_name) {
+                if let Some(meta) = part.pointer("/state/metadata").filter(|m| m.is_object()) {
+                    frame["metadata"] = meta.clone();
+                }
+            }
+            frame
         } else {
             json!({
                 "type": "tool_error",
@@ -3321,6 +3333,25 @@ mod tests {
         assert_eq!(end[0]["type"], "tool_result");
         assert_eq!(end[0]["result"], "3 results");
         assert!(tool_frames_for_part(&done, "m1", &mut sent).is_empty());
+    }
+
+    #[test]
+    fn send_user_message_frames_carry_the_card_metadata() {
+        let mut sent = HashMap::new();
+        let meta = json!({"text": "Report ready", "files": [{"name": "r.md", "size": 5, "display": "render"}], "push": "sent"});
+        let done = json!({"type": "tool", "tool": "send_user_message", "callID": "c2",
+            "state": {"status": "completed", "input": {}, "output": "Delivered", "metadata": meta}});
+        let frames = tool_frames_for_part(&done, "m1", &mut sent);
+        let end = frames.iter().find(|f| f["type"] == "tool_result").unwrap();
+        assert_eq!(end["metadata"]["text"], "Report ready");
+        assert_eq!(end["metadata"]["files"][0]["name"], "r.md");
+
+        // Other tools keep their frames unchanged (no metadata leak).
+        let mut sent = HashMap::new();
+        let other = json!({"type": "tool", "tool": "bash", "callID": "c3",
+            "state": {"status": "completed", "input": {}, "output": "ok", "metadata": {"secret": 1}}});
+        let frames = tool_frames_for_part(&other, "m1", &mut sent);
+        assert!(frames.iter().find(|f| f["type"] == "tool_result").unwrap().get("metadata").is_none());
     }
 
     #[test]
