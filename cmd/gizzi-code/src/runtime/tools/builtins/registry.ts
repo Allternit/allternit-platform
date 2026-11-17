@@ -1,5 +1,7 @@
 import { QuestionTool } from "@/runtime/tools/builtins/question"
 import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
+import { CaptureScreenContextTool } from "@/runtime/tools/builtins/capture-screen-context"
+import { BrowserTasksTool, browserTasksAvailable } from "@/runtime/tools/builtins/browser-tasks"
 import { PaneArtifactTool } from "@/runtime/tools/builtins/pane-artifact"
 import { MediaGenerateTool } from "@/runtime/tools/builtins/media-generate"
 import { ArtifactCheckTool } from "@/runtime/tools/builtins/artifact-check"
@@ -159,12 +161,22 @@ export namespace ToolRegistry {
     const custom = await state().then((x) => x.custom)
     const config = await Config.get()
     const question = ["app", "cli", "desktop"].includes(Flag.GIZZI_CLIENT) || Flag.GIZZI_ENABLE_QUESTION_TOOL
+    // An app client has a view to capture and a pane to open results in; a
+    // terminal (cli) has neither.
+    const appClient = ["app", "desktop"].includes(Flag.GIZZI_CLIENT)
+    // Hidden browser tasks need a local executor with its browser driver up
+    // (a remote company API is never one); checked only for app clients, cached 30 s.
+    const browserTasks = appClient && (await browserTasksAvailable()).ok
 
     return [
       InvalidTool,
       ...(question ? [QuestionTool] : []),
       // Acts on the page shown in the app's browser pane; needs an app client.
       ...(question ? [PaneBrowserTool] : []),
+      // Sees what the user sees in the app (asks once per session); app clients only.
+      ...(appClient ? [CaptureScreenContextTool] : []),
+      // Parallel hidden browser tasks on the user's own machine (each call asks).
+      ...(browserTasks ? [BrowserTasksTool] : []),
       // Works on the document open in the app's artifact pane; needs an app client.
       ...(question ? [PaneArtifactTool] : []),
       // Images (native lane renders in the app); needs an app client.

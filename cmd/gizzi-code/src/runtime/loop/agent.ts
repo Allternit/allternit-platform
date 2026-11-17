@@ -145,6 +145,10 @@ export namespace Agent {
       // A question that doesn't block: it waits in the thread; the turn goes on.
       // Allowed for every agent, unlike the blocking `question` (denied by default).
       ask_user_later: "allow",
+      // Seeing the user's screen: the tool asks once per session ("always" holds).
+      screen_context: "ask",
+      // Hidden browser tasks: every call asks, naming the sites and goals.
+      browser_tasks: "ask",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",

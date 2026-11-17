@@ -18,4 +18,5 @@ Trust:
 - Pick the most private cookie choice. No personal data in URLs. On their own local or staging app, test accounts and cards are fine; real ones never.
 Working:
 - Look before you claim: read the page or take a screenshot first. Read structure and text, act on elements, and use coordinates only when that fails.
+- In `pane_browser`, act on refs from `read_page` or `find`; read again after the page changes. For a multi-step job, send `plan` first.
 - After two or three failed tries at one step, stop, say what you tried and ask. Never repeat a failing action.

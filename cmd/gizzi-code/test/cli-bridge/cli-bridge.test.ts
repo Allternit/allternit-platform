@@ -49,6 +49,9 @@ describe("CliBridge MCP server", () => {
       "folder_access",
       "question",
     ])
+    // Screen and browser tasks need the app (see CliBridge.TOOLS).
+    expect(names).not.toContain("capture_screen_context")
+    expect(names).not.toContain("browser_tasks")
     const question = list.result.tools.find((t: any) => t.name === "question")
     expect(question.description).toContain("no AskUserQuestion")
     expect(question.inputSchema.properties.questions).toBeDefined()

@@ -104,8 +104,9 @@ export namespace SystemPrompt {
    * Browser and computer tools (computer-use.txt), by exact id. The computer,
    * computer_v2 and browser toolsets are one function tool each (members are
    * the `action` field, never their own tool id; computer-toolset/index.ts).
+   * browser_tasks drives hidden browsers for the user, so the same rules hold.
    */
-  export const COMPUTER_TOOL_IDS: readonly string[] = ["pane_browser", "browser", "computer", "computer_v2", "computers"]
+  export const COMPUTER_TOOL_IDS: readonly string[] = ["pane_browser", "browser", "computer", "computer_v2", "computers", "browser_tasks"]
 
   /**
    * The turn's prompt context from the session surface, the user message's
