@@ -114,8 +114,6 @@
 	     uncommented; HomeAccessService reports Home unavailable meanwhile. -->
 	<key>AllternitHomeKitEnabled</key>
 	<false/>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Allternit uses Bluetooth only when you start keyboard mode, so this device can be a Bluetooth keyboard and mouse for your other iPhone.</string>
 	<key>NSHomeKitUsageDescription</key>
 	<string>Allternit lets your bots see your Home accessories and scenes, switch lights and run scenes, only after you turn on Home in Device Access. Locks, garage doors and alarms need your approval each time.</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -148,7 +146,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
-		<string>bluetooth-peripheral</string>
 		<string>fetch</string>
 		<string>remote-notification</string>
 	</array>

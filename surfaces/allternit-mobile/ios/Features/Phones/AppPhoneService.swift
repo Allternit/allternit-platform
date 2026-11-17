@@ -266,8 +266,6 @@ final class AppPhoneService: ObservableObject {
     func setForeground(_ foreground: Bool) {
         isForeground = foreground
         if foreground { DeviceAccessStore.shared.refresh() }
-        // Keyboard mode lets go of held keys when the app leaves the foreground (contract §9.2).
-        KeyboardModeService.shared.setForeground(foreground)
         refreshScreenState()
         if foreground {
             startControl()
@@ -334,8 +332,6 @@ final class AppPhoneService: ObservableObject {
                 } catch {
                     // Desktop offline, network gone: retry below.
                 }
-                // The lane dropped: keyboard mode lets go of anything held (contract §9.2).
-                KeyboardModeService.shared.laneDropped()
                 self.isControlConnected = false
                 self.controlSocket = nil
                 try? await Task.sleep(for: .seconds(delay))
@@ -350,7 +346,6 @@ final class AppPhoneService: ObservableObject {
         controlSocket?.cancel(with: .goingAway, reason: nil)
         controlSocket = nil
         isControlConnected = false
-        KeyboardModeService.shared.laneDropped()
     }
 
     /// One control socket's life: announce state, then answer requests until
@@ -400,10 +395,10 @@ final class AppPhoneService: ObservableObject {
         }
     }
 
-    static let phoneUseMethods: Set<String> = Set([
+    static let phoneUseMethods: Set<String> = [
         "device.describe", "device.shortcuts.run", "device.home.list", "device.home.set",
         "device.home.scene", "device.screen.read",
-    ]).union(KeyboardCommands.methods)
+    ]
 
     /// Sends on the live control socket (the one the request came in on, or
     /// a newer one), or keeps the reply for the next socket when none is up.
@@ -443,10 +438,6 @@ final class AppPhoneService: ObservableObject {
             }
             if method.hasPrefix("web.") {
                 return try await ACIBrowserBridge.shared.handle(method: method, params: params)
-            }
-            if KeyboardCommands.handles(method) {
-                // Keyboard mode (`bt-apple`): input for ANOTHER device over Bluetooth, never this one.
-                return try await KeyboardModeService.shared.handle(method: method, params: params)
             }
             throw AppPhoneRPCError(code: "unknown_method", message: "Unknown method \(method)")
         }

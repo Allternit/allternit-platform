@@ -334,10 +334,6 @@ function checkPackagingDryRun(jobs) {
   // (cmd/allternit-mirror, SwiftPM, staged by prepare-mirror.cjs, which
   // hard-fails on macOS without it). Windows and Linux have no such route.
   bins.push({ name: 'allternit-mirror', optional: false, flag: null, darwinOnly: true });
-  // The Mac Bluetooth keyboard helper for the `bt-mac` Phone Use route
-  // (cmd/allternit-bthid, SwiftPM, staged by prepare-bthid.cjs, which
-  // hard-fails on macOS without it). Windows and Linux have no such route.
-  bins.push({ name: 'allternit-bthid', optional: false, flag: null, darwinOnly: true });
 
   // Platform jobs = jobs that invoke electron-builder. Jobs that invoke it
   // via an npm script (build:electron / dist / pack) run the

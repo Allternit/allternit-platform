@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 /// Composer "+" sheet tool options, sent as `metadata.tools` on every
 /// agent-chat request (ToolOptionsStore is the persisted source).
@@ -274,8 +273,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     /// "+" sheet's tool options; the bridge turns `attachments` into gizzi
     /// file parts.
     private struct AgentChatRequest: Encodable {
-        /// `form_factor: "phone"` tells the runtime to add its small-screen reply block.
-        struct Metadata: Encodable { let tools: ToolOptions?; let form_factor: String? }
+        struct Metadata: Encodable { let tools: ToolOptions }
         let chatId: String
         let message: String
         let agentId: String?
@@ -317,7 +315,6 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                     // Streams are long-lived; the default 60s idle timeout
                     // would kill slow generations between frames.
                     request.timeoutInterval = 600
-                    let formFactor: String? = await MainActor.run { UIDevice.current.userInterfaceIdiom == .phone ? "phone" : nil }
                     request.httpBody = try JSONEncoder().encode(AgentChatRequest(
                         chatId: sessionId,
                         message: text,
@@ -327,7 +324,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         effort: effort,
                         fast: UserDefaults.standard.bool(forKey: "allternit-model-fast") ? true : nil,
                         attachments: attachments,
-                        metadata: (tools != nil || formFactor != nil) ? AgentChatRequest.Metadata(tools: tools, form_factor: formFactor) : nil,
+                        metadata: tools.map { AgentChatRequest.Metadata(tools: $0) },
                         workdir: workdir
                     ))
 

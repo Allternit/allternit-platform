@@ -168,8 +168,6 @@
               "guides/android-app",
               "guides/device-access",
               "guides/phone-link",
-              "guides/iphone-routes",
-              "guides/iphone-bridge-shortcuts",
               "guides/android-live-view",
               "guides/cloud-phones",
               "guides/bot-voice-on-linked-phone",
@@ -413,7 +411,6 @@
             "group": "Core Concepts",
             "pages": [
               "core/gizzi-runtime",
-              "core/system-prompts",
               "core/gizzi-core",
               "core/communication",
               "core/memory-fabric",
