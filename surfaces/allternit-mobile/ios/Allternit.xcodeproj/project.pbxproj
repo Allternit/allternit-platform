@@ -646,6 +646,7 @@
 		C3630BB554C9903A76010957 /* CoworkWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67AEB0A38036D18D7A00D9C7 /* CoworkWorkspaceView.swift */; };
 		C40138BDFC50E68F4B605C0D /* CoworkTasksListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6456273215D242B20811AD42 /* CoworkTasksListView.swift */; };
 		C5549640432B10AB4817D75C /* SharedPhoneRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39168AAAA2A1729A6320147C /* SharedPhoneRun.swift */; };
+		C5570A9FF0BE3AC2E4F2E331 /* FilesKeysView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06CC222B9C4446F9F644BDDB /* FilesKeysView.swift */; };
 		C65E68CEB7348A46FE2E3352 /* AgentActivityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80BE6F99828A33512D8BBF70 /* AgentActivityStore.swift */; };
 		C67B3C7EBA3FBE9AC753D8EE /* Entities.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79C58B39750008BDE881C8B /* Entities.swift */; };
 		C6B5B87F15E898467AE32F4A /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88F84CC32A63DA63F238682F /* AudioToolbox.framework */; };
@@ -974,6 +975,7 @@
 		065746AA1AAB611D27D806F6 /* ACIComputersClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACIComputersClient.swift; sourceTree = "<group>"; };
 		065BE9F8581DD0504FBA0107 /* CloudInstancesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudInstancesStore.swift; sourceTree = "<group>"; };
 		06B360969E6E7F337595712A /* AllternitMessages.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AllternitMessages.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		06CC222B9C4446F9F644BDDB /* FilesKeysView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilesKeysView.swift; sourceTree = "<group>"; };
 		06DA8120797ED6A538464EA3 /* FolderLookSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderLookSheet.swift; sourceTree = "<group>"; };
 		071C1D1CB11C431C8761C4B7 /* FeaturePlugins.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeaturePlugins.swift; sourceTree = "<group>"; };
 		0757A1255EC2B7A9AA1D2308 /* ArtifactBodyDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactBodyDecoder.swift; sourceTree = "<group>"; };
@@ -3332,6 +3334,7 @@
 				94097F5735D2AD25C0218820 /* DevicePairingView.swift */,
 				BDF51415431B0961379CB98A /* EnterpriseBYOCPanelView.swift */,
 				6873E8A44AEBA097FF065BFB /* FilesDashboardView.swift */,
+				06CC222B9C4446F9F644BDDB /* FilesKeysView.swift */,
 				6E79642FCCC464D9E8C120AB /* InfrastructureSettingsView.swift */,
 				3CA216B2B8DD04CAD20C743A /* McpServersSettingsView.swift */,
 				8C347DACB0F220B54481BF01 /* MeetingsSettingsView.swift */,
@@ -4291,6 +4294,7 @@
 				7AFD1E1758764C735F8FFDD7 /* FilesInbox.swift in Sources */,
 				C70E6F8AE68018BFA56D4256 /* FilesInboxRequestsView.swift in Sources */,
 				88ACB70973F932FCEA5C0E39 /* FilesIntents.swift in Sources */,
+				C5570A9FF0BE3AC2E4F2E331 /* FilesKeysView.swift in Sources */,
 				0EB3535073A753B51D98C9AA /* FilesModelImporter.swift in Sources */,
 				C93CF8080B7650C0C1A3A1A7 /* FilesOnDeviceInstaller.swift in Sources */,
 				B20A50D572EDA851CE205CB7 /* FilesPackageManifest.swift in Sources */,

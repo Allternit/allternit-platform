@@ -109,8 +109,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             progress.totalUnitCount = Int64(max(item.size, 1))
             let destination = directory.appendingPathComponent(UUID().uuidString, isDirectory: false)
             do {
+                // rootId lets an asleep computer's file come from a replica
+                // (sealed, opened here with this device's Files key) instead
+                // of a wake.
                 try await context.client.download(itemId: item.id, rev: item.rev, size: item.size,
-                                                  contentHash: item.contentHash, to: destination,
+                                                  contentHash: item.contentHash, rootId: item.rootId, to: destination,
                                                   wake: .whenAutomatic) { done, _ in
                     progress.completedUnitCount = Int64(done)
                 }

@@ -166,6 +166,13 @@
             android:taskAffinity="${applicationId}.files"
             android:theme="@style/Theme.AllternitFiles" />
 
+        <!-- Files key (approve devices, give computers the key). Opened from Files settings. -->
+        <activity
+            android:name="com.allternit.app.files.FilesKeyActivity"
+            android:exported="false"
+            android:label="Files key"
+            android:taskAffinity="${applicationId}.files"
+            android:theme="@style/Theme.AllternitFiles" />
         <!-- Opened only from our own notification / provider PendingIntents. -->
         <activity
             android:name="com.allternit.app.files.WakePromptActivity"

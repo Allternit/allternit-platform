@@ -16,7 +16,9 @@ import AllternitFilesKit
 /// 3. lists the user's computers (`GET /runtime-devices`, phones left out)
 ///    and makes the File Provider domains match: one location per computer;
 /// 4. signals each domain, so Files picks up changes made on the computers;
-/// 5. re-reads files pinned "Keep offline" that iOS evicted.
+/// 5. re-reads files pinned "Keep offline" that iOS evicted;
+/// 6. picks up the Files key envelope once another device approved this one
+///    (Settings > Files > Devices, `FilesKeysSection`).
 ///
 /// Runs on every foreground (AppDelegate). Sign-out revokes the key and
 /// removes the domains, which deletes every file iOS kept for them.
@@ -54,6 +56,10 @@ final class FilesDriveBridge {
             NotificationCenter.default.post(name: .filesDriveDidSync, object: nil)
             try await FilesDomains.sync(computers)
             await FilesPinKeeper.materialize(store: store)
+            // Picks up a Files key another device approved (or a rotated
+            // one), so the extension can open replicas without this screen
+            // being opened. Never makes a key or sends a request by itself.
+            _ = try? await FilesKeyService(store: store).state()
         } catch {
             // Next foreground tries again; the extension keeps what it had.
         }

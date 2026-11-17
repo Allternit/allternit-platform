@@ -13,8 +13,8 @@ import android.widget.Toast
 /**
  * Unlocks a `protected` root (Memory Drive) with a fresh device unlock (SPEC section 12).
  * Android 9+: BiometricPrompt (fingerprint/face, or the screen lock as fallback on 10+).
- * Android 8: the screen-lock confirmation. Success marks the computer unlocked for five
- * minutes; requests then carry `x-allternit-unlock`. Started from the "Unlock" button
+ * Android 8: the screen-lock confirmation. Success mints a signed five-minute unlock token
+ * from cloud-api; requests then carry it as `x-allternit-unlock`. Started from the "Unlock" button
  * DocumentsUI shows for the locked folder (AuthenticationRequiredException).
  */
 class UnlockActivity : Activity() {
@@ -67,11 +67,25 @@ class UnlockActivity : Activity() {
     }
 
     private fun unlocked() {
-        drive.markUnlocked(cid)
-        drive.notifyChildren(DocIds.computer(cid))
-        drive.root(cid, rid)?.let { drive.notifyChildren(DocIds.item(cid, rid, it.rootItemId)) }
-        setResult(RESULT_OK)
-        finish()
+        // Minting the token is a network call: off the main thread.
+        drive.io.execute {
+            val ok = try {
+                drive.markUnlocked(cid)
+                drive.notifyChildren(DocIds.computer(cid))
+                drive.root(cid, rid)?.let { drive.notifyChildren(DocIds.item(cid, rid, it.rootItemId)) }
+                true
+            } catch (e: Exception) {
+                false
+            }
+            runOnUiThread {
+                if (ok) {
+                    setResult(RESULT_OK)
+                } else {
+                    Toast.makeText(this, "Couldn't unlock. Check your connection and try again.", Toast.LENGTH_LONG).show()
+                }
+                finish()
+            }
+        }
     }
 
     override fun onDestroy() {

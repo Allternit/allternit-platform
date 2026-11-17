@@ -88,6 +88,24 @@ internal class CloudApi(private val token: String) {
     fun wakeConsent(computerId: String, body: WakeConsentRequest): WakeConsentResponse =
         request("POST", "/api/v1/computer-files/${seg(computerId)}/wake-consent", WireJson.encode(body).toString()).wire()
 
+    /**
+     * SPEC section 12: a signed, 5-minute protected-root unlock token (`fut1`) for this
+     * device, as `(token, expires_at)`. Call only right after a biometric success.
+     */
+    fun unlock(computerId: String, deviceId: String): Pair<String, String> {
+        val o = JSONObject(request("POST", "/api/v1/computer-files/${seg(computerId)}/unlock", JSONObject().put("device_id", deviceId).toString()))
+        return o.getString("token") to o.getString("expires_at")
+    }
+
+    /**
+     * cloud-api's Files key routes (`/api/v1/files-keys…`, SPEC section 13; [FilesKeys]).
+     * `path` starts with `/api/v1/files-keys`. Throws [FilesException] on an error status.
+     */
+    fun filesKeys(method: String, path: String, json: String? = null): String {
+        require(path.startsWith("/api/v1/files-keys") || path.startsWith("/api/v1/computer-files/")) { "not a Files key route" }
+        return request(method, path, json)
+    }
+
     fun setWake(computerId: String, wake: WakeSetting): WakeSettings =
         request("PUT", "/api/v1/computer-files/${seg(computerId)}/wake-settings", WireJson.encode(UpdateWakeSettingsRequest(wake)).toString()).wire()
 
