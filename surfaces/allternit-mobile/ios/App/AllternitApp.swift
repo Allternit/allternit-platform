@@ -44,28 +44,42 @@ struct AllternitApp: App {
         #endif
     }
 
+    @ViewBuilder
+    private var rootContent: some View {
+        if authManager.isClerkConfigured || shouldSkipAuth {
+            // Only inject Clerk.shared when the SDK was actually
+            // configured; otherwise `Clerk.shared` traps on access.
+            if authManager.isClerkConfigured {
+                gatedContent
+                    // ClerkKitUI views (AuthView) read Clerk from the environment.
+                    .environment(Clerk.shared)
+            } else {
+                gatedContent
+            }
+        } else {
+            // Publishable key placeholder not filled in — LoginGateView
+            // shows the setup hint instead of crashing on Clerk.shared.
+            // DEBUG: still expose the skip-auth affordance so the app can
+            // be opened without a configured Clerk app.
+            LoginGateView(onSkipAuth: {
+                skipAuthRequested = true
+            })
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {
-                if authManager.isClerkConfigured || shouldSkipAuth {
-                    // Only inject Clerk.shared when the SDK was actually
-                    // configured; otherwise `Clerk.shared` traps on access.
-                    if authManager.isClerkConfigured {
-                        gatedContent
-                            // ClerkKitUI views (AuthView) read Clerk from the environment.
-                            .environment(Clerk.shared)
-                    } else {
-                        gatedContent
-                    }
+                #if DEBUG
+                if CalmGallery.isEnabled {
+                    // -calm-gallery: glass, haptics and motion presets (phone calm I1).
+                    CalmGalleryView()
                 } else {
-                    // Publishable key placeholder not filled in — LoginGateView
-                    // shows the setup hint instead of crashing on Clerk.shared.
-                    // DEBUG: still expose the skip-auth affordance so the app can
-                    // be opened without a configured Clerk app.
-                    LoginGateView(onSkipAuth: {
-                        skipAuthRequested = true
-                    })
+                    rootContent
                 }
+                #else
+                rootContent
+                #endif
             }
             .environmentObject(authManager)
             .reviewPrompt()
