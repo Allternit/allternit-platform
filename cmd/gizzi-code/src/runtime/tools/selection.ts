@@ -1,3 +1,8 @@
+/**
+ * Legacy MCP tool selection (the removed select_tools tool). Deferral now lives
+ * in primitives/tool-families.ts (tool_search, load on call); nothing in the
+ * runtime calls this module.
+ */
 import type { MessageV2 } from "@/runtime/session/message-v2"
 
 const selected = new Map<string, Set<string>>()
@@ -7,13 +12,6 @@ function fromHistory(messages: MessageV2.WithParts[]) {
   for (const message of messages) {
     for (const part of message.parts) {
       if (part.type !== "tool") continue
-      if (part.tool === "select_tools") {
-        const names = part.state.input.names
-        if (Array.isArray(names)) {
-          for (const name of names) if (typeof name === "string") result.add(name)
-        }
-        continue
-      }
       if (part.tool.includes(":")) result.add(part.tool)
     }
   }
