@@ -11,6 +11,7 @@ import { join } from 'path'
 import { gizziGateDefault } from '../src/constants/gizziGates'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../src/cli/ui/ink-app/services/analytics/growthbook'
 import { modelSupportsAutoMode } from '../src/cli/ui/ink-app/utils/betas'
+import { getSystemPrompt } from '../src/cli/ui/ink-app/constants/prompts'
 import {
   buildDefaultExternalSystemPrompt,
   getDefaultExternalAutoModeRules,
@@ -34,6 +35,16 @@ describe('gate defaults', () => {
       getFeatureValue_CACHED_MAY_BE_STALE<{ enabled?: string }>('tengu_auto_mode_config', {})
         .enabled,
     ).toBe('enabled')
+  })
+})
+
+describe('system prompt vendor strip', () => {
+  test('default external prompts name no outside vendor', async () => {
+    const classifier = buildDefaultExternalSystemPrompt()
+    const repl = (await getSystemPrompt([] as never, 'gizzi-test-model')).join('\n')
+    for (const text of [classifier, repl]) {
+      expect(text).not.toMatch(/Claude|Anthropic|Allternit Shell/)
+    }
   })
 })
 
