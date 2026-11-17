@@ -2950,17 +2950,19 @@ mod tests {
 
     #[tokio::test]
     async fn a_heartbeat_with_no_verdict_fails_and_three_in_a_row_pause_it() {
+        // Its own routine id: FlightGuard is process-wide, so a test sharing "hb"
+        // with the test above can be skipped as "already running" in parallel.
         let state = setup("no-verdict").await;
-        insert_task(&state, "hb", "heartbeat", ("interval", "1h"), "ses_thread", json!({}), None);
+        insert_task(&state, "hb-quiet", "heartbeat", ("interval", "1h"), "ses_thread", json!({}), None);
         let fake = Fake::default();
         *fake.reply.lock().unwrap() = Some("I looked at the build and it seems fine.".into());
         for _ in 0..AUTO_PAUSE_AFTER {
-            force_due(&state, "hb");
+            force_due(&state, "hb-quiet");
             run_due(&state.db, &fake, Utc::now()).await;
         }
-        assert_eq!(runs(&state, "hb"), ["failed", "failed", "failed"]);
-        assert_eq!(last_reason(&state, "hb").as_deref(), Some("no_verdict"));
-        assert_eq!(routine_status(&state, "hb").0, "paused");
+        assert_eq!(runs(&state, "hb-quiet"), ["failed", "failed", "failed"]);
+        assert_eq!(last_reason(&state, "hb-quiet").as_deref(), Some("no_verdict"));
+        assert_eq!(routine_status(&state, "hb-quiet").0, "paused");
         assert!(fake.notes.lock().unwrap().is_empty(), "nothing reaches the user without a verdict");
     }
 
