@@ -24,6 +24,8 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
     var output: String? = nil
     /// run_code: files the run produced + its summary (nil on old runtimes).
     var runCode: RunCodeResult? = nil
+    /// send_user_message: the message and files the agent sent its user.
+    var userMessage: AgentUserMessage? = nil
 
     /// How long the call ran; live calls count up to `now`.
     func elapsed(now: Date = Date()) -> TimeInterval? {
@@ -83,7 +85,8 @@ extension ToolCallRecord {
                 startedAt: part.state?.startedAt,
                 finishedAt: part.state?.finishedAt,
                 output: part.state?.output?.value as? String,
-                runCode: name == "run_code" ? RunCodeResult(files: part.files, run: part.run) : nil
+                runCode: name == "run_code" ? RunCodeResult(files: part.files, run: part.run) : nil,
+                userMessage: name == AgentUserMessage.toolName ? part.state?.userMessage : nil
             )
         }
     }
@@ -105,6 +108,7 @@ extension MessageRecord {
                 call.error = detail.error ?? call.error
                 call.startedAt = detail.startedAt ?? call.startedAt
                 call.finishedAt = detail.finishedAt ?? call.finishedAt
+                if let message = detail.userMessage { call.userMessage = message }
             }
             if state != .running, call.finishedAt == nil { call.finishedAt = now }
             if let runCode { call.runCode = runCode }
@@ -119,7 +123,8 @@ extension MessageRecord {
                 error: detail?.error,
                 startedAt: detail?.startedAt ?? now,
                 finishedAt: detail?.finishedAt ?? (state == .running ? nil : now),
-                runCode: runCode
+                runCode: runCode,
+                userMessage: detail?.userMessage
             ))
         }
     }
@@ -270,5 +275,60 @@ enum SubagentNames {
         if let name = builtins[key] { return name }
         let words = key.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }
         return words.isEmpty ? "Agent" : words.joined(separator: " ")
+    }
+}
+
+// MARK: - send_user_message
+
+/// What an agent sent its own user with `send_user_message` (gizzi
+/// runtime/primitives/user-message.ts): the tool part's `metadata`,
+/// `{text, files, push}`. The chat draws it as a message card.
+struct AgentUserMessage: Decodable, Equatable, Sendable {
+    static let toolName = "send_user_message"
+
+    struct File: Decodable, Equatable, Sendable {
+        /// The Files drive item id; absent when the copy wasn't saved.
+        let id: String?
+        let name: String
+        let size: UInt64
+        /// "render" (show inline) or "attach".
+        let display: String?
+        /// Where the file is on the computer.
+        let path: String?
+        let caption: String?
+        /// Why there is no drive copy: "drive_off", "unavailable", "failed".
+        let notSaved: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case id, name, size, display, path, caption
+            case notSaved = "not_saved"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            id = ((try? c.decodeIfPresent(String.self, forKey: .id)) ?? nil).flatMap { $0.isEmpty ? nil : $0 }
+            size = ((try? c.decodeIfPresent(UInt64.self, forKey: .size)) ?? nil)
+                ?? ((try? c.decodeIfPresent(Double.self, forKey: .size)) ?? nil).map { UInt64(max(0, $0)) } ?? 0
+            display = (try? c.decodeIfPresent(String.self, forKey: .display)) ?? nil
+            path = (try? c.decodeIfPresent(String.self, forKey: .path)) ?? nil
+            caption = ((try? c.decodeIfPresent(String.self, forKey: .caption)) ?? nil).flatMap { $0.isEmpty ? nil : $0 }
+            notSaved = (try? c.decodeIfPresent(String.self, forKey: .notSaved)) ?? nil
+        }
+    }
+
+    let text: String
+    let files: [File]
+    /// "sent", "not_requested", "rate_limited", "unpaired", "unavailable".
+    let push: String?
+
+    private enum CodingKeys: String, CodingKey { case text, files, push }
+
+    /// Needs `text` and `files`, so another tool's metadata never reads as one.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        files = try c.decode(LossyArray<File>.self, forKey: .files).elements
+        push = (try? c.decodeIfPresent(String.self, forKey: .push)) ?? nil
     }
 }

@@ -100,6 +100,8 @@ enum AgentChatEvent: Decodable, Sendable {
         var finishedAt: Date? = nil
         /// The tool's result text (the message_agent delivery receipt is read from it).
         var output: String? = nil
+        /// send_user_message: the message card (the tool part's `metadata`).
+        var userMessage: AgentUserMessage? = nil
     }
 
     struct ToolCall: Sendable {
@@ -272,9 +274,15 @@ enum AgentChatEvent: Decodable, Sendable {
             }
 
         case "tool_result":
+            let toolName = try container.decodeIfPresent(String.self, forKey: .toolName) ?? "Tool"
+            // send_user_message: the card, when the frame carries the part's `metadata`.
+            let userMessage = toolName == AgentUserMessage.toolName
+                ? ((try? container.decodeIfPresent(AgentUserMessage.self, forKey: .metadata)) ?? nil)
+                : nil
             self = .toolResult(ToolResult(
                 toolCallId: try container.decodeIfPresent(String.self, forKey: .toolCallId) ?? "",
-                toolName: try container.decodeIfPresent(String.self, forKey: .toolName) ?? "Tool",
+                toolName: toolName,
+                detail: userMessage.map { ToolDetail(userMessage: $0) },
                 runCode: (try? RunCodeKeys(from: decoder))?.result
             ))
 
