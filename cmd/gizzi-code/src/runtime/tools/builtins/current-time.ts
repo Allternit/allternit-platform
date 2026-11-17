@@ -1,33 +1,23 @@
 /**
  * current_time: the time where the user is (runtime/primitives/clock.ts).
- * Read-only; every client gets it (not bot-gated). The Ink adapter wraps the
- * same core and shares current-time.txt.
+ * Read-only; every client gets it (not bot-gated). The Ink adapter
+ * (cli/ui/ink-app/tools/CurrentTimeTool) wraps the same core and shares
+ * current-time.txt.
  */
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { Clock } from "@/runtime/primitives/clock"
 import DESCRIPTION from "@/runtime/tools/builtins/current-time.txt"
 
-export type CurrentTimeResult = Clock.Now & { source: Clock.Source }
+export type CurrentTimeResult = Clock.Current
 
-export const PROCESS_ZONE_NOTE =
-  "This is this machine's time zone. It may not be the user's: say which zone you mean, or ask the user where they are."
+export const PROCESS_ZONE_NOTE = Clock.PROCESS_ZONE_NOTE
 
-/** The time for a call: the argument, else the turn's zone (`turnZone`), else the last client zone, else the process zone. */
-export async function currentTime(input: { timezone?: string; turnZone?: string; at?: Date }): Promise<CurrentTimeResult> {
-  const resolved = await Clock.resolveTimeZone({ argument: input.timezone, turnZone: input.turnZone })
-  return { ...Clock.now(resolved.zone, input.at), source: resolved.source }
-}
+/** The time for a call (Clock.current): the argument, else the turn's zone (`turnZone`), else the last client zone, else the process zone. */
+export const currentTime = Clock.current
 
-/** The tool's text output for a result. */
-export function currentTimeOutput(result: CurrentTimeResult, requested?: string): string {
-  const lines = [JSON.stringify(result, null, 2)]
-  if (requested && result.source !== "argument") {
-    lines.push(`"${requested}" is not a valid IANA time zone, so the user's zone was used instead.`)
-  }
-  if (result.source === "process") lines.push(PROCESS_ZONE_NOTE)
-  return lines.join("\n")
-}
+/** The tool's text output for a result (Clock.currentOutput). */
+export const currentTimeOutput = Clock.currentOutput
 
 export const CurrentTimeTool = Tool.define("current_time", {
   description: DESCRIPTION,

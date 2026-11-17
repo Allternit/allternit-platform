@@ -21,6 +21,7 @@ import { Plugin } from "@/runtime/integrations/plugin"
 import { Skill } from "@/runtime/skills/skill"
 import { BUILTIN_CATALOG, CATALOG_ALIASES, catalogAgent, isModelClass, MODEL_CLASSES } from "@/runtime/agents/builtin-catalog"
 import { CatalogSync } from "@/runtime/agents/catalog-sync"
+import { CREDENTIAL_PATH_RULES } from "@/runtime/tools/guard/permission/credential-paths"
 
 const HarnessConfigSchema = z.object({
   mode: z.enum(["byok", "cloud", "local", "subprocess"]),
@@ -133,6 +134,8 @@ export namespace Agent {
       task_stop: "ask",
       goal_budget: "allow",
       current_time: "allow",
+      // Reaches only the session's owner; push is opt-in per call and rate-limited server side.
+      send_user_message: "allow",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",
@@ -143,39 +146,14 @@ export namespace Agent {
       plan_exit: "deny",
       // Sensitive credentials and git control paths require review by default.
       // Public key and environment-template variants remain ordinary project files.
+      // One list (credential-paths.ts): send_user_message refuses the same files.
       read: {
         "*": "allow",
-        "*.env": "ask",
-        "*.env.*": "ask",
-        "*id_rsa*": "ask",
-        "*id_ed25519*": "ask",
-        "*id_ecdsa*": "ask",
-        "*credentials*": "ask",
-        ".git/*": "ask",
-        "*/.git/*": "ask",
-        "*.env.example": "allow",
-        "*.env.sample": "allow",
-        "*.env.template": "allow",
-        "*id_rsa.pub": "allow",
-        "*id_ed25519.pub": "allow",
-        "*id_ecdsa.pub": "allow",
+        ...CREDENTIAL_PATH_RULES,
       },
       edit: {
         "*": "allow",
-        "*.env": "ask",
-        "*.env.*": "ask",
-        "*id_rsa*": "ask",
-        "*id_ed25519*": "ask",
-        "*id_ecdsa*": "ask",
-        "*credentials*": "ask",
-        ".git/*": "ask",
-        "*/.git/*": "ask",
-        "*.env.example": "allow",
-        "*.env.sample": "allow",
-        "*.env.template": "allow",
-        "*id_rsa.pub": "allow",
-        "*id_ed25519.pub": "allow",
-        "*id_ecdsa.pub": "allow",
+        ...CREDENTIAL_PATH_RULES,
       },
     }, "default")
     // Tagged "user" so auto mode in app sessions keeps the person's own asks.

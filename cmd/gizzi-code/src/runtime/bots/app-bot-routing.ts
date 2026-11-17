@@ -65,6 +65,8 @@ export class AppRoutingError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The API's machine-readable `code` (e.g. `drive_off`), when it sent one. */
+    readonly code?: string,
   ) {
     super(message)
     this.name = "AppRoutingError"
@@ -95,12 +97,15 @@ async function post<T>(path: string, body: unknown, timeoutMs: number, extra?: R
   const text = await response.text().catch(() => "")
   if (!response.ok) {
     let message = text
+    let code: string | undefined
     try {
-      message = (JSON.parse(text) as { error?: string; message?: string }).error ?? message
+      const body = JSON.parse(text) as { error?: string; message?: string; code?: string }
+      message = body.error ?? message
+      code = typeof body.code === "string" ? body.code : undefined
     } catch {
       // plain-text body
     }
-    throw new AppRoutingError(response.status, message || `HTTP ${response.status}`)
+    throw new AppRoutingError(response.status, message || `HTTP ${response.status}`, code)
   }
   return JSON.parse(text) as T
 }
@@ -277,6 +282,37 @@ export async function isAppBotSession(sessionID: string): Promise<boolean> {
 /** A bot's main chat (or a person's chat running as their main bot), not a task thread. */
 export async function isAppBotMainChat(sessionID: string): Promise<boolean> {
   return (await appBotCaller(sessionID))?.mainChat === true
+}
+
+/*
+ * The agent reaching its own user (send_user_message). Works in every session
+ * the caller owns, not only bot chats. Server: allternit-api agent_user_tools.rs.
+ */
+
+export interface UserFileReceipt {
+  id: string
+  name: string
+  size: number
+}
+
+/** Copy a local file (absolute path) into the Files drive's Agent Output folder. 409 `drive_off` when the drive is off. */
+export async function sendUserFile(sessionID: string, input: { path: string; caption?: string }): Promise<UserFileReceipt> {
+  return post("/bot-routing/user/files", { sessionId: sessionID, ...input }, 30_000)
+}
+
+export interface UserNotifyResult {
+  /** The push was requested (not delivered). */
+  pushed: boolean
+  reason?: "rate_limited" | "unpaired" | "incognito"
+  event?: string
+}
+
+/** Ask for a push to the user's devices. `needs_you` asks at normal urgency, never urgent. */
+export async function notifyUser(
+  sessionID: string,
+  input: { kind: "message" | "question"; level: "normal" | "needs_you"; preview: string; ref?: string },
+): Promise<UserNotifyResult> {
+  return post("/bot-routing/user/notify", { sessionId: sessionID, ...input }, 10_000)
 }
 
 /* Sending work to another project. Server: allternit-api project_send_tools.rs. */

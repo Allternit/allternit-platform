@@ -154,6 +154,27 @@ export namespace Clock {
     }
   }
 
+  export type Current = Now & { source: Source }
+
+  export const PROCESS_ZONE_NOTE =
+    "This is this machine's time zone. It may not be the user's: say which zone you mean, or ask the user where they are."
+
+  /** The time for a `current_time` call: the argument, else the turn's zone, else the last client zone, else the process zone. */
+  export async function current(input: { timezone?: string; turnZone?: string; at?: Date }): Promise<Current> {
+    const resolved = await resolveTimeZone({ argument: input.timezone, turnZone: input.turnZone })
+    return { ...now(resolved.zone, input.at), source: resolved.source }
+  }
+
+  /** The `current_time` tool's text output (runtime builtin and Ink adapter). */
+  export function currentOutput(result: Current, requested?: string): string {
+    const lines = [JSON.stringify(result, null, 2)]
+    if (requested && result.source !== "argument") {
+      lines.push(`"${requested}" is not a valid IANA time zone, so the user's zone was used instead.`)
+    }
+    if (result.source === "process") lines.push(PROCESS_ZONE_NOTE)
+    return lines.join("\n")
+  }
+
   /** The date in `zone` in `Date.toDateString()` form ("Tue Nov 17 2026"); no time, so the prompt prefix stays cacheable. */
   export function dateString(zone: string, at: Date = new Date()): string {
     const values: Record<string, string> = {}
