@@ -18,6 +18,7 @@ import { CurrentTimeTool } from './tools/CurrentTimeTool/CurrentTimeTool.js'
 import { SendUserMessageTool } from './tools/SendUserMessageTool/SendUserMessageTool.js'
 // Scheduled tasks (replaced the Ink CronCreate/CronList/CronDelete tools).
 import { AutomationTool } from './tools/AutomationTool/AutomationTool.js'
+import { AskUserLaterTool } from './tools/AskUserLaterTool/AskUserLaterTool.js'
 // Dead code elimination: conditional import for ant-only tools
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 function safeRequire(path: string) {
@@ -191,6 +192,7 @@ export function getAllBaseTools(): Tools {
     CurrentTimeTool,
     SendUserMessageTool,
     AutomationTool,
+    AskUserLaterTool,
     SkillTool,
     EnterPlanModeTool,
     ...(process.env.USER_TYPE === 'ant' ? [ConfigTool] : []),
