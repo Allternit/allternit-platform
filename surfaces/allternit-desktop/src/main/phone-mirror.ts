@@ -26,7 +26,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { isNeedsYouCode, needsYou, type NeedsYou, type RouteHealth } from './phone-link-health.js';
-import { isIosLink, type Capability, type LaneContext, type LaneTool, type PhoneLane } from './phone-route.js';
+import { isIosLink, type Capability, type ImageReader, type LaneContext, type LaneTool, type PhoneLane } from './phone-route.js';
 import type { AppPhoneLane, PhoneLinkBackend, ToolErrorCode, ToolResult, UsbPhoneBackend } from './phone-tools.js';
 import { frameOf, type VerifyFrame } from './phone-verify.js';
 
@@ -122,6 +122,7 @@ export function commandTimeoutMs(cmd: string, args: Record<string, unknown> = {}
       case 'capture':
         return 6;
       case 'read':
+      case 'read_image':
         return 10;
       case 'type':
         return 5 + (typeof args.text === 'string' ? args.text.length : 0) * 0.03;
@@ -252,9 +253,9 @@ const NOT_ON_THIS_OS = 'iPhone Mirroring works only on a Mac.';
  * A probe reply → the route's health (contract §5). Only the probe's own
  * "healthy" makes the route healthy; anything unknown is unavailable.
  *
- * Missing permissions have no contract code yet, so they are "unavailable"
- * with a sentence naming the System Settings pane: a pinned call shows it,
- * and automatic routing moves on to the next route.
+ * A missing Mac permission is MAC_PERMISSION_MISSING naming the System
+ * Settings pane. Like every needs-you state the router moves on to the next
+ * route and shows it only when no route is ready (contract §1.1 step 4).
  */
 export function probeHealth(probe: Record<string, unknown> | null, ctx: Pick<LaneContext, 'locked'>): RouteHealth {
   if (!probe || probe.ok !== true) {
@@ -274,15 +275,8 @@ export function probeHealth(probe: Record<string, unknown> | null, ctx: Pick<Lan
     case 'MIRROR_PHONE_IN_USE':
       return { state: 'needs_you', needsYou: needsYou(probe.health) };
     case 'NEEDS_SCREEN_RECORDING':
-      return {
-        state: 'unavailable',
-        reason: `Allow Allternit in ${pane ?? 'System Settings > Privacy & Security > Screen & System Audio Recording'} so I can see iPhone Mirroring.`,
-      };
     case 'NEEDS_ACCESSIBILITY':
-      return {
-        state: 'unavailable',
-        reason: `Allow Allternit in ${pane ?? 'System Settings > Privacy & Security > Accessibility'} so I can click and type in iPhone Mirroring.`,
-      };
+      return { state: 'needs_you', needsYou: macPermissionNeed(probe.health, pane) };
     case 'MIRROR_WINDOW_AMBIGUOUS':
       return { state: 'unavailable', reason: 'More than one iPhone Mirroring window is open. Close the extra ones so I use the right phone.' };
     case 'MIRROR_NOT_INSTALLED':
@@ -300,9 +294,22 @@ export function probeHealth(probe: Record<string, unknown> | null, ctx: Pick<Lan
 export function onlyIphone(serial: string, lanes: { usb: UsbPhoneBackend | null; links: PhoneLinkBackend | null; apps: AppPhoneLane | null }): boolean {
   const iphones = new Set<string>();
   for (const s of lanes.usb?.serials() ?? []) iphones.add(s);
-  for (const d of lanes.apps?.devices() ?? []) if (d.platform !== 'android') iphones.add(d.serial);
+  // A second iPhone or iPad in keyboard mode (bt-apple) is not a phone Mirroring could show.
+  for (const d of lanes.apps?.devices() ?? []) if (d.platform !== 'android' && d.keyboard_for === undefined) iphones.add(d.serial);
   for (const s of lanes.links?.serials() ?? []) if (isIosLink(lanes.links, s)) iphones.add(s);
   return iphones.size === 1 && iphones.has(serial);
+}
+
+const PRIVACY_PANE = 'System Settings > Privacy & Security > ';
+const MAC_PERMISSION_NAME: Readonly<Record<string, string>> = {
+  NEEDS_SCREEN_RECORDING: 'Screen & System Audio Recording',
+  NEEDS_ACCESSIBILITY: 'Accessibility',
+};
+
+/** MAC_PERMISSION_MISSING for the helper's NEEDS_SCREEN_RECORDING / NEEDS_ACCESSIBILITY, naming the pane it reported. */
+export function macPermissionNeed(health: string, pane: string | null): NeedsYou {
+  const name = pane?.startsWith(PRIVACY_PANE) ? pane.slice(PRIVACY_PANE.length) : MAC_PERMISSION_NAME[health] ?? 'Screen & System Audio Recording';
+  return needsYou('MAC_PERMISSION_MISSING', { name });
 }
 
 // ── Results ─────────────────────────────────────────────────────────────────
@@ -324,8 +331,12 @@ export function replyFailure(reply: Record<string, unknown>): ToolResult & { nee
     const ny = needsYou(reply.health);
     return { ok: false, error: 'needs_you', message: ny.message, needs_you: ny };
   }
-  const code = typeof reply.error === 'string' ? ERROR_CODES[reply.error] : undefined;
   const pane = typeof reply.pane === 'string' ? reply.pane : null;
+  if (typeof reply.health === 'string' && reply.health in MAC_PERMISSION_NAME) {
+    const ny = macPermissionNeed(reply.health, pane);
+    return { ok: false, error: 'needs_you', message: ny.message, needs_you: ny };
+  }
+  const code = typeof reply.error === 'string' ? ERROR_CODES[reply.error] : undefined;
   return { ok: false, error: code ?? 'phone_failed', message: pane && !message.includes(pane) ? `${message} (${pane})` : message };
 }
 
@@ -341,6 +352,27 @@ function elementsOf(reply: Record<string, unknown>): OcrElement[] {
   return (reply.elements as Array<Record<string, unknown>>)
     .filter((e) => typeof e.label === 'string' && Array.isArray(e.bounds) && e.bounds.length === 4)
     .map((e) => ({ class: 'Text', label: String(e.label), id: '', bounds: (e.bounds as number[]).map((n) => Math.round(Number(n))) as OcrElement['bounds'] }));
+}
+
+/**
+ * The helper's Vision OCR on an image (`read_image`): the iPhone broadcast's
+ * fallback frame when the broadcast extension has no memory to read it
+ * (phone-route.ts officialLane). Mac only; null when this build has no helper
+ * or the read fails, so the caller keeps the phone's own answer.
+ */
+export function mirrorImageReader(client: () => MirrorClient | null): ImageReader {
+  return async (imageBase64) => {
+    const c = client();
+    if (!c) return null;
+    try {
+      const reply = await c.request('read_image', { image_base64: imageBase64 });
+      if (!reply.ok) return null;
+      const elements = elementsOf(reply);
+      return { elements, text: typeof reply.text === 'string' ? reply.text : elements.map((e) => e.label).join('\n'), width: Number(reply.width) || 0, height: Number(reply.height) || 0 };
+    } catch {
+      return null;
+    }
+  };
 }
 
 /** phone.find_and_tap on OCR text: an exact label first, then one that contains the text; `match` narrows. */

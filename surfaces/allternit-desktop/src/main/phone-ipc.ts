@@ -357,6 +357,9 @@ export function registerPhoneIpc(handle: Guarded): void {
   handle('phone:usb-stop', async (_e, boardId: unknown) => (await usb()).stop(String(boardId)));
   handle('phone:usb-forget', async (_e, boardId: unknown) => (await usb()).forget(String(boardId)));
 
+  // Phone Use: each route's health for one iPhone and the one a tap would use (the connect kit's route list).
+  handle('phone:routes', (_e, serial: unknown) => phoneService.phoneRoutes(serial));
+
   // Control my iPhone by Bluetooth (bt-mac): this Mac as a Bluetooth keyboard and mouse for the person's iPhone.
   // status never asks for Bluetooth permission; pair asks the first time.
   handle('phone:bt-mac-status', () => phoneService.btMacStatus());

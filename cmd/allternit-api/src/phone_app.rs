@@ -59,6 +59,10 @@
 //! screen), `canTap` (Android with Accessibility on and the app connected),
 //! `consent` (Android: last reported screen-share consent, `unknown` while the
 //! app is not connected; iOS: null), `appOpen`, `foreground`, `browserOpen`.
+//! Phone Use ([`mark_phone_use`]): a second iPhone or iPad in keyboard mode
+//! carries `keyboard_for` (the iPhone it types for, `""` when not certain);
+//! other app iPhones carry `routes` (`official`, and `bt-apple` when a keyboard
+//! device is listed).
 //!
 //! An unpaired phone (no stored key) gets `{"type":"end","reason":"not_paired"}`
 //! and close 4401 on ingest/control.
@@ -524,7 +528,80 @@ fn listing_fields(platform: AppPlatform, control_state: Option<&Value>) -> Value
         // Device Access switches from the app's last `state` frame (Phone Use
         // health on the Desktop); null while the app is not connected.
         "deviceAccess": control_state.and_then(|s| s.get("deviceAccess").cloned()).unwrap_or(Value::Null),
+        // Keyboard mode from the iOS app's state frame (Phone Use `bt-apple`): this
+        // device is a Bluetooth keyboard and mouse for another iPhone. Read by
+        // [`mark_phone_use`] and dropped there.
+        "keyboard": if android { Value::Null } else { keyboard_state(control_state) },
     })
+}
+
+/// `{on, connected}` from an iOS app's state frame; null when the app is closed or older.
+fn keyboard_state(control_state: Option<&Value>) -> Value {
+    match control_state.and_then(|s| s.get("keyboard")).filter(|k| k.is_object()) {
+        Some(k) => json!({
+            "on": k["on"].as_bool() == Some(true),
+            "connected": k["on"].as_bool() == Some(true) && k["connected"].as_bool() == Some(true),
+        }),
+        None => Value::Null,
+    }
+}
+
+fn route_row(route: &str, healthy: bool, needs_you: Option<&str>) -> Value {
+    let mut row = json!({ "route": route, "healthy": healthy });
+    if let Some(code) = needs_you {
+        row["needs_you"] = json!(code);
+    }
+    row
+}
+
+/// Phone Use fields on the whole `GET /api/v1/phones` list, after
+/// [`decorate_listing`] ran on each row (contract §1, §3.1):
+/// - a second iPhone or iPad in keyboard mode gets `keyboard_for`: the name of
+///   the iPhone it types for when exactly one other iPhone could be it, else
+///   `""` (a Bluetooth peripheral is never told its host's name);
+/// - every other app iPhone gets `routes` with what the node itself can see:
+///   `official` (the app open) and `bt-apple` (a keyboard device listed).
+///   Desktop adds the Mac routes (mirror, bt-mac, usb-agent) itself
+///   (`phones.phoneRoutes`), so web and the PWA show a partial list.
+pub fn mark_phone_use(phones: &mut [Value]) {
+    let is_ios_app = |p: &Value| {
+        p["serial"].as_str().is_some_and(|s| s.starts_with(APP_SERIAL_PREFIX)) && p["platform"].as_str() == Some("ios")
+    };
+    let is_keyboard = |p: &Value| p["keyboard"]["on"].as_bool() == Some(true);
+    let keyboards: Vec<usize> = (0..phones.len()).filter(|&i| is_ios_app(&phones[i]) && is_keyboard(&phones[i])).collect();
+    let targets: Vec<usize> = (0..phones.len()).filter(|&i| is_ios_app(&phones[i]) && !is_keyboard(&phones[i])).collect();
+    let connected = keyboards.iter().filter(|&&i| phones[i]["keyboard"]["connected"].as_bool() == Some(true)).count();
+    let broadcasting = targets.iter().filter(|&&i| phones[i]["online"].as_bool() == Some(true)).count();
+    let target_name = (targets.len() == 1).then(|| phones[targets[0]]["name"].as_str().unwrap_or_default().to_string());
+    for &i in &keyboards {
+        phones[i]["keyboard_for"] = json!(target_name.clone().unwrap_or_default());
+    }
+    for &i in &targets {
+        let mut routes = vec![if phones[i]["appOpen"].as_bool() == Some(true) {
+            route_row("official", true, None)
+        } else {
+            route_row("official", false, Some("APP_NOT_FOREGROUND"))
+        }];
+        if !keyboards.is_empty() {
+            let live = phones[i]["online"].as_bool() == Some(true);
+            routes.push(if connected > 1 || broadcasting > 1 {
+                // Which keyboard is paired with which iPhone can't be told apart: not set up.
+                route_row("bt-apple", false, None)
+            } else if connected == 0 {
+                route_row("bt-apple", false, Some("BT_NOT_PAIRED"))
+            } else if !live {
+                route_row("bt-apple", false, Some("BROADCAST_STOPPED"))
+            } else {
+                route_row("bt-apple", true, None)
+            });
+        }
+        phones[i]["routes"] = Value::Array(routes);
+    }
+    for p in phones.iter_mut() {
+        if let Some(obj) = p.as_object_mut() {
+            obj.remove("keyboard");
+        }
+    }
 }
 
 /// Add the app-phone fields to a `GET /api/v1/phones` row.
@@ -1597,6 +1674,56 @@ mod tests {
         assert_eq!(closed["canTap"], false);
         assert_eq!(closed["consent"], "unknown");
         assert_eq!(closed["appOpen"], false);
+    }
+
+    #[test]
+    fn listing_marks_the_keyboard_device_and_lists_routes_for_the_iphone() {
+        let row = |serial: &str, name: &str, online: bool, state: Option<Value>| {
+            let mut p = json!({ "serial": serial, "name": name, "online": online });
+            let fields = listing_fields(AppPlatform::Ios, state.as_ref());
+            for (k, v) in fields.as_object().unwrap() {
+                p[k] = v.clone();
+            }
+            p
+        };
+        let mut phones = vec![
+            row("app:main", "Sam's iPhone", true, Some(json!({ "foreground": true }))),
+            row("app:pad", "Sam's iPad", false, Some(json!({ "keyboard": { "on": true, "connected": true } }))),
+            json!({ "serial": "adb-1", "name": "Pixel", "online": true }),
+        ];
+        mark_phone_use(&mut phones);
+        assert_eq!(phones[1]["keyboard_for"], "Sam's iPhone");
+        assert!(phones[1].get("routes").is_none(), "a keyboard is not another phone");
+        assert!(phones[0].get("keyboard_for").is_none());
+        assert_eq!(phones[0]["routes"], json!([{ "route": "official", "healthy": true }, { "route": "bt-apple", "healthy": true }]));
+        assert!(phones.iter().all(|p| p.get("keyboard").is_none()), "the raw state stays inside the node");
+        assert!(phones[2].get("routes").is_none());
+
+        // Keyboard on but no iPhone connected to it, and the app closed.
+        let mut waiting = vec![
+            row("app:main", "Sam's iPhone", true, None),
+            row("app:pad", "Sam's iPad", false, Some(json!({ "keyboard": { "on": true, "connected": false } }))),
+        ];
+        mark_phone_use(&mut waiting);
+        assert_eq!(
+            waiting[0]["routes"],
+            json!([{ "route": "official", "healthy": false, "needs_you": "APP_NOT_FOREGROUND" }, { "route": "bt-apple", "healthy": false, "needs_you": "BT_NOT_PAIRED" }])
+        );
+
+        // Two iPhones besides the keyboard: the keyboard's iPhone is not known.
+        let mut two = vec![
+            row("app:a", "A", true, Some(json!({}))),
+            row("app:b", "B", true, Some(json!({}))),
+            row("app:pad", "Pad", false, Some(json!({ "keyboard": { "on": true, "connected": true } }))),
+        ];
+        mark_phone_use(&mut two);
+        assert_eq!(two[2]["keyboard_for"], "");
+        assert_eq!(two[0]["routes"][1], json!({ "route": "bt-apple", "healthy": false }));
+
+        // No keyboard device: only the official route.
+        let mut alone = vec![row("app:main", "Sam's iPhone", true, Some(json!({})))];
+        mark_phone_use(&mut alone);
+        assert_eq!(alone[0]["routes"], json!([{ "route": "official", "healthy": true }]));
     }
 
     #[test]

@@ -8,6 +8,8 @@
 //   probe      {"ocr"?:bool}                     app running, window, Mac lock, permissions, health
 //   capture    {"png"?:bool,"gray"?:bool}        PNG of the Mirroring window only, plus its size
 //   read       {}                                Vision text lines with [x1,y1,x2,y2] pixel boxes
+//   read_image {"image_base64"}                  the same for a JPEG/PNG Desktop already has (the iPhone
+//                                                broadcast's fallback frame); needs no permission or window
 //   tap        {"x","y"}
 //   type       {"text"}                          max 500 characters
 //   swipe      {"x1","y1","x2","y2","duration_ms"?} or {"direction":"up|down|left|right"}
@@ -28,6 +30,7 @@ public enum Command: Equatable, Sendable {
     case probe(ocr: Bool)
     case capture(png: Bool, gray: Bool)
     case read
+    case readImage(Data)
     case tap(x: Double, y: Double)
     case type(text: String)
     case swipe(x1: Double, y1: Double, x2: Double, y2: Double, durationMs: Int)
@@ -44,7 +47,7 @@ public enum Command: Equatable, Sendable {
         case .version: return 2
         case .probe(let ocr): return ocr ? 6 : 3
         case .capture: return 6
-        case .read: return 10
+        case .read, .readImage: return 10
         case .type(let text): return 5 + Double(text.count) * 0.03
         case .swipe(_, _, _, _, let d), .swipeDirection(_, let d): return 5 + Double(d) / 1000
         default: return 5
@@ -54,7 +57,7 @@ public enum Command: Equatable, Sendable {
     /// Commands that send input to the window.
     public var isInput: Bool {
         switch self {
-        case .version, .probe, .capture, .read: return false
+        case .version, .probe, .capture, .read, .readImage: return false
         default: return true
         }
     }
@@ -72,6 +75,8 @@ public struct MirrorError: Error, Equatable, Sendable {
 }
 
 public let maxTypeLength = 500
+/** read_image: the largest image accepted (a 4K JPEG is well under this). */
+public let maxImageBytes = 12 << 20
 
 /// A request line → its id and command. Bad input is a `bad_request` error that still carries the id when one was readable.
 public func parseRequest(_ line: String) -> (id: String?, result: Result<Command, MirrorError>) {
@@ -106,6 +111,12 @@ public func parseCommand(_ d: [String: Any]) -> Result<Command, MirrorError> {
     case "probe": return .success(.probe(ocr: flag("ocr", false)))
     case "capture": return .success(.capture(png: flag("png", true), gray: flag("gray", false)))
     case "read": return .success(.read)
+    case "read_image":
+        guard let b64 = d["image_base64"] as? String, !b64.isEmpty, let data = Data(base64Encoded: b64) else {
+            return .failure(MirrorError("bad_request", "read_image needs image_base64."))
+        }
+        guard data.count <= maxImageBytes else { return .failure(MirrorError("bad_request", "The image is larger than \(maxImageBytes >> 20) MB.")) }
+        return .success(.readImage(data))
     case "tap":
         guard let x = num("x"), let y = num("y") else { return .failure(MirrorError("bad_request", "tap needs numeric x and y.")) }
         return .success(.tap(x: x, y: y))

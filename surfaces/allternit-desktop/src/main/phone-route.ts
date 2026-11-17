@@ -154,8 +154,9 @@ const NOT_BUILT: Partial<Record<RouteId, string>> = {
   mirror: 'iPhone Mirroring is not available in this version of Allternit Desktop.',
   // The real lane is phone-bt-mac.ts, registered by phone-service.ts; this stub serves runners built without it.
   'bt-mac': 'Bluetooth keyboard and mouse from this Mac is not in this build of Allternit Desktop.',
-  'bt-apple': 'Bluetooth keyboard and mouse from a second iPhone or iPad is not available yet.',
-  'bt-android': 'Bluetooth keyboard and mouse from the Allternit Android app is not available yet.',
+  // The real lanes are phone-bt-apple.ts and phone-bt-android.ts, registered by phone-service.ts.
+  'bt-apple': 'Bluetooth keyboard and mouse from a second iPhone or iPad is not in this build of Allternit Desktop.',
+  'bt-android': 'Bluetooth keyboard and mouse from the Allternit Android app is not in this build of Allternit Desktop.',
 };
 
 /** A route that is not built yet: always "unavailable", so the router falls through it. */
@@ -234,8 +235,11 @@ export function officialResult(tool: string, res: AppRpcResult): ToolResult {
       const ny = needsYou('APP_NOT_FOREGROUND');
       return { ok: false, error: 'needs_you', message: ny.message, needs_you: ny, detail: { error: 'app_not_open' } } as ToolResult;
     }
-    case 'device_access_off':
-      return { ok: false, error: 'device_access_off', message: `Turn on ${sw ?? 'this'} in the Allternit app on your iPhone (Settings > Device Access). Do not retry until the person says it is on.`, detail: { error: 'device_access_off' } } as ToolResult;
+    case 'device_access_off': {
+      // DEVICE_ACCESS_OFF (contract §5). The error stays device_access_off so the router never tries another route.
+      const ny = needsYou('DEVICE_ACCESS_OFF', { name: sw ?? 'this' });
+      return { ok: false, error: 'device_access_off', message: `${ny.message} Do not retry until the person says it is on.`, needs_you: ny, detail: { error: 'device_access_off' } } as ToolResult;
+    }
     case 'permission_denied':
       return { ok: false, error: 'device_access_off', message: `iOS does not allow Allternit to use ${sw ?? 'this'}. Allow it for Allternit in the iPhone Settings app, then turn it on in Allternit Settings > Device Access.`, detail: { error: 'permission_denied' } } as ToolResult;
     case 'not_supported':
@@ -273,10 +277,43 @@ export function officialRequest(tool: LaneTool, args: Record<string, unknown>): 
   }
 }
 
+/** One action from device.describe's `action_list` (contract §7.2). */
+interface CatalogAction {
+  id: string;
+  title: string;
+  kind: ActionKind;
+  params: string[];
+  opens_app?: boolean;
+  /** Community-sourced (`webResearchIntents`): runs only through the shortcut the person added. */
+  confidence?: string;
+}
+
 interface ActionCatalog {
   built?: string;
-  builtIn: { name: string; known: boolean; actions: string[] };
-  apps: Array<{ id: string; name: string; category: string; shortcut: string; installed: boolean; link: string | null; actionCount: number }>;
+  /** `list` is null from an app that sends only ids (before `action_list`). */
+  builtIn: { name: string; known: boolean; actions: string[]; list: CatalogAction[] | null };
+  apps: Array<{ id: string; name: string; category: string; shortcut: string; installed: boolean; link: string | null; actionCount: number; list: CatalogAction[] | null }>;
+}
+
+const ACTION_KINDS: readonly ActionKind[] = ['create', 'send', 'open', 'search', 'read', 'control', 'other'];
+
+/** An `action_list` as sent by the app; null when absent (an older app sends counts only). */
+function actionListOf(v: unknown): CatalogAction[] | null {
+  if (!Array.isArray(v)) return null;
+  return v.flatMap((raw): CatalogAction[] => {
+    const a = asObj(raw);
+    if (typeof a.id !== 'string' || !a.id) return [];
+    const title = typeof a.title === 'string' && a.title ? a.title : actionWords(a.id);
+    const kind = ACTION_KINDS.includes(a.kind as ActionKind) ? (a.kind as ActionKind) : deriveActionKind(title);
+    return [{
+      id: a.id,
+      title,
+      kind,
+      params: Array.isArray(a.params) ? a.params.filter((p): p is string => typeof p === 'string') : [],
+      ...(typeof a.opens_app === 'boolean' ? { opens_app: a.opens_app } : {}),
+      ...(typeof a.confidence === 'string' ? { confidence: a.confidence } : {}),
+    }];
+  });
 }
 
 /** The action catalog from device.describe's `catalog` (contract §7). */
@@ -290,9 +327,11 @@ function catalogOf(detail: Record<string, unknown>): ActionCatalog {
       name: str(built.name, 'Allternit Actions'),
       known: built.known === true,
       actions: Array.isArray(built.actions) ? built.actions.filter((a): a is string => typeof a === 'string') : [],
+      list: actionListOf(built.action_list),
     },
     apps: (Array.isArray(cat.apps) ? cat.apps : []).map((raw) => {
       const a = asObj(raw);
+      const list = actionListOf(a.action_list);
       return {
         id: str(a.id),
         name: str(a.name),
@@ -300,39 +339,57 @@ function catalogOf(detail: Record<string, unknown>): ActionCatalog {
         shortcut: str(a.shortcut),
         installed: a.shortcut_known === true,
         link: typeof a.shortcut_link === 'string' ? a.shortcut_link : null,
-        actionCount: (Number(a.actions) || 0) + (Number(a.web_actions) || 0),
+        actionCount: list ? list.length : (Number(a.actions) || 0) + (Number(a.web_actions) || 0),
+        list,
       };
     }).filter((a) => a.id && a.shortcut),
   };
 }
 
+/** An ActionEntry (contract §7.2) for one catalog action. */
+function actionEntry(app: string, a: CatalogAction, dispatch: string, installed: boolean): Record<string, unknown> {
+  return {
+    id: a.id,
+    title: a.title,
+    kind: a.kind,
+    params: a.params,
+    ...(a.opens_app !== undefined ? { opens_app: a.opens_app } : {}),
+    ...(a.confidence !== undefined ? { confidence: a.confidence } : {}),
+    dispatch,
+    installed,
+    guarded: approvalClass('phone.actions.run', { app, action: a.id }, { action: { kind: a.kind } }) !== null,
+  };
+}
+
 /**
- * phone.actions.list over device.describe. The built-in "Allternit Actions"
- * entries come with their ids, a derived kind and whether they are guarded;
- * a third-party app comes with its shortcut, whether it is added and how many
- * actions it has (device.describe sends the per-intent list only as a count).
+ * phone.actions.list over device.describe: every app with its actions (id,
+ * title, derived kind, params, whether it is guarded). An app from before
+ * `action_list` sends counts only; its apps then list `action_count` and no
+ * actions.
  */
 export function actionsListFromDescribe(detail: Record<string, unknown>, args: Record<string, unknown>): Record<string, unknown> {
   const cat = catalogOf(detail);
   const wantKind = typeof args.kind === 'string' ? args.kind : undefined;
   const wantApp = typeof args.app === 'string' ? args.app.toLowerCase() : undefined;
   const installedOnly = args.installed_only === true;
-  const builtIn = cat.builtIn.actions
-    .map((id) => {
-      const kind = deriveActionKind(id);
-      return { id, title: actionWords(id), kind, params: [] as string[], dispatch: 'actions_shortcut', installed: cat.builtIn.known, guarded: approvalClass('phone.actions.run', { app: 'allternit', action: id }, { action: { kind } }) !== null };
-    })
-    .filter((a) => !wantKind || a.kind === wantKind);
+  const byKind = (a: CatalogAction) => !wantKind || a.kind === wantKind;
+  const builtInList = cat.builtIn.list ?? cat.builtIn.actions.map((id) => ({ id, title: actionWords(id), kind: deriveActionKind(id), params: [] as string[] }));
+  const builtIn = builtInList.filter(byKind).map((a) => actionEntry('allternit', a, 'actions_shortcut', cat.builtIn.known));
   const apps: Array<Record<string, unknown>> = [];
-  if ((!wantApp || wantApp === 'allternit') && (!installedOnly || cat.builtIn.known)) {
+  if ((!wantApp || wantApp === 'allternit') && (!installedOnly || cat.builtIn.known) && (!wantKind || builtIn.length > 0)) {
     apps.push({ id: 'allternit', name: cat.builtIn.name, category: 'Built in', shortcut: cat.builtIn.name, installed: cat.builtIn.known, actions: builtIn });
   }
-  if (!wantKind) {
-    for (const a of cat.apps) {
-      if (wantApp && a.id.toLowerCase() !== wantApp) continue;
-      if (installedOnly && !a.installed) continue;
-      apps.push({ id: a.id, name: a.name, category: a.category, shortcut: a.shortcut, installed: a.installed, action_count: a.actionCount, actions: [] });
+  for (const a of cat.apps) {
+    if (wantApp && a.id.toLowerCase() !== wantApp) continue;
+    if (installedOnly && !a.installed) continue;
+    if (!a.list) {
+      // An older app: counts only, so a kind filter can't be answered for it.
+      if (!wantKind) apps.push({ id: a.id, name: a.name, category: a.category, shortcut: a.shortcut, installed: a.installed, action_count: a.actionCount, actions: [] });
+      continue;
     }
+    const actions = a.list.filter(byKind).map((x) => actionEntry(a.id, x, 'app_shortcut', a.installed));
+    if (wantKind && actions.length === 0) continue;
+    apps.push({ id: a.id, name: a.name, category: a.category, shortcut: a.shortcut, installed: a.installed, action_count: a.actionCount, actions });
   }
   return {
     apps,
@@ -354,7 +411,21 @@ export function actionsRunRequest(detail: Record<string, unknown>, args: Record<
   }
   const entry = cat.apps.find((a) => a.id.toLowerCase() === app);
   if (!entry) return unknown(`No catalog app has the id "${String(args.app)}".`);
+  // An app from before `action_list` sends no ids to check; its shortcut answers for unknown ones.
+  if (entry.list && !entry.list.some((a) => a.id === action)) return unknown(`${entry.name} has no action "${action}".`);
   return { name: entry.shortcut, input, dispatched_as: 'app_shortcut' };
+}
+
+/** OCR of an image Desktop already has (phone-mirror.ts `mirrorImageReader`). Elements use the contract's Element shape. */
+export type ImageReader = (imageBase64: string) => Promise<{ elements: Array<{ class: string; label: string; id: string; bounds: [number, number, number, number] }>; text: string; width: number; height: number } | null>;
+
+/** After the extension says it sent a fresh keyframe, wait this long for it to reach the node. */
+const FALLBACK_FRAME_WAIT_MS = 400;
+
+export interface OfficialLaneOptions {
+  /** OCR for the broadcast's fallback frame; null/absent = no OCR in this build (Windows, Linux). */
+  readImage?: () => ImageReader | null;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -364,8 +435,31 @@ export function actionsRunRequest(detail: Record<string, unknown>, args: Record<
  * actions and Home; a screen read needs the broadcast instead. The approval
  * check (phone-tools.ts phoneUseApproval) runs before act is called.
  */
-export function officialLane(apps: () => AppPhoneLane | null, now: () => number = Date.now): PhoneLane {
+export function officialLane(apps: () => AppPhoneLane | null, now: () => number = Date.now, opts: OfficialLaneOptions = {}): PhoneLane {
   const described = new Map<string, { at: number; detail: Record<string, unknown> }>();
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  /**
+   * The broadcast extension had no memory to read the screen (contract §9.1:
+   * `error:"unavailable"`, `fallback` = `frame_sent` or `runtime_reads_frames`):
+   * read the latest broadcast still here instead. Null = keep the phone's answer.
+   */
+  const readFallbackFrame = async (a: AppPhoneLane, serial: string, res: ToolResult, args: Record<string, unknown>): Promise<ToolResult | null> => {
+    const detail = asObj((res as { detail?: unknown }).detail);
+    const reader = opts.readImage?.();
+    if (res.ok || detail.error !== 'unavailable' || !reader) return null;
+    if (detail.fallback === 'frame_sent') await sleep(FALLBACK_FRAME_WAIT_MS);
+    const shot = await a.call('phone.screenshot', serial, {});
+    if (!shot.ok || typeof shot.dataBase64 !== 'string') return null;
+    const seen = await reader(shot.dataBase64);
+    if (!seen) return null;
+    const filter = asObj(args.filter);
+    const label = typeof filter.label === 'string' ? filter.label.toLowerCase() : '';
+    const type = typeof filter.type === 'string' ? filter.type.toLowerCase() : '';
+    const elements = seen.elements.filter((e) => (!label || e.label.toLowerCase().includes(label)) && (!type || e.class.toLowerCase() === type));
+    const text = label || type ? elements.map((e) => e.label).join('\n') : seen.text;
+    const out = { elements, text, width: seen.width, height: seen.height };
+    return { ok: true, verified: true, ...out, detail: { ...out, read_by: 'desktop' } } as ToolResult;
+  };
   const live = (serial: string) => {
     const a = apps();
     if (!a?.has(serial) || !a.rpc || !a.officialState) return null;
@@ -413,6 +507,7 @@ export function officialLane(apps: () => AppPhoneLane | null, now: () => number 
       const req = officialRequest(tool, args);
       if (!req) return { ok: false, error: 'not_supported', message: `${tool} does not run on the official route.` };
       const res = officialResult(tool, await a.rpc(serial, req.method, req.params, officialTimeoutMs(args.timeout_s)));
+      if (!res.ok && tool === 'phone.read_ui') return (await readFallbackFrame(a, serial, res, args)) ?? res;
       if (res.ok && tool === 'phone.read_ui') {
         // Existing readers take elements and text at the top level (phone-verify.ts PhoneUseResult).
         const detail = asObj(res.detail);
@@ -706,9 +801,10 @@ export class PhoneRouter {
     for (const id of ROUTE_ORDER) {
       const lane = this.lanes[id];
       const h = await this.health(id, ctx);
-      const code: NeedsYouCode | undefined = h.state === 'needs_you' ? h.needsYou.code : h.state === 'healthy' ? h.notice?.code : undefined;
+      const need: NeedsYou | undefined = h.state === 'needs_you' ? h.needsYou : h.state === 'healthy' ? h.notice : undefined;
       if (h.state === 'healthy') first ??= id;
-      routes.push({ route: id, healthy: h.state === 'healthy', available: h.state !== 'unavailable', ...(code ? { needs_you: code } : {}), covers: [...lane.covers] });
+      // `message` is the filled sentence (a name or date in it), for the connect kit's needs-you line.
+      routes.push({ route: id, healthy: h.state === 'healthy', available: h.state !== 'unavailable', ...(need ? { needs_you: need.code, message: need.message } : {}), covers: [...lane.covers] });
     }
     let facts: PhoneFacts = {};
     const official = this.lanes.official;

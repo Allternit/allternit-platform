@@ -96,6 +96,10 @@ export interface AppPhoneRow {
   appOpen?: boolean;
   /** Device Access switches from the app's last state frame; absent on older nodes or while the app is closed. */
   deviceAccess?: Record<string, boolean>;
+  /** Phone Use: a second iPhone or iPad in keyboard mode, and the iPhone it types for ('' = not certain). */
+  keyboardFor?: string;
+  /** Phone Use routes the node can see for this iPhone (contract §3.1 rows). */
+  routes?: unknown[];
 }
 
 /** What the node last heard from an iPhone's app, for the Phone Use official route's health (phone-route.ts). */
@@ -496,6 +500,10 @@ export interface AppPhoneDevice {
   screen: boolean;
   /** What a bot can do here, in plain words. */
   note: string;
+  /** Phone Use: this is a second iPhone or iPad acting as a Bluetooth keyboard for the named iPhone ('' = not certain). Not a phone to act on. */
+  keyboard_for?: string;
+  /** Phone Use routes the node listed (the connect kit asks Desktop for the full list: phones.phoneRoutes). */
+  routes?: unknown[];
 }
 
 const fail = (error: ToolErrorCode, message: string): ToolResult => ({ ok: false, error, message });
@@ -753,9 +761,13 @@ export class AppPhoneBackend implements UsbPhoneBackend {
         name,
         canTap: false,
         screen: r.online,
-        note: r.online
-          ? `Screen only: phone.screenshot and phone.web.* work; ${APP_TAPS_MESSAGE.toLowerCase()}.`
-          : `${APP_SHARE_SCREEN_MESSAGE} phone.web.* work while the Allternit app is open.`,
+        note: r.keyboardFor !== undefined
+          ? `Bluetooth keyboard and mouse for ${r.keyboardFor || 'another iPhone'} (route bt-apple). Not a phone to act on: use the iPhone's own serial.`
+          : r.online
+            ? `Screen only: phone.screenshot and phone.web.* work; ${APP_TAPS_MESSAGE.toLowerCase()}.`
+            : `${APP_SHARE_SCREEN_MESSAGE} phone.web.* work while the Allternit app is open.`,
+        ...(r.keyboardFor !== undefined ? { keyboard_for: r.keyboardFor } : {}),
+        ...(r.routes ? { routes: r.routes } : {}),
       };
     });
   }
@@ -934,7 +946,7 @@ export function httpAppPhoneNode(deps: HttpAppPhoneNodeDeps): AppPhoneNode {
       const json = (await res.json().catch(() => ({}))) as { phones?: unknown };
       const rows = Array.isArray(json.phones) ? json.phones : [];
       return rows.flatMap((row): AppPhoneRow[] => {
-        const r = row as { serial?: unknown; name?: unknown; model?: unknown; online?: unknown; screen?: unknown; route?: unknown; platform?: unknown; canTap?: unknown; consent?: unknown; appOpen?: unknown; deviceAccess?: unknown };
+        const r = row as { serial?: unknown; name?: unknown; model?: unknown; online?: unknown; screen?: unknown; route?: unknown; platform?: unknown; canTap?: unknown; consent?: unknown; appOpen?: unknown; deviceAccess?: unknown; keyboard_for?: unknown; routes?: unknown };
         const access = r.deviceAccess && typeof r.deviceAccess === 'object' && !Array.isArray(r.deviceAccess)
           ? Object.fromEntries(Object.entries(r.deviceAccess as Record<string, unknown>).filter(([, v]) => typeof v === 'boolean')) as Record<string, boolean>
           : undefined;
@@ -949,6 +961,8 @@ export function httpAppPhoneNode(deps: HttpAppPhoneNodeDeps): AppPhoneNode {
           ...(typeof r.consent === 'string' ? { consent: r.consent } : {}),
           ...(typeof r.appOpen === 'boolean' ? { appOpen: r.appOpen } : {}),
           ...(access ? { deviceAccess: access } : {}),
+          ...(typeof r.keyboard_for === 'string' ? { keyboardFor: r.keyboard_for } : {}),
+          ...(Array.isArray(r.routes) ? { routes: r.routes } : {}),
           // `screen` is the ingest socket; older rows only carry `online`.
           online: r.screen === undefined ? r.online === true : r.screen === true && r.online !== false,
         }];

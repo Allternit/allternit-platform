@@ -33,6 +33,7 @@ import {
   usbAgentLane,
   type ApprovalClass,
   type PhoneLane,
+  type ImageReader,
   type RouteId,
 } from './phone-route.js';
 import { failEnvelope } from './phone-verify.js';
@@ -189,6 +190,8 @@ export interface PhoneToolDeps {
    * stubs until their plan steps land. Tests pass fake lanes here.
    */
   lanes?: Partial<Record<RouteId, PhoneLane>>;
+  /** OCR of an image (the iPhone broadcast's fallback frame for phone.read_ui); Mac only. */
+  readImage?: () => ImageReader | null;
   /** An iPhone's lock state when something knows it (null = unknown). */
   phoneLocked?: (serial: string) => Promise<boolean | null>;
   /** The iCTRL helper's removal date (ISO), once set (plan decision D2). Until then no retirement notice. */
@@ -961,7 +964,7 @@ export class PhoneToolRunner {
     this.now = deps.now ?? Date.now;
     this.router = new PhoneRouter({
       lanes: {
-        official: officialLane(() => deps.apps?.() ?? null, deps.now),
+        official: officialLane(() => deps.apps?.() ?? null, deps.now, { readImage: () => deps.readImage?.() ?? null, sleep: deps.sleep }),
         'usb-agent': usbAgentLane(() => deps.usb?.() ?? null),
         'legacy-helper': legacyHelperLane(() => deps.links?.() ?? null, () => deps.helperRetiresAt?.() ?? null),
         ...deps.lanes,
@@ -986,6 +989,25 @@ export class PhoneToolRunner {
       if (serial) recorder.record({ serial, tool: name, args: raw, result: result as Record<string, unknown>, durationMs: this.now() - started });
     }
     return result;
+  }
+
+  /**
+   * Phone Use routes for one iPhone, for the connect kit (preload
+   * `phones.phoneRoutes`): phone.describe's `routes` (contract §3.1) and the
+   * route a tap would use now (`chosen`, null when none is ready). Not a tool
+   * call: never acts and is not recorded in the run history. Null for a phone
+   * the router does not serve (Android, unknown serials).
+   */
+  async routes(serial: string): Promise<{ routes: Array<Record<string, unknown>>; chosen: RouteId | null } | null> {
+    const lanes: GuardLanes = { usb: this.deps.usb?.() ?? null, links: this.deps.links?.() ?? null, apps: this.deps.apps?.() ?? null };
+    if (!isIphone(serial, lanes)) return null;
+    const described = await this.router.describe(serial);
+    const routes = Array.isArray(described.detail.routes) ? (described.detail.routes as Array<Record<string, unknown>>) : [];
+    const chosen = routes.find((r) => r.healthy === true && Array.isArray(r.covers) && (r.covers as unknown[]).includes('tap'));
+    return {
+      routes: routes.map((r) => (typeof r.needs_you === 'string' ? { ...r, needsYou: { code: r.needs_you, message: r.message } } : r)),
+      chosen: chosen && isRouteId(chosen.route) ? chosen.route : null,
+    };
   }
 
   /** The one connected phone, when there is exactly one. */

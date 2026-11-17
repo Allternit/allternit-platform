@@ -128,6 +128,19 @@ enum Main {
                 "ok": true, "elements": elements, "text": text,
                 "width": image.width, "height": image.height, "coordinate_space": "pixels",
             ]
+        case .readImage(let data):
+            // An image Desktop already has: no window, no Screen Recording, nothing on screen is touched.
+            let image = try Capture.decode(data)
+            let lines = try Capture.text(image, fast: false)
+            var boxed: [(text: String, bounds: [Int], confidence: Double)] = lines.map { line in
+                (line.text, pixelBox(normalized: line.box, width: image.width, height: image.height), Double(line.confidence))
+            }
+            boxed.sort { a, b in a.bounds[1] != b.bounds[1] ? a.bounds[1] < b.bounds[1] : a.bounds[0] < b.bounds[0] }
+            let elements: [[String: Any]] = boxed.map { ["class": "Text", "label": $0.text, "id": "", "bounds": $0.bounds, "confidence": $0.confidence] }
+            return [
+                "ok": true, "elements": elements, "text": boxed.map { $0.text }.joined(separator: "\n"),
+                "width": image.width, "height": image.height, "coordinate_space": "pixels",
+            ]
         default:
             return try await input(cmd)
         }

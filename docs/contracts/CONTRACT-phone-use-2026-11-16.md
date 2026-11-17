@@ -14,7 +14,7 @@ Route ids are lowercase strings. They appear in `route` in every result (section
 | `mirror` | macOS iPhone Mirroring driven by Desktop (`cmd/allternit-mirror`) | Mirror window frame + OCR | Mac pointer and keys into the window |
 | `bt-mac` | Mac acting as Bluetooth keyboard and mouse for the phone | broadcast frames read by Desktop | HID from Mac |
 | `bt-android` | Allternit Android app acting as Bluetooth keyboard and mouse (`BluetoothHidDevice`) | broadcast; on-phone read or the bot's vision | HID from Android |
-| `bt-apple` | A second iPhone or iPad running the App Store Allternit app as Bluetooth keyboard and mouse. A MAIN route (the common setup is two Apple devices and no Mac). Needs P5 to pass; described to App Review as a Bluetooth keyboard/mouse remote | broadcast | HID from the second device |
+| `bt-apple` | A second iPhone or iPad running the App Store Allternit app as Bluetooth keyboard and mouse. A MAIN route (the common setup is two Apple devices and no Mac). Needs P5 to pass; described to App Review as a Bluetooth keyboard/mouse remote. The app declares the `bluetooth-peripheral` background mode, but the person keeps Allternit open on the second device: the app keeps its screen awake while keyboard mode runs, and if iOS suspends it the link drops and every key and button is released (section 9.2) | broadcast | HID from the second device |
 | `usb-agent` | USB Agent board (cable, or Bluetooth mode) | AirPlay or broadcast | board HID |
 | `legacy-helper` | Existing iCTRL helper. DEPRECATED: no new setup; removed 30 days after plan step 16 passes, with an in-app notice | helper | helper |
 
@@ -44,7 +44,7 @@ Windows and Linux Desktop have no native Bluetooth sender: they use `bt-android`
 {
   "$defs": {
     "RouteId": { "enum": ["official","mirror","bt-mac","bt-android","bt-apple","usb-agent","legacy-helper"] },
-    "NeedsYouCode": { "enum": ["MAC_LOCKED","MIRROR_WINDOW_HIDDEN","MIRROR_PHONE_IN_USE","BROADCAST_STOPPED","BT_NOT_PAIRED","ASSISTIVETOUCH_OFF","FULL_KEYBOARD_ACCESS_OFF","APP_NOT_FOREGROUND","SHORTCUT_NOT_INSTALLED","HELPER_RETIRING"] },
+    "NeedsYouCode": { "enum": ["MAC_LOCKED","MIRROR_WINDOW_HIDDEN","MIRROR_PHONE_IN_USE","BROADCAST_STOPPED","BT_NOT_PAIRED","ASSISTIVETOUCH_OFF","FULL_KEYBOARD_ACCESS_OFF","APP_NOT_FOREGROUND","SHORTCUT_NOT_INSTALLED","HELPER_RETIRING","MAC_PERMISSION_MISSING","DEVICE_ACCESS_OFF"] },
     "Serial": { "type": "string", "maxLength": 128, "description": "Phone id. App-linked iPhones are \"app:<id>\"." },
     "Element": {
       "type": "object",
@@ -77,7 +77,7 @@ Result `detail`:
 { "type":"object","required":["routes","foreground_app","locked"],
   "properties":{
     "routes":{"type":"array","items":{"type":"object","required":["route","healthy"],
-      "properties":{"route":{"$ref":"#/$defs/RouteId"},"healthy":{"type":"boolean"},"needs_you":{"$ref":"#/$defs/NeedsYouCode"},"covers":{"type":"array","items":{"enum":["shortcuts","actions","home","tap","type","swipe","key","screenshot","read_ui"]}}}}},
+      "properties":{"route":{"$ref":"#/$defs/RouteId"},"healthy":{"type":"boolean"},"needs_you":{"$ref":"#/$defs/NeedsYouCode"},"message":{"type":"string","description":"the filled section 5 sentence, present with needs_you"},"covers":{"type":"array","items":{"enum":["shortcuts","actions","home","tap","type","swipe","key","screenshot","read_ui"]}}}}},
     "locked":{"type":["boolean","null"],"description":"null when unknown"},
     "foreground_app":{"type":["string","null"]},
     "shortcuts":{"type":"array","items":{"type":"string"},"description":"installed Allternit shortcut names"},
@@ -100,7 +100,7 @@ Result `detail`: `{ "output": <string|object|null>, "returned_via": "app_intent"
 ```json
 { "type":"object","properties":{"serial":{"$ref":"#/$defs/Serial"},"app":{"type":"string","maxLength":64,"description":"catalog app id, e.g. \"slack\"; omit for all"},"kind":{"enum":["create","send","open","search","read","control","other"]},"installed_only":{"type":"boolean","default":false}},"additionalProperties":false }
 ```
-Result `detail`: `{ "apps": [ { "id","name","category","actions":[ActionEntry] } ] }`, ActionEntry from section 7.2.
+Result `detail`: `{ "apps": [ { "id","name","category","actions":[ActionEntry] } ] }`, ActionEntry from section 7.2. Every app lists its actions (from `device.describe`'s `action_list`, section 9.1); an app version from before `action_list` lists `action_count` and no actions.
 
 `phone.actions.run`: run one catalog action.
 ```json
@@ -112,7 +112,7 @@ Result `detail`: `{ "apps": [ { "id","name","category","actions":[ActionEntry] }
   "timeout_s":{"type":"integer","minimum":1,"maximum":120,"default":30}},
   "additionalProperties":false }
 ```
-Result `detail`: `{ "output": object|null, "dispatched_as": "framework"|"actions_shortcut"|"app_shortcut"|"app_intent" }`. Unknown app or action: `ok:false, detail.error:"unknown_action"`. Params failing the action's `params` list: `detail.error:"bad_params"` with `detail.missing: string[]`. The built-in "Allternit Actions" shortcut dispatches on a JSON `action` field.
+Result `detail`: `{ "output": object|null, "dispatched_as": "framework"|"actions_shortcut"|"app_shortcut"|"app_intent" }`. Unknown app or action: `ok:false, detail.error:"unknown_action"`. Params failing the action's `params` list: `detail.error:"bad_params"` with `detail.missing: string[]`. The built-in "Allternit Actions" shortcut dispatches on a JSON `action` field. Desktop checks `app` and `action` against `device.describe`'s action lists, then sends `device.shortcuts.run` with the app's shortcut name and the input `{ "action", "params" }` (there is no separate `device.actions.run` message).
 
 `phone.home.list`: `{ serial?, kind?: "light"|"switch"|"lock"|"thermostat"|"garage"|"sensor"|"scene" }`. `detail`: `{ "devices":[{ "id","name","room","kind","state":object }], "scenes":[{ "id","name" }] }`. Read only, never guarded.
 
@@ -191,8 +191,10 @@ Health is evaluated before each tap action and reported by `phone.describe`. Eac
 | `APP_NOT_FOREGROUND` | a shortcut needs Allternit in front and no tap route can open it | Open the Allternit app on your iPhone. |
 | `SHORTCUT_NOT_INSTALLED` | `official` shortcut name not found | Add the "<name>" shortcut in Allternit Settings > Device Access > iPhone actions. |
 | `HELPER_RETIRING` | `legacy-helper` selected | The old Allternit helper is being retired. Switch to the app and set up a new route before <date>. |
+| `MAC_PERMISSION_MISSING` | `mirror` needs a macOS permission Allternit does not have (Screen & System Audio Recording, Accessibility) | Allow Allternit in System Settings > Privacy & Security > <name> on your Mac. |
+| `DEVICE_ACCESS_OFF` | an `official` call needs a Device Access switch (Shortcuts, Home) that is off in the Allternit app | Turn on <name> in the Allternit app on your iPhone (Settings > Device Access). |
 
-`<name>` and `<date>` are filled by the runtime. `MIRROR_PHONE_IN_USE`, `BT_NOT_PAIRED`, `ASSISTIVETOUCH_OFF`, `FULL_KEYBOARD_ACCESS_OFF` have no `official` equivalent. A `needs_you` for a route the router could skip is only returned when no other healthy route exists (section 1.1 step 4).
+`<name>` and `<date>` are filled by the runtime (for `MAC_PERMISSION_MISSING` the pane name, for `DEVICE_ACCESS_OFF` the switch name). `MIRROR_PHONE_IN_USE`, `BT_NOT_PAIRED`, `ASSISTIVETOUCH_OFF`, `FULL_KEYBOARD_ACCESS_OFF`, `MAC_PERMISSION_MISSING` have no `official` equivalent. `DEVICE_ACCESS_OFF` ends the call (`detail.error:"device_access_off"`): no other route has that switch. A `needs_you` for a route the router could skip is only returned when no other healthy route exists (section 1.1 step 4).
 
 Detection of `ASSISTIVETOUCH_OFF` and `FULL_KEYBOARD_ACCESS_OFF` is by observation (pointer absent in broadcast; keyboard navigation not responding), not by an API. UNVERIFIED (P3, P4).
 
@@ -300,13 +302,12 @@ Common reply: `{ "type":"<req>.result", "id": string, "ok": boolean, "route": "o
 
 | type | Fields | Result `detail` |
 |---|---|---|
-| `device.describe` | `id` | `{ foreground:boolean, locked:boolean\|null, shortcuts:string[], home:{available:boolean}, broadcast:boolean }` |
+| `device.describe` | `id` | `{ foreground:boolean, locked:boolean\|null, shortcuts:string[], home:{available:boolean}, broadcast:boolean, catalog }`. `catalog`: `{ built, actions_shortcut:{ name, known, link, actions:string[], action_list }, apps:[{ id, name, category, shortcut, shortcut_known, shortcut_link, actions:int, web_actions:int, action_list }] }`; each `action_list` item is `{ id, title, kind, params:string[], opens_app?, confidence?, source:"app_intent"\|"web_research" }` (usable intents only, section 7.2) |
 | `device.shortcuts.run` | `id`, `name:string`, `input?:any`, `timeout_s?:int` | `{ output:any\|null, returned_via:"app_intent"\|"x_callback" }` |
-| `device.actions.run` | `id`, `app:string`, `action:string`, `params:object`, `timeout_s?:int` | `{ output:object\|null, dispatched_as:string }` |
 | `device.home.list` | `id`, `kind?:string` | `{ devices:[...], scenes:[...] }` |
 | `device.home.set` | `id`, `device_id:string`, `state:object` | `{ id, state:object }` |
 | `device.home.scene` | `id`, `scene_id:string` | `{ id, ran:boolean }` |
-| `device.screen.read` | `id`, `filter?:{label?:string,type?:string}` | `{ elements:Element[], text:string, width:int, height:int }` (on-phone OCR of the latest broadcast frame; may be refused when the extension has no memory: `error:"unavailable"`, runtime then reads frames itself) |
+| `device.screen.read` | `id`, `filter?:{label?:string,type?:string}` | `{ elements:Element[], text:string, width:int, height:int }` (on-phone OCR of the latest broadcast frame; may be refused when the extension has no memory: `error:"unavailable"` with `fallback:"frame_sent"` (a fresh keyframe is on its way) or `"runtime_reads_frames"`; Desktop then OCRs the latest broadcast still itself and answers with the same fields plus `read_by:"desktop"`, on a Mac only) |
 
 ### 9.2 HID sender messages (Android `bt-android`, second Apple device `bt-apple`)
 
@@ -327,6 +328,10 @@ Errors: `ok:false, needs_you.code` `BT_NOT_PAIRED` when no paired host, else `de
 On the Android app-phone control socket these travel in the existing RPC shape: `{id, method:"hid.…", params}` answered by `{id, result}` or `{id, error:{code,message}}` (codes `bt_not_paired`, `hid_unavailable`, `hid_failed`, `invalid_params`, `bad_params`), sent by Desktop through the node's `POST /api/v1/phones/app/:id/rpc`. The phone does not send `hid.pair.status` unprompted there (the node keeps only `state` frames); Desktop asks for it. A sender MUST release all keys and buttons when the link drops or the app is backgrounded.
 
 The Mac sender and the board are not on this lane (local to Desktop), but implement the same `HidTransport` (section 6).
+
+### 9.3 Phone listing
+
+`GET /api/v1/phones` adds to app iPhone rows: on a second iPhone or iPad in keyboard mode (its `state` frame carries `keyboard:{on,connected}`), `keyboard_for`: the name of the one other app iPhone it can be typing for, or `""` when there is more than one; on every other app iPhone, `routes`: the rows the node can see (`official`, and `bt-apple` when a keyboard device is listed) in the `phone.describe` row shape. Desktop answers the full list for the connect kit (`phones.phoneRoutes(serial)`: `{ routes, chosen }`, `chosen` = the route a tap would use now).
 
 ## 10. Licensing
 
