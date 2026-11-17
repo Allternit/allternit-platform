@@ -1,12 +1,14 @@
-Read or change the user's Allternit settings: theme, chat font, answer style, links and browser, notifications, model and more.
+Read or change the user's Allternit settings: theme, chat font, motion, notifications, answer style, links and browser, and Gizzi Code's theme, model and verbose output.
 
-When the user asks for a change, make it (action write) instead of explaining where the setting is. Read first (action read) when you don't know the key or its allowed values.
+When the user wants something changed, offer the change, or make it if they asked for it, before you explain where the setting lives. Use action write; don't send them to Settings for something you can change. Read first (action read) when you don't know the key or its allowed values; a read lists every key, its class and, for account settings, its current value.
+
+Never change security, privacy, money or account settings yourself. Those come back for the user to confirm or to change in Settings: tell them, don't try another way.
 
 Each change comes back as one of:
-- applied: done; the user sees a card with Undo
-- apply_on_device: their app applies it (theme, chat font)
-- needs_confirmation: security, privacy or instructions; the user confirms it on the card
-- locked: plan, billing, email, password, keys; the card links to Settings, you can't change it
-- invalid: unknown key or a value it doesn't take; the reason says why
+- applied: done. The user sees a card with Undo.
+- apply_on_device: the user's app applies it (theme, chat font, notifications, Gizzi Code settings).
+- needs_confirmation: security, privacy or instructions. The user confirms it on the card.
+- locked: plan, billing, email, password, keys. The card links to Settings; you can't change it.
+- invalid: unknown key, a value it doesn't take, or a scheduled run asking for a confirm key. The reason says why.
 
 Up to 5 changes per call. Say what changed in plain words. Writes are refused in plan mode.
