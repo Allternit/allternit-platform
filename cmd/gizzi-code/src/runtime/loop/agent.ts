@@ -578,7 +578,7 @@ export namespace Agent {
       const result = streamObject({
         ...params,
         providerOptions: ProviderTransform.providerOptions(model, {
-          instructions: SystemPrompt.instructions(),
+          instructions: SystemPrompt.instructions(model),
           store: false,
         }),
         onError: () => {},

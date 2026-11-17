@@ -4,10 +4,12 @@
  * (SessionPrompt loop); `headerParts` puts the base header around it
  * (LLM.stream).
  *
- * Normal sessions (Code mode, gizzi CLI, chat without a bot): unchanged —
- * provider/agent header first ("You are Allternit Shell…"), then environment,
- * instruction files, workspace identity, the live repo map, MCP server instructions, bot-chat
- * persona, scratchpad, and the caller's "+" appended instructions last.
+ * Normal sessions (Code mode, gizzi CLI, chat without a bot): the
+ * provider/agent header first (SystemPrompt.provider: the chat stack for
+ * chat/cowork/browser/design sessions, the Gizzi Code stack for code or
+ * unset), then environment, instruction files, workspace identity, the live
+ * repo map, MCP server instructions, bot-chat persona, scratchpad, and the
+ * caller's "+" appended instructions last.
  *
  * Bot turns (see runtime/bots/bot-turn.ts): the bot's persona (the caller's
  * "+" text, composed by allternit-api) leads, no instruction files or
@@ -83,7 +85,10 @@ export interface HeaderInput {
   bot?: BotTurnInfo
   /** The gizzi agent's own prompt (custom agents); replaces the provider header. */
   agentPrompt?: string
-  /** Codex OAuth sends its header through `options.instructions` instead. */
+  /**
+   * Codex OAuth sends the header stack (provider, or bot guidance on a bot
+   * turn) through `options.instructions` instead, so it is left out here.
+   */
   codex?: boolean
   /** Provider header prompts (SystemPrompt.provider). */
   provider: () => string[]
@@ -97,7 +102,8 @@ export function headerParts(input: HeaderInput): string[] {
   if (input.bot) {
     // The agent's own prompt (title, compaction, custom agents) still
     // replaces the generic header, as it does for normal sessions.
-    return [...input.system, ...(input.agentPrompt ? [input.agentPrompt] : input.botGuidance())].filter((x) => x)
+    const guidance = input.agentPrompt ? [input.agentPrompt] : input.codex ? [] : input.botGuidance()
+    return [...input.system, ...guidance].filter((x) => x)
   }
   return [
     ...(input.agentPrompt ? [input.agentPrompt] : input.codex ? [] : input.provider()),

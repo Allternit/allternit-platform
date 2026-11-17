@@ -775,7 +775,10 @@ export const AgentCompatRoutes = () =>
       try {
         if (!sessionID) {
           const existing = await findSession(chatID)
-          sessionID = existing?.id ?? (await Session.create({ title: `Allternit chat ${chatID}` })).id
+          // `surface: "chat"` as the Rust bridge sets it (create_gizzi_chat_session):
+          // an app session for PermissionNext.isAppSession, and the chat prompt stack.
+          sessionID =
+            existing?.id ?? (await Session.create({ title: `Allternit chat ${chatID}`, surface: "chat" })).id
           chatSessions.set(chatID, sessionID)
         }
       } catch (err) {
@@ -818,9 +821,18 @@ export const AgentCompatRoutes = () =>
       // Fast (the picker's tile): the priority tier, only for a model whose
       // account offers one (model-thinking.json `fast`); llm.ts sends it on.
       const fast = body?.fast === true && modelRef && ModelThinking.of(modelRef.modelID)?.fast === true
+      // Prompt hints the runtime reads from the user message (system.ts PromptContext):
+      // a phone client sends form_factor "phone", a voice turn reply_mode "voice".
+      const formFactor = body?.metadata?.form_factor === "phone" ? "phone" : undefined
+      const replyMode = body?.metadata?.reply_mode === "voice" ? "voice" : undefined
       const metadata =
-        (tools && typeof tools === "object") || fast
-          ? { ...(tools && typeof tools === "object" ? { tools } : {}), ...(fast ? { service_tier: "priority" } : {}) }
+        (tools && typeof tools === "object") || fast || formFactor || replyMode
+          ? {
+              ...(tools && typeof tools === "object" ? { tools } : {}),
+              ...(fast ? { service_tier: "priority" } : {}),
+              ...(formFactor ? { form_factor: formFactor } : {}),
+              ...(replyMode ? { reply_mode: replyMode } : {}),
+            }
           : undefined
       // The picker's thinking level, kept only when this model takes it.
       const variant = modelRef && typeof body?.effort === "string" ? ModelThinking.check(modelRef.modelID, body.effort) : undefined

@@ -21,12 +21,12 @@
  * `official` is the Allternit iPhone app (officialLane: Shortcuts, the action
  * catalog, Home, and on-phone reads of the broadcast frame), through
  * allternit-api's `/phones/app/:id/rpc`. `mirror` is phone-mirror.ts (iPhone
- * Mirroring on a Mac), registered by phone-service.ts through
- * PhoneToolDeps.lanes; its stub remains for runners built without it. Routes
- * not built yet (bt-*) are stubs that report "unavailable", so the router skips
- * them; later plan steps register real lanes in their place. The USB Agent and the old iCTRL
- * helper are wrapped as the `usb-agent` and `legacy-helper` lanes without
- * changing them.
+ * Mirroring on a Mac) and `bt-mac` is phone-bt-mac.ts (this Mac as a Bluetooth
+ * keyboard and mouse), both registered by phone-service.ts through
+ * PhoneToolDeps.lanes; their stubs remain for runners built without them.
+ * Routes not built yet are stubs that report "unavailable", so the router skips
+ * them. The USB Agent and the old iCTRL helper are wrapped as the `usb-agent`
+ * and `legacy-helper` lanes without changing them.
  */
 
 import type { AppRpcResult } from './phone-app-store.js';
@@ -152,9 +152,8 @@ export interface PhoneLane {
 const NOT_BUILT: Partial<Record<RouteId, string>> = {
   official: 'Shortcuts, actions and Home need the next version of Allternit Desktop.',
   mirror: 'iPhone Mirroring is not available in this version of Allternit Desktop.',
-  // Plan step 10 finding (2026-11-17): macOS has no supported public API for an app to act as a
-  // Bluetooth keyboard/mouse (classic HID PSMs and the HID GATT service 0x1812 are reserved).
-  'bt-mac': 'Your Mac can’t act as a Bluetooth keyboard and mouse for your iPhone: macOS has no supported way for apps to do that. Use iPhone Mirroring, the Allternit Android app or the USB Agent instead.',
+  // The real lane is phone-bt-mac.ts, registered by phone-service.ts; this stub serves runners built without it.
+  'bt-mac': 'Bluetooth keyboard and mouse from this Mac is not in this build of Allternit Desktop.',
   'bt-apple': 'Bluetooth keyboard and mouse from a second iPhone or iPad is not available yet.',
   'bt-android': 'Bluetooth keyboard and mouse from the Allternit Android app is not available yet.',
 };
