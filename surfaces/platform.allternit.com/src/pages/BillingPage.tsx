@@ -30,6 +30,20 @@ function formatHours(seconds: number): string {
   return `${(seconds / 3600).toFixed(seconds < 36_000 ? 1 : 0)} hr`;
 }
 
+type StoreProvider = "apple" | "google";
+
+function storeLabel(provider: StoreProvider) {
+  return provider === "apple" ? "Apple" : "Google";
+}
+
+function storeManageLabel(provider: StoreProvider) {
+  return provider === "apple" ? "App Store" : "Google Play";
+}
+
+function asStoreProvider(value: unknown): StoreProvider | null {
+  return value === "apple" || value === "google" ? value : null;
+}
+
 function safePortalUrl(value?: string) {
   if (!value) return null;
   try {
@@ -148,6 +162,9 @@ export function BillingPage() {
     plan_id: string;
     status: string;
     renews_at?: string;
+    billing_provider?: string | null;
+    manage_url?: string | null;
+    conflict?: boolean;
   } | null>(null);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
   // `?plan=plus|super|ultra` (the website's Subscribe buttons) starts that
@@ -253,10 +270,20 @@ export function BillingPage() {
             plan_id?: string;
             status?: string;
             renews_at?: string;
+            billing_provider?: string | null;
+            manage_url?: string | null;
+            conflict?: boolean;
           } | null;
           setCurrentSubscription(
             payload?.plan_id && payload.status
-              ? { plan_id: payload.plan_id, status: payload.status, renews_at: payload.renews_at }
+              ? {
+                  plan_id: payload.plan_id,
+                  status: payload.status,
+                  renews_at: payload.renews_at,
+                  billing_provider: payload.billing_provider,
+                  manage_url: payload.manage_url,
+                  conflict: payload.conflict === true,
+                }
               : null,
           );
         }
@@ -378,6 +405,23 @@ export function BillingPage() {
         return;
       }
       const payload = await response.json().catch(() => ({}));
+      const conflictStore = asStoreProvider(payload.billing_provider);
+      if (response.status === 409 && payload.error === "already_subscribed" && conflictStore) {
+        // The open plan is billed by a store: the Stripe portal cannot change it.
+        setSubscribeError(
+          `You already have a plan billed by ${storeLabel(conflictStore)}. Change or cancel it in ${storeManageLabel(conflictStore)} settings.`,
+        );
+        return;
+      }
+      if (response.status === 409 && payload.error === "store_billed") {
+        const store = conflictStore ?? storeProvider;
+        setSubscribeError(
+          store
+            ? `This plan is billed by ${storeLabel(store)}. Change or cancel it in ${storeManageLabel(store)} settings.`
+            : "This plan is billed by an app store. Change or cancel it in the store settings.",
+        );
+        return;
+      }
       if (response.status === 409 && payload.error === "already_subscribed") {
         // One plan per account: changes happen in the Stripe billing portal.
         setSubscribingPlanId(null);
@@ -419,6 +463,15 @@ export function BillingPage() {
         return;
       }
       const payload = await response.json().catch(() => ({}));
+      if (response.status === 409 && payload.error === "store_billed") {
+        const store = asStoreProvider(payload.billing_provider) ?? storeProvider;
+        setPortalError(
+          store
+            ? `This plan is billed by ${storeLabel(store)}. Change or cancel it in ${storeManageLabel(store)} settings.`
+            : "This plan is billed by an app store. Change or cancel it in the store settings.",
+        );
+        return;
+      }
       if (!response.ok) {
         throw new Error(
           payload.message || payload.error || `Unable to open billing portal (${response.status})`,
@@ -443,6 +496,13 @@ export function BillingPage() {
       ? currentSubscription.plan_id
       : null;
 
+  // Plans bought in the iPhone or Android app are billed by the store, not Stripe.
+  const storeProvider: StoreProvider | null = subscribedPlanId
+    ? asStoreProvider(currentSubscription?.billing_provider)
+    : null;
+  const storeManageUrl = safePortalUrl(currentSubscription?.manage_url ?? undefined);
+  const planConflict = currentSubscription?.conflict === true;
+
   // Arrived from a website Subscribe button: start that plan's checkout, or
   // say where to switch when the account already has a plan.
   useEffect(() => {
@@ -452,6 +512,10 @@ export function BillingPage() {
     const label = (id: string) => id.charAt(0).toUpperCase() + id.slice(1);
     if (subscribedPlanId === plan) {
       setPlanNotice(`You're already on ${label(plan)}.`);
+    } else if (subscribedPlanId && storeProvider) {
+      setPlanNotice(
+        `You're on ${label(subscribedPlanId)}, billed by ${storeLabel(storeProvider)}. Change it in ${storeManageLabel(storeProvider)} settings.`,
+      );
     } else if (subscribedPlanId) {
       setPlanNotice(
         `You're on ${label(subscribedPlanId)}. Switch to ${label(plan)} in Manage billing.`,
@@ -720,11 +784,42 @@ export function BillingPage() {
         </div>
       )}
 
+      {planConflict && (
+        <div
+          role="alert"
+          className="rounded-xl border border-solid border-[var(--status-error)]/40 bg-[var(--status-error)]/10 px-4 py-3 text-[13px] text-[var(--status-error)]"
+        >
+          You have two plans. Cancel one.
+        </div>
+      )}
+
+      {storeProvider && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-solid border-[var(--border-subtle)] bg-[var(--bg-secondary)]/40 px-4 py-3">
+          <span className="inline-flex items-center rounded-sm border border-[var(--text-primary)]/40 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.08em] text-[var(--text-primary)]">
+            Billed by {storeLabel(storeProvider)}
+          </span>
+          <span className="text-[13px] text-[var(--text-secondary)]">
+            Change or cancel this plan in {storeManageLabel(storeProvider)} settings.
+          </span>
+          {storeManageUrl && (
+            <a
+              href={storeManageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={QUIET_BUTTON_CLASS}
+            >
+              Manage in {storeManageLabel(storeProvider)} <ArrowSquareOut size={13} />
+            </a>
+          )}
+        </div>
+      )}
+
       <PlanPicker
         currentPlanName={entitlement?.planDisplayName}
         subscribedPlanId={subscribedPlanId}
         onSelect={billingAvailable ? (planId) => void handleSubscribePlan(planId) : undefined}
         onSwitch={() => void handleOpenPortal()}
+        storeBilledBy={storeProvider ? storeLabel(storeProvider) : null}
         livePlans={billingAvailable && plans.length > 0 ? plans : undefined}
         freeweights={freeweightsPerks}
         busyPlanId={subscribingPlanId}
@@ -973,7 +1068,7 @@ export function BillingPage() {
                 </span>
               ) : null;
             })()}
-            {portalAvailable && (
+            {portalAvailable && !storeProvider && (
               <button
                 type="button"
                 onClick={() => void handleOpenPortal()}

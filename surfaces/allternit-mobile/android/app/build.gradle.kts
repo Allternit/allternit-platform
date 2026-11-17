@@ -14,8 +14,8 @@ android {
         targetSdk = 36
         // One versionCode for both builds (same app ID): the Play bundle and the
         // sideloaded APK move together.
-        versionCode = 15
-        versionName = "0.6.0"
+        versionCode = 16
+        versionName = "0.7.0"
     }
 
     // Two builds of the same app ID:
@@ -132,6 +132,17 @@ dependencies {
     // Play In-App Review (the "rate this app" sheet), Google Play build only.
     // The web content cannot call it, so ReviewLauncherActivity asks natively.
     "playImplementation"("com.google.android.play:review:2.0.2")
+    // Google Play Billing for the TWA (store purchases D15), Google Play build only:
+    // the Digital Goods API handler (PlayDelegationService) and the PaymentRequest
+    // provider (PaymentActivity / PaymentService). Apache-2.0, Google. 1.2.0 is the
+    // newest release (dl.google.com maven-metadata, 2026-11-17); its POM brings Play
+    // Billing Library 8.3.0 (new apps and updates need PBL 8+: the PBL 7 deadline was
+    // 2026-08-31, its extension 2026-11-01; PBL 8 is accepted until 2027-08-31,
+    // developer.android.com/google/play/billing/deprecation-faq) and androidx.browser
+    // 1.10.0, which Gradle resolves over :ondevice's 1.8.0 in this build. Its
+    // androidbrowserhelper 2.2.2 resolves to our 2.5.0. Never add it to phonelink:
+    // that build must not carry com.android.vending.BILLING.
+    "playImplementation"("com.google.androidbrowserhelper:billing:1.2.0")
     // On-device models (llama.cpp engine, downloads, TWA postMessage bridge), Google Play
     // build only. See ondevice/README.md. ReviewLauncherActivity extends its
     // BridgedLauncherActivity.

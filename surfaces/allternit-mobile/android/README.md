@@ -229,7 +229,7 @@ What had to adapt:
 ## Build flavors (0.5.2+)
 
 - `phonelink` (the default) is the sideloaded APK Allternit Desktop installs. It is `src/main` plus `src/phonelink`: all Phone Link code, `Mesh.aar`, the accessibility service, services, receivers, permissions and the **Phone Link** shortcut. Tests live in `src/testPhonelink`.
-- `play` is the Google Play bundle. It is `src/main` only: the Trusted Web Activity, with just the `INTERNET` permission. Nothing from Phone Link is packaged.
+- `play` is the Google Play bundle. It is `src/main` plus `src/play`: the Trusted Web Activity, the screen-share lane (`src/phoneshare`), the on-device engine (`:ondevice`), the rating prompt and Google Play Billing (see below). Nothing from the adb side of Phone Link is packaged.
 - The module namespace is `com.allternit.app`, so the generated `R` class carries no Phone Link name. Phone Link classes keep the `com.allternit.phonelink` package, and `src/phonelink/AndroidManifest.xml` names them in full.
 
 ## The Allternit app (Trusted Web Activity, 0.5.0+)
@@ -252,6 +252,33 @@ When the app opens, the launcher may show Google Play's in-app review card befor
 Code: `app/src/play/java/com/allternit/app/ReviewLauncherActivity.kt` and `ReviewPolicy.kt`. The play flavor makes it the launcher through the manifest placeholder `launcherActivity`; the `phonelink` build keeps `LauncherActivity` and has no prompt. Counters are in `SharedPreferences` on the device; nothing is sent to Allternit.
 
 To reset while testing, clear the app's data (`adb shell pm clear com.allternit.app`).
+
+## Google Play Billing (play flavor only, 0.7.0+)
+
+Inside the Play app, m.allternit.com sells plans and credit packs through Google Play Billing only (store purchases plan D15). Stripe checkout, the portal link and auto top-up are hidden there.
+
+- **Library.** `com.google.androidbrowserhelper:billing:1.2.0` (`playImplementation`). It brings Play Billing Library 8.3.0. Play needs PBL 8 or newer for new apps and updates (PBL 7's deadline was 2026-08-31, its extension 2026-11-01; PBL 8 is accepted until 2027-08-31; see developer.android.com/google/play/billing/deprecation-faq). It also lifts androidx.browser to 1.10.0 in this build.
+- **Digital Goods API.** `PlayDelegationService` (`src/play/java/com/allternit/app/`) is androidbrowserhelper's `DelegationService` plus `DigitalGoodsRequestHandler`. The play manifest removes the stock `DelegationService` from `src/main`, so Chrome finds one TWA service. Notification delegation works as before.
+- **Purchases.** The page calls `PaymentRequest` with the method `https://play.google.com/billing`. Chrome opens the library's `PaymentActivity`, and `PaymentService` answers `canMakePayment`. Both check at runtime that the caller is the browser the TWA was last launched in. The page then posts the purchase token to `POST /api/v1/billing/store/google/purchases`, and the server verifies it with Google.
+- **Permission.** `com.android.vending.BILLING` is in the play manifest only. The phonelink build never ships billing. Check its merged manifest (`app/build/intermediates/merged_manifest/phonelinkRelease/.../AndroidManifest.xml`) for no `BILLING`.
+
+### The `src=play` rule
+
+The web app turns on Play Billing when the URL has the exact query `src=play`. It reads it once and keeps it in sessionStorage. **Every URL the play build opens in the TWA must carry it.** `ReviewLauncherActivity` does this with `PlayLaunchUrl` (tests in `src/testPlay`):
+
+- The default URL, deep links (`https://m.allternit.com/...` VIEW intents) and the long-press shortcuts get `src=play` added in `getLaunchingUrl()`. Other parameters and the fragment stay.
+- A text share becomes a VIEW of `/share-target?title=..&text=..&src=play` before the launcher sees it. Chrome's own share path replaces the share target's query, so a marker put in the share target JSON would be lost.
+- Web Push notifications are opened by Chrome itself. When Chrome hands the notification URL to the app as a VIEW intent, it goes through `getLaunchingUrl()` like any deep link. When Chrome focuses or opens the page itself, the marker from the first launch is still in that tab's sessionStorage.
+
+A new launch path (a new activity, shortcut or intent filter that opens the TWA) must go through `ReviewLauncherActivity` or add the marker the same way.
+
+### Testing with a license tester
+
+1. In Play Console, add the test Google account under **Settings › License testing** and to the internal testing track's testers list.
+2. Upload the `bundlePlayRelease` build to the internal track and install it from the opt-in link with that account. Sideloaded or debug builds cannot buy: Play Billing needs the Play-installed, Play-signed app, and the TWA needs the asset-links check to pass.
+3. Open the app. In Chrome DevTools (`chrome://inspect`) check that the page URL has `src=play` and that `'getDigitalGoodsService' in window` is true.
+4. Buy a pack and a plan. License testers get test cards ("Test card, always approves", "...always declines", "...slow"); nothing is charged. Test subscriptions renew every few minutes, so renewals, grace and expiry can be checked in an hour.
+5. Check that the server granted it (`GET /api/v1/billing/subscription` shows `billing_provider: "google"`) and that a second launch does not claim the same purchase twice.
 
 ## Live conformance
 

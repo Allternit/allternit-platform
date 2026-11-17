@@ -170,6 +170,7 @@ export function PlanPicker({
   onSubscribe,
   onSelect,
   onSwitch,
+  storeBilledBy,
   livePlans,
   freeweights,
   busyPlanId,
@@ -186,6 +187,8 @@ export function PlanPicker({
   onSubscribe?: (planId: PlanId) => void;
   onSelect?: (planId: PlanId) => void;
   onSwitch?: () => void;
+  /** "Apple" or "Google" when the plan is billed by a store: other plan cards are locked. */
+  storeBilledBy?: string | null;
   livePlans?: LiveBillingPlan[];
   /** `freeweights` block from /billing/plans. Renders nothing unless status is "offered". */
   freeweights?: FreeweightsPerks | null;
@@ -239,6 +242,8 @@ export function PlanPicker({
               <span className={`${btn} block text-center opacity-60`} style={buttonStyle}>FREE TIER</span>
             ) : plan.id === subscribedPlanId ? (
               <span className={`${btn} block border text-center`} style={{ borderColor: ink.text }}>CURRENT PLAN</span>
+            ) : storeBilledBy && subscribedPlanId ? (
+              <span className={`${btn} block border text-center opacity-70`} style={{ borderColor: ink.text }}>BILLED BY {storeBilledBy.toUpperCase()}</span>
             ) : subscribedPlanId && onSwitch ? (
               <button type="button" onClick={onSwitch} className={btn} style={buttonStyle}>SWITCH IN MANAGE BILLING</button>
             ) : (
