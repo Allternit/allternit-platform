@@ -163,3 +163,6 @@ phone layout and the PWA. If the session is missing or not the viewer's, show
   session's Memory Drive context block (`DriveStatus.needsLook`) and in `memory_list`. The
   server accepts `conflict_of` as an ordinary identifier-safe metadata key; no API change.
   Settle one by keeping the right text on the original id and deleting the sibling.
+- **Past chats and resources** (no drive change). `thread_read`, `thread_recent`, `thread_wait` use
+  `POST /bot-routing/thread/{resolve,recent,wait}`; transcripts stay in gizzi's local store.
+  `resource` reads `out:<id>` and `mcp:<server>:<uri>` refs scoped to the session.
