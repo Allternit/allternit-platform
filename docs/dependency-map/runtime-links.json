@@ -25,6 +25,12 @@
       "path": "allternit/cmd/allternit-api/src/mcp_event_automations.rs"
     },
     {
+      "id": "allternit/cmd/allternit-api/src/agent_user_tools.rs",
+      "label": "Agent to user: files and notify routes",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/agent_user_tools.rs"
+    },
+    {
       "id": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
       "label": "Agent session execution and cancellation",
       "kind": "module",
@@ -1413,6 +1419,15 @@
       "kind": "iCTRL JSON-RPC over HTTP (port 8200) to Phone Link",
       "evidence": [
         "allternit/surfaces/allternit-mobile/android/README.md"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/agent_user_tools.rs",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+      "kind": "runtime event forwarder: agent.message.sent from send_user_message (POST /bot-routing/user/notify) becomes a normal-level push, AGENT_MESSAGE category",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agent_user_tools.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs"
       ]
     },
     {
