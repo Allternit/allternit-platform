@@ -80,6 +80,7 @@ import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
 import { meshManager } from './mesh-manager.js';
 import { PhoneLinkHealthMonitor } from './phone-link-health.js';
+import { MirrorClient, mirrorBinaryPath, mirrorLane, onlyIphone } from './phone-mirror.js';
 import { PhoneChannelReader, type ChannelConversation, type ReaderResult, type ScreenRecorder } from './phone-channel-readers.js';
 import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
 import { checkLinkedApp, openLinkedApp, type PhoneLinkAppResult } from './phone-app-signin.js';
@@ -298,6 +299,8 @@ class PhoneService {
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
   private runner: PhoneToolRunner | null = null;
+  /** The iPhone Mirroring helper process (macOS; phone-mirror.ts). Started on first use. */
+  private mirror: MirrorClient | null = null;
   private linkedBackend: PhoneLinkBackend | null = null;
   private appBackend: AppPhoneBackend | null = null;
   private appPhoneTimer: ReturnType<typeof setInterval> | null = null;
@@ -768,6 +771,13 @@ class PhoneService {
           onError: (error) => log.debug(`[Phone] run history step not recorded: ${error instanceof Error ? error.message : String(error)}`),
         }),
         api: () => phoneApi,
+        // Phone Use route 2a: iPhone Mirroring on this Mac. Health comes from a real probe; on Windows/Linux it is unavailable.
+        lanes: {
+          mirror: mirrorLane({
+            client: () => this.ensureMirrorClient(),
+            serves: (serial) => onlyIphone(serial, { usb: this.usbAgents, links: this.ensureLinkedBackend(), apps: this.ensureAppBackend() }),
+          }),
+        },
         guard: () => holds,
         // The owner's dialog here, and "waiting for approval" on the driven Android phone.
         onHold: phoneHoldHandler({
@@ -1842,7 +1852,18 @@ class PhoneService {
     return this.runner?.call('phone.home', { serial }) ?? { ok: false, error: 'device_offline', message: 'Phones are not set up yet.' };
   }
 
+  /** The allternit-mirror client, or null when this build has no binary (and on Windows/Linux). */
+  private ensureMirrorClient(): MirrorClient | null {
+    if (this.mirror) return this.mirror;
+    const binary = mirrorBinaryPath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() });
+    if (!binary) return null;
+    this.mirror = new MirrorClient({ binary: () => binary });
+    return this.mirror;
+  }
+
   shutdown(): void {
+    this.mirror?.close();
+    this.mirror = null;
     this.callBridge?.stop();
     this.callBridgeWindow?.destroy();
     this.callBridge = null;

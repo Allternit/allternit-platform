@@ -20,9 +20,11 @@
  *
  * `official` is the Allternit iPhone app (officialLane: Shortcuts, the action
  * catalog, Home, and on-phone reads of the broadcast frame), through
- * allternit-api's `/phones/app/:id/rpc`. Routes not built yet (mirror, bt-*)
- * are stubs that report "unavailable", so the router skips them; later plan
- * steps register real lanes in their place. The USB Agent and the old iCTRL
+ * allternit-api's `/phones/app/:id/rpc`. `mirror` is phone-mirror.ts (iPhone
+ * Mirroring on a Mac), registered by phone-service.ts through
+ * PhoneToolDeps.lanes; its stub remains for runners built without it. Routes
+ * not built yet (bt-*) are stubs that report "unavailable", so the router skips
+ * them; later plan steps register real lanes in their place. The USB Agent and the old iCTRL
  * helper are wrapped as the `usb-agent` and `legacy-helper` lanes without
  * changing them.
  */
