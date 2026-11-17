@@ -32,6 +32,7 @@ import { RESOURCE_TOOL_NAME } from '../tools/ResourceTool/prompt.js'
 import { SEND_USER_MESSAGE_TOOL_NAME } from '../tools/SendUserMessageTool/prompt.js'
 import { AUTOMATION_TOOL_NAME } from '../tools/AutomationTool/prompt.js'
 import { ASK_USER_LATER_TOOL_NAME } from '../tools/AskUserLaterTool/prompt.js'
+import { CONNECTOR_SEARCH_TOOL_NAME } from '../tools/ConnectorTool/prompt.js'
 
 export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   TASK_OUTPUT_TOOL_NAME,
@@ -75,6 +76,9 @@ export const ASYNC_AGENT_ALLOWED_TOOLS = new Set([
   SEND_USER_MESSAGE_TOOL_NAME,
   // A question that doesn't block: a worker's ask lands in the main session's thread.
   ASK_USER_LATER_TOOL_NAME,
+  // Workers can find and load the user's connected apps. connector_suggest and
+  // settings stay with the main thread: the user must see the card or change.
+  CONNECTOR_SEARCH_TOOL_NAME,
 ])
 /**
  * Tools allowed only for in-process teammates (not general async agents).
