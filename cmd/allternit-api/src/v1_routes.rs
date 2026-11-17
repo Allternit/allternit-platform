@@ -1007,19 +1007,21 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// on the computer toolset for that turn only; the lease and confirm gates in
 /// computer_toolset.rs / computer_safety.rs still decide every call.
 ///
-/// Three prompt hints also pass. Two only with their one allowed value:
-/// `form_factor: "phone"` and `reply_mode: "voice"`, which the runtime reads to
-/// add its small-screen and spoken-reply prompt blocks. The third is
-/// `time_zone`, the client's IANA zone (see `turn_time_zone`), which the
-/// runtime uses for the date in its environment section and the
-/// `current_time` tool. Anything else is dropped.
+/// Four prompt hints also pass. Three only with their one allowed value
+/// ([`VALUED_TURN_HINTS`]): `form_factor: "phone"` and `reply_mode: "voice"`,
+/// which the runtime reads to add its small-screen and spoken-reply prompt
+/// blocks, and `screen_context: "available"`, sent by a client that answers
+/// `capture_screen_context` requests. The fourth is `time_zone`, the client's
+/// IANA zone (see `turn_time_zone`), which the runtime uses for the date in
+/// its environment section and the `current_time` tool. Anything else is
+/// dropped.
 fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     let meta = body.get("metadata")?;
     let mut out = serde_json::Map::new();
     if let Some(tools) = meta.get("tools").filter(|t| t.is_object()) {
         out.insert("tools".to_string(), tools.clone());
     }
-    for (key, allowed) in [("form_factor", "phone"), ("reply_mode", "voice")] {
+    for (key, allowed) in VALUED_TURN_HINTS {
         if meta.get(key).and_then(|v| v.as_str()) == Some(allowed) {
             out.insert(key.to_string(), json!(allowed));
         }
@@ -1029,6 +1031,12 @@ fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     }
     if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
 }
+
+/// Turn hints that pass only with their one allowed value (the fourth hint,
+/// `time_zone`, is checked by [`turn_time_zone`]). Shared by this route and
+/// agent_session_routes' message send.
+pub(crate) const VALUED_TURN_HINTS: [(&str, &str); 3] =
+    [("form_factor", "phone"), ("reply_mode", "voice"), ("screen_context", "available")];
 
 /// The turn hint `metadata.time_zone`: the client's IANA zone name, at most
 /// 64 characters, kept only when it parses as a `chrono_tz::Tz` (trimmed, in
@@ -3220,15 +3228,20 @@ mod tests {
     }
 
     #[test]
-    fn stored_turn_metadata_keeps_only_the_three_prompt_hints() {
+    fn stored_turn_metadata_keeps_only_the_four_prompt_hints() {
         let body = json!({ "metadata": {
-            "form_factor": "phone", "reply_mode": "voice", "time_zone": "America/Chicago", "x": 1
+            "form_factor": "phone", "reply_mode": "voice", "time_zone": "America/Chicago",
+            "screen_context": "available", "x": 1
         } });
         assert_eq!(
             stored_turn_metadata(&body),
-            Some(json!({ "form_factor": "phone", "reply_mode": "voice", "time_zone": "America/Chicago" }))
+            Some(json!({
+                "form_factor": "phone", "reply_mode": "voice", "time_zone": "America/Chicago",
+                "screen_context": "available"
+            }))
         );
-        let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud" } });
+        assert_eq!(super::VALUED_TURN_HINTS.len() + 1, 4, "three valued hints plus time_zone");
+        let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud", "screen_context": "yes" } });
         assert_eq!(stored_turn_metadata(&body), None);
     }
 
