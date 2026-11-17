@@ -111,6 +111,25 @@ final class PushNotificationManager: NSObject {
         }
     }
 
+    /// Account switch, before Clerk `setActive` (plan contract C7): notices
+    /// and Live Activities of the account leaving go. The push token stays
+    /// registered; `didSwitchAccount()` moves it.
+    func willSwitchAccount() async {
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        // Needs the leaving account's Bearer, so it runs before setActive.
+        await BotLiveActivityManager.willSignOut()
+        clearBadge()
+    }
+
+    /// Account switch, after Clerk `setActive`: post the stored APNs token
+    /// again with the new session. cloud-api moves a token to whoever
+    /// registers it (routes/apns.rs `register`), so push goes to the active
+    /// account only (decision D3). Also stores the new widget read token and
+    /// re-sends Live Activity tokens.
+    func didSwitchAccount() async {
+        await didSignIn()
+    }
+
     /// Sign-out: stop pushes to this phone for the account leaving. Runs
     /// before the session is dropped (the DELETE needs its Bearer).
     func willSignOut() async {

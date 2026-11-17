@@ -51,6 +51,7 @@ struct SettingsView: View {
     @State private var activeOrgId: String? = nil
     @State private var switchingTo: String?? = nil
     @State private var accountError: String? = nil
+    @ReducedMotion private var reducedMotion
 
     #if DEBUG
     @State private var isPlatformPresented = false
@@ -106,7 +107,11 @@ struct SettingsView: View {
                 UsageStore.shared.fetchUsageIfNeeded()
                 if authManager.isSignedIn { AccountPlanStore.shared.load() }
                 await loadOrganizations()
+                rememberActivePlan()
             }
+            // D14: the active account's plan label is cached for when its
+            // row is inactive.
+            .onChange(of: plan.planName) { _, _ in rememberActivePlan() }
             .onAppear {
                 #if DEBUG
                 if launchArgumentEnabled("open-settings-memory") { path.append(SettingsPageID.memory) }
@@ -308,20 +313,22 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             PhoneSettingsCard {
                 if authManager.isSignedIn {
-                    accountRow(orgId: nil, name: accountName, detail: personDetail) {
-                        AccountAvatar(size: 36)
-                    }
-                    ForEach(memberships, id: \.id) { membership in
-                        PhoneCardDivider()
-                        accountRow(orgId: membership.organization.id,
-                                   name: membership.organization.name,
-                                   detail: "Organization") {
-                            orgBadge(membership.organization.name)
+                    ForEach(Array(accountRowModels.enumerated()), id: \.element.id) { index, row in
+                        if index > 0 { PhoneCardDivider() }
+                        accountRow(row) {
+                            if row.orgId == nil {
+                                AccountAvatar(size: 36)
+                            } else {
+                                orgBadge(row.name)
+                            }
                         }
                     }
-                    // Step 31 (I14, contract C7) adds here: other signed-in
-                    // people (Clerk multi-session, cached plan label per D14)
-                    // and the "Add account" row.
+                    // TODO(phone calm step 31, gated by plan amendment A4):
+                    // other signed-in people's session rows, "Add account"
+                    // (sign-in without signing out) and Log out of the active
+                    // session only go here. Waiting on Clerk multi-session
+                    // (clerk.allternit.com `single_session_mode` is true) and a
+                    // clerk-ios 1.6.2 session-list check.
                 } else {
                     NavigationLink(value: SettingsPageID.profile) {
                         HStack(spacing: 12) {
@@ -354,9 +361,12 @@ struct SettingsView: View {
         }
     }
 
-    private func accountRow<Avatar: View>(orgId: String?, name: String, detail: String?,
+    private func accountRow<Avatar: View>(_ row: AccountRowModel,
                                           @ViewBuilder avatar: () -> Avatar) -> some View {
-        let active = activeOrgId == orgId
+        let orgId = row.orgId
+        let name = row.name
+        let detail = row.detail
+        let active = row.isActive
         return Button(action: {
             if active {
                 path.append(SettingsPageID.profile)
@@ -382,12 +392,16 @@ struct SettingsView: View {
                 if switchingTo == .some(orgId) {
                     ProgressView()
                 } else if active {
+                    // Scales in on the newly active row; no motion when
+                    // motion is reduced.
                     Image(systemName: "checkmark")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color("BrandAccent"))
+                        .transition(reducedMotion ? .identity : .scale(scale: 0.4).combined(with: .opacity))
                         .accessibilityHidden(true)
                 }
             }
+            .animation(reducedMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7), value: active)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .frame(minHeight: 56)
@@ -414,16 +428,48 @@ struct SettingsView: View {
         return authManager.accountName
     }
 
-    /// "Personal · <plan>", else the email.
-    private var personDetail: String {
-        var parts = ["Personal"]
-        if let name = plan.planName ?? usageStore.planLabel { parts.append(name) }
-        else if let email = authManager.accountEmail { parts.append(email) }
-        return parts.joined(separator: " · ")
+    /// The card's rows: the person ("Personal · <plan>", else the email) and
+    /// each organization. The active row reads the live plan; the others the
+    /// plan label cached while they were active (D14). No other account's
+    /// data is ever fetched.
+    private var accountRowModels: [AccountRowModel] {
+        let userId = authManager.currentUserId
+        return accountRows(
+            personName: accountName,
+            personFallbackDetail: authManager.accountEmail,
+            organizations: organizationList,
+            activeOrgId: activeOrgId,
+            livePlanName: plan.planName ?? usageStore.planLabel,
+            cachedPlan: { orgId in
+                guard let userId else { return nil }
+                return AccountPlanLabels.read(userId: userId, orgId: orgId)
+            }
+        )
+    }
+
+    /// The person's organizations (sample ones under `-sample-workspace`).
+    private var organizationList: [(id: String, name: String)] {
+        #if DEBUG
+        if SampleWorkspace.isEnabled { return SettingsAccountsSample.organizations }
+        #endif
+        return memberships.map { (id: $0.organization.id, name: $0.organization.name) }
+    }
+
+    /// Saves the active account's plan label for its row (D14).
+    private func rememberActivePlan() {
+        guard authManager.isSignedIn, let userId = authManager.currentUserId,
+              let name = plan.planName ?? usageStore.planLabel else { return }
+        AccountPlanLabels.remember(userId: userId, orgId: activeOrgId, planName: name)
     }
 
     @MainActor
     private func loadOrganizations() async {
+        #if DEBUG
+        if SampleWorkspace.isEnabled {
+            SettingsAccountsSample.seedPlanLabels()
+            return
+        }
+        #endif
         guard authManager.isSignedIn, authManager.isClerkConfigured, let user = Clerk.shared.user else { return }
         activeOrgId = Clerk.shared.session?.lastActiveOrganizationId
         if let cached = user.organizationMemberships, !cached.isEmpty { memberships = cached }
@@ -435,6 +481,14 @@ struct SettingsView: View {
 
     @MainActor
     private func switchAccount(to orgId: String?) async {
+        #if DEBUG
+        // Sample workspace: the switch is shown, not sent to Clerk.
+        if SampleWorkspace.isEnabled, orgId != activeOrgId {
+            activeOrgId = orgId
+            Haptics.selection()
+            return
+        }
+        #endif
         guard authManager.isClerkConfigured, orgId != activeOrgId,
               let sessionId = Clerk.shared.session?.id else { return }
         switchingTo = .some(orgId)
@@ -709,3 +763,25 @@ struct SettingsView: View {
         }
     }
 }
+
+#if DEBUG
+/// `-calm-accounts` with `-sample-workspace` (phone calm step 31): sample
+/// organizations for the Accounts card, with cached plan labels for the
+/// inactive rows. Pass `-calm-settings` too so Settings opens; the card is
+/// the first thing on its root.
+enum SettingsAccountsSample {
+    static var organizations: [(id: String, name: String)] {
+        guard launchArgumentEnabled(LaunchArgument.calmAccounts) else { return [] }
+        return [(id: "org_sample_harbor", name: "Harbor Bakery"),
+                (id: "org_sample_pier", name: "Pier Street Cafe")]
+    }
+
+    /// Cached labels as if each row had been active once (D14).
+    static func seedPlanLabels() {
+        guard launchArgumentEnabled(LaunchArgument.calmAccounts) else { return }
+        let userId = SampleWorkspace.userId
+        AccountPlanLabels.remember(userId: userId, orgId: nil, planName: "Pro")
+        AccountPlanLabels.remember(userId: userId, orgId: "org_sample_harbor", planName: "Team")
+    }
+}
+#endif
