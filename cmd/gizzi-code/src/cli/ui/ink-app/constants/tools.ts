@@ -36,6 +36,7 @@ import { ASK_USER_LATER_TOOL_NAME } from '../tools/AskUserLaterTool/prompt.js'
 import { WAIT_AGENTS_TOOL_NAME } from '../tools/WaitAgentsTool/prompt.js'
 import { AGENT_CONTROL_TOOL_NAME } from '../tools/AgentControlTool/prompt.js'
 import { GET_CONTEXT_REMAINING_TOOL_NAME } from '../tools/GetContextRemainingTool/prompt.js'
+import { AGENT_BATCH_TOOL_NAME } from '../tools/AgentBatchTool/prompt.js'
 
 export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   TASK_OUTPUT_TOOL_NAME,
@@ -48,6 +49,9 @@ export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   // Wave B: these act on the main thread's agents (subagents start none).
   WAIT_AGENTS_TOOL_NAME,
   AGENT_CONTROL_TOOL_NAME,
+  // A batch fans out one worker per row: only the main thread runs one, so a
+  // subagent (or a batch worker) never starts another batch.
+  AGENT_BATCH_TOOL_NAME,
 ])
 
 export const CUSTOM_AGENT_DISALLOWED_TOOLS = new Set([

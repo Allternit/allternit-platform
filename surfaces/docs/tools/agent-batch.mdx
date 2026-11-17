@@ -1,0 +1,52 @@
+---
+title: 'agent_batch'
+description: 'Run one worker per row of a CSV file and get back one results file, with a sample run first'
+---
+
+## Overview
+
+`agent_batch` is a built-in gizzi tool for the same job done many times: classify 200 tickets, research 80 companies, tag a product list. You give it a CSV, an instruction with `{column}` placeholders, and an output schema. It starts one worker per row and writes the answers to a results CSV.
+
+It runs on your own machine and spends your own model quota. Gizzi asks before it runs.
+
+## Use sample mode first
+
+Sample mode runs the first 1 to 3 rows, writes nothing, and shows what the workers returned and an estimate of the full cost and time. Check the answers, adjust the instruction or schema, then run the whole batch.
+
+## What you give it
+
+| Input | Meaning |
+|-------|---------|
+| CSV file | One row per task. The header row names the columns. Up to 25 MB |
+| Instruction | What each worker does, with at least one `{column}` placeholder filled from its row |
+| Output schema | The fields each worker fills, up to 20 flat fields. Each is a string, number, boolean or one of a fixed list (enum), and may be optional |
+
+## Limits
+
+| Setting | Default | Maximum |
+|---------|---------|---------|
+| Workers at once (concurrency) | 4 | 8 |
+| Rows | 200 | 1000 |
+| Time per row | 300 seconds | 1800 seconds |
+
+Rows past the row limit are not processed.
+
+## How a row is checked
+
+Each worker replies with one JSON object. If it does not match the schema, the worker is told what was wrong and gets one retry. A row that is still wrong is marked failed, with the reason.
+
+## Results and resuming
+
+The results CSV keeps your input columns, adds the schema columns, and adds `_status` and `_error`. Each row is written as it finishes. A progress file next to it (`<output>.progress.json`) records what is done, so running the same call again continues where it stopped and does not redo finished rows.
+
+## Good to know
+
+- Workers cannot start workers of their own, and cannot ask you questions.
+- Cost is the sum of every worker. A large batch can use a lot of quota, so check the sample estimate.
+- The tool will not overwrite your input file or write over a credential file.
+
+## Related pages
+
+- [Agent Swarm Tools](/tools/agent-swarm)
+- [sleep](/tools/sleep)
+- [Automation](/tools/automation)

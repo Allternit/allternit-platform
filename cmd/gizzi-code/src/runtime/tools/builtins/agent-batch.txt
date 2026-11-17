@@ -1,0 +1,25 @@
+Run one subagent per row of a CSV file. Each worker gets the instruction with that row's values filled in and replies with a JSON object matching output_schema. The results are written to an output CSV.
+
+Use it for the same task repeated over many rows: classify 300 support tickets, enrich a list of companies, summarize each link in a sheet. For a handful of different tasks, use agent_swarm or task instead.
+
+Always run mode "sample" first. It runs the first 1-3 rows, writes nothing, and shows their results plus the estimated tokens, cost and time for the whole file. Show the user those results and the estimate. Call again with mode "run" only after the user agrees. Every row costs a model call, and on a metered model that is real money.
+
+Parameters:
+- csv_path: the input CSV, inside the project, the session's working folder or the scratchpad. The first row is the header. Quoted fields, line breaks inside quotes and a byte-order mark are fine.
+- instruction: the task for one row. Put column names in braces where the row's values go, e.g. "Find the official website of {company} in {city}." At least one {column} is required; an unknown {name} is an error.
+- output_schema: the columns each worker fills, 1 to 20 flat fields. Each field has a name (letters, digits, _), a type (string, number, boolean or enum), an optional description, values for an enum, and optional: true when null is allowed. Field names must differ from the CSV's columns.
+- id_column: a column with a unique id per row. Set it when the file may change between runs, so a re-run matches rows by id instead of by position.
+- output_csv_path: where to write the results (a .csv inside the same allowed folders). Default: <input name>.results.csv next to the input.
+- subagent_type: the worker agent (default "general").
+- max_concurrency: workers at once, default 4, max 8.
+- max_runtime_seconds: time per row, default 300, max 1800.
+- max_rows: rows to cover, default 200, max 1000. Rows past the limit are not run.
+
+How a run works:
+- Workers can't start other agents, ask the user anything, send messages or sleep. Give them everything they need in the instruction.
+- A reply that doesn't match the schema gets one retry, told what was wrong; if it is still wrong, the row fails.
+- Each row is appended to the output as it finishes: the input columns, the schema columns, _status (ok or failed) and _error.
+- Progress is kept in <output>.progress.json. If a run stops or some rows fail, call the same run again: rows that finished ok are skipped, failed and unfinished rows run again.
+- An existing output file without its progress file is never overwritten.
+
+The batch runs on this computer's runtime, with the model the worker agent uses.

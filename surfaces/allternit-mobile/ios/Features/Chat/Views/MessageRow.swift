@@ -114,6 +114,16 @@ struct MessageRow: View {
                     }
                 }
 
+                // agent_batch / sleep: progress card and wait row.
+                ForEach(message.toolCalls) { call in
+                    let n = ToolDescriber.normalized(call.toolName)
+                    if n == "agentbatch" {
+                        BatchProgressCard(call: call)
+                    } else if n == "sleep" {
+                        SleepRow(call: call)
+                    }
+                }
+
                 // lookup: the fact card (weather, time zones, conversion, link,
                 // places, images) drawn from the tool part, never retyped by the model.
                 ForEach(message.toolCalls) { call in
@@ -895,5 +905,92 @@ struct EditedVersionsSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+
+// MARK: - agent_batch / sleep (E2-4)
+
+/// Counts parsed from the agent_batch result text (the tool part's metadata
+/// is not carried on the record): "N ok, M failed, of T rows." / "Sample: N of T rows ok."
+struct BatchProgress: Equatable {
+    var isSample: Bool
+    var done = 0
+    var failed = 0
+    var skipped = 0
+    var total = 0
+    var outputPath: String?
+
+    var finished: Int { done + failed + skipped }
+
+    init(call: ToolCallRecord) {
+        isSample = call.input["mode"] == "sample"
+        let text = call.output ?? ""
+        func num(_ pattern: String, in s: String) -> Int? {
+            guard let r = s.range(of: pattern, options: .regularExpression) else { return nil }
+            return Int(s[r].filter(\.isNumber))
+        }
+        if text.hasPrefix("Sample:"), let m = text.range(of: #"Sample: (\d+) of (\d+)"#, options: .regularExpression) {
+            isSample = true
+            let nums = text[m].split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+            if nums.count == 2 { done = nums[0]; total = nums[1]; failed = total - done }
+        } else {
+            done = num(#"\d+(?= ok)"#, in: text) ?? 0
+            failed = num(#"\d+(?= failed)"#, in: text) ?? 0
+            skipped = num(#"\d+(?= skipped)"#, in: text) ?? 0
+            total = num(#"(?<=of )\d+(?= rows)"#, in: text) ?? 0
+        }
+        if total == 0, let t = call.title, let m = t.range(of: #"(\d+)/(\d+)"#, options: .regularExpression) {
+            let nums = t[m].split(separator: "/").compactMap { Int($0) }
+            if nums.count == 2 { done = nums[0]; total = nums[1] }
+        }
+        if let line = text.components(separatedBy: "\n").first(where: { $0.hasPrefix("Results: ") }) {
+            outputPath = String(line.dropFirst(9)).trimmingCharacters(in: .whitespaces)
+        }
+    }
+}
+
+struct BatchProgressCard: View {
+    let call: ToolCallRecord
+
+    var body: some View {
+        let p = BatchProgress(call: call)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "tablecells")
+                Text(p.isSample ? "Sample batch" : "Batch run").font(.subheadline.weight(.semibold))
+                Spacer()
+                if call.state == .running { ProgressView().controlSize(.small) }
+            }
+            ProgressView(value: Double(min(p.finished, max(p.total, 1))), total: Double(max(p.total, 1)))
+            Text("\(p.done) done, \(p.failed) failed\(p.skipped > 0 ? ", \(p.skipped) skipped" : ""), \(p.total) total")
+                .font(.caption).foregroundStyle(.secondary)
+            if let path = p.outputPath, !p.isSample {
+                Label((path as NSString).lastPathComponent, systemImage: "doc.text")
+                    .font(.caption).lineLimit(1)
+                    .accessibilityHint(path)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemBackground)))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct SleepRow: View {
+    let call: ToolCallRecord
+
+    var body: some View {
+        let reason = call.input["reason"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let woke = call.output ?? ""
+        let seconds = Int(call.input["seconds"] ?? "") ?? Int((call.output ?? "").components(separatedBy: " ").dropFirst().first ?? "") ?? 0
+        let early = woke.contains("user_input")
+        let span = seconds >= 60 ? "\(seconds / 60) min" : "\(seconds) s"
+        let base = call.state == .running ? "Waiting \(span)" : (early ? "Woke early" : "Waited \(span)")
+        HStack(spacing: 6) {
+            Image(systemName: "hourglass")
+            Text(reason.isEmpty ? base : "\(base) \u{2014} \(reason)")
+        }
+        .font(.footnote).foregroundStyle(.secondary)
     }
 }

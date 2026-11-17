@@ -517,6 +517,8 @@
               "tools/tool-search",
               "tools/context-remaining",
               "tools/task-list",
+              "tools/agent-batch",
+              "tools/sleep",
               "tools/gateway",
               "tools/etrid",
               "tools/local-engine",

@@ -53,6 +53,7 @@ describe("CliBridge MCP server", () => {
       "thread_recent",
       "resource",
       "memory_list",
+      "sleep",
       "question",
     ])
     const question = list.result.tools.find((t: any) => t.name === "question")

@@ -167,6 +167,15 @@ export namespace Agent {
       thread_recent: "allow",
       thread_wait: "allow",
       resource: "allow",
+      // A short wait inside the turn (max 15 min) that wakes on the user's next message.
+      sleep: "allow",
+      // One worker per CSV row, so every call costs real model calls: always
+      // asks (the card shows the rows, concurrency and model). The pattern is
+      // `<mode>:<subagent_type>`, so allowing a sample never allows a full run.
+      // Its workers can't fan out: agent-batch.ts gives each worker session
+      // deny rules for WORKER_DENIED_TOOLS (task, agent_swarm, agent_batch,
+      // batch, sleep...), which come after these and win.
+      agent_batch: "ask",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",

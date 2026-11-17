@@ -1,0 +1,27 @@
+---
+title: 'sleep'
+description: 'The built-in tool that pauses a turn for a short time and wakes early when you write'
+---
+
+## Overview
+
+`sleep` is a built-in gizzi tool for waiting inside a turn: letting a build finish, giving a service a moment, polling on a short interval. It waits 1 to 900 seconds.
+
+## When it wakes
+
+| Result | Meaning |
+|--------|---------|
+| `timer` | The requested time passed |
+| `user_input` | You sent a new message, so the wait ended early |
+| `cancelled` | You stopped the turn |
+
+The result also reports `slept_seconds`, the real time waited.
+
+## For longer waits
+
+Use [automation](/tools/automation) instead. A scheduled automation runs later without holding a turn open.
+
+## Related pages
+
+- [agent_batch](/tools/agent-batch)
+- [Automation](/tools/automation)

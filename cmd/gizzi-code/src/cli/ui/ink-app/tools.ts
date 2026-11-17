@@ -27,6 +27,10 @@ import { WaitAgentsTool } from './tools/WaitAgentsTool/WaitAgentsTool.js'
 import { AgentControlTool } from './tools/AgentControlTool/AgentControlTool.js'
 import { GetContextRemainingTool } from './tools/GetContextRemainingTool/GetContextRemainingTool.js'
 import { HistoryRecallTool } from './tools/HistoryRecallTool/HistoryRecallTool.js'
+// A short wait that wakes on the user's input (replaced the PROACTIVE/KAIROS stub).
+import { SleepTool } from './tools/SleepTool/SleepTool.js'
+// One subagent per CSV row with an output schema (sample first, resumable).
+import { AgentBatchTool } from './tools/AgentBatchTool/AgentBatchTool.js'
 // Dead code elimination: conditional import for ant-only tools
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 function safeRequire(path: string) {
@@ -45,10 +49,6 @@ const SuggestBackgroundPRTool =
   process.env.USER_TYPE === 'ant'
     ? safeRequire('./tools/SuggestBackgroundPRTool/SuggestBackgroundPRTool.js')
         ?.SuggestBackgroundPRTool
-    : null
-const SleepTool =
-  feature('PROACTIVE') || feature('KAIROS')
-    ? safeRequire('./tools/SleepTool/SleepTool.js')?.SleepTool
     : null
 const RemoteTriggerTool = feature('AGENT_TRIGGERS_REMOTE')
   ? safeRequire('./tools/RemoteTriggerTool/RemoteTriggerTool.js')
@@ -210,6 +210,8 @@ export function getAllBaseTools(): Tools {
     AgentControlTool,
     GetContextRemainingTool,
     HistoryRecallTool,
+    SleepTool,
+    AgentBatchTool,
     SkillTool,
     EnterPlanModeTool,
     ...(process.env.USER_TYPE === 'ant' ? [ConfigTool] : []),
@@ -227,7 +229,6 @@ export function getAllBaseTools(): Tools {
       ? [getTeamCreateTool(), getTeamDeleteTool()]
       : []),
     ...(process.env.USER_TYPE === 'ant' && REPLTool ? [REPLTool] : []),
-    ...(SleepTool ? [SleepTool] : []),
     ...(RemoteTriggerTool ? [RemoteTriggerTool] : []),
     BriefTool,
     ...(SendUserFileTool ? [SendUserFileTool] : []),

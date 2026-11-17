@@ -1209,7 +1209,7 @@ enum ToolFrameState {
 /// (send_user_message: text + files + push; automation: the saved automation;
 /// lookup: the validated answer card the client draws in place of a
 /// model-written one).
-const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "lookup"];
+const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "lookup", "agent_batch", "sleep"];
 
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`
