@@ -369,6 +369,8 @@ export const AgentCompatRoutes = () =>
               action: props.action ?? null,
               target: props.target ?? null,
               text: props.text ?? null,
+              // read_page / find / page text / console / tabs / plan + ref fields (pane-browser index.ts).
+              args: props.args ?? null,
               time: props.time ?? null,
             }
           case "pane_render.requested":
