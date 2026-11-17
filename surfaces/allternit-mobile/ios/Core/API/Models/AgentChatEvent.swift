@@ -70,6 +70,10 @@ enum AgentChatEvent: Decodable, Sendable {
     /// Answered in place from the message's question card.
     case question(AgentQuestionRequest)
 
+    /// A question was answered or dismissed (`question.replied` /
+    /// `question.rejected`, payload `{sessionID, requestID}`).
+    case questionClosed(requestID: String)
+
     /// The agent is waiting on a permission (session-worker `permission.asked`).
     /// The tool calls rail draws Deny / Allow on the matching tool row.
     case permissionAsked(AgentPermissionAsk)
@@ -315,6 +319,24 @@ enum AgentChatEvent: Decodable, Sendable {
         case "artifact", "artifact.created", "artifact-created":
             if let artifact = Self.decodeArtifact(container) {
                 self = .artifact(artifact)
+            } else {
+                self = .ignored
+            }
+
+        case "question.asked":
+            struct Envelope: Decodable { let properties: AgentQuestionRequest? }
+            if let req = (try? Envelope(from: decoder).properties) ?? (try? AgentQuestionRequest(from: decoder)) {
+                self = .question(req)
+            } else {
+                self = .ignored
+            }
+
+        case "question.replied", "question.rejected":
+            struct Ids: Decodable { let requestID: String? }
+            struct Envelope: Decodable { let properties: Ids? }
+            if let id = ((try? Envelope(from: decoder).properties?.requestID) ?? nil)
+                ?? (try? Ids(from: decoder).requestID) ?? nil {
+                self = .questionClosed(requestID: id)
             } else {
                 self = .ignored
             }
