@@ -3,7 +3,8 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 
 /**
  * Past chats (Wave D lanes T): thread_read over the real session store, and
- * thread_recent / thread_wait through the real routing client. Only the HTTP
+ * thread_recent / thread_wait through the real routing client plus this
+ * runtime's own plain chats (real store, real status bus). Only the HTTP
  * edge (allternit-api /bot-routing/thread/*) is stubbed. The server-side
  * wait logic (first of N, cursors, timeout 0) has its own Rust tests in
  * allternit-api thread_read_tools.rs.
@@ -17,6 +18,7 @@ process.env.GIZZI_CONFIG_DIR = mkdtempSync(path.join(osTmpdir(), "gizzi-thread-r
 const { tmpdir } = await import("../fixture/fixture")
 const { Instance } = await import("../../src/runtime/context/project/instance")
 const { Session } = await import("../../src/runtime/session")
+const { SessionStatus } = await import("../../src/runtime/session/status")
 const { Identifier } = await import("../../src/shared/id/id")
 const { PastChats } = await import("../../src/runtime/primitives/past-chats")
 const { ThreadReadTool } = await import("../../src/runtime/tools/builtins/thread-read")
@@ -78,6 +80,11 @@ async function inProject<T>(fn: () => Promise<T>) {
 }
 
 const texts = (r: { turns: Array<{ text: string }> }) => r.turns.map((t) => t.text)
+
+const notFound = () => new Response(JSON.stringify({ error: "No chat with that id.", code: "not_found" }), { status: 404 })
+
+/** The server's view of a plain chat (not a bot thread): it resolves to its own session. */
+const plainChat = (id: string) => Response.json({ thread: { id, title: "Chat", status: "unknown", sessionId: id, local: true } })
 
 describe("thread_read", () => {
   test("cursor paging covers every turn once, backwards and forwards", async () => {
@@ -198,5 +205,67 @@ describe("thread_wait", () => {
     const woke = await PastChats.wait("ses_caller", { targets: [{ thread: "t1", after_cursor: "4" }, { thread: "t2", after_cursor: "3" }], timeout_s: 30 })
     expect(woke.woke).toMatchObject({ thread: "t2", reason: "needs_user", status_line: "Which venue?", cursor: "9" })
     expect(woke.timed_out).toBe(false)
+  })
+})
+
+describe("thread_recent", () => {
+  test("lists this computer's plain chats and CLI sessions with the bot threads, never an incognito one", async () => {
+    await inProject(async () => {
+      const caller = await chat("Caller", 2)
+      const plain = await chat("Seating chart", 2)
+      const secret = await chat("Secret", 2)
+      route = (p, body) => {
+        if (p === "/thread/recent")
+          return Response.json({
+            threads: [
+              { id: "thr_bot", botId: "b1", botName: "Scout", title: "Venue hunt", status: "idle", closed: false, archived: false, lastActivityAt: new Date(Date.now() + 60_000).toISOString(), kind: "task" },
+            ],
+          })
+        if (p === "/thread/resolve") return body.thread === secret ? notFound() : plainChat(body.thread)
+        return new Response("{}", { status: 500 })
+      }
+      const r = await PastChats.recent(caller, { limit: 20 })
+      const ids = r.threads.map((t) => t.id)
+      expect(ids[0]).toBe("thr_bot")
+      expect(ids).toContain(plain)
+      expect(ids).not.toContain(secret)
+      expect(r.threads.find((t) => t.id === plain)).toMatchObject({ title: "Seating chart", status: "idle", botName: null })
+      const times = r.threads.map((t) => Date.parse(t.lastActivityAt))
+      expect(times).toEqual([...times].sort((a, b) => b - a))
+    })
+  })
+})
+
+describe("thread_wait on a plain chat", () => {
+  test("wakes when the chat finishes a turn, and its cursor stops the same turn waking it again", async () => {
+    await inProject(async () => {
+      const caller = await chat("Caller", 2)
+      const worker = await chat("Worker", 2)
+      route = (p, body) => (p === "/thread/resolve" ? plainChat(body.thread) : new Response("{}", { status: 500 }))
+
+      const snap = await PastChats.wait(caller, { targets: [{ thread: worker }], timeout_s: 0 })
+      expect(snap).toMatchObject({ woke: null, timed_out: true, statuses: [{ thread: worker, title: "Worker", status: "idle" }] })
+
+      const waiting = PastChats.wait(caller, { targets: [{ thread: worker, after_cursor: snap.statuses[0].cursor }], timeout_s: 30 })
+      SessionStatus.set(worker, { type: "busy" })
+      await say(worker, "user", "book the hall")
+      await say(worker, "assistant", "booked")
+      SessionStatus.set(worker, { type: "idle" })
+      const r = await waiting
+      expect(r.woke).toMatchObject({ thread: worker, reason: "turn_finished", status: "idle" })
+      expect(r.timed_out).toBe(false)
+
+      const again = await PastChats.wait(caller, { targets: [{ thread: worker, after_cursor: r.woke!.cursor }], timeout_s: 0 })
+      expect(again.woke).toBeNull()
+    })
+  })
+
+  test("an incognito chat can't be waited on", async () => {
+    await inProject(async () => {
+      const caller = await chat("Caller", 2)
+      const secret = await chat("Secret", 2)
+      route = (p) => (p === "/thread/resolve" ? notFound() : new Response("{}", { status: 500 }))
+      await expect(PastChats.wait(caller, { targets: [{ thread: secret }], timeout_s: 0 })).rejects.toThrow("No chat")
+    })
   })
 })
