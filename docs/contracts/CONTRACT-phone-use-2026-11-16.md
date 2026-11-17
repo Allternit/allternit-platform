@@ -189,7 +189,7 @@ Health is evaluated before each tap action and reported by `phone.describe`. Eac
 | `ASSISTIVETOUCH_OFF` | pointer route, pointer not seen or AssistiveTouch reported off | Turn on AssistiveTouch on your iPhone (Settings > Accessibility > Touch). |
 | `FULL_KEYBOARD_ACCESS_OFF` | key navigation needed and Full Keyboard Access is off | Turn on Full Keyboard Access on your iPhone (Settings > Accessibility > Keyboards). |
 | `APP_NOT_FOREGROUND` | a shortcut needs Allternit in front and no tap route can open it | Open the Allternit app on your iPhone. |
-| `SHORTCUT_NOT_INSTALLED` | `official` shortcut name not found | Add the "<name>" shortcut in Allternit Settings > Shortcuts. |
+| `SHORTCUT_NOT_INSTALLED` | `official` shortcut name not found | Add the "<name>" shortcut in Allternit Settings > Device Access > iPhone actions. |
 | `HELPER_RETIRING` | `legacy-helper` selected | The old Allternit helper is being retired. Switch to the app and set up a new route before <date>. |
 
 `<name>` and `<date>` are filled by the runtime. `MIRROR_PHONE_IN_USE`, `BT_NOT_PAIRED`, `ASSISTIVETOUCH_OFF`, `FULL_KEYBOARD_ACCESS_OFF` have no `official` equivalent. A `needs_you` for a route the router could skip is only returned when no other healthy route exists (section 1.1 step 4).
