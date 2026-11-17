@@ -1,0 +1,4040 @@
+{
+ "built": "2026-11-16",
+ "note": "Trimmed for the iOS app from the 2026-11-16 Phone Use catalog: usable App Intents only (isDiscoverable != false), kind derived per contract 7.2. Shortcut links are null until the owner publishes them (gate G3).",
+ "actions": {
+  "name": "Allternit Actions",
+  "link": null,
+  "actions": [
+   {
+    "id": "messages.send",
+    "title": "Send a message",
+    "kind": "send",
+    "params": [
+     "to",
+     "text"
+    ]
+   },
+   {
+    "id": "mail.send",
+    "title": "Send an email",
+    "kind": "send",
+    "params": [
+     "to",
+     "subject",
+     "body"
+    ]
+   },
+   {
+    "id": "phone.call",
+    "title": "Call a number",
+    "kind": "send",
+    "params": [
+     "to"
+    ]
+   },
+   {
+    "id": "facetime.call",
+    "title": "FaceTime someone",
+    "kind": "send",
+    "params": [
+     "to"
+    ]
+   },
+   {
+    "id": "notes.create",
+    "title": "Create a note",
+    "kind": "create",
+    "params": [
+     "title",
+     "body"
+    ]
+   },
+   {
+    "id": "reminders.create",
+    "title": "Add a reminder",
+    "kind": "create",
+    "params": [
+     "title",
+     "due"
+    ]
+   },
+   {
+    "id": "calendar.create",
+    "title": "Add a calendar event",
+    "kind": "create",
+    "params": [
+     "title",
+     "start",
+     "end"
+    ]
+   },
+   {
+    "id": "maps.directions",
+    "title": "Get directions",
+    "kind": "open",
+    "params": [
+     "to",
+     "mode"
+    ]
+   },
+   {
+    "id": "music.play",
+    "title": "Play music",
+    "kind": "control",
+    "params": [
+     "query"
+    ]
+   },
+   {
+    "id": "music.pause",
+    "title": "Pause music",
+    "kind": "control",
+    "params": []
+   },
+   {
+    "id": "photos.latest",
+    "title": "Get latest photos",
+    "kind": "read",
+    "params": [
+     "count"
+    ]
+   },
+   {
+    "id": "files.save",
+    "title": "Save a file",
+    "kind": "create",
+    "params": [
+     "name",
+     "text"
+    ]
+   },
+   {
+    "id": "safari.open",
+    "title": "Open a web page",
+    "kind": "open",
+    "params": [
+     "url"
+    ]
+   },
+   {
+    "id": "translate.text",
+    "title": "Translate text",
+    "kind": "other",
+    "params": [
+     "text",
+     "to"
+    ]
+   },
+   {
+    "id": "clipboard.get",
+    "title": "Get the clipboard",
+    "kind": "read",
+    "params": []
+   },
+   {
+    "id": "clipboard.set",
+    "title": "Set the clipboard",
+    "kind": "control",
+    "params": [
+     "text"
+    ]
+   },
+   {
+    "id": "focus.set",
+    "title": "Set a Focus",
+    "kind": "control",
+    "params": [
+     "focus",
+     "on"
+    ]
+   },
+   {
+    "id": "wifi.set",
+    "title": "Turn Wi-Fi on or off",
+    "kind": "control",
+    "params": [
+     "on"
+    ]
+   },
+   {
+    "id": "bluetooth.set",
+    "title": "Turn Bluetooth on or off",
+    "kind": "control",
+    "params": [
+     "on"
+    ]
+   },
+   {
+    "id": "low_power.set",
+    "title": "Turn Low Power Mode on or off",
+    "kind": "control",
+    "params": [
+     "on"
+    ]
+   },
+   {
+    "id": "brightness.set",
+    "title": "Set screen brightness",
+    "kind": "control",
+    "params": [
+     "level"
+    ]
+   },
+   {
+    "id": "volume.set",
+    "title": "Set volume",
+    "kind": "control",
+    "params": [
+     "level"
+    ]
+   },
+   {
+    "id": "flashlight.set",
+    "title": "Turn the flashlight on or off",
+    "kind": "control",
+    "params": [
+     "on"
+    ]
+   },
+   {
+    "id": "dnd.set",
+    "title": "Turn Do Not Disturb on or off",
+    "kind": "control",
+    "params": [
+     "on"
+    ]
+   },
+   {
+    "id": "alarm.create",
+    "title": "Set an alarm",
+    "kind": "create",
+    "params": [
+     "time",
+     "label"
+    ]
+   },
+   {
+    "id": "timer.start",
+    "title": "Start a timer",
+    "kind": "control",
+    "params": [
+     "seconds"
+    ]
+   },
+   {
+    "id": "health.log",
+    "title": "Log a health sample",
+    "kind": "create",
+    "params": [
+     "type",
+     "value"
+    ]
+   },
+   {
+    "id": "weather.get",
+    "title": "Get the weather",
+    "kind": "read",
+    "params": [
+     "place"
+    ]
+   },
+   {
+    "id": "wallet.open",
+    "title": "Open a Wallet pass",
+    "kind": "open",
+    "params": [
+     "pass"
+    ]
+   }
+  ]
+ },
+ "apps": [
+  {
+   "id": "chatgpt",
+   "name": "ChatGPT",
+   "category": "AI chat",
+   "shortcut": "Allternit ChatGPT",
+   "link": null,
+   "intents": [
+    {
+     "id": "AskChatGPTAboutImageIntent",
+     "title": "Ask ChatGPT about an image",
+     "kind": "other",
+     "params": [
+      "image"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "AskChatGPTAboutImageWithPromptIntent",
+     "title": "Ask ChatGPT about an image with a prompt",
+     "kind": "other",
+     "params": [
+      "prompt",
+      "image"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "AskIntent",
+     "title": "Ask ChatGPT",
+     "kind": "other",
+     "params": [
+      "prompt",
+      "newChat",
+      "continuous"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "MessageYourDotIntent",
+     "title": "Message your dot",
+     "kind": "send",
+     "params": [
+      "message",
+      "dot",
+      "content"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "OpenCodexIntent",
+     "title": "Open Codex",
+     "kind": "open",
+     "params": [
+      "createTask"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenNewChatInAppShortcutIntent",
+     "title": "Start conversation with ChatGPT",
+     "kind": "control",
+     "params": [
+      "useSearchGPT",
+      "temporaryChat",
+      "startAction"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenNewChatInProjectIntent",
+     "title": "Start chat in project",
+     "kind": "control",
+     "params": [
+      "project"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenVoiceModeIntent",
+     "title": "Voice",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "ConfigureOpenNewChatInAppIntent",
+     "title": "New Chat Configuration",
+     "kind": "create",
+     "params": [
+      "startDictation",
+      "temporaryChat"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": [
+    {
+     "action": "Ask ChatGPT",
+     "kind": "send",
+     "params": [
+      "prompt (not itemised by source)"
+     ],
+     "confidence": "community"
+    },
+    {
+     "action": "Open ChatGPT",
+     "kind": "open",
+     "params": [],
+     "confidence": "community"
+    },
+    {
+     "action": "ChatGPT web search / dictation / voice mode (Action Button options; exact action names not confirmed)",
+     "kind": "control",
+     "params": [],
+     "confidence": "community"
+    }
+   ]
+  },
+  {
+   "id": "claude",
+   "name": "Claude",
+   "category": "AI chat",
+   "shortcut": "Allternit Claude",
+   "link": null,
+   "intents": [
+    {
+     "id": "ClaudeAppIntentsExtension",
+     "title": "Ask Claude",
+     "kind": "other",
+     "params": [
+      "message"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ClaudeCameraCaptureIntent",
+     "title": "Analyze Photo",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenClaudeDictationIntent",
+     "title": "Start Dictation",
+     "kind": "control",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenClaudeIntent",
+     "title": "Open Claude",
+     "kind": "open",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenProjectIntent",
+     "title": "Open Project",
+     "kind": "open",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    }
+   ],
+   "web": [
+    {
+     "action": "Ask Claude",
+     "kind": "send",
+     "params": [
+      "prompt (text; can take Shortcut Input)"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Analyze Photo with Claude",
+     "kind": "other",
+     "params": [],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "gemini",
+   "name": "Gemini",
+   "category": "AI chat",
+   "shortcut": "Allternit Gemini",
+   "link": null,
+   "intents": [
+    {
+     "id": "ConvModeWithGeminiIntent",
+     "title": "GeminiConversationModeShortTitleV2",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenCameraWithGeminiIntent",
+     "title": "UseCameraWithGeminiShortTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ShareFileWithGeminiIntent",
+     "title": "ShareFileWithGeminiShortTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ShareImageWithGeminiIntent",
+     "title": "ShareImageWithGeminiShortTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "TalkToGeminiIntent",
+     "title": "TalkToGeminiShortTitleV2",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "TypeToGeminiIntent",
+     "title": "TypeToGeminiShortTitleV2",
+     "kind": "other",
+     "params": [
+      "prompt"
+     ],
+     "opensApp": true
+    }
+   ],
+   "web": [
+    {
+     "action": "Type Gemini prompt",
+     "kind": "open",
+     "params": [],
+     "confidence": "community"
+    },
+    {
+     "action": "Open Gemini mic",
+     "kind": "open",
+     "params": [],
+     "confidence": "community"
+    },
+    {
+     "action": "Talk Live with Gemini",
+     "kind": "open",
+     "params": [],
+     "confidence": "community"
+    },
+    {
+     "action": "Use camera with Gemini",
+     "kind": "open",
+     "params": [],
+     "confidence": "community"
+    },
+    {
+     "action": "Share image with Gemini",
+     "kind": "send",
+     "params": [
+      "image"
+     ],
+     "confidence": "community"
+    },
+    {
+     "action": "Share file with Gemini",
+     "kind": "send",
+     "params": [
+      "file"
+     ],
+     "confidence": "community"
+    }
+   ]
+  },
+  {
+   "id": "grok",
+   "name": "Grok",
+   "category": "AI chat",
+   "shortcut": "Allternit Grok",
+   "link": null,
+   "intents": [
+    {
+     "id": "AskGrok",
+     "title": "Ask Grok",
+     "kind": "other",
+     "params": [
+      "newMessage",
+      "modelMode"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "BuildActivityStopIntent",
+     "title": "Stop Build",
+     "kind": "control",
+     "params": [
+      "conversationId"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "OpenAra",
+     "title": "Talk to Grok",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenGrok",
+     "title": "Open Grok",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenGrokWithDictation",
+     "title": "Dictate to Grok",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenSubscribeIntent",
+     "title": "Upgrade Plan",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "VoiceModeCloseIntent",
+     "title": "Close Voice Mode",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "VoiceModeDeafenIntent",
+     "title": "Deafen Voice Mode",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "VoiceModeMuteIntent",
+     "title": "Mute Voice Mode",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    }
+   ],
+   "web": [
+    {
+     "action": "Dictate to Grok",
+     "kind": "open",
+     "params": [],
+     "confidence": "community"
+    }
+   ]
+  },
+  {
+   "id": "kimi",
+   "name": "Kimi",
+   "category": "AI chat",
+   "shortcut": "Allternit Kimi",
+   "link": null,
+   "intents": [
+    {
+     "id": "OpenAppActionIntent",
+     "title": "Open App",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "copilot",
+   "name": "Copilot",
+   "category": "AI chat",
+   "shortcut": "Allternit Copilot",
+   "link": null,
+   "intents": [
+    {
+     "id": "LaunchAgentIntent",
+     "title": "Open Agent in Copilot",
+     "kind": "open",
+     "params": [
+      "agent"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "LaunchCopilotIntent",
+     "title": "Open Copilot",
+     "kind": "open",
+     "params": [
+      "launchMode",
+      "referrerValue"
+     ],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "perplexity",
+   "name": "Perplexity",
+   "category": "AI chat",
+   "shortcut": "Allternit Perplexity",
+   "link": null,
+   "intents": [
+    {
+     "id": "AskPerplexityIntent",
+     "title": "Ask Perplexity",
+     "kind": "other",
+     "params": [
+      "query"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ComputerIntent",
+     "title": "Start Computer",
+     "kind": "control",
+     "params": [
+      "query"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ImageSearchIntent",
+     "title": "New Image Search",
+     "kind": "create",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "NewQueryIntent",
+     "title": "New Search",
+     "kind": "create",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenDiscoverIntent",
+     "title": "Open Discover",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenProjectIntent",
+     "title": "Open Project",
+     "kind": "open",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenTeammateIntent",
+     "title": "Open Teammate",
+     "kind": "open",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    }
+   ],
+   "web": [
+    {
+     "action": "Ask Perplexity",
+     "kind": "send",
+     "params": [
+      "question (prompted)"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Start a new chat",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Start voice conversation",
+     "kind": "control",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Open Perplexity",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Open Perplexity Search",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Start Voice Mode (shortcut 'Perplexity Voice Mode')",
+     "kind": "control",
+     "params": [],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "slack",
+   "name": "Slack",
+   "category": "Communication",
+   "shortcut": "Allternit Slack",
+   "link": null,
+   "intents": [
+    {
+     "id": "LaunchNewHuddleIntent",
+     "title": "New Huddle",
+     "kind": "create",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "LaunchNewMessageIntent",
+     "title": "New Message",
+     "kind": "create",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "LaunchSlackIntent",
+     "title": "Launch Slack",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "SlackbotMessageIntent",
+     "title": "Message Slackbot",
+     "kind": "send",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "SlackbotVoiceIntent",
+     "title": "Slackbot Voice",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "discord",
+   "name": "Discord",
+   "category": "Communication",
+   "shortcut": "Allternit Discord",
+   "link": null,
+   "intents": [
+    {
+     "id": "LiveActivityActionIntent",
+     "title": "Discord Live Activity Action",
+     "kind": "other",
+     "params": [
+      "actionId",
+      "surface"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "microsoftteams",
+   "name": "Microsoft Teams",
+   "category": "Communication",
+   "shortcut": "Allternit Microsoft Teams",
+   "link": null,
+   "intents": [
+    {
+     "id": "AskCopilotIntent",
+     "title": "AskCplt",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "whatsapp",
+   "name": "WhatsApp",
+   "category": "Communication",
+   "shortcut": "Allternit WhatsApp",
+   "link": null,
+   "intents": [
+    {
+     "id": "NewChatIntent",
+     "title": "New chat",
+     "kind": "create",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenMetaAIIntent",
+     "title": "Meta AI",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "PostStatusIntent",
+     "title": "Add status",
+     "kind": "create",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ProfileQRIntent",
+     "title": "QR code",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "webex",
+   "name": "Webex",
+   "category": "Communication",
+   "shortcut": "Allternit Webex",
+   "link": null,
+   "intents": [
+    {
+     "id": "JoinNextMeetingControlIntent",
+     "title": "Join next meeting",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenWebexIntent",
+     "title": "Open app",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "PauseAINotesIntent",
+     "title": "Pause Notetaker",
+     "kind": "control",
+     "params": [
+      "callId"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ResumeAINotesIntent",
+     "title": "Resume Notetaker",
+     "kind": "other",
+     "params": [
+      "callId"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "SetDoNotDisturbControlIntent",
+     "title": "Set do not disturb",
+     "kind": "control",
+     "params": [
+      "duration"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "SetStatusControlIntent",
+     "title": "Set status",
+     "kind": "control",
+     "params": [
+      "status",
+      "duration"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "SetStatusIntent",
+     "title": "Set Status",
+     "kind": "control",
+     "params": [
+      "status",
+      "customStatus",
+      "duration",
+      "date"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "StartPersonalMeetingRoomControlIntent",
+     "title": "Start Personal Meeting Room",
+     "kind": "control",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ViewMeetingIntent",
+     "title": "View my meetings",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    }
+   ],
+   "web": [
+    {
+     "action": "Start Personal Meeting Room",
+     "kind": "control",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "View Today's Meetings",
+     "kind": "read",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Set do not disturb",
+     "kind": "control",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Set status",
+     "kind": "control",
+     "params": [
+      "status (not itemised)"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Join next meeting",
+     "kind": "control",
+     "params": [],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "dialpad",
+   "name": "Dialpad",
+   "category": "Communication",
+   "shortcut": "Allternit Dialpad",
+   "link": null,
+   "intents": [
+    {
+     "id": "SetDoNotDisturbIntent",
+     "title": "Set Do Not Disturb",
+     "kind": "control",
+     "params": [
+      "dndStatus",
+      "dndDuration"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "SetStatusIntent",
+     "title": "Set Dialpad Status",
+     "kind": "control",
+     "params": [
+      "status"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": [
+    {
+     "action": "Call [contact] with Dialpad (Siri)",
+     "kind": "control",
+     "params": [
+      "contact (must be a Dialpad contact)"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Dialpad Siri commands for messaging, reading messages, changing status, toggling DND (exact phrases not captured)",
+     "kind": "other",
+     "params": [],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "instagram",
+   "name": "Instagram",
+   "category": "Social",
+   "shortcut": "Allternit Instagram",
+   "link": null,
+   "intents": [
+    {
+     "id": "IGDirectThreadAppIntent",
+     "title": "Open Direct",
+     "kind": "open",
+     "params": [
+      "directThread"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "IGOpenMainAppSurfaceIntent",
+     "title": "Open Instagram",
+     "kind": "open",
+     "params": [
+      "destination"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "IGLockedCameraCaptureIntent",
+     "title": "Instagram camera",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "MetaAILiveActivityDisconnectIntent",
+     "title": "Disconnect",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "MetaAILiveActivityToggleMicIntent",
+     "title": "Mute/Unmute the microphone",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "ShowResponsiveViewIntent",
+     "title": "Show Responsive View",
+     "kind": "read",
+     "params": [
+      "shouldShow"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "TapDisplayIntent",
+     "title": "Tap Display Intent",
+     "kind": "other",
+     "params": [
+      "on"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "facebook",
+   "name": "Facebook",
+   "category": "Social",
+   "shortcut": "Allternit Facebook",
+   "link": null,
+   "intents": [
+    {
+     "id": "FBFeedBackgroundFetchAppLayerIntent",
+     "title": "Trigger FB feed app layer background fetch",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "FBFeedBackgroundLaunchIntent",
+     "title": "Launch Facebook In Background",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "FBMetaAILiveActivityDisconnectIntent",
+     "title": "Disconnect",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "FBMetaAILiveActivityToggleMicIntent",
+     "title": "Mute/Unmute the microphone",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "FBOpenAppIntent",
+     "title": "Open",
+     "kind": "open",
+     "params": [
+      "destination"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "FBReelsBackgroundFetchIntent",
+     "title": "Trigger FB Reels background fetch",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "FBWarmStartBackgroundFetchIntent",
+     "title": "Trigger FB supplemental fetch in background",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "FBWidgetSwitchTabIntent",
+     "title": "Switch tabs in widget",
+     "kind": "other",
+     "params": [
+      "tabKeys",
+      "tabValues",
+      "displayedContentTrackings",
+      "displayedContentTrackingsKey"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "linkedin",
+   "name": "LinkedIn",
+   "category": "Social",
+   "shortcut": "Allternit LinkedIn",
+   "link": null,
+   "intents": [
+    {
+     "id": "FindLinkedInCompanyIntent",
+     "title": "Find LinkedIn Company",
+     "kind": "search",
+     "params": [
+      "companyName"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "FindLinkedInProfileIntent",
+     "title": "Find LinkedIn Profile",
+     "kind": "search",
+     "params": [
+      "personName"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "GetLinkedInFeedUpdatesIntent",
+     "title": "siri_feed_action_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "SearchLinkedInJobsIntent",
+     "title": "Search LinkedIn Jobs",
+     "kind": "search",
+     "params": [
+      "keywords"
+     ],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "tiktok",
+   "name": "TikTok",
+   "category": "Social",
+   "shortcut": "Allternit TikTok",
+   "link": null,
+   "intents": [
+    {
+     "id": "GYLIntent",
+     "title": "iOSshortcuts_appIntent_youMayLike",
+     "kind": "other",
+     "params": [
+      "gylEntity"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenCreatorIntent",
+     "title": "ios17TopHitShortcut_shortcutName3",
+     "kind": "other",
+     "params": [
+      "openCreatorEntity"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenInboxIntent",
+     "title": "ios17TopHitShortcut_shortcutName1",
+     "kind": "other",
+     "params": [
+      "openInboxEntity"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenSearchControlIntent",
+     "title": "ios17TopHitShortcut_shortcutName2",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenTakoIntent",
+     "title": "takoCreatorAssistant_announce_inboxNotif_cta",
+     "kind": "other",
+     "params": [
+      "opentakoEntity"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenVisualSearchEntityIntent",
+     "title": "Open Visual Search",
+     "kind": "open",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenWatchLiveIntent",
+     "title": "ios17TopHitShortcut_shortcutNameLive",
+     "kind": "other",
+     "params": [
+      "queryWord"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "ShowMoreSearchResultsIntent",
+     "title": "Visual Image Search",
+     "kind": "other",
+     "params": [
+      "semanticContent"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "WidgetNotificationAppIntent",
+     "title": "WidgetNotificationAppIntent",
+     "kind": "other",
+     "params": [
+      "identifier"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "snapchat",
+   "name": "Snapchat",
+   "category": "Social",
+   "shortcut": "Allternit Snapchat",
+   "link": null,
+   "intents": [
+    {
+     "id": "CaptureIntent",
+     "title": "Snapchat Capture",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenCameraIntent",
+     "title": "Open Camera",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenGamesIntent",
+     "title": "Open Games",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenLensesIntent",
+     "title": "Open Lenses",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenMapIntent",
+     "title": "Open Map",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenMemoriesIntent",
+     "title": "Open Memories",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenSpotlightIntent",
+     "title": "Open Spotlight",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenStoriesIntent",
+     "title": "Open Stories",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "gmail",
+   "name": "Gmail",
+   "category": "Email",
+   "shortcut": "Allternit Gmail",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "Send email (Gmail app shortcut)",
+     "kind": "send",
+     "params": [],
+     "confidence": "community"
+    }
+   ]
+  },
+  {
+   "id": "outlook",
+   "name": "Outlook",
+   "category": "Email",
+   "shortcut": "Allternit Outlook",
+   "link": null,
+   "intents": [
+    {
+     "id": "NextMeeting",
+     "title": "NEXT_MEETING_INTENT_TITLE",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "RunningLate",
+     "title": "RUNNING_LATE_INTENT_TITLE",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "SearchOutlookIntent",
+     "title": "SearchOutlookIntent",
+     "kind": "other",
+     "params": [
+      "criteria"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "VoiceCatchUp",
+     "title": "VOICE_CATCH_UP_INTENT_TITLE",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "VoiceChatIntent",
+     "title": "VOICE_CHAT_INTENT_TITLE",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "zohomail",
+   "name": "Zoho Mail",
+   "category": "Email",
+   "shortcut": "Allternit Zoho Mail",
+   "link": null,
+   "intents": [
+    {
+     "id": "AddEventIntent",
+     "title": "createNewEvent_shortcut_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenCalendarIntent",
+     "title": "openCalendar_shortcut_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenComposeIntent",
+     "title": "composeMail_shortcut_title",
+     "kind": "other",
+     "params": [
+      "mailMessage",
+      "subjectContent",
+      "recipientsStringArray",
+      "ccListStringArray",
+      "bccListStringArray"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenUnreadMailsIntent",
+     "title": "openUnread_shortcut_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "SearchMailsIntent",
+     "title": "searchMails_shortcut_title",
+     "kind": "other",
+     "params": [
+      "searchText"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "SendFeedbackIntent",
+     "title": "sendFeedback_shortcut_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "notion",
+   "name": "Notion",
+   "category": "Productivity",
+   "shortcut": "Allternit Notion",
+   "link": null,
+   "intents": [
+    {
+     "id": "AIAssistantIntent",
+     "title": "Ask Notion AI",
+     "kind": "other",
+     "params": [
+      "question"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "AddTextBoxIntent",
+     "title": "AddTextToPage",
+     "kind": "other",
+     "params": [
+      "target",
+      "text",
+      "user",
+      "workspace"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ContinueAIConversationIntent",
+     "title": "ContinueAIConversationShortcutTitle",
+     "kind": "other",
+     "params": [
+      "conversation"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "CreateMeetingNoteShortcutIntent",
+     "title": "CreateMeetingNoteShortcutTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "CreateNoteForMeetingIntent",
+     "title": "CreateNoteForMeetingShortcutTitle",
+     "kind": "other",
+     "params": [
+      "meeting"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "CreateNoteIntent",
+     "title": "CreateNoteShortcutTitle",
+     "kind": "other",
+     "params": [
+      "name",
+      "content",
+      "attachments",
+      "isPinned",
+      "folder"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "CreatePageWithoutOpenIntent",
+     "title": "CreatePageWithoutOpenShortcutTitle",
+     "kind": "other",
+     "params": [
+      "title",
+      "body",
+      "user",
+      "workspace",
+      "database"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "FollowUpAIConversationIntent",
+     "title": "FollowUpAIConversationShortcutTitle",
+     "kind": "other",
+     "params": [
+      "conversation",
+      "question"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "ImportPageContentIntent",
+     "title": "ImportPageContentTitle",
+     "kind": "other",
+     "params": [
+      "text",
+      "link",
+      "user",
+      "workspace"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "JoinMeetingIntent",
+     "title": "Join Meeting",
+     "kind": "other",
+     "params": [
+      "meeting"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "LaunchNotionAIIntent",
+     "title": "AILaunchControlIntentTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "LaunchNotionIntent",
+     "title": "LaunchControlIntentTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenMeetingIntent",
+     "title": "Open Meeting",
+     "kind": "open",
+     "params": [
+      "meeting"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenMeetingNoteIntent",
+     "title": "Open Meeting Note",
+     "kind": "open",
+     "params": [
+      "note"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenNextMeetingIntent",
+     "title": "Open Next Meeting",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenPageIntent",
+     "title": "OpenNotionPage",
+     "kind": "other",
+     "params": [
+      "user",
+      "workspace",
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenSearchIntent",
+     "title": "SearchInNotion",
+     "kind": "other",
+     "params": [
+      "searchQuery"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "ResumeMeetingIntent",
+     "title": "Resume Meeting Note",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "StartAgentConversationIntent",
+     "title": "StartAgentConversationShortcutTitle",
+     "kind": "other",
+     "params": [
+      "agent",
+      "question"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "StopMeetingIntent",
+     "title": "Stop Meeting Note",
+     "kind": "control",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "excel",
+   "name": "Excel",
+   "category": "Spreadsheets",
+   "shortcut": "Allternit Excel",
+   "link": null,
+   "intents": [
+    {
+     "id": "CreateSpreadsheetIntent",
+     "title": "Create Workbook",
+     "kind": "create",
+     "params": [
+      "template"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "NewSpreadsheetIntent",
+     "title": "New Workbook",
+     "kind": "create",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenSpreadsheetIntent",
+     "title": "Open Workbook",
+     "kind": "open",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "UniversalSearchIntent",
+     "title": "Search in app",
+     "kind": "search",
+     "params": [
+      "criteria"
+     ],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "airtable",
+   "name": "Airtable",
+   "category": "Database",
+   "shortcut": "Allternit Airtable",
+   "link": null,
+   "intents": [
+    {
+     "id": "FGOpenApplicationIntent",
+     "title": "AppIntents.OpenApplication.Title",
+     "kind": "other",
+     "params": [
+      "selectedApplication"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "FGOpenPageBundleIntent",
+     "title": "AppIntents.OpenPageBundle.Title",
+     "kind": "other",
+     "params": [
+      "selectedPageBundle"
+     ],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "google_drive",
+   "name": "Google Drive",
+   "category": "Storage",
+   "shortcut": "Allternit Google Drive",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "Search in Drive",
+     "kind": "search",
+     "params": [
+      "search query"
+     ],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "onedrive",
+   "name": "OneDrive",
+   "category": "Storage",
+   "shortcut": "Allternit OneDrive",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "Scan whiteboard / business card / document",
+     "kind": "other",
+     "params": [],
+     "confidence": "community"
+    }
+   ]
+  },
+  {
+   "id": "egnyte",
+   "name": "Egnyte",
+   "category": "Storage",
+   "shortcut": "Allternit Egnyte",
+   "link": null,
+   "intents": [
+    {
+     "id": "GeotaggedPhotosQuickIntentAction",
+     "title": "Geotagged photos",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "LaunchCopilotQuickIntentAction",
+     "title": "Launch AI Assistant",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenRecentFilesQuickIntentAction",
+     "title": "Recent files",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenSearchQuickIntentAction",
+     "title": "Open search",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ScanDocumentQuickIntentAction",
+     "title": "Scan document",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "TakePhotoVideoQuickIntentAction",
+     "title": "Take photo or video",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "UploadFileQuickIntentAction",
+     "title": "Upload file",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "UploadPhotoVideoQuickIntentAction",
+     "title": "Upload photo or video",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": [
+    {
+     "action": "Open Ask-me-anything chat",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Open recent files",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Start document scan",
+     "kind": "create",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Open Egnyte search",
+     "kind": "search",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Upload files or photos",
+     "kind": "send",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Take a photo",
+     "kind": "create",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Upload geotagged photos from a location",
+     "kind": "send",
+     "params": [
+      "location"
+     ],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "asana",
+   "name": "Asana",
+   "category": "Project management",
+   "shortcut": "Allternit Asana",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "Create a task by Siri phrase ('in Asana' / 'using Asana')",
+     "kind": "create",
+     "params": [
+      "task name"
+     ],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "clickup",
+   "name": "ClickUp",
+   "category": "Project management",
+   "shortcut": "Allternit ClickUp",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "Siri: 'Add [task name] to my [List name] List in ClickUp'",
+     "kind": "create",
+     "params": [
+      "task name",
+      "list name"
+     ],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "jira",
+   "name": "Jira",
+   "category": "Project management",
+   "shortcut": "Allternit Jira",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "Create Issue",
+     "kind": "create",
+     "params": [
+      "Project",
+      "Issue Type",
+      "Summary"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Set Issue Field Value",
+     "kind": "other",
+     "params": [],
+     "confidence": "community"
+    }
+   ]
+  },
+  {
+   "id": "linear",
+   "name": "Linear",
+   "category": "Project management",
+   "shortcut": "Allternit Linear",
+   "link": null,
+   "intents": [
+    {
+     "id": "CreateDraftIntent",
+     "title": "Create draft",
+     "kind": "create",
+     "params": [
+      "organization",
+      "team",
+      "title",
+      "description",
+      "attachments",
+      "workflowState",
+      "priority",
+      "assignee",
+      "project",
+      "milestone",
+      "labels"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "CreateIssueIntent",
+     "title": "Create issue",
+     "kind": "create",
+     "params": [
+      "organization",
+      "team",
+      "title",
+      "description",
+      "attachments",
+      "workflowState",
+      "priority",
+      "assignee",
+      "project",
+      "milestone",
+      "labels"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "OpenAgentIntent",
+     "title": "Ask Linear Agent",
+     "kind": "other",
+     "params": [
+      "organization",
+      "message",
+      "attachments"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenLinearIntent",
+     "title": "Open Linear",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "monday",
+   "name": "monday.com",
+   "category": "Project management",
+   "shortcut": "Allternit monday.com",
+   "link": null,
+   "intents": [
+    {
+     "id": "IWasMentionedMessagesIntent",
+     "title": "I was mentioned",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "UnreadMessagesIntent",
+     "title": "Unread notifications",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "trello",
+   "name": "Trello",
+   "category": "Project management",
+   "shortcut": "Allternit Trello",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "Add Card to Inbox",
+     "kind": "create",
+     "params": [
+      "card title"
+     ],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "wrike",
+   "name": "Wrike",
+   "category": "Project management",
+   "shortcut": "Allternit Wrike",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "Open Wrike",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Add task (Siri: 'add [task name] in Wrike')",
+     "kind": "create",
+     "params": [
+      "task name"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Show My To-Do list in Wrike",
+     "kind": "read",
+     "params": [],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "todoist",
+   "name": "Todoist",
+   "category": "Tasks",
+   "shortcut": "Allternit Todoist",
+   "link": null,
+   "intents": [
+    {
+     "id": "CompleteItemsAppIntent",
+     "title": "complete_tasks_intent_title",
+     "kind": "other",
+     "params": [
+      "items"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "CreateProjectAppIntent",
+     "title": "create_project_intent_title",
+     "kind": "other",
+     "params": [
+      "name",
+      "workspace",
+      "folder",
+      "parent",
+      "isFavorite"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "CreateSectionAppIntent",
+     "title": "create_section_intent_title",
+     "kind": "other",
+     "params": [
+      "name",
+      "project"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "CreateTaskIntent",
+     "title": "create_task_title",
+     "kind": "other",
+     "params": [
+      "content",
+      "contentDescription",
+      "project",
+      "section",
+      "dueDate",
+      "priority",
+      "labels"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "DeleteItemsAppIntent",
+     "title": "delete_tasks_intent_title",
+     "kind": "other",
+     "params": [
+      "items"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "DuplicateItemsAppIntent",
+     "title": "duplicate_tasks_intent_title",
+     "kind": "other",
+     "params": [
+      "items"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "DuplicateProjectAppIntent",
+     "title": "duplicate_project_intent_title",
+     "kind": "other",
+     "params": [
+      "project"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "DuplicateSectionAppIntent",
+     "title": "duplicate_section_intent_title",
+     "kind": "other",
+     "params": [
+      "section"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "EditItemsDateAppIntent",
+     "title": "edit_tasks_date_intent_title",
+     "kind": "other",
+     "params": [
+      "editAction",
+      "items",
+      "date"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "EditItemsLabelsAppIntent",
+     "title": "edit_tasks_labels_intent_title",
+     "kind": "other",
+     "params": [
+      "editAction",
+      "items",
+      "labels"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "EditItemsPriorityAppIntent",
+     "title": "edit_tasks_priority_intent_title",
+     "kind": "other",
+     "params": [
+      "editAction",
+      "items",
+      "priority"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "MoveItemsAppIntent",
+     "title": "move_tasks_intent_title",
+     "kind": "other",
+     "params": [
+      "items",
+      "project",
+      "section"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "MoveSectionAppIntent",
+     "title": "move_section_intent_title",
+     "kind": "other",
+     "params": [
+      "section",
+      "project"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "OpenItemAppIntent",
+     "title": "open_item_title",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenRambleAppIntent",
+     "title": "open_ramble_intent_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenSectionAppIntent",
+     "title": "open_section_intent_title",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenViewIntent",
+     "title": "open_view_title",
+     "kind": "other",
+     "params": [
+      "viewMode",
+      "project",
+      "label",
+      "filter"
+     ],
+     "opensApp": true
+    }
+   ],
+   "web": [
+    {
+     "action": "Create Task",
+     "kind": "create",
+     "params": [
+      "Task Name",
+      "Due date",
+      "Project",
+      "Priority",
+      "Labels",
+      "Show when run"
+     ],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "ticktick",
+   "name": "TickTick",
+   "category": "Tasks",
+   "shortcut": "Allternit TickTick",
+   "link": null,
+   "intents": [
+    {
+     "id": "TTAddRecordingTask",
+     "title": "Voice Recording",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "TTAddTasksIntent",
+     "title": "Add_Tasks",
+     "kind": "other",
+     "params": [
+      "titles",
+      "taskType",
+      "setReminder",
+      "startDate",
+      "endDate",
+      "priority",
+      "tag",
+      "project",
+      "isAllDay",
+      "date",
+      "editInApp"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "TTCheckinHabitIntent",
+     "title": "CheckIn Habit",
+     "kind": "other",
+     "params": [
+      "habit",
+      "amount"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "TTCompleteTask",
+     "title": "Complete Task",
+     "kind": "other",
+     "params": [
+      "task",
+      "queryTask"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "TTEndCurrentFocus",
+     "title": "End Focusing",
+     "kind": "other",
+     "params": [
+      "focus"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "TTOpenCalendarIntent",
+     "title": "Open_Calendar",
+     "kind": "other",
+     "params": [
+      "type"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "TTOpenMatrixIntent",
+     "title": "Open Matrix",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "TTPauseCurrentFocus",
+     "title": "Continue/Pause Focusing",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "TTPlanMyDay",
+     "title": "View Plan My Day",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "TTProjectFocusFilter",
+     "title": "Filter List",
+     "kind": "other",
+     "params": [
+      "projects"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "TTViewUpcomingTask",
+     "title": "View Upcoming Task",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "zoom",
+   "name": "Zoom",
+   "category": "Meetings",
+   "shortcut": "Allternit Zoom",
+   "link": null,
+   "intents": [
+    {
+     "id": "MyNotesDoneIntent",
+     "title": "LN_MyNotes_LA_DoneIntent_Title_1149421",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "MyNotesPauseIntent",
+     "title": "LN_MyNotes_LA_PauseIntent_Title_1149421",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "ZMAllowWebinarAttendeeToTalkIntent",
+     "title": "LN_ZoomCuts_Allow_Webinar_Attendee_To_Talk_510514",
+     "kind": "other",
+     "params": [
+      "attendees",
+      "allowToTalk"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMAskToStartVideoIntent",
+     "title": "LN_ZoomCuts_Ask_To_Start_Video_510514",
+     "kind": "other",
+     "params": [
+      "participants"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMAskToUnmuteIntent",
+     "title": "LN_ZoomCuts_Ask_To_Unmute_510514",
+     "kind": "other",
+     "params": [
+      "operation",
+      "participants"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMClearAnnotationsIntent",
+     "title": "LN_ZoomCuts_Clear_Annotations_510514",
+     "kind": "other",
+     "params": [
+      "style"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMCloudRecordingIntent",
+     "title": "LN_ZoomCuts_Cloud_Recording_510514",
+     "kind": "other",
+     "params": [
+      "mode"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMDemotePanelistToAttendeeIntent",
+     "title": "LN_ZoomCuts_Demote_Panelist_To_Attendee_510514",
+     "kind": "other",
+     "params": [
+      "panelists"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMGetMeetingSettingIntent",
+     "title": "LN_ZoomCuts_Get_Meeting_Setting_510514",
+     "kind": "other",
+     "params": [
+      "setting"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMGetMeetingUrlIntent",
+     "title": "LN_ZoomCuts_Get_Meeting_URL_510514",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "ZMGetMyUserIdIntent",
+     "title": "LN_ZoomCuts_Get_My_User_ID_510514",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "ZMIsMeetingActiveIntent",
+     "title": "LN_ZoomCuts_Is_Meeting_Active_510514",
+     "kind": "other",
+     "params": [
+      "showError"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMIsMeetingHostIntent",
+     "title": "LN_ZoomCuts_Is_Meeting_Host_510514",
+     "kind": "other",
+     "params": [
+      "role"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMJoinMeetingIntent",
+     "title": "LN_ZoomCuts_Join_Meeting_510514",
+     "kind": "other",
+     "params": [
+      "meetingId",
+      "passcode",
+      "audioOff",
+      "videoOff"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "ZMJoinTheNextMeetingIntent",
+     "title": "LN_ZoomCuts_Join_The_Next_Meeting_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ZMLeaveMeetingIntent",
+     "title": "LN_ZoomCuts_Leave_Meeting_510514",
+     "kind": "other",
+     "params": [
+      "endMeeting"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMLowerHandsIntent",
+     "title": "LN_ZoomCuts_Lower_Hands_510514",
+     "kind": "other",
+     "params": [
+      "participants",
+      "operation",
+      "webinarAttendeesOnly"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMMuteMyAudioIntent",
+     "title": "LN_ZoomCuts_Mute_My_Audio_510514",
+     "kind": "other",
+     "params": [
+      "operation",
+      "state",
+      "showError"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMMuteParticipantsIntent",
+     "title": "LN_ZoomCuts_Mute_Participants_510514",
+     "kind": "other",
+     "params": [
+      "participants",
+      "operation"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMOpenContactsIntent",
+     "title": "LN_ZoomCuts_Open_Contacts_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ZMOpenMyNotesIntent",
+     "title": "LN_ZoomCuts_Open_My_Notes_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ZMOpenNewSMSIntent",
+     "title": "LN_ZoomCuts_Open_New_SMS_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ZMOpenSIPDialPadIntent",
+     "title": "LN_ZoomCuts_Open_SIP_Dial_Pad_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ZMOpenSIPFaxIntent",
+     "title": "LN_ZoomCuts_Open_SIP_Fax_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ZMOpenSIPHistoryIntent",
+     "title": "LN_ZoomCuts_Open_SIP_History_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ZMOpenSIPLinesIntent",
+     "title": "LN_ZoomCuts_Open_SIP_Lines_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ZMOpenSIPVoicemailIntent",
+     "title": "LN_ZoomCuts_Open_SIP_Voicemail_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ZMPromoteAttendeeToPanelistIntent",
+     "title": "LN_ZoomCuts_Promote_Attendee_To_Panelist_510514",
+     "kind": "other",
+     "params": [
+      "attendees"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMRaiseMyHandIntent",
+     "title": "LN_ZoomCuts_Raise_My_Hand_510514",
+     "kind": "other",
+     "params": [
+      "raiseMode"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMRemoveParticipantsIntent",
+     "title": "LN_ZoomCuts_Remove_Participants_510514",
+     "kind": "other",
+     "params": [
+      "participants"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMRenameParticipantIntent",
+     "title": "LN_ZoomCuts_Rename_Participant_510514",
+     "kind": "other",
+     "params": [
+      "operation",
+      "participant",
+      "name"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMRevokeCoHostIntent",
+     "title": "LN_ZoomCuts_Revoke_Cohost_510514",
+     "kind": "other",
+     "params": [
+      "participants"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMSetAttendeeChatPrivilegeIntent",
+     "title": "LN_ZoomCuts_Set_Attendee_Chat_Privilege_510514",
+     "kind": "other",
+     "params": [
+      "privilege"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMSetCoHostIntent",
+     "title": "LN_ZoomCuts_Set_Cohost_510514",
+     "kind": "other",
+     "params": [
+      "participants"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMSetFocusModeIntent",
+     "title": "LN_ZoomCuts_Set_Focus_Mode_510514",
+     "kind": "other",
+     "params": [
+      "operation",
+      "state"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMSetHostIntent",
+     "title": "LN_ZoomCuts_Set_Host_510514",
+     "kind": "other",
+     "params": [
+      "operation",
+      "participant"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMSetMeetingSettingIntent",
+     "title": "LN_ZoomCuts_Set_Meeting_Setting_510514",
+     "kind": "other",
+     "params": [
+      "operation",
+      "state",
+      "setting"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMSetMeetingTopicIntent",
+     "title": "LN_ZoomCuts_Set_Meeting_Topic_510514",
+     "kind": "other",
+     "params": [
+      "topic"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMSetMyVideoIntent",
+     "title": "LN_ZoomCuts_Set_My_Video_510514",
+     "kind": "other",
+     "params": [
+      "operation",
+      "state",
+      "showError"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMSetSecuritySettingIntent",
+     "title": "LN_ZoomCuts_Set_Security_Setting_510514",
+     "kind": "other",
+     "params": [
+      "setting",
+      "operation",
+      "state"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMSpotlightIntent",
+     "title": "LN_ZoomCuts_Spotlight_510514",
+     "kind": "other",
+     "params": [
+      "participants",
+      "operation",
+      "state"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "ZMStartMyPersonalMeetingIntent",
+     "title": "LN_ZoomCuts_Start_My_Personal_Meeting_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ZMStopParticipantVideoIntent",
+     "title": "LN_ZoomCuts_Stop_Participant_Video_510514",
+     "kind": "other",
+     "params": [
+      "participants"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ZMStopSharingIntent",
+     "title": "LN_ZoomCuts_Stop_Sharing_510514",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "ZMViewTodaysMeetingsIntent",
+     "title": "LN_ZoomCuts_View_Todays_Meetings_613646",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    }
+   ],
+   "web": [
+    {
+     "action": "Join my next meeting",
+     "kind": "open",
+     "params": [],
+     "confidence": "community"
+    },
+    {
+     "action": "View today's meetings",
+     "kind": "read",
+     "params": [],
+     "confidence": "community"
+    },
+    {
+     "action": "Start my personal meeting",
+     "kind": "control",
+     "params": [],
+     "confidence": "community"
+    }
+   ]
+  },
+  {
+   "id": "hubspot",
+   "name": "HubSpot",
+   "category": "CRM",
+   "shortcut": "Allternit HubSpot",
+   "link": null,
+   "intents": [
+    {
+     "id": "MarkTaskAsDoneIntent",
+     "title": "Mark Task as Done",
+     "kind": "other",
+     "params": [
+      "task",
+      "source"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "OpenAppIntent",
+     "title": "Open HubSpot",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenTaskIntent",
+     "title": "Open Task",
+     "kind": "open",
+     "params": [
+      "task",
+      "source"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "StartBreezeVoiceChatIntent",
+     "title": "Start Breeze voice chat",
+     "kind": "control",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "salesforce",
+   "name": "Salesforce",
+   "category": "CRM",
+   "shortcut": "Allternit Salesforce",
+   "link": null,
+   "intents": [
+    {
+     "id": "AddVoiceNoteIntent",
+     "title": "VM_RECENT_ADD_MEETING_NOTES",
+     "kind": "other",
+     "params": [
+      "eventId",
+      "subject"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "OpenAgentforce",
+     "title": "AF_OPEN_AGENTFORCE",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenAgentforceAndSendMessage",
+     "title": "AF_ASK_AGENTFORCE",
+     "kind": "other",
+     "params": [
+      "request"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenAgentforceNoKeyboard",
+     "title": "AF_OPEN_AGENTFORCE_NO_KEYBOARD",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenAgentforceTranscribing",
+     "title": "AF_TALK_TO_AGENTFORCE",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "PauseTranscriptionIntent",
+     "title": "MA_LA_PAUSE_INTENT_TITLE",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "PauseVoiceMemoIntent",
+     "title": "VOICE_MEMO_LA_PAUSE_INTENT_TITLE",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "ResumeTranscriptionIntent",
+     "title": "MA_LA_RESUME_INTENT_TITLE",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ResumeVoiceMemoIntent",
+     "title": "VOICE_MEMO_LA_RESUME_INTENT_TITLE",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "TodaysMeetingsIntent",
+     "title": "SF_SIRI_TODAYS_MEETINGS_TITLE",
+     "kind": "other",
+     "params": [
+      "filter"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "TranscribeSpecificMeetingIntent",
+     "title": "SCM_MEETING_ASSISTANT_ENTRY_CARD_CTA",
+     "kind": "other",
+     "params": [
+      "eventId",
+      "subject"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "pipedrive",
+   "name": "Pipedrive",
+   "category": "CRM",
+   "shortcut": "Allternit Pipedrive",
+   "link": null,
+   "intents": [
+    {
+     "id": "AddNewContactAppIntent",
+     "title": "app_intent_add_contact_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "CreateNewDealAppIntent",
+     "title": "app_intent_create_deal_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenLeadAppIntent",
+     "title": "app_intent_open_lead_title",
+     "kind": "other",
+     "params": [
+      "leadID"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenLeadsInboxAppIntent",
+     "title": "app_intent_open_leads_inbox_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ScheduleActivityAppIntent",
+     "title": "app_intent_schedule_activity_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "SearchPipedriveAppIntent",
+     "title": "app_intent_search_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "ShowActivitiesAppIntent",
+     "title": "app_intent_show_activities_title",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "zoho",
+   "name": "Zoho CRM",
+   "category": "CRM",
+   "shortcut": "Allternit Zoho CRM",
+   "link": null,
+   "intents": [
+    {
+     "id": "PWNextApprovalIntent",
+     "title": "Next Approval",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "PWPreviousApprovalIntent",
+     "title": "Previous Approval",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "PWTaskCompleteIntent",
+     "title": "Task Complete",
+     "kind": "other",
+     "params": [
+      "widgetKind",
+      "family",
+      "recordId",
+      "status"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": [
+    {
+     "action": "Open module list",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Open a module's list view (e.g. 'open my leads')",
+     "kind": "open",
+     "params": [
+      "module",
+      "list view"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Launch Zia / Dashboards",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "quickbooks",
+   "name": "QuickBooks",
+   "category": "Accounting",
+   "shortcut": "Allternit QuickBooks",
+   "link": null,
+   "intents": [
+    {
+     "id": "BusinessFeedAction",
+     "title": "Open Business Feed",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "CreateEstimateImageAction",
+     "title": "Create Estimate",
+     "kind": "create",
+     "params": [
+      "estimateDetails"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "CreateInvoiceImageAction",
+     "title": "Create invoice",
+     "kind": "create",
+     "params": [
+      "invoiceDetails"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "ExpenseReminderIntent",
+     "title": "Expense Reminder",
+     "kind": "other",
+     "params": [
+      "merchant",
+      "amount",
+      "card"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "OpenAskIntuitAssistIntent",
+     "title": "Ask Intuit AI",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenSalesItemIntent",
+     "title": "Open QuickBooks Action",
+     "kind": "open",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "SelectVoiceToSalesItemIntent",
+     "title": "Select transaction type",
+     "kind": "other",
+     "params": [
+      "salesItemType"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ShowVisualSearchResultsIntent",
+     "title": "QuickBooks Global Search",
+     "kind": "other",
+     "params": [
+      "semanticContent"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "ToggleVoiceToSalesItemRecordingIntent",
+     "title": "Create invoice from voice toggle",
+     "kind": "create",
+     "params": [
+      "value",
+      "salesItemType"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "DismissOmniResponseLiveActivityIntent",
+     "title": "Open Omni",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "ynab",
+   "name": "YNAB",
+   "category": "Finance",
+   "shortcut": "Allternit YNAB",
+   "link": null,
+   "intents": [
+    {
+     "id": "AddNewTransactionIntent",
+     "title": "Add New Transaction",
+     "kind": "create",
+     "params": [
+      "currencyAmount",
+      "inflowOrOutflow",
+      "subCategoryIntentEntity",
+      "splitSubCategoryIntentEntities",
+      "payeeIntentEntity",
+      "accountIntentEntity"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenBudgetIntent",
+     "title": "Open Plan",
+     "kind": "open",
+     "params": [
+      "budgetIntentEntity"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenCategoryDetailsIntent",
+     "title": "Open Category Details",
+     "kind": "open",
+     "params": [
+      "category"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "ShowGenericCategoryBalanceIntent",
+     "title": "Show category balance",
+     "kind": "read",
+     "params": [
+      "name"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "ShowSpecificCategoryBalanceIntent",
+     "title": "Show specific category balance",
+     "kind": "read",
+     "params": [
+      "category"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": [
+    {
+     "action": "Add New Transaction",
+     "kind": "create",
+     "params": [
+      "Amount",
+      "Outflow/Inflow",
+      "Payee",
+      "Category",
+      "Account"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Find Category",
+     "kind": "search",
+     "params": [
+      "Filter (Name, Balance, Group, Group Name...)",
+      "Sort by",
+      "Order",
+      "Limit"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Open Category Details",
+     "kind": "open",
+     "params": [
+      "Category"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Open Plan",
+     "kind": "open",
+     "params": [
+      "Plan"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Show Category Balance",
+     "kind": "read",
+     "params": [
+      "Category (partial names accepted)"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Siri phrase: 'Add new transaction in YNAB'",
+     "kind": "create",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Siri phrase: 'How much is available for [category] in YNAB'",
+     "kind": "read",
+     "params": [
+      "category"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Siri phrase: 'Open plan in YNAB'",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "ramp",
+   "name": "Ramp",
+   "category": "Finance",
+   "shortcut": "Allternit Ramp",
+   "link": null,
+   "intents": [
+    {
+     "id": "GetFundsIntent",
+     "title": "Get funds",
+     "kind": "read",
+     "params": [
+      "funds"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "GetTransactionsMissingItemsIntent",
+     "title": "Get transactions with missing items",
+     "kind": "read",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "MatchReceiptIntent",
+     "title": "Upload receipt",
+     "kind": "other",
+     "params": [
+      "photo"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "OpenRampIntent",
+     "title": "Open screen",
+     "kind": "open",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "UpdateTransactionIntent",
+     "title": "Update transaction",
+     "kind": "other",
+     "params": [
+      "transaction",
+      "memo",
+      "suggestedMemo",
+      "receipt"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "stripe",
+   "name": "Stripe",
+   "category": "Payments",
+   "shortcut": "Allternit Stripe",
+   "link": null,
+   "intents": [
+    {
+     "id": "ConfigurationIntent",
+     "title": "Configuration",
+     "kind": "other",
+     "params": [
+      "chartSelection",
+      "widgetTimeRange",
+      "accountSelection"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "shopify",
+   "name": "Shopify",
+   "category": "Commerce",
+   "shortcut": "Allternit Shopify",
+   "link": null,
+   "intents": [
+    {
+     "id": "SidekickIntent",
+     "title": "Open Sidekick",
+     "kind": "open",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "RefreshIntent",
+     "title": "Refresh",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "gusto",
+   "name": "Gusto",
+   "category": "HR",
+   "shortcut": "Allternit Gusto",
+   "link": null,
+   "intents": [
+    {
+     "id": "ClockOutIntent",
+     "title": "Clock out",
+     "kind": "other",
+     "params": [
+      "source"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "DebugSimulateSystemEndIntent",
+     "title": "Simulate system end (debug)",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "EndBreakIntent",
+     "title": "End break",
+     "kind": "other",
+     "params": [
+      "source"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "OpenGustoDestinationIntent",
+     "title": "open_gusto_destination_intent_title",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenTimeTrackingIntent",
+     "title": "Open app",
+     "kind": "open",
+     "params": [
+      "source"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "SearchGustoDestinationIntent",
+     "title": "search_gusto_destination_intent_title",
+     "kind": "other",
+     "params": [
+      "criteria"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "StartMealBreakIntent",
+     "title": "Take break",
+     "kind": "other",
+     "params": [
+      "source"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "bamboohr",
+   "name": "BambooHR",
+   "category": "HR",
+   "shortcut": "Allternit BambooHR",
+   "link": null,
+   "intents": [
+    {
+     "id": "AskHRAppIntentV1",
+     "title": "Ask BambooHR",
+     "kind": "other",
+     "params": [
+      "question"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": [
+    {
+     "action": "Ask BambooHR a question",
+     "kind": "read",
+     "params": [
+      "question (spoken)"
+     ],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "pagerduty",
+   "name": "PagerDuty",
+   "category": "Observability",
+   "shortcut": "Allternit PagerDuty",
+   "link": null,
+   "intents": [
+    {
+     "id": "AcknowledgeIncidentsIntent",
+     "title": "acknowledgeIncidentsTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "AcknowledgeMostRecentIncidentIntent",
+     "title": "acknowledgeMostRecentIncidentTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "CheckOnCallStatusIntent",
+     "title": "checkOnCallStatusTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "OpenIncidentSummaryIntent",
+     "title": "openIncidentSummaryTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "datadog",
+   "name": "Datadog",
+   "category": "Observability",
+   "shortcut": "Allternit Datadog",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "User-created Siri shortcut that opens a dashboard or monitor (name chosen by user)",
+     "kind": "open",
+     "params": [
+      "dashboard or monitor (must have been opened in app once)"
+     ],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "servicenow",
+   "name": "ServiceNow",
+   "category": "ITSM",
+   "shortcut": "Allternit ServiceNow",
+   "link": null,
+   "intents": [
+    {
+     "id": "OpenRequests",
+     "title": "app_intent_open_my_requests",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenServiceCatalog",
+     "title": "app_intent_browse_services",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenTasks",
+     "title": "app_intent_open_my_tasks",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "OpenVirtualAgent",
+     "title": "app_intent_open_agent_chat",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "SearchIntent",
+     "title": "app_intent_search_term",
+     "kind": "other",
+     "params": [
+      "searchText"
+     ],
+     "opensApp": true
+    }
+   ],
+   "web": [
+    {
+     "action": "Open a chat window",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Browser items and services",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Open my tasks",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Open my requests",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Search in the ServiceNow instance",
+     "kind": "search",
+     "params": [],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "bitwarden",
+   "name": "Bitwarden",
+   "category": "Security",
+   "shortcut": "Allternit Bitwarden",
+   "link": null,
+   "intents": [
+    {
+     "id": "GeneratePassphraseIntent",
+     "title": "GeneratePassphrase",
+     "kind": "other",
+     "params": [
+      "numberOfWords",
+      "capitalize",
+      "includeNumber"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "LockAllAccountsIntent",
+     "title": "LockAllAccounts",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "LogoutAllAccountsIntent",
+     "title": "LogOutAllAccounts",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "OpenGeneratorIntent",
+     "title": "OpenGenerator",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    }
+   ],
+   "web": [
+    {
+     "action": "Lock all accounts",
+     "kind": "control",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Log out all accounts",
+     "kind": "control",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Open password generator",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Generate passphrase",
+     "kind": "read",
+     "params": [
+      "length and format presettable in the shortcut"
+     ],
+     "confidence": "documented"
+    },
+    {
+     "action": "Launch Bitwarden",
+     "kind": "open",
+     "params": [],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "spotify",
+   "name": "Spotify",
+   "category": "Media",
+   "shortcut": "Allternit Spotify",
+   "link": null,
+   "intents": [
+    {
+     "id": "AddToLibraryIntent",
+     "title": "sAddToLibraryIntentTitle",
+     "kind": "other",
+     "params": [
+      "audioEntity"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "AddToPlaylistIntent",
+     "title": "sAddToPlaylistIntentTitle",
+     "kind": "other",
+     "params": [
+      "audioEntity",
+      "playlist"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "CreatePlaylistIntent",
+     "title": "sCreatePlaylistIntentTitle",
+     "kind": "other",
+     "params": [
+      "prompt"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "CreateStationIntent",
+     "title": "sCreateStationIntentTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": false
+    },
+    {
+     "id": "OpenAlbumIntent",
+     "title": "sOpenAlbumIntentTitle",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenArtistIntent",
+     "title": "sOpenArtistIntentTitle",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenAudiobookIntent",
+     "title": "sOpenAudiobookIntentTitle",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenEpisodeIntent",
+     "title": "sOpenEpisodeIntentTitle",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenPlaylistIntent",
+     "title": "sOpenPlaylistIntentTitle",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenShowIntent",
+     "title": "sOpenShowIntentTitle",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenTrackIntent",
+     "title": "sOpenTrackIntentTitle",
+     "kind": "other",
+     "params": [
+      "target"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "PlayAudioIntent",
+     "title": "sPlayAudioIntentTitle",
+     "kind": "other",
+     "params": [
+      "audioEntity",
+      "playbackAttributes",
+      "queueLocation",
+      "warmupAudioQueueResult"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "UpdateAudioAffinityIntent",
+     "title": "sUpdateAudioAffinityIntentTitle",
+     "kind": "other",
+     "params": [
+      "affinityState",
+      "target"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "WarmupAudioQueueIntent",
+     "title": "WarmupAudioQueueIntent",
+     "kind": "other",
+     "params": [
+      "audioEntity",
+      "playbackAttributes"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "googlephotos",
+   "name": "Google Photos",
+   "category": "Media",
+   "shortcut": "Allternit Google Photos",
+   "link": null,
+   "intents": [
+    {
+     "id": "OpenAlbumIntent",
+     "title": "appintent_view_albums",
+     "kind": "other",
+     "params": [
+      "account"
+     ],
+     "opensApp": true
+    },
+    {
+     "id": "OpenCreateIntent",
+     "title": "appintent_create",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "SearchIntent",
+     "title": "appintent_photos_search",
+     "kind": "other",
+     "params": [
+      "criteria"
+     ],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "googlemaps",
+   "name": "Google Maps",
+   "category": "Maps",
+   "shortcut": "Allternit Google Maps",
+   "link": null,
+   "intents": [
+    {
+     "id": "DirectionsIntent",
+     "title": "AppShortcutsDirectionsIntentTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "RestaurantsIntent",
+     "title": "AppShortcutsRestaurantsIntentTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    },
+    {
+     "id": "SearchIntent",
+     "title": "AppShortcutsSearchIntentTitle",
+     "kind": "other",
+     "params": [],
+     "opensApp": true
+    }
+   ],
+   "web": []
+  },
+  {
+   "id": "strava",
+   "name": "Strava",
+   "category": "Fitness",
+   "shortcut": "Allternit Strava",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "Start Activity (Siri phrase must include 'Strava')",
+     "kind": "control",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Pause (Siri phrase must include 'Strava')",
+     "kind": "control",
+     "params": [],
+     "confidence": "documented"
+    },
+    {
+     "action": "Resume (Siri phrase must include 'Strava')",
+     "kind": "control",
+     "params": [],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "harvest",
+   "name": "Harvest",
+   "category": "Time tracking",
+   "shortcut": "Allternit Harvest",
+   "link": null,
+   "intents": [],
+   "web": [
+    {
+     "action": "Start/stop timer via Siri (exact action names not published)",
+     "kind": "control",
+     "params": [
+      "unspecified"
+     ],
+     "confidence": "documented"
+    }
+   ]
+  },
+  {
+   "id": "netsuite",
+   "name": "NetSuite",
+   "category": "ERP",
+   "shortcut": "Allternit NetSuite",
+   "link": null,
+   "intents": [
+    {
+     "id": "AddNoteIntent",
+     "title": "label_intent_note_title",
+     "kind": "other",
+     "params": [
+      "memo"
+     ],
+     "opensApp": false
+    },
+    {
+     "id": "AddTimeLogIntent",
+     "title": "label_intent_timer_title",
+     "kind": "other",
+     "params": [
+      "hours",
+      "minutes",
+      "memo"
+     ],
+     "opensApp": false
+    }
+   ],
+   "web": []
+  }
+ ]
+}
