@@ -1,13 +1,8 @@
 import Foundation
 
-/// Where `FilesClient.download` got the bytes.
-public enum ServedBy: String, Sendable, Equatable {
-    /// From the computer itself (awake, or woken).
-    case live
-    /// From a sealed replica on another of the user's computers (SPEC section
-    /// 10, step 4), opened with this device's Files key. No wake.
-    case replica
-}
+// `FilesClient.download` returns the contract's `ServedBy` (FilesDriveContract.gen.swift):
+// `.live` from the computer itself (awake, or woken), `.replica` from a sealed replica on
+// another of the user's computers (SPEC section 10, step 4), opened with this device's Files key.
 
 extension FilesClient {
     /// Downloads an item's content to `destination`, streaming to disk in
