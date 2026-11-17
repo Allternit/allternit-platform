@@ -3,6 +3,10 @@ title: 'MCP Servers'
 description: 'Attach external tools and expose the Allternit registry via the Model Context Protocol'
 ---
 
+## Connector tools load on demand
+
+When a turn would mount more than 30 connector tools, none are mounted until the agent searches with `connector_search` and loads the ones it needs. They keep their normal permissions. See [Connector tools](/tools/connectors).
+
 ## Overview
 
 The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) is an open standard for connecting agents to external tools and data sources. Allternit supports MCP in three ways:

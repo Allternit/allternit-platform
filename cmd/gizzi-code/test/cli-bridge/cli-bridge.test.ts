@@ -55,6 +55,9 @@ describe("CliBridge MCP server", () => {
       "memory_list",
       "sleep",
       "folder_access",
+      "connector_search",
+      "connector_suggest",
+      "settings",
       "question",
     ])
     // Screen and browser tasks need the app (see CliBridge.TOOLS).

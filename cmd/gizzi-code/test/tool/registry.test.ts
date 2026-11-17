@@ -280,4 +280,29 @@ describe("tool.registry", () => {
       else process.env.GIZZI_CLIENT = prev
     }
   })
+
+  test("Wave D connect and settings tools reach every client and are not bot-only", async () => {
+    const tools = ["connector_search", "connector_suggest", "settings"]
+    const botOnly = new Set<string>([...ToolRegistry.BOT_THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli", "desktop"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            for (const id of tools) {
+              expect(ids).toContain(id)
+              expect(botOnly.has(id)).toBe(false)
+            }
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
 })

@@ -147,6 +147,20 @@ struct MessageRow: View {
                     }
                 }
 
+                // connector_suggest: the connectors the agent offered, with Connect.
+                // settings: what changed, with Undo / Confirm / Open Settings.
+                ForEach(message.toolCalls) { call in
+                    if let suggestion = AgentConnectorSuggestion.parse(
+                        toolName: call.toolName, metadata: call.metadata, output: call.output, input: call.input, title: call.title
+                    ) {
+                        ConnectSuggestCardView(suggestion: suggestion)
+                    } else if let settingsResult = AgentSettingsResult.parse(
+                        toolName: call.toolName, metadata: call.metadata, output: call.output
+                    ) {
+                        SettingsChangeCardView(result: settingsResult, toolCallId: call.id, autoApply: message.isStreaming)
+                    }
+                }
+
                 // Message Bubble — markdown for the assistant, plain text for the user.
                 // Skipped when the message is nothing but an error card.
                 if let run = hostedRun, message.role == "assistant" {

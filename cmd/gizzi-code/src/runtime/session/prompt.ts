@@ -40,6 +40,7 @@ import { ToolRegistry } from "@/runtime/tools/builtins/registry"
 import { MCP } from "@/runtime/tools/mcp"
 import { mcpAppMetadata } from "@/runtime/tools/mcp/apps"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
+import { Connectors } from "@/runtime/primitives/connectors"
 import type { CallToolResult } from "@modelcontextprotocol/client"
 import { LSP } from "@/runtime/integrations/lsp"
 import { ReadTool } from "@/runtime/tools/builtins/read"
@@ -1826,7 +1827,12 @@ const message = await createUserMessage(input)
     const mcpTools = Object.entries(mcpCatalog.tools)
     // A bot's Capabilities page: MCP connectors it has off are not offered to it.
     const turnBot = BotTurn.get(input.session.id)
+    // Wave D decision 10: more than Connectors.DEFER_THRESHOLD connector tools
+    // mount none until connector_search loads them (non-connector MCP tools
+    // always mount). Loaded tools keep their own permission rules below.
+    const connectorMounted = Connectors.mountFilter(input.session.id, mcpCatalog.descriptors)
     for (const [key, item] of mcpTools) {
+      if (!connectorMounted(key)) continue
       if (!BotTurn.mcpOnForBot(turnBot, mcpCatalog.descriptors[key]?.connectorId)) continue
       const execute = item.execute
       if (!execute) continue

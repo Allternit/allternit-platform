@@ -654,7 +654,9 @@
         "allternit/surfaces/docs/api/memory-drive.mdx",
         "allternit/surfaces/docs/tools/memory.mdx",
         "allternit/surfaces/docs/tools/past-chats.mdx",
-        "allternit/surfaces/docs/tools/resources.mdx"
+        "allternit/surfaces/docs/tools/resources.mdx",
+        "allternit/surfaces/docs/tools/connectors.mdx",
+        "allternit/surfaces/docs/tools/settings.mdx"
       ]
     },
     {

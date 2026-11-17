@@ -38,6 +38,7 @@ import { WAIT_AGENTS_TOOL_NAME } from '../tools/WaitAgentsTool/prompt.js'
 import { AGENT_CONTROL_TOOL_NAME } from '../tools/AgentControlTool/prompt.js'
 import { GET_CONTEXT_REMAINING_TOOL_NAME } from '../tools/GetContextRemainingTool/prompt.js'
 import { AGENT_BATCH_TOOL_NAME } from '../tools/AgentBatchTool/prompt.js'
+import { CONNECTOR_SEARCH_TOOL_NAME } from '../tools/ConnectorTool/prompt.js'
 
 export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   TASK_OUTPUT_TOOL_NAME,
@@ -91,6 +92,9 @@ export const ASYNC_AGENT_ALLOWED_TOOLS = new Set([
   ASK_USER_LATER_TOOL_NAME,
   // history_recall stays main-thread: it reads the main session's transcript.
   GET_CONTEXT_REMAINING_TOOL_NAME,
+  // Workers can find and load the user's connected apps. connector_suggest and
+  // settings stay with the main thread: the user must see the card or change.
+  CONNECTOR_SEARCH_TOOL_NAME,
 ])
 /**
  * Tools allowed only for in-process teammates (not general async agents).

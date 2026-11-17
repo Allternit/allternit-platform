@@ -30,6 +30,9 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
     var automation: AgentAutomationResult? = nil
     /// lookup: the fact card (weather, time zones, conversion, …) drawn under the reply.
     var lookupCard: AnswerCardEnvelope? = nil
+    /// The tool part's `metadata` object as raw JSON text (nil when none).
+    /// connector_suggest and settings read their cards from it.
+    var metadata: String? = nil
 
     /// How long the call ran; live calls count up to `now`.
     func elapsed(now: Date = Date()) -> TimeInterval? {
@@ -92,7 +95,8 @@ extension ToolCallRecord {
                 runCode: name == "run_code" ? RunCodeResult(files: part.files, run: part.run) : nil,
                 userMessage: name == AgentUserMessage.toolName ? part.state?.userMessage : nil,
                 automation: name == AgentAutomationResult.toolName ? part.state?.automation : nil,
-                lookupCard: name == LookupToolMetadata.toolName ? part.state?.lookup?.card : nil
+                lookupCard: name == LookupToolMetadata.toolName ? part.state?.lookup?.card : nil,
+                metadata: part.state?.metadata
             )
         }
     }
@@ -117,6 +121,7 @@ extension MessageRecord {
                 if let message = detail.userMessage { call.userMessage = message }
                 if let automation = detail.automation { call.automation = automation }
                 if let card = detail.lookupCard { call.lookupCard = card }
+                if let metadata = detail.metadata { call.metadata = metadata }
             }
             if state != .running, call.finishedAt == nil { call.finishedAt = now }
             if let runCode { call.runCode = runCode }
@@ -131,10 +136,12 @@ extension MessageRecord {
                 error: detail?.error,
                 startedAt: detail?.startedAt ?? now,
                 finishedAt: detail?.finishedAt ?? (state == .running ? nil : now),
+                output: detail?.output,
                 runCode: runCode,
                 userMessage: detail?.userMessage,
                 automation: detail?.automation,
-                lookupCard: detail?.lookupCard
+                lookupCard: detail?.lookupCard,
+                metadata: detail?.metadata
             ))
         }
     }
