@@ -35,11 +35,12 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { HidCore, HidError, hidRouteHealth, senderFromTransport, type Calibration, type HidTransport, type Point, type PointerScreen } from './phone-hid-core.js';
+import { HidCore, HidError, hidRouteHealth, senderFromTransport, type Calibration, type HidTransport, type Point } from './phone-hid-core.js';
 import { needsYou, type RouteHealth } from './phone-link-health.js';
 import type { Capability, LaneContext, LaneTool, PhoneLane } from './phone-route.js';
 import type { ToolErrorCode, ToolResult } from './phone-tools.js';
-import { changed, type Gray } from './phone-usb-agent-vision.js';
+import type { Gray } from './phone-usb-agent-vision.js';
+import { BroadcastStills } from './phone-broadcast-stills.js';
 import { frameOf, type VerifyFrame } from './phone-verify.js';
 
 export const BTHID_BINARY = 'allternit-bthid';
@@ -531,74 +532,6 @@ const DECODE_WIDTH = 360;
 export const POINTER_RECHECK_MS = 30_000;
 
 const fail = (error: ToolErrorCode, message: string): ToolResult => ({ ok: false, error, message });
-
-/**
- * The iPhone's broadcast as the core needs it: stills pulled on demand and
- * kept as grayscale. Same as phone-bt-android.ts BroadcastScreen (PR #2490);
- * once both are on main, one of them should import the other.
- */
-export class BroadcastStills implements PointerScreen {
-  private gray: Gray | null = null;
-  private at: number | null = null;
-  private readonly now: () => number;
-  private readonly sleep: (ms: number) => Promise<void>;
-
-  constructor(
-    private readonly grab: () => Promise<{ jpeg: Buffer; ageMs: number } | null>,
-    private readonly isLive: () => boolean,
-    private readonly decode: (jpeg: Buffer) => Gray | null,
-    opts: { now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
-  ) {
-    this.now = opts.now ?? Date.now;
-    this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-  }
-
-  live(): boolean {
-    return this.isLive();
-  }
-
-  latestAt(): number | null {
-    return this.at;
-  }
-
-  latestGray(): Gray | null {
-    return this.gray;
-  }
-
-  /** Pulls a still; true when it is newer than the one kept. */
-  async pull(): Promise<boolean> {
-    const shot = await this.grab();
-    if (!shot) return false;
-    const at = this.now() - Math.max(0, shot.ageMs);
-    if (this.at !== null && at <= this.at) return false;
-    this.gray = this.decode(shot.jpeg);
-    this.at = at;
-    return true;
-  }
-
-  async nextGray(since: number, timeoutMs: number): Promise<Gray | null> {
-    const deadline = this.now() + timeoutMs;
-    for (;;) {
-      await this.pull();
-      if (this.at !== null && this.at > since) return this.gray;
-      if (this.now() >= deadline) return null;
-      await this.sleep(100);
-    }
-  }
-
-  /** Waits at least `leastMs`, then until two stills `quietMs` apart match, or `mostMs`. */
-  async settled(quietMs: number, leastMs: number, mostMs: number): Promise<void> {
-    const deadline = this.now() + mostMs;
-    await this.sleep(leastMs);
-    await this.pull();
-    while (this.now() < deadline) {
-      const before = this.gray;
-      await this.sleep(quietMs);
-      await this.pull();
-      if (before && this.gray && !changed(before, this.gray)) return;
-    }
-  }
-}
 
 interface IphoneState {
   core: HidCore;
