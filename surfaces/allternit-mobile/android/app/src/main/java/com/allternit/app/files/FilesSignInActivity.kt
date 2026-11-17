@@ -95,6 +95,11 @@ class FilesSignInActivity : Activity() {
             }
             actions.addView(FilesUi.matchWidth(FilesUi.button(this, "Open Files", true) { openFiles() }))
             actions.addView(FilesUi.gap(this, 12))
+            // Files key: approve your other devices, give computers the key, open replicas.
+            actions.addView(FilesUi.matchWidth(FilesUi.button(this, "Files key", false) {
+                startActivity(Intent(this, FilesKeyActivity::class.java))
+            }))
+            actions.addView(FilesUi.gap(this, 12))
             actions.addView(FilesUi.matchWidth(FilesUi.button(this, "Sign out", false) {
                 drive.signOut()
                 render(null)

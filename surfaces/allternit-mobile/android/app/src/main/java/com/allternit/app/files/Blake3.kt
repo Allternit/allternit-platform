@@ -126,6 +126,8 @@ internal class Blake3 private constructor(private val key: IntArray, private val
 
         fun hashHex(data: ByteArray): String = Blake3().apply { update(data) }.finalizeHex()
 
+        fun hash(data: ByteArray): ByteArray = Blake3().apply { update(data) }.finalizeBytes()
+
         /** Keyed-hash mode; `key` is 32 bytes. */
         fun keyed(key: ByteArray): Blake3 {
             require(key.size == 32) { "BLAKE3 keys are 32 bytes" }

@@ -97,6 +97,15 @@ internal class CloudApi(private val token: String) {
         return o.getString("token") to o.getString("expires_at")
     }
 
+    /**
+     * cloud-api's Files key routes (`/api/v1/files-keys…`, SPEC section 13; [FilesKeys]).
+     * `path` starts with `/api/v1/files-keys`. Throws [FilesException] on an error status.
+     */
+    fun filesKeys(method: String, path: String, json: String? = null): String {
+        require(path.startsWith("/api/v1/files-keys") || path.startsWith("/api/v1/computer-files/")) { "not a Files key route" }
+        return request(method, path, json)
+    }
+
     fun setWake(computerId: String, wake: WakeSetting): WakeSettings =
         request("PUT", "/api/v1/computer-files/${seg(computerId)}/wake-settings", WireJson.encode(UpdateWakeSettingsRequest(wake)).toString()).wire()
 

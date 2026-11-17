@@ -346,6 +346,14 @@ class AllternitDocumentsProvider : DocumentsProvider() {
                 drive.cache.touch(cacheFile)
                 return ParcelFileDescriptor.open(cacheFile, ParcelFileDescriptor.MODE_READ_ONLY)
             }
+            // Asleep or offline and this phone has the Files key: read a sealed replica on
+            // another computer first, so opening needs no wake (SPEC section 10 step 4).
+            val st = drive.knownState(cid)
+            if ((st == ComputerState.ASLEEP || st == ComputerState.OFFLINE) && !drive.hasTicket(cid) &&
+                blocking(signal, 300_000) { fromReplica(cid, item) }
+            ) {
+                return ParcelFileDescriptor.open(cacheFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            }
             return try {
                 if (item.size > PROXY_MIN) {
                     blocking(signal) { drive.ensureContent(cid, WakeReason.OPEN_FILE, iid, item.name) }
@@ -359,7 +367,10 @@ class AllternitDocumentsProvider : DocumentsProvider() {
                 }
             } catch (e: Exception) {
                 // Asleep, offline or refused: an older copy on the phone still opens (served_by cache).
+                // Otherwise a replica on another computer, when this phone has the Files key.
                 if (cachedRev != null && e !is OperationCanceledException) {
+                    ParcelFileDescriptor.open(cacheFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                } else if (e !is OperationCanceledException && blocking(signal, 300_000) { fromReplica(cid, item) }) {
                     ParcelFileDescriptor.open(cacheFile, ParcelFileDescriptor.MODE_READ_ONLY)
                 } else {
                     throw e
@@ -377,6 +388,24 @@ class AllternitDocumentsProvider : DocumentsProvider() {
         val rec = drive.newEdit(cid, item.rootId, item, staging)
         return ParcelFileDescriptor.open(staging, pfdMode or ParcelFileDescriptor.MODE_CREATE, closeHandler) {
             drive.queue(drive.cache.record(rec.id) ?: rec, 1_500)
+        }
+    }
+
+    /**
+     * The file from a sealed replica into the offline cache (rev = the item's rev). False when
+     * this phone has no Files key or no host has a current copy; the caller keeps its error.
+     */
+    private fun fromReplica(cid: String, item: Item): Boolean {
+        val keys = FilesKeys.get(drive)
+        if (!keys.hasKey()) return false
+        val tmp = drive.cache.newStaging()
+        return try {
+            keys.readFromReplica(cid, item, tmp)
+            drive.cache.putContent(cid, item.id, item.rev, tmp)
+            true
+        } catch (e: Exception) {
+            tmp.delete()
+            false
         }
     }
 
