@@ -1,0 +1,97 @@
+---
+title: System prompts
+description: "How the Gizzi runtime builds the system prompt for each turn, which files it reads, the two metadata hints clients can send, and how to change a prompt."
+---
+
+## What users see
+
+The same runtime answers in two voices. In chat, cowork, browser and design sessions it is the Allternit assistant. In the terminal and in Code mode it is Gizzi Code, a coding agent. Which one a session gets depends on the session's surface, not on the model.
+
+## Layer order
+
+The runtime builds the system prompt from layers. The stable layers come first so the model provider can cache them.
+
+For a normal turn:
+
+1. Base prompt (chat or code, by surface)
+2. Capabilities (chat surfaces only)
+3. Safety
+4. One model-family addendum, or none
+5. Mode (plan, build and similar)
+6. Voice block, only when the turn is spoken
+7. Phone block, only when the user is on a phone
+
+For a bot turn, the bot runs as itself:
+
+1. The bot's persona
+2. Bot guidance
+3. Capabilities (chat-family surfaces only)
+4. Safety
+
+Voice and phone blocks also apply to bot turns, because phone calls are bot-bound.
+
+## Which stack a session gets
+
+| Session surface | Stack |
+|---|---|
+| chat, cowork, browser, design | Chat stack: base-chat, capabilities, safety |
+| code, or no surface set | Code stack: base-code, safety |
+
+A child session (for example a sub-agent) inherits the surface of its root session. Nothing is stamped on the child.
+
+The addendum is chosen by model family: gpt, gemini, or open (qwen, kimi, glm, deepseek, trinity, local and unknown models). Claude models get none. Addenda are surface-neutral.
+
+## Where the files are
+
+Prompt files live in `cmd/gizzi-code/src/runtime/session/prompt/`:
+
+- `base-chat.txt`, `capabilities.txt`, `base-code.txt`, `safety.txt`, `bot.txt`
+- `addendum-gpt.txt`, `addendum-gemini.txt`, `addendum-open.txt`
+- `voice.txt`, `phone.txt`
+- Mode files: `plan-mode.txt`, `plan.txt`, `build-mode.txt`, `build-switch.txt`, `max-steps.txt`, `wrap-up.txt`, `mdx-graphs.txt`
+
+Utility prompts live in `cmd/gizzi-code/src/runtime/loop/prompts/`: `compaction.txt`, `explore.txt`, `generate.txt`, `initialize.txt`, `review.txt`, `semi-formal-verification.txt`, `summary.txt`, `title.txt`.
+
+The selection logic is in `cmd/gizzi-code/src/runtime/session/system.ts` and `system-header.ts`.
+
+## Size limits
+
+A test enforces a byte cap on each file.
+
+| File | Byte cap |
+|---|---|
+| base-chat | 5,600 |
+| capabilities | 8,400 |
+| safety | 1,800 |
+| base-code | 10,800 |
+| each addendum | 700 |
+| voice | 1,300 |
+| phone | 700 |
+
+## Two hints a client can send
+
+A client sends these as optional keys in the user message metadata. Both are optional, and any other value is ignored.
+
+| Key | Value | Effect | Sent by |
+|---|---|---|---|
+| `reply_mode` | `"voice"` | Adds the spoken-reply block: short sentences, no markup | allternit-api, on phone-call turns |
+| `form_factor` | `"phone"` | Adds the small-screen block: shorter replies, less layout | The phone layout on ai.allternit.com, the m.allternit.com app, and the iOS app |
+
+allternit-api passes only these two exact values through the chat bridge and the session message route. The runtime reads them in `SystemPrompt.context()`.
+
+## Compaction and handoff
+
+When a long session is compacted, the summary has five headings, in this order: Goal and user requests, Work done and current state, Errors and failed approaches, Promises to the user and open items, Next step. The session title is plain text.
+
+A context handoff to a fresh session is a separate step with its own baton, not a compaction. See the Gizzi Runtime page.
+
+## Changing a prompt
+
+1. Edit the text file in your own words. Prompts must not name other companies or their products.
+2. Keep the file under its byte cap.
+3. Run `bun test test/session/system-prompt-selection.test.ts` from `cmd/gizzi-code`. It checks the cap, the vendor-name rule, stack selection, addendum choice and layer order.
+
+## Related pages
+
+- [Gizzi Runtime](/core/gizzi-runtime)
+- [Context in the CLI](/cli/context)

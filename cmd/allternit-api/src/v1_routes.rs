@@ -1006,11 +1006,22 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// `computer: true` (contracts/pet-offers `turnOptions.computer`), which turns
 /// on the computer toolset for that turn only; the lease and confirm gates in
 /// computer_toolset.rs / computer_safety.rs still decide every call.
+///
+/// Two prompt hints also pass, each only with its one allowed value:
+/// `form_factor: "phone"` and `reply_mode: "voice"`. The runtime reads them to
+/// add its small-screen and spoken-reply prompt blocks. Anything else is dropped.
 fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
-    body.get("metadata")
-        .and_then(|m| m.get("tools"))
-        .filter(|t| t.is_object())
-        .map(|tools| json!({ "tools": tools.clone() }))
+    let meta = body.get("metadata")?;
+    let mut out = serde_json::Map::new();
+    if let Some(tools) = meta.get("tools").filter(|t| t.is_object()) {
+        out.insert("tools".to_string(), tools.clone());
+    }
+    for (key, allowed) in [("form_factor", "phone"), ("reply_mode", "voice")] {
+        if meta.get(key).and_then(|v| v.as_str()) == Some(allowed) {
+            out.insert(key.to_string(), json!(allowed));
+        }
+    }
+    if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
 }
 
 /// Compose the final system-instructions block for an agent-chat request.
@@ -3177,6 +3188,14 @@ mod tests {
             .map(|loc| crate::client_location::location_layer(&loc))
             .unwrap();
         assert!(layer.starts_with("Where the user is (shared from their device just now, approximate): about 40.71, -74.01"));
+    }
+
+    #[test]
+    fn stored_turn_metadata_keeps_only_the_two_prompt_hints() {
+        let body = json!({ "metadata": { "form_factor": "phone", "reply_mode": "voice", "x": 1 } });
+        assert_eq!(stored_turn_metadata(&body), Some(json!({ "form_factor": "phone", "reply_mode": "voice" })));
+        let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud" } });
+        assert_eq!(stored_turn_metadata(&body), None);
     }
 
     #[test]

@@ -1,26 +1,5 @@
 <system-reminder>
-# Plan Mode - System Reminder
+Plan mode is on and the session is read-only. Do not change files or system state. That includes edits through the shell: no sed -i, tee, redirects, heredocs or formatters. Shell commands may only read or inspect (ls, cat, git status, git log, git diff, grep). This holds even when the user asks for an edit: plan the edit instead.
 
-CRITICAL: Plan mode ACTIVE - you are in READ-ONLY phase. STRICTLY FORBIDDEN:
-ANY file edits, modifications, or system changes. Do NOT use sed, tee, echo, cat,
-or ANY other bash command to manipulate files - commands may ONLY read/inspect.
-This ABSOLUTE CONSTRAINT overrides ALL other instructions, including direct user
-edit requests. You may ONLY observe, analyze, and plan. Any modification attempt
-is a critical violation. ZERO exceptions.
-
----
-
-## Responsibility
-
-Your current responsibility is to think, read, search, and delegate explore agents to construct a well-formed plan that accomplishes the goal the user wants to achieve. Your plan should be comprehensive yet concise, detailed enough to execute effectively while avoiding unnecessary verbosity.
-
-Ask the user clarifying questions or ask for their opinion when weighing tradeoffs.
-
-**NOTE:** At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
-
----
-
-## Important
-
-The user indicated that they do not want you to execute yet -- you MUST NOT make any edits, run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
+Your job is to read, search, delegate exploration to subagents when the scope is wide, and produce a decision-complete plan: the approach, the files or places involved, ordered steps, and a done check for each. Explore before asking. Ask the user only what the material cannot answer, and recommend a default. Finish with plan_exit.
 </system-reminder>

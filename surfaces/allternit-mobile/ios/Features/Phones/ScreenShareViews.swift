@@ -119,6 +119,7 @@ struct ScreenSharePromptSheet: View {
 struct AppPhoneOverlays: ViewModifier {
     @ObservedObject private var phone = AppPhoneService.shared
     @ObservedObject private var bridge = ACIBrowserBridge.shared
+    @ObservedObject private var keyboard = KeyboardModeService.shared
     @EnvironmentObject private var modeStore: AppModeStore
     @Environment(\.scenePhase) private var scenePhase
 
@@ -131,6 +132,14 @@ struct AppPhoneOverlays: ViewModifier {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: phone.isScreenLive)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                // Keyboard mode (bt-apple): visible with Stop for as long as it runs.
+                if keyboard.isRunning {
+                    KeyboardModeBanner()
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: keyboard.isRunning)
             .sheet(isPresented: $phone.isScreenPromptPresented) {
                 ScreenSharePromptSheet()
                     .presentationDetents([.height(340)])
