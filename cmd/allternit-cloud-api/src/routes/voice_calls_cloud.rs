@@ -81,7 +81,9 @@ const BOT_CONFIG_BUDGET: Duration = Duration::from_millis(400);
 /// The first byte of a turn reply goes out within this, or the turn fails.
 const TURN_FIRST_BYTE: Duration = Duration::from_secs(60);
 
-const DEFAULT_PERSONA: &str = "A helpful AI assistant.";
+const DEFAULT_PERSONA: &str = "You are Gizzi, Allternit's assistant, speaking on a phone call. Talk naturally in short turns and ask one question at a time. \
+Never read lists, links, email addresses or long numbers aloud; say you will send those as a text instead. \
+If you are unsure, say so and offer to have the owner follow up. Never claim to be another company's assistant.";
 const DEFAULT_VOICE_ID: &str = "allternit-default";
 const DEFAULT_GREETING: &str = "How can I help you today?";
 
