@@ -23,6 +23,12 @@ struct CodeSessionsClient: Sendable {
         try await client.patch(path: "agent-sessions/\(Self.escape(sessionId))", body: UpdateBody(active: false))
     }
 
+    /// The user opened the session: clears the server-owned `readyForReview`
+    /// flag (`PATCH {markReviewed: true}`, code_session_status.rs).
+    func markReviewed(sessionId: String) async throws {
+        try await client.patch(path: "agent-sessions/\(Self.escape(sessionId))", body: UpdateBody(markReviewed: true))
+    }
+
     func applyPermission(sessionId: String, mode: CodePermissionMode) async throws {
         try await client.patch(
             path: "agent-sessions/\(Self.escape(sessionId))",
@@ -34,6 +40,7 @@ struct CodeSessionsClient: Sendable {
         var name: String? = nil
         var active: Bool? = nil
         var metadata: Metadata? = nil
+        var markReviewed: Bool? = nil
 
         struct Metadata: Encodable {
             let permission: [CodePermissionRule]

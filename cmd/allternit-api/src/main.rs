@@ -491,6 +491,10 @@ async fn main() {
     // to the REST run surface within one tick (same contract as the route
     // mirror in fabric_transport_routes::submit_intent).
     spawn_al_orchestrator(db.clone(), cowork_run_manager.clone());
+    // Phone calm 9a: Code session status flags (needsInput, readyForReview)
+    // from gizzi's global event stream, whether or not a client is on
+    // `/agent-sessions/sync`.
+    allternit_api::code_session_status::spawn(db.clone());
     // Consumer-packaged Cowork P4.2: routines tick — due routines fire one
     // canonical intent each onto Fabric Transport (claimed/leased like any
     // other run).

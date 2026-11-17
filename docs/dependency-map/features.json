@@ -2115,6 +2115,30 @@
       ]
     },
     {
+      "id": "feature:code-session-status-signals",
+      "label": "Code session status signals (needs input, ready for review)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Server-owned metadata flags needsInput and readyForReview on agent sessions, written by allternit-api's always-on watcher of gizzi /v1/global/event; clients clear readyForReview with PATCH markReviewed. Web and iOS filters (All, Needs input, Ready for review, Working, Done, Archived) read them.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/code_session_status.rs",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit/surfaces/allternit-mobile/ios/Core/API/Models/AgentSession.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Code",
+        "allternit-ai/src/lib/code-session-state.ts",
+        "allternit-ai/src/components/session-overview"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-17",
+          "note": "Phone calm step 9a (amendment A1, contract C6). Change signal: gizzi file.edited (sessionID) plus completed artifact_create/artifact_update tool parts. Flags are stripped from client metadata writes; session_flags event on /agent-sessions/sync."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/api/agent-sessions.mdx"
+      ]
+    },
+    {
       "id": "feature:code-linked-prs",
       "label": "Linked PRs on Code sessions",
       "product": "product:ai-allternit",
