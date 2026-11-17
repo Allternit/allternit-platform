@@ -1,0 +1,64 @@
+---
+title: 'Agent control'
+description: 'Name, fork, wait for, pause, resume, message and close the child agents a session starts'
+---
+
+## Overview
+
+A session can start child agents with the `task` tool and the [agent swarm](/tools/agent-swarm). Wave B gives the parent a way to manage them: two tools, `wait_agents` and `agent_control`, plus new fields on `task`.
+
+An agent only acts on its own descendants. It cannot reach a sibling or a parent.
+
+## Names, fork and effort on task
+
+| Field | Meaning |
+|---|---|
+| `name` | Optional, 1 to 32 characters from `a-z`, `0-9`, `_` and `-`. Stored on the child session as a path such as `/root/build/tests`, at most 3 levels deep. Paths are unique. |
+| `fork` | `none` (default) starts the child clean. `all` copies this session's history up to the last finished message. A fork cannot override `model` or `effort`; the call is refused. |
+| `effort` | `low`, `medium` or `high`. It maps to the existing model variant input. The `model` field is unchanged: small, standard and deep map to haiku, sonnet and opus. |
+| `task_id` | Now also accepts a name path, so a named child can be resumed without its id. |
+
+Each `agent_swarm` item takes the same `name`, `model` and `effort` fields.
+
+## wait_agents
+
+Blocks until something happens, then returns. It costs no model tokens while it waits.
+
+| Input | Meaning |
+|---|---|
+| `targets` | Child ids or name paths. Leave out to wait on every running child. |
+| `timeout_ms` | 10,000 to 3,600,000. Default 300,000. |
+
+It returns `woke` (`settled`, `steer` or `timeout`), the children that `settled` (id, name, status, summary) and those still `running`. `settled` fires when the first target finishes. `steer` fires when the person sends a message while the parent waits, so waiting never makes the session deaf.
+
+## agent_control
+
+One tool with an `action`.
+
+| Action | What it does | Permission |
+|---|---|---|
+| `list` | Show descendants, filtered by `path_prefix`. | Allow |
+| `interrupt` | Stop a running child but keep its session. It is marked interrupted, not failed. | Allow |
+| `resume` | Start a new run on an interrupted or finished child. | Allow |
+| `followup` | Send `message` to a child. An idle child starts a background turn; a running child is steered. | Allow |
+| `close` | Stop a child and all its descendants, deepest first. | Ask |
+
+`task_stop` also cascades to descendants now.
+
+## In the apps
+
+The task tree on Desktop, ai.allternit.com, the m.allternit.com PWA and iOS shows each child's name, path and interrupted state. Pause sits next to Stop on a running row; Resume replaces it on an interrupted one. Gizzi Code shows `wait_agents` and `agent_control` (list, interrupt) as tool rows.
+
+## Routes
+
+| Route | Purpose |
+|---|---|
+| `POST /session/:id/background-tasks/:taskID/interrupt` | Interrupt a background task. |
+| `POST /session/:id/background-tasks/:taskID/resume` | Resume it. |
+
+allternit-api proxies both next to cancel. A resume opens a new run row on the same child session; the earlier row keeps its history.
+
+## Related
+
+- [Agent swarm tools](/tools/agent-swarm)
+- [Task list](/tools/task-list)

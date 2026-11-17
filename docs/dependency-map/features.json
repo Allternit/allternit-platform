@@ -2813,12 +2813,20 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/agent-run-tree.mdx",
-        "allternit/cmd/gizzi-code/src/runtime/session/session-tasks.ts"
+        "allternit/cmd/gizzi-code/src/runtime/session/session-tasks.ts",
+        "allternit/surfaces/docs/tools/agent-control.mdx",
+        "allternit/surfaces/docs/tools/tool-search.mdx",
+        "allternit/surfaces/docs/tools/context-remaining.mdx",
+        "allternit/surfaces/docs/tools/task-list.mdx"
       ],
       "decisions": [
         {
           "on": "2026-10-20",
           "note": "Eoj: on every surface subagents show; Retry asks the parent agent to re-run (not the child in place)."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Primitives wave B: tasks get names, fork and effort; wait_agents and agent_control (interrupt, resume, followup, close); tool_search deferral; context notices, get_context_remaining and history_recall; todowrite ids, activeForm, blockedBy and cancelled/interrupted states."
         }
       ]
     },
