@@ -1,6 +1,6 @@
 Show the user a card that offers to connect 1 to 3 connectors.
 
-Use it when the task needs a connector that is not connected. The ids must come from a connector_search made in this session; other ids are dropped.
+Use it when the task needs a connector that is not connected. The ids must come from a connector_search made in this session. Ids that were not searched, are already connected or can't be connected here are left off the card; if none is left, the call is refused.
 
 reason is one line the user sees (up to 200 characters): what connecting lets you do for them.
 

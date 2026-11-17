@@ -6,17 +6,22 @@
  * connectors they are comes from the session id, never from model input.
  *
  * - `POST /bot-routing/connector/search` `{sessionId, query, limit}` →
- *   `{hits: [{id, name, group, state, available, reason?, serverName?}]}`.
- *   `serverName` is the proxied MCP server a connected hit's tools mount
- *   under (`mcp__<server>__<connector>__<tool>`), for `load`.
+ *   `{hits: [{id, name, group, state, available, reason?, mcpConnectorId?, serverName?}]}`.
+ *   `mcpConnectorId` is the MCP connector whose proxied tools belong to a
+ *   connected hit (`MCP.ToolDescriptor.connectorId`), for `load`;
+ *   `serverName` is the proxy server they mount under
+ *   (`mcp__<server>__<connector>__<tool>`). A connected hit without them is
+ *   reached through the app connectors' `execute_action` tool.
  *
- * W2 stub: final signatures; lane C fills the shapes and error handling.
+ * Errors surface as AppRoutingError (status, message, code).
  * Free of runtime state and UI imports so bun tests can stub `fetch`.
  */
 import { botRoutingPost } from "@/runtime/bots/app-bot-routing"
 import type { Connectors } from "@/runtime/primitives/connectors"
 
 export interface ConnectorSearchHit extends Omit<Connectors.Hit, "tools"> {
+  /** The MCP connector whose proxied tools belong to this hit, when connected. */
+  mcpConnectorId?: string | null
   /** The proxied MCP server the connector's tools mount under, when connected. */
   serverName?: string | null
 }

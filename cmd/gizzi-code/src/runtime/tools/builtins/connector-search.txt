@@ -2,7 +2,10 @@ Find the user's connectors (Gmail, Calendar, Slack, Linear, Drive and others) by
 
 Use it when the task needs an outside app and you don't see a tool for it. Search by the job, not only the app name ("calendar", "send a message to the team").
 
-Each hit has an id, name, group, state (connected, not_connected, needs_reconnect) and whether the user can connect it here.
+Each hit has an id, name, group and state:
+- connected: usable now.
+- available: not connected, but the user can connect it here. reason says when an old connection needs signing in again.
+- unavailable: can't be connected here; reason says why.
 
-- load: true mounts the tools of up to 3 connected hits for the rest of this session. Call them as usual; their normal permissions apply.
+- load: true mounts the tools of up to 3 connected hits for the rest of this session. They are callable from your next step, under their normal permissions. A connected hit that mounts no tools is reached through execute_action.
 - A hit that is not connected can't be used yet. Offer it with connector_suggest; never ask for passwords, keys or codes.
