@@ -278,24 +278,6 @@ class RpcDispatcherTest {
         assertEquals(true, up.getBoolean("running"))
         assertTrue(up.isNull("lastError"))
         assertTrue(up.isNull("launch"))
-        assertTrue(up.isNull("projection"))
-    }
-
-    @Test fun screenServiceReportsTheProjectionFallback() {
-        val share = ScreenShareSession()
-        share.start(DisplayInfo(720, 1600, 280, 0), 0)
-        share.control("resume", 0)
-        hooks.screen = ScreenServiceStatus(false, "not_set_up", null, null,
-            projection = share.report(1_000, paired = true, controlConnected = true, canTap = true))
-        val p = call("screen_service").getJSONObject("projection")
-        assertEquals("live", p.getString("state"))
-        assertEquals("granted", p.getString("consent"))
-        assertTrue(p.getBoolean("paired"))
-        assertTrue(p.getBoolean("control"))
-        assertTrue(p.getBoolean("canTap"))
-        assertEquals(576, p.getInt("width"))
-        assertEquals(1280, p.getInt("height"))
-        assertTrue(p.isNull("idleMs"))
     }
 
     // ── mesh_restart ────────────────────────────────────────────────────────

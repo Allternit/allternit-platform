@@ -21,10 +21,6 @@ final class ConnectionsStore: ObservableObject {
     /// Rows mid-connect on this phone ("Connecting…") until the server says otherwise.
     @Published private var connecting: Set<String> = []
 
-    /// Name of an Android app phone on the runtime phone list: the
-    /// `android-screen` row is on while one exists (as on the web).
-    @Published private(set) var androidPhoneName: String?
-
     var computerOnline: Bool { runtimeId != nil }
 
     private var deviceWatch: AnyCancellable?
@@ -69,7 +65,6 @@ final class ConnectionsStore: ObservableObject {
             rows = ConnectionsMerge.merge(cloud: [], runtime: runtimeRows, known: ConnectionsCatalog.knownIds)
         }
         runtimeId = answered
-        androidPhoneName = (try? await ACIComputersClient.shared.listPhones())?.first(where: \.isAndroidApp)?.name
     }
 
     private static func capture<T>(_ work: @escaping @Sendable () async throws -> T) async -> Result<T, Error> {
@@ -128,11 +123,6 @@ final class ConnectionsStore: ObservableObject {
             row.state = .on
             row.found = "This iPhone"
             row.available = true
-        case "android-screen":
-            if let name = androidPhoneName {
-                row.state = .on
-                row.found = name
-            }
         case "phone-control":
             if AppPhoneService.shared.credentials != nil {
                 row.state = .on

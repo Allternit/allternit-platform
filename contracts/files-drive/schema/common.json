@@ -11,8 +11,8 @@
     },
     "DeviceId": {
       "type": "string",
-      "description": "One of the user's own devices: a phone, Mac, PC or browser profile (dev_...), or a computer under its cloud-api runtime device id (rt_...), which is how a computer appears in the Files key device list and in placement.",
-      "pattern": "^(dev|rt)_[A-Za-z0-9_-]{4,64}$"
+      "description": "One of the user's own devices (phone, Mac, PC, browser profile).",
+      "pattern": "^dev_[A-Za-z0-9_-]{4,64}$"
     },
     "RootId": {
       "type": "string",

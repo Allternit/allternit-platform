@@ -426,7 +426,7 @@ async fn connect(
         match id.as_str() {
             // Install, then the app pairs itself; /login turns done when it is online.
             "this-mac" | "server" => Ok(login_reply("pair", Some(&download_url), true, Some(LOGIN_MINUTES))),
-            "phone" | "phone-control" | "android-screen" => Ok(login_reply("scan", Some(PHONE_URL), true, Some(LOGIN_MINUTES))),
+            "phone" | "phone-control" => Ok(login_reply("scan", Some(PHONE_URL), true, Some(LOGIN_MINUTES))),
             "slack" => match crate::routes::slack_app::app_config() {
                 Some(cfg) => {
                     let url = crate::routes::slack_app::authorize_url(&cfg, &user);

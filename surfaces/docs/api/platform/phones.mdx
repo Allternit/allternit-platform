@@ -49,19 +49,6 @@ GET /v1/phones
 
 Returns `{ data, has_more: false, next_cursor: null }`. While the Desktop is offline, this lists the phones the cloud last saw, with `online: false` and `desktop_online: false`.
 
-## Android claim and pair
-
-An Android phone with the Allternit app joins as an app phone (serial `app:` plus the phone id, route `android-app`) without Desktop. These cloud routes sit on `api.allternit.com`:
-
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| `POST` | `/api/v1/app-phones/:phoneId/claim` | Clerk owner | Returns a one-time 8 character code. It lives 120 s, works once, and is limited to 10 per account per 10 minutes and 3 open at once (`429` beyond that). |
-| `POST` | `/api/v1/app-phones/claim/redeem` | None (the code) | Body `{ "code", "name", ... }` returns `{ "phoneId", "appPhoneKey" }`, registering or re-keying the phone like `POST /api/v1/app-phones`. Failed redeems are throttled per address and globally. |
-| `GET` | `/api/v1/app-phones/pair/pending` | Clerk owner | Pending pair requests, relayed to the runtime signed with its relay key and `x-allternit-owner`. |
-| `POST` | `/api/v1/app-phones/:phoneId/pair/decision` | Clerk owner | Body `{ "approve": bool }`. Approves or denies a pending pair without Desktop. |
-
-Phone rows in the phones list add `platform`, `route: "android-app"`, `canTap`, `screen` and `consent`. Viewer details, `screen_request` and the `input.events` rule are in [Phone stream relay](/api/phone-stream-relay#android-via-the-allternit-app-app-serials-route-android-app). User guide: [Android live view](/guides/android-live-view).
-
 ## Run one phone tool
 
 ```http

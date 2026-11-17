@@ -46,8 +46,6 @@ fn fixtures_round_trip() {
     round_trip::<FeedMessage>("feed-changes.json", include_str!("../../../../contracts/files-drive/fixtures/feed-changes.json"));
     round_trip::<FeedMessage>("feed-heartbeat.json", include_str!("../../../../contracts/files-drive/fixtures/feed-heartbeat.json"));
     round_trip::<FeedMessage>("feed-state-asleep.json", include_str!("../../../../contracts/files-drive/fixtures/feed-state-asleep.json"));
-    round_trip::<FilesKeyInfo>("files-key-info-empty.json", include_str!("../../../../contracts/files-drive/fixtures/files-key-info-empty.json"));
-    round_trip::<FilesKeyInfo>("files-key-info.json", include_str!("../../../../contracts/files-drive/fixtures/files-key-info.json"));
     round_trip::<GuestCapabilityClaims>("guest-claims-comment.json", include_str!("../../../../contracts/files-drive/fixtures/guest-claims-comment.json"));
     round_trip::<GuestCapabilityClaims>("guest-claims-edit.json", include_str!("../../../../contracts/files-drive/fixtures/guest-claims-edit.json"));
     round_trip::<GuestCapabilityClaims>("guest-claims-upload.json", include_str!("../../../../contracts/files-drive/fixtures/guest-claims-upload.json"));
@@ -59,8 +57,6 @@ fn fixtures_round_trip() {
     round_trip::<QueuedDrop>("guest-upload-drop-queued.json", include_str!("../../../../contracts/files-drive/fixtures/guest-upload-drop-queued.json"));
     round_trip::<HaveNeedResponse>("have-need.json", include_str!("../../../../contracts/files-drive/fixtures/have-need.json"));
     round_trip::<KeyShareGrant>("key-envelope.json", include_str!("../../../../contracts/files-drive/fixtures/key-envelope.json"));
-    round_trip::<PendingKeyRequest>("key-request-pending.json", include_str!("../../../../contracts/files-drive/fixtures/key-request-pending.json"));
-    round_trip::<KeyRotation>("key-rotation.json", include_str!("../../../../contracts/files-drive/fixtures/key-rotation.json"));
     round_trip::<KeyShareRequest>("key-share-request.json", include_str!("../../../../contracts/files-drive/fixtures/key-share-request.json"));
     round_trip::<ListResponse>("list-asleep.json", include_str!("../../../../contracts/files-drive/fixtures/list-asleep.json"));
     round_trip::<ListResponse>("list-home.json", include_str!("../../../../contracts/files-drive/fixtures/list-home.json"));
@@ -95,8 +91,6 @@ fn fixtures_round_trip() {
     round_trip::<StorageDiscovery>("storage.json", include_str!("../../../../contracts/files-drive/fixtures/storage.json"));
     round_trip::<SubscribeMessage>("subscribe.json", include_str!("../../../../contracts/files-drive/fixtures/subscribe.json"));
     round_trip::<TrashListResponse>("trash-list.json", include_str!("../../../../contracts/files-drive/fixtures/trash-list.json"));
-    round_trip::<FilesUnlockClaims>("unlock-claims.json", include_str!("../../../../contracts/files-drive/fixtures/unlock-claims.json"));
-    round_trip::<UnlockResponse>("unlock-response.json", include_str!("../../../../contracts/files-drive/fixtures/unlock-response.json"));
     round_trip::<UploadCommitResponse>("upload-commit.json", include_str!("../../../../contracts/files-drive/fixtures/upload-commit.json"));
     round_trip::<UploadCreateRequest>("upload-create.json", include_str!("../../../../contracts/files-drive/fixtures/upload-create.json"));
     round_trip::<UploadStatus>("upload-status-open.json", include_str!("../../../../contracts/files-drive/fixtures/upload-status-open.json"));

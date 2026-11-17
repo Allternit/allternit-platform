@@ -21,9 +21,6 @@
 //!   `readOnly` defaults to TRUE; a full-control token injects input into a
 //!   personal phone, so `readOnly: false` goes through the same ACI
 //!   confirmation grant as a full-control VNC token (`computer_ws`).
-//!   An Android app phone (`app:<id>`, `phone_app`) whose app is connected
-//!   but not sharing its screen also gets a token: its viewer waits, and the
-//!   relay asks the phone to start sharing (`screen_request`).
 //! * `POST /api/v1/phones/:serial/viewer-token` → `{ "token", "expiresInSec": 600,
 //!   "readOnly": true }`: a view-only token (purpose `phone_view`) for the
 //!   Platform API live view (cloud-api `POST /v1/phones/:serial/live`). The
@@ -1103,11 +1100,6 @@ pub(crate) async fn run_phone_stream_viewer<T: FrameTransport>(
         {
             AttachOutcome::Attached { session } => break session,
             AttachOutcome::Waiting => {
-                // An Android app phone with no ingest: ask it to share its
-                // screen (throttled per phone; a no-op for iPhones).
-                if let Some(phone_id) = serial.strip_prefix(crate::phone_app::APP_SERIAL_PREFIX) {
-                    crate::phone_app::request_screen(&account, phone_id).await;
-                }
                 let mut timer = Box::pin(tokio::time::sleep_until(deadline));
                 loop {
                     tokio::select! {
@@ -1258,24 +1250,11 @@ async fn list_phones(
         // iPhone via the App Store app (`phone_app`): screen only, online
         // while its broadcast extension holds the ingest socket.
         if let Some(phone_id) = row.serial.strip_prefix(crate::phone_app::APP_SERIAL_PREFIX) {
-            crate::phone_app::decorate_listing(&state, &user.user_id, phone_id, &mut phone).await;
+            crate::phone_app::decorate_listing(&user.user_id, phone_id, &mut phone).await;
         }
         phones.push(phone);
     }
     Json(json!({ "phones": phones })).into_response()
-}
-
-/// A viewer token is worth minting: a phone-link session (or app-phone
-/// ingest) streams this serial, or it is an Android app phone whose app is
-/// connected and can be asked to start sharing.
-async fn stream_reachable(state: &AppState, account: &str, serial: &str) -> bool {
-    if state.phone_link.is_online(account, serial).await {
-        return true;
-    }
-    match serial.strip_prefix(crate::phone_app::APP_SERIAL_PREFIX) {
-        Some(phone_id) => crate::phone_app::can_request_screen(account, phone_id).await,
-        None => false,
-    }
 }
 
 /// POST /api/v1/phones/:serial/ws-token — mint the short-lived HMAC token the
@@ -1309,7 +1288,7 @@ async fn issue_phone_ws_token(
     if !rows.iter().any(|row| row.serial == serial) {
         return error_response(StatusCode::NOT_FOUND, "phone not found");
     }
-    if !stream_reachable(&state, &user.user_id, &serial).await {
+    if !state.phone_link.is_online(&user.user_id, &serial).await {
         return error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "desktop_offline",
@@ -1367,7 +1346,7 @@ async fn issue_phone_viewer_token(
     if !rows.iter().any(|row| row.serial == serial) {
         return error_response(StatusCode::NOT_FOUND, "phone not found");
     }
-    if !stream_reachable(&state, &user.user_id, &serial).await {
+    if !state.phone_link.is_online(&user.user_id, &serial).await {
         return error_response(StatusCode::SERVICE_UNAVAILABLE, "desktop_offline");
     }
     let token = sign_phone_view_token(&secret, &user.user_id, &serial, PHONE_VIEW_TOKEN_TTL_SECONDS);

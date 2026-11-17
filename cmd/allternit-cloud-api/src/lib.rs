@@ -437,9 +437,6 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Files drive sharing (contracts/files-drive): owner share routes check the Clerk session per request;
         // token-keys, files-gateway summary/redeem and the guest gateway are public (Files-Guest tokens).
         .merge(routes::files_gateway::routes())
-        // Files key sharing (contracts/files-drive SPEC section 13): owner only, every handler resolves the
-        // caller; stores public keys and sealed envelopes, never the Files root key.
-        .merge(routes::files_keys::routes())
         // Artifacts v2 (docs/design/artifacts-v2.md): every handler resolves
         // the caller itself (Clerk session or scoped token); the public link
         // route /api/v2/public/artifacts/:id takes no auth.

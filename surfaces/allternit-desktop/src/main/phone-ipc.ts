@@ -289,7 +289,6 @@ export function registerPhoneIpc(handle: Guarded): void {
   handle('phone:stream-stop', (_e, serial: unknown) => phoneService.stopStream(String(serial ?? '')));
   handle('phone:stream-status', (_e, serial: unknown) => phoneService.streamStatus(String(serial ?? '')));
   handle('phone:stream-input', (_e, serial: unknown, events: unknown) => phoneService.sendStreamInput(String(serial ?? ''), events));
-  handle('phone:stream-request-control', (_e, serial: unknown) => phoneService.requestStreamControl(String(serial ?? '')));
   handle('phone:stream-display-power', (_e, serial: unknown, on: unknown) => phoneService.setStreamDisplayPower(String(serial ?? ''), Boolean(on)));
   handle('phone:stream-audio-meta-get', (_e, serial: unknown) => phoneService.getStreamManager().audioMeta(String(serial ?? '')));
   handle('phone:stream-subscribe', (e, serial: unknown) => subscribeStream(e.sender, String(serial ?? '')));

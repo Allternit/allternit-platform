@@ -32,8 +32,6 @@ data class ScreenServiceStatus(
     val state: String,
     val lastError: String?,
     val launch: ShellServerProtocol.LaunchLines?,
-    /** The screen-share fallback (MediaProjection through the account), when the app has it. */
-    val projection: ProjectionReport? = null,
 )
 
 /** Server-level operations `config` can trigger. Changes apply after the reply is sent. */
@@ -421,7 +419,6 @@ class RpcDispatcher(
             .put("state", s.state)
             .put("lastError", s.lastError ?: JSONObject.NULL)
             .put("launch", launch ?: JSONObject.NULL)
-            .put("projection", s.projection?.toJson() ?: JSONObject.NULL)
     }
 
     private fun pageSource(p: JSONObject, o: DeviceOps): JSONObject {

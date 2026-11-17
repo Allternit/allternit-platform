@@ -55,13 +55,6 @@ export interface Phone {
   name: string
   model?: string
   online: boolean
-  /** App phones: "ios" or "android". */
-  platform?: string
-  route?: string
-  /** Android app phone: taps from the live view are on. */
-  canTap?: boolean
-  /** Android screen-share consent: granted | needed | denied | unknown. */
-  consent?: string
 }
 
 export async function listPhones(): Promise<Phone[]> {
@@ -69,23 +62,6 @@ export async function listPhones(): Promise<Phone[]> {
   if (r.status === 401 || r.status === 403) throw new PhoneLineError("You're signed out. Run `gizzi login` first.")
   if (r.status !== 200) throw new PhoneLineError(`Couldn't list your phones: ${reason(r)}`)
   return (r.body?.phones ?? []) as Phone[]
-}
-
-/** One line per phone: name, platform, and for Android app phones the screen-share state and taps. */
-export function formatPhones(phones: Phone[]): string {
-  if (!phones.length) return "No phone is linked."
-  return phones
-    .map((p) => {
-      const android = p.platform === "android"
-      const platform = android ? "Android" : p.platform === "ios" || p.serial.startsWith("app:") ? "iPhone" : "phone"
-      const base = `${(p.name || p.model || p.serial).padEnd(18).slice(0, 18)} ${platform.padEnd(8)}`
-      if (android && p.route === "android-app") {
-        const screen = p.online ? "screen live" : "screen waiting for Start"
-        return `${base} ${screen}  taps ${p.canTap ? "on" : "off"}`
-      }
-      return `${base} ${p.online ? "online" : "offline"}`
-    })
-    .join("\n")
 }
 
 const label = (p: Phone) => p.name || p.model || p.serial
@@ -467,20 +443,10 @@ const RunsCommand = cmd({
     }),
 })
 
-const ListCommand = cmd({
-  command: "list",
-  describe: "your linked phones, their platform, and screen-share state",
-  builder: (y: Argv) => y,
-  handler: () =>
-    guard(async () => {
-      process.stdout.write(formatPhones(await listPhones()) + "\n")
-    }),
-})
-
 export const PhoneCommand = cmd({
   command: "phone",
   describe: "run tasks on your linked phone and approve what it asks",
   builder: (y: Argv) =>
-    y.command(ListCommand).command(TaskCommand).command(RunsCommand).demandCommand(1, "Specify a phone command (list, task, runs)"),
+    y.command(TaskCommand).command(RunsCommand).demandCommand(1, "Specify a phone command (task, runs)"),
   handler: () => {},
 })

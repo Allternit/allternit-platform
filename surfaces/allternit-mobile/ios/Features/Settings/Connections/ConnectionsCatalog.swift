@@ -102,7 +102,6 @@ enum ConnectionsCatalog {
 
         // Phones
         ConnEntry(id: "phone", group: .phones, name: "Your phone", logo: .symbol("iphone"), blurb: "iPhone or Android", ways: [.scan], runsOn: .device),
-        ConnEntry(id: "android-screen", group: .phones, name: "Android phone (screen share)", logo: .symbol("iphone"), blurb: "See and tap your Android from any device", ways: [.pair], isNew: true),
         ConnEntry(id: "phone-control", group: .phones, name: "Let your bots use this iPhone", logo: .symbol("hand.tap"), blurb: "Taps and types in your phone apps for you", ways: [.install], runsOn: .device),
 
         // Coding tools

@@ -395,7 +395,6 @@ struct ACILinkedPhonesSection: View {
     @State private var error: String? = nil
     @State private var attempt = 0
     @State private var callAudioFor: ACIComputersClient.CloudPhone? = nil
-    @State private var liveFor: ACIComputersClient.CloudPhone? = nil
 
     /// PHONE_STREAM_UNSUPPORTED_MESSAGE.
     private static let setupCopy = "Live phone screens need Allternit Desktop with a phone connected there. Set the phone up from Allternit Desktop, then open it here again."
@@ -446,7 +445,6 @@ struct ACILinkedPhonesSection: View {
         }
         .task(id: "\(auth.isSignedIn)-\(attempt)") { await load() }
         .sheet(item: $callAudioFor) { phone in ACICallAudioSheet(phone: phone) }
-        .fullScreenCover(item: $liveFor) { phone in PhoneLiveView(phone: phone) }
     }
 
     private func phoneRow(_ phone: ACIComputersClient.CloudPhone) -> some View {
@@ -459,17 +457,11 @@ struct ACILinkedPhonesSection: View {
                     Circle()
                         .fill(phone.isLive ? Theme.statusSuccess : Color("TextTertiary"))
                         .frame(width: 8, height: 8)
-                    Text(phone.isAndroidApp
-                         ? (phone.online ? (phone.canTap == true ? "Screen and taps" : "Screen only") : "Phone app offline")
-                         : phone.isAppPhone ? "Screen only" : phone.online ? "Online" : "Desktop offline")
+                    Text(phone.isAppPhone ? "Screen only" : phone.online ? "Online" : "Desktop offline")
                         .font(.system(size: 14))
                         .foregroundColor(Color("TextPrimary"))
                 }
-                if phone.isAndroidApp && !phone.online {
-                    Text("Open the Allternit app on the phone")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
-                } else if phone.isAppPhone && !phone.isLive {
+                if phone.isAppPhone && !phone.isLive {
                     Text("Open the Allternit app on your iPhone and tap Share screen")
                         .font(.system(size: 13))
                         .foregroundColor(Color("TextSecondary"))
@@ -482,12 +474,7 @@ struct ACILinkedPhonesSection: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .padding(.vertical, 16)
             // Call audio is the Android cable bridge; a linked iPhone has only its screen.
-            if phone.isAndroidApp {
-                ACIPillButton(title: "Open", accessibilityLabel: "Open the screen of \(phone.name)") {
-                    liveFor = phone
-                }
-                .padding(.trailing, 8)
-            } else if !phone.isIphone {
+            if !phone.isIphone {
                 ACIPillButton(title: "Call audio", accessibilityLabel: "Call audio for \(phone.name)") {
                     callAudioFor = phone
                 }
