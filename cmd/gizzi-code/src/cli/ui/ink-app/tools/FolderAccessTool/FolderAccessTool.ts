@@ -4,29 +4,33 @@
  * same name (contract: {action: request|request_delete, paths[1..5], reason} →
  * {granted: [resolved]}; always asks).
  *
- * A `request` grant adds the folders to the session's working directories (the
- * same grant /add-dir makes for the session), so Ink's file and shell
- * permission checks treat them as granted. A `request_delete` grant is recorded
- * per session in `deleteGrantedFolders` for the delete path to consult.
+ * Both actions add the folders to the session's working directories (the same
+ * grant /add-dir makes for the session), so Ink's file and shell permission
+ * checks treat them as granted, and record them in `folderGrants.ts`.
+ * `request_delete` also allows real deletes; without it, Ink's permission path
+ * moves deletes there to `<folder>/_to_delete/` (deleteRedirect.ts), the same
+ * rule as the runtime's FolderGrants.
  *
  * Always asks: `requiresUserInteraction()` + an `ask` result is bypass-immune
  * in the Ink permission path (step 1e), so no mode and no saved "always" rule
  * skips the question. With nobody to ask (dontAsk, async agents) it is refused.
  */
-import { stat } from 'fs/promises'
-import { dirname, resolve } from 'path'
+import { realpath, stat } from 'fs/promises'
+import { homedir } from 'os'
+import { parse, resolve } from 'path'
 import { z } from 'zod/v4'
 import {
   getAdditionalDirectoriesForGizziMd,
+  getOriginalCwd,
   setAdditionalDirectoriesForClaudeMd,
 } from '../../bootstrap/state.js'
 import { buildTool, type ToolDef } from '../../Tool.js'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { expandPath } from '../../utils/path.js'
-import { allWorkingDirectories } from '../../utils/permissions/filesystem.js'
 import { pathInWorkingPath } from '../../utils/permissions/pathInWorkingPath.js'
 import { applyPermissionUpdate } from '../../utils/permissions/PermissionUpdate.js'
 import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
+import { accessGrantedFolders, deleteGrantedFolders } from './folderGrants.js'
 import { DESCRIPTION, FOLDER_ACCESS_TOOL_NAME, PROMPT } from './prompt.js'
 import { renderToolResultMessage, renderToolUseMessage } from './UI.js'
 
@@ -35,18 +39,18 @@ const inputSchema = lazySchema(() =>
     action: z
       .enum(['request', 'request_delete'])
       .describe(
-        '"request" grants access to the folders for this session; "request_delete" lets deletes inside granted folders remove files instead of moving them to _to_delete/',
+        '"request": read and write in the folders (a delete moves the file to <folder>/_to_delete/); "request_delete": also allow real deletes',
       ),
     paths: z
       .array(z.string().min(1))
       .min(1)
       .max(5)
-      .describe('1 to 5 folder paths (absolute, relative, or starting with ~)'),
+      .describe('1 to 5 existing folders (absolute, ~/..., or relative to the project)'),
     reason: z
       .string()
       .min(1)
       .max(200)
-      .describe('One short sentence the user sees: why you need this access'),
+      .describe('What you will do there, in plain words (the person sees it)'),
   }),
 )
 type InputSchema = ReturnType<typeof inputSchema>
@@ -60,28 +64,29 @@ const outputSchema = lazySchema(() =>
 type OutputSchema = ReturnType<typeof outputSchema>
 export type Output = z.infer<OutputSchema>
 
-/** Folders the user approved `request_delete` for, this process (session). */
-export const deleteGrantedFolders = new Set<string>()
-
-/** Whether a real delete (not the _to_delete/ move) is granted for this path. */
-export function isDeleteGranted(target: string): boolean {
-  const abs = resolve(expandPath(target))
-  for (const folder of deleteGrantedFolders) {
-    if (pathInWorkingPath(abs, folder)) return true
-  }
-  return false
-}
-
-/** Resolve one requested path to the folder it names (a file names its folder). */
+/**
+ * Resolve one requested path to a real folder, with the runtime's rules: an
+ * existing folder (relative paths are against the project), not the home
+ * folder or the filesystem root, not inside the project.
+ */
 async function resolveFolder(raw: string): Promise<string> {
-  const abs = resolve(expandPath(raw))
-  let info
+  const abs = resolve(getOriginalCwd(), expandPath(raw, getOriginalCwd()))
+  let real: string
   try {
-    info = await stat(abs)
+    real = await realpath(abs)
+    if (!(await stat(real)).isDirectory()) throw new Error('not a folder')
   } catch {
-    throw new Error(`Folder not found: ${raw}`)
+    throw new Error(`Not an existing folder: ${raw}`)
   }
-  return info.isDirectory() ? abs : dirname(abs)
+  if (real === parse(real).root) throw new Error(`The filesystem root can't be granted: ${raw}`)
+  if (real === (await realpath(homedir()).catch(() => homedir()))) {
+    throw new Error(`The home folder can't be granted; name a narrower folder: ${raw}`)
+  }
+  const project = await realpath(getOriginalCwd()).catch(() => getOriginalCwd())
+  if (pathInWorkingPath(real, project)) {
+    throw new Error(`${raw} is inside the project and needs no access`)
+  }
+  return real
 }
 
 async function resolveAll(paths: string[]): Promise<string[]> {
@@ -154,22 +159,6 @@ export const FolderAccessTool = buildTool({
   async call(input, context) {
     const folders = await resolveAll(input.paths)
 
-    if (input.action === 'request_delete') {
-      const working = allWorkingDirectories(
-        context.getAppState().toolPermissionContext,
-      )
-      const ungranted = folders.filter(
-        f => !Array.from(working).some(w => pathInWorkingPath(f, w)),
-      )
-      if (ungranted.length) {
-        throw new Error(
-          `Request access first (action "request") for: ${ungranted.join(', ')}`,
-        )
-      }
-      for (const f of folders) deleteGrantedFolders.add(f)
-      return { data: { action: input.action, granted: folders } }
-    }
-
     const update = {
       type: 'addDirectories' as const,
       directories: folders,
@@ -180,6 +169,10 @@ export const FolderAccessTool = buildTool({
       update,
     )
     context.setAppState(prev => ({ ...prev, toolPermissionContext: updated }))
+    for (const f of folders) accessGrantedFolders.add(f)
+    if (input.action === 'request_delete') {
+      for (const f of folders) deleteGrantedFolders.add(f)
+    }
 
     // Same follow-through as /add-dir: GIZZI.md lookup and the Bash sandbox.
     const current = getAdditionalDirectoriesForGizziMd()
