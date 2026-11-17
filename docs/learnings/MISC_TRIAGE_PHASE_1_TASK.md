@@ -14,7 +14,6 @@ Marketplace/Plugins (rows 88–91):
 3. Marketplace (top-level) (PARTIAL → iOS)
 4. Plugin Registry / Plugin Marketplace (PARTIAL → iOS)
 5. Team Skills panel (GAP → iOS)
-6. MiroFish simulation engine (GAP → iOS, gizzi-code)
 
 Products/Discovery (rows 92–96):
 7. Products Discovery (GAP → iOS, gizzi-code)
