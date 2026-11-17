@@ -27,4 +27,7 @@ enum LaunchArgument {
     /// `SampleURLProtocol`, for side-by-side and App Store screenshots.
     /// Combine with `-bots` / `-code` / `-open-aci` etc. to pick the screen.
     static let sampleWorkspace = "sample-workspace"
+
+    /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
+    static let calmGallery = "calm-gallery"
 }
