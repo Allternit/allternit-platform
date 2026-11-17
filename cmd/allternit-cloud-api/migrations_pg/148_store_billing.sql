@@ -15,6 +15,12 @@ ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS store_environment TEX
 -- D13: when the server last re-read this store plan from the store (at most
 -- once per 10 minutes per row, after its period end has passed).
 ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS store_checked_at TIMESTAMPTZ;
+-- Google rows only: the Play purchase token, the one id the Play Developer
+-- API reads a subscription by, so the D13 refresh can re-read it (the row key
+-- holds only its hash). Google's guidance is to keep tokens on the backend;
+-- the token is useless without this server's service account. NULL for
+-- Stripe and Apple rows.
+ALTER TABLE billing_subscriptions ADD COLUMN IF NOT EXISTS store_purchase_token TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_billing_subscriptions_user_open
     ON billing_subscriptions (user_id)

@@ -1027,7 +1027,7 @@ pub async fn refresh_due_plans_from_env(db: &PgPool, user_id: &str) -> Vec<Suspe
 
 /// An erased account keeps an inactive tombstone row; a store event must not
 /// grant to it or bring it back.
-async fn account_closed(db: &PgPool, user_id: &str) -> Result<bool, ApiError> {
+pub(crate) async fn account_closed(db: &PgPool, user_id: &str) -> Result<bool, ApiError> {
     let status: Option<String> = sqlx::query_scalar("SELECT status FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_optional(db)
@@ -1037,7 +1037,7 @@ async fn account_closed(db: &PgPool, user_id: &str) -> Result<bool, ApiError> {
 
 /// The plan tier when this store plan no longer grants one: another open
 /// plan's tier, else the deployment default (`DEFAULT_PLAN_TIER`, `free`).
-async fn fallback_tier(db: &PgPool, user_id: &str, key: &str) -> Result<String, ApiError> {
+pub(crate) async fn fallback_tier(db: &PgPool, user_id: &str, key: &str) -> Result<String, ApiError> {
     let other: Option<String> = sqlx::query_scalar(
         r#"
         SELECT plan_tier FROM billing_subscriptions
@@ -1204,7 +1204,7 @@ async fn give_back_reversed_refund(
 
 /// One keyed cloud-wallet ledger row and its balance change, in the caller's
 /// database transaction. A key already used changes nothing.
-async fn move_credits(
+pub(crate) async fn move_credits(
     dbtx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: &str,
     amount_usd: f64,

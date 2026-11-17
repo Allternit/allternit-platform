@@ -16,9 +16,9 @@
 //! - `GET /api/v1/billing/subscription` (Clerk session or API token): the caller's
 //!   current Free / Plus / Max / Ultra plan (open row, else Free), with
 //!   `billing_provider` (`stripe` / `apple` / `google` / null), `manage_url` and
-//!   `conflict` (more than one open plan). First re-reads an App Store plan
-//!   whose period end has passed (at most once per 10 minutes per row; plan
-//!   D13, `services::store_apple`).
+//!   `conflict` (more than one open plan). First re-reads an App Store or
+//!   Google Play plan whose period end has passed (at most once per 10 minutes
+//!   per row; plan D13, `services::store_apple`, `services::store_google`).
 //! - `POST /api/v1/billing/subscribe` (Clerk session or API token): Checkout Session `mode=subscription` whose
 //!   `subscription_data[metadata]` carries `clerk_user_id` / `allternit_plan_tier` /
 //!   `allternit_plan_id` — the contract `routes::billing_webhooks` consumes. 409
@@ -187,12 +187,15 @@ async fn get_current_subscription(
         .id;
     let admin = crate::auth::is_admin_user(&user_id);
     if !admin {
-        // Plan D13 (no scheduled job): an App Store plan whose period end has
-        // passed is re-read from Apple, at most once per 10 minutes per row,
-        // which heals a missed renewal or expiry notification. Never fails
-        // this read.
+        // Plan D13 (no scheduled job): an App Store or Google Play plan whose
+        // period end has passed is re-read from the store, at most once per
+        // 10 minutes per row, which heals a missed renewal or expiry
+        // notification. Never fails this read.
         let suspend =
             crate::services::store_apple::refresh_due_plans_from_env(&state.db, &user_id).await;
+        super::billing_store::run_suspensions(&state, &suspend);
+        let suspend =
+            crate::services::store_google::refresh_due_plans_from_env(&state.db, &user_id).await;
         super::billing_store::run_suspensions(&state, &suspend);
     }
     let plan = current_subscription_for(&state.db, &user_id).await?;
