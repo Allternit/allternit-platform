@@ -38,6 +38,7 @@ import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
 import { AppPhoneBackend, AppPhoneViewerSession, APP_SHARE_SCREEN_MESSAGE, appPlatformOf, httpAppPhoneNode, isAppSerial, type AppPhoneDevice } from './phone-app-store.js';
 import { decodeStillInWindow } from './phone-app-still.js';
 import { BtHidClient, btHidBinaryPath, btMacLane, btMacSettings, type BtMacSettings } from './phone-bt-mac.js';
+import { btAppleLane } from './phone-bt-apple.js';
 import { IosVideoSession } from './phone-ios-video.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
 import { PhoneLinkPhoneSocket, phoneLinkApiUrl } from './phone-link-cloud.js';
@@ -781,6 +782,16 @@ class PhoneService {
             decode: decodeGray,
             load: (serial) => readJson<Calibration | null>(this.btMacCalibrationFile(serial), null),
             save: (serial, c) => writeJson(this.btMacCalibrationFile(serial), c),
+          }),
+          // Phone Use route 2c: a second iPhone or iPad (the App Store app, keyboard mode on) as the
+          // main iPhone's Bluetooth keyboard and mouse, driven over its app-phone lane (phone-bt-apple.ts).
+          'bt-apple': btAppleLane({
+            phones: () => this.ensureAppBackend(),
+            rpc: (phoneId, method, params, timeoutMs) =>
+              httpAppPhoneNode({ apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()), headers: () => this.nodeHeaders() }).rpc(phoneId, method, params, timeoutMs),
+            decode: decodeGray,
+            load: (serial) => readJson<Calibration | null>(this.btAppleCalibrationFile(serial), null),
+            save: (serial, c) => writeJson(this.btAppleCalibrationFile(serial), c),
           }),
         },
         guard: () => holds,
@@ -1871,6 +1882,11 @@ class PhoneService {
   /** The person turned the keyboard on (Pair) and has not turned it off (Disconnect). */
   private btMacEnabled(): boolean {
     return readJson<{ enabled?: boolean }>(this.btMacFile(), {}).enabled === true;
+  }
+
+  /** Pointer calibration for one iPhone on the bt-apple route (driven by a second iPhone or iPad). */
+  private btAppleCalibrationFile(serial: string): string {
+    return path.join(this.dir(), `bt-apple-calibration-${serial.replace(/[^a-zA-Z0-9-]/g, '')}.json`);
   }
 
   /** Pointer calibration for one iPhone on the bt-mac route. */
