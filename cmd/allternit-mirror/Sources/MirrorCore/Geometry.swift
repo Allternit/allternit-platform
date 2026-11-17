@@ -20,11 +20,15 @@ public struct WindowGeometry: Equatable, Sendable {
     public var pixelHeight: Int { Int((Double(bounds.height) * scale).rounded()) }
 
     /// A capture-pixel point → a global screen point. Refuses anything outside the window.
+    /// A coordinate for an error message. `Int(_:)` traps on NaN or infinity, which are
+    /// exactly the values the guard below rejects (build train 20261117-0034).
+    static func coord(_ v: Double) -> String { v.isFinite ? String(Int(v)) : String(describing: v) }
+
     public func screenPoint(x: Double, y: Double) throws -> CGPoint {
         guard x.isFinite, y.isFinite, x >= 0, y >= 0, x < Double(pixelWidth), y < Double(pixelHeight) else {
             throw MirrorError(
                 "outside_window",
-                "(\(Int(x)), \(Int(y))) is outside the iPhone Mirroring window (\(pixelWidth)×\(pixelHeight) pixels). Take a new screenshot and use its coordinates."
+                "(\(Self.coord(x)), \(Self.coord(y))) is outside the iPhone Mirroring window (\(pixelWidth)×\(pixelHeight) pixels). Take a new screenshot and use its coordinates."
             )
         }
         let p = CGPoint(x: Double(bounds.minX) + x / scale, y: Double(bounds.minY) + y / scale)
