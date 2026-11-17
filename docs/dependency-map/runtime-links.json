@@ -1289,6 +1289,16 @@
       ]
     },
     {
+      "source": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+      "target": "allternit/cmd/gizzi-code/src/runtime/session",
+      "kind": "server hint metadata.project_role thread (from the session bag's projectRole) read by SystemPrompt.context() to add the project thread prompt block",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt/project-thread.txt"
+      ]
+    },
+    {
       "source": "allternit-ai/src/lib/openui",
       "target": "allternit/cmd/gizzi-code/src/runtime/session",
       "kind": "shared answer policy: app catalog routing and runtime final-response enforcement before public text publication",

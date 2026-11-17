@@ -3203,8 +3203,9 @@ fn session_bot_id(db: &DbHandle, session_id: &str) -> Option<String> {
 const BOT_MEMORY_CHARS: usize = 6000;
 
 /// The bot's standing instructions for a turn the server starts (coordinator,
-/// routines): the thread's own prompt when the client set one, else the
-/// bot's, plus who it is and what it has saved to memory.
+/// routines): the bot's own current prompt first, then the thread's prompt
+/// under "## This thread" (once, if the thread snapshot already contains the
+/// bot prompt), plus who it is and what it has saved to memory.
 pub(crate) fn bot_turn_system(db: &DbHandle, session_id: &str, bot_id: &str) -> Option<String> {
     let conn = db.connect().ok()?;
     let (user_id, name, description, prompt, title): (String, String, Option<String>, Option<String>, Option<String>) = conn
@@ -3224,8 +3225,21 @@ pub(crate) fn bot_turn_system(db: &DbHandle, session_id: &str, bot_id: &str) -> 
     if let Some(d) = description.filter(|d| !d.trim().is_empty()) {
         out.push_str(&format!(" {d}"));
     }
-    if let Some(p) = thread_prompt.or(prompt).filter(|p| !p.trim().is_empty()) {
-        out.push_str(&format!("\n\n## Standing instructions\n\n{}", p.trim()));
+    let prompt = prompt.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+    let thread_prompt = thread_prompt.map(|p| p.trim().to_string());
+    match (prompt, thread_prompt) {
+        // The thread snapshot already carries the bot's prompt: emit it once.
+        (Some(bot), Some(thread)) if thread.contains(&bot) => {
+            out.push_str(&format!("\n\n## Standing instructions\n\n{thread}"));
+        }
+        // The bot's own current prompt always leads; the thread adds to it.
+        (Some(bot), Some(thread)) => {
+            out.push_str(&format!("\n\n## Standing instructions\n\n{bot}\n\n## This thread\n\n{thread}"));
+        }
+        (Some(only), None) | (None, Some(only)) => {
+            out.push_str(&format!("\n\n## Standing instructions\n\n{only}"));
+        }
+        (None, None) => {}
     }
     if let Ok(Some(principal)) = crate::cowork_routes::bot_memory_principal(&conn, &user_id, bot_id) {
         let mut stmt = conn
@@ -3351,6 +3365,29 @@ pub(crate) async fn native_turn_request(db: &DbHandle, session_id: &str, bot_id:
 }
 
 /// [`native_turn_request`] on `model` instead of the bot's own brain.
+/// Sets `payload["metadata"][key]`, creating the metadata object if absent
+/// (or replacing a non-object value) so existing keys are never wiped.
+fn set_payload_metadata(payload: &mut serde_json::Value, key: &str, value: serde_json::Value) {
+    if !payload.is_object() {
+        *payload = json!({});
+    }
+    let obj = payload.as_object_mut().expect("payload is an object");
+    let meta = obj.entry("metadata").or_insert_with(|| json!({}));
+    if !meta.is_object() {
+        *meta = json!({});
+    }
+    if let Some(m) = meta.as_object_mut() {
+        m.insert(key.to_string(), value);
+    }
+}
+
+/// Tags a turn payload that belongs to a project thread session.
+fn apply_project_role_hint(payload: &mut serde_json::Value, bag: Option<&serde_json::Value>) {
+    if bag.and_then(|b| b.get("projectRole")).and_then(serde_json::Value::as_str) == Some("thread") {
+        set_payload_metadata(payload, "project_role", json!("thread"));
+    }
+}
+
 async fn native_turn_request_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &str, model: Option<serde_json::Value>) -> Result<(Client, String, serde_json::Value), String> {
     let model = model
         .or_else(|| bot_turn_model(db, session_id, bot_id))
@@ -3378,6 +3415,7 @@ async fn native_turn_request_on(db: &DbHandle, session_id: &str, bot_id: &str, t
     if let Some(bot) = bot_turn_marker(db, bot_id, Some(session_id)) {
         payload["bot"] = bot;
     }
+    apply_project_role_hint(&mut payload, db.get_session_metadata(session_id).ok().flatten().as_ref());
     Ok((client, path, payload))
 }
 
@@ -3446,7 +3484,7 @@ async fn native_turn_on(db: &DbHandle, session_id: &str, bot_id: &str, text: &st
     }
     let (client, path, mut payload) = native_turn_request_on(db, session_id, bot_id, text, brain_ref).await?;
     if voice {
-        payload["metadata"] = json!({ "reply_mode": "voice" });
+        set_payload_metadata(&mut payload, "reply_mode", json!("voice"));
     }
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
         Ok(message) => {
@@ -4037,6 +4075,42 @@ mod tests {
         db.set_session_metadata("s2", &json!({"systemPrompt": "Price at 35% for this launch."})).unwrap();
         assert!(bot_turn_system(&db, "s2", "b1").unwrap().contains("Price at 35% for this launch."));
         assert!(bot_turn_system(&db, "s1", "missing").is_none());
+
+        // The bot's own prompt leads; the thread prompt follows under its heading.
+        let both = bot_turn_system(&db, "s2", "b1").unwrap();
+        let bot_at = both.find("Never move money.").unwrap();
+        let head_at = both.find("## This thread\n\nPrice at 35% for this launch.").unwrap();
+        assert!(bot_at < head_at);
+
+        // A snapshot that already contains the bot prompt does not repeat it.
+        db.set_session_metadata("s3", &json!({"systemPrompt": "Ledger identity.\n\nNever move money.\n\nProject: Q3"})).unwrap();
+        let dup = bot_turn_system(&db, "s3", "b1").unwrap();
+        assert_eq!(dup.matches("Never move money.").count(), 1);
+        assert!(dup.contains("Project: Q3"));
+        assert!(!dup.contains("## This thread"));
+
+        // A bot with no prompt: the thread prompt stands alone.
+        conn.execute(
+            "INSERT INTO agents (id, user_id, name, description, model, provider, system_prompt, config)
+             VALUES ('b2', 'u1', 'Quiet', NULL, 'sonnet', 'claude-cli', NULL, '{}')",
+            [],
+        )
+        .unwrap();
+        db.set_session_metadata("s4", &json!({"systemPrompt": "Thread only."})).unwrap();
+        let bare = bot_turn_system(&db, "s4", "b2").unwrap();
+        assert!(bare.contains("## Standing instructions\n\nThread only."));
+        assert!(!bare.contains("## This thread"));
+
+        // project_role hint rides in metadata and survives the voice key.
+        let mut payload = json!({ "parts": [] });
+        apply_project_role_hint(&mut payload, Some(&json!({"projectRole": "thread"})));
+        assert_eq!(payload["metadata"]["project_role"], "thread");
+        set_payload_metadata(&mut payload, "reply_mode", json!("voice"));
+        assert_eq!(payload["metadata"]["project_role"], "thread");
+        assert_eq!(payload["metadata"]["reply_mode"], "voice");
+        let mut plain = json!({ "parts": [] });
+        apply_project_role_hint(&mut plain, Some(&json!({"projectRole": "other"})));
+        assert!(plain.get("metadata").is_none());
 
         // P4.1: a fabric job aimed at the bot runs as the bot.
         conn.execute("UPDATE agents SET is_bot = 1 WHERE id = 'b1'", []).unwrap();

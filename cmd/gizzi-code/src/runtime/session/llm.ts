@@ -23,6 +23,7 @@ import { Plugin } from "@/runtime/integrations/plugin"
 import { SystemPrompt } from "@/runtime/session/system"
 import { headerParts } from "@/runtime/session/system-header"
 import * as BotTurn from "@/runtime/bots/bot-turn"
+import { appBotCaller } from "@/runtime/bots/app-bot-routing"
 import { Flag } from "@/runtime/context/flag/flag"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { runWithStreamContext } from "@/runtime/session/stream-context"
@@ -103,7 +104,19 @@ export namespace LLM {
     if (bot) BotTurn.mark(input.sessionID, bot)
     // Surface picks the stack; the user message's metadata adds the voice
     // (`reply_mode: "voice"`) and phone (`form_factor: "phone"`) blocks.
-    const promptContext = SystemPrompt.context(input.surface, input.user.metadata)
+    // The tool-signal blocks (suggestions, delegation, project thread,
+    // computer use) read the tools the model actually gets: prompt.ts
+    // resolveTools already gated them, and this file's resolveTools drops the ones
+    // this turn disables, so it runs first here. The person's own plans get
+    // no tools. The roster caller (project thread or main chat) is read only
+    // for app bot chats, from the cache the gating already filled.
+    const personOnly = isPersonOnlyProvider(input.model.providerID)
+    const toolIds = personOnly ? [] : Object.keys(await resolveTools(input))
+    const caller =
+      toolIds.includes("suggest_task") || toolIds.includes("thread_update")
+        ? await appBotCaller(input.sessionID).catch(() => null)
+        : null
+    const promptContext = SystemPrompt.context(input.surface, input.user.metadata, { toolIds, caller })
     const system = []
     system.push(
       headerParts({
@@ -254,8 +267,8 @@ export namespace LLM {
 
     // O8: deterministic tool order so the [tools] prefix segment is stable.
     // The person's own plans are chat only: no tools reach them (contract §9.3).
-    const personOnly = isPersonOnlyProvider(input.model.providerID)
-    const tools = personOnly ? {} : PromptSegments.orderTools(await resolveTools(input))
+    // (input.tools was already filtered by resolveTools above, before the prompt.)
+    const tools = personOnly ? {} : PromptSegments.orderTools(input.tools)
 
     // LiteLLM and some Anthropic proxies require the tools parameter to be present
     // when message history contains tool calls, even if no tools are being used.

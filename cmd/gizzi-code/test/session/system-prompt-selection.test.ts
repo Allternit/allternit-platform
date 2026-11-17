@@ -14,6 +14,10 @@ import PLAN_MODE from "@/runtime/session/prompt/plan-mode.txt"
 import ADDENDUM_GPT from "@/runtime/session/prompt/addendum-gpt.txt"
 import ADDENDUM_GEMINI from "@/runtime/session/prompt/addendum-gemini.txt"
 import ADDENDUM_OPEN from "@/runtime/session/prompt/addendum-open.txt"
+import DUET from "@/runtime/session/prompt/duet.txt"
+import DELEGATION from "@/runtime/session/prompt/delegation.txt"
+import PROJECT_THREAD from "@/runtime/session/prompt/project-thread.txt"
+import COMPUTER_USE from "@/runtime/session/prompt/computer-use.txt"
 
 const model = (id: string) => ({ api: { id } })
 const claude = model("claude-sonnet-4-5")
@@ -50,7 +54,7 @@ describe("prompt stack by session surface", () => {
 })
 
 describe("2026-11-16 audit: no vendor names or Allternit Shell in prompts", () => {
-  const VENDOR = /claude|anthropic|chatgpt|openai|gemini|grok|codex|opencode|allternit shell/i
+  const VENDOR = /claude|anthropic|chatgpt|openai|gemini|grok|codex|opencode|duet|allternit shell/i
   const dirs = [
     path.join(import.meta.dir, "../../src/runtime/session/prompt"),
     path.join(import.meta.dir, "../../src/runtime/loop/prompts"),
@@ -61,6 +65,10 @@ describe("2026-11-16 audit: no vendor names or Allternit Shell in prompts", () =
 
   test("finds the prompt files", () => {
     expect(files.length).toBeGreaterThan(10)
+    const names = files.map((file) => path.basename(file))
+    for (const name of ["duet.txt", "delegation.txt", "project-thread.txt", "computer-use.txt"]) {
+      expect(names).toContain(name)
+    }
   })
 
   for (const file of files) {
@@ -241,7 +249,12 @@ describe("effectiveSurface", () => {
 describe("byte caps (PLAN.md token budgets)", () => {
   const caps: [string, string, number][] = [
     ["base-chat", BASE_CHAT, 5_600],
-    ["capabilities", CAPABILITIES, 8_400],
+    ["capabilities", CAPABILITIES, 7_000],
+    ["bot", BOT, 3_200],
+    ["duet", DUET, 1_800],
+    ["delegation", DELEGATION, 1_000],
+    ["project-thread", PROJECT_THREAD, 1_300],
+    ["computer-use", COMPUTER_USE, 3_200],
     ["safety", SAFETY, 1_800],
     ["base-code", BASE_CODE, 10_800],
     ["addendum-gpt", ADDENDUM_GPT, 700],
@@ -255,4 +268,110 @@ describe("byte caps (PLAN.md token budgets)", () => {
       expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(cap)
     })
   }
+})
+
+describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
+  const SIGNAL_BLOCKS = [DUET, DELEGATION, PROJECT_THREAD, COMPUTER_USE]
+  const all = { appBot: true, projectSend: true, projectThread: true, computerUse: true }
+
+  test("a bot turn with no signals gets bot.txt and none of the signal blocks", () => {
+    for (const ctx of [{}, { surface: "chat" as const }, SystemPrompt.context("chat", {}, { toolIds: ["read", "webfetch"] })]) {
+      const parts = SystemPrompt.bot(undefined, ctx)
+      expect(parts).toContain(BOT)
+      expect(SIGNAL_BLOCKS.filter((block) => parts.includes(block))).toEqual([])
+    }
+  })
+
+  test("bot order: mode, bot, duet, delegation, project-thread, capabilities, safety, computer-use, voice, phone", () => {
+    const parts = SystemPrompt.bot("plan", { surface: "chat", replyMode: "voice", formFactor: "phone", ...all })
+    expect(parts).toEqual([PLAN_MODE, BOT, DUET, DELEGATION, PROJECT_THREAD, CAPABILITIES, SAFETY, COMPUTER_USE, VOICE, PHONE])
+    // Code surface: the same order with no capabilities.
+    expect(SystemPrompt.bot(undefined, { surface: "code", ...all })).toEqual([
+      BOT,
+      DUET,
+      DELEGATION,
+      PROJECT_THREAD,
+      SAFETY,
+      COMPUTER_USE,
+    ])
+  })
+
+  test("each flag adds exactly its own block on a bot turn", () => {
+    const cases: [keyof typeof all, string, string[]][] = [
+      ["appBot", DUET, [BOT, DUET, CAPABILITIES, SAFETY]],
+      ["projectSend", DELEGATION, [BOT, DELEGATION, CAPABILITIES, SAFETY]],
+      ["projectThread", PROJECT_THREAD, [BOT, PROJECT_THREAD, CAPABILITIES, SAFETY]],
+      ["computerUse", COMPUTER_USE, [BOT, CAPABILITIES, SAFETY, COMPUTER_USE]],
+    ]
+    for (const [flag, block, expected] of cases) {
+      const parts = SystemPrompt.bot(undefined, { surface: "chat", [flag]: true } as SystemPrompt.PromptContext)
+      expect(parts).toEqual(expected)
+      expect(SIGNAL_BLOCKS.filter((b) => parts.includes(b))).toEqual([block])
+    }
+  })
+
+  test("normal order: base, capabilities, safety, addendum, mode, project-thread, computer-use, voice, phone", () => {
+    const parts = SystemPrompt.provider(model("gpt-5.1"), "plan", {
+      surface: "chat",
+      replyMode: "voice",
+      formFactor: "phone",
+      ...all,
+    })
+    expect(parts).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, ADDENDUM_GPT, PLAN_MODE, PROJECT_THREAD, COMPUTER_USE, VOICE, PHONE])
+    expect(SystemPrompt.provider(claude, undefined, { projectThread: true })).toEqual([BASE_CODE, SAFETY, PROJECT_THREAD])
+    expect(SystemPrompt.provider(claude, undefined, { computerUse: true })).toEqual([BASE_CODE, SAFETY, COMPUTER_USE])
+  })
+
+  test("provider() and instructions() never carry duet or delegation, whatever the flags", () => {
+    for (const surface of [...CHAT_SURFACES, "code" as const, undefined]) {
+      const ctx = { surface, ...all }
+      const text = SystemPrompt.provider(claude, "build", ctx).join("\n") + SystemPrompt.instructions(model("gpt-5.1"), undefined, ctx)
+      expect(text).not.toContain(DUET)
+      expect(text).not.toContain(DELEGATION)
+    }
+  })
+
+  test("context(): tool ids set appBot, projectSend and computerUse", () => {
+    expect(SystemPrompt.context("chat", {}, { toolIds: ["suggest_task"] }).appBot).toBe(true)
+    expect(SystemPrompt.context("chat", {}, { toolIds: ["grant_task_permission"] }).appBot).toBe(true)
+    expect(SystemPrompt.context("chat", {}, { toolIds: ["project_send"] }).projectSend).toBe(true)
+    // project_list alone is not project_send.
+    expect(SystemPrompt.context("chat", {}, { toolIds: ["project_list"] }).projectSend).toBeUndefined()
+    for (const id of ["pane_browser", "browser", "computer", "computer_v2", "computers"]) {
+      expect(SystemPrompt.context("code", {}, { toolIds: [id] }).computerUse).toBe(true)
+    }
+    // Exact ids, not substrings: toolset members are actions, never tool ids.
+    for (const id of ["browser_use", "mcp__browser__click", "computer_status", "left_click"]) {
+      expect(SystemPrompt.context("code", {}, { toolIds: [id] }).computerUse).toBeUndefined()
+    }
+    expect(SystemPrompt.context("chat", { reply_mode: "voice" })).toEqual({ surface: "chat", replyMode: "voice" })
+  })
+
+  test("context(): project thread from the roster caller (never a main chat) or the server hint", () => {
+    const thread = (caller: SystemPrompt.TurnSignals["caller"], metadata: Record<string, unknown> = {}) =>
+      SystemPrompt.context("chat", metadata, { toolIds: ["suggest_task"], caller }).projectThread
+    expect(thread({ projectId: "p1", mainChat: false })).toBe(true)
+    expect(thread({ projectId: "p1" })).toBe(true)
+    expect(thread({ projectId: "p1", mainChat: true })).toBeUndefined()
+    expect(thread({ projectId: null, mainChat: false })).toBeUndefined()
+    expect(thread({ mainChat: false })).toBeUndefined()
+    expect(thread(null)).toBeUndefined()
+    expect(thread(undefined)).toBeUndefined()
+    // The internal project worker has no roster caller; the server stamps the hint.
+    expect(thread(undefined, { project_role: "thread" })).toBe(true)
+    expect(thread(undefined, { project_role: "lead" })).toBeUndefined()
+  })
+
+  test("bot main chat on a chat surface, with computer use, stays within 18,000 bytes", () => {
+    // A main chat: suggestions, project sending and pane_browser (on every app session); not a project thread.
+    const ctx = SystemPrompt.context("chat", {}, {
+      toolIds: ["suggest_task", "grant_task_permission", "thread_update", "project_list", "project_send", "pane_browser"],
+      caller: { projectId: "p1", mainChat: true },
+    })
+    expect(ctx).toMatchObject({ appBot: true, projectSend: true, computerUse: true })
+    expect(ctx.projectThread).toBeUndefined()
+    const parts = SystemPrompt.bot(undefined, ctx)
+    expect(parts).toEqual([BOT, DUET, DELEGATION, CAPABILITIES, SAFETY, COMPUTER_USE])
+    expect(Buffer.byteLength(parts.join("\n\n"), "utf8")).toBeLessThanOrEqual(18_000)
+  })
 })

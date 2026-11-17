@@ -1,6 +1,6 @@
 ---
 title: System prompts
-description: "How the Gizzi runtime builds the system prompt for each turn, which files it reads, the two metadata hints clients can send, and how to change a prompt."
+description: "How the Gizzi runtime builds the system prompt for each turn, which files it reads, the blocks it adds by signal, the hints clients and the server send, and how to change a prompt."
 ---
 
 ## What users see
@@ -18,17 +18,40 @@ For a normal turn:
 3. Safety
 4. One model-family addendum, or none
 5. Mode (plan, build and similar)
-6. Voice block, only when the turn is spoken
-7. Phone block, only when the user is on a phone
+6. Project thread block, only on a project thread
+7. Computer-use block, only when the turn has browser or computer tools
+8. Voice block, only when the turn is spoken
+9. Phone block, only when the user is on a phone
 
 For a bot turn, the bot runs as itself:
 
-1. The bot's persona
-2. Bot guidance
-3. Capabilities (chat-family surfaces only)
-4. Safety
+1. Mode (plan, build and similar)
+2. Bot guidance, which carries the bot's persona
+3. Suggestions block, when the bot can suggest tasks
+4. Delegation block, when the bot can hand work to a project's bots
+5. Project thread block, when the thread belongs to a project
+6. Capabilities (chat-family surfaces only)
+7. Safety
+8. Computer-use block, when the turn has browser or computer tools
+9. Voice block, only when the turn is spoken
+10. Phone block, only when the user is on a phone
 
 Voice and phone blocks also apply to bot turns, because phone calls are bot-bound.
+
+## Blocks added by signal
+
+Four blocks are not part of a stack. The runtime adds each one only when its signal is present, so a bot turn with no signal gets the bot guidance and nothing more. The signals come from the tools the turn actually has, after the usual gating, never from the model.
+
+| Block (file) | Added when | Turns |
+|---|---|---|
+| Suggestions (`duet.txt`) | The turn's tools include `suggest_task` or `grant_task_permission` | Bot turns only |
+| Delegation (`delegation.txt`) | The tools include `project_send` | Bot turns only |
+| Project thread (`project-thread.txt`) | The server hint `project_role` is `"thread"`, or the roster caller has a project and is not the main chat | Bot and normal turns |
+| Computer use (`computer-use.txt`) | The tools include `pane_browser`, `browser`, `computer`, `computers` or a computer_v2 tool | Bot and normal turns |
+
+A bot's main chat never counts as a project thread. The suggestions block is named `duet.txt` inside the repo, but prompt text never names a vendor or product, so the block itself says "suggestions". The provider-side prompt (`provider()`) never includes the suggestions or delegation blocks.
+
+The roster lookup runs only when the tools include `suggest_task` or `thread_update`, and its result is cached per session.
 
 ## Which stack a session gets
 
@@ -46,6 +69,7 @@ The addendum is chosen by model family: gpt, gemini, or open (qwen, kimi, glm, d
 Prompt files live in `cmd/gizzi-code/src/runtime/session/prompt/`:
 
 - `base-chat.txt`, `capabilities.txt`, `base-code.txt`, `safety.txt`, `bot.txt`
+- Signal blocks: `duet.txt` (suggestions), `delegation.txt`, `project-thread.txt`, `computer-use.txt`
 - `addendum-gpt.txt`, `addendum-gemini.txt`, `addendum-open.txt`
 - `voice.txt`, `phone.txt`
 - Mode files: `plan-mode.txt`, `plan.txt`, `build-mode.txt`, `build-switch.txt`, `max-steps.txt`, `wrap-up.txt`, `mdx-graphs.txt`
@@ -61,23 +85,35 @@ A test enforces a byte cap on each file.
 | File | Byte cap |
 |---|---|
 | base-chat | 5,600 |
-| capabilities | 8,400 |
+| capabilities | 7,000 |
+| bot | 3,200 |
+| duet (suggestions) | 1,800 |
+| delegation | 1,000 |
+| project-thread | 1,300 |
+| computer-use | 3,200 |
 | safety | 1,800 |
 | base-code | 10,800 |
 | each addendum | 700 |
 | voice | 1,300 |
 | phone | 700 |
 
-## Two hints a client can send
+The guidance on a bot's main chat on a chat surface (bot, suggestions, delegation, capabilities, safety and computer use together) stays at or under 18,000 bytes.
 
-A client sends these as optional keys in the user message metadata. Both are optional, and any other value is ignored.
+## Hints
+
+Hints are optional keys in the user message metadata. Any other value is ignored.
 
 | Key | Value | Effect | Sent by |
 |---|---|---|---|
 | `reply_mode` | `"voice"` | Adds the spoken-reply block: short sentences, no markup | allternit-api, on phone-call turns |
 | `form_factor` | `"phone"` | Adds the small-screen block: shorter replies, less layout | The phone layout on ai.allternit.com, the m.allternit.com app, and the iOS app |
+| `project_role` | `"thread"` | Adds the project thread block | allternit-api (server hint), stamped from the session bag's `projectRole` |
 
-allternit-api passes only these two exact values through the chat bridge and the session message route. The runtime reads them in `SystemPrompt.context()`.
+`reply_mode` and `form_factor` are the two client hints; allternit-api passes only those exact values through the chat bridge and the session message route. `project_role` is a server hint: clients do not send it. The runtime reads all three in `SystemPrompt.context()`.
+
+## Server-started bot turns
+
+When allternit-api starts a bot turn itself (a delegated task, an accepted suggestion, a message from another bot), the system text carries the bot's own prompt first. A project thread's prompt follows under the heading `## This thread`. If the client snapshot already contains the thread prompt, it is printed once, not twice. The bot keeps its own instructions on these turns.
 
 ## Compaction and handoff
 
@@ -89,7 +125,7 @@ A context handoff to a fresh session is a separate step with its own baton, not 
 
 1. Edit the text file in your own words. Prompts must not name other companies or their products.
 2. Keep the file under its byte cap.
-3. Run `bun test test/session/system-prompt-selection.test.ts` from `cmd/gizzi-code`. It checks the cap, the vendor-name rule, stack selection, addendum choice and layer order.
+3. Run `bun test test/session/system-prompt-selection.test.ts` from `cmd/gizzi-code`. It checks the cap, the vendor-name rule (which also rejects the internal name `duet`), stack selection, addendum choice, the signal blocks and layer order.
 
 ## Related pages
 
