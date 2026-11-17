@@ -47,6 +47,10 @@ enum LaunchArgument {
     /// Combine with `-bots` / `-code` / `-open-aci` etc. to pick the screen.
     static let sampleWorkspace = "sample-workspace"
 
+    /// `-calm-drawer-open` (DEBUG only): launch with the drawer open (page
+    /// pushed right, scaled, rounded) for screenshots.
+    static let calmDrawerOpen = "calm-drawer-open"
+
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
 
