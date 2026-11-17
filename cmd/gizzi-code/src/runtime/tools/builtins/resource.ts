@@ -3,7 +3,9 @@
  * and MCP resources. Core in runtime/primitives/resource.ts. Every client;
  * permission allow (loop/agent.ts).
  *
- * W1 stub: final id and parameters; lane R fills the execute body.
+ * The core bounds its own text (Resource.MAX_TEXT_BYTES), so the result sets
+ * `truncated: false` and Tool.define does not spill it into another saved
+ * output.
  */
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { Resource } from "@/runtime/primitives/resource"
@@ -13,18 +15,25 @@ export const ResourceTool = Tool.define("resource", {
   description: DESCRIPTION,
   parameters: Resource.Input,
   async execute(params, ctx) {
+    const base = { action: params.action as string, ref: params.ref, truncated: false }
     try {
       const r = await Resource.run(ctx.sessionID, params, ctx.abort)
       return {
-        title: params.ref ? `${params.action} ${params.ref}` : params.action,
-        output: r.text ?? JSON.stringify(r.entries ?? []),
-        metadata: { action: params.action as string, ref: params.ref },
+        title: params.ref ? `${params.action} ${params.ref}` : "list refs",
+        output: r.text ?? "",
+        metadata: {
+          ...base,
+          entries: r.entries?.length,
+          total_lines: r.total_lines,
+          next_offset: r.next_offset,
+        },
       }
     } catch (error) {
+      if (ctx.abort?.aborted) throw error
       return {
-        title: "Resource unavailable",
+        title: "Resource not read",
         output: error instanceof Error ? error.message : String(error),
-        metadata: { action: params.action as string, ref: params.ref },
+        metadata: { ...base, error: true },
       }
     }
   },
