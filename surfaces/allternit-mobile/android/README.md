@@ -77,7 +77,7 @@ The native Kotlin + Jetpack Compose app that will replace the TWA launcher is bu
 
 | Module | Namespace | What it holds today |
 |---|---|---|
-| `:core:design` | `com.allternit.core.design` | `AllternitTheme { }` (light by default), `AllternitColors` (BgPrimary, TextPrimary, AccentPrimary from the iOS asset catalog until the token generator lands), `Motion.standardSpring()` (damping 0.86, stiffness 322 = iOS `spring(0.35, 0.86)`), `Haptics` (tap, success, warning → `HapticFeedbackConstants`, with pre-API-30 fallbacks) |
+| `:core:design` | `com.allternit.core.design` | `AllternitTheme(themeMode = ThemeMode.Light)` (Light default; `System` follows the phone only when the user's setting says so), generated `AllternitColors.Light/Dark` (all 17 iOS colorsets), `AllternitRadii`, `AllternitGlass`, `ModeAccents`, `FriendlyState`, `ThinkingOrb`, `Motion.standardSpring()` (damping 0.86, stiffness 322 = iOS `spring(0.35, 0.86)`), `Haptics` (tap, success, warning → `HapticFeedbackConstants`, with pre-API-30 fallbacks), `ph_*` icons |
 | `:core:api` | `com.allternit.core.api` | `ApiConfig` (`https://api.allternit.com/api/v1`; `/api/aci` and `/api/factory` derived the same way as iOS `AppConfig.swift`; `/api/agent-chat` on the connected instance), `ApiClients.okHttp(bearer)` with a `BearerProvider` interceptor |
 | `:core:auth` | `com.allternit.core.auth` | `TokenProvider` interface only (Clerk Android or the Files-style Custom Tab sign-in is picked in step 7) |
 | `:core:stream` | `com.allternit.core.stream` | `SseEvent` + `SseParser`, a byte-level port of iOS `SSEParser.swift`, with its test vectors in `SseParserTest` |
@@ -310,3 +310,16 @@ scripts/conformance.sh 192.168.1.20:8200            # over Wi-Fi (pairing needs 
 ```
 
 The script checks `/whoami` and the device header, that an unsealed `/rpc` gets a 401, X25519 pairing, `device_info`, `is_locked`, `list_apps`, `config`, an unknown method, `page_source` (text and structured), `screen_text`, `find_element` and `screenshot`. It also confirms that a replayed nonce, a skewed timestamp and a forged tag are rejected, using `ictrl_rpc.py`'s own crypto. At the end it revokes its own key. It uses a throwaway `HOME`, so `~/.ictrl/token.json` is never touched.
+
+## Design tokens
+
+Colors, radii, glass opacities and mode accents come from the iOS design system, not from hand-copied hex.
+
+```sh
+node contracts/design-tokens/generate.mjs           # regenerate AllternitTokens.gen.kt
+node contracts/design-tokens/generate.mjs --check   # exit 1 if it is stale (runs in scripts/android-check.sh)
+node surfaces/allternit-mobile/android/scripts/convert-icons.mjs   # iOS PhIcons SVG -> res/drawable/ph_*.xml
+node surfaces/allternit-mobile/android/scripts/convert-logos.mjs --dry-run   # AppLogos -> WebP (not run in CI)
+```
+
+Never hand-edit `AllternitTokens.gen.kt` or the `ph_*` drawables: change the iOS colorset, `Color+Theme.swift` or `ModeTheme.swift`, then regenerate. The generator reads literals only and fails naming any value it cannot parse. `DeckIcons` are PDF-only on iOS, so no `deck_*` drawables exist yet. App logos (1,248 PNG, 5.6 MB) are converted to `assets/logos/*.webp` by `convert-logos.mjs` in the PR that wires Coil.

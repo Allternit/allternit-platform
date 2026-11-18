@@ -33,4 +33,6 @@ dependencies {
     api(libs.compose.ui)
     api(libs.compose.foundation)
     api(libs.compose.material3)
+
+    testImplementation(libs.junit)
 }
