@@ -211,6 +211,33 @@ enum AccountSwitch {
         Haptics.selection()
         return Clerk.shared.session?.lastActiveOrganizationId ?? orgId
     }
+
+    /// "Switch account" to another person, one Clerk session at a time
+    /// (phone calm I14b, option B; web `signOutToSignIn`). In this order
+    /// (`PersonSwitchOrder`): `AccountSwitchCleanup.run(reason:
+    /// .personChanged)` while the leaving session still works, then Clerk
+    /// sign-out, then the sign-in screen with `email` filled in (nil = "Add
+    /// another account", an empty sign-in). Throws when sign-out is refused;
+    /// the current person stays signed in and their data is rebuilt.
+    static func switchPerson(email: String?, authManager: AuthManager) async throws {
+        let steps = PersonSwitchSteps(
+            cleanup: { await AccountSwitchCleanup.run(reason: .personChanged) },
+            signOut: {
+                try await authManager.signOut()
+                AccountPlanStore.shared.reset()
+            },
+            afterSignOut: { AccountSwitchCleanup.resetLocalState(reason: .personChanged) },
+            rebuild: {
+                authManager.refreshAuthState()
+                await AccountSwitchCleanup.rebuild()
+                // signOut() revoked the device credential before Clerk
+                // refused; pair again for the person still signed in.
+                _ = try? await RuntimePairing.shared.ensurePaired()
+            },
+            showSignIn: { email in authManager.pendingSignInEmail = email }
+        )
+        try await PersonSwitchOrder.run(email: email, steps: steps)
+    }
 }
 
 /// The signed-in person's photo (Clerk imageUrl), else their initial.

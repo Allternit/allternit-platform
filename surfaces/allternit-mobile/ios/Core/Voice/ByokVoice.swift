@@ -107,6 +107,18 @@ enum VoiceProviderKeys {
         defaults.set(true, forKey: metaKey(vendor, "optOut"))
     }
 
+    /// Person change (phone calm I14b): every voice key, the ElevenLabs
+    /// voice and each vendor's label, change time and opt-out leave this
+    /// phone. Unlike `disconnect`, no opt-out is left behind: the next person
+    /// starts clean. The account copy (if saved) is not touched.
+    static func forgetAll() {
+        for field in Field.allCases { KeychainHelper.delete(account(field)) }
+        let defaults = UserDefaults.standard
+        for vendor in VoiceVendor.allCases {
+            for name in ["label", "updatedAt", "optOut"] { defaults.removeObject(forKey: metaKey(vendor, name)) }
+        }
+    }
+
     /// This phone's copy of a vendor's key, for account sync.
     static func local(_ vendor: VoiceVendor) -> VoiceKeyLocal? {
         guard let key = value(vendor.keyField) else { return nil }

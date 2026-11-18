@@ -84,6 +84,17 @@ final class ChatGPTDeviceStore: ObservableObject {
         return confirmed
     }
 
+    /// Person change (phone calm I14b): the ChatGPT sign-in is the leaving
+    /// person's. Signs out at OpenAI (best effort; the Keychain item goes
+    /// either way) and forgets the accepted disclosure, so the next person
+    /// reads it before connecting their own plan.
+    func forgetOnPersonChange() async {
+        _ = await signOut()
+        modelsError = nil
+        UserDefaults.standard.removeObject(forKey: Self.acceptedKey)
+        objectWillChange.send()
+    }
+
     func markLimitReached() { needs = .usageLimit }
 
     func markExpired() {

@@ -51,6 +51,11 @@ struct SettingsView: View {
     @State private var activeOrgId: String? = nil
     @State private var switchingTo: String?? = nil
     @State private var accountError: String? = nil
+    /// Switch account (I14b): other accounts used on this device, which row
+    /// is signing out (a user id, or `addAnotherKey`), and a refused sign-out.
+    @State private var rememberedAccounts: [RememberedAccount] = []
+    @State private var leaving: String? = nil
+    @State private var leaveFailed = false
     @ReducedMotion private var reducedMotion
 
     #if DEBUG
@@ -108,6 +113,7 @@ struct SettingsView: View {
                 if authManager.isSignedIn { AccountPlanStore.shared.load() }
                 await loadOrganizations()
                 rememberActivePlan()
+                loadRememberedAccounts()
             }
             // D14: the active account's plan label is cached for when its
             // row is inactive.
@@ -308,7 +314,9 @@ struct SettingsView: View {
 
     /// The signed-in person and their organizations. The active one has a ✓
     /// and opens Profile; tapping another switches to it (Clerk `setActive`,
-    /// `AccountSwitch`). Signed out: one row that opens Profile.
+    /// `AccountSwitch`). Under them (I14b): other accounts used on this
+    /// device and "Add another account". Signed out: one row that opens
+    /// Profile.
     private var accountsCard: some View {
         VStack(spacing: 0) {
             PhoneSettingsCard {
@@ -323,12 +331,18 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    // TODO(phone calm step 31, gated by plan amendment A4):
-                    // other signed-in people's session rows, "Add account"
-                    // (sign-in without signing out) and Log out of the active
-                    // session only go here. Waiting on Clerk multi-session
-                    // (clerk.allternit.com `single_session_mode` is true) and a
-                    // clerk-ios 1.6.2 session-list check.
+                    // Other people (I14b, option B): one Clerk session at a
+                    // time, so switching person signs out and opens sign-in
+                    // with that email filled in (multi-session is not on).
+                    if showsRememberedAccounts {
+                        ForEach(rememberedAccounts) { account in
+                            PhoneCardDivider()
+                            rememberedRow(account)
+                                .transition(reducedMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                        }
+                        PhoneCardDivider()
+                        addAnotherAccountRow
+                    }
                 } else {
                     NavigationLink(value: SettingsPageID.profile) {
                         HStack(spacing: 12) {
@@ -350,6 +364,13 @@ struct SettingsView: View {
                     }
                     .buttonStyle(PhoneRowButtonStyle())
                 }
+            }
+            if leaveFailed {
+                Text(RememberedAccounts.switchFailedText)
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(EdgeInsets(top: 6, leading: 6, bottom: 0, trailing: 6))
             }
             if let accountError {
                 Text(accountError)
@@ -413,6 +434,141 @@ struct SettingsView: View {
         .accessibilityHint(active ? "Opens your profile" : "Switches to this account")
     }
 
+    // MARK: Switch account (I14b)
+
+    private static let addAnotherKey = "add-another-account"
+
+    /// Real Clerk sign-in, or the sample card under `-calm-accounts`.
+    private var showsRememberedAccounts: Bool {
+        #if DEBUG
+        if SampleWorkspace.isEnabled { return launchArgumentEnabled(LaunchArgument.calmAccounts) }
+        #endif
+        return authManager.isClerkConfigured
+    }
+
+    /// A remembered account: tap the row to switch (sign out, then sign-in
+    /// with its email filled in); the visible ✕ removes it from this device.
+    private func rememberedRow(_ account: RememberedAccount) -> some View {
+        let isLeaving = leaving == account.userId
+        return HStack(spacing: 0) {
+            Button(action: { switchPerson(key: account.userId, email: account.email) }) {
+                HStack(spacing: 12) {
+                    RememberedAccountAvatar(account: account, size: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(account.name)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(Color("TextPrimary"))
+                            .lineLimit(1)
+                        Text(isLeaving ? "Signing out…" : account.detail)
+                            .font(.system(size: 13))
+                            .foregroundColor(Color("TextSecondary"))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if isLeaving { ProgressView() }
+                }
+                .padding(.leading, 16)
+                .padding(.vertical, 10)
+                .frame(minHeight: 56)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PhoneRowButtonStyle())
+            .accessibilityLabel("\(account.name), \(account.email)")
+            .accessibilityHint("Signs out, then opens sign-in for this account")
+
+            Button(action: { forgetRemembered(account) }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 6)
+            .accessibilityLabel("Remove \(account.email) from this device")
+        }
+        .disabled(leaving != nil || switchingTo != nil)
+    }
+
+    /// "Add another account": sign out, then an empty sign-in.
+    private var addAnotherAccountRow: some View {
+        let isLeaving = leaving == Self.addAnotherKey
+        return Button(action: { switchPerson(key: Self.addAnotherKey, email: nil) }) {
+            HStack(spacing: 12) {
+                Image(systemName: "person.badge.plus")
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Color("BgPrimary")))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Add another account")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                    if isLeaving {
+                        Text("Signing out…")
+                            .font(.system(size: 13))
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if isLeaving { ProgressView() }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(minHeight: 56)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PhoneRowButtonStyle())
+        .disabled(leaving != nil || switchingTo != nil)
+        .accessibilityHint("Signs out, then opens an empty sign-in")
+    }
+
+    private func loadRememberedAccounts() {
+        #if DEBUG
+        if SampleWorkspace.isEnabled {
+            rememberedAccounts = SettingsAccountsSample.rememberedAccounts
+            leaveFailed = launchArgumentEnabled(LaunchArgument.calmAccountsSwitchFailed)
+            return
+        }
+        #endif
+        rememberedAccounts = RememberedAccounts.others(excluding: authManager.currentUserId)
+    }
+
+    private func forgetRemembered(_ account: RememberedAccount) {
+        Haptics.light()
+        if !SampleWorkspace.isEnabled { RememberedAccounts.forget(userId: account.userId) }
+        withAnimation(Motion.pick(Motion.deck, reduced: reducedMotion)) {
+            rememberedAccounts.removeAll { $0.userId == account.userId }
+        }
+    }
+
+    /// Person switch (`AccountSwitch.switchPerson`). Success leaves for the
+    /// sign-in screen; a refused sign-out keeps this account and shows one
+    /// calm line.
+    private func switchPerson(key: String, email: String?) {
+        guard leaving == nil, switchingTo == nil else { return }
+        Haptics.selection()
+        leaveFailed = false
+        accountError = nil
+        #if DEBUG
+        // Sample workspace: shown, not sent to Clerk.
+        if SampleWorkspace.isEnabled { return }
+        #endif
+        leaving = key
+        Task {
+            do {
+                try await AccountSwitch.switchPerson(email: email, authManager: authManager)
+                leaving = nil
+                dismiss()
+            } catch {
+                leaving = nil
+                leaveFailed = true
+                Haptics.warning()
+            }
+        }
+    }
+
     /// An organization's initial on a graphite disc.
     private func orgBadge(_ name: String) -> some View {
         Text(String(name.prefix(1)).uppercased())
@@ -460,6 +616,8 @@ struct SettingsView: View {
         guard authManager.isSignedIn, let userId = authManager.currentUserId,
               let name = plan.planName ?? usageStore.planLabel else { return }
         AccountPlanLabels.remember(userId: userId, orgId: activeOrgId, planName: name)
+        // The remembered-accounts row shows it after a person change (I14b).
+        RememberedAccounts.setPlan(userId: userId, planLabel: name)
     }
 
     @MainActor
@@ -776,6 +934,21 @@ enum SettingsAccountsSample {
                 (id: "org_sample_pier", name: "Pier Street Cafe")]
     }
 
+    /// `-calm-signin-prefill`: the email the sign-in screen fills in.
+    static let prefillEmail = "sam@pierstreet.example"
+
+    /// Accounts used on this device before (I14b), shown under the card.
+    static var rememberedAccounts: [RememberedAccount] {
+        guard launchArgumentEnabled(LaunchArgument.calmAccounts) else { return [] }
+        let now = Date()
+        return [
+            RememberedAccount(userId: "user_sample_sam", name: "Sam Rivera", email: prefillEmail,
+                              imageUrl: nil, planLabel: "Pro", lastUsedAt: now.addingTimeInterval(-3_600)),
+            RememberedAccount(userId: "user_sample_lee", name: "Lee Park", email: "lee@harborbakery.example",
+                              imageUrl: nil, planLabel: nil, lastUsedAt: now.addingTimeInterval(-86_400)),
+        ]
+    }
+
     /// Cached labels as if each row had been active once (D14).
     static func seedPlanLabels() {
         guard launchArgumentEnabled(LaunchArgument.calmAccounts) else { return }
@@ -785,3 +958,35 @@ enum SettingsAccountsSample {
     }
 }
 #endif
+
+/// A remembered account's photo (its saved Clerk image URL), else its
+/// initial on a graphite disc, like `AccountAvatar`.
+struct RememberedAccountAvatar: View {
+    let account: RememberedAccount
+    var size: CGFloat = 36
+
+    var body: some View {
+        Group {
+            if let string = account.imageUrl, let url = URL(string: string) {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    initial
+                }
+            } else {
+                initial
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .accessibilityHidden(true)
+    }
+
+    private var initial: some View {
+        Text(account.initial)
+            .font(.system(size: size * 0.4, weight: .semibold))
+            .foregroundColor(Color("BgPrimary"))
+            .frame(width: size, height: size)
+            .background(Color("TextPrimary"))
+    }
+}

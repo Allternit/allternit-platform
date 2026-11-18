@@ -21,6 +21,8 @@ final class DecisionsStore: ObservableObject {
     private var pollTask: Task<Void, Never>? = nil
     private var watchers = 0
     private var resolvedApprovals: Set<String> = []
+    /// Bumped by `reset()`; a fetch started before it is not applied.
+    private var generation = 0
 
     /// Web POLL_MS.
     private static let pollNs: UInt64 = 5_000_000_000
@@ -68,19 +70,25 @@ final class DecisionsStore: ObservableObject {
     }
 
     private func refreshQuestions() async {
+        let started = generation
         do {
-            questions = try await asks.listQuestions()
+            let fetched = try await asks.listQuestions()
+            guard started == generation else { return }
+            questions = fetched
             questionsError = nil
             await resolveAgentNames()
         } catch {
+            guard started == generation else { return }
             questionsError = "Couldn't load decisions. \(FriendlyErrorMessage.from(error.localizedDescription))"
         }
     }
 
     private func resolveAgentNames() async {
         let missing = Set(questions.map(\.sessionID)).subtracting(agentNames.keys)
+        let started = generation
         guard !missing.isEmpty,
-              let sessions = try? await AgentChatClient().listSessions() else { return }
+              let sessions = try? await AgentChatClient().listSessions(),
+              started == generation else { return }
         var names = agentNames
         for session in sessions where missing.contains(session.id) {
             if let name = session.agentName, !name.isEmpty {
@@ -93,15 +101,33 @@ final class DecisionsStore: ObservableObject {
     }
 
     private func refreshApprovals() async {
+        let started = generation
         do {
             let pending = try await factory.listPending()
+            guard started == generation else { return }
             let listed = Set(pending.map(\.id))
             resolvedApprovals = resolvedApprovals.intersection(listed)
             approvals = pending.filter { !resolvedApprovals.contains($0.id) }
             approvalsError = nil
         } catch {
+            guard started == generation else { return }
             approvalsError = "Couldn't load approvals. \(FriendlyErrorMessage.from(error.localizedDescription))"
         }
+    }
+
+    /// Account switch (phone calm I14b, org and person): drops the leaving
+    /// account's questions, approvals and names. Watchers keep polling and
+    /// fill it again with the new session; a poll already in flight is
+    /// dropped (`generation`).
+    func reset() {
+        generation += 1
+        questions = []
+        approvals = []
+        questionsError = nil
+        approvalsError = nil
+        hasLoaded = false
+        agentNames = [:]
+        resolvedApprovals = []
     }
 
     /// `decision`: "approve" | "reject".

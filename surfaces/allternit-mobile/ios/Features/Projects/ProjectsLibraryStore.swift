@@ -85,6 +85,17 @@ final class ProjectsLibraryStore: ObservableObject {
         localArchived = Set(defaults.stringArray(forKey: Self.archivedKey) ?? [])
     }
 
+    /// Person change (phone calm I14b): this phone's favorite and archived
+    /// marks on code and design projects are the leaving person's. Lists
+    /// reload in `AccountSwitchCleanup.rebuild()`.
+    func resetLocalFlags() {
+        localFavorites = []
+        localArchived = []
+        pendingBotFlags = [:]
+        defaults.removeObject(forKey: Self.favoritesKey)
+        defaults.removeObject(forKey: Self.archivedKey)
+    }
+
     // MARK: Loading
 
     func load() async {

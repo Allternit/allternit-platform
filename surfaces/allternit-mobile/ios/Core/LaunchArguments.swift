@@ -138,9 +138,20 @@ enum LaunchArgument {
     static let calmSettingsInfo = "calm-settings-info"
 
     /// `-calm-accounts` (DEBUG only): the Settings Accounts card with sample
-    /// organizations and cached plan labels (phone calm step 31). Pass
-    /// `-calm-settings -sample-workspace` with it.
+    /// organizations and cached plan labels (phone calm step 31), plus two
+    /// sample accounts remembered on this device and "Add another account"
+    /// (step I14b). Pass `-calm-settings -sample-workspace` with it.
     static let calmAccounts = "calm-accounts"
+
+    /// `-calm-accounts-switch-failed` (DEBUG only): with `-calm-accounts`,
+    /// the card shows the refused sign-out line under the remembered
+    /// accounts (phone calm I14b).
+    static let calmAccountsSwitchFailed = "calm-accounts-switch-failed"
+
+    /// `-calm-signin-prefill` (DEBUG only): the sign-in screen as it opens
+    /// after "Switch account", with a sample email filled in (phone calm
+    /// I14b). Use without `-sample-workspace` (that signs in).
+    static let calmSignInPrefill = "calm-signin-prefill"
 
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
