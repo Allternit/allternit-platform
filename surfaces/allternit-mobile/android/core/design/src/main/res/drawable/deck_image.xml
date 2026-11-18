@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Converted from iOS Assets.xcassets by scripts/convert-icons.mjs; do not edit. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+    <path
+        android:fillColor="#FFFDF8F3"
+        android:strokeColor="#FFE7DDD2"
+        android:strokeWidth="1.5"
+        android:pathData="M 9.75 0.75 L 26.25 0.75 C 31.21875 0.75 35.25 4.78125 35.25 9.75 L 35.25 26.25 C 35.25 31.21875 31.21875 35.25 26.25 35.25 L 9.75 35.25 C 4.78125 35.25 0.75 31.21875 0.75 26.25 L 0.75 9.75 C 0.75 4.78125 4.78125 0.75 9.75 0.75 Z M 9.75 0.75" />
+    <path
+        android:strokeColor="#FFC2410C"
+        android:strokeWidth="2.415"
+        android:pathData="M 9.890625 5.0625 L 26.109375 5.0625 C 27.824219 5.0625 29.210938 6.453125 29.210938 8.167969 L 29.210938 24.382812 C 29.210938 26.097656 27.824219 27.488281 26.109375 27.488281 L 9.890625 27.488281 C 8.175781 27.488281 6.789062 26.097656 6.789062 24.382812 L 6.789062 8.167969 C 6.789062 6.453125 8.175781 5.0625 9.890625 5.0625 Z M 9.890625 5.0625" />
+    <path
+        android:fillColor="#FFC2410C"
+        android:pathData="M 15.929688 11.617188 C 15.929688 13.046875 14.773438 14.203125 13.34375 14.203125 C 11.914062 14.203125 10.753906 13.046875 10.753906 11.617188 C 10.753906 10.1875 11.914062 9.03125 13.34375 9.03125 C 14.773438 9.03125 15.929688 10.1875 15.929688 11.617188 Z M 15.929688 11.617188" />
+    <path
+        android:strokeColor="#FFC2410C"
+        android:strokeWidth="2.415"
+        android:strokeLineJoin="round"
+        android:pathData="M 7.648438 26.28125 L 15.414062 18.863281 L 20.585938 23.175781 L 24.039062 20.242188 L 28.351562 24.554688" />
+</vector>
