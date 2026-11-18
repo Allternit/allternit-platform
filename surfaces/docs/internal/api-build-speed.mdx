@@ -1,0 +1,55 @@
+---
+title: "allternit-api build speed settings"
+description: "The Cargo and CI settings that make allternit-api build and test faster, and the numbers behind them"
+---
+
+**Status: AVAILABLE (internal).** For Allternit developers and the build train, not customers.
+
+These settings landed on 2026-11-17 as step one of the allternit-api crate split. Each one was measured on a GitHub runner before it was picked. The bench is `.github/workflows/api-build-bench.yml` (label a PR `api-bench`, or run it by hand). The numbers below come from bench run 44231866825.
+
+## What changed
+
+| Setting | Where | What it does |
+| --- | --- | --- |
+| `[profile.ci-test]` | `.cargo/config.toml` | A test profile for CI. It inherits `dev`, sets `opt-level = 1` and turns debuginfo off. Debug assertions stay on. |
+| `cargo test --profile ci-test` | Test step of `deploy-allternit-api-contabo.yml` | Runs the suite in `ci-test` instead of `--release`. No thin LTO and no size optimization, so test binaries compile and link much faster. |
+| No `--features test-helpers` on the Test step | Same step | `allternit_api::test_helpers` is compiled when `debug_assertions` is on, and `ci-test` keeps it on. The feature is only needed for `cargo test --release`. The bench ran the full suite this way: 3,480 passed, 0 failed. |
+| `CARGO_INCREMENTAL=0` on the Test step | Same step | A CI runner never reuses incremental state, so writing it is wasted work. |
+| `CARGO_BUILD_JOBS: "2"` on the Test step | Same step | Two parallel rustc jobs. The test build is the step that runs short on memory (lowest free memory 569 MB with the 12 GB swap). |
+| `CARGO_BUILD_JOBS: "4"` on the Build step | Build release binary step | Four parallel rustc jobs for the release binary. Lowest free memory was 4.3 GB, so it has room. Incremental stays on for the release build. |
+| `timeout-minutes` on Test (90) and Build (60) | Both steps | A hung step fails instead of holding the deploy queue for hours. Both caps leave room for a cold cache. |
+| Size and sha256 line | Build step | Prints `allternit-api size=... sha256=...` after the build, so a run shows which binary it deployed. |
+| `split-debuginfo = "packed"` removed | `[profile.dev]` in `.cargo/config.toml` | Packed debuginfo made every macOS dev link run `dsymutil`. Without it the platform default leaves debug info in the object files and skips `dsymutil`. Line tables (`debug = 1`) stay, so stack traces still have file and line. |
+| `[profile.dev.package."*"] debug = false` | `.cargo/config.toml` | No debuginfo for dependencies. Workspace code still has line tables. Smaller dependency artifacts and less work at link time. |
+
+The release profile itself (`opt-level = "z"`, thin LTO, strip, `panic = "abort"`) did not change. The shipped binary is built the same way as before.
+
+## Measured numbers
+
+All CI rows are from bench run 44231866825 on `ubuntu-latest` with the deploy workflow's cache restored.
+
+| Run | Setting | Time |
+| --- | --- | --- |
+| Test step before | `cargo test --release`, 2 jobs | 59.3 min (deploy run 43995226723) |
+| T1 (picked) | `--profile ci-test`, 2 jobs, incremental off | 2,615 s (43.6 min) |
+| R0 (before) | release build, 2 jobs | 1,130 s (18.8 min) |
+| R2 (picked) | release build, 4 jobs | 858 s (14.3 min) |
+| A0 (local, Mac) | `dsymutil` per `allternit-api` link | 23 s |
+
+R2 was measured with `--bin allternit-api`. A separate run (R1) showed that flag saves nothing, so the Build step does not use it; the saving comes from the four jobs.
+
+Not picked at G0: R3 (incremental off on the release build, 980 s) and T2 (tests with 4 jobs, 2,015 s). Both runs are kept in the bench for reference.
+
+## One cold rebuild after this change
+
+Changing a profile setting changes every crate's build fingerprint. After this change merges:
+
+- Every warm local Rust target (Agent Tree bases, worktrees, your own checkout) rebuilds cold once on its next build. The train refreshes the shared base with `gizzi agents tree base refresh --build` after the merge.
+- The first CI deploy run compiles the `ci-test` profile from scratch, since the cache only held release artifacts. Later runs restore it from the cache.
+- The Test and Build steps no longer share compiled crates (`ci-test` and `release` are separate profiles), so the cache holds both.
+
+## How to check it worked
+
+- Boot smoke test: the "Boot smoke test (fresh DB, before deploy)" step still passes on the first deploy run.
+- Step times: on the first non-train deploy run after the merge, compare the Test and Build step times with the numbers above. The second run is the fair comparison, because the first one fills the cache.
+- Local: a one-line change to `cmd/allternit-api/src/main.rs` should link without a `dsymutil` pass.

@@ -16,14 +16,19 @@ incremental = true
 # This keeps binaries and .rlib files much smaller while still producing
 # useful stack traces during development.
 debug = 1
+# Debug info is no longer packed into .dSYM (2026-11-17, PR-2): packing ran dsymutil on every
+# macOS link, 23 s per allternit-api link. The platform default ("unpacked" on
+# macOS) leaves debug info in the object files and skips dsymutil.
 
-# On macOS, pack debug info into a separate .dSYM bundle instead of embedding
-# it in every binary/rlib. This significantly reduces per-artifact size.
-split-debuginfo = "packed"
+[profile.dev.package."*"]
+# No debuginfo for dependencies, only for workspace code you step through.
+# Smaller dependency artifacts and faster links. See
+# surfaces/docs/internal/api-build-speed.mdx.
+debug = false
 
 [profile.ci-test]
 # Test profile for CI: same cfg set as the train's dev runs, light optimization,
-# no debuginfo. See surfaces/docs/internal/api-build-speed.mdx once PR-2 lands.
+# no debuginfo. See surfaces/docs/internal/api-build-speed.mdx.
 inherits = "dev"
 opt-level = 1
 debug = false

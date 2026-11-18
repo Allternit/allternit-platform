@@ -397,7 +397,8 @@
               "operations/cloud-api-edge",
               "operations/platform-test-projects",
               "operations/mail-triage-eval",
-              "internal/channel-apps-owner-setup"
+              "internal/channel-apps-owner-setup",
+              "internal/api-build-speed"
             ],
             "icon": "/icons/screen.svg"
           },
