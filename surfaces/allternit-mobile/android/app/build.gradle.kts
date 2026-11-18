@@ -3,6 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Release signing from the environment (native app step 4). The build train (or a
+// release Mac) sets all four; when any is missing the release build stays unsigned,
+// exactly as before, and is signed afterwards. No path or password lives in the repo.
+val releaseSigningEnv: Map<String, String>? = listOf(
+    "ALLTERNIT_ANDROID_KEYSTORE",
+    "ALLTERNIT_ANDROID_KEYSTORE_PASSWORD",
+    "ALLTERNIT_ANDROID_KEY_ALIAS",
+    "ALLTERNIT_ANDROID_KEY_PASSWORD",
+).associateWith { providers.environmentVariable(it).orNull.orEmpty() }
+    .takeIf { env -> env.values.all { it.isNotBlank() } }
+
 android {
     namespace = "com.allternit.app"
     compileSdk = 36
@@ -64,9 +75,23 @@ android {
         getByName("testPlay") { java.srcDir("src/testPhoneshare/java") }
     }
 
+    signingConfigs {
+        releaseSigningEnv?.let { env ->
+            create("release") {
+                storeFile = file(env.getValue("ALLTERNIT_ANDROID_KEYSTORE"))
+                storePassword = env.getValue("ALLTERNIT_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = env.getValue("ALLTERNIT_ANDROID_KEY_ALIAS")
+                keyPassword = env.getValue("ALLTERNIT_ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (releaseSigningEnv != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             // The static "Inbox tasks" shortcut targets this app's own package.
             resValue("string", "files_app_id", "com.allternit.app")
         }

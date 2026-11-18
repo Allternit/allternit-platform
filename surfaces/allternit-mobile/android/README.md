@@ -47,7 +47,7 @@ scripts/conformance.sh          live run of ictrl_rpc.py against a phone
 
 ## Build and test
 
-You need JDK 17 and Android SDK 35 (platform `android-35`, build-tools 35.x). The wrapper jar is not committed. Generate it once with any Gradle 8.x: `gradle wrapper --gradle-version 8.10.2`.
+You need JDK 17 and Android SDK 36 (platform `android-36`, build-tools 36.x). The Gradle wrapper (8.11.1, jar included) is committed, so `./gradlew` works as is.
 
 **Prerequisite — the mesh AAR.** The app embeds the gomobile-bound tsnet node from `infrastructure/mesh/tsnet-ios`. Build it first and copy the result to `app/libs/` (gitignored):
 
@@ -69,7 +69,27 @@ export ANDROID_HOME=$HOME/Library/Android/sdk     # or write sdk.dir in local.pr
 # -> app/build/outputs/bundle/playRelease/app-play-release.aab
 ```
 
-Toolchain: AGP 8.7.3, Kotlin 2.0.21, Gradle 8.10.2, minSdk 26, target/compileSdk 35.
+Toolchain: AGP 8.9.1, Kotlin 2.0.21, Gradle 8.11.1, minSdk 26, target/compileSdk 36. App version: versionCode 16, versionName 0.7.0 (one versionCode for both flavors). Versions for new modules live in `gradle/libs.versions.toml`.
+
+## Native app modules
+
+The native Kotlin + Jetpack Compose app that will replace the TWA launcher is built up in library modules first (plan: `handoffs/android-native-2026-11-18/PLAN.md` in the workspace). `:app` does not depend on them yet, so the Play and sideload builds are unchanged until the cutover step.
+
+| Module | Namespace | What it holds today |
+|---|---|---|
+| `:core:design` | `com.allternit.core.design` | `AllternitTheme { }` (light by default), `AllternitColors` (BgPrimary, TextPrimary, AccentPrimary from the iOS asset catalog until the token generator lands), `Motion.standardSpring()` (damping 0.86, stiffness 322 = iOS `spring(0.35, 0.86)`), `Haptics` (tap, success, warning → `HapticFeedbackConstants`, with pre-API-30 fallbacks) |
+| `:core:api` | `com.allternit.core.api` | `ApiConfig` (`https://api.allternit.com/api/v1`; `/api/aci` and `/api/factory` derived the same way as iOS `AppConfig.swift`; `/api/agent-chat` on the connected instance), `ApiClients.okHttp(bearer)` with a `BearerProvider` interceptor |
+| `:core:auth` | `com.allternit.core.auth` | `TokenProvider` interface only (Clerk Android or the Files-style Custom Tab sign-in is picked in step 7) |
+| `:core:stream` | `com.allternit.core.stream` | `SseEvent` + `SseParser`, a byte-level port of iOS `SSEParser.swift`, with its test vectors in `SseParserTest` |
+| `:core:data` | `com.allternit.core.data` | `Prefs`, a typed wrapper over Preferences DataStore (the stand-in for UserDefaults) |
+
+Compose comes from the Compose BOM 2025.05.01 (UI 1.8.2, material3 1.3.2) with the Kotlin 2.0.21 Compose compiler plugin (`org.jetbrains.kotlin.plugin.compose`). DataStore is 1.1.7.
+
+**Release signing.** `app/build.gradle.kts` signs release builds only when all four of `ALLTERNIT_ANDROID_KEYSTORE` (keystore path), `ALLTERNIT_ANDROID_KEYSTORE_PASSWORD`, `ALLTERNIT_ANDROID_KEY_ALIAS` and `ALLTERNIT_ANDROID_KEY_PASSWORD` are set. Otherwise the release build is unsigned, as before. Never put a keystore path or password in the repo.
+
+## Checks
+
+`scripts/android-check.sh` is what the build train runs for Android (there is no GitHub Actions workflow). It assembles the Play debug build, runs its unit tests and lint, runs the `:core:*` unit tests, builds and tests `phonelink` only when `app/libs/Mesh.aar` exists (otherwise it prints a skip), and fails if Play Billing ever shows up on the `phonelink` runtime classpath. `scripts/android-check.sh --dry-run` prints the commands without running them. Coding sessions do not run it.
 
 The app has no runtime dependencies beyond the Kotlin stdlib, the mesh AAR and `androidbrowserhelper` (the TWA launcher, Apache-2.0) (tsnet/userspace WireGuard, built in-tree). Tests use JUnit 4.13.2 (EPL-1.0, test only) and `org.json:json:20240303` (public domain, test only, because android.jar ships only stubs of org.json). Everything else is in-tree. NanoHTTPD was not needed, and the X25519 code is written from RFC 7748 rather than vendored.
 
