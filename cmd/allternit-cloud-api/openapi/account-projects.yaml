@@ -1,0 +1,237 @@
+openapi: 3.1.0
+info:
+  title: Allternit Account Projects API
+  version: "1.0.0"
+  summary: Projects and bots saved to the account, made with or without a computer.
+  description: |
+    Projects (`chat`, `code`, `design`) and bots (`bot`) a person makes with no
+    computer, saved to their account so every device lists them. When one of
+    the person's computers connects it adopts the unadopted rows: it creates
+    its own project under the same id, then calls `/adopted`. The first
+    computer adopts. After that the computer's copy wins and it mirrors title,
+    description, instructions and deletes back here. A delete is a tombstone
+    (`deleted_at`). Bot setup lives in `metadata.brief`.
+    Base URL `https://api.allternit.com`. Docs:
+    https://docs.allternit.com/api/account-projects
+
+    Authenticate with a signed-in Clerk session (API tokens get 403), or a
+    paired runtime's signed request (`x-allternit-runtime-id`,
+    `x-allternit-runtime-ts`, `x-allternit-runtime-sig`, signed over the path
+    without its query), which acts as the runtime's owner. Never gated on
+    compute. Rows are scoped to the caller; someone else's id is 404.
+servers:
+  - url: https://api.allternit.com
+security:
+  - bearerAuth: []
+  - runtimeSignature: []
+tags:
+  - name: Account projects
+paths:
+  /api/v1/account-projects:
+    get:
+      operationId: listAccountProjects
+      summary: List account projects
+      description: Newest change first, at most 500.
+      tags: [Account projects]
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/Kind" }
+        - name: include_adopted
+          in: query
+          required: false
+          description: "`false` lists only rows no computer has adopted yet. Default `true`."
+          schema: { type: boolean, default: true }
+        - name: include_deleted
+          in: query
+          required: false
+          description: "`true` includes tombstones. Default `false`."
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Projects.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items: { $ref: "#/components/schemas/AccountProject" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createAccountProject
+      summary: Create an account project
+      description: |
+        Idempotent on `id`: sending an id that already exists for the caller
+        answers 200 with the stored row and changes nothing. Clients pick the
+        id (a UUID) so an offline create can be retried safely.
+      tags: [Account projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, title]
+              properties:
+                id: { type: string, format: uuid }
+                kind: { $ref: "#/components/schemas/Kind" }
+                title: { type: string, maxLength: 200 }
+                description: { type: [string, "null"], maxLength: 2000 }
+                instructions: { type: [string, "null"], maxLength: 50000 }
+                metadata: { $ref: "#/components/schemas/Metadata" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountProject" }
+        "200":
+          description: The id already existed for the caller; the stored row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountProject" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /api/v1/account-projects/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: getAccountProject
+      summary: Get an account project
+      description: Tombstones are returned too, with `deleted_at` set.
+      tags: [Account projects]
+      responses:
+        "200":
+          description: The project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountProject" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateAccountProject
+      summary: Update an account project
+      description: |
+        Send only the fields to change. `description` or `instructions` set to
+        null clears it. `metadata` merges by top-level key; a key set to null
+        is removed. A tombstoned project is 404.
+      tags: [Account projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kind: { $ref: "#/components/schemas/Kind" }
+                title: { type: string, maxLength: 200 }
+                description: { type: [string, "null"], maxLength: 2000 }
+                instructions: { type: [string, "null"], maxLength: 50000 }
+                metadata: { $ref: "#/components/schemas/Metadata" }
+      responses:
+        "200":
+          description: The updated project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountProject" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteAccountProject
+      summary: Delete an account project
+      description: Sets `deleted_at` (a tombstone). Deleting again is also 204.
+      tags: [Account projects]
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+  /api/v1/account-projects/{id}/adopted:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: adoptAccountProject
+      summary: Mark a project adopted by a computer
+      description: |
+        `computer_id` is the runtime id of one of the caller's computers. A
+        runtime-signed call may adopt only for itself (else 403). The first
+        computer wins: the same computer again is 200, another is 409.
+      tags: [Account projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [computer_id]
+              properties:
+                computer_id: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: The project, adopted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountProject" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Clerk session JWT.
+    runtimeSignature:
+      type: apiKey
+      in: header
+      name: x-allternit-runtime-sig
+      description: HMAC signature from a paired runtime, with `x-allternit-runtime-id` and `x-allternit-runtime-ts`.
+  parameters:
+    ProjectId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Error:
+      description: Error.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+  schemas:
+    Kind:
+      type: string
+      enum: [chat, code, design, bot]
+    Metadata:
+      type: object
+      description: |
+        Free-form JSON object, at most 64 KiB. Known keys: `cover` (the
+        project's cover), `brief` (a bot's setup, an object; mirrors the
+        allternit-api `bot_briefs` fields: `status`, `local_date`,
+        `tz_offset_min`, `content`, `posted_at`).
+      properties:
+        cover: {}
+        brief: { type: [object, "null"] }
+      additionalProperties: true
+    AccountProject:
+      type: object
+      required: [id, kind, title, metadata, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/Kind" }
+        title: { type: string }
+        description: { type: [string, "null"] }
+        instructions: { type: [string, "null"] }
+        metadata: { $ref: "#/components/schemas/Metadata" }
+        adopted_computer_id: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: [string, "null"], format: date-time }

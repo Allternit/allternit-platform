@@ -688,6 +688,8 @@ async fn main() {
     }
     // Keep this runtime's phone numbers in step with the cloud (inert until the runtime is paired).
     allternit_api::phone_sync::spawn(state.clone());
+    // Adopt projects and bots made with no computer (inert until paired).
+    allternit_api::account_sync::spawn(state.db.clone());
     allternit_api::computer_idle::spawn_idle_sweeper(state.clone(), shutdown_tx.subscribe());
 
     // BYOK credential revalidation sweep (P1.7): re-probe every active

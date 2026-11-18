@@ -905,6 +905,7 @@
                   "api/usage",
                   "api/cloud-billing",
                   "api/account-compute-status",
+                  "api/account-projects",
                   "api/analytics",
                   "api/audit-logs",
                   "api/runtime-backend",

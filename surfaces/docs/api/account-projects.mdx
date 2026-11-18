@@ -1,0 +1,100 @@
+---
+title: "Account projects API"
+description: "Projects and bots saved to the account, so a person with no computer can make and list them on any device."
+---
+
+These routes live in `allternit-cloud-api` and are served at `https://api.allternit.com`. The OpenAPI file is `cmd/allternit-cloud-api/openapi/account-projects.yaml`.
+
+A person with no computer can still make projects (`chat`, `code`, `design`) and bots (`bot`). They are saved to the account, so every device lists them. Files and runs still need a computer.
+
+## How it works with a computer
+
+1. A phone or browser with no computer creates the project here, with an id it picks (a UUID).
+2. When one of the person's computers connects, `allternit-api` (`account_sync.rs`) pulls the rows no computer has adopted yet. It creates its own project under the **same id**, then calls `POST /api/v1/account-projects/{id}/adopted`. The first computer adopts.
+3. After that the computer's copy wins. A rename or a new description or instructions on the computer is copied back here, and a project deleted on the computer is deleted here.
+4. A delete made here while the computer is offline is a tombstone (`deleted_at`). The computer deletes its copy on its next pull.
+
+Clients merge lists by id: the computer's `cowork/projects` list and this list hold the same id for an adopted project. Treat a 404 from these routes as an empty list (a cloud-api that does not have them yet).
+
+The computer pulls on boot, every 5 minutes, and within a minute of pairing.
+
+## Auth
+
+- A signed-in Clerk session. API tokens (`alt_…`, `allternit_*`) get 403.
+- A paired runtime's signed request (`x-allternit-runtime-id`, `x-allternit-runtime-ts`, `x-allternit-runtime-sig`), the same scheme as the runtime presence heartbeat. It acts as the computer's owner and may adopt only for itself.
+
+These routes never require a computer. Rows are scoped to the caller: someone else's project id is 404.
+
+## The project object
+
+```json
+{
+  "id": "7d6c3c52-6d0f-4a3a-9a57-2f4f0d1b9b01",
+  "kind": "bot",
+  "title": "Morning helper",
+  "description": "Reads my mail",
+  "instructions": "Keep it short.",
+  "metadata": {
+    "cover": "sunrise",
+    "brief": { "status": "ready", "local_date": "2026-11-18", "tz_offset_min": -360 }
+  },
+  "adopted_computer_id": null,
+  "created_at": "2026-11-18T15:04:05Z",
+  "updated_at": "2026-11-18T15:04:05Z",
+  "deleted_at": null
+}
+```
+
+| Field | Notes |
+|---|---|
+| `kind` | `chat`, `code`, `design` or `bot` |
+| `title` | 1 to 200 characters |
+| `description` | up to 2,000 characters, or null |
+| `instructions` | up to 50,000 characters, or null |
+| `metadata` | a JSON object, at most 64 KiB. `cover` is the project's cover. `brief` is a bot's setup (an object) and uses the same field names as the computer's `bot_briefs` table: `status`, `local_date`, `tz_offset_min`, `content`, `posted_at`. |
+| `adopted_computer_id` | the runtime id of the computer that adopted it, or null |
+| `deleted_at` | set when deleted (a tombstone), else null |
+
+On the computer, an adopted project's `metadata` also carries `accountProject.kind`, so clients can tell a bot from a code project in the `cowork/projects` list.
+
+## List
+
+`GET /api/v1/account-projects`
+
+| Query | Default | Meaning |
+|---|---|---|
+| `kind` | all | one kind only |
+| `include_adopted` | `true` | `false` lists only rows no computer has adopted |
+| `include_deleted` | `false` | `true` includes tombstones |
+
+Answers `{"projects": [ ... ]}`, newest change first, at most 500.
+
+## Create
+
+`POST /api/v1/account-projects`
+
+```json
+{ "id": "7d6c3c52-6d0f-4a3a-9a57-2f4f0d1b9b01", "kind": "bot", "title": "Morning helper", "metadata": { "brief": { "status": "ready" } } }
+```
+
+`id` is optional. Answers 201 with the project. Sending an id that already exists for you answers 200 with the stored row and changes nothing, so a retried offline create is safe. An id that belongs to someone else is 409.
+
+## Get, update, delete
+
+- `GET /api/v1/account-projects/{id}` answers the project, tombstones included.
+- `PATCH /api/v1/account-projects/{id}` takes any of `kind`, `title`, `description`, `instructions`, `metadata`. A null `description` or `instructions` clears it. `metadata` merges by top-level key, and a key set to null is removed. A tombstoned project is 404.
+- `DELETE /api/v1/account-projects/{id}` sets `deleted_at` and answers 204. Deleting again is also 204.
+
+## Adopt
+
+`POST /api/v1/account-projects/{id}/adopted` with `{"computer_id": "rt_…"}`.
+
+`computer_id` is the runtime id of one of your computers. The first computer wins: the same computer again answers 200, another computer answers 409. A runtime-signed call for a different computer is 403.
+
+## Plan chats in a project
+
+`plan_threads` has a nullable `project_id` column (migration 149) so a no-computer chat can belong to an account project.
+
+## Deploy note
+
+Migration `cmd/allternit-cloud-api/migrations_pg/149_account_projects.sql` is additive. Production runs cloud-api with `ALLTERNIT_SKIP_MIGRATIONS=1`; `deploy-contabo.sh` applies the file with psql before the binary swap. The account erase deletes every row (`account_projects` in `account_erase.rs`).

@@ -82,6 +82,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("plan_runner_consents", USER),
     // Plan chat threads (migration 141).
     ("plan_threads", USER),
+    // Projects and bots made with no computer (migration 149).
+    ("account_projects", USER),
     // Copilot grants (migration 142). Revoked at GitHub in release_computers first.
     ("copilot_grants", USER),
     // Account preferences: pad templates and per-mode defaults (migration 145).

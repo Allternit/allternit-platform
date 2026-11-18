@@ -203,6 +203,8 @@ Response:
 }
 ```
 
+`id` is optional (1 to 128 letters, digits, `-` or `_`). Send it to keep one id everywhere, for example an [account project](/api/account-projects) made with no computer. Creating the same id again for the same person changes nothing and answers 200 with the same body. An id that belongs to someone else is 409. Without `id` the computer picks one and answers 201.
+
 ### Attach a file to a project
 
 ```bash

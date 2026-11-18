@@ -112,6 +112,8 @@ pub mod client_location;
 pub mod channel_phone;
 pub mod phone_outbound;
 pub mod phone_sync;
+/// Account projects (cloud-api migration 149) adopted onto this computer.
+pub mod account_sync;
 pub mod cloud_files;
 pub mod relay_auth;
 pub mod runtime_events;
