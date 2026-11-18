@@ -11,7 +11,7 @@
 //!   → 201 project (200 with the stored row when `id` already exists for this person)
 //! - `GET    /api/v1/account-projects/:id`           → project (tombstones included)
 //! - `PATCH  /api/v1/account-projects/:id`           `{kind?, title?, description?, instructions?, metadata?}` → project
-//! - `DELETE /api/v1/account-projects/:id`           → 204 (sets `deleted_at`)
+//! - `DELETE /api/v1/account-projects/:id`           → 204 (sets `deleted_at`; a bot also deletes its plan threads)
 //! - `POST   /api/v1/account-projects/:id/adopted`   `{computer_id}` → project
 //!
 //! Auth: a signed-in Clerk session (API tokens 403), or a paired runtime's
@@ -359,20 +359,31 @@ async fn remove(State(state): State<Arc<ApiState>>, headers: HeaderMap, method: 
     reply(async {
         let who = caller(&state, &headers, &method, &uri, b"").await?;
         let id = path_id(&id)?;
-        let done = sqlx::query(
+        // One transaction: tombstone the project and, for a bot, erase its chat-only threads.
+        let mut tx = state.db.begin().await.map_err(err)?;
+        let kind: Option<String> = sqlx::query_scalar(
             "UPDATE account_projects SET \
                updated_at = CASE WHEN deleted_at IS NULL THEN now() ELSE updated_at END, \
                deleted_at = COALESCE(deleted_at, now()) \
-             WHERE id = $1::uuid AND user_id = $2",
+             WHERE id = $1::uuid AND user_id = $2 RETURNING kind",
         )
         .bind(&id)
         .bind(&who.user)
-        .execute(&state.db)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(err)?;
-        if done.rows_affected() == 0 {
+        let Some(kind) = kind else {
             return Err(not_found());
+        };
+        if kind == "bot" {
+            sqlx::query("DELETE FROM plan_threads WHERE project_id = $1::uuid AND user_id = $2")
+                .bind(&id)
+                .bind(&who.user)
+                .execute(&mut *tx)
+                .await
+                .map_err(err)?;
         }
+        tx.commit().await.map_err(err)?;
         Ok(StatusCode::NO_CONTENT.into_response())
     }
     .await)
@@ -590,5 +601,26 @@ mod tests {
             .header("x-allternit-runtime-id", "rt_home").header("x-allternit-runtime-ts", Utc::now().timestamp().to_string())
             .header("x-allternit-runtime-sig", "v1=bad").body(Body::empty()).unwrap();
         assert_eq!(router.clone().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn deleting_a_bot_deletes_its_chat_only_threads_but_not_a_code_projects() {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        sqlx::raw_sql(include_str!("../../migrations_pg/141_plan_threads.sql")).execute(&state.db).await.expect("141 applies");
+        sqlx::raw_sql(include_str!("../../migrations_pg/149_account_projects.sql")).execute(&state.db).await.expect("149 applies");
+        let db = state.db.clone();
+        let router = routes().merge(crate::routes::plan_threads::routes()).with_state(state);
+        let plan = router.clone();
+        let (_, bot) = send(&router, "POST", "/api/v1/account-projects", "user_a", Some(json!({ "kind": "bot", "title": "Helper" }))).await;
+        let (_, code) = send(&router, "POST", "/api/v1/account-projects", "user_a", Some(json!({ "kind": "code", "title": "Site" }))).await;
+        let (bot_id, code_id) = (bot["id"].as_str().unwrap(), code["id"].as_str().unwrap());
+        for project in [bot_id, code_id] {
+            let (status, _) = send(&plan, "POST", "/api/v1/plan-threads", "user_a", Some(json!({ "model": "plan/claude/sonnet", "project_id": project }))).await;
+            assert_eq!(status, StatusCode::CREATED);
+        }
+        let (status, _) = send(&router, "DELETE", &format!("/api/v1/account-projects/{bot_id}"), "user_a", None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let left: Vec<Option<String>> = sqlx::query_scalar("SELECT project_id::text FROM plan_threads").fetch_all(&db).await.unwrap();
+        assert_eq!(left, vec![Some(code_id.to_string())]);
     }
 }

@@ -145,7 +145,10 @@ paths:
     delete:
       operationId: deleteAccountProject
       summary: Delete an account project
-      description: Sets `deleted_at` (a tombstone). Deleting again is also 204.
+      description: |
+        Sets `deleted_at` (a tombstone). Deleting again is also 204. Deleting a
+        `bot` project also deletes its plan threads (`project_id` = this id),
+        in the same transaction.
       tags: [Account projects]
       responses:
         "204": { description: Deleted. }
@@ -180,6 +183,57 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /api/v1/plan-threads:
+    post:
+      operationId: createPlanThread
+      summary: Save a chat thread, optionally in an account project
+      description: |
+        Chat store (docs: https://docs.allternit.com/api/connections#plan-chat-store).
+        Signed-in session only, never gated on compute. With `project_id`, the
+        thread belongs to that account project (a chat-only bot's chats).
+        `project_id` must be the caller's own project that is not deleted, else 400.
+      tags: [Account projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model]
+              properties:
+                model: { type: string, example: "allternit/glm-5.3" }
+                title: { type: string, maxLength: 200 }
+                messages: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/PlanMessage" } }
+                project_id: { type: string, format: uuid }
+      responses:
+        "201":
+          description: The thread summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanThreadSummary" }
+        "400": { $ref: "#/components/responses/Error" }
+    get:
+      operationId: listPlanThreads
+      summary: List chat threads, optionally for one account project
+      description: Newest first, at most 200, no messages. A `project_id` that is not a UUID is 400.
+      tags: [Account projects]
+      parameters:
+        - name: project_id
+          in: query
+          required: false
+          description: Only the threads saved in this account project.
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Thread summaries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [threads]
+                properties:
+                  threads: { type: array, items: { $ref: "#/components/schemas/PlanThreadSummary" } }
+        "400": { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -235,3 +289,21 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         deleted_at: { type: [string, "null"], format: date-time }
+    PlanMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [user, assistant, system] }
+        content: { type: string, maxLength: 200000 }
+        model: { type: string }
+    PlanThreadSummary:
+      type: object
+      required: [id, model, message_count, created_at, updated_at, project_id]
+      properties:
+        id: { type: string, description: Starts with `pth_`. }
+        title: { type: [string, "null"] }
+        model: { type: string }
+        message_count: { type: integer }
+        project_id: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
