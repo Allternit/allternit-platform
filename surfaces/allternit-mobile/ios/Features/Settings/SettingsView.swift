@@ -129,6 +129,9 @@ struct SettingsView: View {
                     path.append(SettingsRoute.advanced)
                 }
                 if launchArgumentEnabled("open-settings-brain-spike") { isBrainSpikePresented = true }
+                if launchArgumentEnabled(LaunchArgument.calmUsage) || launchArgumentEnabled("open-usage") {
+                    path.append(SettingsPageID.usage)
+                }
                 if launchArgumentEnabled("open-settings-meetings") { isMeetingsPresented = true }
                 if launchArgumentEnabled(LaunchArgument.calmSettingsInfo) {
                     // The popover needs the toolbar laid out first.
@@ -303,8 +306,9 @@ struct SettingsView: View {
         case .billing:
             return plan.planName ?? usageStore.planLabel
         case .usage:
-            guard authManager.isSignedIn, let percent = usageStore.percentUsed else { return nil }
-            return "\(min(100, max(0, Int(percent.rounded()))))% used"
+            // Same windows and selector as the Usage page's top bar (I15).
+            guard authManager.isSignedIn, let percent = usagePercent(cloudUsageWindows(usageStore.snapshot)) else { return nil }
+            return "\(percent)% used"
         default:
             return nil
         }

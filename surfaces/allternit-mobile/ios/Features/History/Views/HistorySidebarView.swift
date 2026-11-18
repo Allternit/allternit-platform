@@ -191,6 +191,7 @@ struct HistorySidebarView: View {
                 || launchArgumentEnabled(LaunchArgument.calmSettings)
                 || launchArgumentEnabled(LaunchArgument.calmSettingsAdvanced)
                 || launchArgumentEnabled(LaunchArgument.calmSettingsInfo)
+                || launchArgumentEnabled(LaunchArgument.calmUsage)
                 || launchArgumentEnabled("open-usage") {
                 isSettingsPresented = true
             }

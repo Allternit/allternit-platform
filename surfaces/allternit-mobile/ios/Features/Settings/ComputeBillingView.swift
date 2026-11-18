@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings → Billing (and Usage): plan, usage bars and credits from the real
+/// Settings → Billing: plan, usage bars and credits from the real
 /// routes (`/api/v1/me/usage`, `/api/v1/hosted-runtimes/entitlement`,
 /// `/api/v1/billing/credits`, `/api/v1/billing/subscription`).
 ///
@@ -11,6 +11,9 @@ import SwiftUI
 /// credits" links show on the US App Store storefront only (StorefrontGate),
 /// next to the store buttons. Elsewhere, without store buttons, the page
 /// shows plan status with no link and no price.
+///
+/// `title: "Usage"` opens Settings → Usage instead (`UsagePageView`, phone
+/// calm I15), so every caller keeps its route.
 struct ComputeBillingView: View {
     @ObservedObject private var usageStore = UsageStore.shared
     @ObservedObject private var plan = AccountPlanStore.shared
@@ -70,6 +73,16 @@ struct ComputeBillingView: View {
     }
 
     var body: some View {
+        if title == "Usage" {
+            // Settings → Usage (phone calm I15): its own page; the billing
+            // list below is Settings → Billing.
+            UsagePageView()
+        } else {
+            billingList
+        }
+    }
+
+    private var billingList: some View {
         List {
             if title != "Usage" {
                 Section {
@@ -113,18 +126,6 @@ struct ComputeBillingView: View {
                 }
             } header: {
                 Text("Plan")
-            }
-
-            if title == "Usage" {
-                Section {
-                    AccountUsageCardsView()
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                } header: {
-                    Text("Accounts")
-                } footer: {
-                    Text("Heads-up at 80% · tasks wrap up at 95%")
-                }
             }
 
             Section {

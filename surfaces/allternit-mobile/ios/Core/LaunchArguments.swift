@@ -153,6 +153,14 @@ enum LaunchArgument {
     /// I14b). Use without `-sample-workspace` (that signs in).
     static let calmSignInPrefill = "calm-signin-prefill"
 
+    /// `-calm-usage` (DEBUG only): open Settings with Usage pushed (phone
+    /// calm I15). With `-sample-workspace` every Usage source answers sample
+    /// numbers (`SampleUsage`): a monthly Cloud window, cloud computer hours,
+    /// two connected accounts with 5-hour and weekly windows (one past the
+    /// heads-up threshold, one past wrap-up), credits. Without it the page
+    /// reads the real account (signed out = its calm empty states).
+    static let calmUsage = "calm-usage"
+
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
 

@@ -127,7 +127,7 @@ struct LimitRingView<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     static func color(_ ratio: Double) -> Color {
-        ratio >= 0.95 ? Theme.statusError : ratio >= 0.8 ? Theme.statusWarning : Color.green
+        ratio >= UsageThresholds.landAt ? Theme.statusError : ratio >= UsageThresholds.warnAt ? Theme.statusWarning : Color.green
     }
 
     var body: some View {

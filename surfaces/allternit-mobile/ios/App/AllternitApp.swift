@@ -238,6 +238,8 @@ struct AllternitApp: App {
             || launchArgumentEnabled(LaunchArgument.calmSettings)
             || launchArgumentEnabled(LaunchArgument.calmSettingsAdvanced)
             || launchArgumentEnabled(LaunchArgument.calmSettingsInfo)
+            || launchArgumentEnabled(LaunchArgument.calmUsage)
+            || launchArgumentEnabled("open-usage")
             || launchArgumentEnabled("open-plus-sheet")
             || launchArgumentEnabled("open-plus-permission")
             || launchArgumentEnabled("open-plus-computer")
