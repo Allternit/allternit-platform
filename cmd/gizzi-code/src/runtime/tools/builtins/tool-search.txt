@@ -1,0 +1,8 @@
+Load tools that are not in your tool list yet.
+
+To keep each request small, some groups of tools start unloaded: for example scratchpad, goals, artifacts, memory and vault, email, scheduled tasks, notebooks, threads, projects, computers, history, and the tools of connected MCP servers. When you need one of them, call tool_search first. The tools it loads can be called from your next step on, for the rest of the session.
+
+- `query` with keywords ("send email", "schedule reminder", "github issue") loads the groups that match.
+- `query` as "select:name1,name2" loads those exact tools.
+
+The result lists what it loaded, what was loaded already, and any names it did not know. If you call an unloaded tool by name, its group loads and you are told to call it again.

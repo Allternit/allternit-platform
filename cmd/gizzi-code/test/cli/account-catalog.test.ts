@@ -66,6 +66,34 @@ describe("Allternit account (/usage, footer chip)", () => {
     expect(lines).not.toContain("Free monthly")
   })
 
+  test("a store plan names who bills it and where to manage it", async () => {
+    process.env.ALLTERNIT_API_TOKEN = "t"
+    resetAllternitAccountCache()
+    const fetchImpl = (async (url: string) =>
+      new Response(
+        JSON.stringify(
+          String(url).includes("/billing/subscription")
+            ? { plan_id: "plus", status: "active", billing_provider: "apple", manage_url: "https://apps.apple.com/account/subscriptions" }
+            : { plan: "plus", label: "Plus", status: "active", weeklyUsed: 1, weeklyLimit: 10, credits: 5, monthToDateUsageUsd: 1 },
+        ),
+        { status: 200 },
+      )) as unknown as typeof fetch
+    const result = await getAllternitAccount({ fresh: true, fetchImpl })
+    expect(result.status === "ok" && result.account.billingProvider).toBe("apple")
+    const lines = accountLines(result, () => "##", () => undefined).join("\n")
+    expect(lines).toContain("Plan:      Plus (billed by Apple, manage in App Store subscriptions)")
+  })
+
+  test("a plan with no billing_provider prints no store note", async () => {
+    process.env.ALLTERNIT_API_TOKEN = "t"
+    resetAllternitAccountCache()
+    const result = await getAllternitAccount({
+      fresh: true,
+      fetchImpl: usageFetch({ plan: "plus", label: "Plus", status: "active", credits: 1 }),
+    })
+    expect(accountLines(result, () => "##", () => undefined).join("\n")).not.toContain("billed by")
+  })
+
   test("a rejected sign-in is signed-out, never a plan", async () => {
     process.env.ALLTERNIT_API_TOKEN = "t"
     resetAllternitAccountCache()

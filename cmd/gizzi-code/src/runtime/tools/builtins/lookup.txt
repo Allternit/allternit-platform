@@ -1,0 +1,16 @@
+Look up one fact and get it back as text plus a card the user's app draws: the weather, the time in other places, a unit or currency conversion, a link preview, places near somewhere, or images with credit. Use it instead of typing these numbers yourself.
+
+Pick `kind`:
+- weather: current conditions and a daily forecast. `query` (or `place`) is the place; `count` is forecast days (up to 7).
+- time: the same moment in several places. `zones` lists IANA zones or place names; `query` is the moment ("now", "9am Chicago").
+- convert: `amount`, `from`, `to`. Currency codes (USD, EUR) use ECB reference rates; units (km, mi, °F, kg) are computed locally.
+- link: a preview of one https page. `query` is the URL.
+- places: up to 10 places. `query` is what to find; `place` is where ("Riverwalk, Chicago").
+- images: 3 to 5 freely licensed images. `query` is the subject; `count` is how many.
+
+"Here" or "near me" works only when the user shares their location; otherwise ask them for a place before you call this.
+
+After it returns:
+- The card already shows the numbers and the credit. Do not write the same card again, and add at most one card per fact.
+- Still state the fact in words in your reply, so it stands alone where no card is drawn, and name the credited source.
+- If it fails, say so and use websearch or webfetch instead, citing the source.

@@ -1,6 +1,5 @@
 // @ts-nocheck
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
-import { feature } from 'bun:bundle'
 import { TASK_OUTPUT_TOOL_NAME } from '../tools/TaskOutputTool/constants.js'
 import { EXIT_PLAN_MODE_V2_TOOL_NAME } from '../tools/ExitPlanModeTool/constants.js'
 import { ENTER_PLAN_MODE_TOOL_NAME } from '../tools/EnterPlanModeTool/constants.js'
@@ -27,11 +26,19 @@ import { TOOL_SEARCH_TOOL_NAME } from '../tools/ToolSearchTool/prompt.js'
 import { SYNTHETIC_OUTPUT_TOOL_NAME } from '../tools/SyntheticOutputTool/SyntheticOutputTool.js'
 import { ENTER_WORKTREE_TOOL_NAME } from '../tools/EnterWorktreeTool/constants.js'
 import { EXIT_WORKTREE_TOOL_NAME } from '../tools/ExitWorktreeTool/constants.js'
-import {
-  CRON_CREATE_TOOL_NAME,
-  CRON_DELETE_TOOL_NAME,
-  CRON_LIST_TOOL_NAME,
-} from '../tools/ScheduleCronTool/prompt.js'
+import { CURRENT_TIME_TOOL_NAME } from '../tools/CurrentTimeTool/prompt.js'
+import { LOOKUP_TOOL_NAME } from '../tools/LookupTool/prompt.js'
+import { THREAD_READ_TOOL_NAME, THREAD_RECENT_TOOL_NAME, THREAD_WAIT_TOOL_NAME } from '../tools/ThreadReadTool/prompt.js'
+import { RESOURCE_TOOL_NAME } from '../tools/ResourceTool/prompt.js'
+import { BROWSER_TASKS_TOOL_NAME } from '../tools/BrowserTasksTool/prompt.js'
+import { SEND_USER_MESSAGE_TOOL_NAME } from '../tools/SendUserMessageTool/prompt.js'
+import { AUTOMATION_TOOL_NAME } from '../tools/AutomationTool/prompt.js'
+import { ASK_USER_LATER_TOOL_NAME } from '../tools/AskUserLaterTool/prompt.js'
+import { WAIT_AGENTS_TOOL_NAME } from '../tools/WaitAgentsTool/prompt.js'
+import { AGENT_CONTROL_TOOL_NAME } from '../tools/AgentControlTool/prompt.js'
+import { GET_CONTEXT_REMAINING_TOOL_NAME } from '../tools/GetContextRemainingTool/prompt.js'
+import { AGENT_BATCH_TOOL_NAME } from '../tools/AgentBatchTool/prompt.js'
+import { CONNECTOR_SEARCH_TOOL_NAME } from '../tools/ConnectorTool/prompt.js'
 
 export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   TASK_OUTPUT_TOOL_NAME,
@@ -41,6 +48,12 @@ export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   ...(process.env.USER_TYPE === 'ant' ? [] : [AGENT_TOOL_NAME]),
   ASK_USER_QUESTION_TOOL_NAME,
   TASK_STOP_TOOL_NAME,
+  // Wave B: these act on the main thread's agents (subagents start none).
+  WAIT_AGENTS_TOOL_NAME,
+  AGENT_CONTROL_TOOL_NAME,
+  // A batch fans out one worker per row: only the main thread runs one, so a
+  // subagent (or a batch worker) never starts another batch.
+  AGENT_BATCH_TOOL_NAME,
 ])
 
 export const CUSTOM_AGENT_DISALLOWED_TOOLS = new Set([
@@ -66,6 +79,22 @@ export const ASYNC_AGENT_ALLOWED_TOOLS = new Set([
   TOOL_SEARCH_TOOL_NAME,
   ENTER_WORKTREE_TOOL_NAME,
   EXIT_WORKTREE_TOOL_NAME,
+  // Workers and background agents can read the user's clock, look up a fact and hand the user a deliverable.
+  CURRENT_TIME_TOOL_NAME,
+  LOOKUP_TOOL_NAME,
+  THREAD_READ_TOOL_NAME,
+  THREAD_RECENT_TOOL_NAME,
+  THREAD_WAIT_TOOL_NAME,
+  RESOURCE_TOOL_NAME,
+  BROWSER_TASKS_TOOL_NAME,
+  SEND_USER_MESSAGE_TOOL_NAME,
+  // A question that doesn't block: a worker's ask lands in the main session's thread.
+  ASK_USER_LATER_TOOL_NAME,
+  // history_recall stays main-thread: it reads the main session's transcript.
+  GET_CONTEXT_REMAINING_TOOL_NAME,
+  // Workers can find and load the user's connected apps. connector_suggest and
+  // settings stay with the main thread: the user must see the card or change.
+  CONNECTOR_SEARCH_TOOL_NAME,
 ])
 /**
  * Tools allowed only for in-process teammates (not general async agents).
@@ -78,11 +107,9 @@ export const IN_PROCESS_TEAMMATE_ALLOWED_TOOLS = new Set([
   TASK_LIST_TOOL_NAME,
   TASK_UPDATE_TOOL_NAME,
   SEND_MESSAGE_TOOL_NAME,
-  // Teammate-created crons are tagged with the creating agentId and routed to
-  // that teammate's pendingUserMessages queue (see useScheduledTasks.ts).
-  ...(feature('AGENT_TRIGGERS')
-    ? [CRON_CREATE_TOOL_NAME, CRON_DELETE_TOOL_NAME, CRON_LIST_TOOL_NAME]
-    : []),
+  // A teammate's this_thread scheduled tasks are tagged with its agentId and
+  // routed to its pendingUserMessages queue (see useScheduledTasks.ts).
+  AUTOMATION_TOOL_NAME,
 ])
 
 /*
@@ -92,6 +119,7 @@ export const IN_PROCESS_TEAMMATE_ALLOWED_TOOLS = new Set([
  * - ExitPlanModeTool: Plan mode is a main thread abstraction.
  * - TaskStopTool: Requires access to main thread task state.
  * - TungstenTool: Uses singleton virtual terminal abstraction that conflicts between agents.
+ * - folder_access: Always asks the user; async agents have nobody to ask, so it is left out.
  *
  * ENABLE LATER (NEED WORK):
  * - MCPTool: TBD
@@ -107,4 +135,6 @@ export const COORDINATOR_MODE_ALLOWED_TOOLS = new Set([
   TASK_STOP_TOOL_NAME,
   SEND_MESSAGE_TOOL_NAME,
   SYNTHETIC_OUTPUT_TOOL_NAME,
+  WAIT_AGENTS_TOOL_NAME,
+  AGENT_CONTROL_TOOL_NAME,
 ])

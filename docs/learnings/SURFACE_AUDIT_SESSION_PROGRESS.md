@@ -148,7 +148,6 @@ Branch: `fix/review-decision-event-type` (issue #16/#19 fixes) + `docs/surface-a
 | 88 | Marketplace (top-level) (PARTIAL → iOS) | `[x]` | DEFER — re-verified against live code: `views/marketplace/main/useMarketplaceManager.ts` is hardcoded mock `INITIAL_ITEMS` with no backend; nothing real to port yet | Defer until web has real marketplace backend | |
 | 89 | Plugin Registry / Plugin Marketplace (PARTIAL → iOS) | `[x]` | REAL — iOS Plugin Marketplace shipped: new Plugins sidebar tab, `MarketplacePlugin` model with bundled catalog, `PluginStore` for enabled-state persistence, and `PluginMarketplaceView` with category filters/search/enable toggle (`feat/ios-plugin-marketplace`) | Shipped phase 1 iOS port | `feat/ios-plugin-marketplace` |
 | 90 | Team Skills panel (GAP → iOS) | `[x]` | REAL — iOS Team Skills shipped: new sidebar tab, `WorkspaceClient`/`WorkspaceStore`, `TeamSkill` model, `TeamSkillsClient`/`TeamSkillsStore`, and `TeamSkillsView` wired to `/api/v1/team-skills` | Shipped phase 1 iOS port | `feat/ios-team-skills` |
-| 91 | MiroFish simulation engine (GAP → iOS, gizzi-code) | `[x]` | DEFER — web fully built `lib/mirofish/*`, real gap on iOS/gizzi-code but large scope | Defer to later phase | |
 
 ## Products/Discovery (5)
 

@@ -11,6 +11,9 @@ import { cloudOrigin } from '@/runtime/providers/discovery/allternit-cloud'
 import { CloudContinue } from '@/runtime/session/cloud-continue'
 import { cloudCreditsDisclosure } from '@/shared/util/provider-error'
 
+/** Who bills the plan. Absent = the server did not say (treated as Stripe/web). */
+export type BillingProvider = 'stripe' | 'apple' | 'google'
+
 export type AllternitAccount = {
   /** Plan id: free, plus, super (shown as Max), ultra. */
   plan: string
@@ -26,6 +29,8 @@ export type AllternitAccount = {
   monthToDateUsd: number
   /** `cloud_models`: whether Cloud models may run. Absent = the server sent none (not locked). */
   cloudModels?: CloudContinue.Entitlement
+  /** `billing_provider` from `GET /api/v1/billing/subscription`. Absent on older servers or Free. */
+  billingProvider?: BillingProvider
 }
 
 export type AccountResult =
@@ -64,6 +69,24 @@ export function parseAccountUsage(payload: unknown): AllternitAccount | undefine
   }
 }
 
+/** `billing_provider` from a `/billing/subscription` payload, or undefined. */
+export function parseBillingProvider(payload: unknown): BillingProvider | undefined {
+  const v = payload && typeof payload === 'object' ? (payload as Record<string, unknown>).billing_provider : undefined
+  return v === 'stripe' || v === 'apple' || v === 'google' ? v : undefined
+}
+
+/** True when the plan is billed by Apple or Google, so web checkout cannot change it. */
+export function isStoreBilled(account: Pick<AllternitAccount, 'billingProvider'>): boolean {
+  return account.billingProvider === 'apple' || account.billingProvider === 'google'
+}
+
+/** "Apple, manage in App Store subscriptions" / "Google, manage in Google Play subscriptions". */
+export function storeBilledNote(provider: 'apple' | 'google'): string {
+  return provider === 'apple'
+    ? 'billed by Apple, manage in App Store subscriptions'
+    : 'billed by Google, manage in Google Play subscriptions'
+}
+
 /** The Cloud entitlement of the signed-in account, or undefined (signed out, unreachable, or none sent = not locked). */
 export async function cloudEntitlement(opts: { fetchImpl?: typeof fetch } = {}): Promise<CloudContinue.Entitlement | undefined> {
   const result = await getAllternitAccount(opts).catch(() => undefined)
@@ -98,7 +121,17 @@ async function read(fetchImpl: typeof fetch = fetch): Promise<AccountResult> {
     }
     if (!res?.ok) continue
     const account = parseAccountUsage(await res.json().catch(() => undefined))
-    if (account) return { status: 'ok', account }
+    if (account) {
+      // Who bills the plan. Best effort: a failure here leaves it unknown (web).
+      if (account.plan !== 'free') {
+        const sub = await fetchImpl(`${cloudOrigin()}/api/v1/billing/subscription`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => undefined)
+        if (sub?.ok) account.billingProvider = parseBillingProvider(await sub.json().catch(() => undefined))
+      }
+      return { status: 'ok', account }
+    }
   }
   if (rejected === tokens.length) {
     return { status: 'signed-out', message: 'Allternit rejected the saved sign-in. Run `gizzi login` again.' }
@@ -153,7 +186,9 @@ export function accountLines(result: AccountResult, bar: (ratio: number) => stri
   }
   const a = result.account
   const paid = a.plan !== 'free'
-  lines.push(`  Plan:      ${a.label}${paid && a.status && a.status !== 'active' && a.status !== 'none' ? ` (${a.status})` : ''}`)
+  const statusNote = paid && a.status && a.status !== 'active' && a.status !== 'none' ? ` (${a.status})` : ''
+  const storeNote = paid && (a.billingProvider === 'apple' || a.billingProvider === 'google') ? ` (${storeBilledNote(a.billingProvider)})` : ''
+  lines.push(`  Plan:      ${a.label}${statusNote}${storeNote}`)
   lines.push(`  Credits:   ${formatUsd(a.credits)} Cloud balance`)
   if (a.monthlyLimit > 0) {
     const ratio = Math.min(1, Math.max(0, a.monthlyUsed / a.monthlyLimit))

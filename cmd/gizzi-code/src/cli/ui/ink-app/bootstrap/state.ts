@@ -134,9 +134,9 @@ type State = {
   sessionBypassPermissionsMode: boolean
   // Session-only flag gating the .claude/scheduled_tasks.json watcher
   // (useScheduledTasks). Set by cronScheduler.start() when the JSON has
-  // entries, or by CronCreateTool. Not persisted.
+  // entries, or by the automation tool. Not persisted.
   scheduledTasksEnabled: boolean
-  // Session-only cron tasks created via CronCreate with durable: false.
+  // Session-only scheduled tasks (the automation tool's this_thread queue).
   // Fire on schedule like file-backed tasks but are never written to
   // .claude/scheduled_tasks.json — they die with the process. Typed via
   // SessionCronTask below (not importing from cronTasks.ts keeps

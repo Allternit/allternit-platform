@@ -331,6 +331,26 @@
     {
       "id": "calendar-agenda",
       "name": "Calendar agenda"
+    },
+    {
+      "id": "time-zones",
+      "name": "Time zones"
+    },
+    {
+      "id": "conversion",
+      "name": "Conversion"
+    },
+    {
+      "id": "link-preview",
+      "name": "Link preview"
+    },
+    {
+      "id": "places",
+      "name": "Places"
+    },
+    {
+      "id": "writing",
+      "name": "Writing draft"
     }
   ],
   "aliases": {
@@ -470,6 +490,30 @@
     ],
     "research-brief": [
       "research brief"
+    ],
+    "time-zones": [
+      "time zones",
+      "world clock"
+    ],
+    "conversion": [
+      "unit conversion",
+      "currency conversion",
+      "exchange rate"
+    ],
+    "link-preview": [
+      "link preview",
+      "preview this link"
+    ],
+    "places": [
+      "nearby places",
+      "places near"
+    ],
+    "writing": [
+      "email draft",
+      "draft email",
+      "draft an email",
+      "text message draft",
+      "social post draft"
     ]
   }
 }

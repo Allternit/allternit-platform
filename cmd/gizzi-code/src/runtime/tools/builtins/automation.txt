@@ -1,0 +1,22 @@
+Create, list, change, delete or run the user's scheduled tasks: reminders, follow-ups and recurring checks that run later on the user's own computer.
+
+Call these "scheduled tasks" when you talk to the user, never "automations", "routines", "cron jobs" or "triggers".
+
+Before you create one, call action list and look for one that already does the job; update it instead of making a duplicate.
+
+Only create a scheduled task the user asked for. The one exception is your own follow-up (initiation own_followup), and only after the user said yes to it in this conversation.
+
+Kinds:
+- message (default): at the scheduled time the prompt runs and the result posts into this conversation (target this_thread) or into a new session each time (target new_session). Use it for reminders ("remind me at 3pm to call Sam") and recurring briefs.
+- heartbeat: a recurring check that stays quiet unless something matters, for example "tell me when the deploy finishes" or "watch this PR for review comments". Each run starts in a fresh session that cannot see this conversation, so the prompt must stand alone. Write into it: what to check and how, the last known state, when to tell the user, and when the check is done and should stop.
+
+Schedule (exactly one):
+- at: local wall time "YYYY-MM-DDTHH:mm" in the user's zone. Prefer this for one-time reminders. Never work out a UTC offset yourself and never add one; put a different zone in timezone if the user names one. If the time does not exist (the clocks skip it for daylight saving time) you get an error: ask the user for another time.
+- delay_minutes: for "in 20 minutes" style requests.
+- rrule: for repeating schedules, for example "FREQ=WEEKLY;BYDAY=MO,WE,FR;BYHOUR=9;BYMINUTE=0". End it with COUNT (number of runs) or UNTIL rather than deleting it later.
+- cron: 5 fields read in the user's zone, for example "0 9 * * 1-5".
+One-time tasks can be 1 minute to 365 days ahead. Repeating tasks run at most every 15 minutes. If you don't know the user's time zone or the current time, call current_time first.
+
+Runs are unattended: a step that needs the user's approval is refused, the run stops, and the user gets a notice. Don't schedule work that needs approval. After you create or change a scheduled task, tell the user in one sentence what approval setting it got (the result gives you the sentence) and when it runs next, in their time zone.
+
+A run that a scheduled task started cannot create scheduled tasks.

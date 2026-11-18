@@ -78,6 +78,9 @@ const DATA_KEYS: &[&str] = &[
     // Factory approvals: where this runtime already asked (`["app","push",…]`). "push" means its own Web Push
     // (factory_approvals_push) reached a device, so cloud sends the iPhone app only, not a second Web Push.
     "surfaces",
+    // An agent's message to its user (`agent_user_tools`, `agent.message.sent`): what it points at, and the
+    // session's name when it has no bot.
+    "ref", "sessionTitle",
 ];
 
 /// Extra keys a phone event (`phone.step`, `phone.run.completed`) carries, in
@@ -608,13 +611,14 @@ mod tests {
             ("files.inbox.dropped", json!({ "task_id": "tsk_1", "untrusted": true }), Some("files.inbox.dropped")),
             ("files.task.result", json!({ "task_id": "tsk_1", "status": "succeeded" }), Some("files.task.result")),
             ("files.conflict", json!({ "conflict": {} }), Some("files.conflict")),
+            ("agent.message.sent", json!({ "text": "Your report is ready", "kind": "message" }), Some("agent.message.sent")),
         ];
         for (ty, payload, want) in table {
             let got = classify(ty, payload).and_then(Kind::registry);
             assert_eq!(got, *want, "{ty} {payload}");
         }
         // The registry names this runtime emits are all in the agreed list.
-        let registry = ["approval.requested", "approval.resolved", "agent.run.completed", "thread.needs_user", "message.received", "call.ended", "inbox.item.created", "vendor.ticket.created", "subscription.login_needed", "subscription.signed_in", "usage.threshold", "attention.opened", "attention.resolved", "phone.step", "phone.run.completed", "phone.approval.requested", "phone.approval.resolved", "files.inbox.dropped", "files.task.result", "files.conflict"];
+        let registry = ["approval.requested", "approval.resolved", "agent.run.completed", "thread.needs_user", "message.received", "call.ended", "inbox.item.created", "vendor.ticket.created", "subscription.login_needed", "subscription.signed_in", "usage.threshold", "attention.opened", "attention.resolved", "phone.step", "phone.run.completed", "phone.approval.requested", "phone.approval.resolved", "files.inbox.dropped", "files.task.result", "files.conflict", "agent.message.sent"];
         for (_, _, want) in table {
             if let Some(w) = want {
                 assert!(registry.contains(w), "{w}");

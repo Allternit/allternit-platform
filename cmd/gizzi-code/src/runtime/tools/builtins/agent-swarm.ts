@@ -18,13 +18,31 @@ import {
   needsSubagentSummaryContinuation,
   throwIfSubagentMessageFailed,
 } from "@/runtime/agents/subagent-run-contract"
+import { resolveModelClass } from "@/runtime/agents/model-class"
+import { TaskEffort, TaskName } from "@/runtime/primitives/task-name"
+import { TASK_EFFORT_VALUES } from "@/runtime/primitives/wave-b-types"
 
 const item = z.object({
   description: z.string().min(1),
   prompt: z.string().min(1),
   subagent_type: z.string().min(1),
-  task_id: z.string().optional().describe("Owned child session to resume instead of spawning a new agent."),
+  task_id: z
+    .string()
+    .optional()
+    .describe("Owned child session to resume instead of spawning a new agent: its task_id or its name path."),
   timeout_ms: z.number().int().positive().max(3_600_000).optional(),
+  name: z
+    .string()
+    .optional()
+    .describe("Short name for addressing this agent later ([a-z0-9_-], up to 32); becomes a path such as /root/tests."),
+  model: z
+    .enum(["small", "standard", "deep", "inherit"])
+    .optional()
+    .describe("small (haiku-class), standard (sonnet-class), deep (opus-class, risky work only) or inherit (your model)."),
+  effort: z
+    .enum(TASK_EFFORT_VALUES)
+    .optional()
+    .describe("low, medium or high: the model's nearest reasoning level; ignored when it has none."),
 })
 
 const parameters = z.object({
@@ -36,7 +54,7 @@ type Item = z.infer<typeof item>
 
 export const AgentSwarmTool = Tool.define("agent_swarm", async () => ({
   description:
-    "Run a batch of independent subagents with adaptive burst/ramp scheduling, same-agent rate-limit retry, cancellation, and ordered partial results.",
+    "Run a batch of independent subagents with adaptive burst/ramp scheduling, same-agent rate-limit retry, cancellation, and ordered partial results. Each item can take a name (so you can address it later by path, such as /root/tests), a model class (small ≈ haiku, standard ≈ sonnet, deep ≈ opus; use deep only for risky work) and an effort (low, medium, high).",
   parameters,
   async execute(params, ctx) {
     const config = await Config.get()
@@ -55,12 +73,19 @@ export const AgentSwarmTool = Tool.define("agent_swarm", async () => ({
       const agent = await Agent.get(task.subagent_type)
       if (!agent || agent.mode === "primary") throw new Error(`Unknown subagent type: ${task.subagent_type}`)
       resolved.set(task.subagent_type, agent)
+      if (task.name !== undefined) TaskName.validate(task.name)
     }
+    const parentModel = { providerID: parentInfo.providerID, modelID: parentInfo.modelID }
 
     const run: AdaptiveRunLauncher<Item, string>["launch"] = async (queued, context) => {
       const task = queued.data
       const agent = resolved.get(task.subagent_type)!
-      const existingID = context.retryRunID ?? task.task_id
+      const existingID =
+        context.retryRunID ??
+        (task.task_id
+          ? ((await TaskName.resolve({ sessionID: ctx.sessionID, target: task.task_id }).catch(() => undefined)) ??
+            task.task_id)
+          : undefined)
       const child = existingID
         ? await Session.get(existingID).then((session) => {
             assertOwnedSubagentRun(
@@ -83,9 +108,15 @@ export const AgentSwarmTool = Tool.define("agent_swarm", async () => ({
           })
 
       if (!existingID) await PermissionNext.setMode(child.id, await PermissionNext.getMode(ctx.sessionID))
+      if (!existingID && task.name)
+        await TaskName.assign({ parentSessionID: ctx.sessionID, childSessionID: child.id, name: task.name })
       // A bot's swarm workers stay isolated from the user's personal setup.
       BotTurn.mark(child.id, BotTurn.get(ctx.sessionID))
-      const model = agent.model ?? { providerID: parentInfo.providerID, modelID: parentInfo.modelID }
+      const model =
+        (task.model ? await resolveModelClass(task.model, parentModel) : undefined) ?? agent.model ?? parentModel
+      const variant = task.effort
+        ? await TaskEffort.variant({ effort: task.effort, providerID: model.providerID, modelID: model.modelID })
+        : undefined
       const tools = {
         todowrite: false,
         todoread: false,
@@ -110,6 +141,7 @@ export const AgentSwarmTool = Tool.define("agent_swarm", async () => ({
                 sessionID: child.id,
                 agent: agent.name,
                 model,
+                ...(variant ? { variant } : {}),
                 tools,
                 parts: await SessionPrompt.resolvePromptParts(task.prompt),
               })
@@ -126,6 +158,7 @@ export const AgentSwarmTool = Tool.define("agent_swarm", async () => ({
               sessionID: child.id,
               agent: agent.name,
               model,
+              ...(variant ? { variant } : {}),
               tools,
               parts: [{ type: "text", text: policy!.continuationPrompt }],
             })
@@ -163,6 +196,11 @@ export const AgentSwarmTool = Tool.define("agent_swarm", async () => ({
       { maxConcurrency: params.max_concurrency ?? resolveAdaptiveConcurrency() },
     )
     const results = await batch.run()
+    const paths = await Promise.all(
+      results.map((result) =>
+        result.task.data.name && result.runID ? TaskName.pathOf(result.runID).catch(() => null) : null,
+      ),
+    )
     return {
       title: `${params.tasks.length} agent swarm`,
       metadata: {
@@ -171,10 +209,11 @@ export const AgentSwarmTool = Tool.define("agent_swarm", async () => ({
         suspended,
       },
       output: JSON.stringify(
-        results.map((result) => ({
+        results.map((result, index) => ({
           description: result.task.data.description,
           subagent_type: result.task.data.subagent_type,
           task_id: result.runID,
+          ...(paths[index] ? { name: paths[index] } : {}),
           status: result.status,
           result: result.result,
           error: result.error,

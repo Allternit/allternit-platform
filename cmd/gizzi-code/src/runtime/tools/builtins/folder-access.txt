@@ -1,0 +1,10 @@
+Ask the person for access to folders outside this project, for this session.
+
+- action "request": read and write in the folders. Files and commands there stop asking about the outside folder. A delete there does not delete: the file moves to `<folder>/_to_delete/`, keeping its path inside the folder.
+- action "request_delete": also allow real deletes in the folders. Ask only when the person wants files gone for good, and say so in reason.
+- paths: 1 to 5 existing folders (absolute, `~/...`, or relative to the project). Name the narrowest folder that does the job; the home folder and the filesystem root are refused. Folders inside the project need no access.
+- reason (required, up to 200 characters): what you will do there, in plain words. The person sees it on the card.
+
+The person approves every request, in every mode. A grant lasts until this session ends and covers subagents of this session. If they decline, don't ask again for the same folders; work with what you have or ask them what to do.
+
+After you move files to `_to_delete`, tell the person where they are.

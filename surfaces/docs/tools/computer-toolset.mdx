@@ -98,6 +98,10 @@ The executor reports what a target can run (see [Schema](#schema)). A member tha
 | Browser (ACU gateway, Playwright) | All 31 browser members, including element refs, tabs, console, network, JavaScript and uploads. The four optional members stay off until the caller turns them on (see [Optional members](#optional-members)). |
 | Paired computers (mesh) | Nothing. They take no agent input. View them live instead. |
 
+### Access members
+
+`resolve_access` and `request_access` run in allternit-api, not in the driver. They look up apps and ask the person for a `read`, `click` or `full` tier per app. Without a grant an app on this device is read only, and a call above the granted tier fails with `access_required`. Sandbox and cloud computers need no grant. Full rules: [Computer access tiers](/tools/computer-access). Every call also passes the four action classes in [Action review](/tools/action-review).
+
 ## Executor
 
 ```http
@@ -298,7 +302,7 @@ The contract for this option is `turnOptions.computer` in `contracts/pet-offers/
 
 - **gizzi `browser` tool** (ACU gateway, goal-driven `execute`). It is replaced by the toolset `browser` tool under the same `GIZZI_DISABLE_BROWSER_TOOL` switch. Goal-driven browsing was a second agent loop, so it is gone.
 - **gizzi `desktop` tool.** Removed on 2026-10-09. Screen input is the `computer` tool; provisioning and files are the `computers` tool, which calls allternit-api's `computer_*` tools. Both are on with `GIZZI_ENABLE_COMPUTER_TOOL`.
-- **`pane_browser`** is unchanged. It drives the page the person can see in the app's browser pane. That pane is a different target from the headless gateway session, so the two stay separate.
+- **`pane_browser`** is unchanged. It drives the page the person can see in the app's browser pane. That pane is a different target from the headless gateway session, so the two stay separate. See [Browser pane](/tools/pane-browser) and [Browser tasks](/tools/browser-tasks).
 - **allternit-api `computer_screenshot` / `computer_mouse` / `computer_keyboard` tools** (`/tools/execute`). These stay as compatibility aliases on the shared control plane. New work uses the toolset.
 
 ## Contract files and generated types
@@ -316,6 +320,8 @@ Outputs: `sdk/computer-toolset` (`@allternit/computer-toolset`), gizzi `contract
 - [Allternit Driver](/tools/allternit-driver)
 - [How computer use decides](/tools/computer-use-decisions)
 - [Computer-use safety](/tools/computer-safety)
+- [Computer access tiers](/tools/computer-access)
+- [Action review](/tools/action-review)
 - [Replay cache and skills](/tools/computer-use-replay)
 - [Computer credentials](/tools/computer-credentials)
 - [Computers MCP server](/api/platform/hosted-computers)

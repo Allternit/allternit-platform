@@ -1,0 +1,14 @@
+Ask the user something without stopping your work. The question goes to the thread (and their phone); you get an id back at once and keep going. When they answer, the answer arrives as a new message that starts with "[answer to your question <id>]".
+
+Use it when you are working without the user watching (a scheduled task, a long job, a subagent, a worker) and you hit a decision only they can make, but you can make a reasonable guess and keep going. If the user is here and you can't continue without the answer, use the question tool instead.
+
+How to ask:
+- 1 to 3 questions, each with a few concrete options (same shape as the question tool: label, description, `recommended`, `caution`, `then`, `risk`, `context`).
+- `assumption` (required, up to 300 characters): what you will do until they answer, in one line. The user sees it on the card.
+- Then do exactly that. Prefer work that is easy to change if the answer differs.
+
+Limits:
+- At most 3 unanswered asks per thread. A 4th is refused; continue on your assumptions instead.
+- An ask nobody answers expires after 7 days. You are not told; your assumption stands.
+
+When the answer arrives, check it against your assumption. If it differs, redo or adjust the affected work and say what changed.

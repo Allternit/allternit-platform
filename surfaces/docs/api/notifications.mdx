@@ -26,7 +26,7 @@ Clerk session or a `compute`-scoped API key.
 }
 ```
 
-One row per event type a person can be notified about, in [event registry](/guides/mcp-events#events) order: `approval.requested`, `approval.resolved`, `agent.run.completed`, `thread.needs_user`, `message.received`, `call.ended`, `inbox.item.created`, `vendor.ticket.created`, `subscription.login_needed`, `subscription.signed_in`, `usage.threshold`, `attention.opened`, `attention.resolved`. `title` and `description` come from the registry (the same titles as `GET /api/v1/events/catalog`), so a client renders switches without its own copy. `default` is what `enabled` is when the person hasn't changed it. `pushConfigured: false` means the server has no VAPID keys, so nothing is sent whatever the switches say.
+One row per event type a person can be notified about, in [event registry](/guides/mcp-events#events) order: `approval.requested`, `approval.resolved`, `agent.run.completed`, `thread.needs_user`, `message.received`, `agent.message.sent`, `call.ended`, `inbox.item.created`, `vendor.ticket.created`, `subscription.login_needed`, `subscription.signed_in`, `usage.threshold`, `attention.opened`, `attention.resolved`. `title` and `description` come from the registry (the same titles as `GET /api/v1/events/catalog`), so a client renders switches without its own copy. `default` is what `enabled` is when the person hasn't changed it. `pushConfigured: false` means the server has no VAPID keys, so nothing is sent whatever the switches say.
 
 ### `PUT /api/v1/notifications/preferences`
 
@@ -60,7 +60,7 @@ No auth: the token is the credential, and it was only sent to that person's devi
 
 | On | Off |
 |---|---|
-| `approval.requested`, `thread.needs_user`, `message.received`, `call.ended`, `subscription.login_needed`, `usage.threshold`, `attention.opened`, `agent.run.completed` (failed or long runs only) | `approval.resolved`, `attention.resolved`, `inbox.item.created`, `vendor.ticket.created`, `subscription.signed_in` |
+| `approval.requested`, `thread.needs_user`, `message.received`, `agent.message.sent`, `call.ended`, `subscription.login_needed`, `usage.threshold`, `attention.opened`, `agent.run.completed` (failed or long runs only) | `approval.resolved`, `attention.resolved`, `inbox.item.created`, `vendor.ticket.created`, `subscription.signed_in` |
 
 `message.received` and `call.ended` default on because the app already pushed messages and missed calls before the sink existed.
 
@@ -91,6 +91,7 @@ The payload is the [Web Push](/api/web-push#what-gets-pushed) JSON with `type: "
 | `agent.run.completed` | `<bot> finished a run` | `Done: <title>`, `It failed. Open it to see why.`, `It was cancelled.` | `run-<id>` |
 | `thread.needs_user` | `<bot> needs you` | the reason, the thread title or `Open the thread to reply.` | `needs-<thread>` (`Urgency: high`) |
 | `message.received` | the sender, or New message | the text (cut at 240 characters), or `You have a new <channel> message for your bot` | `msg-<thread>` or `channel-<provider>` |
+| `agent.message.sent` | the bot's name, the session title, or Your agent | the message preview (cut at 200 characters), or `Sent you a message. Open it to read it.` | `agent-msg-<thread or session>` |
 | `call.ended` | `Missed call from <from>` or Call ended | follow-up hint, or `<bot> finished a call with <from> (2 min).` | `call-<id>` |
 | `inbox.item.created` | the item title | its summary | `inbox-<id>` |
 | `vendor.ticket.created` | `New ticket for <bot>` | A vendor bot has work waiting. | `ticket-<id>` |
@@ -135,6 +136,7 @@ The category comes from the runtime's `inboxKind` first, then the event name, so
 | `APPROVAL_INLINE` | Approve, Deny, Reply | An inbox item of kind `approval`, `held_send`, `email_draft`, `factory_approval` or `gizzi_permission` whose whole text and recipient fit (`approveInline: true`) and that has a `contentHash` |
 | `APPROVAL_REVIEW` | Review, Deny, Reply | Such an item that does not fit, or has no hash; an `approval.requested` with an `inboxId` but no kind |
 | `BOT_REPLY` | Reply, Open | `message.received` with `senderKind: "bot"`; `thread.needs_user` with no inbox kind |
+| `AGENT_MESSAGE` | Reply, Open | `agent.message.sent` |
 | `RUN_DONE` | Open | `agent.run.completed` |
 | `NEEDS_FIX` | Retry, Snooze | `attention.opened` |
 
@@ -174,6 +176,14 @@ The fields cloud reads today: `needsYou` (a list of inbox ids). The rest (`activ
 
 When a sink push for an inbox item reaches at least one iPhone, cloud records the tag in `notification_delivered`. On each new snapshot, every inbox id that was in the previous `needsYou` and is not in this one (answered on another device, on the web, or it expired) has its delivered tags removed from the person's iPhones by a background push, and the rows are deleted. Web Push gets no revoke push: an open page closes its own notifications, and Safari drops subscriptions that receive silent pushes.
 
+## Agent messages
+
+`agent.message.sent` ("Messages from your agents") is written when an agent calls [send_user_message](/tools/send-user-message) with a push. It is on by default, at level Normal, so quiet hours hold it, and it is `private` by default. It takes the `AGENT_MESSAGE` category and shares the per-thread message limiter with `message.received`. Agent pushes are also limited at the source to 4 per thread per hour and 20 per user per day. The 12-hour stale rule above applies. A runtime that is not linked to the person's account forwards nothing, so an unpaired runtime never pushes. An incognito chat never pushes. Tapping the push opens the thread or session.
+
+## Scheduled-task approvals
+
+When a scheduled run started by the local API scheduler stops at an approval, the scheduler raises one attention item (needs you, with Retry). The runtime sees `automation_run.by` equal to `scheduler` and sends no second notice. A run started by gizzi's own `/cron` fallback has no `by` and notifies from the runtime. See [automation](/tools/automation).
+
 ## Quiet hours
 
 ### Levels
@@ -184,7 +194,7 @@ Every push has a level (`notifications::level`):
 |---|---|
 | Urgent | `attention.opened` with `severity: "critical"`, and any event whose data has `urgency: "urgent"` (a bot marked it; the runtime forwards the `urgency` key) |
 | Needs you | `approval.requested`, `thread.needs_user`, `subscription.login_needed` |
-| Normal | `message.received`, `call.ended`, `attention.opened` with `severity: "warn"`, and the direct pushes |
+| Normal | `message.received`, `agent.message.sent`, `call.ended`, `attention.opened` with `severity: "warn"`, and the direct pushes |
 | Low | everything else |
 
 While a person is in quiet hours (their `notification_quiet_hours` row is on and the current time in their zone is inside the window), a push below their `letThrough` level is not sent:

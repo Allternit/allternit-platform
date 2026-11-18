@@ -37,7 +37,25 @@
 //!   [`request_stop`] (`POST …/runs/:run_id/cancel`) aborts the turn; the run
 //!   ends `cancelled` with its output so far and does not count as a failure.
 //!   Rows left `running` by a runtime that quit are failed at the next boot.
-//! * **Needs a bot.** A local routine with no `agent_id` is never claimed
+//! * **Scheduled tasks** (the `automation` tool, `agent_automation_tools`):
+//!   a routine with `config.delivery.sessionId` posts into that session
+//!   itself, as its bot when it has one, else as a plain user turn (gizzi
+//!   uses the session's model and queues it while the session is busy).
+//!   `config.kind = "heartbeat"` runs in a fresh side session with
+//!   [`HEARTBEAT_INSTRUCTIONS`] and acts on the reply's [`parse_verdict`]:
+//!   NOTIFY posts a visible note into the thread and pushes it, DONT_NOTIFY
+//!   is a quiet `skipped` run (`quiet`), DONE notifies and completes it, no
+//!   verdict fails it (`no_verdict`). Every scheduled turn carries
+//!   [`run_marker`] (`metadata.automation_run`), so gizzi refuses its
+//!   approval asks; a run stopped that way ends on the needs-you path
+//!   (`approval_timeout`, with Retry).
+//! * **Completion.** A routine becomes `completed` (`metadata.completed =
+//!   {at, reason}`) on a heartbeat's DONE, after `max_runs` good or quiet
+//!   runs, past `config.until`, and (agent-made) after its one-shot ran. A
+//!   one-shot more than 12 h late is not run: one `skipped` run (`missed`) and
+//!   a `routine_missed` item.
+//! * **Needs a bot.** A local routine with no `agent_id` (and no
+//!   `config.delivery.sessionId`) is never claimed
 //!   (it used to fail every run with "local routines need an agent"). The
 //!   tick flags it `metadata.needsAgent = true` so the UI can list it under
 //!   "Needs a bot"; assigning an agent (PUT `agent_id`) clears the flag.
@@ -83,8 +101,17 @@ const WAITING_ON_YOU: &str = "waiting for you: the last run stopped at a phone s
 const MISSED_ROWS_CAP: usize = 30;
 /// Longest a run may start after it was due before it counts as missed.
 const MIN_GRACE_SECS: i64 = 300;
-/// SQL predicate: the routine has an agent to run it.
-const HAS_AGENT: &str = "agent_id IS NOT NULL AND TRIM(agent_id) != ''";
+/// SQL predicate: something runs the routine: a bot, or the one session a
+/// scheduled task posts into itself (`config.delivery.sessionId`, made by the
+/// `automation` tool). Rows with neither are "Needs a bot".
+const RUNNABLE: &str = "((agent_id IS NOT NULL AND TRIM(agent_id) != '')
+    OR COALESCE(TRIM(json_extract(CASE WHEN json_valid(config) THEN config ELSE '{}' END, '$.delivery.sessionId')), '') != '')";
+/// A one-shot due longer ago than this is not run late: it is logged as missed.
+pub const ONE_SHOT_LATE_LIMIT_SECS: i64 = 12 * 60 * 60;
+/// The text appended to a heartbeat run's prompt (shared with gizzi's `Heartbeat.heartbeatInstructions()`).
+pub const HEARTBEAT_INSTRUCTIONS: &str = include_str!("../../../contracts/automation/heartbeat-instructions.txt");
+/// A heartbeat reply with no verdict line fails with an error starting with this.
+pub const NO_VERDICT: &str = "no verdict: ";
 /// SQL expression: the row's metadata as a JSON object (NULL/garbage → {}).
 const META: &str = "CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END";
 
@@ -186,10 +213,37 @@ pub struct LocalRoutine {
     pub timezone: Option<String>,
     /// How late a scheduled run started, set by [`claim_due`] when it ran past its grace period.
     pub late_by_ms: Option<i64>,
+    /// Good runs after which the routine completes (`routines.max_runs`); loops have none.
+    pub max_runs: Option<i64>,
+}
+
+impl LocalRoutine {
+    /// The one session a scheduled task posts into (`config.delivery.sessionId`).
+    pub fn delivery_session(&self) -> Option<&str> {
+        if self.kind != TaskKind::Routine {
+            return None;
+        }
+        crate::automation_routes::delivery_session(&self.config)
+    }
+
+    /// `message` (a turn at the scheduled time) or `heartbeat` (a quiet check).
+    pub fn automation_kind(&self) -> &str {
+        self.config.get("kind").and_then(Value::as_str).filter(|k| *k == "heartbeat").unwrap_or("message")
+    }
+
+    /// Something can run it: a bot, or the session it posts into.
+    pub fn runnable(&self) -> bool {
+        self.agent_id.as_deref().is_some_and(|a| !a.trim().is_empty()) || self.delivery_session().is_some()
+    }
+
+    /// Made by the `automation` tool (`metadata.origin = "agent"`).
+    fn agent_made(&self) -> bool {
+        self.metadata.get("origin").and_then(Value::as_str) == Some("agent")
+    }
 }
 
 const COLS: &str = "id, user_id, agent_id, name, description, schedule_type, schedule_expression, \
-                    config, metadata, next_run_at, timeout_seconds, timezone";
+                    config, metadata, next_run_at, timeout_seconds, timezone, max_runs";
 
 fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
     let parse = |s: Option<String>| s.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
@@ -208,12 +262,13 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
         timeout_seconds: row.get(10)?,
         timezone: row.get(11)?,
         late_by_ms: None,
+        max_runs: row.get(12)?,
     })
 }
 
 /// `COLS` for `loops`: a loop has no timeout of its own, so the default applies.
 const LOOP_COLS: &str = "id, user_id, agent_id, name, description, schedule_type, schedule_expression, \
-                         config, metadata, next_run_at, NULL, timezone";
+                         config, metadata, next_run_at, NULL, timezone, NULL";
 
 fn map_loop_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalRoutine> {
     map_row(row).map(|r| LocalRoutine { kind: TaskKind::Loop, ..r })
@@ -267,7 +322,7 @@ fn backfill(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<()> {
         let mut stmt = conn.prepare(&format!(
             "SELECT id, schedule_type, schedule_expression, last_run_at, timezone FROM routines
              WHERE execution_domain = 'local' AND status = 'active' AND next_run_at IS NULL
-               AND {HAS_AGENT}
+               AND {RUNNABLE}
                AND schedule_type IN ('interval', 'cron', 'once')"
         ))?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
@@ -295,7 +350,7 @@ pub fn flag_agentless(conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
     let flagged = conn.execute(
         &format!(
             "UPDATE routines SET metadata = json_set({META}, '$.needsAgent', json('true')), next_run_at = NULL
-             WHERE execution_domain = 'local' AND NOT ({HAS_AGENT})
+             WHERE execution_domain = 'local' AND NOT {RUNNABLE}
                AND (json_extract({META}, '$.needsAgent') IS NOT 1 OR next_run_at IS NOT NULL)"
         ),
         [],
@@ -312,7 +367,7 @@ fn sync_needs_bot_items(conn: &rusqlite::Connection) {
     let missing: Vec<(String, String, String)> = (|| -> rusqlite::Result<_> {
         let mut st = conn.prepare(&format!(
             "SELECT r.id, r.user_id, r.name FROM routines r
-             WHERE r.execution_domain = 'local' AND r.status = 'active' AND NOT ({HAS_AGENT})
+             WHERE r.execution_domain = 'local' AND r.status = 'active' AND NOT {RUNNABLE}
                AND NOT EXISTS (SELECT 1 FROM attention_items a WHERE a.id = 'routine_needs_bot:' || r.id
                                AND (a.resolved_at IS NULL OR a.resolution = 'dismissed'))"
         ))?;
@@ -336,7 +391,7 @@ fn sync_needs_bot_items(conn: &rusqlite::Connection) {
         let mut st = conn.prepare(&format!(
             "SELECT a.id, a.owner FROM attention_items a WHERE a.kind = 'routine_needs_bot' AND a.resolved_at IS NULL
                AND NOT EXISTS (SELECT 1 FROM routines r WHERE r.id = a.source_id AND r.execution_domain = 'local'
-                               AND r.status = 'active' AND NOT ({HAS_AGENT}))"
+                               AND r.status = 'active' AND NOT {RUNNABLE})"
         ))?;
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.filter_map(Result::ok).collect())
@@ -353,7 +408,7 @@ fn claim_due(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<LocalRou
     let due: Vec<LocalRoutine> = {
         let mut stmt = conn.prepare(&format!(
             "SELECT {COLS} FROM routines
-             WHERE execution_domain = 'local' AND status = 'active' AND {HAS_AGENT}
+             WHERE execution_domain = 'local' AND status = 'active' AND {RUNNABLE}
                AND next_run_at IS NOT NULL AND next_run_at <= ?1
                AND NOT {closed}
              ORDER BY next_run_at",
@@ -376,9 +431,24 @@ fn claim_due(db: &DbHandle, now: DateTime<Utc>) -> rusqlite::Result<Vec<LocalRou
                 record_paused_skip(&conn, &r, now);
                 continue;
             }
+            // Past its end date (`config.until`): complete it instead of running.
+            if until_of(&r).is_some_and(|until| until <= now) {
+                complete(&conn, r.kind, &r.id, "until", now);
+                continue;
+            }
             let mut r = r;
             if let Some(due_at) = r.next_run_at.as_deref().and_then(|t| DateTime::parse_from_rfc3339(t).ok()).map(|t| t.with_timezone(&Utc)) {
                 let late = now - due_at;
+                // A one-shot more than 12 h late (the computer was off or asleep) is
+                // missed, not run: a reminder that late is wrong, not useful.
+                if r.schedule_type == "once" && late > chrono::Duration::seconds(ONE_SHOT_LATE_LIMIT_SECS) {
+                    r.late_by_ms = Some(late.num_milliseconds());
+                    record_missed_one_shot(&conn, &r, due_at, now);
+                    if r.agent_made() {
+                        complete(&conn, r.kind, &r.id, "missed", now);
+                    }
+                    continue;
+                }
                 let interval = next_run(&r.schedule_type, &r.schedule_expression, due_at, false, r.timezone.as_deref()).map_or(0, |t| (t - due_at).num_seconds());
                 let grace = chrono::Duration::seconds(MIN_GRACE_SECS.max(interval / 10));
                 if late > grace {
@@ -554,6 +624,206 @@ fn record_missed(conn: &rusqlite::Connection, r: &LocalRoutine, due_at: DateTime
     });
 }
 
+/// A one-shot due more than [`ONE_SHOT_LATE_LIMIT_SECS`] ago: one `skipped` row
+/// (`outcome_reason = missed`) and a `routine_missed` attention item, no run.
+fn record_missed_one_shot(conn: &rusqlite::Connection, r: &LocalRoutine, due_at: DateTime<Utc>, now: DateTime<Utc>) {
+    let wrote = conn.execute(
+        "INSERT INTO routine_runs (id, routine_id, status, scheduled_at, started_at, finished_at, duration_ms,
+             output, error, triggered_by, metadata, outcome_reason, late_by_ms)
+         VALUES (?1, ?2, 'skipped', ?3, ?4, ?4, 0, 'missed', NULL, 'schedule', '{}', 'missed', ?5)",
+        params![uuid::Uuid::new_v4().to_string(), r.id, due_at.to_rfc3339(), now.to_rfc3339(), r.late_by_ms],
+    );
+    if let Err(e) = wrote {
+        warn!(routine = %r.id, error = %e, "could not record a missed one-shot");
+    }
+    let _ = conn.execute(
+        &format!("UPDATE routines SET last_run_at = ?2, metadata = json_set({META}, '$.lastRunStatus', 'skipped') WHERE id = ?1"),
+        params![r.id, now.to_rfc3339()],
+    );
+    crate::netops::alerts::open(conn, &crate::netops::alerts::Item {
+        owner: r.user_id.clone(),
+        kind: "routine_missed".into(),
+        severity: "warn".into(),
+        bot_id: r.agent_id.clone(),
+        source: "routine".into(),
+        source_id: r.id.clone(),
+        summary: format!(
+            "\"{}\" didn't run: it was due more than 12 hours ago, while this computer was off or asleep.",
+            r.name
+        ),
+        detail: json!({ "routine": r.name, "dueAt": due_at.to_rfc3339(), "lateByMs": r.late_by_ms, "missedRuns": 1 }),
+        ..Default::default()
+    });
+}
+
+/// `config.until`: the end date a scheduled task's RRULE gave it.
+fn until_of(r: &LocalRoutine) -> Option<DateTime<Utc>> {
+    let until = r.config.get("until").and_then(Value::as_str)?;
+    DateTime::parse_from_rfc3339(until.trim()).ok().map(|t| t.with_timezone(&Utc))
+}
+
+/// Stop a routine for good: status `completed`, no cursor, and
+/// `metadata.completed = {at, reason}` (`done`, `max_runs`, `until`, `once`, `missed`).
+pub fn complete(conn: &rusqlite::Connection, kind: TaskKind, id: &str, reason: &str, at: DateTime<Utc>) -> bool {
+    if kind != TaskKind::Routine {
+        return false;
+    }
+    conn.execute(
+        &format!(
+            "UPDATE routines SET status = 'completed', next_run_at = NULL,
+                 metadata = json_set({META}, '$.completed', json_object('at', ?2, 'reason', ?3))
+             WHERE id = ?1 AND status IN ('active', 'paused')"
+        ),
+        params![id, at.to_rfc3339(), reason],
+    )
+    .map(|n| n == 1)
+    .unwrap_or(false)
+}
+
+/// Runs that count toward `max_runs`: good runs and quiet heartbeat runs, not
+/// the skips for paused bots or a computer that was off.
+pub fn counted_runs(conn: &rusqlite::Connection, id: &str) -> i64 {
+    conn.query_row(
+        "SELECT count(*) FROM routine_runs WHERE routine_id = ?1
+           AND (status = 'succeeded'
+                OR (status = 'skipped' AND COALESCE(outcome_reason, '') NOT IN ('bots_paused', 'missed_runtime_offline', 'missed')))",
+        params![id],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
+}
+
+/// Why the routine is finished after this run, if it is: a heartbeat's
+/// DONE, `max_runs` reached, its next run past `config.until`, or a
+/// scheduled task's one-shot that ran.
+fn completion_after_run(conn: &rusqlite::Connection, r: &LocalRoutine, outcome: &RunOutcome) -> Option<&'static str> {
+    if r.kind != TaskKind::Routine || outcome.status == "cancelled" {
+        return None;
+    }
+    if outcome.reason == Some("done") {
+        return Some("done");
+    }
+    if outcome.status == "failed" {
+        return None;
+    }
+    if r.max_runs.is_some_and(|n| n > 0 && counted_runs(conn, &r.id) >= n) {
+        return Some("max_runs");
+    }
+    let next: Option<String> = conn.query_row("SELECT next_run_at FROM routines WHERE id = ?1", params![r.id], |row| row.get(0)).ok().flatten();
+    let next = next.and_then(|t| DateTime::parse_from_rfc3339(&t).ok()).map(|t| t.with_timezone(&Utc));
+    if let (Some(until), Some(next)) = (until_of(r), next) {
+        if next > until {
+            return Some("until");
+        }
+    }
+    if r.schedule_type == "once" && r.agent_made() && next.is_none() {
+        return Some("once");
+    }
+    None
+}
+
+// ─── Heartbeat verdicts ────────────────────────────────────────────────────
+
+/// How a heartbeat run tells the scheduler whether to bother the user: the
+/// last line of its reply. Mirrors gizzi's `Heartbeat.parseVerdict`
+/// (`runtime/primitives/heartbeat.ts`); both pass every vector in
+/// `contracts/automation/heartbeat-verdict.json`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Verdict {
+    /// Post the line to the task's thread and push it.
+    Notify { line: String },
+    /// Nothing worth saying: a quiet `skipped` run.
+    DontNotify,
+    /// Post and push the line, then complete the task.
+    Done { line: String },
+    /// No verdict: the run failed.
+    #[serde(rename = "none")]
+    Missing,
+}
+
+/// A line that is only a code fence or decoration (skipped when finding the last line).
+fn verdict_filler(line: &str) -> bool {
+    let run_of = |set: &str| line.chars().count() >= 3 && line.chars().all(|c| set.contains(c));
+    run_of("`") || run_of("~") || run_of("-*_=") || line.chars().all(|c| c.is_whitespace() || "*_`>#".contains(c))
+}
+
+/// The verdict keyword at the start of `text` (any case): (`notify` | `done` |
+/// `dont_notify`, its length in bytes). A letter, `_` or `'` right after it is
+/// no keyword ("Notifying").
+fn verdict_keyword(text: &str) -> Option<(&'static str, usize)> {
+    let lower = text.to_ascii_lowercase();
+    let seps = ["_", " "];
+    let mut forms: Vec<(String, &'static str)> = Vec::new();
+    for a in seps {
+        forms.push((format!("dont{a}notify"), "dont_notify"));
+        forms.push((format!("don't{a}notify"), "dont_notify"));
+        for b in seps {
+            forms.push((format!("do{a}not{b}notify"), "dont_notify"));
+        }
+    }
+    forms.push(("notify".to_string(), "notify"));
+    forms.push(("done".to_string(), "done"));
+    forms.into_iter().find_map(|(form, keyword)| {
+        if !lower.starts_with(&form) {
+            return None;
+        }
+        let next = lower[form.len()..].chars().next();
+        (!next.is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '\'')).then_some((keyword, form.len()))
+    })
+}
+
+/// The verdict on the last non-empty line of `reply` (trailing code fences
+/// and markdown rules ignored; bold, inline code, a quote marker or a bullet
+/// around it ignored). NOTIFY needs a message after ":" or "-"; DONE's may be
+/// empty; text after DONT_NOTIFY is ignored. Anything else is [`Verdict::Missing`].
+pub fn parse_verdict(reply: &str) -> Verdict {
+    let Some(last) = reply.split('\n').map(str::trim).rev().find(|l| !l.is_empty() && !verdict_filler(l)) else {
+        return Verdict::Missing;
+    };
+    let text = last
+        .trim_start_matches(|c: char| c.is_whitespace() || ">*_`#-".contains(c))
+        .trim_end_matches(|c: char| c.is_whitespace() || "*_`".contains(c));
+    let Some((keyword, len)) = verdict_keyword(text) else {
+        return Verdict::Missing;
+    };
+    let rest = text[len..].trim();
+    if keyword == "dont_notify" {
+        return Verdict::DontNotify;
+    }
+    let line = if rest.is_empty() || rest.chars().all(|c| ".!;,".contains(c)) {
+        String::new()
+    } else {
+        let mut chars = rest.chars();
+        match chars.next() {
+            Some(':' | '-' | '\u{2013}' | '\u{2014}') => chars
+                .as_str()
+                .trim_start_matches(|c: char| c.is_whitespace() || "*_`".contains(c))
+                .trim_end_matches(|c: char| c.is_whitespace() || "*_`".contains(c))
+                .trim()
+                .to_string(),
+            _ => return Verdict::Missing,
+        }
+    };
+    match keyword {
+        "done" => Verdict::Done { line },
+        _ if line.is_empty() => Verdict::Missing,
+        _ => Verdict::Notify { line },
+    }
+}
+
+/// The prompt a heartbeat run receives: the task's prompt, then the verdict
+/// instructions (gizzi `Heartbeat.runPrompt`).
+pub fn heartbeat_prompt(prompt: &str) -> String {
+    format!("{}\n\n---\n{}", prompt.trim(), HEARTBEAT_INSTRUCTIONS.trim_end())
+}
+
+/// The user-message metadata every scheduled turn carries, so gizzi refuses
+/// its approval asks (nobody is there to answer) and records which run stopped.
+pub fn run_marker(routine_id: &str, run_id: &str) -> Value {
+    json!({ "automation_run": { "id": routine_id, "runId": run_id, "by": "scheduler" } })
+}
+
 // ─── Delivery ───────────────────────────────────────────────────────────────
 
 /// How a routine reaches the bot. Production drives gizzi and the tool path;
@@ -561,9 +831,48 @@ fn record_missed(conn: &rusqlite::Connection, r: &LocalRoutine, due_at: DateTime
 pub trait RoutineDriver: Send + Sync {
     fn session_exists(&self, session_id: &str) -> impl Future<Output = bool> + Send;
     fn create_session(&self, bot_id: &str, bot_name: &str) -> impl Future<Output = Result<String, String>> + Send;
-    fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> impl Future<Output = Result<String, String>> + Send;
+    /// A turn as the bot. `metadata` rides on the user message ([`run_marker`]).
+    fn send_turn(&self, session_id: &str, bot_id: &str, text: &str, metadata: &Value) -> impl Future<Output = Result<String, String>> + Send;
     /// `send_turn` with `"provider/model"` in place of the bot's own model (a loop's `config.model`).
-    fn send_turn_on_model(&self, session_id: &str, bot_id: &str, text: &str, model: &str) -> impl Future<Output = Result<String, String>> + Send;
+    fn send_turn_on_model(
+        &self,
+        session_id: &str,
+        bot_id: &str,
+        text: &str,
+        model: &str,
+        metadata: &Value,
+    ) -> impl Future<Output = Result<String, String>> + Send;
+    /// A user turn posted straight into a session that has no bot (a scheduled
+    /// task's `config.delivery.sessionId`). The runtime uses the session's own
+    /// model and queues the turn while the session is busy.
+    fn send_session_turn(&self, session_id: &str, text: &str, metadata: &Value) -> impl Future<Output = Result<String, String>> + Send {
+        let _ = (session_id, text, metadata);
+        std::future::ready(Err("this driver can't post into a session without a bot".to_string()))
+    }
+    /// A fresh session for one run: a heartbeat's side session (deleted after
+    /// the run) or a new-session scheduled task's run. In the folder (and on the
+    /// brain) of `like`, the thread the task belongs to; as the routine's bot when it has one.
+    fn create_run_session(&self, r: &LocalRoutine, title: &str, like: &str) -> impl Future<Output = Result<String, String>> + Send {
+        let _ = (r, title, like);
+        std::future::ready(Err("this driver can't create run sessions".to_string()))
+    }
+    /// Delete a heartbeat's side session after its run (best effort).
+    fn delete_session(&self, session_id: &str) -> impl Future<Output = ()> + Send {
+        let _ = session_id;
+        std::future::ready(())
+    }
+    /// Post a visible assistant note into a session without running a turn
+    /// (a heartbeat's NOTIFY or DONE line). `event_id` dedupes a retry.
+    fn post_note(&self, session_id: &str, text: &str, event_id: &str) -> impl Future<Output = Result<(), String>> + Send {
+        let _ = (session_id, text, event_id);
+        std::future::ready(Err("this driver can't post notes".to_string()))
+    }
+    /// Ask for a push to the owner about `session_id` (level normal; quiet hours
+    /// and the per-thread limiter apply): `agent_user_tools::notify`.
+    fn notify_owner(&self, r: &LocalRoutine, session_id: &str, line: &str) -> impl Future<Output = Result<(), String>> + Send {
+        let _ = (r, session_id, line);
+        std::future::ready(Ok(()))
+    }
     fn run_monitor(&self, user_id: &str, command: &str) -> impl Future<Output = Result<String, String>> + Send;
     /// The session a run goes to: the routine's own standing thread, a fresh
     /// generation per run (P4.4). `None` → the bot's main thread.
@@ -619,12 +928,48 @@ impl RoutineDriver for GizziDriver {
         crate::agent_session_routes::create_bot_session(&self.state.db, bot_id, bot_name).await
     }
 
-    async fn send_turn(&self, session_id: &str, bot_id: &str, text: &str) -> Result<String, String> {
-        crate::agent_session_routes::send_bot_turn(&self.state.db, session_id, bot_id, text).await
+    async fn send_turn(&self, session_id: &str, bot_id: &str, text: &str, metadata: &Value) -> Result<String, String> {
+        crate::agent_session_routes::send_bot_turn_marked(&self.state.db, session_id, bot_id, text, None, metadata).await
     }
 
-    async fn send_turn_on_model(&self, session_id: &str, bot_id: &str, text: &str, model: &str) -> Result<String, String> {
-        crate::agent_session_routes::send_bot_turn_on_model(&self.state.db, session_id, bot_id, text, model).await
+    async fn send_turn_on_model(&self, session_id: &str, bot_id: &str, text: &str, model: &str, metadata: &Value) -> Result<String, String> {
+        crate::agent_session_routes::send_bot_turn_marked(&self.state.db, session_id, bot_id, text, Some(model), metadata).await
+    }
+
+    async fn send_session_turn(&self, session_id: &str, text: &str, metadata: &Value) -> Result<String, String> {
+        crate::agent_session_routes::send_session_turn(&self.state.db, session_id, text, metadata, None).await
+    }
+
+    async fn create_run_session(&self, r: &LocalRoutine, title: &str, like: &str) -> Result<String, String> {
+        let bot = r.agent_id.as_deref().filter(|a| !a.trim().is_empty());
+        crate::agent_session_routes::create_plain_session(&self.state.db, title, Some(like), bot).await
+    }
+
+    async fn delete_session(&self, session_id: &str) {
+        crate::agent_session_routes::delete_scratch_session(&self.state.db, session_id).await
+    }
+
+    async fn post_note(&self, session_id: &str, text: &str, event_id: &str) -> Result<(), String> {
+        // An assistant message with no model turn: it survives reloads and shows on every device.
+        let metadata = json!({ "vendor": "automation", "adapter": "heartbeat", "source": "automation", "remote_event_id": event_id });
+        crate::agent_session_routes::append_vendor_message(&self.state.db, session_id, text, metadata).await
+    }
+
+    async fn notify_owner(&self, r: &LocalRoutine, session_id: &str, line: &str) -> Result<(), String> {
+        let owner = crate::agent_user_tools::Owner {
+            user_id: r.user_id.clone(),
+            bot: crate::bot_routing::caller_for_session(&self.state.db, session_id).filter(|c| c.user_id == r.user_id),
+        };
+        let body = crate::agent_user_tools::NotifyBody {
+            session_id: session_id.to_string(),
+            kind: "message".into(),
+            level: "normal".into(),
+            preview: line.to_string(),
+            reference: Some(format!("automation:{}", r.id)),
+        };
+        crate::agent_user_tools::notify(&self.state.db, &owner, &body, crate::relay_auth::process_secret().as_ref())
+            .map(|_| ())
+            .map_err(|(_, _, why)| why)
     }
 
     async fn routine_session(&self, r: &LocalRoutine, agent_id: &str, instruction: &str) -> Option<Result<String, String>> {
@@ -986,6 +1331,9 @@ pub fn classify(error: &str) -> &'static str {
     if error.starts_with(NEEDS_YOU) {
         return "approval_timeout";
     }
+    if error.starts_with(NO_VERDICT) {
+        return "no_verdict";
+    }
     let e = error.to_lowercase();
     if e.contains("timed out") {
         "timeout"
@@ -1144,6 +1492,12 @@ pub fn live_run(routine_id: &str) -> Option<(String, Option<String>)> {
     with_live(|m| m.get(routine_id).map(|l| (l.run_id.clone(), l.session_id.clone())))
 }
 
+/// A scheduled run is going in `session_id` right now (its own thread, or a
+/// heartbeat's side session): a tool call there comes from that run's turn.
+pub fn session_running_automation(session_id: &str) -> bool {
+    with_live(|m| m.values().any(|l| l.session_id.as_deref() == Some(session_id)))
+}
+
 /// Ask the routine's run in progress to stop. False when `run_id` is not
 /// running here. The run ends `cancelled` and keeps its output so far.
 pub fn request_stop(routine_id: &str, run_id: &str) -> bool {
@@ -1188,6 +1542,92 @@ pub fn settle_orphaned_runs(db: &DbHandle) -> rusqlite::Result<usize> {
     Ok(settled)
 }
 
+/// The last output of a heartbeat's good or quiet run (carried forward so it
+/// can tell "same as last time").
+fn previous_heartbeat_output(db: &DbHandle, r: &LocalRoutine) -> Option<String> {
+    db.connect().ok()?.query_row(
+        "SELECT output FROM routine_runs WHERE routine_id = ?1 AND output IS NOT NULL
+           AND (status = 'succeeded' OR (status = 'skipped' AND outcome_reason = 'quiet'))
+         ORDER BY started_at DESC LIMIT 1",
+        params![r.id],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+/// One turn of a scheduled task: as its bot when it has one (the bot's brain
+/// and identity), else posted straight into the session.
+async fn delivery_turn<D: RoutineDriver>(driver: &D, r: &LocalRoutine, bot: Option<&BotInfo>, session: &str, text: &str, marker: &Value) -> Result<String, String> {
+    match r.agent_id.as_deref().filter(|a| !a.trim().is_empty()) {
+        Some(agent_id) if bot.is_some() => driver.send_turn(session, agent_id, text, marker).await,
+        Some(_) => Err("the routine's agent no longer exists".to_string()),
+        None => driver.send_session_turn(session, text, marker).await,
+    }
+}
+
+/// A heartbeat's notice: a visible note in the task's thread, then a push.
+/// The note is the delivery (a failed note fails the run); a push that is
+/// refused (quiet hours, the limiter, an unpaired runtime) is not.
+async fn deliver_notice<D: RoutineDriver>(driver: &D, r: &LocalRoutine, target: &str, line: &str, event_id: &str) -> Result<(), String> {
+    driver.post_note(target, line, event_id).await.map_err(|e| format!("could not post the notice into its thread: {e}"))?;
+    if let Err(e) = driver.notify_owner(r, target, line).await {
+        warn!(routine = %r.id, error = %e, "heartbeat push not sent");
+    }
+    Ok(())
+}
+
+/// Run a scheduled task made in a conversation (`config.delivery.sessionId`).
+///
+/// * `message`, target `this_thread`: the prompt is a turn in that session.
+///   `new_session`: a fresh session per run, kept.
+/// * `heartbeat`: the prompt plus [`HEARTBEAT_INSTRUCTIONS`] runs in a fresh
+///   side session (deleted by [`execute`] after the run); the reply's last
+///   line decides: NOTIFY posts and pushes, DONT_NOTIFY is a quiet `skipped`
+///   run (`quiet`), DONE posts, pushes and completes the task (`done`), no
+///   verdict fails the run (the failure streak pauses it).
+async fn run_delivery<D: RoutineDriver>(
+    db: &DbHandle,
+    driver: &D,
+    r: &LocalRoutine,
+    target: &str,
+    bot: Option<&BotInfo>,
+    marker: &Value,
+    note_session: &(dyn Fn(&str) + Sync),
+) -> Result<(String, &'static str, Option<&'static str>), String> {
+    let prompt = instruction_of(r);
+    let run_id = marker.pointer("/automation_run/runId").and_then(Value::as_str).unwrap_or_default().to_string();
+    if r.automation_kind() == "heartbeat" {
+        let side = driver.create_run_session(r, &format!("Scheduled check: {}", r.name), target).await?;
+        note_session(&side);
+        let mut body = heartbeat_prompt(&prompt);
+        if let Some(prev) = previous_heartbeat_output(db, r) {
+            body = format!("Previous check's reply:\n{}\n\n{body}", truncate(&prev, PREVIOUS_OUTPUT_CAP));
+        }
+        let reply = delivery_turn(driver, r, bot, &side, &routine_turn(&r.name, &body), marker).await?;
+        let event = format!("{}:{run_id}", r.id);
+        return match parse_verdict(&reply) {
+            Verdict::Notify { line } => {
+                deliver_notice(driver, r, target, &line, &event).await?;
+                Ok((reply, "succeeded", None))
+            }
+            Verdict::DontNotify => Ok((reply, "skipped", Some("quiet"))),
+            Verdict::Done { line } => {
+                let line = if line.is_empty() { format!("\"{}\" is done, so this scheduled check stopped.", r.name) } else { line };
+                deliver_notice(driver, r, target, &line, &event).await?;
+                Ok((reply, "succeeded", Some("done")))
+            }
+            Verdict::Missing => Err(format!(
+                "{NO_VERDICT}the check's reply didn't end with NOTIFY: <line>, DONT_NOTIFY or DONE: <line>"
+            )),
+        };
+    }
+    let new_session = r.config.get("target").and_then(Value::as_str) == Some("new_session");
+    let session = if new_session { driver.create_run_session(r, &r.name, target).await? } else { target.to_string() };
+    note_session(&session);
+    let reply = delivery_turn(driver, r, bot, &session, &routine_turn(&r.name, &prompt), marker).await?;
+    Ok((reply, "succeeded", None))
+}
+
 /// Run one routine end to end and record it. Never panics on a bad run —
 /// the failure is the recorded result. The `routine_runs` row is written
 /// `running` when the run starts (so the UI can show it live and stop it)
@@ -1228,6 +1668,8 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
         }
     };
 
+    // Every turn this run posts says which scheduled run it is.
+    let marker = run_marker(&r.id, &run_id);
     let timeout_secs = r.timeout_seconds.filter(|t| *t > 0).unwrap_or(DEFAULT_TIMEOUT_SECS);
     // A phone replay may wait on the owner: never cut it off inside that wait.
     let timeout_secs = if phone_replay_of(&r.config).is_some() { timeout_secs.max(crate::phone_guard::WAIT.as_secs() as i64 + 600) } else { timeout_secs };
@@ -1235,17 +1677,17 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
         // A Files folder rule runs only when a file lands, under its fixed
         // tool grant (`files_v2::rules`): never as a free bot turn.
         if crate::files_v2::is_folder_rule(&r.config) {
-            return Ok(("folder rules run when a file lands in their folder".to_string(), "skipped"));
+            return Ok(("folder rules run when a file lands in their folder".to_string(), "skipped", None));
         }
         // A phone skill replays with no model turn and needs no bot thread.
         if let Some((skill, serial, inputs)) = phone_replay_of(&r.config) {
             // After a run stopped at a step that needs the owner, only their
             // Retry (a manual run) replays it: never back into the hold on a schedule.
             if !matches!(trigger, Trigger::Manual { .. }) && waiting_on_owner(db, r) {
-                return Ok((WAITING_ON_YOU.to_string(), "skipped"));
+                return Ok((WAITING_ON_YOU.to_string(), "skipped", None));
             }
             let out = driver.run_phone_skill(r, &skill, serial.as_deref(), &inputs).await?;
-            return Ok((out, "succeeded"));
+            return Ok((out, "succeeded", None));
         }
         // A Loop Card makes this a measured loop: gizzi's engine keeps or reverts each change.
         if r.kind == TaskKind::Loop && r.config.pointer("/metric/command").and_then(Value::as_str).is_some() {
@@ -1256,7 +1698,11 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
                 .filter(|c| !c.trim().is_empty())
                 .ok_or("a measured loop needs a change command (config.changeCommand)")?;
             let out = driver.run_measured(r, change, timeout_secs as u64).await?;
-            return Ok((out, "succeeded"));
+            return Ok((out, "succeeded", None));
+        }
+        // A scheduled task made in a conversation posts into that session itself.
+        if let Some(target) = r.delivery_session() {
+            return run_delivery(db, driver, r, target, bot.as_ref(), &marker, &note_session).await;
         }
         let agent_id = r.agent_id.as_deref().ok_or("this routine has no bot; assign it to a bot to run it")?;
         let bot = bot.as_ref().ok_or("the routine's agent no longer exists")?;
@@ -1264,7 +1710,7 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             let out = truncate(&driver.run_monitor(&r.user_id, command).await?, MONITOR_OUTPUT_CAP);
             let hash = fnv1a_hex(&out);
             if r.metadata.get("lastMonitorHash").and_then(Value::as_str) == Some(hash.as_str()) {
-                return Ok(("no change".to_string(), "skipped"));
+                return Ok(("no change".to_string(), "skipped", None));
             }
             monitor_hash = Some(hash);
             routine_turn(&r.name, &out)
@@ -1287,10 +1733,10 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
         // A loop's `config.model`, when it's the "provider/model" a brain needs.
         let model = r.config.get("model").and_then(Value::as_str).filter(|m| r.kind == TaskKind::Loop && m.contains('/'));
         let reply = match model {
-            Some(model) => driver.send_turn_on_model(&session, agent_id, &text, model).await?,
-            None => driver.send_turn(&session, agent_id, &text).await?,
+            Some(model) => driver.send_turn_on_model(&session, agent_id, &text, model, &marker).await?,
+            None => driver.send_turn(&session, agent_id, &text, &marker).await?,
         };
-        Ok((reply, "succeeded"))
+        Ok((reply, "succeeded", None))
     };
     let timed = async {
         match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs as u64), work).await {
@@ -1301,7 +1747,7 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
             )),
         }
     };
-    let result: Result<(String, &'static str), String> = tokio::select! {
+    let result: Result<(String, &'static str, Option<&'static str>), String> = tokio::select! {
         res = timed => res,
         _ = stop.notified() => Err(STOPPED.to_string()),
     };
@@ -1318,15 +1764,28 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
         Some(session) => driver.turn_digest(session).await,
         None => None,
     };
+    // A heartbeat's side session is scratch: gone once its digest is read.
+    if let (Some(target), Some(session)) = (r.delivery_session(), session_used.as_deref()) {
+        if r.automation_kind() == "heartbeat" && session != target {
+            driver.delete_session(session).await;
+        }
+    }
+    // The runtime stopped the turn at a step that needs the owner's approval
+    // (nobody is there to answer a scheduled run): the needs-you path, with
+    // Retry, not a plain failure.
+    let result = match digest.as_ref().and_then(|d| d.blocked.as_deref()) {
+        Some(tool) if !stopped => Err(format!("{NEEDS_YOU}the run stopped at a {tool} step that needs your approval")),
+        _ => result,
+    };
 
     let outcome = match result {
-        Ok((out, status)) => RunOutcome {
+        Ok((out, status, reason)) => RunOutcome {
             status,
             output: Some(truncate(&out, RUN_OUTPUT_CAP)),
             error: None,
             session_id: session_used,
             auto_paused: false,
-            reason: None,
+            reason,
         },
         Err(_) if stopped => RunOutcome {
             status: "cancelled",
@@ -1422,6 +1881,11 @@ pub async fn execute<D: RoutineDriver>(db: &DbHandle, driver: &D, r: &LocalRouti
         outcome.auto_paused =
             record_streak(&conn, r.kind, &r.id, outcome.status, outcome.error.as_deref(), &finished.to_rfc3339());
         alert_for_outcome(&conn, r, &outcome, &run_id, &trigger);
+        if let Some(why) = completion_after_run(&conn, r, &outcome) {
+            if complete(&conn, r.kind, &r.id, why, finished) {
+                info!(routine = %r.id, reason = why, "routine completed");
+            }
+        }
     } else {
         dead_letter(db, r, &outcome, &run_id, "database unavailable".into());
     }
@@ -1564,7 +2028,7 @@ pub async fn run_startup<D: RoutineDriver>(db: &DbHandle, driver: &D) -> usize {
         let conn = db.connect()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {COLS} FROM routines WHERE execution_domain = 'local' AND status = 'active'
-               AND {HAS_AGENT} AND json_extract(config, '$.trigger') = 'startup'"
+               AND {RUNNABLE} AND json_extract(config, '$.trigger') = 'startup'"
         ))?;
         let rows = stmt.query_map([], map_row)?;
         Ok(rows.filter_map(Result::ok).collect())
@@ -1639,6 +2103,18 @@ mod tests {
         aborts: Mutex<Vec<String>>,
         /// Models a turn was sent on.
         models: Mutex<Vec<String>>,
+        /// The metadata each turn carried, in order.
+        metas: Mutex<Vec<Value>>,
+        /// Turns posted straight into a session with no bot: (session, text).
+        plain_turns: Mutex<Vec<(String, String)>>,
+        /// What a heartbeat's turn answers.
+        reply: Mutex<Option<String>>,
+        /// Notes posted (session, text) and pushes asked for (session, line).
+        notes: Mutex<Vec<(String, String)>>,
+        pushes: Mutex<Vec<(String, String)>>,
+        deleted: Mutex<Vec<String>>,
+        /// The digest says the turn stopped at an approval.
+        blocked: bool,
     }
 
     impl RoutineDriver for Fake {
@@ -1650,19 +2126,47 @@ mod tests {
             self.sessions.lock().unwrap().push(id.clone());
             Ok(id)
         }
-        async fn send_turn(&self, s: &str, _b: &str, t: &str) -> Result<String, String> {
+        async fn send_turn(&self, s: &str, _b: &str, t: &str, meta: &Value) -> Result<String, String> {
             if self.delay_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
             }
             if self.fail {
                 return Err("provider_rate_limit".into());
             }
+            self.metas.lock().unwrap().push(meta.clone());
             self.turns.lock().unwrap().push((s.to_string(), t.to_string()));
+            if let Some(reply) = self.reply.lock().unwrap().clone() {
+                return Ok(reply);
+            }
             Ok(format!("done: {}", t.lines().next().unwrap_or("")))
         }
-        async fn send_turn_on_model(&self, s: &str, b: &str, t: &str, model: &str) -> Result<String, String> {
+        async fn send_turn_on_model(&self, s: &str, b: &str, t: &str, model: &str, meta: &Value) -> Result<String, String> {
             self.models.lock().unwrap().push(model.to_string());
-            self.send_turn(s, b, t).await
+            self.send_turn(s, b, t, meta).await
+        }
+        async fn send_session_turn(&self, s: &str, t: &str, meta: &Value) -> Result<String, String> {
+            if self.fail {
+                return Err("provider_rate_limit".into());
+            }
+            self.metas.lock().unwrap().push(meta.clone());
+            self.plain_turns.lock().unwrap().push((s.to_string(), t.to_string()));
+            Ok(self.reply.lock().unwrap().clone().unwrap_or_else(|| "Reminder sent".into()))
+        }
+        async fn create_run_session(&self, _r: &LocalRoutine, _t: &str, _like: &str) -> Result<String, String> {
+            let id = format!("side-{}", self.creates.fetch_add(1, Ordering::SeqCst));
+            self.sessions.lock().unwrap().push(id.clone());
+            Ok(id)
+        }
+        async fn delete_session(&self, s: &str) {
+            self.deleted.lock().unwrap().push(s.to_string());
+        }
+        async fn post_note(&self, s: &str, t: &str, _e: &str) -> Result<(), String> {
+            self.notes.lock().unwrap().push((s.to_string(), t.to_string()));
+            Ok(())
+        }
+        async fn notify_owner(&self, _r: &LocalRoutine, s: &str, line: &str) -> Result<(), String> {
+            self.pushes.lock().unwrap().push((s.to_string(), line.to_string()));
+            Ok(())
         }
         async fn run_monitor(&self, _u: &str, _c: &str) -> Result<String, String> {
             Ok(self.monitor.lock().unwrap().clone())
@@ -1676,6 +2180,7 @@ mod tests {
                 tools: vec!["linear_list_issues".into(), "slack_post".into()],
                 steps: vec![json!({ "content": "Read issues", "status": "completed" })],
                 model: Some("anthropic/claude-sonnet-5-5".into()),
+                blocked: self.blocked.then(|| "bash".to_string()),
             })
         }
         async fn abort_session(&self, s: &str) -> Result<(), String> {
@@ -2343,5 +2848,190 @@ mod tests {
         assert_eq!(out.status, "succeeded", "{:?}", out.error);
         assert_eq!(taps.load(Ordering::SeqCst), 1);
         assert!(items(&state)[0].2.is_some(), "a good run resolves the item");
+    }
+
+    // ─── Scheduled tasks made in a conversation (automation tool) ─────────
+
+    /// A row the `automation` tool makes: no bot, posts into `session`.
+    fn insert_task(state: &AppState, id: &str, kind: &str, schedule: (&str, &str), session: &str, extra: Value, max_runs: Option<i64>) {
+        let mut config = json!({ "jobType": "agent", "prompt": "Is the deploy green?", "kind": kind, "target": "this_thread", "delivery": { "sessionId": session } });
+        if let (Some(c), Some(e)) = (config.as_object_mut(), extra.as_object()) {
+            c.extend(e.clone());
+        }
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO routines (id, user_id, agent_id, name, status, schedule_type, schedule_expression, timezone,
+                     execution_domain, config, metadata, max_runs)
+                 VALUES (?1, 'user-a', NULL, ?2, 'active', ?3, ?4, 'UTC', 'local', ?5, '{\"origin\":\"agent\"}', ?6)",
+                params![id, format!("Task {id}"), schedule.0, schedule.1, config.to_string(), max_runs],
+            )
+            .unwrap();
+    }
+
+    fn routine_status(state: &AppState, id: &str) -> (String, Option<String>) {
+        state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT status, json_extract(metadata, '$.completed.reason') FROM routines WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+    }
+
+    fn last_reason(state: &AppState, id: &str) -> Option<String> {
+        state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT outcome_reason FROM routine_runs WHERE routine_id = ?1 ORDER BY started_at DESC LIMIT 1", params![id], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn every_turn_the_scheduler_posts_names_its_run() {
+        let state = setup("marker").await;
+        // A bot routine: its turn carries automation_run = {id, runId}.
+        insert(&state, "r-bot", "interval", "1h", json!({}), Some("bot-1"));
+        force_due(&state, "r-bot");
+        let fake = Fake::default();
+        assert_eq!(run_due(&state.db, &fake, Utc::now()).await, 1);
+        let run_id: String = state.db.connect().unwrap().query_row("SELECT id FROM routine_runs WHERE routine_id = 'r-bot'", [], |r| r.get(0)).unwrap();
+        assert_eq!(fake.metas.lock().unwrap()[0], json!({ "automation_run": { "id": "r-bot", "runId": run_id, "by": "scheduler" } }));
+        // A task in a session with no bot: posted straight into it, marked the same way.
+        insert_task(&state, "t-msg", "message", ("interval", "1h"), "ses_plain", json!({}), None);
+        force_due(&state, "t-msg");
+        assert_eq!(run_due(&state.db, &fake, Utc::now()).await, 1);
+        let plain = fake.plain_turns.lock().unwrap().clone();
+        assert_eq!(plain.len(), 1);
+        assert_eq!(plain[0].0, "ses_plain");
+        assert!(plain[0].1.starts_with("[routine: Task t-msg] Is the deploy green?"), "{}", plain[0].1);
+        assert_eq!(fake.metas.lock().unwrap()[1]["automation_run"]["id"], "t-msg");
+        assert_eq!(runs(&state, "t-msg"), ["succeeded"]);
+        assert!(fake.turns.lock().unwrap().iter().all(|(s, _)| s != "ses_plain"), "no bot turn for it");
+    }
+
+    #[tokio::test]
+    async fn a_heartbeat_runs_in_a_side_session_and_only_its_verdict_reaches_the_user() {
+        let state = setup("heartbeat").await;
+        insert_task(&state, "hb", "heartbeat", ("interval", "1h"), "ses_thread", json!({}), None);
+        let fake = Fake::default();
+
+        // NOTIFY: a note in the thread and a push; the side session is deleted.
+        *fake.reply.lock().unwrap() = Some("Checked CI.\nNOTIFY: The deploy failed on step 3.".into());
+        force_due(&state, "hb");
+        assert_eq!(run_due(&state.db, &fake, Utc::now()).await, 1);
+        let (side, text) = fake.plain_turns.lock().unwrap()[0].clone();
+        assert!(side.starts_with("side-"), "ran in a side session, not the thread: {side}");
+        assert!(text.contains("Is the deploy green?\n\n---\nThis is a scheduled check (a heartbeat)."), "{text}");
+        assert_eq!(fake.notes.lock().unwrap().clone(), vec![("ses_thread".to_string(), "The deploy failed on step 3.".to_string())]);
+        assert_eq!(fake.pushes.lock().unwrap().clone(), vec![("ses_thread".to_string(), "The deploy failed on step 3.".to_string())]);
+        assert_eq!(fake.deleted.lock().unwrap().clone(), vec![side.clone()]);
+        assert_eq!(runs(&state, "hb"), ["succeeded"]);
+
+        // DONT_NOTIFY: a quiet skipped run, nothing posted.
+        *fake.reply.lock().unwrap() = Some("Same as last time.\nDONT_NOTIFY".into());
+        force_due(&state, "hb");
+        run_due(&state.db, &fake, Utc::now()).await;
+        assert_eq!(runs(&state, "hb"), ["succeeded", "skipped"]);
+        assert_eq!(last_reason(&state, "hb").as_deref(), Some("quiet"));
+        assert_eq!(fake.notes.lock().unwrap().len(), 1);
+
+        // DONE: posted and pushed, then the task completes.
+        *fake.reply.lock().unwrap() = Some("DONE: PR #42 merged; stopping this check.".into());
+        force_due(&state, "hb");
+        run_due(&state.db, &fake, Utc::now()).await;
+        assert_eq!(fake.notes.lock().unwrap()[1].1, "PR #42 merged; stopping this check.");
+        assert_eq!(routine_status(&state, "hb"), ("completed".to_string(), Some("done".to_string())));
+        force_due(&state, "hb");
+        assert_eq!(run_due(&state.db, &fake, Utc::now()).await, 0, "a completed task never runs again");
+    }
+
+    #[tokio::test]
+    async fn a_heartbeat_with_no_verdict_fails_and_three_in_a_row_pause_it() {
+        // Its own routine id: FlightGuard is process-wide, so a test sharing "hb"
+        // with the test above can be skipped as "already running" in parallel.
+        let state = setup("no-verdict").await;
+        insert_task(&state, "hb-quiet", "heartbeat", ("interval", "1h"), "ses_thread", json!({}), None);
+        let fake = Fake::default();
+        *fake.reply.lock().unwrap() = Some("I looked at the build and it seems fine.".into());
+        for _ in 0..AUTO_PAUSE_AFTER {
+            force_due(&state, "hb-quiet");
+            run_due(&state.db, &fake, Utc::now()).await;
+        }
+        assert_eq!(runs(&state, "hb-quiet"), ["failed", "failed", "failed"]);
+        assert_eq!(last_reason(&state, "hb-quiet").as_deref(), Some("no_verdict"));
+        assert_eq!(routine_status(&state, "hb-quiet").0, "paused");
+        assert!(fake.notes.lock().unwrap().is_empty(), "nothing reaches the user without a verdict");
+    }
+
+    #[tokio::test]
+    async fn max_runs_and_until_complete_a_task() {
+        let state = setup("limits").await;
+        let fake = Fake::default();
+        // max_runs = 2: quiet heartbeat runs count.
+        insert_task(&state, "capped", "heartbeat", ("interval", "1h"), "ses_a", json!({}), Some(2));
+        *fake.reply.lock().unwrap() = Some("DONT_NOTIFY".into());
+        force_due(&state, "capped");
+        run_due(&state.db, &fake, Utc::now()).await;
+        assert_eq!(routine_status(&state, "capped").0, "active");
+        force_due(&state, "capped");
+        run_due(&state.db, &fake, Utc::now()).await;
+        assert_eq!(routine_status(&state, "capped"), ("completed".to_string(), Some("max_runs".to_string())));
+
+        // config.until already past: completed at the claim, never run.
+        let past = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        insert_task(&state, "ended", "message", ("interval", "1h"), "ses_a", json!({ "until": past }), None);
+        force_due(&state, "ended");
+        assert_eq!(run_due(&state.db, &fake, Utc::now()).await, 0);
+        assert_eq!(routine_status(&state, "ended"), ("completed".to_string(), Some("until".to_string())));
+        assert!(runs(&state, "ended").is_empty());
+
+        // A one-shot the tool made completes after it runs.
+        insert_task(&state, "once", "message", ("once", &(Utc::now() + chrono::Duration::minutes(5)).to_rfc3339()), "ses_a", json!({}), None);
+        force_due(&state, "once");
+        assert_eq!(run_due(&state.db, &fake, Utc::now()).await, 1);
+        assert_eq!(routine_status(&state, "once"), ("completed".to_string(), Some("once".to_string())));
+    }
+
+    #[tokio::test]
+    async fn a_one_shot_more_than_twelve_hours_late_is_missed_not_run() {
+        let state = setup("late").await;
+        let fake = Fake::default();
+        let due = |h: i64| (Utc::now() - chrono::Duration::hours(h)).to_rfc3339();
+        insert_task(&state, "stale", "message", ("once", &due(13)), "ses_a", json!({}), None);
+        insert_task(&state, "late", "message", ("once", &due(2)), "ses_a", json!({}), None);
+        let conn = state.db.connect().unwrap();
+        conn.execute("UPDATE routines SET next_run_at = ?2 WHERE id = ?1", params!["stale", due(13)]).unwrap();
+        conn.execute("UPDATE routines SET next_run_at = ?2 WHERE id = ?1", params!["late", due(2)]).unwrap();
+        assert_eq!(run_due(&state.db, &fake, Utc::now()).await, 1, "only the 2 h late one runs");
+        assert_eq!(runs(&state, "stale"), ["skipped"]);
+        assert_eq!(last_reason(&state, "stale").as_deref(), Some("missed"));
+        assert_eq!(routine_status(&state, "stale"), ("completed".to_string(), Some("missed".to_string())));
+        let missed: i64 = conn
+            .query_row("SELECT count(*) FROM attention_items WHERE kind = 'routine_missed' AND source_id = 'stale' AND resolved_at IS NULL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(missed, 1);
+        assert_eq!(runs(&state, "late"), ["succeeded"]);
+        assert_eq!(fake.plain_turns.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_run_stopped_at_an_approval_goes_to_needs_you() {
+        let state = setup("approval").await;
+        insert_task(&state, "t-ask", "message", ("interval", "1h"), "ses_a", json!({}), None);
+        let fake = Fake { blocked: true, ..Default::default() };
+        force_due(&state, "t-ask");
+        run_due(&state.db, &fake, Utc::now()).await;
+        assert_eq!(runs(&state, "t-ask"), ["failed"]);
+        assert_eq!(last_reason(&state, "t-ask").as_deref(), Some("approval_timeout"));
+        let summary: String = state
+            .db
+            .connect()
+            .unwrap()
+            .query_row("SELECT summary FROM attention_items WHERE kind = 'routine_failed' AND source_id = 't-ask'", [], |r| r.get(0))
+            .unwrap();
+        assert!(summary.starts_with("Routine stopped at a step that needs you"), "{summary}");
     }
 }

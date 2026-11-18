@@ -208,6 +208,13 @@ export namespace BackgroundTask {
     return settle(id, "cancelled", { error: reason, output })
   }
 
+  /**
+   * Settles a running row as `interrupted` (restart cleanup, a CLI stop, or
+   * agent_control interrupt). The child session stays; a later `complete` or
+   * `fail` from the run that was stopped returns this row unchanged, so the
+   * caller can tell from the returned status that the run was interrupted and
+   * not failed. Resuming opens a new row on the same child (`create`).
+   */
   export function interrupt(id: string, reason: string, output?: string): Promise<Info> {
     return settle(id, "interrupted", { error: reason, output })
   }
@@ -230,9 +237,34 @@ export namespace BackgroundTask {
       const condition = activeOnly
         ? and(eq(BackgroundTaskTable.parent_session_id, parentSessionID), eq(BackgroundTaskTable.status, "running"))
         : eq(BackgroundTaskTable.parent_session_id, parentSessionID)
-      return db.select().from(BackgroundTaskTable).where(condition).orderBy(desc(BackgroundTaskTable.time_created)).all()
+      return db.select().from(BackgroundTaskTable).where(condition)
+        .orderBy(desc(BackgroundTaskTable.time_created), desc(BackgroundTaskTable.id))
+        .all()
     })
     return rows.map(fromRow)
+  }
+
+  /**
+   * Every run row of one child session, newest first. A child gets a new row
+   * each time it is resumed or followed up (rows settle only from `running`),
+   * so one child can have several.
+   */
+  export async function listForChild(childSessionID: string): Promise<Info[]> {
+    await initialize()
+    const rows = Database.use((db) =>
+      db
+        .select()
+        .from(BackgroundTaskTable)
+        .where(eq(BackgroundTaskTable.child_session_id, childSessionID))
+        .orderBy(desc(BackgroundTaskTable.time_created), desc(BackgroundTaskTable.id))
+        .all(),
+    )
+    return rows.map(fromRow)
+  }
+
+  /** The newest run row of a child session, if it ever ran in the background. */
+  export async function latestForChild(childSessionID: string): Promise<Info | undefined> {
+    return (await listForChild(childSessionID))[0]
   }
 
   export async function countActive(parentSessionID: string): Promise<number> {

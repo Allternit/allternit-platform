@@ -37,6 +37,31 @@ struct PermissionAskView: View {
                         .foregroundColor(Color("TextSecondary"))
                         .lineLimit(3)
                 }
+                if ask.isComputerAccess {
+                    if !ask.apps.isEmpty {
+                        Text("Apps: " + ask.apps.joined(separator: ", "))
+                            .font(.footnote).foregroundColor(Color("TextPrimary"))
+                    }
+                    if !ask.tiers.isEmpty {
+                        Text("Access: " + ask.tiers.joined(separator: ", "))
+                            .font(.caption).foregroundColor(Color("TextSecondary"))
+                    }
+                    if let r = ask.accessReason, !r.isEmpty {
+                        Text(r).font(.caption).foregroundColor(Color("TextSecondary"))
+                    }
+                } else if ask.isFolderAccess {
+                    ForEach(ask.paths, id: \.self) { p in
+                        Text(p)
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundColor(Color("TextSecondary"))
+                            .lineLimit(2)
+                    }
+                }
+                if let line = ask.reviewLine {
+                    Text(line)
+                        .font(.caption)
+                        .foregroundColor(Color("TextSecondary"))
+                }
                 if ask.permission.lowercased() == "run_code" {
                     RunCodeScript(code: ask.code ?? "", files: ask.files)
                 }
@@ -57,7 +82,9 @@ struct PermissionAskView: View {
     private var buttons: some View {
         HStack(spacing: 6) {
             button("Deny", reply: "reject", kind: .quiet)
-            button("Always", reply: "always", kind: .quiet)
+            if ask.allowsAlways {
+                button("Always", reply: "always", kind: .quiet)
+            }
             button("Allow", reply: "once", kind: .primary)
         }
     }

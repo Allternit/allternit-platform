@@ -455,8 +455,11 @@ final class BotModeClient: @unchecked Sendable {
     /// `POST /api/v1/agent-sessions/:id/messages`). Returns once the
     /// message is accepted; the reply streams in the chat.
     func sendUserMessage(sessionId: String, text: String) async throws {
-        struct Body: Encodable { let text: String }
-        try await client.post(path: "agent-sessions/\(Self.query(sessionId))/messages", body: Body(text: text))
+        /// `time_zone` (IANA name): the runtime answers in the user's local time.
+        struct Metadata: Encodable { let time_zone: String }
+        struct Body: Encodable { let text: String; let metadata: Metadata }
+        try await client.post(path: "agent-sessions/\(Self.query(sessionId))/messages",
+                              body: Body(text: text, metadata: Metadata(time_zone: TimeZone.current.identifier)))
     }
 
     // MARK: Pause all bots (runtime `GET`/`PUT /api/v1/bots/pause`)

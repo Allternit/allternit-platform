@@ -1,6 +1,7 @@
 /** Turn boundary enforcement. Only validated answer text reaches public parts. */
 import { createHash } from 'node:crypto';
 import { ANSWER_POLICY_MAX_CHARS, answerPolicyInstruction, checkAnswerResponse, selectAnswerPolicy, type AnswerPolicy } from '../integrations/artifacts/answer-policy';
+import { ANSWER_WIDGETS_MANUAL } from '../integrations/artifacts/answer-contract';
 import { MessageV2 } from './message-v2';
 import { Session } from './index';
 import { SessionTrace } from './trace';
@@ -19,9 +20,39 @@ const CODE_DELIVERS: Partial<Record<string, (mediaType: string) => boolean>> = {
   table: type => SHEET_TYPES.has(type),
 };
 
+/**
+ * Tools whose completed part carries a validated catalog card in
+ * `state.metadata.card` (lookup: weather, time-zones, conversion,
+ * link-preview, places, image-gallery). The chat draws that card from the
+ * tool part, so when it is the required template the answer is the prose
+ * beside it; the model is never made to retype the card's numbers.
+ */
+const CARD_TOOLS = new Set(['lookup']);
+
+/** True when a completed tool part already delivered a card of `template`. */
+export function toolDeliveredCard(part: MessageV2.Part, template: string): boolean {
+  if (part.type !== 'tool' || !CARD_TOOLS.has(part.tool) || part.state.status !== 'completed') return false;
+  const card: unknown = part.state.metadata?.card;
+  return !!card && typeof card === 'object' && (card as { template?: unknown }).template === template;
+}
+
+/**
+ * The short writing-only manual for a turn that sends `answer_cards: "widgets"`
+ * (iOS, the Ink REPL: clients that draw no catalog cards). Not added when the
+ * turn's system prompt already carries the full card manual, so a client never
+ * gets both.
+ */
+export function answerWidgetsManual(user: Pick<MessageV2.User, 'metadata' | 'system'>): string | undefined {
+  if (user.metadata?.['answer_cards'] !== 'widgets') return undefined;
+  if (user.system?.includes('## Enforced answer templates')) return undefined;
+  return ANSWER_WIDGETS_MANUAL;
+}
+
 export class AnswerTurnGuard {
   readonly policy: AnswerPolicy;
   readonly system: string | undefined;
+  /** The writing-only manual for this turn (`answer_cards: "widgets"`); the prompt adds it to the system layers. */
+  readonly widgetsManual: string | undefined;
   private held = new Map<string, MessageV2.TextPart>();
   private problems: string[] = [];
   private attempts = 0;
@@ -29,6 +60,7 @@ export class AnswerTurnGuard {
   needsRepair = false;
   constructor(readonly userID: string, message: string, user: MessageV2.User) {
     this.system = user.system;
+    this.widgetsManual = answerWidgetsManual(user);
     this.policy = selectAnswerPolicy(message, {
       visuals: !!user.system?.includes('## Enforced answer templates'),
       artifactOutput: /For this turn the user (?:picked Output|asked for an artifact)/.test(user.system ?? ''),
@@ -86,26 +118,35 @@ export class AnswerTurnGuard {
     }
     await Session.updateMessage(message);
   }
-  /** A successful run_code call in this turn saved a file of the required kind. */
-  private async deliveredByCode(sessionID: string) {
-    const fits = this.policy.mode === 'template' ? CODE_DELIVERS[this.policy.template] : undefined;
-    if (!fits) return false;
+  /**
+   * A tool in this turn already delivered the required answer: a successful
+   * run_code call saved a file of the required kind (chart image, sheet), or
+   * a card tool (lookup) returned a card of the required template.
+   */
+  private async deliveredByTool(sessionID: string): Promise<'run_code' | 'lookup' | undefined> {
+    if (this.policy.mode !== 'template') return undefined;
+    const template = this.policy.template;
+    const fits = CODE_DELIVERS[template];
     for await (const message of MessageV2.stream(sessionID)) {
       if (message.info.id === this.userID) break;
       if (message.info.role !== 'assistant') continue;
       for (const part of message.parts) {
-        if (part.type !== 'tool' || part.tool !== 'run_code' || part.state.status !== 'completed' || part.state.metadata?.exit_code !== 0) continue;
+        if (toolDeliveredCard(part, template)) return 'lookup';
+        if (!fits || part.type !== 'tool' || part.tool !== 'run_code' || part.state.status !== 'completed' || part.state.metadata?.exit_code !== 0) continue;
         const files: unknown = part.state.metadata.files;
-        if (Array.isArray(files) && files.some(file => typeof file?.mediaType === 'string' && fits(file.mediaType))) return true;
+        if (Array.isArray(files) && files.some(file => typeof file?.mediaType === 'string' && fits(file.mediaType))) return 'run_code';
       }
     }
-    return false;
+    return undefined;
   }
   async complete(message: MessageV2.Assistant, allowRepair = true): Promise<'accepted' | 'repairing' | 'rejected'> {
     const parts = [...this.held.values()].filter(part => part.messageID === message.id);
     const text = SecretRedactor.text(this.text(message.id));
     let checked = checkAnswerResponse(this.policy, text);
-    if (!checked.valid && await this.deliveredByCode(message.sessionID)) checked = { valid: true, returned: 'run_code', problems: [] };
+    if (!checked.valid) {
+      const delivered = await this.deliveredByTool(message.sessionID);
+      if (delivered) checked = { valid: true, returned: delivered, problems: [] };
+    }
     this.attempts++;
     const status = checked.valid ? 'accepted' : allowRepair && this.repairs < 1 ? 'repairing' : 'rejected';
     if (status === 'repairing') this.repairs++;

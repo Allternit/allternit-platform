@@ -4,7 +4,10 @@ import { PaneBrowser } from "@/runtime/integrations/pane-browser"
 import z from "zod/v4"
 import { lazy } from "@/shared/util/lazy"
 
-/** The app answers a pane browser request (see PaneBrowser). */
+/**
+ * The app answers a pane browser request (see PaneBrowser), and can show or
+ * take back the sites a `pane_browser plan` approval covers for a session.
+ */
 export const PaneBrowserRoutes = lazy(() =>
   new Hono()
     .get("/", async (c) => c.json(await PaneBrowser.list()))
@@ -17,5 +20,15 @@ export const PaneBrowserRoutes = lazy(() =>
         const found = await PaneBrowser.reply({ requestID, result: c.req.valid("json") })
         return found ? c.json(true) : c.json({ error: "Unknown request" }, 404)
       },
+    )
+    .get(
+      "/plan/:sessionID",
+      validator("param", z.object({ sessionID: z.string() })),
+      async (c) => c.json({ hosts: await PaneBrowser.planHosts(c.req.valid("param").sessionID) }),
+    )
+    .delete(
+      "/plan/:sessionID",
+      validator("param", z.object({ sessionID: z.string() })),
+      async (c) => c.json({ revoked: await PaneBrowser.revokePlan(c.req.valid("param").sessionID) }),
     ),
 )

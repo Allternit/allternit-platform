@@ -179,7 +179,7 @@ pub fn classify_label(label: &str) -> Option<Irreversible> {
 
 /// Roles whose label is something a person reads, not something they press
 /// (text, fields, headings): never classified.
-fn passive_role(role: &str) -> bool {
+pub(crate) fn passive_role(role: &str) -> bool {
     let r = role.strip_prefix("AX").unwrap_or(role).to_lowercase();
     matches!(
         r.as_str(),
@@ -478,6 +478,12 @@ pub struct Context {
     pub elements: HashMap<String, Elem>,
     /// Whether the app (and page, for browsers) could be observed.
     pub known: bool,
+    /// This platform can't report the app in front at all (no probe for it,
+    /// or the probe can't run) — not the same as an app that couldn't be
+    /// identified. The per-app tier check is skipped and audited as
+    /// `tier_check=unavailable`; the lists, classes and approvals still apply.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub tier_unavailable: bool,
 }
 
 const BROWSER_APPS: [&str; 10] = [
@@ -600,28 +606,7 @@ pub async fn observe(target: &Target, toolset: Toolset, member: &str, scaled: &V
             }
             ctx
         }
-        Target::ThisDevice if toolset == Toolset::Computer && cfg!(target_os = "macos") => {
-            let mut params = json!({});
-            if let Some(p) = scaled.get("coordinate").and_then(Value::as_array).filter(|a| a.len() == 2) {
-                params["point"] = json!(p);
-            }
-            let ids = step_ids(member, scaled);
-            if !ids.is_empty() {
-                params["ids"] = json!(ids);
-            }
-            for k in ["app", "pid", "window_id"] {
-                if let Some(v) = scaled.get(k) {
-                    params[k] = v.clone();
-                }
-            }
-            match crate::this_device_input::call_driver_timed("context", params, Duration::from_secs(3)).await {
-                Ok(v) => context_from_driver(&v),
-                Err(e) => {
-                    tracing::debug!("safety context unavailable: {}", String::from(e));
-                    Context::default()
-                }
-            }
-        }
+        Target::ThisDevice if toolset == Toolset::Computer => this_device_context(member, scaled).await,
         Target::Guest { os, .. } if os != "windows" => {
             // Title and window class of the active X window (one exec).
             match crate::computer_toolset::guest_exec(target, "xdotool getactivewindow getwindowname getwindowclassname 2>/dev/null").await {
@@ -635,6 +620,114 @@ pub async fn observe(target: &Target, toolset: Toolset, member: &str, scaled: &V
             }
         }
         _ => Context::default(),
+    }
+}
+
+/// The app in front on this device, per platform:
+///
+/// - macOS: the Allternit Driver's `context` op (app, bundle id, element at
+///   the point). A failure stays an unknown app, which fails closed.
+/// - Linux: the active X window's title and class through xdotool on the
+///   display this device's input goes to (the same `local_x_exec` path).
+/// - Windows: the driver's `context` op when it answers, else the foreground
+///   window's process (GetForegroundWindow + GetWindowThreadProcessId through
+///   PowerShell).
+/// - Anything else, or a Linux/Windows probe that can't run: the platform
+///   can't report it (`tier_unavailable`).
+async fn this_device_context(member: &str, scaled: &Value) -> Context {
+    if cfg!(target_os = "macos") || cfg!(windows) {
+        let mut params = json!({});
+        if let Some(p) = scaled.get("coordinate").and_then(Value::as_array).filter(|a| a.len() == 2) {
+            params["point"] = json!(p);
+        }
+        let ids = step_ids(member, scaled);
+        if !ids.is_empty() {
+            params["ids"] = json!(ids);
+        }
+        for k in ["app", "pid", "window_id"] {
+            if let Some(v) = scaled.get(k) {
+                params[k] = v.clone();
+            }
+        }
+        match crate::this_device_input::call_driver_timed("context", params, Duration::from_secs(3)).await {
+            Ok(v) => {
+                let ctx = context_from_driver(&v);
+                if ctx.known || cfg!(target_os = "macos") {
+                    return ctx;
+                }
+            }
+            Err(e) => {
+                tracing::debug!("safety context unavailable: {}", String::from(e));
+                if cfg!(target_os = "macos") {
+                    return Context::default();
+                }
+            }
+        }
+        return windows_front_app().await;
+    }
+    if cfg!(target_os = "linux") {
+        let probe = crate::computer_toolset::local_x_exec("xdotool getactivewindow getwindowname getwindowclassname 2>/dev/null");
+        return match tokio::time::timeout(Duration::from_secs(3), probe).await {
+            Ok(Ok(out)) => context_from_window_lines(&out),
+            Ok(Err(e)) => {
+                tracing::debug!("active window unavailable on this device: {e}");
+                Context { tier_unavailable: true, ..Default::default() }
+            }
+            Err(_) => Context { tier_unavailable: true, ..Default::default() },
+        };
+    }
+    Context { tier_unavailable: true, ..Default::default() }
+}
+
+/// `title` / `class` lines (xdotool getwindowname getwindowclassname).
+fn context_from_window_lines(out: &str) -> Context {
+    let mut lines = out.lines();
+    let title = lines.next().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let class = lines.next().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    Context { known: class.is_some(), app: class, title, ..Default::default() }
+}
+
+/// PowerShell probe of the foreground window's process: process name,
+/// file description, window title, one per line.
+const WINDOWS_FRONT_APP_PS: &str = r#"$ErrorActionPreference='Stop'
+Add-Type -Name FG -Namespace AllternitSafety -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint p);'
+$h=[AllternitSafety.FG]::GetForegroundWindow()
+if ($h -eq [System.IntPtr]::Zero) { exit 3 }
+$p=0; [void][AllternitSafety.FG]::GetWindowThreadProcessId($h,[ref]$p)
+$pr=Get-Process -Id $p
+$d=''; try { $d=$pr.MainModule.FileVersionInfo.FileDescription } catch {}
+Write-Output $pr.ProcessName; Write-Output $d; Write-Output $pr.MainWindowTitle"#;
+
+/// The foreground app on Windows. A probe that can't run is "platform can't
+/// report" (`tier_unavailable`), never a guess.
+async fn windows_front_app() -> Context {
+    let mut cmd = tokio::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_FRONT_APP_PS]).kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        // CREATE_NO_WINDOW: no console flashes on the person's screen.
+        cmd.creation_flags(0x0800_0000);
+    }
+    match tokio::time::timeout(Duration::from_secs(4), cmd.output()).await {
+        Ok(Ok(out)) if out.status.success() => context_from_windows_probe(&String::from_utf8_lossy(&out.stdout)),
+        _ => Context { tier_unavailable: true, ..Default::default() },
+    }
+}
+
+/// Process name / description / title lines from the Windows probe. The
+/// executable name stands in for a bundle id (`chrome.exe`).
+fn context_from_windows_probe(out: &str) -> Context {
+    let mut lines = out.lines().map(str::trim);
+    let process = lines.next().filter(|s| !s.is_empty()).map(str::to_string);
+    let description = lines.next().filter(|s| !s.is_empty()).map(str::to_string);
+    let title = lines.next().filter(|s| !s.is_empty()).map(str::to_string);
+    let Some(process) = process else { return Context { tier_unavailable: true, ..Default::default() } };
+    Context {
+        app: Some(description.unwrap_or_else(|| process.clone())),
+        bundle_id: Some(format!("{}.exe", process.to_lowercase())),
+        title,
+        known: true,
+        ..Default::default()
     }
 }
 
@@ -653,6 +746,7 @@ fn context_from_driver(v: &Value) -> Context {
         at_point: v.get("at_point").filter(|e| e.is_object()).map(elem),
         elements: v.get("elements").and_then(Value::as_object).map(|m| m.iter().map(|(k, e)| (k.clone(), elem(e))).collect()).unwrap_or_default(),
         known: s("app").is_some() || s("bundle_id").is_some(),
+        tier_unavailable: false,
     }
 }
 
@@ -688,7 +782,7 @@ pub fn domain_matches(pattern: &str, host: &str) -> bool {
     h == p || h.ends_with(&format!(".{p}"))
 }
 
-fn app_matches(pattern: &str, ctx: &Context) -> bool {
+pub(crate) fn app_matches(pattern: &str, ctx: &Context) -> bool {
     ctx.app_names().iter().any(|a| glob(pattern, a))
 }
 
@@ -904,6 +998,10 @@ pub struct Assessment {
     pub watch: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub monitor: Option<MonitorAnswer>,
+    /// The access-tier check against the app in front (this device only;
+    /// `computer_access`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access: Option<crate::computer_access::AccessCheck>,
     pub context: Context,
     #[serde(skip)]
     pub snapshot: bool,
@@ -913,6 +1011,10 @@ pub struct Assessment {
     /// a project context (never serialized to the model; in the audit note).
     #[serde(skip)]
     pub project_id: Option<String>,
+    /// The error code a Deny answers with when it isn't `safety_denied`:
+    /// `access_required` (tier check) or `tier_exceeded` (request_access).
+    #[serde(skip)]
+    pub code: Option<&'static str>,
 }
 
 impl Assessment {
@@ -933,6 +1035,12 @@ impl Assessment {
         }
         if let Some(m) = &self.monitor {
             s.push_str(&format!(" monitor={}", m.verdict));
+        }
+        if let Some(x) = &self.access {
+            match x.tier_check {
+                "checked" => s.push_str(&format!(" tier={}/{}", x.required.as_str(), x.granted.as_str())),
+                other => s.push_str(&format!(" tier_check={other}")),
+            }
         }
         if let Some(p) = &self.project_id {
             s.push_str(&format!(" project={p}"));
@@ -1045,9 +1153,43 @@ pub async fn assess(
     let member = spec.name.as_str();
     let mutating = !read_only(spec);
     let settings = load_settings(state, &user.user_id, &computer.id, project_id).await;
+
+    // 0. The access members look up and grant tiers; they don't act in an
+    // app, so there is nothing on screen to check. request_access is checked
+    // against the category ceilings and the deny lists here, before anyone
+    // is asked to approve it.
+    if toolset == Toolset::Computer && crate::computer_access::is_access_member(member) {
+        let mut a = Assessment {
+            verdict: Verdict::Allow,
+            step: member.replace('_', " "),
+            irreversible: None,
+            watch: None,
+            monitor: None,
+            access: None,
+            context: Context::default(),
+            snapshot: false,
+            settings,
+            project_id: project_id.map(str::to_string),
+            code: None,
+        };
+        if member == "request_access" {
+            let exempt = crate::computer_access::exempt(target);
+            if let Err((code, why)) = crate::computer_access::check_request(scaled, &a.settings, exempt) {
+                a.verdict = Verdict::Deny(why);
+                a.code = (code != "safety_denied").then_some(code);
+            }
+        }
+        return a;
+    }
+
     let secrets = crate::aci_credentials::CREDENTIALS.screening_secrets(&user.user_id);
     let texts = typed_texts(member, scaled);
-    let needs_context = mutating || settings.lists_set() || matches!(target, Target::Browser { .. });
+    // Access tiers (this device only): a step above read needs to know the
+    // app in front, even when it is read-only by risk (scroll, mouse_move).
+    let exempt = crate::computer_access::exempt(target);
+    let required_tier = if toolset == Toolset::Computer { crate::computer_access::required_tier(member, scaled) } else { None };
+    let tier_gate = !exempt && required_tier.is_some_and(|t| t > crate::computer_access::Tier::Read);
+    let needs_context = mutating || tier_gate || settings.lists_set() || matches!(target, Target::Browser { .. });
     let ctx = if needs_context && !matches!(member, "wait" | "cursor_position" | "request_human") {
         observe(target, toolset, member, scaled).await
     } else {
@@ -1060,10 +1202,12 @@ pub async fn assess(
         irreversible: None,
         watch: None,
         monitor: None,
+        access: None,
         context: ctx,
         snapshot: false,
         settings,
         project_id: project_id.map(str::to_string),
+        code: None,
     };
 
     // 1. Lists, host policy, secret binding: deny.
@@ -1088,6 +1232,25 @@ pub async fn assess(
                     return a;
                 }
             }
+        }
+    }
+
+    // 1b. Access tiers: the call's tier against the app actually in front
+    // (session grant or standing allow_apps grant, capped at the category
+    // ceiling; deny lists win; an unknown app is read only).
+    if let Some(required) = required_tier {
+        let grants = crate::computer_access::session_grants(
+            &user.user_id,
+            &computer.id,
+            &crate::computer_access::session_key(run_id),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+        );
+        let (check, outcome) = crate::computer_access::decide(&a.context, &a.settings, &grants, required, exempt);
+        a.access = Some(check);
+        if let Err(why) = outcome {
+            a.verdict = Verdict::Deny(why);
+            a.code = Some("access_required");
+            return a;
         }
     }
 

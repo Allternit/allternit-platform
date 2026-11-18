@@ -1007,21 +1007,51 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// on the computer toolset for that turn only; the lease and confirm gates in
 /// computer_toolset.rs / computer_safety.rs still decide every call.
 ///
-/// Two prompt hints also pass, each only with its one allowed value:
-/// `form_factor: "phone"` and `reply_mode: "voice"`. The runtime reads them to
-/// add its small-screen and spoken-reply prompt blocks. Anything else is dropped.
+/// Five prompt hints also pass. Four only with their one allowed value
+/// ([`VALUED_TURN_HINTS`]): `form_factor: "phone"` and `reply_mode: "voice"`,
+/// which the runtime reads to add its small-screen and spoken-reply prompt
+/// blocks; `answer_cards: "widgets"` (sent by iOS and the Ink REPL), which adds
+/// the short `writing` card manual; and `screen_context: "available"`, sent by
+/// a client that answers `capture_screen_context` requests. The fifth is
+/// `time_zone`, the client's IANA zone (see `turn_time_zone`), which the
+/// runtime uses for the date in its environment section and the
+/// `current_time` tool. Anything else is dropped.
 fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     let meta = body.get("metadata")?;
     let mut out = serde_json::Map::new();
     if let Some(tools) = meta.get("tools").filter(|t| t.is_object()) {
         out.insert("tools".to_string(), tools.clone());
     }
-    for (key, allowed) in [("form_factor", "phone"), ("reply_mode", "voice")] {
+    for (key, allowed) in VALUED_TURN_HINTS {
         if meta.get(key).and_then(|v| v.as_str()) == Some(allowed) {
             out.insert(key.to_string(), json!(allowed));
         }
     }
+    if let Some(zone) = turn_time_zone(meta) {
+        out.insert("time_zone".to_string(), json!(zone));
+    }
     if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
+}
+
+/// Turn hints that pass only with their one allowed value (the fifth hint,
+/// `time_zone`, is checked by [`turn_time_zone`]). Shared by this route and
+/// agent_session_routes' message send.
+pub(crate) const VALUED_TURN_HINTS: [(&str, &str); 4] = [
+    ("form_factor", "phone"),
+    ("reply_mode", "voice"),
+    ("answer_cards", "widgets"),
+    ("screen_context", "available"),
+];
+
+/// The turn hint `metadata.time_zone`: the client's IANA zone name, at most
+/// 64 characters, kept only when it parses as a `chrono_tz::Tz` (trimmed, in
+/// the spelling chrono_tz names it). Separate from the opt-in `client_location`.
+pub(crate) fn turn_time_zone(meta: &serde_json::Value) -> Option<String> {
+    let zone = meta.get("time_zone")?.as_str()?.trim();
+    if zone.is_empty() || zone.len() > 64 {
+        return None;
+    }
+    zone.parse::<chrono_tz::Tz>().ok().map(|tz| tz.name().to_string())
 }
 
 /// Compose the final system-instructions block for an agent-chat request.
@@ -1182,6 +1212,12 @@ enum ToolFrameState {
     Ended,
 }
 
+/// Tools whose settled `tool_result` frame carries the part's `state.metadata`
+/// (send_user_message: text + files + push; automation: the saved automation;
+/// lookup: the validated answer card the client draws in place of a
+/// model-written one).
+const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "lookup", "agent_batch", "sleep", "connector_suggest", "settings"];
+
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`
 /// or `tool_error` when it settles — the wire the workspace client parses.
@@ -1219,13 +1255,22 @@ fn tool_frames_for_part(
         frames.push(if status == "completed" {
             // run_code's `files[]` + `run` are added by the caller off the
             // async stream (gizzi_chat_stream::run_code_payload_async).
-            json!({
+            let mut frame = json!({
                 "type": "tool_result",
                 "messageId": msg_id,
                 "toolCallId": call_id,
                 "toolName": tool_name,
                 "result": part.pointer("/state/output").cloned().unwrap_or_else(|| json!("")),
-            })
+            });
+            // Tools whose client card reads the part's metadata (send_user_message:
+            // text + files + push) get it on the live frame too, so the card shows
+            // while the reply streams, not only after a reload.
+            if METADATA_CARD_TOOLS.contains(&tool_name) {
+                if let Some(meta) = part.pointer("/state/metadata").filter(|m| m.is_object()) {
+                    frame["metadata"] = meta.clone();
+                }
+            }
+            frame
         } else {
             json!({
                 "type": "tool_error",
@@ -1705,10 +1750,17 @@ async fn agent_chat_bridge(
 
     // Opt-in location (Settings → Privacy → "Share my location with bots",
     // off by default): checked and rounded here, then sent to gizzi as the
-    // turn-only `turnSystem` layer — never in `system` (gizzi stores that on
-    // the user message), never stored, never logged. Invalid → ignored.
-    let location_layer = crate::client_location::from_body(&body_json, chrono::Utc::now())
-        .map(|loc| crate::client_location::location_layer(&loc));
+    // turn-only `turnSystem` layer (prose for the model) and the turn-only
+    // `turnLocation` value (structured, for lookup's "here") — never in
+    // `system` or `metadata` (gizzi stores both on the user message), never
+    // stored, never logged. Invalid → ignored.
+    let shared_location = crate::client_location::from_body(&body_json, chrono::Utc::now());
+    let location_layer = shared_location
+        .as_ref()
+        .map(crate::client_location::location_layer);
+    let turn_location = shared_location
+        .as_ref()
+        .map(crate::client_location::turn_value);
 
     // A resume re-attaches to a turn already running on this chat (the
     // client's stream dropped mid-reply): nothing new is sent to the model.
@@ -2193,6 +2245,11 @@ async fn agent_chat_bridge(
             .reduce(|a, b| format!("{a}\n\n{}", b.trim()))
         {
             gizzi_payload["turnSystem"] = json!(layers);
+        }
+        // The same location, structured, for tools (lookup "here"): turn-only
+        // like `turnSystem`, so gizzi never parses the layer's wording.
+        if let Some(value) = &turn_location {
+            gizzi_payload["turnLocation"] = value.clone();
         }
 
         // Composer tool options (the + menu / mobile "+" sheet):
@@ -3191,11 +3248,67 @@ mod tests {
     }
 
     #[test]
-    fn stored_turn_metadata_keeps_only_the_two_prompt_hints() {
-        let body = json!({ "metadata": { "form_factor": "phone", "reply_mode": "voice", "x": 1 } });
-        assert_eq!(stored_turn_metadata(&body), Some(json!({ "form_factor": "phone", "reply_mode": "voice" })));
-        let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud" } });
+    fn turn_location_is_sent_only_when_location_sharing_is_on() {
+        let at = chrono::Utc::now().to_rfc3339();
+        // Sharing on: the client adds `client_location` to the send.
+        let on = json!({
+            "chatId": "c1",
+            "message": "weather here?",
+            "metadata": { "tools": { "webSearch": true } },
+            "client_location": {
+                "lat": 40.712_8, "lon": -74.006_1, "accuracy_m": 30.0,
+                "time_zone": "America/New_York", "at": at
+            }
+        });
+        let value = crate::client_location::from_body(&on, chrono::Utc::now())
+            .map(|loc| crate::client_location::turn_value(&loc))
+            .unwrap();
+        assert_eq!(value["lat"], json!(40.71));
+        assert_eq!(value["lon"], json!(-74.01));
+        assert_eq!(value["accuracy_m"], json!(1000));
+        assert_eq!(value["time_zone"], json!("America/New_York"));
+        assert!(value["at"].as_str().is_some_and(|s| !s.is_empty()));
+        // It never rides the stored metadata, and needs no turn hint.
+        assert_eq!(stored_turn_metadata(&on).unwrap(), json!({ "tools": { "webSearch": true } }));
+        // Sharing off (no `client_location`), or a location the server rejects: no value.
+        let off = json!({ "chatId": "c1", "message": "weather here?", "metadata": { "client_location": { "lat": 40.71, "lon": -74.01 } } });
+        assert_eq!(crate::client_location::from_body(&off, chrono::Utc::now()), None);
+        let stale = json!({ "client_location": {
+            "lat": 40.71, "lon": -74.01, "time_zone": "America/New_York", "at": "2020-01-01T00:00:00Z"
+        } });
+        assert_eq!(crate::client_location::from_body(&stale, chrono::Utc::now()), None);
+    }
+
+    #[test]
+    fn stored_turn_metadata_keeps_only_the_five_prompt_hints() {
+        let body = json!({ "metadata": {
+            "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets",
+            "time_zone": "America/Chicago", "screen_context": "available", "x": 1
+        } });
+        let kept = stored_turn_metadata(&body).unwrap();
+        assert_eq!(
+            kept,
+            json!({
+                "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets",
+                "time_zone": "America/Chicago", "screen_context": "available"
+            })
+        );
+        assert_eq!(kept.as_object().unwrap().len(), 5);
+        assert_eq!(super::VALUED_TURN_HINTS.len() + 1, 5, "four valued hints plus time_zone");
+        let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud", "answer_cards": "all", "screen_context": "yes" } });
         assert_eq!(stored_turn_metadata(&body), None);
+        let body = json!({ "metadata": { "answer_cards": true } });
+        assert_eq!(stored_turn_metadata(&body), None);
+    }
+
+    #[test]
+    fn stored_turn_metadata_passes_only_a_valid_time_zone() {
+        let zone = |value: serde_json::Value| stored_turn_metadata(&json!({ "metadata": { "time_zone": value } }));
+        assert_eq!(zone(json!("Asia/Kolkata")), Some(json!({ "time_zone": "Asia/Kolkata" })));
+        assert_eq!(zone(json!(" UTC ")), Some(json!({ "time_zone": "UTC" })));
+        for bad in [json!("Mars/Olympus"), json!("+05:00"), json!(""), json!(7), json!("A".repeat(65))] {
+            assert_eq!(zone(bad), None);
+        }
     }
 
     #[test]
@@ -3289,6 +3402,34 @@ mod tests {
         assert_eq!(end[0]["type"], "tool_result");
         assert_eq!(end[0]["result"], "3 results");
         assert!(tool_frames_for_part(&done, "m1", &mut sent).is_empty());
+    }
+
+    #[test]
+    fn send_user_message_frames_carry_the_card_metadata() {
+        let mut sent = HashMap::new();
+        let meta = json!({"text": "Report ready", "files": [{"name": "r.md", "size": 5, "display": "render"}], "push": "sent"});
+        let done = json!({"type": "tool", "tool": "send_user_message", "callID": "c2",
+            "state": {"status": "completed", "input": {}, "output": "Delivered", "metadata": meta}});
+        let frames = tool_frames_for_part(&done, "m1", &mut sent);
+        let end = frames.iter().find(|f| f["type"] == "tool_result").unwrap();
+        assert_eq!(end["metadata"]["text"], "Report ready");
+        assert_eq!(end["metadata"]["files"][0]["name"], "r.md");
+
+        // The automation card (Cancel needs the routine id) shows live too.
+        let mut sent = HashMap::new();
+        let meta = json!({"action": "create", "status": "ok", "automation": {"id": "routine-1", "title": "Call the bank"}});
+        let made = json!({"type": "tool", "tool": "automation", "callID": "c4",
+            "state": {"status": "completed", "input": {}, "output": "Scheduled", "metadata": meta}});
+        let frames = tool_frames_for_part(&made, "m1", &mut sent);
+        let end = frames.iter().find(|f| f["type"] == "tool_result").unwrap();
+        assert_eq!(end["metadata"]["automation"]["id"], "routine-1");
+
+        // Other tools keep their frames unchanged (no metadata leak).
+        let mut sent = HashMap::new();
+        let other = json!({"type": "tool", "tool": "bash", "callID": "c3",
+            "state": {"status": "completed", "input": {}, "output": "ok", "metadata": {"secret": 1}}});
+        let frames = tool_frames_for_part(&other, "m1", &mut sent);
+        assert!(frames.iter().find(|f| f["type"] == "tool_result").unwrap().get("metadata").is_none());
     }
 
     #[test]

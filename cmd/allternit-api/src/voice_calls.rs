@@ -380,7 +380,10 @@ fn summary_prompt(db: &DbHandle, call: &CallRow, call_id: &str) -> Result<Option
         transcript = format!("[earlier part of the call omitted]\n{}", &transcript[cut..]);
     }
     Ok(Some(format!(
-        "Summarize this {} phone call for the bot's owner. Caller number: {}. Duration: {} seconds. Ended: {}.\n\nTranscript and tool log:\n{transcript}",
+        "Summarize this {} phone call for the bot's owner. Caller number: {}. Duration: {} seconds. Ended: {}.\n\n\
+Rules: cover who called, what was asked, what was agreed, and follow-ups with an owner and a time for each. \
+Use only facts stated in the transcript or tool log; if something is missing, write \"not stated\". Do not invent names, numbers, times or promises. \
+Keep it short, plain text.\n\nTranscript and tool log:\n{transcript}",
         call.direction,
         if caller.is_empty() { "withheld" } else { caller.as_str() },
         duration.map_or("unknown".to_string(), |d| d.to_string()),

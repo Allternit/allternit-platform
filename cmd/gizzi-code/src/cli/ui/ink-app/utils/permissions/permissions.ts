@@ -12,6 +12,13 @@ import { shouldUseSandbox } from '../../tools/BashTool/shouldUseSandbox.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import { POWERSHELL_TOOL_NAME } from '../../tools/PowerShellTool/toolName.js'
 import { REPL_TOOL_NAME } from '../../tools/REPLTool/constants.js'
+import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
+import { FILE_WRITE_TOOL_NAME } from '../../tools/FileWriteTool/prompt.js'
+import { NOTEBOOK_EDIT_TOOL_NAME } from '../../tools/NotebookEditTool/constants.js'
+import { redirectDeletes } from '../../tools/FolderAccessTool/deleteRedirect.js'
+import { accessGrantedFolders } from '../../tools/FolderAccessTool/folderGrants.js'
+import { ActionClasses } from '@/runtime/tools/guard/permission/action-classes'
+import { getCwd } from '../cwd.js'
 import type { AssistantMessage } from '../../types/message.js'
 import { extractOutputRedirections } from '../bash/commands.js'
 import { logForDebugging } from '../debug.js'
@@ -65,6 +72,7 @@ const autoModeStateModule = feature('TRANSCRIPT_CLASSIFIER')
   : null
 
 import {
+  getOriginalCwd,
   addToTurnClassifierDuration,
   getTotalCacheCreationInputTokens,
   getTotalCacheReadInputTokens,
@@ -471,7 +479,225 @@ async function runPermissionRequestHooksForHeadlessAgent(
   return null
 }
 
+/* ------------------------------------------------------------------ */
+/* Action classes (contracts/action-classes) in the Ink path            */
+/* ------------------------------------------------------------------ */
+//
+// The same four classes the runtime reviewer enforces
+// (runtime/tools/guard/permission/action-review.ts), classified by the shared
+// runtime classifier so the TUI and the runtime cannot drift:
+//   hand_off             never runs, in any mode
+//   confirm_now          asks every time, in every mode including bypass; no
+//                        "always" suggestion, and saved allow rules don't skip it
+//   confirm_unless_named asks unless an allow rule names this action
+//                        (a content rule like Bash(git push:*), or the exact MCP tool)
+//   free                 unchanged
+// With nobody to ask (dontAsk, async agents) the ask becomes a deny further
+// down, as for every other bypass-immune ask.
+
+const SHELL_TOOLS = new Set([BASH_TOOL_NAME, POWERSHELL_TOOL_NAME])
+const WRITE_TOOLS = new Set([
+  FILE_EDIT_TOOL_NAME,
+  FILE_WRITE_TOOL_NAME,
+  NOTEBOOK_EDIT_TOOL_NAME,
+])
+
+function str(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined
+}
+
+/** The classifier's view of one Ink tool call; undefined = not classified (free). */
+function actionInputFor(
+  tool: Tool,
+  input: { [key: string]: unknown },
+): ActionClasses.Input | undefined {
+  if (SHELL_TOOLS.has(tool.name)) {
+    return { tool: 'bash', action: 'run', args: { command: str(input.command) ?? '' } }
+  }
+  if (WRITE_TOOLS.has(tool.name)) {
+    return {
+      tool: 'write',
+      action: 'write',
+      args: {
+        path: str(input.file_path) ?? str(input.notebook_path),
+        text: str(input.new_string) ?? str(input.content) ?? str(input.new_source),
+      },
+    }
+  }
+  const mcp = tool.isMcp || tool.mcpInfo ? mcpInfoFromString(tool.name) : null
+  if (mcp) {
+    return { tool: 'mcp', action: 'call', args: { name: mcp.toolName ?? tool.name } }
+  }
+  return undefined
+}
+
+function classifyAction(
+  tool: Tool,
+  input: { [key: string]: unknown },
+): ActionClasses.Result | undefined {
+  const actionInput = actionInputFor(tool, input)
+  if (!actionInput) return undefined
+  try {
+    return ActionClasses.classify(actionInput, { projectRoot: getOriginalCwd() })
+  } catch (e) {
+    logError(e)
+    // A classifier failure must not let a call skip review: ask.
+    return { class: 'confirm_now', topic: 'none', reason: 'Could not review this action' }
+  }
+}
+
+/** Whether an allow rule names this call (not a whole-tool or wildcard rule). */
+function namedByAllowRule(
+  tool: Tool,
+  toolPermissionResult: PermissionResult,
+  context: ToolPermissionContext,
+): boolean {
+  const reason = toolPermissionResult?.decisionReason
+  if (toolPermissionResult?.behavior === 'allow' && reason) {
+    if (
+      reason.type === 'rule' &&
+      reason.rule.ruleBehavior === 'allow' &&
+      reason.rule.ruleValue.ruleContent !== undefined
+    ) {
+      return true
+    }
+    // A compound shell command every part of which passed its own rules.
+    if (reason.type === 'subcommandResults') return true
+  }
+  // An MCP tool is named by a rule for that exact tool (not the whole server).
+  if (tool.isMcp || tool.mcpInfo) {
+    return getAllowRules(context).some(
+      rule =>
+        rule.ruleValue.toolName === tool.name &&
+        rule.ruleValue.ruleContent === undefined,
+    )
+  }
+  return false
+}
+
+/** The class gate. Null = the class adds nothing; continue the normal checks. */
+function actionClassDecision(
+  tool: Tool,
+  input: { [key: string]: unknown },
+  toolPermissionResult: PermissionResult,
+  context: ToolPermissionContext,
+  reviewed?: ActionClasses.Result,
+): PermissionDecision | null {
+  const review = reviewed ?? classifyAction(tool, input)
+  if (!review || review.class === 'free') return null
+  if (review.class === 'hand_off') {
+    return {
+      behavior: 'deny',
+      message: `${review.reason}. This never runs from an agent: hand it to the user to do themselves.`,
+      decisionReason: { type: 'other', reason: `action class hand_off: ${review.reason}` },
+    }
+  }
+  const updatedInput =
+    toolPermissionResult && 'updatedInput' in toolPermissionResult
+      ? toolPermissionResult.updatedInput
+      : undefined
+  if (review.class === 'confirm_now') {
+    return {
+      behavior: 'ask',
+      message: `${review.reason}: this asks every time.`,
+      ...(updatedInput ? { updatedInput } : {}),
+      // No suggestions: there is no "always" for this class.
+      decisionReason: {
+        type: 'safetyCheck',
+        reason: `${review.reason} (asks every time)`,
+        classifierApprovable: false,
+      },
+    }
+  }
+  // confirm_unless_named
+  if (namedByAllowRule(tool, toolPermissionResult, context)) return null
+  return {
+    behavior: 'ask',
+    message: `${review.reason}: this asks unless an allow rule names it.`,
+    ...(updatedInput ? { updatedInput } : {}),
+    ...(toolPermissionResult && 'suggestions' in toolPermissionResult && toolPermissionResult.suggestions
+      ? { suggestions: toolPermissionResult.suggestions }
+      : {}),
+    decisionReason: {
+      type: 'safetyCheck',
+      reason: `${review.reason} (asks unless an allow rule names it)`,
+      classifierApprovable: false,
+    },
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* folder_access: deletes in a granted outside folder                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * In a folder granted with folder_access (a session working directory outside
+ * the project) and without a request_delete grant, a delete moves the file to
+ * `<folder>/_to_delete/`: a plain rm is rewritten, any other deleting command
+ * is refused with a message. Bash only; other tools don't delete.
+ */
+function folderDeleteRedirect(
+  tool: Tool,
+  input: { [key: string]: unknown },
+  context: ToolPermissionContext,
+):
+  | { input: { [key: string]: unknown } }
+  | { deny: PermissionDecision }
+  | undefined {
+  if (tool.name !== BASH_TOOL_NAME) return undefined
+  const command = str(input.command)
+  if (!command) return undefined
+  const projectRoot = getOriginalCwd()
+  // Only folders granted with folder_access, and only while still a working dir.
+  const grantedFolders = Array.from(accessGrantedFolders).filter(f =>
+    context.additionalWorkingDirectories.has(f),
+  )
+  if (!grantedFolders.length) return undefined
+  const decision = redirectDeletes(command, { cwd: getCwd(), projectRoot, grantedFolders })
+  if (!decision) return undefined
+  if (decision.kind === 'refuse') {
+    return {
+      deny: {
+        behavior: 'deny',
+        message: decision.message,
+        decisionReason: { type: 'other', reason: 'folder_access: delete not granted' },
+      },
+    }
+  }
+  return { input: { ...input, command: decision.command } }
+}
+
 export const hasPermissionsToUseTool: CanUseToolFn = async (
+  tool,
+  input,
+  context,
+  assistantMessage,
+  toolUseID,
+): Promise<PermissionDecision> => {
+  const redirect = folderDeleteRedirect(
+    tool,
+    input,
+    context.getAppState().toolPermissionContext,
+  )
+  if (redirect && 'deny' in redirect) return redirect.deny
+  if (!redirect) {
+    return hasPermissionsToUseToolCore(tool, input, context, assistantMessage, toolUseID)
+  }
+  // Review and run the rewritten command (mv into _to_delete/), not the rm.
+  const result = await hasPermissionsToUseToolCore(
+    tool,
+    redirect.input,
+    context,
+    assistantMessage,
+    toolUseID,
+  )
+  if ((result.behavior === 'allow' || result.behavior === 'ask') && !result.updatedInput) {
+    return { ...result, updatedInput: redirect.input }
+  }
+  return result
+}
+
+const hasPermissionsToUseToolCore: CanUseToolFn = async (
   tool,
   input,
   context,
@@ -1132,6 +1358,37 @@ export async function checkRuleBasedPermissions(
     return toolPermissionResult
   }
 
+  // 1d'. A hook allow is the person's own config, so it counts as naming a
+  // confirm_unless_named action; hand_off and confirm_now still hold.
+  const hookReview = classifyAction(tool, input)
+  if (hookReview?.class === 'hand_off' || hookReview?.class === 'confirm_now') {
+    return actionClassDecision(
+      tool,
+      input,
+      toolPermissionResult,
+      appState.toolPermissionContext,
+      hookReview,
+    )
+  }
+
+  // A delete in a granted outside folder must be moved, not run as typed:
+  // refuse here, or route through canUseTool (which rewrites it) with an ask.
+  const redirect = folderDeleteRedirect(tool, input, appState.toolPermissionContext)
+  if (redirect && 'deny' in redirect) {
+    return redirect.deny
+  }
+  if (redirect) {
+    return {
+      behavior: 'ask',
+      message: 'Deletes in this folder move to _to_delete/.',
+      decisionReason: {
+        type: 'safetyCheck',
+        reason: 'folder_access: delete redirected to _to_delete/',
+        classifierApprovable: false,
+      },
+    }
+  }
+
   // 1f. Content-specific ask rules from tool.checkPermissions
   // (e.g. Bash(npm publish:*) → {ask, type:'rule', ruleBehavior:'ask'})
   if (
@@ -1226,6 +1483,20 @@ async function hasPermissionsToUseToolInner(
   // 1d. Tool implementation denied permission
   if (toolPermissionResult?.behavior === 'deny') {
     return toolPermissionResult
+  }
+
+  // 1d'. Action classes (contracts/action-classes): hand_off never runs;
+  // confirm_now asks in every mode, bypass included, with no "always";
+  // confirm_unless_named asks unless an allow rule names it. Checked before
+  // the mode and whole-tool allow steps so neither can skip it.
+  const classDecision = actionClassDecision(
+    tool,
+    input,
+    toolPermissionResult,
+    appState.toolPermissionContext,
+  )
+  if (classDecision) {
+    return classDecision
   }
 
   // 1e. Tool requires user interaction even in bypass mode

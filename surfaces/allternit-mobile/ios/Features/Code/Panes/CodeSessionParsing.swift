@@ -5,14 +5,46 @@ import Foundation
 /// The session's plan as a checklist (ProgressCard / checklist.ts
 /// `applyTodoCall`): todowrite / TodoWrite snapshots replace the list,
 /// TaskCreate adds a step, TaskUpdate changes or deletes one, in order.
+/// gizzi's todowrite items also carry `cancelled` / `interrupted` statuses
+/// and `blockedBy` (ids of steps that must finish first).
 enum CodeProgress {
     enum Status: Equatable { case pending, inProgress, completed, failed }
+    /// Why a step stopped without finishing. Cancelled steps are settled
+    /// (status `.failed`); interrupted ones wait to be picked up again
+    /// (status `.pending`).
+    enum Stop: Equatable { case cancelled, interrupted }
 
     struct Step: Identifiable, Equatable {
         let id: String
         var content: String
         var activeForm: String?
         var status: Status
+        var stop: Stop? = nil
+        /// Ids of the steps this one waits on (todowrite `blockedBy`).
+        var blockedBy: [String] = []
+
+        /// What the row says: the present-continuous form while it runs.
+        var title: String { status == .inProgress ? (activeForm ?? content) : content }
+
+        /// "Cancelled", "Interrupted", or nil for the plain states.
+        var stopLabel: String? {
+            switch stop {
+            case .cancelled: return "Cancelled"
+            case .interrupted: return "Interrupted"
+            case nil: return nil
+            }
+        }
+    }
+
+    /// The blockers of `step` that are not finished yet, by their titles
+    /// ("Waiting on: Write the tests"); nil when nothing holds it back.
+    static func blockedLine(for step: Step, in steps: [Step]) -> String? {
+        guard step.status == .pending || step.stop == .interrupted, !step.blockedBy.isEmpty else { return nil }
+        let open = step.blockedBy.compactMap { id -> String? in
+            guard let blocker = steps.first(where: { $0.id == id }) else { return "#\(id)" }
+            return blocker.status == .completed || blocker.stop == .cancelled ? nil : blocker.content
+        }
+        return open.isEmpty ? nil : "Waiting on: " + open.joined(separator: ", ")
     }
 
     static func steps(from messages: [AgentSessionMessage]) -> [Step] {
@@ -42,7 +74,12 @@ enum CodeProgress {
         let name = normalized(tool)
         let inp = (input ?? [:]).mapValues(\.value)
         let isTaskCall = name.hasSuffix("taskcreate") || name.hasSuffix("taskupdate")
-        if let snapshot = (inp["todos"] as? [Any]) ?? (isTaskCall ? nil : todos(fromResult: output)) {
+        if var snapshot = (inp["todos"] as? [Any]) ?? (isTaskCall ? nil : todos(fromResult: output)) {
+            // gizzi assigns missing ids (which blockedBy names); its result has them.
+            if !isTaskCall, snapshot.contains(where: { text(($0 as? [String: Any])?["id"]) == nil }),
+               let normalized = todos(fromResult: output), normalized.count == snapshot.count {
+                snapshot = normalized
+            }
             return snapshotSteps(snapshot)
         }
         if name.hasSuffix("taskcreate") {
@@ -50,7 +87,8 @@ enum CodeProgress {
             guard let content else { return list }
             let id = taskNumber(in: output) ?? String(list.count + 1)
             guard !list.contains(where: { $0.id == id }) else { return list }
-            return list + [Step(id: id, content: content, activeForm: text(inp["activeForm"]), status: status(inp["status"]))]
+            return list + [Step(id: id, content: content, activeForm: activeForm(inp), status: status(inp["status"]),
+                                stop: stop(inp["status"]), blockedBy: ids(inp["blockedBy"]))]
         }
         if name.hasSuffix("taskupdate") {
             guard let id = text(inp["taskId"]) ?? text(inp["id"]) ?? taskNumber(in: output) else { return list }
@@ -58,8 +96,13 @@ enum CodeProgress {
             let at = list.firstIndex { $0.id == id }
             var next = at.map { list[$0] } ?? Step(id: id, content: "Task \(id)", activeForm: nil, status: .pending)
             if let subject = text(inp["subject"]) { next.content = subject }
-            if let activeForm = text(inp["activeForm"]) { next.activeForm = activeForm }
-            if inp["status"] != nil { next.status = status(inp["status"]) }
+            if let activeForm = activeForm(inp) { next.activeForm = activeForm }
+            if inp["status"] != nil {
+                next.status = status(inp["status"])
+                next.stop = stop(inp["status"])
+            }
+            if inp["blockedBy"] != nil { next.blockedBy = ids(inp["blockedBy"]) }
+            for id in ids(inp["addBlockedBy"]) where !next.blockedBy.contains(id) { next.blockedBy.append(id) }
             var out = list
             if let at { out[at] = next } else { out.append(next) }
             return out
@@ -67,7 +110,8 @@ enum CodeProgress {
         return list
     }
 
-    /// checklist.ts `checklistStatus`.
+    /// checklist.ts `checklistStatus`. Interrupted is not settled: it reads
+    /// as waiting until the agent picks it up again.
     static func status(_ raw: Any?, done: Any? = nil) -> Status {
         let value = (text(raw) ?? ((done as? Bool) == true ? "completed" : "pending")).lowercased()
         switch value {
@@ -76,6 +120,24 @@ enum CodeProgress {
         case "cancelled", "canceled", "failed", "error": return .failed
         default: return .pending
         }
+    }
+
+    static func stop(_ raw: Any?) -> Stop? {
+        switch text(raw)?.lowercased() {
+        case "cancelled", "canceled": return .cancelled
+        case "interrupted", "paused": return .interrupted
+        default: return nil
+        }
+    }
+
+    private static func activeForm(_ item: [String: Any]) -> String? {
+        text(item["activeForm"]) ?? text(item["active_form"])
+    }
+
+    /// `blockedBy: ["t1", 2]` → ["t1", "2"]; a lone id is a list of one.
+    private static func ids(_ raw: Any?) -> [String] {
+        if let list = raw as? [Any] { return list.compactMap { text($0) } }
+        return text(raw).map { [$0] } ?? []
     }
 
     /// gizzi's todowrite/todoread output is the list as JSON; some runtimes
@@ -104,7 +166,8 @@ enum CodeProgress {
             let content = (raw as? String) ?? text(item["content"]) ?? text(item["text"]) ?? text(item["title"]) ?? text(item["subject"])
             guard let content, !content.isEmpty else { return nil }
             return Step(id: text(item["id"]) ?? "todo-\(index)", content: content,
-                        activeForm: text(item["activeForm"]), status: status(item["status"], done: item["done"]))
+                        activeForm: activeForm(item), status: status(item["status"], done: item["done"]),
+                        stop: stop(item["status"]), blockedBy: ids(item["blockedBy"] ?? item["blocked_by"]))
         }
     }
 

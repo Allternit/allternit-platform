@@ -138,6 +138,158 @@ pub fn save_meeting(session_id: &str, meeting: &MeetingInfo, transcript: &[Segme
     }
 }
 
+// ---- Agent Output: a file an agent sends the user (`send_user_message`) ----
+
+/// Why a file was not copied into Agent Output.
+#[derive(Debug, PartialEq)]
+pub enum ImportError {
+    /// The Files drive is off on this computer, or has no Agent Output folder.
+    DriveOff,
+    NotAbsolute,
+    Missing,
+    /// A folder, or anything else that isn't a regular file.
+    NotAFile,
+    TooLarge { limit: u64 },
+    Failed(String),
+}
+
+impl From<std::io::Error> for ImportError {
+    fn from(e: std::io::Error) -> Self {
+        ImportError::Failed(e.to_string())
+    }
+}
+
+/// Who sent the file: written to its provenance sidecar.
+#[derive(Debug, Clone)]
+pub struct SentBy {
+    pub session_id: String,
+    /// The tool that sent it (`send_user_message`).
+    pub tool: String,
+    /// The bot, when the session is a bot's chat.
+    pub agent_id: Option<String>,
+    pub caption: Option<String>,
+}
+
+/// A file copied into Agent Output: its drive id, name and size.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Imported {
+    pub id: String,
+    pub name: String,
+    pub size: u64,
+}
+
+/// The source checked: an absolute path to a regular file of at most `limit`
+/// bytes. Returns the resolved path and size.
+pub fn check_source(path: &Path, limit: u64) -> Result<(PathBuf, u64), ImportError> {
+    if !path.is_absolute() {
+        return Err(ImportError::NotAbsolute);
+    }
+    let real = std::fs::canonicalize(path).map_err(|_| ImportError::Missing)?;
+    let meta = std::fs::metadata(&real).map_err(|_| ImportError::Missing)?;
+    if !meta.is_file() {
+        return Err(ImportError::NotAFile);
+    }
+    if meta.len() > limit {
+        return Err(ImportError::TooLarge { limit });
+    }
+    Ok((real, meta.len()))
+}
+
+/// Copies `src` into `dir` under a free name (never replacing a file) and
+/// writes its `.provenance.json` sidecar (`source: agent`, the session and
+/// tool that sent it). Returns the copy's path and size.
+pub fn copy_with_provenance(dir: &Path, src: &Path, limit: u64, by: &SentBy, now: chrono::DateTime<chrono::Utc>) -> Result<(PathBuf, u64), ImportError> {
+    use std::io::Read;
+    let (real, _) = check_source(src, limit)?;
+    std::fs::create_dir_all(dir)?;
+    let file_name = real.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let (raw_stem, raw_ext) = match file_name.rfind('.') {
+        Some(i) if i > 0 => (&file_name[..i], Some(&file_name[i + 1..])),
+        _ => (file_name.as_str(), None),
+    };
+    let ext: Option<String> = raw_ext.map(|e| e.chars().filter(|c| c.is_ascii_alphanumeric()).take(16).collect::<String>()).filter(|e| !e.is_empty());
+    let mut stem = safe_file_name(raw_stem, "File");
+    // A copy must never pass for a provenance sidecar.
+    if stem.ends_with(".provenance") && ext.as_deref() == Some("json") {
+        stem.push_str(" (sent)");
+    }
+    let candidate = |n: u32| {
+        let s = if n == 1 { stem.clone() } else { format!("{stem} {n}") };
+        dir.join(match &ext {
+            Some(e) => format!("{s}.{e}"),
+            None => s,
+        })
+    };
+    let mut input = std::fs::File::open(&real)?;
+    let (dest, mut out) = (1..10_000)
+        .find_map(|n| {
+            let p = candidate(n);
+            std::fs::OpenOptions::new().write(true).create_new(true).open(&p).ok().map(|f| (p, f))
+        })
+        .ok_or_else(|| ImportError::Failed("no free name in Agent Output".into()))?;
+    // The file may have grown since it was checked: copy at most limit + 1 bytes.
+    let copied = std::io::copy(&mut (&mut input).take(limit + 1), &mut out);
+    drop(out);
+    let size = match copied {
+        Ok(n) if n <= limit => n,
+        Ok(_) => {
+            let _ = std::fs::remove_file(&dest);
+            return Err(ImportError::TooLarge { limit });
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&dest);
+            return Err(e.into());
+        }
+    };
+    let name = dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let provenance = Provenance { source: ProvenanceSource::Agent, ai_generated: false, agent_id: by.agent_id.clone(), task_id: None, input_item_ids: None };
+    let sidecar = json!({
+        "allternit_provenance": 1,
+        "provenance": provenance,
+        "result": { "name": name, "size": size },
+        "sent_by": { "session_id": by.session_id, "tool": by.tool, "caption": by.caption },
+        "created_at": now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    });
+    let side = dir.join(format!("{name}{}", super::inbox::SIDECAR_SUFFIX));
+    if let Err(e) = std::fs::write(side, serde_json::to_vec_pretty(&sidecar).unwrap_or_default()) {
+        let _ = std::fs::remove_file(&dest);
+        return Err(e.into());
+    }
+    Ok((dest, size))
+}
+
+/// Copies a local file into this computer's Agent Output folder with its
+/// provenance sidecar, indexes it, and returns its drive id. The runtime and
+/// this API run on the same machine, so the path is read directly.
+pub async fn import_agent_output(src: PathBuf, limit: u64, by: SentBy) -> Result<Imported, ImportError> {
+    check_source(&src, limit)?;
+    let files = super::sync::process().ok_or(ImportError::DriveOff)?;
+    let inner = files.inner().await.map_err(|_| ImportError::DriveOff)?;
+    tokio::task::spawn_blocking(move || {
+        let fail = |e: allternit_files_engine::FilesError| ImportError::Failed(e.to_string());
+        let root = inner
+            .drive
+            .roots()
+            .map_err(fail)?
+            .into_iter()
+            .find(|r| r.kind == allternit_files_core::RootKind::AgentOutput)
+            .ok_or(ImportError::DriveOff)?;
+        let (dest, size) = copy_with_provenance(&root.local_path, &src, limit, &by, chrono::Utc::now())?;
+        inner.drive.reconcile_paths(std::slice::from_ref(&dest)).map_err(fail)?;
+        let name = dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let item = inner
+            .drive
+            .list(&root.root_item_id)
+            .map_err(fail)?
+            .into_iter()
+            .find(|i| i.name == name)
+            .ok_or_else(|| ImportError::Failed("the copy was not indexed".into()))?;
+        Ok(Imported { id: item.id, name, size })
+    })
+    .await
+    .map_err(|e| ImportError::Failed(e.to_string()))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

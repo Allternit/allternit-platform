@@ -983,7 +983,11 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             if name == nil { reportPetOffer(reason) }
             return true
 
+        case .questionClosed(let requestID):
+            AgentAskStore.shared.questionClosed(id: requestID)
+
         case .question(let request):
+            AgentAskStore.shared.questionAsked(request)
             updateMessage(messageId) { message in
                 if !message.questions.contains(where: { $0.id == request.id }) {
                     message.questions.append(request)

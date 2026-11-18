@@ -4,14 +4,16 @@
  * call to gizzi as its own tool_call/tool_result events: name and text only.
  * run_code's structured result (files[], runDir, exit_code…) is what
  * allternit-api ingests (gizzi_chat_stream.rs keys on `part.tool == "run_code"`
- * and `state.metadata.files`), so the bridge stashes it here when the call
+ * and `state.metadata.files`); lookup's is its answer card (`metadata.card`,
+ * which allternit-api's METADATA_CARD_TOOLS, the clients and the answer guard
+ * read from a part named "lookup"). The bridge stashes it here when the call
  * returns and the processor merges it into the observed tool part.
  *
  * Kept free of runtime imports: processor.ts reads it on every observed tool event.
  */
 export namespace CliBridgeResults {
   /** The bridged tools whose result metadata the processor merges. */
-  const CANONICAL = ["run_code"] as const
+  const CANONICAL = ["run_code", "lookup"] as const
   export type Canonical = (typeof CANONICAL)[number]
 
   /**
@@ -29,8 +31,8 @@ export namespace CliBridgeResults {
 
   /**
    * gizzi's own id for a bridged tool the CLI reported under its vendor name.
-   * Covers run_code only: every other name comes back unchanged (the web keys
-   * on `mcp__allternit__artifact_*` as the CLI reports them).
+   * Covers run_code and lookup only: every other name comes back unchanged
+   * (the web keys on `mcp__allternit__artifact_*` as the CLI reports them).
    */
   export function canonicalTool(name: string): string {
     const trimmed = name.trim()

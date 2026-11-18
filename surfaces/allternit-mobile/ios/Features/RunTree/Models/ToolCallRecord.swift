@@ -24,6 +24,15 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
     var output: String? = nil
     /// run_code: files the run produced + its summary (nil on old runtimes).
     var runCode: RunCodeResult? = nil
+    /// send_user_message: the message and files the agent sent its user.
+    var userMessage: AgentUserMessage? = nil
+    /// automation: the scheduled task the call made or changed.
+    var automation: AgentAutomationResult? = nil
+    /// lookup: the fact card (weather, time zones, conversion, …) drawn under the reply.
+    var lookupCard: AnswerCardEnvelope? = nil
+    /// The tool part's `metadata` object as raw JSON text (nil when none).
+    /// connector_suggest and settings read their cards from it.
+    var metadata: String? = nil
 
     /// How long the call ran; live calls count up to `now`.
     func elapsed(now: Date = Date()) -> TimeInterval? {
@@ -83,7 +92,11 @@ extension ToolCallRecord {
                 startedAt: part.state?.startedAt,
                 finishedAt: part.state?.finishedAt,
                 output: part.state?.output?.value as? String,
-                runCode: name == "run_code" ? RunCodeResult(files: part.files, run: part.run) : nil
+                runCode: name == "run_code" ? RunCodeResult(files: part.files, run: part.run) : nil,
+                userMessage: name == AgentUserMessage.toolName ? part.state?.userMessage : nil,
+                automation: name == AgentAutomationResult.toolName ? part.state?.automation : nil,
+                lookupCard: name == LookupToolMetadata.toolName ? part.state?.lookup?.card : nil,
+                metadata: part.state?.metadata
             )
         }
     }
@@ -105,6 +118,10 @@ extension MessageRecord {
                 call.error = detail.error ?? call.error
                 call.startedAt = detail.startedAt ?? call.startedAt
                 call.finishedAt = detail.finishedAt ?? call.finishedAt
+                if let message = detail.userMessage { call.userMessage = message }
+                if let automation = detail.automation { call.automation = automation }
+                if let card = detail.lookupCard { call.lookupCard = card }
+                if let metadata = detail.metadata { call.metadata = metadata }
             }
             if state != .running, call.finishedAt == nil { call.finishedAt = now }
             if let runCode { call.runCode = runCode }
@@ -119,7 +136,12 @@ extension MessageRecord {
                 error: detail?.error,
                 startedAt: detail?.startedAt ?? now,
                 finishedAt: detail?.finishedAt ?? (state == .running ? nil : now),
-                runCode: runCode
+                output: detail?.output,
+                runCode: runCode,
+                userMessage: detail?.userMessage,
+                automation: detail?.automation,
+                lookupCard: detail?.lookupCard,
+                metadata: detail?.metadata
             ))
         }
     }
@@ -170,6 +192,19 @@ enum ToolDescriber {
             let detail = s("description").isEmpty ? String(s("prompt", "message", "task").prefix(80)) : s("description")
             return ToolDescription(verb: SubagentNames.title(for: subagent.isEmpty ? nil : subagent), detail: detail, symbol: "person.2.fill", subagent: subagent.isEmpty ? "agent" : subagent)
         }
+        if name == "memorylist" {
+            return ToolDescription(verb: "Listed memories", detail: s("path", "query"), symbol: "brain")
+        }
+        if name == "memorywrite" || name == "memoryedit" {
+            if call.state == .failed || (call.error ?? "").lowercased().contains("stale") || (call.error ?? "").lowercased().contains("changed") {
+                return ToolDescription(verb: "Memory edit refused \u{2014} it changed", detail: s("path"), symbol: "brain")
+            }
+            return ToolDescription(verb: running ? "Editing a memory" : "Edited a memory", detail: s("path", "text"), symbol: "brain")
+        }
+        if name == "threadread" { return ToolDescription(verb: "Read a past chat", detail: s("thread_id", "id"), symbol: "bubble.left.and.text.bubble.right") }
+        if name == "threadrecent" { return ToolDescription(verb: "Checked recent chats", detail: "", symbol: "bubble.left.and.text.bubble.right") }
+        if name == "threadwait" { return ToolDescription(verb: "Waited on chats", detail: "", symbol: "bubble.left.and.text.bubble.right") }
+        if name == "resource" { return ToolDescription(verb: "Read saved output", detail: s("id", "uri", "path"), symbol: "doc.text") }
         if name.contains("websearch") || name.contains("googlesearch") || name == "search" {
             return ToolDescription(verb: running ? "Searching the web" : "Searched the web", detail: query, symbol: "globe")
         }
@@ -195,6 +230,12 @@ enum ToolDescriber {
         }
         if name.contains("glob") || name.contains("findfiles") || name.contains("listfiles") || name == "ls" || name == "list" {
             return ToolDescription(verb: running ? "Finding files" : "Found files", detail: query.isEmpty ? path : query, symbol: "folder")
+        }
+        if name == "agentbatch" {
+            return ToolDescription(verb: running ? "Running a batch over a spreadsheet" : "Ran a batch over a spreadsheet", detail: "", symbol: "tablecells")
+        }
+        if name == "sleep" {
+            return ToolDescription(verb: running ? "Waiting" : "Waited", detail: s("reason"), symbol: "hourglass")
         }
         if name.contains("memory") {
             return ToolDescription(verb: running ? "Using Memory Drive" : "Used Memory Drive", detail: s("query", "text"), symbol: "brain")
@@ -270,5 +311,145 @@ enum SubagentNames {
         if let name = builtins[key] { return name }
         let words = key.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }
         return words.isEmpty ? "Agent" : words.joined(separator: " ")
+    }
+}
+
+// MARK: - send_user_message
+
+/// What an agent sent its own user with `send_user_message` (gizzi
+/// runtime/primitives/user-message.ts): the tool part's `metadata`,
+/// `{text, files, push}`. The chat draws it as a message card.
+struct AgentUserMessage: Decodable, Equatable, Sendable {
+    static let toolName = "send_user_message"
+
+    struct File: Decodable, Equatable, Sendable {
+        /// The Files drive item id; absent when the copy wasn't saved.
+        let id: String?
+        let name: String
+        let size: UInt64
+        /// "render" (show inline) or "attach".
+        let display: String?
+        /// Where the file is on the computer.
+        let path: String?
+        let caption: String?
+        /// Why there is no drive copy: "drive_off", "unavailable", "failed".
+        let notSaved: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case id, name, size, display, path, caption
+            case notSaved = "not_saved"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            id = ((try? c.decodeIfPresent(String.self, forKey: .id)) ?? nil).flatMap { $0.isEmpty ? nil : $0 }
+            size = ((try? c.decodeIfPresent(UInt64.self, forKey: .size)) ?? nil)
+                ?? ((try? c.decodeIfPresent(Double.self, forKey: .size)) ?? nil).map { UInt64(max(0, $0)) } ?? 0
+            display = (try? c.decodeIfPresent(String.self, forKey: .display)) ?? nil
+            path = (try? c.decodeIfPresent(String.self, forKey: .path)) ?? nil
+            caption = ((try? c.decodeIfPresent(String.self, forKey: .caption)) ?? nil).flatMap { $0.isEmpty ? nil : $0 }
+            notSaved = (try? c.decodeIfPresent(String.self, forKey: .notSaved)) ?? nil
+        }
+    }
+
+    let text: String
+    let files: [File]
+    /// "sent", "not_requested", "rate_limited", "unpaired", "unavailable".
+    let push: String?
+
+    private enum CodingKeys: String, CodingKey { case text, files, push }
+
+    /// Needs `text` and `files`, so another tool's metadata never reads as one.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        files = try c.decode(LossyArray<File>.self, forKey: .files).elements
+        push = (try? c.decodeIfPresent(String.self, forKey: .push)) ?? nil
+    }
+}
+
+// MARK: - automation
+
+/// What the `automation` tool returned (gizzi runtime/tools/builtins/
+/// automation.ts `AutomationMetadata`): the tool part's `metadata`,
+/// `{action, status, automation?, automations?, id?, approval?, via?}`.
+/// The chat draws a create or update as a scheduled-task card.
+struct AgentAutomationResult: Decodable, Equatable, Sendable {
+    static let toolName = "automation"
+
+    /// One scheduled task (`AutomationInfo`, gizzi runtime/bots/app-bot-routing.ts).
+    struct Info: Decodable, Equatable, Sendable {
+        struct Schedule: Decodable, Equatable, Sendable {
+            /// "once" (`at`, an instant) or "cron" (`expression`, read in the task's zone).
+            let type: String
+            let at: String?
+            let expression: String?
+        }
+
+        let id: String
+        let title: String
+        /// "message" or "heartbeat".
+        let kind: String
+        /// "this_thread" or "new_session".
+        let target: String?
+        /// "active", "paused" or "completed".
+        let status: String
+        let schedule: Schedule?
+        /// The user's IANA zone the schedule is read in.
+        let timezone: String?
+        /// Nil when nothing more is due.
+        let nextRunAt: String?
+        let lastRunAt: String?
+        let lastRunStatus: String?
+        let maxRuns: Int?
+        let runCount: Int?
+        let until: String?
+        let sessionId: String?
+        /// "agent" or "user".
+        let origin: String?
+        let initiation: String?
+        let createdAt: String?
+
+        var kindLabel: String { kind == "heartbeat" ? "Check" : "Reminder" }
+        var targetLabel: String? {
+            switch target {
+            case "this_thread": return "Posts in this chat"
+            case "new_session": return "New chat each run"
+            default: return nil
+            }
+        }
+    }
+
+    /// "create", "update", "list", "delete" or "run_now".
+    let action: String
+    /// "ok", "no_platform" or "no_scheduler".
+    let status: String
+    let automation: Info?
+    let automations: [Info]?
+    let id: String?
+    /// The sentence about approvals for unattended runs.
+    let approval: String?
+    /// "platform" (allternit-api routine) or "cron" (this computer's scheduler).
+    let via: String?
+
+    private enum CodingKeys: String, CodingKey { case action, status, automation, automations, id, approval, via }
+
+    /// Needs `action` and `status`, so another tool's metadata never reads as one.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        action = try c.decode(String.self, forKey: .action)
+        status = try c.decode(String.self, forKey: .status)
+        automation = (try? c.decodeIfPresent(Info.self, forKey: .automation)) ?? nil
+        automations = (try? c.decodeIfPresent(LossyArray<Info>.self, forKey: .automations))??.elements
+        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? nil
+        approval = (try? c.decodeIfPresent(String.self, forKey: .approval)) ?? nil
+        via = (try? c.decodeIfPresent(String.self, forKey: .via)) ?? nil
+    }
+
+    /// The task a card shows: a create or update that went through.
+    var card: Info? {
+        guard status == "ok", action == "create" || action == "update" else { return nil }
+        return automation
     }
 }

@@ -132,8 +132,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let data = userInfo["data"] as? [String: Any]
         let event = data?["event"] as? String
         let inboxId = data?["inboxId"] as? String
+        let sessionId = data?["sessionId"] as? String
         await MainActor.run {
-            PushNotificationManager.shared.handleTap(urlPath: urlPath, event: event, inboxId: inboxId)
+            PushNotificationManager.shared.handleTap(urlPath: urlPath, event: event, inboxId: inboxId, sessionId: sessionId)
         }
     }
 }
