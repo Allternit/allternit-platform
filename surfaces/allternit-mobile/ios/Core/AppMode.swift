@@ -174,8 +174,10 @@ final class AppModeStore: ObservableObject {
         self.mode = shell.appMode
         self.activeTab = shell.rootTab
         #if DEBUG
-        // `-open-tab models` (DEBUG): open a section at launch, for screenshots.
-        if let raw = defaults.string(forKey: "open-tab"), let item = ModeBarItem(rawValue: raw) { self.activeTab = item }
+        // `-open-tab models` (DEBUG): open a section at launch, for screenshots and
+        // Maestro flow 07. launchArgumentValue also covers `-open-tab=models`.
+        if let raw = launchArgumentValue("open-tab") ?? defaults.string(forKey: "open-tab"),
+           let item = ModeBarItem(rawValue: raw) { self.activeTab = item }
         #endif
     }
 
