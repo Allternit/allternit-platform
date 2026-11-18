@@ -1193,6 +1193,11 @@ async fn list_projects(
 
 #[derive(Deserialize)]
 struct CreateProjectBody {
+    /// Optional caller-chosen id (an account project's id from cloud-api, so
+    /// the same project keeps one id everywhere). Creating the same id again
+    /// for the same person is a no-op that answers 200.
+    #[serde(default)]
+    id: Option<String>,
     title: String,
     description: Option<String>,
     instructions: Option<String>,
@@ -1201,41 +1206,105 @@ struct CreateProjectBody {
     default_branch: Option<String>,
 }
 
+pub(crate) enum CreateOutcome {
+    Created,
+    /// The same person already has a project with this id (a retried create).
+    Existed,
+    /// Someone else's project has this id.
+    Taken,
+}
+
+/// A caller-chosen project id: 1-128 ASCII letters, digits, `-` or `_`
+/// (UUIDs from cloud-api account projects fit).
+pub(crate) fn valid_project_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Insert a project under `id`, idempotent per person.
+fn insert_project_row(
+    conn: &rusqlite::Connection,
+    id: &str,
+    user_id: &str,
+    body: &CreateProjectBody,
+) -> rusqlite::Result<CreateOutcome> {
+    insert_project(
+        conn,
+        id,
+        user_id,
+        &body.title,
+        body.description.as_deref(),
+        body.instructions.as_deref(),
+        body.metadata.as_deref(),
+        body.git_remote.as_deref(),
+        body.default_branch.as_deref(),
+    )
+}
+
+/// `INSERT OR IGNORE` a cowork project row; shared with account_sync, which
+/// adopts account projects under their cloud id.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn insert_project(
+    conn: &rusqlite::Connection,
+    id: &str,
+    user_id: &str,
+    title: &str,
+    description: Option<&str>,
+    instructions: Option<&str>,
+    metadata: Option<&str>,
+    git_remote: Option<&str>,
+    default_branch: Option<&str>,
+) -> rusqlite::Result<CreateOutcome> {
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO cowork_projects (id, user_id, title, description, instructions, metadata, git_remote, default_branch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![id, user_id, title, description, instructions, metadata, git_remote, default_branch],
+    )?;
+    if inserted > 0 {
+        return Ok(CreateOutcome::Created);
+    }
+    let owner: Option<String> = conn
+        .query_row("SELECT user_id FROM cowork_projects WHERE id = ?1", params![id], |r| r.get(0))
+        .optional()?;
+    Ok(if owner.as_deref() == Some(user_id) { CreateOutcome::Existed } else { CreateOutcome::Taken })
+}
+
 async fn create_project(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
     _headers: HeaderMap,
     Json(body): Json<CreateProjectBody>,
 ) -> impl IntoResponse {
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = match body.id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(given) if valid_project_id(given) => given.to_string(),
+        Some(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "id holds 1-128 letters, digits, '-' or '_'"})),
+            )
+                .into_response()
+        }
+        None => uuid::Uuid::new_v4().to_string(),
+    };
     let db = state.db.clone();
     let id2 = id.clone();
     let user_id = user.user_id;
 
     let result = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
-        conn.execute(
-            "INSERT INTO cowork_projects (id, user_id, title, description, instructions, metadata, git_remote, default_branch)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                id2,
-                user_id,
-                body.title,
-                body.description,
-                body.instructions,
-                body.metadata,
-                body.git_remote,
-                body.default_branch,
-            ],
-        )?;
-        Ok::<_, rusqlite::Error>(())
+        insert_project_row(&conn, &id2, &user_id, &body)
     })
     .await;
 
     match result {
-        Ok(Ok(())) => (
+        Ok(Ok(CreateOutcome::Created)) => (
             StatusCode::CREATED,
             Json(json!({ "project": { "id": id } })),
+        )
+            .into_response(),
+        Ok(Ok(CreateOutcome::Existed)) => (StatusCode::OK, Json(json!({ "project": { "id": id } }))).into_response(),
+        Ok(Ok(CreateOutcome::Taken)) => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "that project id is taken"})),
         )
             .into_response(),
         Ok(Err(e)) => {
@@ -1553,7 +1622,7 @@ async fn close_project_status(
 /// isn't lost); the project's team rows and Al's project chat go with it.
 /// Before, only the project row went, leaving threads and team rows pointing
 /// at a project that no longer existed. Returns whether a project was deleted.
-fn delete_project_rows(conn: &rusqlite::Connection, id: &str, user_id: &str) -> rusqlite::Result<bool> {
+pub(crate) fn delete_project_rows(conn: &rusqlite::Connection, id: &str, user_id: &str) -> rusqlite::Result<bool> {
     let tx = conn.unchecked_transaction()?;
     // A registered workspace (a code or design project a browser holds) keeps
     // an empty row with only its key: that browser re-registers it whenever its

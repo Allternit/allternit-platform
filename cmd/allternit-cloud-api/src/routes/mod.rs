@@ -45,6 +45,8 @@ pub mod voice_keys;
 pub mod brain_runners;
 pub mod connections;
 pub mod plan_threads;
+/// Account projects and bots made with no computer (migration 149).
+pub mod account_projects;
 pub mod jobs;
 pub mod live_activity;
 pub mod livekit_admin;
