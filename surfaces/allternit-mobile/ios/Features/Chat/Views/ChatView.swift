@@ -17,9 +17,6 @@ struct ChatView: View {
     @ObservedObject private var brain = BrainStore.shared
     @State private var isShareLinkPresented = false
     /// The chat ⋯ menu (phone calm pass step 22; web PhoneChatMenu).
-    /// Scroll-to-bottom button: the transcript is more than one screen above its end.
-    @State private var jumpFar = false
-    @ReducedMotion private var reducedMotion
     @State private var isChatMenuOpen = false
     /// A ⋯ row that opens a sheet waits for the menu to close first.
     @State private var pendingMenuItem: ChatMenuItem?
@@ -238,6 +235,9 @@ private struct ChatMenuPopover: View {
 struct ChatContentView: View {
     let sessionId: String?
     @ObservedObject var viewModel: ChatViewModel
+    /// Scroll-to-bottom button: the transcript is more than one screen above its end.
+    @State private var jumpFar = false
+    @ReducedMotion private var reducedMotion
     /// Home: the web chat launch screen (greeting, composer with its full
     /// deck, the template gallery) and the compact deck in a session. Other
     /// hosts get the plain composer.
