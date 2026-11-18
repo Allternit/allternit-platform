@@ -17,11 +17,13 @@ struct OfficeFloorView: View {
     @ObservedObject private var store = BotModeStore.shared
     @ObservedObject private var hub = AgentHubStore.shared
     @ObservedObject private var colors = BotColorStore.shared
+    @ObservedObject private var projectStore = ProjectStore.shared
     @EnvironmentObject private var navigator: BotNavigator
     @State private var ready = false
     @State private var failed = false
     @State private var attempt = 0
     @State private var thread = OfficePanelThread()
+    @State private var computerList: [ComputerRecord] = []
 
     var body: some View {
         ZStack {
@@ -54,6 +56,11 @@ struct OfficeFloorView: View {
             // A cold 3D load on a slow phone can take a while (web: 25 s).
             try? await Task.sleep(for: .seconds(25))
             if !ready { failed = true }
+        }
+        .task {
+            // Names only for the facility's Commons studios and Compute Row; a failed load just omits the field.
+            projectStore.fetchProjectsIfNeeded()
+            if let list = try? await BotModeClient.shared.listComputers() { computerList = list }
         }
         .task {
             // Statuses and questions come from the threads; keep them fresh while the floor is open.
@@ -113,8 +120,41 @@ struct OfficeFloorView: View {
             }
             return entry
         }
-        let data = (try? JSONSerialization.data(withJSONObject: ["type": "allternit:workspace", "bots": bots])) ?? Data("{}".utf8)
+        var message: [String: Any] = ["type": "allternit:workspace", "bots": bots]
+        if auth.currentUserId != nil {
+            let projects = Self.workspaceProjects(projectStore.projects)
+            if !projects.isEmpty { message["projects"] = projects }
+            let computers = Self.workspaceComputers(computerList)
+            if !computers.isEmpty { message["computers"] = computers }
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: message)) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Projects for the facility (web toWorkspaceProjects): names only, newest first, max 24.
+    static func workspaceProjects(_ list: [CoworkProject]) -> [[String: Any]] {
+        list.filter { !$0.id.isEmpty && !$0.title.isEmpty }
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(24)
+            .map { ["id": $0.id, "name": $0.title, "updatedAt": $0.updatedAt] }
+    }
+
+    /// Computers for the facility (web toWorkspaceComputers): name and state only, running first, max 12.
+    static func workspaceComputers(_ list: [ComputerRecord]) -> [[String: Any]] {
+        func state(_ s: String) -> String? {
+            switch s {
+            case "running", "stopped", "error": return s
+            case "creating": return "starting"
+            default: return nil
+            }
+        }
+        // The server list is already ordered; a stable sort keeps that order inside each group.
+        let kept = list.enumerated().filter { !$0.element.id.isEmpty && !$0.element.name.isEmpty && state($0.element.status) != nil }
+        let sorted = kept.sorted { a, b in
+            let ar = a.element.isRunning, br = b.element.isRunning
+            return ar != br ? ar : a.offset < b.offset
+        }
+        return sorted.prefix(12).map { ["id": $0.element.id, "name": $0.element.name, "status": state($0.element.status)!] }
     }
 
     /// The A-block orb mark the web app hosts; the facility draws A:// as the orb when its avatar is this.
