@@ -13,6 +13,8 @@ struct BotLaunchpadView: View {
     @ObservedObject private var status = BotStatusStore.shared
     @ObservedObject private var colors = BotColorStore.shared
     @EnvironmentObject private var navigator: BotNavigator
+    /// Filters the roster; set by the Bots header's search pill.
+    var searchQuery: String = ""
 
     /// The roster layout, kept per scope like the web's useOverviewLayout
     /// (`allternit.session-overview.layout.bots-home-roster`).
@@ -95,14 +97,10 @@ struct BotLaunchpadView: View {
 
     private var roster: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("YOUR TEAM")
-                    .font(.system(size: 12, weight: .semibold))
-                    .tracking(0.72)
-                    .foregroundColor(Color("TextTertiary"))
-                Spacer()
-                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list)
-            }
+            Text("YOUR TEAM")
+                .font(.system(size: 12, weight: .semibold))
+                .tracking(0.72)
+                .foregroundColor(Color("TextTertiary"))
             Group {
                 switch layout {
                 case .list: rosterList
@@ -134,6 +132,8 @@ struct BotLaunchpadView: View {
                 : members.contains(where: { $0 == .working || $0 == .talking }) ? .working : .idle
             return RosterEntry.group(group, status: status)
         }
+        let needle = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !needle.isEmpty { out = out.filter { $0.name.lowercased().contains(needle) } }
         return out
     }
 
