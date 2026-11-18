@@ -40,6 +40,9 @@ struct ProfileFields: Codable, Equatable, Sendable {
 /// model, then the plan card.
 struct ProfileSettingsPage: View {
     @EnvironmentObject private var authManager: AuthManager
+    /// Closes the whole Settings sheet (after the account is deleted).
+    var onClose: () -> Void = {}
+    @State private var isDeletePresented = false
     @ObservedObject private var plan = AccountPlanStore.shared
     @ObservedObject private var usageStore = UsageStore.shared
 
@@ -167,6 +170,21 @@ struct ProfileSettingsPage: View {
                         .buttonStyle(SettingsQuietButtonStyle())
                 }
             }
+
+            // App Store 5.1.1(v): two taps from the Settings root (Profile > Delete account).
+            if authManager.isSignedIn {
+                Button(action: { isDeletePresented = true }) {
+                    Label("Delete account", systemImage: "person.crop.circle.badge.xmark")
+                        .font(.system(size: 15))
+                        .foregroundColor(Theme.statusError)
+                }
+                .padding(.top, 28)
+                .accessibilityLabel("Delete account")
+                .accessibilityIdentifier("delete-account-row")
+            }
+        }
+        .navigationDestination(isPresented: $isDeletePresented) {
+            DeleteAccountView(onDeleted: onClose)
         }
         .task { await load() }
     }

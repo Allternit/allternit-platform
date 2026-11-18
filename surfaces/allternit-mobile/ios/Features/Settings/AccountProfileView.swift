@@ -51,6 +51,8 @@ struct AccountProfileView: View {
                             .font(.subheadline)
                             .foregroundColor(Theme.statusError)
                     }
+                    .accessibilityLabel("Delete account")
+                    .accessibilityIdentifier("delete-account-row")
                 } else {
                     Button(action: {
                         onClose()
