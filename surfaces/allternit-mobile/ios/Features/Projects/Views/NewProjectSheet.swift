@@ -39,8 +39,10 @@ struct NewProjectSheet: View {
                         .clipShape(Circle())
                 }
                 .accessibilityLabel("Close")
+                .accessibilityIdentifier("newProjectClose")
                 Spacer()
                 Text("New project")
+                    .accessibilityIdentifier("newProjectTitle")
                     .font(.system(.title3, design: .serif))
                     .fontWeight(.medium)
                     .foregroundColor(Color("TextPrimary"))
@@ -54,6 +56,7 @@ struct NewProjectSheet: View {
                 }
                 .disabled(!canCreate)
                 .accessibilityLabel("Create project")
+                .accessibilityIdentifier("newProjectCreate")
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -169,6 +172,7 @@ struct NewProjectSheet: View {
                 .textInputAutocapitalization(field == .title ? .words : .sentences)
                 .submitLabel(submitLabel)
                 .focused($focusedField, equals: field)
+                .accessibilityIdentifier(field == .title ? "newProjectName" : "")
                 .onSubmit {
                     if field == .title {
                         focusedField = .description

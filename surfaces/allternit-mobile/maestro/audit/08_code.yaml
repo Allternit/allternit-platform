@@ -9,8 +9,9 @@ appId: ${APP_ID}
 - tapOn:
     id: "modeDial"
 - tapOn:
-    id: "modeDialOptioncode"
+    id: "modeFanCardcode"
 - takeScreenshot: code_list
-- tapOn: "Open sidebar"
+- tapOn:
+    id: "phoneMenuButton"
 - takeScreenshot: code_sidebar_open
 - stopApp

@@ -6,10 +6,13 @@ appId: ${APP_ID}
     arguments:
       skip-auth: true
       sidebar: true
-- tapOn: "Automation Tasks"
+- tapOn:
+    id: "drawerRowautomation-tasks"
 - takeScreenshot: automation_cron
-- tapOn: "Routines"
+- tapOn:
+    id: "automationTabroutine"
 - takeScreenshot: automation_routines
-- tapOn: "Loops"
+- tapOn:
+    id: "automationTabloop"
 - takeScreenshot: automation_loops
 - stopApp

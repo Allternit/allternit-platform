@@ -15,7 +15,7 @@ appId: ${APP_ID}
       - tapOn:
           text: "Dismiss notifications prompt"
           optional: true
-- assertVisible: "Select model"
+- assertVisible:
+    id: "modelPickerSearch"
 - takeScreenshot: chat_model_picker
-- tapOn: "Done"
 - stopApp

@@ -352,6 +352,7 @@ struct ComposerView: View {
                     terminal: isTerminal,
                     onFocusChange: { isFocused = $0 }
                 )
+                .accessibilityIdentifier("composerInput")
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)

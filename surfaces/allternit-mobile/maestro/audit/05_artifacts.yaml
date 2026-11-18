@@ -6,8 +6,10 @@ appId: ${APP_ID}
     arguments:
       skip-auth: true
       sidebar: true
-- tapOn: "Artifacts"
+- tapOn:
+    id: "drawerRowartifacts-library"
 - takeScreenshot: artifacts_library
-- tapOn: "Open sidebar"
+- tapOn:
+    id: "phoneMenuButton"
 - takeScreenshot: artifacts_sidebar_open
 - stopApp

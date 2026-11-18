@@ -15,6 +15,7 @@ appId: ${APP_ID}
       - tapOn:
           text: "Dismiss notifications prompt"
           optional: true
-- assertVisible: "Brain Spike"
+- assertVisible:
+    id: "brainSpikeList"
 - takeScreenshot: settings_brain_spike
 - stopApp

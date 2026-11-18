@@ -256,6 +256,7 @@ struct ComposerPlusSheet: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(page == .root ? "Close" : "Back")
+                    .accessibilityIdentifier(page == .root ? "plusSheetClose" : "")
                     Spacer()
                     if page == .root {
                         Button(action: {
@@ -269,6 +270,7 @@ struct ComposerPlusSheet: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("plusSheetPhotos")
                     }
                 }
             }
@@ -295,11 +297,11 @@ struct ComposerPlusSheet: View {
 
             // Group 1: add something.
             PlusGroup {
-                PlusRow(icon: "camera", title: "Camera") { cameraTapped() }
+                PlusRow(icon: "camera", title: "Camera", testId: "plusSheetCamera") { cameraTapped() }
                 PlusDivider()
-                PlusRow(icon: "doc.badge.plus", title: "Add files") { isFilePickerPresented = true }
+                PlusRow(icon: "doc.badge.plus", title: "Add files", testId: "plusSheetAddFiles") { isFilePickerPresented = true }
                 PlusDivider()
-                PlusRow(icon: "link", title: "GitHub link", isActive: isGitHubInputVisible) {
+                PlusRow(icon: "link", title: "GitHub link", isActive: isGitHubInputVisible, testId: "plusSheetGithub") {
                     withAnimation(Motion.pick(Motion.deck, reduced: reduceMotion)) { isGitHubInputVisible.toggle() }
                 }
                 if isGitHubInputVisible {
@@ -351,7 +353,7 @@ struct ComposerPlusSheet: View {
                                   isOn: $settings.generateMemoryFromHistory)
                 }
                 PlusDivider()
-                PlusRow(icon: "bolt", title: "Connectors", chevron: true) { isConnectorsPresented = true }
+                PlusRow(icon: "bolt", title: "Connectors", chevron: true, testId: "plusSheetConnectors") { isConnectorsPresented = true }
                 PlusDivider()
                 PlusRow(icon: "graduationcap", title: "Skills", chevron: true) { capabilitiesKind = .skill }
                 PlusDivider()
@@ -808,6 +810,8 @@ private struct PlusRow: View {
     var isActive: Bool = false
     /// The folded computer chip's dot, on the Computer row.
     var showsDot: Bool = false
+    /// Shared Maestro/Android test id (maestro/ids.md); empty = none.
+    var testId: String = ""
     let action: () -> Void
 
     var body: some View {
@@ -856,6 +860,7 @@ private struct PlusRow: View {
         .buttonStyle(.plain)
         .accessibilityLabel(value.map { "\(title), \($0)" } ?? title)
         .accessibilityAddTraits(isActive ? [.isSelected] : [])
+        .accessibilityIdentifier(testId)
     }
 }
 

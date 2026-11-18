@@ -15,11 +15,17 @@ appId: ${APP_ID}
       - tapOn:
           text: "Dismiss notifications prompt"
           optional: true
-- assertVisible: "Camera"
-- assertVisible: "Photos"
-- assertVisible: "Files"
-- assertVisible: "GitHub"
-- assertVisible: "Connectors"
+- assertVisible:
+    id: "plusSheetCamera"
+- assertVisible:
+    id: "plusSheetPhotos"
+- assertVisible:
+    id: "plusSheetAddFiles"
+- assertVisible:
+    id: "plusSheetGithub"
+- assertVisible:
+    id: "plusSheetConnectors"
 - takeScreenshot: composer_plus_sheet
-- tapOn: "Close"
+- tapOn:
+    id: "plusSheetClose"
 - stopApp
