@@ -5,6 +5,15 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## Next — Desktop sign-in and Connect screen fixes
+
+The server fix goes live with the next cloud-api deploy; the Desktop fixes arrive with the next Desktop build.
+
+- **Pairing a new computer or phone:** signing in no longer ends with "This pairing request is invalid or expired." A server error on every pairing lookup (since 2026-11-09) caused it.
+- **Clearer pairing errors:** the sign-in window now says when the problem is on Allternit's side or when you need to sign in again. It says "invalid or expired" only when the code really is.
+- **Connect screen (tray → Connection settings):** **Test** and **Save** work again. On every system they failed with "Untrusted IPC sender".
+- **Linux and Windows:** the sign-in window's title bar reads "Allternit" instead of "@allternit/desktop".
+
 ## Next — Phone feedback 1.0.4
 
 Arrives with the next iPhone app build (1.0.4) and the next web update. It is not live yet.

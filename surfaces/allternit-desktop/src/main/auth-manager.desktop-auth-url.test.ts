@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isDesktopAuthNavigation, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
+import { isDesktopAuthNavigation, pairingLookupFailureMessage, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
 
 const BASE = 'https://accounts.allternit.com/__desktop_auth__/';
 
@@ -34,5 +34,22 @@ describe('shouldPairWithLateClerkToken', () => {
     expect(shouldPairWithLateClerkToken({ ...late, pairingInFlight: true })).toBe(false);
     expect(shouldPairWithLateClerkToken({ ...late, paired: true })).toBe(false);
     expect(shouldPairWithLateClerkToken({ ...late, token: '' })).toBe(false);
+  });
+});
+
+describe('pairingLookupFailureMessage', () => {
+  it('says invalid or expired only for a missing or expired code', () => {
+    expect(pairingLookupFailureMessage(404)).toMatch(/invalid or expired/);
+    expect(pairingLookupFailureMessage(401, 'TOKEN_EXPIRED')).toMatch(/invalid or expired/);
+  });
+
+  it('asks for a new sign-in when the sign-in itself was rejected', () => {
+    expect(pairingLookupFailureMessage(401, 'UNAUTHORIZED')).toMatch(/sign in again/);
+  });
+
+  it('reports a server error as a server error', () => {
+    const message = pairingLookupFailureMessage(500, 'DATABASE_ERROR');
+    expect(message).not.toMatch(/invalid or expired/);
+    expect(message).toMatch(/error 500/);
   });
 });

@@ -37,7 +37,7 @@ import log from 'electron-log';
 import WebSocket from 'ws';
 import { URLS } from './config.js';
 import { dropRuntimeCredentialForGizzi, isGizziOwnedRelayPath, isGizziProviderListPath } from './relay-gizzi-credential.js';
-import { isDesktopAuthNavigation, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
+import { isDesktopAuthNavigation, pairingLookupFailureMessage, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
 import { cloudAccountMismatch, type CloudReconnectResult } from './cloud-account.js';
 import {
@@ -1139,7 +1139,9 @@ export class DesktopAuthManager {
     );
     log.info('[Auth] Pairing lookup status:', lookup.status);
     if (!lookup.ok) {
-      throw new Error('This pairing request is invalid or expired. Please try again.');
+      const body = await lookup.json().catch(() => ({})) as { code?: string; error?: unknown };
+      log.warn('[Auth] Pairing lookup failed:', lookup.status, body.code ?? '');
+      throw new Error(pairingLookupFailureMessage(lookup.status, body.code));
     }
 
     // Approve it with the Clerk-authenticated user.

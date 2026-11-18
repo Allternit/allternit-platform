@@ -172,6 +172,15 @@ struct RuntimeDeviceView {
     preferred: bool,
 }
 
+/// Every column `PairingRow` reads. Each `query_as::<_, PairingRow>` selects
+/// exactly this list: a query that left out `machine_id` failed every pairing
+/// lookup with "no column found for name: machine_id" (500), which broke
+/// sign-in for new Desktop and iPhone pairings.
+const PAIRING_ROW_COLUMNS: &str = "id, user_code, challenge, public_key, public_key_fingerprint, \
+     name, runtime_type, hostname, platform, version, machine_id, capabilities, \
+     status, user_id, organization_id, hosted_instance_id, \
+     byo_bootstrap_token_id, provisioned_instance_id, expires_at";
+
 #[derive(Debug, FromRow)]
 struct PairingRow {
     id: String,
@@ -542,16 +551,9 @@ async fn exchange_pairing(
     State(state): State<Arc<ApiState>>,
     Json(request): Json<ExchangePairingRequest>,
 ) -> Result<Response, ApiError> {
-    let pairing = sqlx::query_as::<_, PairingRow>(
-        r#"
-        SELECT id, user_code, challenge, public_key, public_key_fingerprint,
-               name, runtime_type, hostname, platform, version, machine_id, capabilities,
-               status, user_id, organization_id, hosted_instance_id,
-               byo_bootstrap_token_id, provisioned_instance_id, expires_at
-        FROM runtime_pairings
-        WHERE id = $1 AND device_code_hash = $2
-        "#,
-    )
+    let pairing = sqlx::query_as::<_, PairingRow>(&format!(
+        "SELECT {PAIRING_ROW_COLUMNS} FROM runtime_pairings WHERE id = $1 AND device_code_hash = $2"
+    ))
     .bind(&request.pairing_id)
     .bind(sha256_hex(request.device_code.as_bytes()))
     .fetch_optional(&state.db)
@@ -1316,15 +1318,9 @@ async fn approver_from_headers(state: &ApiState, headers: &HeaderMap) -> Result<
 }
 
 async fn pairing_by_code(state: &ApiState, code: &str) -> Result<PairingRow, ApiError> {
-    sqlx::query_as::<_, PairingRow>(
-        r#"
-        SELECT id, user_code, challenge, public_key, public_key_fingerprint,
-               name, runtime_type, hostname, platform, version, capabilities,
-               status, user_id, organization_id, hosted_instance_id,
-               byo_bootstrap_token_id, provisioned_instance_id, expires_at
-        FROM runtime_pairings WHERE user_code = $1
-        "#,
-    )
+    sqlx::query_as::<_, PairingRow>(&format!(
+        "SELECT {PAIRING_ROW_COLUMNS} FROM runtime_pairings WHERE user_code = $1"
+    ))
     .bind(code)
     .fetch_optional(&state.db)
     .await?
@@ -1636,6 +1632,25 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn pairing_row_columns_cover_every_pairing_row_field() {
+        let columns: Vec<&str> = PAIRING_ROW_COLUMNS.split(',').map(str::trim).collect();
+        let source = include_str!("runtime_pairing.rs");
+        let start = source.find("struct PairingRow {").unwrap();
+        let body = &source[start..start + source[start..].find('}').unwrap()];
+        let fields: Vec<&str> = body
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.trim().split(':').next())
+            .filter(|name| !name.is_empty())
+            .collect();
+        assert!(fields.len() > 10, "parsed PairingRow fields: {fields:?}");
+        for field in &fields {
+            assert!(columns.contains(field), "PAIRING_ROW_COLUMNS is missing {field}");
+        }
+        assert_eq!(columns.len(), fields.len());
+    }
 
     #[test]
     fn desktop_handshake_gets_local_kind_never_null() {

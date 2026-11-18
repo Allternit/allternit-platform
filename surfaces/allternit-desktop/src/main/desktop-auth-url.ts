@@ -32,3 +32,19 @@ export function shouldPairWithLateClerkToken(state: {
 }): boolean {
   return !state.waiting && state.token.length > 0 && !state.paired && !state.pairingInFlight;
 }
+
+/**
+ * What the sign-in window says when the pairing-code lookup fails. Only a
+ * missing or expired code is the person's to retry; a server error or a
+ * rejected sign-in must not be reported as "invalid or expired" (a cloud-api
+ * 500 on every lookup hid behind that wording on 2026-11-18).
+ */
+export function pairingLookupFailureMessage(status: number, errorCode?: string): string {
+  if (status === 404 || status === 410 || errorCode === 'TOKEN_EXPIRED') {
+    return 'This pairing request is invalid or expired. Please try again.';
+  }
+  if (status === 401 || status === 403) {
+    return 'Allternit could not confirm your sign-in. Please sign in again.';
+  }
+  return `Allternit could not check this pairing right now (error ${status}). Please try again in a minute.`;
+}
