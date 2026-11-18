@@ -88,13 +88,14 @@ The Code header has ☰ on the left and the sessions button (a task list) on the
 
 The Code prompt is one input line in a dashed frame. The model sits on the frame's top edge at the right, and the prompt cache's state (**cache warm**, **cache expiring** or **cache cold**) sits at the left when the provider reports it. After a run in this session, a line under the icon row shows that run's tokens in, cached share and cost. Tap the context meter and set **Context bar** to **Bottom** (the blocks in the icon row, the default) or **Above** (a thin bar just above the prompt). See [Terminal and prompt](/code/terminal-and-prompt#prompt).
 
-The view button sits at the bottom right of the composer. Its icon shows which view you are in, and a tap opens a short list of three:
+The view button sits at the bottom right of the composer. Its icon shows which view you are in, and a tap opens a short list of two:
 
 - **Code:** the session as a chat.
 - **Terminal:** the same session drawn as a terminal: a dark screen, your messages as `❯` lines, each tool step as `●` with its result under it, and a **Working…** line with a timer while the agent runs.
-- **Shell:** a plain command shell on your computer.
 
-The shell has no composer, so the view button sits at its bottom right, above the keys. From the shell you get back to Code or Terminal in two taps. The app remembers Code or Terminal for each session.
+The computer's own shell is not in this list. Tap the computer icon in the composer's icon row, then **Open shell** under a connected computer. The shell fills the screen: the header shows the computer's name with a live status dot and **Back**, and it has no composer, no floating button and no Terminal bot strip. With no computer connected there is no shell to open. The app remembers Code or Terminal for each session.
+
+Operator keys (the keys bots use to sign in) are not on the phone; mint and revoke them in the console.
 
 The sessions button opens your code sessions as List · Grid · Deck. **Deck** shows each session as a tall card with its last messages; swipe sideways through them. Tap one to open it.
 
