@@ -252,7 +252,7 @@ struct ScheduledTaskSheet: View {
                     config: ["jobType": "agent", "prompt": prompt]
                 ))
             }
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
             dismiss()
         } catch {
             self.error = FriendlyErrorMessage.from(error.localizedDescription)

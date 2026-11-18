@@ -101,7 +101,8 @@ struct ComposerView: View {
     @State private var isMicPrimingPresented = false
     @State private var isFocused = false
     @State private var placeholderIndex = 0
-    @State private var upgradeURL: IdentifiableURL? = nil
+    // Purchase pages go to the browser via the Open links in rule (step 30).
+    @Environment(\.openURL) private var openURL
     /// The In-App Purchase sheet, where the App Store sells plans.
     @State private var isStoreSheetPresented = false
     /// Deck fold (C1): swiped up and not yet swiped down or blurred empty.
@@ -278,9 +279,6 @@ struct ComposerView: View {
         }
         .sheet(isPresented: $isMicPrimingPresented) {
             PermissionPrimingSheet(permission: .microphone) { onVoiceMode() }
-        }
-        .sheet(item: $upgradeURL) { item in
-            SafariView(url: item.url)
         }
         .sheet(isPresented: $isStoreSheetPresented) {
             StorePurchaseSheet(focus: .plan)
@@ -579,7 +577,7 @@ struct ComposerView: View {
                         if storefront.showsStoreButtons(for: .plan) {
                             isStoreSheetPresented = true
                         } else {
-                            upgradeURL = IdentifiableURL(url: AccountPlanStore.shared.upgradeURL)
+                            openURL(AccountPlanStore.shared.upgradeURL)
                         }
                     }
                     .font(.system(size: 13, weight: .semibold))
@@ -613,7 +611,7 @@ struct ComposerView: View {
 
     private func voiceModeTapped() {
         guard isVoiceModeEnabled else { return }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         if DictationController.systemPromptsPending(), !AppPermission.microphone.hasPrimed {
             // App-owned explainer before the system prompts, once per install.
             isMicPrimingPresented = true
@@ -681,7 +679,7 @@ struct ComposerView: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color("BorderSubtle"), lineWidth: 1))
 
             Button(action: {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 attachmentStore.remove(id: attachment.id)
             }) {
                 Image(systemName: "xmark")
@@ -757,7 +755,7 @@ enum ComposerPlaceholders {
 /// Three small bars beside Stop while a turn runs (web allternit-waveform-bar).
 private struct StreamingBars: View {
     @State private var phase = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 2) {

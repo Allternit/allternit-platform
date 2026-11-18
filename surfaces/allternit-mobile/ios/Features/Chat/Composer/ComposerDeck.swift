@@ -236,7 +236,7 @@ struct ComposerDeckBand: View {
     }
 
     private func select(_ mode: ChatDeckMode) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         agentModeStore.selectTile(mode.tile, for: surface)
         // Picking a mode in the chat's deck turns that mode on for the next send.
         if !agentModeStore.isAgentEnabled(for: surface) {

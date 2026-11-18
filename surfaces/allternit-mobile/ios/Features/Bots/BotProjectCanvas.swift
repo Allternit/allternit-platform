@@ -165,7 +165,7 @@ struct ProjectGraphCanvas<Content: View>: View {
     let contentSize: CGSize
     @ViewBuilder let content: () -> Content
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var scale: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var viewport: CGSize = .zero

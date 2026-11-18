@@ -264,7 +264,7 @@ struct HistorySidebarView: View {
     /// 40pt neutral circle (`phone-round-btn`), red count top-right.
     private func roundButton(systemName: String, label: String, id: String, badge: Int = 0, action: @escaping () -> Void) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             action()
         } label: {
             Image(systemName: systemName)
@@ -396,7 +396,7 @@ struct HistorySidebarView: View {
 
     private func railRowView(_ row: RailRow) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             row.action()
         } label: {
             navRowLabel(row)
@@ -454,7 +454,7 @@ struct HistorySidebarView: View {
                 sectionLabel("Pinned")
                 ForEach(pinnedSessions) { session in
                     Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Haptics.light()
                         open(session)
                     } label: {
                         recentRowBody(session)
@@ -568,7 +568,7 @@ struct HistorySidebarView: View {
                 .multilineTextAlignment(.center)
                 .padding(.top, 8)
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 newItem()
             } label: {
                 HStack(spacing: 6) {
@@ -739,7 +739,7 @@ struct HistorySidebarView: View {
     /// lifts it to drag into your own order; a tap opens it.
     private func recentRow(_ session: AgentSession) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             open(session)
         } label: {
             recentRowBody(session)
@@ -811,7 +811,7 @@ struct HistorySidebarView: View {
         let stroke: Color = ratio >= 1 ? Theme.statusError : (ratio >= 0.8 ? Theme.statusWarning : Color("TextPrimary"))
         let usageText = usage.percentUsed.map { ", Allternit Cloud \(Int(($0).rounded()))% used" } ?? ""
         return Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             isSettingsPresented = true
         } label: {
             ZStack {
@@ -963,7 +963,7 @@ struct HistorySidebarView: View {
                 HStack(spacing: 10) {
                     ForEach(list, id: \.bot.id) { entry in
                         Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptics.light()
                             openBotChat(entry.bot.id)
                         } label: {
                             BotStatusAvatar(bot: entry.bot, size: 36, working: entry.working && !entry.needsYou, waiting: entry.needsYou)
@@ -1034,7 +1034,7 @@ struct HistorySidebarView: View {
     }
 
     private func delete(_ session: AgentSession) {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.medium()
         let removed = store.remove(id: session.id)
         pinsStore.remove(id: session.id)
         manualOrderRaw = manualOrder.filter { $0 != session.id }.joined(separator: ",")

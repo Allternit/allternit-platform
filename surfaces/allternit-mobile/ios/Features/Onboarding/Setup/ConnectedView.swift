@@ -17,7 +17,7 @@ struct SetupConnectedView: View {
     var onOpen: (_ fix: String?) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     @State private var inventory: ConnectedInventory.Inventory?
     @State private var focus: String?
@@ -296,7 +296,7 @@ private struct ConnectedEdge: View {
     var to: CGPoint
     var on: Bool
     var delay: Double
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var shown = false
 
     var body: some View {

@@ -75,7 +75,7 @@ struct SettingsFailureView: View {
     /// What couldn't load, e.g. "your skills".
     let subject: String
     let retry: () -> Void
-    @State private var safariURL: IdentifiableURL? = nil
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(spacing: 4) {
@@ -84,7 +84,7 @@ struct SettingsFailureView: View {
             // outage.
             if failure != .signedOut && !failure.isNoComputer {
                 Button("Check system status") {
-                    safariURL = IdentifiableURL(url: SystemStatusClient.pageURL)
+                    openURL(SystemStatusClient.pageURL)
                 }
                 .font(.footnote)
                 .foregroundColor(Color("TextSecondary"))
@@ -93,7 +93,6 @@ struct SettingsFailureView: View {
                 .accessibilityHint("Opens status.allternit.com")
             }
         }
-        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
     }
 
     @ViewBuilder

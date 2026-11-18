@@ -103,8 +103,7 @@ struct RoutinesListView: View {
                     filterMenu
 
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
+                        Haptics.light()
                         isCreateSheetPresented = true
                     }) {
                         Image(systemName: "plus")
@@ -236,8 +235,7 @@ struct RoutinesListView: View {
 
     private func routineRow(_ routine: Routine) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             detailRoutine = routine
         }) {
             HStack(spacing: 12) {
@@ -282,8 +280,7 @@ struct RoutinesListView: View {
             message: "Chain a few commands into a named routine you can run on demand, anytime.",
             actionTitle: "Create routine",
             action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isCreateSheetPresented = true
             }
         )

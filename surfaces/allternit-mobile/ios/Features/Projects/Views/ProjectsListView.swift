@@ -223,7 +223,7 @@ struct ProjectsListView: View {
 
     private func openMenu() {
         if let onOpenSidebar {
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            Haptics.medium()
             onOpenSidebar()
         } else {
             dismiss()
@@ -389,7 +389,7 @@ struct ProjectsListView: View {
     // MARK: - Actions
 
     private func open(_ project: LibraryProject) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         if let cowork = project.cowork {
             detailProject = cowork
         } else if let row = project.workspace {

@@ -15,7 +15,7 @@ struct BotLiveStageView: View {
     @ObservedObject private var store = BotModeStore.shared
     @ObservedObject private var status = BotStatusStore.shared
     @EnvironmentObject private var navigator: BotNavigator
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     @State private var sessionId: String? = nil
     @State private var resolveError: String? = nil

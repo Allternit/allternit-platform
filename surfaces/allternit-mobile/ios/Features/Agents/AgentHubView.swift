@@ -178,8 +178,7 @@ struct AgentHubView: View {
             .accessibilityLabel("Discover agents and bots")
 
             Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isTemplateSheetPresented = true
             }) {
                 Image(systemName: "plus")
@@ -212,8 +211,7 @@ struct AgentHubView: View {
     private func tabButton(_ tab: HubTab) -> some View {
         let isSelected = selectedTab == tab
         return Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             selectedTab = tab
         }) {
             Text(tab.label)
@@ -338,8 +336,7 @@ struct AgentHubView: View {
     private var botTogglePill: some View {
         let isOn = agentModeStore.isAgentEnabled(for: .chat)
         return Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             if !isOn {
                 agentModeStore.setAgentEnabled(true, for: .chat)
                 agentModeStore.fetchAgentsIfNeeded()
@@ -380,8 +377,7 @@ struct AgentHubView: View {
             HStack(spacing: 0) {
                 ForEach(Array(modes.enumerated()), id: \.offset) { index, mode in
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
+                        Haptics.light()
                         agentModeStore.selectTile(mode, for: .chat)
                     }) {
                         HStack(spacing: 4) {
@@ -577,8 +573,7 @@ struct AgentHubView: View {
 
     private func botCategoryChip(label: String, isActive: Bool, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             Text(label)
@@ -602,8 +597,7 @@ struct AgentHubView: View {
         let accent = bot.botAccentColor.map { Color(hex: $0) } ?? Color("AccentPrimary")
         let sessionCount = sessionCountByBotId[bot.id] ?? 0
         return Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             detailAgent = bot
         }) {
             VStack(alignment: .leading, spacing: 10) {
@@ -695,8 +689,7 @@ struct AgentHubView: View {
             message: "Agents and bots run tasks on your behalf — create one from a template to get started.",
             actionTitle: "New from template",
             action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isTemplateSheetPresented = true
             }
         )
@@ -823,8 +816,7 @@ struct AgentHubView: View {
                 LazyVStack(spacing: 10) {
                     ForEach(hubStore.agents) { agent in
                         Button(action: {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
+                            Haptics.light()
                             detailAgent = agent
                         }) {
                             HStack(spacing: 12) {
@@ -910,8 +902,7 @@ struct AgentHubView: View {
 
     private func agentRow(_ agent: AgentRecord) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             detailAgent = agent
         }) {
             HStack(alignment: .top, spacing: 11) {
@@ -991,8 +982,7 @@ struct AgentHubView: View {
 
     private var templatesRow: some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             isTemplateSheetPresented = true
         }) {
             HStack(spacing: 11) {
@@ -1082,8 +1072,7 @@ struct AgentHubView: View {
 
     private func configCard(icon: String, title: String, subtitle: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             HStack(spacing: 12) {
@@ -1188,8 +1177,7 @@ private struct HubTabButton: View {
 
     var body: some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             select(tab)
         }) {
             Text(tab.label)
@@ -1279,8 +1267,7 @@ struct BotSelectionSheet: View {
     private func botCard(agent: AgentRecord?) -> some View {
         let isSelected = agentModeStore.selectedAgentId(for: .chat) == agent?.id
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             agentModeStore.selectAgent(agent, for: .chat)
             dismiss()
         }) {
@@ -1504,8 +1491,7 @@ struct AgentTemplateSheet: View {
         } else {
             List(hubStore.templates) { template in
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     pendingTemplate = template
                     isConfirmPresented = true
                 }) {

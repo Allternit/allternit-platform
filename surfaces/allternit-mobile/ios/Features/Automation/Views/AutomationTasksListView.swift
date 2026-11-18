@@ -101,8 +101,7 @@ struct AutomationTasksListView: View {
                     filterMenu
 
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
+                        Haptics.light()
                         isCreateSheetPresented = true
                     }) {
                         Image(systemName: "plus")
@@ -236,8 +235,7 @@ struct AutomationTasksListView: View {
 
     private func jobRow(_ job: CronJob) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             detailJob = job
         }) {
             HStack(spacing: 12) {
@@ -287,8 +285,7 @@ struct AutomationTasksListView: View {
             message: "Schedule a prompt to run automatically — daily digests, recurring reminders, anything on a timer.",
             actionTitle: "Create automation task",
             action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isCreateSheetPresented = true
             }
         )

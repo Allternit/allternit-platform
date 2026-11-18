@@ -248,7 +248,7 @@ struct GroupChatView: View {
     @State private var isBackgroundPresented = false
     @ObservedObject private var backdrops = StageBackdropStore.shared
     @ObservedObject private var botColors = BotColorStore.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     /// The room's background: its own look, else Settings (Plain when off).
     private var backdropVariant: String { backdrops.variant(for: .group, scope: .group(groupId)) }
@@ -496,7 +496,7 @@ struct GroupStageView: View {
     let onDock: () -> Void
     @ObservedObject private var store = BotModeStore.shared
     @ObservedObject private var colors = BotColorStore.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var floating = false
 
     /// The members' colours, each bot's own (the web palette for the rest).

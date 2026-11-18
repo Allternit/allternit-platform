@@ -436,7 +436,7 @@ struct MeetYourBotsView: View {
 
     @StateObject private var model = MeetYourBotsModel()
     @ObservedObject private var hub = AgentHubStore.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var notificationsOn = false
     @State private var askingNotifications = false
     @State private var leadSheet: LeadSheet?

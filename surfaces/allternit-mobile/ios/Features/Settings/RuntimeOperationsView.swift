@@ -50,8 +50,7 @@ struct RuntimeOperationsView: View {
             Spacer()
 
             Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 store.fetchIfNeeded(force: true)
             }) {
                 Image(systemName: "arrow.clockwise")

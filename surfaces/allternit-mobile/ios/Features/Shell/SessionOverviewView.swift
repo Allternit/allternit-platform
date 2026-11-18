@@ -659,7 +659,7 @@ struct SessionOverviewView: View {
 
     /// Teleport from ⋯: the session keeps its conversation and resumes on the other computer.
     private func teleport(_ session: AgentSession, toCloud: Bool) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         Task {
             do { try await store.teleport(id: session.id, toCloud: toCloud) }
             catch { actionError = FriendlyErrorMessage.from(error.localizedDescription) }
@@ -725,7 +725,7 @@ struct SessionOverviewView: View {
     }
 
     private func close(_ session: AgentSession) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         Task {
             // archive() takes the card out at once and puts it back if the write fails.
             do { try await store.archive(id: session.id) }
@@ -734,7 +734,7 @@ struct SessionOverviewView: View {
     }
 
     private func open(_ session: AgentSession) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         onOpen(session)
     }
 }

@@ -250,7 +250,7 @@ struct StageMontageCard: View {
     let working: Bool
     let onOpen: (ArtifactV2Summary) -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var index = 0
     private static let interval: TimeInterval = 2.4
 

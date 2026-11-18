@@ -85,7 +85,7 @@ struct PhoneIconButton: View {
 
     var body: some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             action()
         } label: {
             Image(systemName: systemName)
@@ -299,7 +299,7 @@ struct PhoneOverviewButton: View {
         let count = store.openSessions(for: mode).count
         let noun = mode == .code ? "code threads" : (mode == .aci ? "agent runs" : "chats")
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             action()
         } label: {
             Text(count > 99 ? "99+" : "\(count)")

@@ -160,8 +160,7 @@ struct RuntimePairingView: View {
     /// subtitle, checkmark on the currently paired one.
     private func runtimeRow(_ runtime: RuntimeDevice) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             environmentStore.pair(withRuntimeId: runtime.id)
             dismiss()
         }) {

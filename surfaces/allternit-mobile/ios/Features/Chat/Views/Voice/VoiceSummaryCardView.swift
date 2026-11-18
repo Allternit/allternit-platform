@@ -76,8 +76,7 @@ struct VoiceSummaryCardView: View {
 
     private func feedbackButton(_ systemName: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UISelectionFeedbackGenerator()
-            generator.selectionChanged()
+            Haptics.selection()
             action()
         }) {
             Image(systemName: systemName)

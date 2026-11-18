@@ -132,7 +132,7 @@ private struct GalleryPage: View {
 
 /// Shows whether Reduce Motion is on, so a screenshot says which motion it shows.
 private struct ReduceMotionNote: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     var body: some View {
         Text("Reduce Motion: \(reduceMotion ? "on (static orb, opacity only)" : "off")")
             .font(.caption2).foregroundColor(Color("TextTertiary"))

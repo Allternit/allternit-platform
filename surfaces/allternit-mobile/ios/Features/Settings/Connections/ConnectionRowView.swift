@@ -35,7 +35,7 @@ struct ConnLogoView: View {
 /// The status dot before the words (web `StatusDot`).
 private struct ConnStatusDot: View {
     let state: ConnState
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var dim = false
 
     var body: some View {

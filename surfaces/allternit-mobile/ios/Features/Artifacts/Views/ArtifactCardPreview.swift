@@ -28,7 +28,7 @@ struct ArtifactCardPreview: View {
 
     @State private var preview: ArtifactCardPreviewStore.Preview? = nil
     @State private var pulse = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         ZStack {

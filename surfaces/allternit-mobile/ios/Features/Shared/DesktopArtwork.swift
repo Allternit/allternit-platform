@@ -364,7 +364,7 @@ struct PolishCardGrid<Content: View>: View {
 /// PreviewCardSkeleton: the same shape as the real cards, so nothing jumps.
 struct PolishCardSkeletons: View {
     var count: Int = 6
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var dim = false
 
     var body: some View {

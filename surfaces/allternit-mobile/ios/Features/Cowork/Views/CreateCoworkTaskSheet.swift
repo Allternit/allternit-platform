@@ -176,8 +176,7 @@ struct CreateCoworkTaskSheet: View {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return }
         let trimmedDescription = descriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
         onCreate(trimmedTitle, trimmedDescription.isEmpty ? nil : trimmedDescription, assigneeType)
         dismiss()
     }

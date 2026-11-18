@@ -26,6 +26,7 @@ enum Haptics {
     @MainActor static func selection() { guard isEnabled else { return }; selectionGen.selectionChanged(); selectionGen.prepare() }
     @MainActor static func success() { guard isEnabled else { return }; notifyGen.notificationOccurred(.success); notifyGen.prepare() }
     @MainActor static func warning() { guard isEnabled else { return }; notifyGen.notificationOccurred(.warning); notifyGen.prepare() }
+    @MainActor static func error() { guard isEnabled else { return }; notifyGen.notificationOccurred(.error); notifyGen.prepare() }
 
     /// Warm the generators (call when a gesture begins).
     @MainActor static func prepare() {

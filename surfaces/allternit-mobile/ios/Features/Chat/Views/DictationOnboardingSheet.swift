@@ -88,8 +88,7 @@ struct DictationOnboardingSheet: View {
                     // ── Speech language row → inline locale picker ──
                     VStack(spacing: 0) {
                         Button(action: {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
+                            Haptics.light()
                             withAnimation { isLanguageListExpanded.toggle() }
                         }) {
                             HStack {
@@ -131,8 +130,7 @@ struct DictationOnboardingSheet: View {
 
             // ── Continue ──
             Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 Self.markShown()
                 dismiss()
                 onContinue()
@@ -157,8 +155,7 @@ struct DictationOnboardingSheet: View {
 
     private func languageOption(label: String, value: SpeechLanguage?) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             settings.speechLanguage = value
             withAnimation { isLanguageListExpanded = false }
         }) {

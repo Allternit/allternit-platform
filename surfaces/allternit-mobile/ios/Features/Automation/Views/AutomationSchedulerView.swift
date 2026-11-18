@@ -636,7 +636,7 @@ private struct SchedulerChip: View {
         .zIndex(drag.active ? 30 : 10)
         .animation(.easeOut(duration: 0.12), value: drag.active)
         .onChange(of: drag.active) { _, active in
-            if active { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+            if active { Haptics.light() }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.title), \(AutomationRoutineRule.fmtTime(item.rule.at)). Show details\(item.locked ? "" : ", swipe up or down to move").")

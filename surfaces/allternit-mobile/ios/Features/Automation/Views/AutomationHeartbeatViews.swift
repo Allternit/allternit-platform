@@ -621,7 +621,7 @@ struct HeartbeatSchedulerView: View {
         do {
             try await createJob(name: name, cron: HeartbeatDocument.cron(from: time), description: description, enabled: enabled)
             isAdding = false
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
             await writeFile()
             return true
         } catch {
@@ -672,7 +672,7 @@ struct HeartbeatSchedulerView: View {
         defer { busyId = nil }
         do {
             try await cron.runNow(id: job.id)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
         } catch {
             self.error = "Couldn't run \(row.name). \(FriendlyErrorMessage.from(error.localizedDescription))"
         }
@@ -714,7 +714,7 @@ struct HeartbeatSchedulerView: View {
                 fileTasks.append(HeartbeatFileTask(name: name, schedule: schedule, description: description))
                 expandedId = "file-\(name)"
             }
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
             await writeFile()
             return true
         } catch {

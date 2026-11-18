@@ -7,7 +7,7 @@ struct ThinkingSliderView: View {
     let thinking: ModelThinking
     let value: String
     let onChange: (String) -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private static let cols = 30
     private static let rows = 5
@@ -48,7 +48,7 @@ struct ThinkingSliderView: View {
                         let i = Int((g.location.x / max(1, proxy.size.width) * Double(n - 1)).rounded())
                         let level = thinking.levels[min(n - 1, max(0, i))]
                         if level.id != value {
-                            UISelectionFeedbackGenerator().selectionChanged()
+                            Haptics.selection()
                             onChange(level.id)
                         }
                     })

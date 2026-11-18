@@ -298,7 +298,7 @@ struct ModelPickerSheet: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard row.available else { return }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             modelStore.userSelectedModel(row.id)
             dismiss()
         }
@@ -467,7 +467,7 @@ struct ModelPickerSheet: View {
     }
 
     private func choose(_ model: RuntimeModel) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         // A locked Cloud row opens the credits sheet and keeps the old selection.
         if modelStore.isCloudLocked(model.id) {
             creditsRequest = CloudCreditsGate.request(modelId: model.id, reason: plan.cloudModels?.reason)

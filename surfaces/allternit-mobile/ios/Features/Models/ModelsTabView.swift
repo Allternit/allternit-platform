@@ -93,7 +93,7 @@ struct ModelsTabView: View {
 
     private func circleButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             action()
         }) {
             Image(systemName: icon)
