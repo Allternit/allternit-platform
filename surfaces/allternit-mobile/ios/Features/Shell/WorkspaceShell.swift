@@ -213,7 +213,8 @@ struct MainWorkspaceView: View {
             // `-open-<section>` (DEBUG only): land on a section directly
             // (no tap injection in simctl). `-open-settings` and friends are
             // handled by the drawer, which owns the Settings sheet.
-            if launchArgumentEnabled("open-projects") {
+            if launchArgumentEnabled("open-projects") || launchArgumentEnabled("calm-projects-pill")
+                || launchArgumentEnabled("calm-projects-explainer") || launchArgumentEnabled("calm-new-project") {
                 modeStore.selectBarItem(.projects)
             }
             if launchArgumentEnabled("open-artifacts") {

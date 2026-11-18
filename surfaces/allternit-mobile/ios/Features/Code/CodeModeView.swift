@@ -455,7 +455,13 @@ struct CodeModeView: View {
                 shellOpen = false
                 startFromSessionsView(prompt)
             },
-            onRefresh: { await loadSessions() }
+            onRefresh: { await loadSessions() },
+            onOpenCards: {
+                // The card overview is a sheet on this view: close the
+                // sessions view first so it can present.
+                closeSessionsView()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { overviewKind = .threads }
+            }
         )
     }
 
