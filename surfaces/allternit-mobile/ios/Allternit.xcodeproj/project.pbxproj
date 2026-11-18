@@ -872,7 +872,6 @@
 		F3B03EF76C3A938A0A455ABA /* OnDeviceLabApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 691A3E019EBE2CFC3FD1D5C8 /* OnDeviceLabApp.swift */; };
 		F3BCD5BF99E4C223221C718E /* SampleURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC21CF93092F6F12C6D3F1D /* SampleURLProtocol.swift */; };
 		F3E006F8FFD445CB70129544 /* FabricTransportClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCD882DECA9CE6A95ABBA9CF /* FabricTransportClient.swift */; };
-		F48382C1AFEE998EBAA5BC7C /* ComposerSwipeTip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8FFDCED2EA951AC0E617AD /* ComposerSwipeTip.swift */; };
 		F488AECF2D5DCE640148634E /* OnboardingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85F5DF368763C37AE6E8833E /* OnboardingStore.swift */; };
 		F49298921438C5AA2C46674B /* Runestone in Frameworks */ = {isa = PBXBuildFile; productRef = A8A3C701861EEE87CDB63E1F /* Runestone */; };
 		F498763B791A4897EDCC5C49 /* ShellSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0FCE23EDD7E1E9117E5454 /* ShellSearchView.swift */; };
@@ -1181,7 +1180,6 @@
 		2E309E127E42B78330B54B0E /* RuntimeOperationsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeOperationsModels.swift; sourceTree = "<group>"; };
 		2E44F010D96E6FC76D3CE571 /* ACIWebBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACIWebBrowserView.swift; sourceTree = "<group>"; };
 		2E6361085053EA4E5F0A9B2A /* UsageMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMathTests.swift; sourceTree = "<group>"; };
-		2E8FFDCED2EA951AC0E617AD /* ComposerSwipeTip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerSwipeTip.swift; sourceTree = "<group>"; };
 		2EA4CD63CB38E3BE58D42166 /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = usr/lib/libz.tbd; sourceTree = SDKROOT; };
 		2F872E12909F37FC3EB5C89A /* PtyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PtyClient.swift; sourceTree = "<group>"; };
 		2FD5CC652F9A69791193C138 /* SubagentTypesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubagentTypesClient.swift; sourceTree = "<group>"; };
@@ -2761,7 +2759,6 @@
 				7B76F76BA9CE203D93245F15 /* ChatPermission.swift */,
 				F26BA25BCB1FBB8065F987CF /* ComposerDeck.swift */,
 				486A51068DADFBA03C5C2A3D /* ComposerDeckState.swift */,
-				2E8FFDCED2EA951AC0E617AD /* ComposerSwipeTip.swift */,
 				3C3116EAFF64AFF4D77AA58E /* ComposerView.swift */,
 				D69F5A35B9CCBC47EE3A7F17 /* ContextUsageMeter.swift */,
 			);
@@ -4467,7 +4464,6 @@
 				54E12604EB4719BADCABF94F /* ComposerDeckState.swift in Sources */,
 				9C0BDDCD4DC2420648F5BC20 /* ComposerPlusModel.swift in Sources */,
 				BC4A7BEB1237004CCFA919A4 /* ComposerPlusSheet.swift in Sources */,
-				F48382C1AFEE998EBAA5BC7C /* ComposerSwipeTip.swift in Sources */,
 				32CE7784B97EAF42B8A267FA /* ComposerView.swift in Sources */,
 				1F010EB98323D25EEFB22CB6 /* ComputeBillingView.swift in Sources */,
 				CB75971075C518A40D5884CD /* ComputeGateView.swift in Sources */,

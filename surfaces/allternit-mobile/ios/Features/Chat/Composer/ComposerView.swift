@@ -105,12 +105,11 @@ struct ComposerView: View {
     @Environment(\.openURL) private var openURL
     /// The In-App Purchase sheet, where the App Store sells plans.
     @State private var isStoreSheetPresented = false
-    /// Deck fold (C1): swiped up and not yet swiped down or blurred empty.
-    @State private var swipedOpen = false
+    /// Deck fold: open at rest; the "tools" tab or a swipe folds it, and the
+    /// choice persists per device.
+    @State private var deckFolded = UserDefaults.standard.bool(forKey: deckFoldedDefaultsKey)
     /// One of the deck's sheets is up: keeps the band open under it.
     @State private var deckSheetActive = false
-    /// The once card for the swipe (C1 tip).
-    @State private var swipeTipSeen = UserDefaults.standard.bool(forKey: ComposerSwipeTipState.defaultsKey)
     /// Dictation (C3): the mic left of the voice button.
     @StateObject private var dictation = DictationController()
     @State private var dictationBase = ""
@@ -131,7 +130,7 @@ struct ComposerView: View {
 
     /// The deck band shows (it is folded at rest). Hosts with no deck never.
     private var deckBandOpen: Bool {
-        deckOpen(focused: isFocused || deckSheetActive, hasDraft: hasDraft, swipedOpen: swipedOpen, modeArmed: agentOn)
+        deckOpen(folded: deckFolded)
     }
 
     private var forcedDeckOpen: Bool {
@@ -140,27 +139,6 @@ struct ComposerView: View {
         #else
         return false
         #endif
-    }
-
-    private var forcedSwipeTip: Bool {
-        #if DEBUG
-        return launchArgumentEnabled("calm-swipe-tip")
-        #else
-        return false
-        #endif
-    }
-
-    /// The computer chip is on screen (the swipe tip yields to it).
-    private var chipVisible: Bool {
-        showsComputerChip && chipStore.state.kind != .none && !(showsAttach && chipStore.showsDot)
-    }
-
-    private var showsSwipeTip: Bool {
-        if forcedSwipeTip { return deck != .none && !isTerminal }
-        return ComposerSwipeTipState.shouldShow(
-            seen: swipeTipSeen, deckIsOpen: deckBandOpen || forcedDeckOpen, chipVisible: chipVisible,
-            hasDeck: deck != .none && !isTerminal
-        )
     }
 
     /// Dictation needs a speech recognizer for the current language.
@@ -207,12 +185,6 @@ struct ComposerView: View {
                     .zIndex(1)
             }
 
-            if showsSwipeTip {
-                ComposerSwipeTip { dismissSwipeTip() }
-                    .zIndex(1)
-                    .transition(.opacity)
-            }
-
             // One calm line when dictation can't start.
             if let dictationError = dictation.errorMessage {
                 Text(plainErrorText(message: dictationError))
@@ -234,12 +206,20 @@ struct ComposerView: View {
                     DragGesture(minimumDistance: 12)
                         .onEnded { value in
                             guard deck != .none, !isTerminal else { return }
-                            let next = nextSwipedOpen(current: swipedOpen, startY: value.startLocation.y, endY: value.location.y)
-                            guard next != swipedOpen else { return }
-                            swipedOpen = next
-                            if next { markSwipeTipSeen() }
+                            let next = nextSwipedOpen(current: !deckFolded, startY: value.startLocation.y, endY: value.location.y)
+                            guard next == deckFolded else { return }
+                            setDeckFolded(!next)
                         }
                 )
+
+            if deck != .none, !isTerminal {
+                HStack {
+                    ComposerToolsTab(folded: deckFolded) { setDeckFolded(!deckFolded) }
+                    Spacer()
+                }
+                .padding(.leading, 16)
+                .zIndex(1)
+            }
 
             if deck != .none, !isTerminal, deckBandOpen || forcedDeckOpen {
                 ComposerDeckBand(
@@ -253,13 +233,6 @@ struct ComposerView: View {
         .animation(reduceMotion ? nil : Motion.deck, value: deckBandOpen || forcedDeckOpen)
         .animation(DeckMotion.animation, value: deck)
         .background(ComposerFrameReporter())
-        .onChange(of: deckBandOpen) { _, open in
-            if open { Haptics.selection() }
-        }
-        .onChange(of: isFocused) { _, focused in
-            // Blur with an empty draft folds a swiped-open band.
-            if !focused, !hasDraft, !deckSheetActive { swipedOpen = false }
-        }
         .onChange(of: dictation.transcript) { _, transcript in
             guard dictation.isRecording || !transcript.isEmpty else { return }
             inputText = dictationBase + transcript
@@ -642,15 +615,11 @@ struct ComposerView: View {
         }
     }
 
-    /// The swipe tip is a once card: any dismissal, or a first swipe, retires it.
-    private func markSwipeTipSeen() {
-        swipeTipSeen = true
-        UserDefaults.standard.set(true, forKey: ComposerSwipeTipState.defaultsKey)
-    }
-
-    private func dismissSwipeTip() {
-        Haptics.light()
-        withAnimation(reduceMotion ? nil : Motion.deck) { markSwipeTipSeen() }
+    /// Fold or unfold the deck and remember it on this device.
+    private func setDeckFolded(_ folded: Bool) {
+        Haptics.selection()
+        UserDefaults.standard.set(folded, forKey: deckFoldedDefaultsKey)
+        withAnimation(reduceMotion ? nil : Motion.deck) { deckFolded = folded }
     }
 
     /// One staged attachment: image thumbnail or a file chip, X to unstage.
@@ -970,5 +939,36 @@ private struct ComposerFrameReporter: View {
                 .onDisappear { ComposerHitRegion.set(id, nil) }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// The grey "tools" pull tab under the composer's bottom-left edge: flat top
+/// joined to the card, rounded bottom corners. The only deck toggle; it is
+/// always visible (chevron up when open, down when folded).
+struct ComposerToolsTab: View {
+    let folded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: folded ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("tools")
+                    .font(.system(size: 10))
+            }
+            .foregroundColor(Color("TextSecondary").opacity(0.8))
+            .padding(.horizontal, 10)
+            .frame(minWidth: 44, minHeight: 24)
+            .background(
+                UnevenRoundedRectangle(bottomLeadingRadius: 10, bottomTrailingRadius: 10, style: .continuous)
+                    .fill(Color("FillNeutral"))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(folded ? "Show tools" : "Hide tools")
+        .accessibilityValue(folded ? "Folded" : "Expanded")
+        .accessibilityAddTraits(.isButton)
     }
 }
