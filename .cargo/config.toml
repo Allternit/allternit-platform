@@ -21,6 +21,13 @@ debug = 1
 # it in every binary/rlib. This significantly reduces per-artifact size.
 split-debuginfo = "packed"
 
+[profile.ci-test]
+# Test profile for CI: same cfg set as the train's dev runs, light optimization,
+# no debuginfo. See surfaces/docs/internal/api-build-speed.mdx once PR-2 lands.
+inherits = "dev"
+opt-level = 1
+debug = false
+
 [profile.release]
 # Optimize for size instead of speed.
 opt-level = "z"
