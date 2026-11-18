@@ -689,6 +689,7 @@
               "guides/token-budgets",
               "guides/allternit-cloud-quickstart",
               "guides/credits-and-auto-top-up",
+              "guides/plan-renewal-and-cancellation",
               "guides/computer-pricing",
               "guides/credits-computer",
               "guides/webhooks",
@@ -1199,10 +1200,14 @@
   "fonts": {
     "heading": {
       "family": "Newsreader",
-      "weight": 500
+      "weight": 500,
+      "source": "/fonts/newsreader-latin.woff2",
+      "format": "woff2"
     },
     "body": {
-      "family": "Inter"
+      "family": "Inter",
+      "source": "/fonts/inter-latin.woff2",
+      "format": "woff2"
     }
   },
   "api": {
