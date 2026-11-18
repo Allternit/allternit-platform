@@ -154,9 +154,8 @@ struct AccountProjectsClient: Sendable {
 
     /// The project, bare or as `{ "project": {...} }`.
     private func sendProject<B: Encodable>(_ method: String, _ path: String, _ body: B?) async throws -> AccountProject {
-        struct Wrapped: Decodable { let project: AccountProject }
         let data = try await raw(method, path, body)
-        if let wrapped = try? JSONDecoder().decode(Wrapped.self, from: data) { return wrapped.project }
+        if let wrapped = try? JSONDecoder().decode(AccountProjectEnvelope.self, from: data) { return wrapped.project }
         do { return try JSONDecoder().decode(AccountProject.self, from: data) } catch { throw APIError.decoding(error) }
     }
 
@@ -200,3 +199,6 @@ struct AccountProjectsClient: Sendable {
         id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
     }
 }
+
+/// `{ "project": … }`: Swift does not allow a type nested in a generic function.
+private struct AccountProjectEnvelope: Decodable { let project: AccountProject }
