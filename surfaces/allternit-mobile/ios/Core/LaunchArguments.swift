@@ -116,6 +116,17 @@ enum LaunchArgument {
     /// `-calm-artifacts-list` (DEBUG only): Artifacts in List layout.
     static let calmArtifactsList = "calm-artifacts-list"
 
+    /// `-calm-artifact-viewer[=<id>]` (DEBUG only): open an artifact in the
+    /// native viewer with the calm bar (phone calm step 29). Lands on
+    /// Artifacts; with `-sample-workspace` the first sample artifact opens.
+    static let calmArtifactViewer = "calm-artifact-viewer"
+
+    /// `-calm-artifact-comments[=<id>]` (DEBUG only): the viewer with its Comments sheet open.
+    static let calmArtifactComments = "calm-artifact-comments"
+
+    /// `-calm-artifact-share[=<id>]` (DEBUG only): the viewer with its share sheet open.
+    static let calmArtifactShare = "calm-artifact-share"
+
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
 

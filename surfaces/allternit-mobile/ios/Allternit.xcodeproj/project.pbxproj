@@ -497,10 +497,12 @@
 		90479EDA461BD0B88CB8718E /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59F0F883C961CE5C29AD0B21 /* SettingsView.swift */; };
 		9063AB02142DA8BE2ED9C9F1 /* SafariView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7F3B173705B7F5941BDC4FE /* SafariView.swift */; };
 		90DB240D20C48C996AFF0008 /* SpeechSentenceChunker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60CDC4288E01300A67F614B4 /* SpeechSentenceChunker.swift */; };
+		90F0E8E4BBDDC7394DF8E02B /* ArtifactCommentsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBA34A2CEEFE7BB84CE5AD39 /* ArtifactCommentsSheet.swift */; };
 		91346686E6F787A159FD6DB7 /* MeetingLiveSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC97BA44F5DC792E24CC1FB8 /* MeetingLiveSession.swift */; };
 		917EC4AE1FF035DBEC9300D4 /* IMQuickPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E3675D6BEA522D8A6837910 /* IMQuickPanel.swift */; };
 		9198E0324C3EA5D3E36CB1E3 /* TwinSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D5F0FBBDFDA61BCA336D35B /* TwinSettingsView.swift */; };
 		91A9CC9F276FFA299E656E23 /* ConnectorsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D5F1CC189FE9D76750FA4E6 /* ConnectorsClient.swift */; };
+		921131E004A2FEBF67F0F012 /* ArtifactCollabRulesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45DC9DCDFA78B094CADB5ABF /* ArtifactCollabRulesTests.swift */; };
 		930C1204768B15212990D2E1 /* ArtifactTemplateCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBAA96AC0F8A8915F6B702DF /* ArtifactTemplateCatalog.swift */; };
 		9318ED9B6A5A6B72F1240BF6 /* WebhookTrigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 202DAEFD590DACDF8429BB4A /* WebhookTrigger.swift */; };
 		93268B9EABC62F8BC790B16F /* ArtifactDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15187B0C77E90FFBEE394F9A /* ArtifactDetailsView.swift */; };
@@ -623,6 +625,7 @@
 		B309E02609EF8F546B8721C8 /* SharedPhoneRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39168AAAA2A1729A6320147C /* SharedPhoneRun.swift */; };
 		B343308424F651930113D58E /* MessageComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82C73A944813B158FC823773 /* MessageComposer.swift */; };
 		B376D88F15C287A144CA28A1 /* SpeakerLook.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34A9350EE0B4B44F136C665C /* SpeakerLook.swift */; };
+		B3AB601078E40A31BE3A207E /* ArtifactCollabRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 532A804C390BD23771244CEE /* ArtifactCollabRules.swift */; };
 		B3C20297132A58130478F768 /* BenchmarkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50EA6B31E1867A996AFBD6C4 /* BenchmarkView.swift */; };
 		B3EE4EE9F4B4287A15129064 /* MessagesAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E069BEDB08471157C8919702 /* MessagesAssets.xcassets */; };
 		B413B477AD207286FBBF3BC0 /* MeetBotCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBE80E738D829F2E8E018127 /* MeetBotCatalog.swift */; };
@@ -1234,6 +1237,7 @@
 		43BFEA6D9AD0DFA2A813D0C9 /* BotProjectSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotProjectSections.swift; sourceTree = "<group>"; };
 		44C2762D2A4F27D744EF8EC8 /* PersonModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonModels.swift; sourceTree = "<group>"; };
 		455E1A4A7569BDBD36AB748E /* StorePurchaseViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorePurchaseViews.swift; sourceTree = "<group>"; };
+		45DC9DCDFA78B094CADB5ABF /* ArtifactCollabRulesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactCollabRulesTests.swift; sourceTree = "<group>"; };
 		45F44F59BA1C2AB3506C0B8A /* LoopLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopLiveActivity.swift; sourceTree = "<group>"; };
 		467C3A63EC0099855805319F /* PhoneHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneHeader.swift; sourceTree = "<group>"; };
 		468304A152B48DA563AF255C /* BotSetupSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotSetupSheets.swift; sourceTree = "<group>"; };
@@ -1279,6 +1283,7 @@
 		52010EB8219766551769D25B /* FirstRunSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstRunSetupView.swift; sourceTree = "<group>"; };
 		52277CD4E2534578A9E785F8 /* ReplyEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReplyEvent.swift; sourceTree = "<group>"; };
 		524692B6BCBF0E1A9ADEC749 /* AgentAsk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAsk.swift; sourceTree = "<group>"; };
+		532A804C390BD23771244CEE /* ArtifactCollabRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactCollabRules.swift; sourceTree = "<group>"; };
 		541657CC1F861072387754C4 /* AgentChatClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatClient.swift; sourceTree = "<group>"; };
 		548C35B4EA9F99360E661513 /* BrainSpikeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainSpikeView.swift; sourceTree = "<group>"; };
 		54A65D23DCABF32B76CA2982 /* AgentHubStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHubStore.swift; sourceTree = "<group>"; };
@@ -1783,6 +1788,7 @@
 		FAD3451741429A76C898889B /* FreeweightsBrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreeweightsBrowseView.swift; sourceTree = "<group>"; };
 		FB180A8B2DE32B3733CB9CC4 /* RuntimeOperationsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeOperationsStore.swift; sourceTree = "<group>"; };
 		FB77031437EB0BF594F74328 /* KeyboardModeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardModeService.swift; sourceTree = "<group>"; };
+		FBA34A2CEEFE7BB84CE5AD39 /* ArtifactCommentsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactCommentsSheet.swift; sourceTree = "<group>"; };
 		FBCF58B80B9DDFD0F36F5ACD /* ProjectPadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPadView.swift; sourceTree = "<group>"; };
 		FCE122EEEA1CE1A608D15BDB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		FCF6172AAD60A8747CAAE599 /* SettingsChangeCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsChangeCardView.swift; sourceTree = "<group>"; };
@@ -2664,6 +2670,7 @@
 			isa = PBXGroup;
 			children = (
 				87918A785F9680BF0238ED4D /* AppearanceClientTests.swift */,
+				45DC9DCDFA78B094CADB5ABF /* ArtifactCollabRulesTests.swift */,
 				E8A1A0ACA5C2BF95BC5DBE9D /* ArtifactTileFilterTests.swift */,
 				209871E45703181D6EB7229F /* CalmErrorTests.swift */,
 				200400EF6B620633834145F4 /* CloudCreditsTests.swift */,
@@ -2936,6 +2943,7 @@
 			children = (
 				0757A1255EC2B7A9AA1D2308 /* ArtifactBodyDecoder.swift */,
 				2D10E429066BBA9B9A257F43 /* ArtifactBodyEditing.swift */,
+				532A804C390BD23771244CEE /* ArtifactCollabRules.swift */,
 				03E34A99F6B335FE86510DB1 /* ArtifactContentLoader.swift */,
 				618D8F1B0F9B6750E88250A6 /* ArtifactFileShare.swift */,
 				1484FBF4E7FCFDF0EF1262E1 /* ArtifactLibraryStore.swift */,
@@ -3611,6 +3619,7 @@
 			isa = PBXGroup;
 			children = (
 				B2F2D113205D65789D4CA65C /* ArtifactCardPreview.swift */,
+				FBA34A2CEEFE7BB84CE5AD39 /* ArtifactCommentsSheet.swift */,
 				CD6A3E6D3C429D37B634CA69 /* ArtifactCreateTileArt.swift */,
 				15187B0C77E90FFBEE394F9A /* ArtifactDetailsView.swift */,
 				4690E0ABB5E1C5E7196838B4 /* ArtifactLiveWebView.swift */,
@@ -4166,6 +4175,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				EB20AD81DCE4D386834E7DBF /* AppearanceClientTests.swift in Sources */,
+				921131E004A2FEBF67F0F012 /* ArtifactCollabRulesTests.swift in Sources */,
 				C5AC61D78B86770BB9A5A030 /* ArtifactTileFilterTests.swift in Sources */,
 				1426A892E38F70A415822BC6 /* CalmErrorTests.swift in Sources */,
 				81E63CDCE547316DEA0DFD05 /* CloudCreditsTests.swift in Sources */,
@@ -4283,6 +4293,8 @@
 				01ACEB8024C097E740FB8A90 /* ArtifactBodyDecoder.swift in Sources */,
 				D0F0ADDB8B1F6CEA3CE24439 /* ArtifactBodyEditing.swift in Sources */,
 				6210CE2DAED4F1CA23B94459 /* ArtifactCardPreview.swift in Sources */,
+				B3AB601078E40A31BE3A207E /* ArtifactCollabRules.swift in Sources */,
+				90F0E8E4BBDDC7394DF8E02B /* ArtifactCommentsSheet.swift in Sources */,
 				2AF88D8EAD207BC7586A817D /* ArtifactContentLoader.swift in Sources */,
 				EA32C2163D2CF4E1EC5CC82A /* ArtifactCreateTileArt.swift in Sources */,
 				93268B9EABC62F8BC790B16F /* ArtifactDetailsView.swift in Sources */,

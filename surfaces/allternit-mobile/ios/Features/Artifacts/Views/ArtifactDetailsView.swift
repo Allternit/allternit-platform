@@ -103,11 +103,24 @@ struct ArtifactRecord: Identifiable, Hashable, Sendable, Codable {
     }
 }
 
+/// Library rows open the v2 viewer; chat-frame cards (no v2 record) keep
+/// this local viewer with the calm bar (phone calm I12): back, share (the
+/// content as a file, or the link) and ⋯ (Open in browser for a web link,
+/// Copy content). Frame cards have no comments: those live on v2 records.
 struct ArtifactDetailsView: View {
     let artifact: ArtifactRecord
     @Environment(\.dismiss) var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var selectedTab = 0
+    @State private var sharedFile: SharedArtifactFile?
+    @State private var shareError: String?
     @StateObject private var loader = ArtifactContentLoader()
+
+    /// An https link the card points at, for Open in browser.
+    private var webURL: URL? {
+        guard let raw = artifact.url, let url = URL(string: raw), url.scheme?.lowercased() == "https" else { return nil }
+        return url
+    }
 
     var body: some View {
         // Library rows (bot pages included) are Artifacts v2 records: open
@@ -157,31 +170,99 @@ struct ArtifactDetailsView: View {
             }
             .navigationTitle(artifact.title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Close") {
-                        dismiss()
-                    }
-                    .foregroundColor(Color("AccentPrimary"))
-                }
-
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        UIPasteboard.general.string = loader.content
-                        let generator = UINotificationFeedbackGenerator()
-                        generator.notificationOccurred(.success)
-                    }) {
-                        Image(systemName: "doc.on.doc")
-                            .foregroundColor(Color("TextPrimary"))
-                    }
-                    .disabled(loader.content == nil)
-                    .accessibilityLabel("Copy content")
-                }
+            .toolbar(.hidden, for: .navigationBar)
+            .safeAreaInset(edge: .top, spacing: 0) { viewerBar }
+            .sheet(item: $sharedFile) { file in
+                ArtifactShareSheet(items: [file.url])
+                    .presentationDetents([.medium, .large])
             }
-            .preferredColorScheme(.dark)
+            .alert("Couldn't share that", isPresented: Binding(get: { shareError != nil }, set: { if !$0 { shareError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(shareError ?? "")
+            }
         }
         .task {
             await loader.load(artifact: artifact)
+        }
+    }
+
+    // MARK: - Viewer bar
+
+    private var viewerBar: some View {
+        HStack(spacing: 10) {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 40, height: 40)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .glassSurface(cornerRadius: 20)
+            .accessibilityLabel("Back")
+
+            Text(artifact.title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+
+            HStack(spacing: 0) {
+                Button {
+                    Haptics.light()
+                    share()
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 16))
+                        .foregroundColor(Color("TextPrimary"))
+                        .frame(width: 42, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(loader.content?.isEmpty != false && webURL == nil)
+                .accessibilityLabel("Share")
+
+                Menu {
+                    if let webURL {
+                        Button { openURL(webURL) } label: { Label("Open in browser", systemImage: "arrow.up.right.square") }
+                    }
+                    Button {
+                        UIPasteboard.general.string = loader.content
+                        Haptics.success()
+                    } label: { Label("Copy content", systemImage: "doc.on.doc") }
+                    .disabled(loader.content == nil)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 16))
+                        .foregroundColor(Color("TextPrimary"))
+                        .frame(width: 42, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("More")
+            }
+            .padding(.horizontal, 2)
+            .glassSurface(cornerRadius: 20)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color("BgPrimary"))
+    }
+
+    /// The content as a file named after the card (Save to Files, AirDrop…),
+    /// else the link.
+    private func share() {
+        if let text = loader.content, !text.isEmpty {
+            let ext = artifact.fileType.lowercased().filter { $0.isLetter || $0.isNumber }
+            let hasExtension = !(artifact.title as NSString).pathExtension.isEmpty
+            let name = hasExtension ? artifact.title : "\(artifact.title).\(ext.isEmpty ? "txt" : ext)"
+            do {
+                sharedFile = SharedArtifactFile(url: try ArtifactFileShare.write(Data(text.utf8), suggestedName: name, mimeType: nil))
+            } catch {
+                shareError = plainErrorText(error)
+            }
+        } else if let webURL {
+            sharedFile = SharedArtifactFile(url: webURL)
         }
     }
 

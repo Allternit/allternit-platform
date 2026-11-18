@@ -182,6 +182,10 @@ enum SampleWorkspaceAPI {
                 return ["items": items, "next_cursor": NSNull()]
             case let p where p.count == 2 && p[0] == "artifacts":
                 return SampleWorkspace.artifactsV2(now: now).first { $0["id"] as? String == p[1] }
+            case let p where p.count == 3 && p[0] == "artifacts" && p[2] == "comments":
+                return ["items": SampleArtifactCollab.shared.comments(artifactId: p[1])]
+            case let p where p.count == 3 && p[0] == "artifacts" && p[2] == "sharing":
+                return SampleArtifactCollab.shared.sharing(artifactId: p[1])
             case ["org", "artifact-settings"]:
                 return ["enabled": true]
             default:
@@ -264,6 +268,9 @@ enum SampleWorkspaceAPI {
         }
         if namespace == .v1, let answer = SampleProjectState.shared.write(method: method, parts: parts, body: payload) {
             return json(answer)
+        }
+        if namespace == .v2, let answer = SampleArtifactCollab.shared.write(method: method, parts: parts, body: payload) {
+            return answer
         }
         // Teach Analyze: an imported .har becomes a contract, and distill
         // answers the model's draft skill for it.
@@ -739,5 +746,97 @@ enum SampleFactory {
                 ["kind": "delegates_to", "from": "preview-bot-designer", "to": "preview-bot-writer"],
             ],
         ]]
+    }
+}
+
+// MARK: - Artifact comments and sharing
+
+/// The viewer's comments and share sheet on the sample artifacts, for this
+/// launch only (phone calm I12): two threads on the first artifact, adds,
+/// replies, resolve, edit, delete and sharing changes stay in memory.
+final class SampleArtifactCollab: @unchecked Sendable {
+    static let shared = SampleArtifactCollab()
+
+    private let lock = NSLock()
+    private var commentsById: [String: [[String: Any]]] = [:]
+    private var sharingById: [String: [String: Any]] = [:]
+
+    private func seed(_ artifactId: String) -> [[String: Any]] {
+        guard artifactId == "preview-artifact-1" else { return [] }
+        func row(_ id: String, parent: String?, author: String, name: String?, body: String, minutes: Double, resolved: Bool = false) -> [String: Any] {
+            [
+                "id": id, "artifact_id": artifactId, "version": 1, "anchor": [String: Any](),
+                "parent_id": parent ?? NSNull(), "author_id": author, "author_name": name ?? NSNull(),
+                "author_image_url": NSNull(), "body": body, "to_assistant": false,
+                "resolved_at": resolved ? SampleWorkspace.ago(minutes - 5) : NSNull(),
+                "created_at": SampleWorkspace.ago(minutes), "agent_name": NSNull(),
+            ]
+        }
+        return [
+            row("preview-comment-1", parent: nil, author: "preview-maya", name: "Maya", body: "Can we lead with the lemon tart? It sold out twice last week.", minutes: 95),
+            row("preview-comment-2", parent: nil, author: SampleWorkspace.userId, name: SampleWorkspace.userName, body: "Price list matches the register now.", minutes: 70, resolved: true),
+            row("preview-comment-3", parent: "preview-comment-1", author: SampleWorkspace.userId, name: SampleWorkspace.userName, body: "Yes, moving it to the top.", minutes: 40),
+        ]
+    }
+
+    func comments(artifactId: String) -> [[String: Any]] {
+        lock.lock(); defer { lock.unlock() }
+        if commentsById[artifactId] == nil { commentsById[artifactId] = seed(artifactId) }
+        return commentsById[artifactId] ?? []
+    }
+
+    func sharing(artifactId: String) -> [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        return sharingById[artifactId] ?? [
+            "visibility": "private", "shares": [Any](),
+            "policy": ["link_allowed": true, "outside_invites_allowed": true],
+        ]
+    }
+
+    func write(method: String, parts: [String], body: [String: Any]) -> SampleWorkspaceAPI.Answer? {
+        guard parts.count >= 3, parts[0] == "artifacts" else { return nil }
+        let artifactId = parts[1]
+        if parts[2] == "sharing", method == "PUT" {
+            var next = sharing(artifactId: artifactId)
+            next["visibility"] = body["visibility"] as? String ?? "private"
+            next["shares"] = (body["shares"] as? [[String: Any]] ?? []).map { share -> [String: Any] in
+                var row = share
+                row["display"] = share["principal_id"]
+                row["expires_at"] = NSNull()
+                row["accepted_at"] = NSNull()
+                return row
+            }
+            if next["visibility"] as? String == "link" { next["link_url"] = "https://ai.allternit.com/a/\(artifactId)" }
+            lock.lock(); sharingById[artifactId] = next; lock.unlock()
+            return SampleWorkspaceAPI.json(next)
+        }
+        guard parts[2] == "comments" else { return nil }
+        var list = comments(artifactId: artifactId)
+        defer { lock.lock(); commentsById[artifactId] = list; lock.unlock() }
+        if parts.count == 3, method == "POST" {
+            let row: [String: Any] = [
+                "id": "preview-comment-\(UUID().uuidString.prefix(8).lowercased())", "artifact_id": artifactId,
+                "version": 1, "anchor": [String: Any](), "parent_id": body["parent_id"] ?? NSNull(),
+                "author_id": SampleWorkspace.userId, "author_name": SampleWorkspace.userName, "author_image_url": NSNull(),
+                "body": body["body"] as? String ?? "", "to_assistant": false, "resolved_at": NSNull(),
+                "created_at": SampleWorkspace.ago(0), "agent_name": NSNull(),
+            ]
+            list.append(row)
+            return SampleWorkspaceAPI.json(row, status: 201)
+        }
+        guard parts.count == 4, let index = list.firstIndex(where: { $0["id"] as? String == parts[3] }) else {
+            return SampleWorkspaceAPI.json(["error": "not_found"], status: 404)
+        }
+        if method == "DELETE" {
+            let cid = parts[3]
+            list.removeAll { $0["id"] as? String == cid || $0["parent_id"] as? String == cid }
+            return SampleWorkspaceAPI.Answer(status: 204, body: Data())
+        }
+        if method == "PATCH" {
+            if let resolved = body["resolved"] as? Bool { list[index]["resolved_at"] = resolved ? SampleWorkspace.ago(0) : NSNull() }
+            if let text = body["body"] as? String { list[index]["body"] = text }
+            return SampleWorkspaceAPI.json(list[index])
+        }
+        return nil
     }
 }
