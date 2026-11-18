@@ -86,12 +86,6 @@ final class ProjectsLibraryStore: ObservableObject {
     @Published private(set) var noComputer = false
 
     private var computerRefused = false
-    /// A computer answered a list read this load: adoption may run.
-    private var computerAnswered = false
-    private var adopting: Set<String> = []
-    /// The computer's create ignored the id we sent (an older runtime): the
-    /// client fallback stops for this launch and the server sync adopts them.
-    private var adoptionByIdUnsupported = false
     var accountClient = AccountProjectsClient.shared
 
     private static let favoritesKey = "allternit-phone-projects-favorites"
@@ -111,12 +105,11 @@ final class ProjectsLibraryStore: ObservableObject {
         localFavorites = []
         localArchived = []
         pendingBotFlags = [:]
-        // The leaving person's account projects and adoption state.
+        // The leaving person's account projects.
         accountProjects = []
         accountProjectsError = nil
         noComputer = false
         computerRefused = false
-        adoptionByIdUnsupported = false
         defaults.removeObject(forKey: Self.favoritesKey)
         defaults.removeObject(forKey: Self.archivedKey)
     }
@@ -125,7 +118,6 @@ final class ProjectsLibraryStore: ObservableObject {
 
     func load() async {
         ProjectStore.shared.fetchProjectsIfNeeded()
-        computerAnswered = false
         computerRefused = false
         await loadAccountProjects()
         await ComputeStatusStore.shared.refreshIfNeeded()
@@ -133,7 +125,6 @@ final class ProjectsLibraryStore: ObservableObject {
         await loadWorkspaceProjects()
         refreshNoComputer()
         await loadThreadCounts()
-        await adoptAccountProjectsIfNeeded()
     }
 
     /// Account projects of every kind. Signed out or not deployed: empty.
@@ -157,7 +148,7 @@ final class ProjectsLibraryStore: ObservableObject {
         do {
             botProjects = try await BotModeClient.shared.listBotProjects()
             botProjectsError = nil
-            noteComputerAnswered()
+            computerRefused = false
         } catch is CancellationError {
         } catch let error where Self.isNoComputerFailure(error) {
             botProjects = []
@@ -166,11 +157,6 @@ final class ProjectsLibraryStore: ObservableObject {
         } catch {
             botProjectsError = "Couldn't load bot projects. \(FriendlyErrorMessage.from(error))"
         }
-    }
-
-    private func noteComputerAnswered() {
-        computerRefused = false
-        computerAnswered = true
     }
 
     private func refreshNoComputer() {
@@ -283,7 +269,7 @@ final class ProjectsLibraryStore: ObservableObject {
             codeProjects = code
             designProjects = design
             workspaceProjectsError = nil
-            noteComputerAnswered()
+            computerRefused = false
         } catch is CancellationError {
             return
         } catch {
@@ -551,82 +537,19 @@ final class ProjectsLibraryStore: ObservableObject {
             .filter { noComputer || $0.adoptedComputerId == nil }
     }
 
-    // MARK: Account create and adoption
+    // MARK: Account create
 
-    /// New project with no computer: saved to the account. A bot keeps its
-    /// brief in `metadata.brief`.
+    /// New project with no computer: saved to the account. A bot's brief is
+    /// its `instructions` (account_sync copies it to the computer). The
+    /// computer adopts the row itself (allternit-api account_sync); the phone
+    /// never adopts, so the two never race.
     @discardableResult
     func createAccountProject(kind: AccountProject.Kind, title: String, description: String?, brief: String? = nil) async throws -> AccountProject {
-        var metadata: [String: JSONValue]? = nil
-        if let brief, !brief.isEmpty { metadata = ["brief": .string(brief)] }
-        let created = try await accountClient.create(kind: kind, title: title, description: description, metadata: metadata)
+        let instructions = brief?.isEmpty == false ? brief : nil
+        let created = try await accountClient.create(kind: kind, title: title, description: description, instructions: instructions)
         accountProjects.removeAll { $0.id == created.id }
         accountProjects.insert(created, at: 0)
         return created
-    }
-
-    struct AdoptionPlan: Equatable {
-        /// Already on the computer under the same id: only mark adopted.
-        var markOnly: [String] = []
-        /// Create on the computer with the same id, then mark adopted.
-        var create: [AccountProject] = []
-    }
-
-    /// What the client fallback adopts: unadopted chat projects only. Code,
-    /// design and bot rows need a workspace or bot team, which the server
-    /// sync (allternit-api account_sync) sets up.
-    nonisolated static func adoptionPlan(_ account: [AccountProject], computerIds: Set<String>, inFlight: Set<String>) -> AdoptionPlan {
-        var plan = AdoptionPlan()
-        var seen = Set<String>()
-        for project in account where project.adoptedComputerId == nil && !project.isDeleted
-            && project.mode == .chat && !inFlight.contains(project.id) && seen.insert(project.id).inserted {
-            if computerIds.contains(project.id) { plan.markOnly.append(project.id) } else { plan.create.append(project) }
-        }
-        return plan
-    }
-
-    private struct AdoptBody: Encodable {
-        let id: String
-        let title: String
-        let description: String?
-        let instructions: String?
-    }
-
-    /// Client fallback for the server's adoption: a connected computer gets
-    /// each unadopted chat project under the same id, then the row is marked.
-    /// Runs once per id at a time; stops for good when the computer ignores
-    /// the id (deleting the stray copy), so it never makes duplicates.
-    func adoptAccountProjectsIfNeeded() async {
-        guard !noComputer, computerAnswered, !adoptionByIdUnsupported, !SampleWorkspace.isEnabled,
-              accountProjects.contains(where: { $0.adoptedComputerId == nil && $0.mode == .chat }) else { return }
-        guard let computerId = await RuntimeRelayStore.shared.resolveActiveRuntimeId()
-                ?? ComputeStatusStore.shared.status?.computer?.id else { return }
-        // The computer's own list right now, not a cached one.
-        guard let onComputer = try? await ProjectsClient().listProjects() else { return }
-        let plan = Self.adoptionPlan(accountProjects, computerIds: Set(onComputer.map(\.id)), inFlight: adopting)
-        guard !plan.markOnly.isEmpty || !plan.create.isEmpty else { return }
-        let ids = plan.markOnly + plan.create.map(\.id)
-        adopting.formUnion(ids)
-        defer { adopting.subtract(ids) }
-        var marked: [String] = []
-        for id in plan.markOnly {
-            if (try? await accountClient.markAdopted(id: id, computerId: computerId)) != nil { marked.append(id) }
-        }
-        for project in plan.create {
-            guard let response: CreateCoworkProjectResponse = try? await APIClient.shared.post(
-                path: "cowork/projects",
-                body: AdoptBody(id: project.id, title: project.title, description: project.description, instructions: project.instructions)
-            ) else { continue }
-            guard response.project.id == project.id else {
-                try? await ProjectsClient().deleteProject(id: response.project.id)
-                adoptionByIdUnsupported = true
-                break
-            }
-            if (try? await accountClient.markAdopted(id: project.id, computerId: computerId)) != nil { marked.append(project.id) }
-        }
-        guard !marked.isEmpty else { return }
-        ProjectStore.shared.fetchProjectsIfNeeded(force: true)
-        await loadAccountProjects()
     }
 
     private func workspaceRow(_ project: WorkspaceLibraryProject, mode: LibraryProject.Mode, lastActivity: Date?, countLine: String) -> LibraryProject {

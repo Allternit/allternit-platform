@@ -2,8 +2,8 @@ import Foundation
 
 /// A project saved to the account in cloud-api (`account_projects`), so a
 /// person with no computer can still make and see projects and bots. When a
-/// computer connects it adopts the row under the same id, and from then on
-/// the computer's copy wins (clients merge by id).
+/// computer connects, its allternit-api (account_sync) adopts the row under
+/// the same id; from then on the computer's copy wins (clients merge by id).
 struct AccountProject: Decodable, Identifiable, Hashable, Sendable {
     enum Kind: String, CaseIterable, Sendable {
         case chat, code, design, bot
@@ -74,14 +74,16 @@ struct AccountProject: Decodable, Identifiable, Hashable, Sendable {
     var mode: LibraryProject.Mode { LibraryProject.Mode(rawValue: kind) ?? .chat }
     var isDeleted: Bool { deletedAt != nil }
 
-    /// A bot's brief (`metadata.brief`).
+    /// A bot's brief: its `instructions`. A string `metadata.brief` is read
+    /// only for rows written before that (never written by this app).
     var brief: String? {
+        if let instructions, !instructions.isEmpty { return instructions }
         if case .string(let value)? = metadata?["brief"], !value.isEmpty { return value }
         return nil
     }
 }
 
-/// cloud-api `/api/v1/account-projects` (+ `/:id`, `/:id/adopted`): the
+/// cloud-api `/api/v1/account-projects` (+ `/:id`): the
 /// signed-in session only, never a computer. A 404 on the list (route not
 /// deployed yet) is an empty list, never an error.
 struct AccountProjectsClient: Sendable {
@@ -147,14 +149,6 @@ struct AccountProjectsClient: Sendable {
         }
     }
 
-    /// Marks the row as adopted by a computer (same id on the computer).
-    func markAdopted(id: String, computerId: String) async throws {
-        struct Body: Encodable {
-            let computerId: String
-            enum CodingKeys: String, CodingKey { case computerId = "computer_id" }
-        }
-        _ = try await raw("POST", "\(Self.route)/\(Self.escape(id))/adopted", Body(computerId: computerId))
-    }
 
     // MARK: Transport
 

@@ -38,8 +38,8 @@ final class AccountProjectsTests: XCTestCase {
                                      tokenProvider: { "tok" })
     }
 
-    private func project(_ id: String, kind: String = "chat", adopted: String? = nil, deleted: String? = nil) -> AccountProject {
-        AccountProject(id: id, kind: kind, title: id, adoptedComputerId: adopted, deletedAt: deleted)
+    private func project(_ id: String, kind: String = "chat", deleted: String? = nil) -> AccountProject {
+        AccountProject(id: id, kind: kind, title: id, deletedAt: deleted)
     }
 
     // MARK: Client
@@ -49,7 +49,7 @@ final class AccountProjectsTests: XCTestCase {
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
             XCTAssertEqual(request.url?.path, "/api/v1/account-projects")
             XCTAssertEqual(request.url?.query, "kind=bot")
-            return (200, #"{"projects":[{"id":"a","kind":"bot","title":"Scout","description":null,"instructions":null,"metadata":{"brief":"Watch prices"},"adopted_computer_id":null,"created_at":"2026-11-18T10:00:00Z","updated_at":"2026-11-18T10:00:00Z","deleted_at":null},{"id":"b","kind":"bot","title":"Gone","metadata":"{\"brief\":\"x\"}","deleted_at":"2026-11-18T11:00:00Z"}]}"#)
+            return (200, #"{"projects":[{"id":"a","kind":"bot","title":"Scout","description":null,"instructions":"Watch prices","metadata":null,"adopted_computer_id":null,"created_at":"2026-11-18T10:00:00Z","updated_at":"2026-11-18T10:00:00Z","deleted_at":null},{"id":"b","kind":"bot","title":"Gone","instructions":"x","deleted_at":"2026-11-18T11:00:00Z"}]}"#)
         }
         let list = try await client().list(kind: .bot)
         XCTAssertEqual(list.map(\.id), ["a"])
@@ -57,7 +57,8 @@ final class AccountProjectsTests: XCTestCase {
         XCTAssertEqual(list.first?.mode, .bot)
     }
 
-    func testMetadataSentAsStringStillReadsTheBrief() throws {
+    /// Rows written before the brief moved to `instructions`.
+    func testOldRowWithStringMetadataBriefStillReads() throws {
         let json = #"{"id":"a","kind":"bot","title":"Scout","metadata":"{\"brief\":\"Watch prices\"}"}"#
         let decoded = try JSONDecoder().decode(AccountProject.self, from: Data(json.utf8))
         XCTAssertEqual(decoded.brief, "Watch prices")
@@ -74,28 +75,28 @@ final class AccountProjectsTests: XCTestCase {
         do { _ = try await client().list(); XCTFail("expected throw") } catch {}
     }
 
-    func testCreateBotSendsKindAndBrief() async throws {
+    /// cloud-api answers 400 to a string `metadata.brief`: a bot's brief
+    /// goes in `instructions` and no metadata is sent.
+    @MainActor
+    func testCreateBotSendsBriefAsInstructions() async throws {
         AccountProjectsStubProtocol.handler = { request in
             XCTAssertEqual(request.httpMethod, "POST")
-            return (201, #"{"project":{"id":"new","kind":"bot","title":"Scout","metadata":{"brief":"Watch prices"}}}"#)
+            XCTAssertEqual(request.url?.path, "/api/v1/account-projects")
+            return (201, #"{"project":{"id":"new","kind":"bot","title":"Scout","instructions":"Watch prices"}}"#)
         }
-        let created = try await client().create(kind: .bot, title: "Scout", metadata: ["brief": .string("Watch prices")])
+        let store = ProjectsLibraryStore(defaults: UserDefaults(suiteName: "AccountProjectsTests")!)
+        store.accountClient = client()
+        let created = try await store.createAccountProject(kind: .bot, title: "Scout", description: nil, brief: "Watch prices")
         XCTAssertEqual(created.id, "new")
+        XCTAssertEqual(created.brief, "Watch prices")
+        XCTAssertEqual(store.accountProjects.map(\.id), ["new"])
         let body = try XCTUnwrap(AccountProjectsStubProtocol.lastBody)
         let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertEqual(sent["kind"] as? String, "bot")
-        XCTAssertEqual((sent["metadata"] as? [String: Any])?["brief"] as? String, "Watch prices")
+        XCTAssertEqual(sent["instructions"] as? String, "Watch prices")
+        XCTAssertNil(sent["metadata"])
     }
 
-    func testMarkAdoptedPostsComputerId() async throws {
-        AccountProjectsStubProtocol.handler = { request in
-            XCTAssertEqual(request.url?.path, "/api/v1/account-projects/a/adopted")
-            return (204, "")
-        }
-        try await client().markAdopted(id: "a", computerId: "dev_1")
-        let body = try XCTUnwrap(AccountProjectsStubProtocol.lastBody)
-        XCTAssertEqual((try JSONSerialization.jsonObject(with: body) as? [String: Any])?["computer_id"] as? String, "dev_1")
-    }
 
     // MARK: Merge
 
@@ -110,22 +111,6 @@ final class AccountProjectsTests: XCTestCase {
         XCTAssertEqual(ProjectsLibraryStore.accountCountLine(project("c")), "Saved to your account")
     }
 
-    // MARK: Adoption
-
-    func testAdoptionPlanMarksExistingCreatesMissingAndSkipsTheRest() {
-        let account = [
-            project("on-computer"),
-            project("missing"),
-            project("adopted", adopted: "dev_1"),
-            project("code", kind: "code"),
-            project("bot", kind: "bot"),
-            project("busy"),
-            project("gone", deleted: "2026-11-18T00:00:00Z"),
-        ]
-        let plan = ProjectsLibraryStore.adoptionPlan(account, computerIds: ["on-computer"], inFlight: ["busy"])
-        XCTAssertEqual(plan.markOnly, ["on-computer"])
-        XCTAssertEqual(plan.create.map(\.id), ["missing"])
-    }
 
     // MARK: No computer
 
