@@ -30,7 +30,9 @@ struct DeviceAccessSettingsView: View {
 
             PhoneActionsSettingsSection()
 
-            KeyboardModeSettingsSection()
+            if KeyboardModeService.isBuiltIn {
+                KeyboardModeSettingsSection()
+            }
         }
         .onAppear { access.refresh() }
         .onChange(of: scenePhase) { _, phase in

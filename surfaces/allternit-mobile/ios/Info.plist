@@ -114,6 +114,12 @@
 	     uncommented; HomeAccessService reports Home unavailable meanwhile. -->
 	<key>AllternitHomeKitEnabled</key>
 	<false/>
+	<!-- Keyboard mode (Bluetooth keyboard for another iPhone). Off for the App
+	     Store build: KeyboardModeService never starts the peripheral and answers
+	     hid.* with `unavailable`. The bluetooth-peripheral background mode is
+	     removed with it; add it back when this turns true. -->
+	<key>AllternitKeyboardModeEnabled</key>
+	<false/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Allternit uses Bluetooth only when you start keyboard mode, so this device can be a Bluetooth keyboard and mouse for your other iPhone.</string>
 	<key>NSHomeKitUsageDescription</key>
@@ -148,7 +154,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
-		<string>bluetooth-peripheral</string>
 		<string>fetch</string>
 		<string>remote-notification</string>
 	</array>

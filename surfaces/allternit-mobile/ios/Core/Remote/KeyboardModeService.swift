@@ -77,6 +77,14 @@ final class KeyboardModeService: ObservableObject, KeyboardLink {
 
     private init() {}
 
+    /// Keyboard mode ships in this build (Info.plist `AllternitKeyboardModeEnabled`).
+    /// False for the App Store build: the Settings section, the banner and the
+    /// Bluetooth peripheral stay off, and `hid.*` answers `unavailable`. The one
+    /// place the key is read.
+    nonisolated static var isBuiltIn: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "AllternitKeyboardModeEnabled") as? Bool) == true
+    }
+
     /// Started (or starting) by the person.
     var isRunning: Bool { Self.running(mode) }
 
@@ -119,7 +127,7 @@ final class KeyboardModeService: ObservableObject, KeyboardLink {
     // MARK: - Start / Stop (the person's)
 
     func start() {
-        guard !isRunning else { return }
+        guard Self.isBuiltIn, !isRunning else { return }
         mode = .starting
         publish()
     }
@@ -146,7 +154,10 @@ final class KeyboardModeService: ObservableObject, KeyboardLink {
 
     /// A `hid.*` request from Desktop (AppPhoneService).
     func handle(method: String, params: [String: Any]) async throws -> Any {
-        try await commands.handle(method: method, params: params)
+        guard Self.isBuiltIn else {
+            throw AppPhoneRPCError(code: "unavailable", message: "Keyboard mode isn't available in this version of the Allternit app.")
+        }
+        return try await commands.handle(method: method, params: params)
     }
 
     /// The control socket closed or the app went to the background.

@@ -849,7 +849,7 @@ struct SettingsView: View {
     @ViewBuilder
     private func destination(_ page: SettingsPageID) -> some View {
         switch page {
-        case .profile: ProfileSettingsPage()
+        case .profile: ProfileSettingsPage(onClose: { dismiss() })
         case .billing: ComputeBillingView(title: "Billing")
         case .usage: ComputeBillingView(title: "Usage")
         case .notifications: NotificationsSettingsView()
