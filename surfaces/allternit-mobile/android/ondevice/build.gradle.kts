@@ -6,7 +6,7 @@
 //    Backends load at runtime from the APK's native lib dir: every CPU variant
 //    (armv8.0 up to i8mm/sve) and OpenCL for Adreno. If the phone has no usable
 //    OpenCL driver the OpenCL backend just fails to load and the CPU one runs.
-//  - EngineService: foreground service that owns the loaded model.
+//  - EngineService: the "running on this phone" notification with Stop (no foreground service since 0.7.2).
 //  - ModelDownloads: DownloadManager (system download notification, any network),
 //    sha256 checked against the Freeweights manifest, stored in app-private files.
 //  - TwaBridge: the TWA postMessage channel to m.allternit.com (spike S1 verdict).

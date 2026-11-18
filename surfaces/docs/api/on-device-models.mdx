@@ -146,7 +146,7 @@ The native side is the `ondevice` module of the Android app (`surfaces/allternit
 - **GPU policy.** OpenCL is allowed only when the SoC manufacturer is QTI and the model matches an Adreno 7xx or newer part (`GpuPolicy.kt`, an allow-list). On a Moto g play 2024 (Adreno 610) ggml-opencl fails inside the driver and `ggml_abort()` kills the process, so older and unknown SoCs get the CPU.
 - **Downloads.** The system DownloadManager, any network type, with a free-space check of twice the size plus headroom (`disk_full` otherwise).
 - **Manifest check.** The Freeweights manifest signature is verified with minisign (Ed25519, with BouncyCastle, about 3 MB added to the APK because Java Ed25519 needs API 33), then each file's sha256.
-- **Lifecycle.** One loaded model. A foreground service of type `specialUse` shows "is running on this phone" with Stop. Unload on 5 minutes idle, Stop, the page's `unload`, or a memory trim.
+- **Lifecycle.** One loaded model. A notification shows "is running on this phone" with Stop. There is no foreground service (since 0.7.2): the model runs while the app is open, like Google AI Edge Gallery and PocketPal. When you switch apps, Android may pause or end the process, and the model loads again on the next message. Unload on 5 minutes idle, Stop, the page's `unload`, or a memory trim.
 - **Checked.** Moto g play 2024, CPU only, airplane mode: signature and sha256 verified on the device, chat at 13.3 tokens per second, `hello`/`welcome` through the test harness. The JVM tests pass (ondevice 10, app 5). The real PWA through the Trusted Web Activity, and OpenCL on an Adreno 7xx phone: not checked.
 
 ## Device sharing

@@ -14,8 +14,8 @@ android {
         targetSdk = 36
         // One versionCode for both builds (same app ID): the Play bundle and the
         // sideloaded APK move together.
-        versionCode = 17
-        versionName = "0.7.1"
+        versionCode = 18
+        versionName = "0.7.2"
     }
 
     // Two builds of the same app ID:
@@ -24,9 +24,10 @@ android {
     //    library, adb shell server for scrcpy, services, receivers, permissions)
     //    plus the screen-share lane (src/phoneshare) as the fallback when the
     //    scrcpy shell server isn't running.
-    //  - play: the Google Play bundle. The Allternit app (src/main) plus the
-    //    screen-share lane (src/phoneshare: claim code + owner pairing, MediaProjection
-    //    capture, the Accessibility service for a viewer's taps). None of the adb
+    //  - play: the Google Play bundle. The Allternit app (src/main), Play Billing and the
+    //    on-device engine. src/phoneshare compiles in for its shared helpers, but the play
+    //    manifest declares none of its components (no screen share, no Bluetooth control,
+    //    no Accessibility service, no foreground services: 0.7.2, 2026-11-18). None of the adb
     //    pieces (ShellServerLauncher, ShellServerMain, AdbClient/AdbCert/AdbKeyBox,
     //    WRITE_SECURE_SETTINGS, KILL_BACKGROUND_PROCESSES), no local server, no mesh.
     flavorDimensions += "dist"
