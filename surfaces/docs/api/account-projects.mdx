@@ -83,7 +83,7 @@ Answers `{"projects": [ ... ]}`, newest change first, at most 500.
 
 - `GET /api/v1/account-projects/{id}` answers the project, tombstones included.
 - `PATCH /api/v1/account-projects/{id}` takes any of `kind`, `title`, `description`, `instructions`, `metadata`. A null `description` or `instructions` clears it. `metadata` merges by top-level key, and a key set to null is removed. A tombstoned project is 404.
-- `DELETE /api/v1/account-projects/{id}` sets `deleted_at` and answers 204. Deleting again is also 204.
+- `DELETE /api/v1/account-projects/{id}` sets `deleted_at` and answers 204. Deleting again is also 204. Deleting a `bot` project also deletes its plan threads in the same transaction; other kinds keep theirs.
 
 ## Adopt
 
@@ -93,7 +93,12 @@ Answers `{"projects": [ ... ]}`, newest change first, at most 500.
 
 ## Plan chats in a project
 
-`plan_threads` has a nullable `project_id` column (migration 149) so a no-computer chat can belong to an account project.
+`plan_threads` has a nullable `project_id` column (migration 149) so a no-computer chat can belong to an account project, such as a chat-only bot.
+
+- `POST /api/v1/plan-threads` takes an optional `project_id`. It must be your own project that is not deleted, otherwise 400.
+- `GET /api/v1/plan-threads?project_id=<uuid>` lists only that project's threads.
+- Every thread summary and detail carries `project_id` (null when none).
+- Neither route needs a computer. See [Plan chat store](/api/connections#plan-chat-store).
 
 ## Deploy note
 
