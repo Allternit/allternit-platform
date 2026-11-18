@@ -1213,6 +1213,11 @@ function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow 
   window.on('unmaximize', () => emitWindowEvent('unmaximize', { maximized: false }));
   window.on('minimize', () => emitWindowEvent('minimize', { minimized: true }));
   window.on('restore', () => emitWindowEvent('restore', { minimized: false }));
+  // backgroundThrottling is off for this window (agents keep working while it
+  // is hidden), which also keeps document.visibilityState "visible". The UI's
+  // app-visibility module pauses idle decoration on these events instead.
+  window.on('hide', () => emitWindowEvent('hide', { hidden: true }));
+  window.on('show', () => emitWindowEvent('show', { hidden: false }));
   window.on('enter-full-screen', () => emitWindowEvent('enter-full-screen', { fullscreen: true }));
   window.on('leave-full-screen', () => emitWindowEvent('leave-full-screen', { fullscreen: false }));
   window.on('closed', () => {
@@ -4008,6 +4013,8 @@ function createHudWindow({ show }: { show: boolean }): BrowserWindow {
     // e.g. under Playwright). The transparent background hides the pre-paint.
     show,
     backgroundColor: '#00000000',
+    // No backgroundThrottling override: the HUD is pre-warmed hidden, and the
+    // default throttling keeps its timers and rAF slow until it is shown.
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

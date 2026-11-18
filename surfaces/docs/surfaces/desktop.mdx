@@ -97,6 +97,20 @@ Developer notes (main process, `surfaces/allternit-desktop`): all size and clamp
 
 Code: the HUD is `src/shell/hud/HudShell.tsx` and `hud-shell.css` in allternit-ai. The drawing layer is a separate full-screen window (`createAnnotationWindow` in `src/main/unified-main.ts`) that loads `/hud/annotate`. `ShellApp` renders only `AnnotationView` at that path. The window growth for open menus is `useHudOverlayRoom` in `src/shell/hud/overlay-room.ts`, which calls `shell.hud.setBounds`.
 
+## Idle and hidden windows
+
+Desktop keeps working while you are not looking at it, but it does not keep drawing. The main window keeps `backgroundThrottling` off on purpose, so agents and timers in a hidden window run at full speed. That setting also keeps the page's `document.visibilityState` at `visible`, so the UI cannot rely on it.
+
+- **Hidden signal.** The main window sends `window:event:minimize`, `restore`, `hide` and `show` to its page. The UI's `src/lib/app-visibility.ts` (allternit-ai) combines them with `document.visibilityState` and sets `html[data-app-hidden]` while the app is hidden.
+- **Paused while hidden:** every CSS animation (one rule on `html[data-app-hidden]`), the stage and ASCII backdrops, the block pulse, the group ring, avatar frame and blink clocks, and bot status polling. Every bot refreshes once when the window comes back.
+- **Slowed while hidden:** the approval poll runs every 30 s instead of 5 s, so an agent that waits on an approval is still noticed.
+- **Paused while off screen** (window visible): avatar breathing, the pet portrait and the Gizzi mascot, through an IntersectionObserver.
+- **Bot status.** One shared poller per window. A bot that is working, waiting for input or waiting for approval refreshes every 5 s. Other bots refresh every 20 s, and a failed request doubles that bot's wait up to 60 s.
+- **HUD and companion windows** use Electron's default throttling while hidden. The HUD is created hidden 1.5 s after the main window loads, so the hotkey opens it at once. It mounts a small root (`src/shell/hud/HudApp.tsx`), not the whole shell.
+- **Voice list.** The UI reads the bundled voice service's `GET /v1/voices` and `GET /v1/stt/models` once each time the service becomes available, and backs off (30 s, doubling to 5 min) when a request fails. Until 2026-11 it called `/v1/voice/voices`, got 404, and asked again about every millisecond.
+
+**Measure idle cost.** Start Desktop with `--remote-debugging-port=9333`, leave it idle, then run `node scripts/cdp-idle.mjs` in `surfaces/allternit-desktop`. It prints, per window, main-thread busy %, layouts, running animations and requests per 10 s, and never clicks or focuses a window. `--profile /hud` lists the busiest functions. On build b8242 (2026-11-17) it measured the HUD at 95% busy and the main window at 55%, with about 1,000 voice requests a second.
+
 ## App menu
 
 The top-left menu bar has the usual Mac menus:
