@@ -45,6 +45,9 @@ struct ProjectsListView: View {
     @State private var editing: LibraryProject? = nil
     @State private var deleting: LibraryProject? = nil
     @State private var createError: String? = nil
+    /// Bot picked in New project with a computer: the bot form opens next.
+    @State private var opensBotForm = false
+    @State private var isNewBotPresented = false
 
     /// The Show menu (ProjectView CATEGORY_CONFIG, the kinds iOS has).
     private enum Category: String, CaseIterable {
@@ -171,7 +174,9 @@ struct ProjectsListView: View {
             }
         }
         .environmentObject(navigator)
-        .sheet(isPresented: $isCreateSheetPresented) {
+        .sheet(isPresented: $isCreateSheetPresented, onDismiss: {
+            if opensBotForm { opensBotForm = false; isNewBotPresented = true }
+        }) {
             NewProjectSheet(
                 onCreate: { title, description in
                     createProject(mode: newMode, title: title, description: description)
@@ -181,6 +186,9 @@ struct ProjectsListView: View {
                 },
                 kind: $newMode
             )
+        }
+        .sheet(isPresented: $isNewBotPresented) {
+            NewBotSheet { _ in Task { await library.load() } }
         }
         .fullScreenCover(item: $designCanvas) { project in
             DesignProjectCanvasView(project: project, createdHere: project.id == newDesignProjectId)
@@ -286,18 +294,46 @@ struct ProjectsListView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Errors lead the list (a failed bot load must not blank the rest).
+    /// No computer: the computer's lists are empty by design, not failing.
+    private var noComputer: Bool {
+        library.noComputer || ProjectsLibraryStore.isNoComputerMessage(projectStore.loadError)
+    }
+
+    /// Notices lead the list (a failed bot load must not blank the rest).
+    /// No computer reads as one neutral line; a real failure is a calm line
+    /// with Retry. Nothing here is red.
     @ViewBuilder
     private var errors: some View {
-        let botError = (category == .all || category == .bot) ? library.botProjectsError : nil
-        let codeError = (category == .all || category == .code || category == .design) ? library.workspaceProjectsError : nil
-        let loadError = projectStore.loadError.map { _ in "Couldn't load projects. Check the connection and try again." }
-        ForEach([loadError, botError, codeError, createError].compactMap { $0 }.uniqued(), id: \.self) { message in
-            Text(message)
+        let noComputer = self.noComputer
+        let botError = (category == .all || category == .bot) && !noComputer ? library.botProjectsError : nil
+        let codeError = (category == .all || category == .code || category == .design) && !noComputer ? library.workspaceProjectsError : nil
+        let loadError = projectStore.loadError.flatMap { message in
+            noComputer || ProjectsLibraryStore.isNoComputerMessage(message) ? nil : "Couldn't load projects. \(FriendlyErrorMessage.from(message))"
+        }
+        let accountError = noComputer ? library.accountProjectsError : nil
+        if noComputer {
+            NeedsComputerLine(text: "Files and runs need a computer")
+                .padding(.top, 12)
+                .padding(.horizontal, 4)
+        }
+        let failures = [loadError, botError, codeError, accountError].compactMap { $0 }.uniqued()
+        if !failures.isEmpty {
+            FriendlyInlineStateView(
+                style: .offline,
+                icon: "wifi.exclamationmark",
+                title: "Couldn't load everything",
+                message: failures.joined(separator: " "),
+                actionTitle: "Retry",
+                action: { Task { await reload() } }
+            )
+            .padding(.top, 8)
+        }
+        if let createError {
+            Text(createError)
                 .font(.system(size: 13))
-                .foregroundColor(Theme.statusError)
+                .foregroundColor(Color("TextSecondary"))
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 16)
+                .padding(.top, 12)
                 .padding(.horizontal, 4)
         }
     }
@@ -396,6 +432,10 @@ struct ProjectsListView: View {
             if project.mode == .design { designCanvas = row } else { codeDetail = row }
         } else if let bot = project.bot {
             navigator.path = [.project(bot)]
+        } else if project.account != nil {
+            // Code, design and bot work runs on a computer: with none, the
+            // gate explains; with one, the row is on its way there.
+            if noComputer { ComputeStatusStore.shared.noteComputeRequired() } else { Task { await reload() } }
         }
     }
 
@@ -421,10 +461,26 @@ struct ProjectsListView: View {
 
     /// New projects open straight into their project page (Claude parity).
     private func createProject(mode: LibraryProject.Mode, title: String, description: String?, opensLook: Bool = false) {
+        // Bot with a computer: the bot form takes over once this sheet closes.
+        if mode == .bot && !noComputer {
+            opensBotForm = true
+            return
+        }
         Task {
             do {
                 createError = nil
-                if mode == .code {
+                if mode == .bot {
+                    // Saved to the account; the brief runs once a computer connects.
+                    try await library.createAccountProject(kind: .bot, title: title, description: nil, brief: description)
+                } else if noComputer {
+                    let created = try await library.createAccountProject(
+                        kind: AccountProject.Kind(rawValue: mode.rawValue) ?? .chat, title: title, description: description
+                    )
+                    if created.mode == .chat, let row = library.projects(from: projectStore.projects).first(where: { $0.account?.id == created.id }) {
+                        if opensLook { openLookProjectId = created.id }
+                        detailProject = row.cowork
+                    }
+                } else if mode == .code {
                     let created = try await library.createCodeProject(title: title, description: description)
                     newCodeProjectId = created.id
                     codeDetail = created
@@ -438,7 +494,7 @@ struct ProjectsListView: View {
                     detailProject = created
                 }
             } catch {
-                createError = "Couldn't create the project: \(FriendlyErrorMessage.from(error.localizedDescription))"
+                createError = "Couldn't create the project. \(FriendlyErrorMessage.from(error))"
             }
         }
     }
@@ -448,7 +504,7 @@ struct ProjectsListView: View {
             do {
                 try await library.delete(project)
             } catch {
-                createError = "Couldn't delete \(project.title): \(FriendlyErrorMessage.from(error.localizedDescription))"
+                createError = "Couldn't delete \(project.title). \(FriendlyErrorMessage.from(error))"
             }
         }
     }

@@ -49,6 +49,8 @@ struct LibraryProject: Identifiable, Hashable {
     let bot: BotProjectSummary?
     /// Code and design projects.
     var workspace: WorkspaceLibraryProject? = nil
+    /// A project saved to the account (cloud-api) that no computer has yet.
+    var account: AccountProject? = nil
 
     var id: String { "\(mode.rawValue):\(nativeId)" }
 }
@@ -74,6 +76,23 @@ final class ProjectsLibraryStore: ObservableObject {
     @Published private var localArchived: Set<String>
     /// Optimistic bot flags while a write is in flight.
     @Published private var pendingBotFlags: [String: (favorite: Bool?, archived: Bool?)] = [:]
+    /// Projects saved to the account (cloud-api `account-projects`): what a
+    /// person with no computer makes and sees. Merged by id; the computer wins.
+    @Published private(set) var accountProjects: [AccountProject] = []
+    /// A real failure loading them (404 = not deployed yet = empty, no error).
+    @Published private(set) var accountProjectsError: String? = nil
+    /// No computer on the account: compute status says none, or a computer
+    /// read was refused. Lists show account projects only and a neutral line.
+    @Published private(set) var noComputer = false
+
+    private var computerRefused = false
+    /// A computer answered a list read this load: adoption may run.
+    private var computerAnswered = false
+    private var adopting: Set<String> = []
+    /// The computer's create ignored the id we sent (an older runtime): the
+    /// client fallback stops for this launch and the server sync adopts them.
+    private var adoptionByIdUnsupported = false
+    var accountClient = AccountProjectsClient.shared
 
     private static let favoritesKey = "allternit-phone-projects-favorites"
     private static let archivedKey = "allternit-phone-projects-archived"
@@ -92,6 +111,12 @@ final class ProjectsLibraryStore: ObservableObject {
         localFavorites = []
         localArchived = []
         pendingBotFlags = [:]
+        // The leaving person's account projects and adoption state.
+        accountProjects = []
+        accountProjectsError = nil
+        noComputer = false
+        computerRefused = false
+        adoptionByIdUnsupported = false
         defaults.removeObject(forKey: Self.favoritesKey)
         defaults.removeObject(forKey: Self.archivedKey)
     }
@@ -100,18 +125,79 @@ final class ProjectsLibraryStore: ObservableObject {
 
     func load() async {
         ProjectStore.shared.fetchProjectsIfNeeded()
+        computerAnswered = false
+        computerRefused = false
+        await loadAccountProjects()
+        await ComputeStatusStore.shared.refreshIfNeeded()
         await loadBotProjects()
         await loadWorkspaceProjects()
+        refreshNoComputer()
         await loadThreadCounts()
+        await adoptAccountProjectsIfNeeded()
+    }
+
+    /// Account projects of every kind. Signed out or not deployed: empty.
+    func loadAccountProjects() async {
+        guard !SampleWorkspace.isEnabled else { return }
+        guard AuthManager.shared.isSignedIn else {
+            accountProjects = []
+            accountProjectsError = nil
+            return
+        }
+        do {
+            accountProjects = try await accountClient.list()
+            accountProjectsError = nil
+        } catch is CancellationError {
+        } catch {
+            accountProjectsError = "Couldn't load your projects. \(FriendlyErrorMessage.from(error))"
+        }
     }
 
     func loadBotProjects() async {
         do {
             botProjects = try await BotModeClient.shared.listBotProjects()
             botProjectsError = nil
+            noteComputerAnswered()
+        } catch is CancellationError {
+        } catch let error where Self.isNoComputerFailure(error) {
+            botProjects = []
+            botProjectsError = nil
+            computerRefused = true
         } catch {
-            botProjectsError = "Couldn't load projects. Check the connection and try again."
+            botProjectsError = "Couldn't load bot projects. \(FriendlyErrorMessage.from(error))"
         }
+    }
+
+    private func noteComputerAnswered() {
+        computerRefused = false
+        computerAnswered = true
+    }
+
+    private func refreshNoComputer() {
+        let next = Self.isNoComputer(computeState: ComputeStatusStore.shared.status?.state, refused: computerRefused)
+        if next != noComputer { noComputer = next }
+    }
+
+    /// No computer: compute status `none`, or a computer read was refused.
+    nonisolated static func isNoComputer(computeState: String?, refused: Bool) -> Bool {
+        refused || computeState == "none"
+    }
+
+    /// The compute gate (409/410/428) or the relay's "no paired computer".
+    nonisolated static func isNoComputerFailure(_ error: Error) -> Bool {
+        if isComputeGateRefusal(error) { return true }
+        if let relay = error as? RuntimeRelayError { return relay == .noComputer }
+        if case .transport(let inner)? = error as? APIError { return isNoComputerFailure(inner) }
+        return false
+    }
+
+    /// The same check on a stored message (`ProjectStore.loadError` keeps
+    /// the error's description).
+    nonisolated static func isNoComputerMessage(_ message: String?) -> Bool {
+        guard let message, !message.isEmpty else { return false }
+        return message == CalmCopy.computeRequired || message == CalmCopy.noComputerDetail
+            || message == RuntimeRelayError.noComputer.errorDescription
+            || CalmStateText(isError: true, icon: "", title: "", message: message).isNoComputer
     }
 
     private struct WorkspaceList: Decodable {
@@ -197,6 +283,7 @@ final class ProjectsLibraryStore: ObservableObject {
             codeProjects = code
             designProjects = design
             workspaceProjectsError = nil
+            noteComputerAnswered()
         } catch is CancellationError {
             return
         } catch {
@@ -205,8 +292,13 @@ final class ProjectsLibraryStore: ObservableObject {
                 codeProjects = []
                 designProjects = []
                 workspaceProjectsError = nil
+            } else if Self.isNoComputerFailure(error) {
+                codeProjects = []
+                designProjects = []
+                workspaceProjectsError = nil
+                computerRefused = true
             } else {
-                workspaceProjectsError = "Couldn't load code and design projects. Check the connection and try again."
+                workspaceProjectsError = "Couldn't load code and design projects. \(FriendlyErrorMessage.from(error))"
             }
         }
     }
@@ -404,7 +496,137 @@ final class ProjectsLibraryStore: ObservableObject {
             workspaceRow(project, mode: .design, lastActivity: nil,
                          countLine: Self.count(threadCounts[project.nativeId] ?? 0, "thread"))
         }
-        return chats + code + design + bots
+        var computerIds = Set(cowork.map(\.id)).union(botIds)
+        for row in codeProjects + designProjects {
+            computerIds.insert(row.id)
+            computerIds.insert(row.nativeId)
+        }
+        let account = Self.accountOnly(accountProjects, computerIds: computerIds).map(accountRow)
+        return chats + code + design + bots + account
+    }
+
+    /// Account projects no computer list has (the computer wins by id),
+    /// without tombstones or repeats.
+    nonisolated static func accountOnly(_ account: [AccountProject], computerIds: Set<String>) -> [AccountProject] {
+        var seen = Set<String>()
+        return account.filter { project in
+            !project.isDeleted && !computerIds.contains(project.id) && seen.insert(project.id).inserted
+        }
+    }
+
+    /// The line an account-only card shows under its title.
+    nonisolated static func accountCountLine(_ project: AccountProject) -> String {
+        project.mode == .bot ? "Runs when a computer connects" : "Saved to your account"
+    }
+
+    private func accountRow(_ project: AccountProject) -> LibraryProject {
+        // A chat project opens in the project page like any other.
+        let cowork = project.mode == .chat ? CoworkProject(
+            id: project.id, userId: "", title: project.title, description: project.description,
+            instructions: project.instructions, gitRemote: nil, defaultBranch: nil,
+            createdAt: project.createdAt ?? "", updatedAt: project.updatedAt ?? project.createdAt ?? ""
+        ) : nil
+        return LibraryProject(
+            mode: project.mode,
+            nativeId: project.id,
+            title: project.title,
+            description: project.description?.isEmpty == false ? project.description : project.brief,
+            isFavorite: localFavorites.contains(project.id),
+            isArchived: localArchived.contains(project.id),
+            updatedAt: libraryParseDate(project.updatedAt),
+            createdAt: libraryParseDate(project.createdAt),
+            countLine: Self.accountCountLine(project),
+            waiting: 0,
+            working: 0,
+            cowork: cowork,
+            bot: nil,
+            account: project
+        )
+    }
+
+    /// Account bots the Bots home lists until a computer runs them.
+    var accountBots: [AccountProject] {
+        let botIds = Set(botProjects.map(\.id))
+        return Self.accountOnly(accountProjects.filter { $0.mode == .bot }, computerIds: botIds)
+            .filter { noComputer || $0.adoptedComputerId == nil }
+    }
+
+    // MARK: Account create and adoption
+
+    /// New project with no computer: saved to the account. A bot keeps its
+    /// brief in `metadata.brief`.
+    @discardableResult
+    func createAccountProject(kind: AccountProject.Kind, title: String, description: String?, brief: String? = nil) async throws -> AccountProject {
+        var metadata: [String: JSONValue]? = nil
+        if let brief, !brief.isEmpty { metadata = ["brief": .string(brief)] }
+        let created = try await accountClient.create(kind: kind, title: title, description: description, metadata: metadata)
+        accountProjects.removeAll { $0.id == created.id }
+        accountProjects.insert(created, at: 0)
+        return created
+    }
+
+    struct AdoptionPlan: Equatable {
+        /// Already on the computer under the same id: only mark adopted.
+        var markOnly: [String] = []
+        /// Create on the computer with the same id, then mark adopted.
+        var create: [AccountProject] = []
+    }
+
+    /// What the client fallback adopts: unadopted chat projects only. Code,
+    /// design and bot rows need a workspace or bot team, which the server
+    /// sync (allternit-api account_sync) sets up.
+    nonisolated static func adoptionPlan(_ account: [AccountProject], computerIds: Set<String>, inFlight: Set<String>) -> AdoptionPlan {
+        var plan = AdoptionPlan()
+        var seen = Set<String>()
+        for project in account where project.adoptedComputerId == nil && !project.isDeleted
+            && project.mode == .chat && !inFlight.contains(project.id) && seen.insert(project.id).inserted {
+            if computerIds.contains(project.id) { plan.markOnly.append(project.id) } else { plan.create.append(project) }
+        }
+        return plan
+    }
+
+    private struct AdoptBody: Encodable {
+        let id: String
+        let title: String
+        let description: String?
+        let instructions: String?
+    }
+
+    /// Client fallback for the server's adoption: a connected computer gets
+    /// each unadopted chat project under the same id, then the row is marked.
+    /// Runs once per id at a time; stops for good when the computer ignores
+    /// the id (deleting the stray copy), so it never makes duplicates.
+    func adoptAccountProjectsIfNeeded() async {
+        guard !noComputer, computerAnswered, !adoptionByIdUnsupported, !SampleWorkspace.isEnabled,
+              accountProjects.contains(where: { $0.adoptedComputerId == nil && $0.mode == .chat }) else { return }
+        guard let computerId = await RuntimeRelayStore.shared.resolveActiveRuntimeId()
+                ?? ComputeStatusStore.shared.status?.computer?.id else { return }
+        // The computer's own list right now, not a cached one.
+        guard let onComputer = try? await ProjectsClient().listProjects() else { return }
+        let plan = Self.adoptionPlan(accountProjects, computerIds: Set(onComputer.map(\.id)), inFlight: adopting)
+        guard !plan.markOnly.isEmpty || !plan.create.isEmpty else { return }
+        let ids = plan.markOnly + plan.create.map(\.id)
+        adopting.formUnion(ids)
+        defer { adopting.subtract(ids) }
+        var marked: [String] = []
+        for id in plan.markOnly {
+            if (try? await accountClient.markAdopted(id: id, computerId: computerId)) != nil { marked.append(id) }
+        }
+        for project in plan.create {
+            guard let response: CreateCoworkProjectResponse = try? await APIClient.shared.post(
+                path: "cowork/projects",
+                body: AdoptBody(id: project.id, title: project.title, description: project.description, instructions: project.instructions)
+            ) else { continue }
+            guard response.project.id == project.id else {
+                try? await ProjectsClient().deleteProject(id: response.project.id)
+                adoptionByIdUnsupported = true
+                break
+            }
+            if (try? await accountClient.markAdopted(id: project.id, computerId: computerId)) != nil { marked.append(project.id) }
+        }
+        guard !marked.isEmpty else { return }
+        ProjectStore.shared.fetchProjectsIfNeeded(force: true)
+        await loadAccountProjects()
     }
 
     private func workspaceRow(_ project: WorkspaceLibraryProject, mode: LibraryProject.Mode, lastActivity: Date?, countLine: String) -> LibraryProject {
@@ -434,20 +656,19 @@ final class ProjectsLibraryStore: ObservableObject {
     // MARK: Flags
 
     func toggleFavorite(_ project: LibraryProject) {
-        switch project.mode {
-        case .chat, .code, .design:
-            toggle(project.nativeId, in: &localFavorites, key: Self.favoritesKey)
-        case .bot:
+        if project.mode == .bot, project.account == nil {
             Task { await setBotFlags(project.nativeId, favorite: !project.isFavorite, archived: nil) }
+        } else {
+            // Account-only rows keep their flags on the device, like chats.
+            toggle(project.nativeId, in: &localFavorites, key: Self.favoritesKey)
         }
     }
 
     func toggleArchive(_ project: LibraryProject) {
-        switch project.mode {
-        case .chat, .code, .design:
-            toggle(project.nativeId, in: &localArchived, key: Self.archivedKey)
-        case .bot:
+        if project.mode == .bot, project.account == nil {
             Task { await setBotFlags(project.nativeId, favorite: nil, archived: !project.isArchived) }
+        } else {
+            toggle(project.nativeId, in: &localArchived, key: Self.archivedKey)
         }
     }
 
@@ -506,6 +727,11 @@ final class ProjectsLibraryStore: ObservableObject {
     /// cowork project row on the server; a code project's row has its own id).
     func updateDetails(_ project: LibraryProject, title: String, description: String) async throws {
         let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let account = project.account {
+            try await accountClient.update(id: account.id, title: title, description: trimmed)
+            await loadAccountProjects()
+            return
+        }
         try await APIClient.shared.patch(
             path: "cowork/projects/\(BotModeClient.escape(project.workspace?.id ?? project.nativeId))",
             body: DetailsBody(title: title, description: trimmed.isEmpty ? nil : description)
@@ -516,6 +742,11 @@ final class ProjectsLibraryStore: ObservableObject {
     }
 
     func delete(_ project: LibraryProject) async throws {
+        if let account = project.account {
+            try await accountClient.delete(id: account.id)
+            accountProjects.removeAll { $0.id == account.id }
+            return
+        }
         try await ProjectStore.shared.deleteProject(id: project.workspace?.id ?? project.nativeId)
         if let row = project.workspace {
             codeProjects.removeAll { $0.id == row.id }

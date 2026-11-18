@@ -22,6 +22,9 @@ struct NewProjectSheet: View {
         case title, description
     }
 
+    /// Bot: the description is the bot's brief.
+    private var isBot: Bool { kind?.wrappedValue == .bot }
+
     private var canCreate: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -76,6 +79,7 @@ struct NewProjectSheet: View {
                         Text("Chat").tag(LibraryProject.Mode.chat)
                         Text("Code").tag(LibraryProject.Mode.code)
                         Text("Design").tag(LibraryProject.Mode.design)
+                        Text("Bot").tag(LibraryProject.Mode.bot)
                     }
                     .pickerStyle(.segmented)
                 }
@@ -89,8 +93,8 @@ struct NewProjectSheet: View {
                 )
 
                 fieldBubble(
-                    label: "Description",
-                    placeholder: "What is this project about? (optional)",
+                    label: isBot ? "Brief" : "Description",
+                    placeholder: isBot ? "What should this bot do? (optional)" : "What is this project about? (optional)",
                     text: $descriptionText,
                     field: .description,
                     submitLabel: .done
@@ -122,7 +126,7 @@ struct NewProjectSheet: View {
                 }
 
                 Button(action: create) {
-                    Text("Create project")
+                    Text(isBot ? "Create bot" : "Create project")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(canCreate ? Color("BgPrimary") : Color("TextSecondary"))
                         .frame(maxWidth: .infinity)
