@@ -84,9 +84,16 @@ For developers: `GET /api/v1/runtime-devices` marks the default with `"preferred
 
 ### Models and providers on a computer
 
-**Settings → Account → Models & providers** lists the providers the selected computer can use right now: the ones you signed in to or gave a key, plus local engines such as Ollama. The runtime's catalog knows about 300 providers. The rest don't get a row. To add one, type its name in **Add a provider**. The first 8 matches show, each with **Connect**. A provider you connect stays in the list.
+**Settings → Account → Models & providers** stays the same size however many providers you connect:
 
-The iPhone app's **Models & Engines** screen works the same way: ready engines are listed, and you search for the rest. The rows come from `GET /api/v1/providers/auth/status` on the selected computer. Rows with `authenticated: true` get a card. In allternit-ai the split lives in `src/lib/provider-list.ts`.
+- **Search** at the top. Type a name to see your matching providers, grouped, and the providers you can still add.
+- **Three tiles**: **Coding tools**, **API providers** and **On this computer**. Each shows how many you have and how many are ready. Click a tile to open its full list in a side panel (a bottom sheet on a phone), with its own search.
+- **Needs you**: at most 3 rows for providers that wait for a sign-in or a key, each with its button. A coding tool that is installed but not signed in shows here.
+- **Add a provider**: opens a panel that searches the runtime's catalog of about 300 providers and shows the first 8 matches, each with **Connect**.
+
+**Models & Engines** (from **Apps & Extensions**) shows the same panel. On the iPhone app, **Models & Engines** has the same groups as rows that open their lists, a **Needs you** section and **Other providers** (search only).
+
+For developers: the rows come from `GET /api/v1/providers/auth/status` on the selected computer. A row is in use when it is `authenticated`, is an installed CLI (`provider_type: "subprocess"`, status not `not_installed`), or is mid-connect; the rest are catalog rows. The groups follow `details.provider_type` (`subprocess`, `local`, anything else = API). In allternit-ai the rules live in `src/lib/provider-list.ts` and the panel in `src/components/settings/BrainsPanel.tsx`; on iOS in `Features/Settings/ModelManagementView.swift`.
 
 ## Coding tools on any computer
 
