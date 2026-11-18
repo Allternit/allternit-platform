@@ -17,6 +17,34 @@ struct ProviderInfo: Decodable, Sendable, Identifiable {
         case apiKeySet = "api_key_set"
     }
 
+    /// `GET /api/v1/providers` sends `models` as `[{id, name}]` objects
+    /// (provider_routes.rs `ModelInfo`); older servers sent plain strings.
+    /// Accept both and keep the model ids, so one shape change never fails
+    /// the whole provider list.
+    private struct ModelEntry: Decodable {
+        let id: String
+        init(from decoder: Decoder) throws {
+            if let plain = try? decoder.singleValueContainer().decode(String.self) {
+                id = plain
+                return
+            }
+            let keyed = try decoder.container(keyedBy: Keys.self)
+            id = try keyed.decode(String.self, forKey: .id)
+        }
+        private enum Keys: String, CodingKey { case id }
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        providerType = try c.decode(String.self, forKey: .providerType)
+        baseUrl = try c.decodeIfPresent(String.self, forKey: .baseUrl)
+        apiKeySet = try c.decodeIfPresent(Bool.self, forKey: .apiKeySet) ?? false
+        models = (try c.decodeIfPresent([ModelEntry].self, forKey: .models) ?? []).map(\.id)
+        status = try c.decode(String.self, forKey: .status)
+    }
+
     var isLocal: Bool { providerType == "local" }
     var isSubprocess: Bool { providerType == "subprocess" }
 
