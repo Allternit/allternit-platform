@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 2.16.0 (2026-11-17)
+
+- **Gizzi is the assistant.** Chats and the TUI introduce the assistant as Gizzi. The built-in agents and the TUI, voice and coordinator prompts are rewritten (prompts wave 3); the answer manual loads only the template a turn picks.
+- **Time and messages.** `current_time` gives the user's time and zone. `send_user_message` hands a finished file or an update to the user, with an optional push to their phone.
+- **Scheduled tasks.** `automation` makes, lists, changes and runs reminders, recurring runs and quiet checks (heartbeats). A scheduled run refuses approval asks, because nobody is there to answer them.
+- **Questions that do not block.** `ask_user_later` leaves a question in the dock and in Decisions and keeps working.
+- **Agent control.** `wait_agents` and `agent_control` (interrupt, resume, message, close) work on the session's own agents; closing one asks. `tool_search` replaces `select_tools`. `get_context_remaining` and `history_recall` show the context left and the history that compaction removed.
+- **Access.** Computer actions have access tiers and an action reviewer. `folder_access` asks before gizzi's own tools touch a folder outside the project.
+- **Browser.** `pane_browser` acts on element refs from `read_page` and `find` and refuses a stale ref or a changed host. `browser_tasks` runs hidden browser tasks (app clients). `capture_screen_context` lets the app show what is on screen, once per session after a yes.
+- **Recall.** `thread_recent` and `thread_read` read the user's earlier chats as records, `resource` reads large tool output saved in the session, and `memory_list` lists Memory Drive topics; memory edits show conflicts for review.
+- **Connectors and settings.** `connector_search` finds and loads connected apps, `connector_suggest` offers one to connect, and `settings` reads or changes Allternit settings (a planning session cannot write).
+- **Cards.** `lookup` returns one fact as a card (weather, time in other places, conversion, link preview, places, credited images). Writing blocks show drafts to send or keep.
+- **Batches and waits.** `agent_batch` runs one worker per CSV row, sample first, and always asks. `sleep` is a short wait that ends early when the user writes.
+- **Code sessions** report needs input and ready for review.
+- **Store-billed plans.** Plans bought through Apple or Google show as store-billed.
+- Fix: on Windows the pane engine daemon no longer holds the caller's stdout open.
+- Fix: a host with a port (`localhost:3000`) is read as a host, not a URL scheme, in `pane_browser`.
+
 ## 2.15.0 (2026-11-16)
 
 2.14.0 on npm and Homebrew carried the right code (main f2f120791) but reported `2.13.0` from `gizzi --version`, because its version was not bumped first. 2.15.0 replaces it.
