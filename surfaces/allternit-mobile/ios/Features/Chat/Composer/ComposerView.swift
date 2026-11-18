@@ -252,6 +252,7 @@ struct ComposerView: View {
         }
         .animation(reduceMotion ? nil : Motion.deck, value: deckBandOpen || forcedDeckOpen)
         .animation(DeckMotion.animation, value: deck)
+        .background(ComposerFrameReporter())
         .onChange(of: deckBandOpen) { _, open in
             if open { Haptics.selection() }
         }
@@ -881,7 +882,7 @@ struct ComposerTextView: UIViewRepresentable {
         ])
     }
 
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var parent: ComposerTextView
         let placeholderLabel = UILabel()
 
@@ -896,12 +897,78 @@ struct ComposerTextView: UIViewRepresentable {
             updatePlaceholder(textView)
         }
 
+        // Tap outside the composer: resigns focus, so the keyboard goes away
+        // and (with an empty draft) the deck folds. The recognizer sits on the
+        // window, never cancels touches, and skips controls, text inputs and
+        // anything inside a composer, so links, buttons and messages work as
+        // before.
+        private var outsideTap: UITapGestureRecognizer?
+        private weak var editingView: UITextView?
+
+        private func installOutsideTap(for textView: UITextView) {
+            guard outsideTap == nil, let window = textView.window else { return }
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleOutsideTap))
+            tap.cancelsTouchesInView = false
+            tap.delegate = self
+            window.addGestureRecognizer(tap)
+            outsideTap = tap
+            editingView = textView
+        }
+
+        private func removeOutsideTap() {
+            if let tap = outsideTap { tap.view?.removeGestureRecognizer(tap) }
+            outsideTap = nil
+            editingView = nil
+        }
+
+        @objc private func handleOutsideTap() {
+            editingView?.resignFirstResponder()
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let view = touch.view, let window = view.window else { return false }
+            var v: UIView? = view
+            while let cur = v {
+                if cur is UIControl || cur is UITextView || cur is UITextField { return false }
+                v = cur.superview
+            }
+            return !ComposerHitRegion.contains(touch.location(in: window))
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool { true }
+
         func textViewDidBeginEditing(_ textView: UITextView) {
             parent.onFocusChange?(true)
+            installOutsideTap(for: textView)
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.onFocusChange?(false)
+            removeOutsideTap()
         }
+    }
+}
+
+/// Window-space frames of every on-screen composer (deck, chips and all), so a
+/// tap inside one never counts as "outside".
+enum ComposerHitRegion {
+    nonisolated(unsafe) private static var frames: [UUID: CGRect] = [:]
+    static func set(_ id: UUID, _ frame: CGRect?) { frames[id] = frame }
+    static func contains(_ point: CGPoint) -> Bool { frames.values.contains { $0.contains(point) } }
+}
+
+private struct ComposerFrameReporter: View {
+    @State private var id = UUID()
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { ComposerHitRegion.set(id, proxy.frame(in: .global)) }
+                .onChange(of: proxy.frame(in: .global)) { _, f in ComposerHitRegion.set(id, f) }
+                .onDisappear { ComposerHitRegion.set(id, nil) }
+        }
+        .allowsHitTesting(false)
     }
 }
