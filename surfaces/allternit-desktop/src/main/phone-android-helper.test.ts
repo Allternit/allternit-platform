@@ -52,8 +52,9 @@ describe('ensureAndroidHelper', () => {
     await expect(ensureAndroidHelper(scratch(), { version: '0.0.0-unpinned' })).rejects.toMatchObject({ code: 'helper_unavailable' });
   });
 
-  it('pins the published 0.5.4 helper (app ID com.allternit.app, error-help notifications)', () => {
-    expect(ANDROID_HELPER_VERSION).toBe('0.5.4');
+  it('pins the published 0.7.2 helper (screen share + Bluetooth control)', () => {
+    expect(ANDROID_HELPER_VERSION).toBe('0.7.2');
+    expect(PINNED_ANDROID_MANIFESTS['0.7.2']).toBe('38f4cf28a67ccc79883421eaa6ef2d1599ae3786f5b036497e0ef4a155966b5c');
     expect(PINNED_ANDROID_MANIFESTS['0.5.4']).toBe('727dfbdea87ebb859a6e5a58c286bea11a6c6e556165efe7c1d6d7504e77204b');
     expect(PINNED_ANDROID_MANIFESTS['0.5.3']).toBe('e1879d322d85c1ada676ecffa26ef0dcd439a338dee680a7e1f11aa3a54a3377');
     expect(PINNED_ANDROID_MANIFESTS['0.5.0']).toBe('7c60640fa009db79d7776ff2e8d3d57705efd9a38472eb2a88bc1c02e2469164');
