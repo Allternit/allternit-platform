@@ -206,17 +206,7 @@ struct CodeModeView: View {
         .sheet(item: $overviewKind) { kind in
             CodeOverviewSheet(
                 kind: kind,
-                sessions: codeSessions,
                 terminals: terminalStore,
-                onOpenSession: { session in
-                    shellOpen = false
-                    open(sessionId: session.id)
-                },
-                onNew: {
-                    shellOpen = false
-                    newThread()
-                },
-                onArchive: { session in archive(session.id) },
                 onOpenMenu: openDrawer
             )
             .presentationDragIndicator(.visible)
@@ -439,7 +429,7 @@ struct CodeModeView: View {
     // MARK: - Code sessions view
 
     private func sessionsViewContent(_ opening: CodeSessionsOpening) -> some View {
-        CodeSessionsView(
+        CodeSessionsOverview(
             sessions: allCodeSessions,
             folder: folder,
             opening: opening,
@@ -455,13 +445,7 @@ struct CodeModeView: View {
                 shellOpen = false
                 startFromSessionsView(prompt)
             },
-            onRefresh: { await loadSessions() },
-            onOpenCards: {
-                // The card overview is a sheet on this view: close the
-                // sessions view first so it can present.
-                closeSessionsView()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { overviewKind = .threads }
-            }
+            onRefresh: { await loadSessions() }
         )
     }
 
@@ -696,7 +680,7 @@ struct CodeModeView: View {
             shellOpen = true
         }
         if launchArgumentEnabled("open-code-overview") {
-            overviewKind = .threads
+            openSessionsView()
         }
         if launchArgumentEnabled("open-code-usage") {
             showUsage = true
@@ -784,9 +768,17 @@ struct CodeViewMenu: View {
     let current: CodeViewKind
     var tint: Color = Color("TextPrimary")
 
+    @ObservedObject private var relay = RuntimeRelayStore.shared
+
+    /// Shell is the computer's own command line: hidden while no computer
+    /// is connected (kept when it is the view on screen).
+    private var kinds: [CodeViewKind] {
+        CodeViewKind.allCases.filter { $0 != .shell || relay.availability != .none || current == .shell }
+    }
+
     var body: some View {
         Menu {
-            ForEach(CodeViewKind.allCases, id: \.self) { kind in
+            ForEach(kinds, id: \.self) { kind in
                 Button {
                     NotificationCenter.default.post(name: .codePickView, object: kind)
                 } label: {
@@ -805,7 +797,7 @@ struct CodeViewMenu: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("View: \(current.label)")
-        .accessibilityHint("Switch between Code, Terminal and Shell")
+        .accessibilityHint(kinds.contains(.shell) ? "Switch between Code, Terminal and Shell" : "Switch between Code and Terminal")
     }
 }
 

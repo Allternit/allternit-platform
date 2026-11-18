@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// What the Code overview shows: threads, or terminal sessions while the
-/// terminal is on screen (code-overview-kind.tsx).
+/// The terminal sessions overview (code-overview-kind.tsx). Code threads
+/// have one screen: `CodeSessionsOverview`.
 enum CodeOverviewKind: String, Identifiable {
-    case threads, terminals
+    case terminals
     var id: String { rawValue }
 }
 
@@ -25,92 +25,21 @@ struct CodeSessionsButton: View {
     }
 }
 
-/// The Code sessions overview (PhoneOverviewOverlay / SessionOverview on the
-/// phone): ☰ · "Code sessions" · "N open", the layout switch under it;
-/// every open session as a card, and a floating
-/// "Search code" pill with New at the bottom. Closing a card archives the
-/// session.
+/// The terminal sessions overview, shown while the shell is on screen:
+/// ☰ · "Terminal sessions" · "N open", every tile as a card.
 struct CodeOverviewSheet: View {
     let kind: CodeOverviewKind
-    let sessions: [AgentSession]
     @ObservedObject var terminals: CodeTerminalStore
-    let onOpenSession: (AgentSession) -> Void
-    let onNew: () -> Void
-    let onArchive: (AgentSession) -> Void
     let onOpenMenu: () -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("allternit.code.overview-layout") private var layout = "grid"
-    @State private var query = ""
-    @State private var previews: [String: [MessageRecordPreview]] = [:]
-    @FocusState private var searchFocused: Bool
-
-    private var filtered: [AgentSession] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return sessions }
-        return sessions.filter { ($0.name ?? "").lowercased().contains(q) }
-    }
-
-    private var openCount: Int { kind == .terminals ? terminals.tiles.count : sessions.count }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            if kind == .threads {
-                HStack {
-                    Spacer()
-                    OverviewLayoutSwitch(raw: $layout, fallback: .grid)
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
-            }
-            if kind == .threads, layout == "deck", !filtered.isEmpty {
-                // Deck (SessionOverview deck, phone): tall 226-wide cards the
-                // full height, in a sideways row that snaps card by card.
-                GeometryReader { geo in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 12) {
-                            ForEach(filtered) { card($0).frame(width: OverviewDeck.width, height: max(240, geo.size.height - 104)) }
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 8)
-                        .scrollTargetLayout()
-                    }
-                    .scrollTargetBehavior(.viewAligned)
-                }
-            } else {
-            ScrollView {
-                if kind == .terminals {
-                    terminalCards
-                } else if filtered.isEmpty {
-                    Text(query.isEmpty ? "No code threads yet. Start one and it shows here." : "No code threads match.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("BrandAccent"))
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 40)
-                        .padding(.horizontal, 24)
-                } else if layout == "grid" {
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                        ForEach(filtered) { card($0) }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                    .padding(.bottom, 96)
-                } else {
-                    LazyVStack(spacing: 8) {
-                        ForEach(filtered) { card($0) }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                    .padding(.bottom, 96)
-                }
-            }
-            }
+            ScrollView { terminalCards }
         }
         .background(Color("BgPrimary"))
-        .overlay(alignment: .bottom) {
-            if kind == .threads { bottomBar }
-        }
     }
 
     private var header: some View {
@@ -120,10 +49,10 @@ struct CodeOverviewSheet: View {
                 onOpenMenu()
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(kind == .terminals ? "Terminal sessions" : "Code sessions")
+                Text("Terminal sessions")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(Color("TextPrimary"))
-                Text("\(openCount) open")
+                Text("\(terminals.tiles.count) open")
                     .font(.system(size: 12))
                     .foregroundColor(Color("BrandAccent"))
             }
@@ -147,94 +76,6 @@ struct CodeOverviewSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
-    }
-
-    /// One session card: title, ⋯ menu, close (archive), the last exchange,
-    /// and its age.
-    private func card(_ session: AgentSession) -> some View {
-        let title = session.name ?? "Untitled Session"
-        let tall = layout == "deck"
-        return Button(action: {
-            dismiss()
-            onOpenSession(session)
-        }) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 4) {
-                    Text(title)
-                        .font(.system(size: tall ? 15.5 : 13, weight: .semibold))
-                        .foregroundColor(Color("TextPrimary"))
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    Menu {
-                        Button(action: {
-                            dismiss()
-                            onOpenSession(session)
-                        }) { Label("Open", systemImage: "arrow.up.right") }
-                        Button(role: .destructive, action: { onArchive(session) }) { Label("Archive", systemImage: "archivebox") }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 12))
-                            .foregroundColor(Color("TextTertiary"))
-                            .frame(width: 28, height: 28)
-                    }
-                    .accessibilityLabel("More actions for \(title)")
-                    Button(action: { onArchive(session) }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(Color("TextTertiary"))
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close \(title)")
-                }
-                preview(for: session)
-                    .frame(maxWidth: .infinity, minHeight: layout == "list" ? 0 : 100, maxHeight: tall ? .infinity : nil, alignment: .topLeading)
-                HStack {
-                    Spacer()
-                    Text(CodeSessionDates.age(session))
-                        .font(.system(size: 10))
-                        .foregroundColor(Color("BrandAccent"))
-                }
-            }
-            .padding(tall ? 14 : 10)
-            .frame(maxHeight: tall ? .infinity : nil, alignment: .top)
-            .background(Color("BgPanel"))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
-            // Deck cards lift off the page (0 10px 30px rgba(0,0,0,.10)).
-            .shadow(color: .black.opacity(tall ? 0.10 : 0), radius: 15, y: 10)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .task(id: session.id) { await loadPreview(session) }
-    }
-
-    @ViewBuilder
-    private func preview(for session: AgentSession) -> some View {
-        let lines = previews[session.id] ?? []
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(lines) { line in
-                if line.isUser {
-                    HStack {
-                        Spacer(minLength: 16)
-                        Text(line.text)
-                            .font(.system(size: layout == "deck" ? 12 : 10))
-                            .foregroundColor(Color("TextPrimary"))
-                            .lineLimit(2)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(Color("BgTertiary"))
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                    }
-                } else {
-                    Text(line.text)
-                        .font(.system(size: layout == "deck" ? 13 : 10))
-                        .foregroundColor(Color("TextSecondary"))
-                        .lineLimit(layout == "list" ? 2 : (layout == "deck" ? nil : 5))
-                }
-            }
-        }
-        .mask(LinearGradient(colors: [.black, .black, .black.opacity(0.2)], startPoint: .top, endPoint: .bottom))
     }
 
     private var terminalCards: some View {
@@ -275,56 +116,6 @@ struct CodeOverviewSheet: View {
         .padding(.top, 8)
     }
 
-    private var bottomBar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15))
-                    .foregroundColor(Color("TextSecondary"))
-                TextField("Search code", text: $query)
-                    .font(.system(size: 16))
-                    .focused($searchFocused)
-                    .submitLabel(.search)
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 48)
-            .background(Color("BgPanel"))
-            .clipShape(Capsule())
-            .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
-            .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
-            Button(action: {
-                dismiss()
-                onNew()
-            }) {
-                Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(width: 48, height: 48)
-                    .background(Color("BgPanel"))
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(Color("BorderSubtle"), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("New code thread")
-        }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 12)
-    }
-
-    /// The card's last exchange: the newest user message and the reply after it.
-    @MainActor
-    private func loadPreview(_ session: AgentSession) async {
-        guard previews[session.id] == nil, session.messageCount > 0 else { return }
-        guard let records = try? await AgentChatClient().listMessages(sessionId: session.id) else { return }
-        let lastUser = records.lastIndex { $0.role == "user" }
-        let slice = lastUser.map { Array(records[$0...].prefix(2)) } ?? Array(records.suffix(1))
-        previews[session.id] = slice.enumerated().compactMap { index, record in
-            let text = record.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            return MessageRecordPreview(id: "\(session.id)-\(index)", text: text, isUser: record.role == "user")
-        }
-    }
 }
 
 struct MessageRecordPreview: Identifiable, Equatable {
@@ -349,18 +140,18 @@ struct CodeSessionsOpening: Equatable {
     var connectSheet = false
 }
 
-/// The Code sessions view (brief item 7, contract C6; web
-/// `PhoneCodeSessionsView`). Code home stays; its top-right icon opens this,
-/// zoomed out of the icon (CodeModeView). It shows:
+/// The ONE Code sessions screen (brief item 7, contract C6; web
+/// `PhoneCodeSessionsView`). Code home's top-right icon and the drawer entry
+/// both open this, zoomed out of the icon (CodeModeView). The top-right
+/// capsule is the shared Artifacts pill: search, and a sliders popover with
+/// List · Grid · Deck, Status and Show: Scheduled tasks. It shows:
 /// - Computers (`RuntimeRelayStore`, the list the chip reads), + opens the
 ///   connect kit with its pair paths. A row opens the device sheet.
 /// - Sessions with their C6 status icon (spinner Working, hand Needs input,
 ///   eye Ready for review, check Done) and the unread dot. Opening one goes
 ///   to Code, where `CodeModeView.open` clears Ready for review (9a).
-/// - The filter menu (glass, grows from its button; the button fills while a
-///   filter other than All is on) and the clock (Scheduled).
 /// - A floating glass "+ New session": the start screen (`CodeStartScreen`).
-struct CodeSessionsView: View {
+struct CodeSessionsOverview: View {
     /// Every Code-surface session, archived ones too.
     let sessions: [AgentSession]
     let folder: CodeFolderInfo?
@@ -370,16 +161,16 @@ struct CodeSessionsView: View {
     let onArchive: (AgentSession) -> Void
     let onStart: (String) -> Void
     let onRefresh: () async -> Void
-    /// Opens the card overview (Grid / Deck cards), still reachable from the
-    /// new list (step 27 carry-over from step 26).
-    var onOpenCards: (() -> Void)? = nil
 
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var shellSessions = ShellSessionsStore.shared
     @ReducedMotion private var reduced
     @State private var screen: CodeSessionsScreen = .sessions
     @State private var filter: CodeSessionFilter = .all
-    @State private var menuOpen = false
+    @AppStorage("allternit.code.sessions-layout") private var layoutRaw = "list"
+    @State private var query = ""
+    @State private var searching = false
+    @State private var previews: [String: [MessageRecordPreview]] = [:]
     @State private var sheet: Sheet? = nil
     @State private var didApplyOpening = false
 
@@ -456,7 +247,6 @@ struct CodeSessionsView: View {
     }
 
     private func go(_ next: CodeSessionsScreen) {
-        menuOpen = false
         withAnimation(screenAnimation) { screen = next }
     }
 
@@ -482,23 +272,51 @@ struct CodeSessionsView: View {
 
     // MARK: Sessions screen
 
+    private var layout: OverviewLayout { OverviewLayout(stored: layoutRaw) ?? .list }
+
+    private var filtersActive: Bool { filter != .all }
+
     private var sessionsScreen: some View {
         let result = filterCodeSessionRows(sessions, filter: filter, status: status)
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let items = q.isEmpty ? result.items : result.items.filter { ($0.name ?? "").lowercased().contains(q) }
         return VStack(spacing: 0) {
             header(counts: result.counts)
+            if searching || !query.isEmpty {
+                ProjectsSearchField(query: $query, placeholder: "Search code")
+            }
             List {
                 computersSection
                 Section {
-                    if result.items.isEmpty {
-                        Text(filter.emptyText)
+                    if items.isEmpty {
+                        Text(q.isEmpty ? filter.emptyText : "No code sessions match.")
                             .font(.system(size: 13))
                             .foregroundColor(Color("TextSecondary"))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 12)
                             .plainCodeRow()
                     } else {
-                        ForEach(result.items) { session in
-                            sessionRow(session)
+                        switch layout {
+                        case .list:
+                            ForEach(items) { session in
+                                sessionRow(session)
+                            }
+                        case .grid:
+                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                                ForEach(items) { sessionCard($0, tall: false) }
+                            }
+                            .padding(.vertical, 4)
+                            .plainCodeRow()
+                        case .deck:
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHStack(spacing: 12) {
+                                    ForEach(items) { sessionCard($0, tall: true).frame(width: OverviewDeck.width, height: 320) }
+                                }
+                                .padding(.vertical, 8)
+                                .scrollTargetLayout()
+                            }
+                            .scrollTargetBehavior(.viewAligned)
+                            .plainCodeRow()
                         }
                     }
                 } header: {
@@ -508,63 +326,33 @@ struct CodeSessionsView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively)
             .refreshable {
                 await onRefresh()
                 await relay.refresh()
             }
             .animation(reduced ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: filter)
         }
-        .overlay(alignment: .topTrailing) { filterMenu(counts: result.counts) }
         .overlay(alignment: .bottom) {
             CodeFloatingAction(label: "New session") { go(.start) }
                 .padding(.bottom, 12)
         }
     }
 
+    /// Back · centered title · the shared glass pill (search + sliders), as
+    /// on Artifacts.
     private func header(counts: CodeSessionFilterCounts) -> some View {
         HStack(spacing: 8) {
             CodeGlassRoundButton(icon: "chevron.left", label: "Back to Code", action: onClose)
             Spacer()
-            HStack(spacing: 0) {
-                Button(action: { go(.scheduled) }) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 16))
-                        .foregroundColor(Color("TextPrimary"))
-                        .frame(width: 44, height: 40)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Scheduled")
-                if let onOpenCards {
-                    Button {
-                        Haptics.light()
-                        onOpenCards()
-                    } label: {
-                        Image(systemName: "square.grid.2x2")
-                            .font(.system(size: 15))
-                            .foregroundColor(Color("TextPrimary"))
-                            .frame(width: 44, height: 40)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Cards")
-                    .accessibilityHint("Opens the card overview with Grid and Deck layouts")
-                }
-                Button(action: toggleMenu) {
-                    Image(systemName: "line.3.horizontal.decrease")
-                        .font(.system(size: 15, weight: filter == .all ? .regular : .semibold))
-                        .foregroundColor(filter == .all ? Color("TextPrimary") : Color("BgPrimary"))
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(filter == .all ? Color.clear : Color("TextPrimary")))
-                        .frame(width: 44, height: 40)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Filter: \(filter.label)")
-                .accessibilityHint("Opens the session filters")
+            ProjectsPill(searching: $searching, filtersActive: filtersActive, searchLabel: "Search code") {
+                CodeSessionsFilterPopover(
+                    layoutRaw: $layoutRaw,
+                    filter: $filter,
+                    counts: counts,
+                    onScheduled: { go(.scheduled) }
+                )
             }
-            .padding(.horizontal, 4)
-            .glassSurface(cornerRadius: 22)
         }
         .overlay {
             Text("Code sessions")
@@ -578,62 +366,93 @@ struct CodeSessionsView: View {
         .padding(.bottom, 4)
     }
 
-    private func toggleMenu() {
-        Haptics.light()
-        withAnimation(reduced ? Motion.fade : .spring(response: 0.28, dampingFraction: 0.82)) { menuOpen.toggle() }
-    }
-
-    /// The filter menu: glass, grows from the filter button's corner.
-    @ViewBuilder
-    private func filterMenu(counts: CodeSessionFilterCounts) -> some View {
-        ZStack(alignment: .topTrailing) {
-            if menuOpen {
-                Color.black.opacity(0.001)
-                    .ignoresSafeArea()
-                    .onTapGesture { toggleMenu() }
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(CodeSessionFilter.allCases) { option in
-                        Button {
-                            Haptics.selection()
-                            withAnimation(reduced ? Motion.fade : .spring(response: 0.28, dampingFraction: 0.82)) {
-                                filter = option
-                                menuOpen = false
-                            }
+    /// A card for Grid and Deck: title, ⋯ menu, the last exchange, its age.
+    private func sessionCard(_ session: AgentSession, tall: Bool) -> some View {
+        let title = session.name ?? "Untitled Session"
+        let s = status(session)
+        return Button(action: { onOpenSession(session) }) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
+                    Text(title)
+                        .font(.system(size: tall ? 15.5 : 13, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if s != .archived {
+                        Menu {
+                            Button(action: { onOpenSession(session) }) { Label("Open", systemImage: "arrow.up.right") }
+                            Button(role: .destructive, action: { onArchive(session) }) { Label("Archive", systemImage: "archivebox") }
                         } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .opacity(filter == option ? 1 : 0)
-                                    .frame(width: 16)
-                                Text(option.label)
-                                    .font(.system(size: 15))
-                                Spacer(minLength: 16)
-                                Text("\(counts[option])")
-                                    .font(.system(size: 13))
-                                    .monospacedDigit()
-                                    .foregroundColor(Color("TextSecondary"))
-                            }
-                            .foregroundColor(Color("TextPrimary"))
-                            .padding(.horizontal, 14)
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 12))
+                                .foregroundColor(Color("TextTertiary"))
+                                .frame(width: 28, height: 28)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(filter == option ? .isSelected : [])
-                        .accessibilityLabel("\(option.label), \(counts[option])")
+                        .accessibilityLabel("More actions for \(title)")
                     }
                 }
-                .padding(.vertical, 6)
-                .frame(width: 250)
-                .glassSurface(cornerRadius: 18)
-                .shadow(color: .black.opacity(0.12), radius: 20, y: 8)
-                .padding(.top, 56)
-                .padding(.trailing, 14)
-                .transition(reduced ? .opacity : .scale(scale: 0.6, anchor: .topTrailing).combined(with: .opacity))
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Filter sessions")
+                cardPreview(for: session, tall: tall)
+                    .frame(maxWidth: .infinity, minHeight: 100, maxHeight: tall ? .infinity : nil, alignment: .topLeading)
+                HStack(spacing: 6) {
+                    CodeSessionStatusIcon(status: s).scaleEffect(0.8)
+                    Text([s.label, CodeSessionDates.age(session)].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.system(size: 10))
+                        .foregroundColor(Color("BrandAccent"))
+                        .lineLimit(1)
+                    Spacer()
+                }
             }
+            .padding(tall ? 14 : 10)
+            .frame(maxHeight: tall ? .infinity : nil, alignment: .top)
+            .background(Color("BgPanel"))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+            .shadow(color: .black.opacity(tall ? 0.10 : 0), radius: 15, y: 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .task(id: session.id) { await loadPreview(session) }
+    }
+
+    @ViewBuilder
+    private func cardPreview(for session: AgentSession, tall: Bool) -> some View {
+        let lines = previews[session.id] ?? []
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(lines) { line in
+                if line.isUser {
+                    HStack {
+                        Spacer(minLength: 16)
+                        Text(line.text)
+                            .font(.system(size: tall ? 12 : 10))
+                            .foregroundColor(Color("TextPrimary"))
+                            .lineLimit(2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color("BgTertiary"))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                } else {
+                    Text(line.text)
+                        .font(.system(size: tall ? 13 : 10))
+                        .foregroundColor(Color("TextSecondary"))
+                        .lineLimit(tall ? nil : 5)
+                }
+            }
+        }
+        .mask(LinearGradient(colors: [.black, .black, .black.opacity(0.2)], startPoint: .top, endPoint: .bottom))
+    }
+
+    /// The card's last exchange: the newest user message and the reply after it.
+    @MainActor
+    private func loadPreview(_ session: AgentSession) async {
+        guard previews[session.id] == nil, session.messageCount > 0 else { return }
+        guard let records = try? await AgentChatClient().listMessages(sessionId: session.id) else { return }
+        let lastUser = records.lastIndex { $0.role == "user" }
+        let slice = lastUser.map { Array(records[$0...].prefix(2)) } ?? Array(records.suffix(1))
+        previews[session.id] = slice.enumerated().compactMap { index, record in
+            let text = record.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return MessageRecordPreview(id: "\(session.id)-\(index)", text: text, isUser: record.role == "user")
         }
     }
 
@@ -1088,5 +907,63 @@ struct CodeScheduledScreen: View {
         default: state = nil
         }
         return [when, state].compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+// MARK: - Sliders popover
+
+/// The sliders popover of the Code sessions pill: the layout switch on top,
+/// then Status (with counts) and Show: Scheduled tasks.
+struct CodeSessionsFilterPopover: View {
+    @Binding var layoutRaw: String
+    @Binding var filter: CodeSessionFilter
+    let counts: CodeSessionFilterCounts
+    let onScheduled: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list)
+                    .padding(.bottom, 6)
+                label("Status")
+                ForEach(CodeSessionFilter.allCases) { option in
+                    check(option.label, count: counts[option], on: filter == option) {
+                        Haptics.selection()
+                        filter = option
+                    }
+                }
+                label("Show")
+                check("Scheduled tasks", count: nil, on: false) {
+                    dismiss()
+                    onScheduled()
+                }
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 260, maxHeight: 460)
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text).font(.caption.weight(.semibold)).foregroundColor(Color("TextSecondary")).padding(.top, 6)
+    }
+
+    private func check(_ title: String, count: Int?, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).font(.system(size: 15))
+                Spacer(minLength: 12)
+                if let count {
+                    Text("\(count)").font(.system(size: 13)).monospacedDigit().foregroundColor(Color("TextSecondary"))
+                }
+                if on { Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)) }
+            }
+            .foregroundColor(Color("TextPrimary"))
+            .frame(minHeight: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
