@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * The platform pieces AppPhoneLink needs, on OkHttp 4.12: blocking JSON POST,
+ * The platform pieces AppPhoneLink needs, on OkHttp 5: blocking JSON POST,
  * WebSockets with a ping every 20 s (the relay drops a silent socket), and the
  * worker / one ordered serial thread / timer the link runs on.
  */

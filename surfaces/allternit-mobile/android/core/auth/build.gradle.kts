@@ -16,13 +16,18 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 }
 
 dependencies {
     // TokenProvider is a BearerProvider, so an auth implementation plugs straight
     // into the :core:api client factory.
     api(project(":core:api"))
+}
+
+// Kotlin 2.2+ rejects android { kotlinOptions { } } (deprecation raised to error);
+// compilerOptions is the replacement and also works on older Kotlin.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }

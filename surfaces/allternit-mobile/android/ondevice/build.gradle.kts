@@ -66,9 +66,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     testOptions {
         unitTests.isReturnDefaultValues = true
@@ -95,4 +92,12 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+}
+
+// Kotlin 2.2+ rejects android { kotlinOptions { } } (deprecation raised to error);
+// compilerOptions is the replacement and also works on older Kotlin.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
