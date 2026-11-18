@@ -2,6 +2,7 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -24,4 +25,9 @@ android {
 dependencies {
     // OkHttp (Apache-2.0, Square), the same version :app already ships.
     api(libs.okhttp)
+    // kotlinx.serialization (Apache-2.0, JetBrains): the generated models are @Serializable.
+    api(libs.kotlinx.serialization.json)
+    // kotlinx.coroutines (Apache-2.0, JetBrains): suspend calls with cancellation.
+    api(libs.kotlinx.coroutines.core)
+    testImplementation(libs.junit)
 }
