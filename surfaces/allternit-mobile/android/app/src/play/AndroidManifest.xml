@@ -2,25 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Google Play build: merged on top of src/main. Adds the screen-share
-         lane (src/phoneshare): claim + share screen, MediaProjection capture,
-         and the Accessibility service for a viewer's taps. Nothing from the
-         sideloaded build's adb lane (no shell server, no adb keys, no
-         WRITE_SECURE_SETTINGS, no KILL_BACKGROUND_PROCESSES, no local server).
-         Keep the components below in step with src/phonelink/AndroidManifest.xml. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <!-- Control my iPhone by Bluetooth (Phone Use `bt-android`, BluetoothRemote):
-         this phone as a Bluetooth keyboard and mouse (BluetoothHidDevice) for
-         the person's own iPhone. No BLUETOOTH_SCAN: nothing here scans, the
-         iPhone starts the pairing. Bluetooth is optional so Play does not
-         filter out phones without it. -->
-    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Google Play build: merged on top of src/main. The lean Play app (2026-11-18,
+         0.7.2): Play Billing and the on-device engine, but none of the screen-share lane
+         (no MediaProjection, no Accessibility service, no Bluetooth keyboard, no foreground
+         services) and nothing from the sideloaded build's adb lane. Screen share and
+         Bluetooth control ship only in the Phone Link APK (allternit.com/android).
+         src/phoneshare still compiles in (shared helpers such as KeystoreSealer), but its
+         components are not declared here, so Android never starts them. -->
     <!-- Google Play Billing for the TWA (store purchases D15). The Play Billing Library
          declares it too; named here so the play build never depends on that. The
          phonelink build must not have it (it does not ship billing:1.2.0). -->
@@ -75,55 +63,5 @@
             </intent-filter>
         </service>
 
-        <!-- Share screen: claim code, pairing, Share / Stop, taps (with the
-             Accessibility disclosure). Opened from the "Share screen" shortcut,
-             the request notification and allternit://phone-share?code=… -->
-        <activity
-            android:name="com.allternit.phonelink.ScreenShareActivity"
-            android:exported="true"
-            android:label="Share screen"
-            android:launchMode="singleTop">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="allternit" android:host="phone-share" />
-            </intent-filter>
-        </activity>
-
-        <!-- Android's screen-share prompt; only this app's own buttons and notification open it. -->
-        <activity
-            android:name="com.allternit.phonelink.ProjectionConsentActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-
-        <!-- Holds one screen share, started only after the person accepts the prompt. -->
-        <service
-            android:name="com.allternit.phonelink.ProjectionService"
-            android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
-
-        <!-- Keeps Control my iPhone by Bluetooth on while the app is in the background.
-             Started only from the person's tap in Share screen. -->
-        <service
-            android:name="com.allternit.phonelink.BluetoothRemoteService"
-            android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
-
-        <!-- A viewer's taps and typing while the person shares (turned on by the
-             person in Accessibility settings, after the in-app disclosure). -->
-        <service
-            android:name="com.allternit.phonelink.PhoneLinkAccessibilityService"
-            android:exported="true"
-            android:label="@string/accessibility_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
     </application>
 </manifest>

@@ -33,7 +33,8 @@ struct AndroidPairing {
 
     static let noRuntime = "Your phone’s screen goes through one of your computers. Open Allternit Desktop on your Mac or PC, or get an Allternit Cloud computer."
     static let oldRuntime = "Update Allternit on your computer to share an Android phone’s screen."
-    static let playURL = URL(string: "https://play.google.com/store/apps/details?id=com.allternit.app")!
+    /// Screen share is in the Phone Link build only (allternit.com/android), not the Google Play app (0.7.2+).
+    static let phoneLinkURL = URL(string: "https://allternit.com/android")!
 
     static func deepLink(_ code: String) -> URL? {
         var parts = URLComponents()
@@ -207,12 +208,12 @@ struct AndroidScreenPairingView: View {
     private func steps(runtimeId: String, runtimeName: String) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             step(1, "Install Allternit on the phone") {
-                Text("Get the Allternit app from Google Play on the Android phone.").bodyText()
-                Link("Open Google Play", destination: AndroidPairing.playURL).font(.system(size: 14, weight: .semibold))
+                Text("On the Android phone, install Allternit with Phone Link from allternit.com/android. The Google Play version has no screen share.").bodyText()
+                Link("Open allternit.com/android", destination: AndroidPairing.phoneLinkURL).font(.system(size: 14, weight: .semibold))
             }
             step(2, "Turn on taps") {
                 Text("On the phone, open Settings › Accessibility › Installed apps › Allternit and turn it on. Without it you can watch the screen but not tap.").bodyText()
-                Text("Android 13 or newer, with Allternit installed from a file instead of Google Play: if the switch is greyed out, open Settings › Apps › Allternit, tap ⋮ › Allow restricted settings, then turn it on.").bodyText()
+                Text("Android 13 or newer: if the switch is greyed out, open Settings › Apps › Allternit, tap ⋮ › Allow restricted settings, then turn it on.").bodyText()
             }
             step(3, "Link the phone") {
                 Text("In the Allternit app, tap Share screen › Link with a code and type this code. Or scan the code with the phone’s camera.").bodyText()

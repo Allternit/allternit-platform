@@ -3,9 +3,8 @@
      module with playImplementation). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- The running-model foreground service. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- No foreground service (0.7.2, 2026-11-18): the model runs while the app is open,
+         like Google AI Edge Gallery and PocketPal. The "running" notification has Stop. -->
 
     <application>
         <!-- The phone's OpenCL driver (Adreno). Optional: phones without it run on the CPU.
@@ -20,14 +19,10 @@
             android:name="androidx.browser.customtabs.PostMessageService"
             android:exported="true" />
 
-        <service
-            android:name="com.allternit.ondevice.EngineService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keeps an AI model the user loaded in memory so chat on this phone keeps working, including offline, while the user switches apps. Shown with a Stop action; unloads after 5 minutes idle." />
-        </service>
+        <!-- The Stop action on the "running on this phone" notification. -->
+        <receiver
+            android:name="com.allternit.ondevice.EngineService$StopReceiver"
+            android:exported="false" />
 
         <!-- DownloadManager sends ACTION_DOWNLOAD_COMPLETE to this package explicitly. -->
         <receiver

@@ -15,8 +15,8 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * Process-wide owner of the on-device engine: the installed models, downloads, and at most
  * one loaded model. All engine work runs on one worker thread ([handler]); the bridge only
- * posts to it. [EngineService] is the foreground service that keeps the process alive and
- * shows "running" while a model is loaded.
+ * posts to it. [EngineService] shows "running" with Stop while a model is loaded. There is no
+ * foreground service: the model runs while the app is open (see EngineService).
  *
  * Unload rules: idle for [IDLE_UNLOAD_SEC] after the last reply, the notification's Stop,
  * the page's `unload`, or the system asking for memory (onTrimMemory at
