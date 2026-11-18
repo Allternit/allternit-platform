@@ -109,6 +109,8 @@ class FilesSignInActivity : Activity() {
             status.text = (if (error != null) "$error\n\n" else "") +
                 "Sign in to see your computers in the Files app and save to them from any app. Browsing a sleeping computer never wakes it."
             actions.addView(FilesUi.matchWidth(FilesUi.button(this, "Sign in", true) { startSignIn() }))
+            actions.addView(FilesUi.gap(this, 12))
+            actions.addView(FilesUi.body(this, "By continuing you confirm you are 18 or older and agree to the Terms (allternit.com/terms) and Privacy Policy (allternit.com/privacy)."))
         }
     }
 

@@ -11,7 +11,7 @@ struct PhonesDrawerButton: View {
 
     var body: some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             action()
         } label: {
             AllternitMarkView(size: 22)
@@ -142,7 +142,7 @@ struct PhonesSheet: View {
                 ForEach(phones.withPhone) { entry in
                     if let bot = botStore.bot(entry.botId) {
                         Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptics.light()
                             dismiss()
                             onOpenPhone(entry.botId)
                         } label: {

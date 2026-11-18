@@ -6,18 +6,21 @@ edition = "2021"
 [[bin]]
 name = "allternit-api"
 path = "src/main.rs"
+test = false
 
 # Self-hosted Agents Server: a thin second binary that mounts only the
 # `selfhost` router (no Clerk, Stripe or cloud init). See src/selfhost/mod.rs.
 [[bin]]
 name = "allternit-agents-server"
 path = "src/bin/allternit-agents-server.rs"
+test = false
 
 # Brain runner: first process in a person's sealed runner box. Dials out to
 # cloud-api and runs the vendor CLIs tools-off. See src/brain_runner/mod.rs.
 [[bin]]
 name = "allternit-brain-runner"
 path = "src/bin/allternit-brain-runner.rs"
+test = false
 
 [dependencies]
 jsonschema = { version = "0.58.6", default-features = false }

@@ -359,7 +359,8 @@
       "darkModeSupport": true,
       "identity": "-",
       "signIgnore": [
-        "Contents/MacOS/allternit-files-domains$"
+        "Contents/MacOS/allternit-files-domains$",
+        "\\.(png|jpe?g|webp|gif|ico|icns|bmp|tiff?|ttf|otf|woff2?|eot|pdf|pak|pyc|mp3|mp4|m4a|wav|ogg|webm)$"
       ],
       "binaries": [
         "Contents/Resources/computer-use/cua-driver",

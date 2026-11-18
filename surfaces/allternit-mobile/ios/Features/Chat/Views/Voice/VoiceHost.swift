@@ -173,7 +173,7 @@ struct VoiceQuickBar: View {
 
     private func barButton(_ systemName: String, label: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
         Button(action: {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             action()
         }) {
             Image(systemName: systemName)

@@ -28,11 +28,14 @@ cp Config/Secrets.xcconfig.example Config/Secrets.xcconfig
 
 `Config/Secrets.xcconfig` is gitignored so the key is never committed.
 
-The vendored binaries `Frameworks/Mesh.xcframework`, `Frameworks/libgit2.xcframework` and `Frameworks/SherpaOnnxC.xcframework` aren't in git either; their build scripts are listed in the repo `.gitignore`. In a new worktree, symlink them and copy `Secrets.xcconfig` from a checkout that already has them. Without them, `xcodebuild` fails with "There is no XCFramework found":
+The vendored binaries `Frameworks/Mesh.xcframework`, `Frameworks/libgit2.xcframework`, `Frameworks/SherpaOnnxC.xcframework` and `Packages/OnDeviceLLM/Frameworks/llama.xcframework` aren't in git either; their build scripts are listed in the repo `.gitignore`. In a new worktree, symlink them and copy `Secrets.xcconfig` from a checkout that already has them. Without them, `xcodebuild` fails with "There is no XCFramework found":
 
 ```bash
 SRC=<checkout that builds>/surfaces/allternit-mobile/ios
 for f in Mesh libgit2 SherpaOnnxC; do ln -s "$SRC/Frameworks/$f.xcframework" Frameworks/; done
+mkdir -p Packages/OnDeviceLLM/Frameworks
+# llama is copied, not linked: SwiftPM's binary target and the package .gitignore (llama.xcframework/) both need a real folder
+cp -R "$SRC/Packages/OnDeviceLLM/Frameworks/llama.xcframework" Packages/OnDeviceLLM/Frameworks/
 cp "$SRC/Config/Secrets.xcconfig" Config/
 ```
 

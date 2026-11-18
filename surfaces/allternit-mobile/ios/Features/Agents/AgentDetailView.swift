@@ -63,8 +63,7 @@ struct AgentDetailView: View {
             }
             Section {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     isPublishSheetPresented = true
                 }) {
                     Label("Publish to Marketplace", systemImage: "storefront")
@@ -85,8 +84,7 @@ struct AgentDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if agent.isBot {
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
+                        Haptics.light()
                         if botStatusStore.isPinned(botId: agent.id) {
                             botStatusStore.unpin()
                         } else {
@@ -189,8 +187,7 @@ struct AgentDetailView: View {
                 // (emoji stored on the backend `avatar` column, same as the
                 // web hub).
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     isAvatarEditorPresented = true
                 }) {
                     ZStack(alignment: .bottomTrailing) {
@@ -249,8 +246,7 @@ struct AgentDetailView: View {
             // row returns the moment a DB prompt exists: both are shown).
             if promptFiles.isEmpty || agent.systemPrompt?.isEmpty == false {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     isPromptEditorPresented = true
                 }) {
                     HStack {
@@ -268,8 +264,7 @@ struct AgentDetailView: View {
             }
 
             Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isGreetingEditorPresented = true
             }) {
                 HStack {
@@ -365,8 +360,7 @@ struct AgentDetailView: View {
     /// tap opens the file editor.
     private func promptFileRow(_ file: WorkspaceFileInfo, label: String) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             fileToEdit = file
         }) {
             HStack {
@@ -531,8 +525,7 @@ struct AgentDetailView: View {
                         // breaks the Back button (the nil item binding
                         // fights the link-pushed view).
                         Button(action: {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
+                            Haptics.light()
                             fileToEdit = file
                         }) {
                             HStack {
@@ -581,8 +574,7 @@ struct AgentDetailView: View {
                 }
 
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     isNewFileSheetPresented = true
                 }) {
                     HStack(spacing: 10) {
@@ -660,8 +652,7 @@ struct AgentDetailView: View {
     private var webhooksSection: some View {
         Section {
             Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isWebhooksPresented = true
             }) {
                 HStack {
@@ -832,8 +823,7 @@ struct AgentDetailView: View {
                                   isDisabled: Bool, showsSpinner: Bool,
                                   action: @escaping () async -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             Task { await action() }
         }) {
             HStack(spacing: 10) {
@@ -1288,8 +1278,7 @@ struct AgentAvatarEditorSheet: View {
         let isSelected = (edited || !AgentAvatarView.hasSavedLook(agent))
             && draft.trimmingCharacters(in: .whitespacesAndNewlines) == storedAs
         return Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             draft = storedAs
             edited = true
         }) {

@@ -26,6 +26,12 @@ final class AppearanceStore: ObservableObject {
             case .system: return .unspecified
             }
         }
+
+        /// The theme for a saved value: Light for anyone who never picked
+        /// one (phone calm I13, "Light default"); a saved pick is kept.
+        static func initial(saved: String?) -> Mode {
+            saved.flatMap(Mode.init(rawValue:)) ?? .light
+        }
     }
 
     static let shared = AppearanceStore()
@@ -38,7 +44,10 @@ final class AppearanceStore: ObservableObject {
         }
     }
 
-    private static let reduceMotionKey = "allternit-appearance-reduce-motion"
+    /// Reduce motion lives under `ReducedMotion.appKey` (`allternit.reduceMotion`)
+    /// so `@ReducedMotion` views follow this one switch; builds before the
+    /// calm pass saved it here and it is copied over once.
+    private static let legacyReduceMotionKey = "allternit-appearance-reduce-motion"
     private static let chatFontKey = "allternit-appearance-chat-font"
 
     /// Settings → General → Chat font (the PWA's `appearance.chatFont`):
@@ -59,19 +68,26 @@ final class AppearanceStore: ObservableObject {
         didSet { UserDefaults.standard.set(chatFont.rawValue, forKey: Self.chatFontKey) }
     }
 
-    /// Settings → Appearance → Reduce motion (the PWA's
+    /// Settings → App → Reduce motion (the PWA's
     /// APPEARANCE_PREF_KEYS.reduceMotion): turns off UIKit view animations
-    /// app-wide; SwiftUI views read `reduceMotion` to skip their own.
+    /// app-wide; SwiftUI views read `@ReducedMotion` (same key) to skip their own.
     @Published var reduceMotion: Bool {
         didSet {
-            UserDefaults.standard.set(reduceMotion, forKey: Self.reduceMotionKey)
+            UserDefaults.standard.set(reduceMotion, forKey: ReducedMotion.appKey)
             apply()
         }
     }
 
     private init() {
-        theme = Mode(rawValue: UserDefaults.standard.string(forKey: Self.key) ?? "") ?? .system
-        reduceMotion = UserDefaults.standard.bool(forKey: Self.reduceMotionKey)
+        let defaults = UserDefaults.standard
+        theme = Mode.initial(saved: defaults.string(forKey: Self.key))
+        if let saved = defaults.object(forKey: ReducedMotion.appKey) as? Bool {
+            reduceMotion = saved
+        } else {
+            let legacy = defaults.bool(forKey: Self.legacyReduceMotionKey)
+            reduceMotion = legacy
+            if legacy { defaults.set(true, forKey: ReducedMotion.appKey) }
+        }
         chatFont = ChatFont(rawValue: UserDefaults.standard.string(forKey: Self.chatFontKey) ?? "") ?? .default
         // Windows created later (new scenes) pick the saved theme up too.
         NotificationCenter.default.addObserver(
@@ -104,7 +120,7 @@ struct AppearanceTiles: View {
             ForEach(AppearanceStore.Mode.allCases) { option in
                 let picked = store.theme == option
                 Button(action: {
-                    UISelectionFeedbackGenerator().selectionChanged()
+                    Haptics.selection()
                     store.theme = option
                 }) {
                     VStack(spacing: 6) {

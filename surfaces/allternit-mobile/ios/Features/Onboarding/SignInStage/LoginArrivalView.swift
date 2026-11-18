@@ -4,7 +4,7 @@ import WebKit
 /// A bundled, network-free illustration. Authentication remains native and never enters this view.
 struct LoginArrivalView: View {
     var paused = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var loaded = false
 

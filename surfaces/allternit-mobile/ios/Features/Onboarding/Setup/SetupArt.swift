@@ -62,7 +62,7 @@ struct SetupRise: ViewModifier {
     var distance: CGFloat = 6
     var delay: Double = 0
     var animation: Animation = .setupFade
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var shown = false
 
     func body(content: Content) -> some View {
@@ -97,7 +97,7 @@ struct AllternitOrbView: View {
     var size: CGFloat = 16
     var label: String?
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private struct Block { let x: Int, y: Int, ripple: Int, outline: Int, stroke: Int }
     private static let blocks: [Block] = [
@@ -244,7 +244,7 @@ struct SetupGizzi: View {
     var size: CGFloat
     var emotion: Emotion = .curious
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         Group {
@@ -276,7 +276,7 @@ struct SetupGizzi: View {
 /// The quiet grid of rounded squares behind the graph (22pt cells, breathing).
 struct SetupBlockField: View {
     var opacity: Double = 1
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var breathe = false
 
     var body: some View {
@@ -455,7 +455,7 @@ struct SetupLogLine: View {
     var delay: Double
     var single: Bool = false
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var shown = false
 
     var body: some View {
@@ -569,7 +569,7 @@ struct SetupHapticRipple: View {
     var origin: RippleOrigin?
     var cell: CGFloat
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var start: Date?
 
     var body: some View {

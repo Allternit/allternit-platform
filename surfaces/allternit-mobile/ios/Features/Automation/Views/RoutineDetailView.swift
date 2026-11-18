@@ -105,8 +105,7 @@ struct RoutineDetailView: View {
 
     private func actionButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             VStack(spacing: 8) {

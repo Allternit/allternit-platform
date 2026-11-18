@@ -77,6 +77,9 @@ struct ComposerDeckBand: View {
     /// Artifacts ▾ → All artifacts, where leaving means more than switching
     /// the section underneath (an artifact session is a full-screen cover).
     var onAllArtifacts: (() -> Void)? = nil
+    /// True while one of the band's sheets is up, so the folded band does not
+    /// close under it when the keyboard focus moves (contract C1).
+    var onSheetActive: ((Bool) -> Void)? = nil
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -123,6 +126,9 @@ struct ComposerDeckBand: View {
                 .stroke(Color("BorderSubtle"), lineWidth: 1)
         )
         .padding(.top, -8)
+        .onChange(of: isManagePluginsPresented || isArtifactsPresented) { _, active in
+            onSheetActive?(active)
+        }
         .sheet(isPresented: $isManagePluginsPresented) {
             NavigationStack {
                 CapabilitiesSettingsView(kind: .plugin)
@@ -230,7 +236,7 @@ struct ComposerDeckBand: View {
     }
 
     private func select(_ mode: ChatDeckMode) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         agentModeStore.selectTile(mode.tile, for: surface)
         // Picking a mode in the chat's deck turns that mode on for the next send.
         if !agentModeStore.isAgentEnabled(for: surface) {

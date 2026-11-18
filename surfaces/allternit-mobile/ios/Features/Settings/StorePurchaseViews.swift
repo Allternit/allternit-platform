@@ -29,6 +29,10 @@ enum StoreViewCopy {
     static let done = "Done"
 
     static let termsTail = "Payment is charged to your Apple Account at confirmation of purchase. A subscription renews automatically each month unless you turn off auto-renew at least 24 hours before the end of the current period. Your account is charged for renewal within 24 hours before the period ends, at the same price. Manage or cancel a subscription in Settings > your name > Subscriptions on your iPhone. Cancelling stops the next renewal; you keep the plan until the period ends. Credit packs are one-time purchases. Refunds are handled by Apple at reportaproblem.apple.com."
+    /// One line under each Subscribe button, with the real price from the App Store.
+    static func renewalLine(price: String) -> String {
+        "Renews automatically every month at \(price) until you cancel. Cancel any time in Settings > your name > Subscriptions."
+    }
     static let termsURL = URL(string: "https://allternit.com/terms")!
     static let privacyURL = URL(string: "https://allternit.com/privacy")!
 
@@ -172,19 +176,28 @@ struct StorePlanTicket: View {
 
     var body: some View {
         let current = plan.subscription?.isPaid == true && plan.subscription?.planId == item.id
-        PlanTicketView(
-            planId: item.id,
-            label: item.label,
-            price: store.displayPrice(item) ?? "",
-            lines: lines,
-            current: current,
-            actionTitle: actionTitle,
-            action: {
-                if auth.isSignedIn { Task { await store.purchase(item) } } else { AuthManager.shared.signIn() }
+        let price = store.displayPrice(item)
+        VStack(alignment: .leading, spacing: 6) {
+            PlanTicketView(
+                planId: item.id,
+                label: item.label,
+                price: price ?? "",
+                lines: lines,
+                current: current,
+                actionTitle: actionTitle,
+                action: {
+                    if auth.isSignedIn { Task { await store.purchase(item) } } else { AuthManager.shared.signIn() }
+                }
+            )
+            .disabled(store.busyProductId != nil && store.busyProductId != item.productId)
+            .accessibilityHint(auth.isSignedIn ? "Buys with your Apple Account" : "Opens sign in")
+            if !current, let price, !price.isEmpty {
+                Text(StoreViewCopy.renewalLine(price: price))
+                    .font(.caption2)
+                    .foregroundStyle(SetupPalette.mut)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        )
-        .disabled(store.busyProductId != nil && store.busyProductId != item.productId)
-        .accessibilityHint(auth.isSignedIn ? "Buys with your Apple Account" : "Opens sign in")
+        }
     }
 
     private var lines: [String] {

@@ -139,7 +139,7 @@ struct BotsDrawerRail: View {
     private var topRow: some View {
         HStack(spacing: 4) {
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 onOpen(nil)
             } label: {
                 HStack(spacing: 5) {
@@ -155,7 +155,7 @@ struct BotsDrawerRail: View {
             }
             .buttonStyle(.plain)
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 onOpen(.office)
             } label: {
                 HStack(spacing: 5) {

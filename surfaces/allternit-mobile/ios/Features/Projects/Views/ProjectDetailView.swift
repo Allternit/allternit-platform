@@ -23,6 +23,8 @@ struct ProjectDetailView: View {
     let onNewChat: (CoworkProject) -> Void
     /// Tapping a chat row opens it in Home.
     let onOpenChat: (AgentSession) -> Void
+    /// A new project made with "Cover and pad": opens the cover editor on arrival.
+    var opensLook = false
 
     @StateObject private var projectStore = ProjectStore.shared
     @ObservedObject private var library = ProjectsLibraryStore.shared
@@ -91,8 +93,10 @@ struct ProjectDetailView: View {
 
     init(project: CoworkProject,
          onNewChat: @escaping (CoworkProject) -> Void,
-         onOpenChat: @escaping (AgentSession) -> Void) {
+         onOpenChat: @escaping (AgentSession) -> Void,
+         opensLook: Bool = false) {
         self.project = project
+        self.opensLook = opensLook
         _looks = StateObject(wrappedValue: ProjectLookStore(scope: "project:chat:\(project.id)"))
         // Chat projects are the web's cowork projects (`project:cowork:<id>`);
         // a look an older build saved under `project:chat:<id>` is converted once.
@@ -221,6 +225,7 @@ struct ProjectDetailView: View {
         }
         .task {
             padStore.load()
+            if opensLook, sheet == nil { Haptics.light(); sheet = .customize }
             if !padTemplates.loaded && !padTemplates.loading { padTemplates.load() }
             folderAppearance = try? await AppearanceClient(client: .shared).appearance(key: AppearanceClient.projectKey(mode: "cowork", id: project.id))
         }
@@ -253,6 +258,7 @@ struct ProjectDetailView: View {
                 onSaved: { folderAppearance = $0 }
             ) {
                 Button("Project settings") { sheet = .settings }.frame(minHeight: 44)
+                Button("Edit pad") { sheet = .padEdit }.frame(minHeight: 44)
                 Button("Edit details") { sheet = .edit }.frame(minHeight: 44)
                 if let libraryRow {
                     Button(libraryRow.isArchived ? "Unarchive" : "Archive") { library.toggleArchive(libraryRow) }.frame(minHeight: 44)
@@ -265,7 +271,11 @@ struct ProjectDetailView: View {
                                  placeholder: "How should the coordinator manage this project?")
                 .onDisappear { projectStore.fetchProjectsIfNeeded(force: true) }
         case .edit:
-            ProjectEditDetailsSheet(title: liveProject.title, details: liveProject.description ?? "") { title, details in
+            ProjectDetailSettingsSheet(
+                title: liveProject.title, details: liveProject.description ?? "",
+                appearance: folderAppearance,
+                onCoverAndPad: { sheet = .customize }
+            ) { title, details in
                 try await BotProjectClient.shared.saveDetails(projectId: project.id, title: title, description: details)
                 projectStore.fetchProjectsIfNeeded(force: true)
             }
@@ -619,8 +629,7 @@ struct ProjectDetailView: View {
 
     private func addButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             VStack(spacing: 8) {
@@ -688,8 +697,7 @@ struct ProjectDetailView: View {
                 }
             } else {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     isEditingInstructions = true
                 }) {
                     Text(liveProject.instructions ?? "")
@@ -798,8 +806,7 @@ struct ProjectDetailView: View {
                     .foregroundColor(Color("TextSecondary"))
                 Spacer()
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     onNewChat(liveProject)
                 }) {
                     HStack(spacing: 6) {
@@ -828,8 +835,7 @@ struct ProjectDetailView: View {
                 VStack(spacing: 8) {
                     ForEach(chats) { session in
                         Button(action: {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
+                            Haptics.light()
                             onOpenChat(session)
                         }) {
                             HStack(spacing: 12) {
@@ -965,6 +971,106 @@ struct ProjectDetailView: View {
                 files.removeAll { $0.id == file.id }
             } catch {
                 filesError = "Couldn't remove \(file.name): \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+
+// MARK: - Project settings sheet (phone calm step 27)
+
+/// Name and description with the folder cover on top, ✕ left / ✓ right, and a
+/// "Cover and pad" row that opens the existing cover and pad editor.
+private struct ProjectDetailSettingsSheet: View {
+    let appearance: Appearance?
+    let onCoverAndPad: () -> Void
+    let onSave: @MainActor (String, String) async throws -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String
+    @State private var details: String
+    @State private var saving = false
+    @State private var error: String?
+
+    init(title: String, details: String, appearance: Appearance?,
+         onCoverAndPad: @escaping () -> Void,
+         onSave: @escaping @MainActor (String, String) async throws -> Void) {
+        self.appearance = appearance
+        self.onCoverAndPad = onCoverAndPad
+        self.onSave = onSave
+        _title = State(initialValue: title)
+        _details = State(initialValue: details)
+    }
+
+    private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        Spacer()
+                        FolderCoverView(title: trimmedTitle.isEmpty ? "Project" : trimmedTitle, mode: "chat",
+                                        appearance: appearance, width: 110, flat: true)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Folder cover for \(trimmedTitle)")
+                        Spacer()
+                    }
+                    .listRowBackground(Color.clear)
+                }
+                Section {
+                    Button {
+                        Haptics.light()
+                        onCoverAndPad()
+                    } label: {
+                        HStack {
+                            Text("Cover and pad")
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .foregroundColor(Color("TextPrimary"))
+                }
+                Section("Name") {
+                    TextField("Name this project", text: $title)
+                }
+                Section("Description") {
+                    TextField("What is this project about?", text: $details, axis: .vertical)
+                        .lineLimit(3...8)
+                }
+                if let error {
+                    Text(error).font(.caption).foregroundColor(Theme.statusError)
+                }
+            }
+            .navigationTitle("Project settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Close")
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { save() } label: { Image(systemName: "checkmark") }
+                        .accessibilityLabel("Save")
+                        .disabled(saving || trimmedTitle.isEmpty)
+                }
+            }
+        }
+        .onAppear { Haptics.light() }
+        .presentationDetents([.large])
+    }
+
+    private func save() {
+        saving = true
+        error = nil
+        Task {
+            defer { saving = false }
+            do {
+                try await onSave(trimmedTitle, details.trimmingCharacters(in: .whitespacesAndNewlines))
+                dismiss()
+            } catch {
+                self.error = "Couldn't save the project details. Try again."
             }
         }
     }

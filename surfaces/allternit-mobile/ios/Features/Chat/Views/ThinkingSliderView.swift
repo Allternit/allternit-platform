@@ -7,7 +7,7 @@ struct ThinkingSliderView: View {
     let thinking: ModelThinking
     let value: String
     let onChange: (String) -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private static let cols = 30
     private static let rows = 5
@@ -48,7 +48,7 @@ struct ThinkingSliderView: View {
                         let i = Int((g.location.x / max(1, proxy.size.width) * Double(n - 1)).rounded())
                         let level = thinking.levels[min(n - 1, max(0, i))]
                         if level.id != value {
-                            UISelectionFeedbackGenerator().selectionChanged()
+                            Haptics.selection()
                             onChange(level.id)
                         }
                     })
@@ -127,7 +127,7 @@ struct LimitRingView<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     static func color(_ ratio: Double) -> Color {
-        ratio >= 0.95 ? Theme.statusError : ratio >= 0.8 ? Theme.statusWarning : Color.green
+        ratio >= UsageThresholds.landAt ? Theme.statusError : ratio >= UsageThresholds.warnAt ? Theme.statusWarning : Color.green
     }
 
     var body: some View {

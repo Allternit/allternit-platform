@@ -151,7 +151,7 @@ struct V2ArtifactEditorView: View {
                 bodyFormat: next.format,
                 meta: artifact.version.meta
             )
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
             onSaved(saved)
             dismiss()
         } catch let error as APIError where error.httpStatus == 409 {

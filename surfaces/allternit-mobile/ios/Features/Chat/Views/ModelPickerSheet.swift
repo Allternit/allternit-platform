@@ -112,7 +112,7 @@ struct ModelPickerSheet: View {
                         overviewChip(
                             icon: AnyView(LimitRingView(window: worst, size: 28) { ModelProviderMark(providerId: pid, size: 15) }),
                             title: ModelProviderNames.name(pid),
-                            detail: worst.map { $0.usedRatio >= 0.95 ? "limit reached" : "\(count) · \(Int(((1 - $0.usedRatio) * 100).rounded()))% left" } ?? "\(count) models",
+                            detail: worst.map { $0.usedRatio >= UsageThresholds.landAt ? "limit reached" : "\(count) · \(Int(((1 - $0.usedRatio) * 100).rounded()))% left" } ?? "\(count) models",
                             active: scope == .provider(pid)
                         ) { scope = .provider(pid) }
                     }
@@ -298,7 +298,7 @@ struct ModelPickerSheet: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard row.available else { return }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             modelStore.userSelectedModel(row.id)
             dismiss()
         }
@@ -467,7 +467,7 @@ struct ModelPickerSheet: View {
     }
 
     private func choose(_ model: RuntimeModel) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         // A locked Cloud row opens the credits sheet and keeps the old selection.
         if modelStore.isCloudLocked(model.id) {
             creditsRequest = CloudCreditsGate.request(modelId: model.id, reason: plan.cloudModels?.reason)

@@ -19,6 +19,19 @@ Draft for App Store Connect. Register 1 voice: plain, no hype, no guarantees. Eo
 
 Note: entered for 1.0.1 on 2026-11-11 (Eoj approved). Old values: name `Allternit`, subtitle `Your bots, chats and computer`. Reason: ASO Scout scored the old title 9/30, and App Store search on iPhone ranked "allternit" #75 because it spell-corrects to "alternative". Apple counts each word once across name, subtitle and keywords, so no word repeats. The rating prompt ships in the next build after 1.0.1.
 
+## Age rating (Eoj's console step, 18+)
+
+Our Terms of Service and sign-in say users must be 18 or older, so the store rating must say 18+ too. This is set in App Store Connect, not in code. Do it before the next submission:
+
+1. App Store Connect → the app → App Information → Age Rating → Edit.
+2. Questionnaire: answer "None" for every content row (violence, sexual content, profanity, horror, gambling, medical, alcohol and drugs, contests).
+3. Unrestricted web access: **Yes** (the in-app browser and links reach the open web).
+4. Chat, user-generated content and AI features: answer **Yes** where the form asks about chat with other users, shared user content, or generative AI. Bots talk to people and models can produce unvetted text.
+5. Age rating override: set the higher rating to **18+**, so the final rating is 18+ whatever the questionnaire calculates. If the form has no override field, the "Unrestricted web access" answer already forces the highest band; record the final rating shown.
+6. Save, then check the product page preview shows 18+. Also restrict nothing else: availability stays worldwide unless a storefront needs a different minimum age.
+
+Labels change between App Store Connect versions; match the intent (18+, web access Yes) if wording differs.
+
 ## Promotional text (170)
 
 Allternit, the open source alternative: Apache 2.0 code, the AI models and subscriptions you already have, and your own computer. Your bots and chats on your iPhone.

@@ -20,7 +20,8 @@ enum RecentsDateFilter: String, CaseIterable {
 }
 
 /// The phone drawer (allternit-ai src/fabric-session/phone/PhoneDrawer.tsx):
-/// the active mode's rail, laid out like Claude iOS. Top line: the mode dial,
+/// the active mode's rail, laid out like Claude iOS. Top line: the mode dial
+/// (tap closes the drawer and fans the modes out of ☰, D4),
 /// the mode's wordmark, Inbox and a round search button. Then the mode's rail
 /// rows (Projects, Artifacts, Automation Tasks, Customize, More), Teammates,
 /// Pinned, and Recents with See all + a filter — swipe a recent left to
@@ -66,7 +67,6 @@ struct HistorySidebarView: View {
         statusFilter != .all || dateFilter != .all || !typeFilter.isEmpty
     }
 
-    @State private var isDialExpanded = false
     @State private var isSettingsPresented = false
     @State private var isSearchPresented = false
     @State private var isQuickTaskPresented = false
@@ -106,19 +106,6 @@ struct HistorySidebarView: View {
                 }
 
                 footer
-            }
-
-            if isDialExpanded {
-                // Tap away closes the quarter-moon.
-                Color.black.opacity(0.001)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(spring) { isDialExpanded = false }
-                    }
-                    .accessibilityHidden(true)
-                ModeDialMenu(isExpanded: $isDialExpanded)
-                    .padding(.leading, 12)
-                    .padding(.top, 6)
             }
         }
         .frame(width: width)
@@ -201,6 +188,10 @@ struct HistorySidebarView: View {
                 || launchArgumentEnabled("open-settings-connections")
                 || launchArgumentEnabled("open-settings-brain-spike")
                 || launchArgumentEnabled("open-settings-meetings")
+                || launchArgumentEnabled(LaunchArgument.calmSettings)
+                || launchArgumentEnabled(LaunchArgument.calmSettingsAdvanced)
+                || launchArgumentEnabled(LaunchArgument.calmSettingsInfo)
+                || launchArgumentEnabled(LaunchArgument.calmUsage)
                 || launchArgumentEnabled("open-usage") {
                 isSettingsPresented = true
             }
@@ -211,19 +202,21 @@ struct HistorySidebarView: View {
                 isMeetingsPresented = true
             }
             if launchArgumentEnabled("open-connectors-meetings") { isConnectorsPresented = true }
-            if launchArgumentEnabled("open-search") { isSearchPresented = true }
+            if launchArgumentEnabled("open-search") || launchArgumentEnabled(LaunchArgument.calmSearch) { isSearchPresented = true }
+            if launchArgumentEnabled(LaunchArgument.calmRecentsSelect) || launchArgumentEnabled(LaunchArgument.calmOverviewMenu) {
+                // The shell presents the overview; give it a beat to subscribe.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    NotificationCenter.default.post(name: .shellOpenOverview, object: nil)
+                }
+            }
             if launchArgumentEnabled("open-quick-task") { isQuickTaskPresented = true }
-            if launchArgumentEnabled("open-mode-dial") { isDialExpanded = true }
             #endif
         }
         .onChange(of: isSidebarOpen) { _, isOpen in
-            // Refresh each time the drawer is revealed so new chats show up;
-            // a closing drawer folds the dial.
+            // Refresh each time the drawer is revealed so new chats show up.
             if isOpen {
                 Task { await store.load() }
                 Task { await phones.refresh() }
-            } else {
-                isDialExpanded = false
             }
         }
         .onChange(of: modeStore.shellMode) { _, _ in
@@ -242,7 +235,8 @@ struct HistorySidebarView: View {
     /// `phone-drawer-top-modes`: dial · wordmark · Inbox · search.
     private var header: some View {
         HStack(spacing: 8) {
-            ModeDialButton(isExpanded: $isDialExpanded)
+            // D4: tap closes the drawer, then the mode fan opens out of ☰.
+            ModeDialButton()
             ShellWordmark(mode: modeStore.shellMode)
                 .padding(.leading, 6)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -270,7 +264,7 @@ struct HistorySidebarView: View {
     /// 40pt neutral circle (`phone-round-btn`), red count top-right.
     private func roundButton(systemName: String, label: String, id: String, badge: Int = 0, action: @escaping () -> Void) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             action()
         } label: {
             Image(systemName: systemName)
@@ -402,7 +396,7 @@ struct HistorySidebarView: View {
 
     private func railRowView(_ row: RailRow) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             row.action()
         } label: {
             navRowLabel(row)
@@ -460,7 +454,7 @@ struct HistorySidebarView: View {
                 sectionLabel("Pinned")
                 ForEach(pinnedSessions) { session in
                     Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Haptics.light()
                         open(session)
                     } label: {
                         recentRowBody(session)
@@ -487,15 +481,21 @@ struct HistorySidebarView: View {
     /// Recents (a tap opens every Home session as List · Grid · Deck) · filter.
     private var recentsLabel: some View {
         HStack(spacing: 2) {
+            Text("Recents")
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+            // "View all ›" opens the existing session overview (D7), whose ⋯
+            // menu holds Select chats and the All / Pinned / Archived views.
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 NotificationCenter.default.post(name: .shellOpenOverview, object: nil)
             } label: {
-                HStack(spacing: 4) {
-                    Text("Recents")
+                HStack(spacing: 3) {
+                    Text("View all")
                     Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
                 }
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .frame(minHeight: 32)
+                .padding(.horizontal, 6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -568,7 +568,7 @@ struct HistorySidebarView: View {
                 .multilineTextAlignment(.center)
                 .padding(.top, 8)
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 newItem()
             } label: {
                 HStack(spacing: 6) {
@@ -655,6 +655,9 @@ struct HistorySidebarView: View {
         let working = store.isStreaming(session.id)
         let unread = store.isUnread(session)
         let time = ShellSessionsStore.relativeTime(ShellSessionsStore.timestamp(of: session))
+        // C6 (9a server flags): Needs input / Ready for review ride on the row.
+        let codeStatus = codeSessionFilterStatus(session, streaming: working)
+        let asks = codeStatus.asksForUser
         return HStack(spacing: 14) {
             Image(systemName: ShellSearchView.icon(for: session))
                 .font(.system(size: 16))
@@ -678,10 +681,15 @@ struct HistorySidebarView: View {
                             .accessibilityLabel("Terminal session")
                     }
                     if working {
-                        // .phone-rail-working: 11.5px/500, coral.
-                        Text("Working")
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundColor(Self.workingCoral)
+                        // .phone-rail-spinner: a small coral spinner while a reply runs.
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(Self.workingCoral)
+                            .accessibilityLabel("Working")
+                    } else if asks {
+                        CodeSessionStatusIcon(status: codeStatus)
+                            .imageScale(.small)
+                            .accessibilityLabel(codeStatus.label)
                     } else if !time.isEmpty {
                         Text(time)
                             .font(.system(size: 12))
@@ -689,7 +697,12 @@ struct HistorySidebarView: View {
                             .foregroundColor(Color("TextSecondary"))
                     }
                 }
-                if let mission = session.missionLabel {
+                if asks {
+                    Text(codeStatus.label)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color("TextSecondary"))
+                        .lineLimit(1)
+                } else if let mission = session.missionLabel {
                     Text(mission)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(Color("AccentPrimary"))
@@ -702,9 +715,9 @@ struct HistorySidebarView: View {
                 }
             }
             if !working && unread {
-                // .phone-rail-dot: 8px, the accent.
+                // .phone-rail-dot-new: 8px, blue (new reply).
                 Circle()
-                    .fill(Color("AccentPrimary"))
+                    .fill(Color.blue)
                     .frame(width: 8, height: 8)
                     .accessibilityLabel("Unread")
             }
@@ -726,7 +739,7 @@ struct HistorySidebarView: View {
     /// lifts it to drag into your own order; a tap opens it.
     private func recentRow(_ session: AgentSession) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             open(session)
         } label: {
             recentRowBody(session)
@@ -798,7 +811,7 @@ struct HistorySidebarView: View {
         let stroke: Color = ratio >= 1 ? Theme.statusError : (ratio >= 0.8 ? Theme.statusWarning : Color("TextPrimary"))
         let usageText = usage.percentUsed.map { ", Allternit Cloud \(Int(($0).rounded()))% used" } ?? ""
         return Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             isSettingsPresented = true
         } label: {
             ZStack {
@@ -884,11 +897,10 @@ struct HistorySidebarView: View {
             .foregroundColor(Color("TextPrimary"))
             .padding(.horizontal, 18)
             .frame(height: 44)
-            .background(Capsule().fill(Color("BgPanel")))
-            .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 0.5))
-            .shadow(color: Color.black.opacity(0.14), radius: 8, x: 0, y: 4)
+            .glassSurface(cornerRadius: 22)
+            .shadow(color: Color.black.opacity(0.10), radius: 8, x: 0, y: 4)
         } primaryAction: {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             newItem()
         }
         .accessibilityLabel("\(newLabel). Press and hold for more ways to start")
@@ -951,7 +963,7 @@ struct HistorySidebarView: View {
                 HStack(spacing: 10) {
                     ForEach(list, id: \.bot.id) { entry in
                         Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptics.light()
                             openBotChat(entry.bot.id)
                         } label: {
                             BotStatusAvatar(bot: entry.bot, size: 36, working: entry.working && !entry.needsYou, waiting: entry.needsYou)
@@ -1022,7 +1034,7 @@ struct HistorySidebarView: View {
     }
 
     private func delete(_ session: AgentSession) {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.medium()
         let removed = store.remove(id: session.id)
         pinsStore.remove(id: session.id)
         manualOrderRaw = manualOrder.filter { $0 != session.id }.joined(separator: ",")

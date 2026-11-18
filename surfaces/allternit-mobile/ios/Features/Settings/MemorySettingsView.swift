@@ -199,8 +199,7 @@ struct MemorySettingsView: View {
 
     private func documentRow(_ document: MemoryDocument) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             selectedDocument = document
         }) {
             HStack(spacing: 12) {

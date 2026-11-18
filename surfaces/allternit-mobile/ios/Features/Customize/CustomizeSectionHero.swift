@@ -50,7 +50,7 @@ struct CustomizeSectionHero<Actions: View>: View {
     @ViewBuilder let actions: (CustomizeItem, HeroPalette) -> Actions
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var at = 0
 
     var body: some View {

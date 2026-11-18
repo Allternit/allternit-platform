@@ -92,7 +92,7 @@ struct LiveModeLookSection: View {
 
     private func tile<P: View>(title: String, subtitle: String?, selected: Bool, action: @escaping () -> Void, @ViewBuilder preview: () -> P) -> some View {
         Button(action: {
-            UISelectionFeedbackGenerator().selectionChanged()
+            Haptics.selection()
             action()
         }) {
             VStack(alignment: .leading, spacing: 6) {
@@ -126,7 +126,7 @@ struct LiveModeLookSection: View {
 
     private func chip(name: String, colors: [Color]?, neutral: Bool, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: {
-            UISelectionFeedbackGenerator().selectionChanged()
+            Haptics.selection()
             action()
         }) {
             HStack(spacing: 6) {

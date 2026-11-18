@@ -13,7 +13,7 @@ struct FolderCoverView: View {
     var open: Bool = false
     var flat: Bool = false
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private static let viewW: CGFloat = 250
     private static let viewH: CGFloat = 304

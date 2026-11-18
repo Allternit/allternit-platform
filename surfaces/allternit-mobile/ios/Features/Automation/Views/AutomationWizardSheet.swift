@@ -694,7 +694,7 @@ struct AutomationWizardSheet: View {
                 try await create()
             }
             await store.load()
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
             onSaved()
             dismiss()
         } catch {

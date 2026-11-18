@@ -137,8 +137,7 @@ struct BrainCaptureSheet: View {
     /// commit failed — push problems queue silently in the store.
     private func save() {
         guard !trimmedText.isEmpty, !isSaving else { return }
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
         isSaving = true
         saveError = nil
         Task {

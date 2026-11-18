@@ -78,6 +78,56 @@ enum VoiceRoutePreference: String, CaseIterable, Sendable {
     }
 }
 
+/// Settings → App → Open links in (phone calm I13): where a web link opens.
+/// One root `openURL` handler (`View.openLinksHandler()`) applies it to
+/// every `openURL`, `Link` and Markdown link in the app.
+enum OpenLinksPreference: String, CaseIterable, Sendable {
+    case inApp = "in-app"
+    case safari
+
+    var label: String {
+        switch self {
+        case .inApp: return "In app"
+        case .safari: return "Safari"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .inApp: return "Pages open over the app, with Done to come back"
+        case .safari: return "Pages open in the Safari app"
+        }
+    }
+}
+
+/// Where one link opens: over the app (SFSafariViewController) or handed to
+/// the system (Safari, or the app that owns the link).
+enum OpenLinkTarget: Equatable, Sendable {
+    case inApp
+    case system
+}
+
+/// The one rule behind Open links in. Only http(s) web pages can open in
+/// app. These always go to the system, whatever the setting:
+/// - other schemes (`app-settings:`, `mailto:`, `allternit://`, …);
+/// - Apple's own pages (App Store, subscriptions, reviews open their apps);
+/// - buying on the web: Stripe and our pricing / billing / checkout pages,
+///   because the App Store link-out rule wants purchases in the browser
+///   ("Opens allternit.com in your browser.").
+func openLinkTarget(for url: URL, preference: OpenLinksPreference) -> OpenLinkTarget {
+    guard preference == .inApp else { return .system }
+    guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return .system }
+    guard let host = url.host?.lowercased(), !host.isEmpty else { return .system }
+    if host == "apple.com" || host.hasSuffix(".apple.com") { return .system }
+    if host == "stripe.com" || host.hasSuffix(".stripe.com") { return .system }
+    if host == "allternit.com" || host.hasSuffix(".allternit.com") {
+        let path = url.path.lowercased()
+        let purchasePaths = ["/pricing", "/settings/billing", "/checkout", "/billing"]
+        if purchasePaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) { return .system }
+    }
+    return .inApp
+}
+
 /// App-wide settings behind the sidebar gear (Phase 4 settings hub).
 /// Persisted app-wide (UserDefaults), mirroring ToolOptionsStore's pattern.
 ///
@@ -237,6 +287,18 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(extensionsUseBuiltinNode, forKey: Keys.extensionsUseBuiltinNode) }
     }
 
+    /// App: Open links in (in app or Safari). Default In app.
+    @Published var openLinksIn: OpenLinksPreference {
+        didSet { defaults.set(openLinksIn.rawValue, forKey: Keys.openLinksIn) }
+    }
+
+    /// The saved Open links in choice, readable off the main actor (the root
+    /// `openURL` handler).
+    nonisolated static var openLinksPreference: OpenLinksPreference {
+        UserDefaults.standard.string(forKey: Keys.openLinksIn)
+            .flatMap(OpenLinksPreference.init(rawValue:)) ?? .inApp
+    }
+
     /// Voice speed steps offered in the picker.
     static let speechSpeeds: [Double] = [0.75, 1.0, 1.25, 1.5]
 
@@ -276,6 +338,7 @@ final class SettingsStore: ObservableObject {
         static let gizziAutofixPRs = "allternit-settings-gizzi-autofix-prs"
         static let extensionsAutoUpdate = "allternit-settings-extensions-auto-update"
         static let extensionsUseBuiltinNode = "allternit-settings-extensions-builtin-node"
+        static let openLinksIn = "allternit-settings-open-links-in"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -316,5 +379,7 @@ final class SettingsStore: ObservableObject {
         self.gizziAutofixPRs = defaults.object(forKey: Keys.gizziAutofixPRs) as? Bool ?? true
         self.extensionsAutoUpdate = defaults.object(forKey: Keys.extensionsAutoUpdate) as? Bool ?? true
         self.extensionsUseBuiltinNode = defaults.object(forKey: Keys.extensionsUseBuiltinNode) as? Bool ?? true
+        self.openLinksIn = defaults.string(forKey: Keys.openLinksIn)
+            .flatMap(OpenLinksPreference.init(rawValue:)) ?? .inApp
     }
 }

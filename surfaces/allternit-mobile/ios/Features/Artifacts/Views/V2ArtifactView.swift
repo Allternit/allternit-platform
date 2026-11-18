@@ -27,6 +27,14 @@ import SwiftUI
 /// edit get an Edit button (V2ArtifactEditorView), which saves a new v2
 /// version. PDFs, images and videos get Save or share (the share sheet:
 /// Save to Files / Photos); the live web viewer handles its own exports.
+///
+/// Phone calm I12: natively drawn records get the calm viewer bar (back,
+/// comments with the open-thread badge, share, ⋯) like the web's phone
+/// ArtifactWindow (allternit-ai #1158), which draws the same bar itself for
+/// records opened in the web window. ⋯ holds Go to chat (when the record
+/// names its source chat), Open in browser, View comments, Fill / Fit (image
+/// and video), then the older actions (Edit, Archive, Delete). Share opens
+/// `ArtifactSharePanel` (Share | Export); comments open `ArtifactCommentsSheet`.
 struct V2ArtifactView: View {
     let artifactId: String
     var initialTitle: String? = nil
@@ -47,7 +55,15 @@ struct V2ArtifactView: View {
     @State private var isExporting = false
     @State private var sharedFile: SharedArtifactFile?
     @State private var showingPDFTemplate = false
+    @State private var showingComments = false
+    @State private var showingShare = false
+    @State private var shareTab: ArtifactSharePanel.Tab = .share
+    @State private var pendingExport: String?
+    @State private var openThreads: Int?
+    @AppStorage(ArtifactFit.storageKey) private var fitRaw = ArtifactFit.fit.rawValue
+    @Environment(\.openURL) private var openURL
 
+    private var fit: ArtifactFit { ArtifactFit(stored: fitRaw) }
 
     var body: some View {
         NavigationStack {
@@ -57,8 +73,11 @@ struct V2ArtifactView: View {
             }
             .navigationTitle(artifact?.title ?? initialTitle ?? "Artifact")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { toolbar }
-            .toolbar(usesWebWindow ? .hidden : .automatic, for: .navigationBar)
+            // The calm bar replaces the navigation bar; the web window draws its own.
+            .toolbar(.hidden, for: .navigationBar)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !usesWebWindow { viewerBar }
+            }
             .navigationDestination(isPresented: $showingLegacyEditor) {
                 if let legacyId = artifact?.origin?.legacyId {
                     OfficeDocumentView(artifactId: legacyId)
@@ -88,6 +107,32 @@ struct V2ArtifactView: View {
                 ArtifactShareSheet(items: [file.url])
                     .presentationDetents([.medium, .large])
             }
+            .sheet(isPresented: $showingComments) {
+                if let artifact {
+                    ArtifactCommentsSheet(artifactId: artifact.id, myAccess: artifact.myAccess) { count in
+                        openThreads = count
+                    }
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                }
+            }
+            .sheet(isPresented: $showingShare, onDismiss: runPendingExport) {
+                if let artifact {
+                    ArtifactSharePanel(
+                        artifactId: artifact.id,
+                        title: artifact.title,
+                        kind: artifact.kind,
+                        myAccess: artifact.myAccess,
+                        ownerName: artifact.isMine ? "You" : artifact.owner.name,
+                        visibility: artifact.visibility,
+                        exports: exportActions(artifact),
+                        initialTab: shareTab,
+                        onExport: { action in runExport(action, artifact: artifact) }
+                    )
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                }
+            }
             .overlay(alignment: .bottom) {
                 if isExporting {
                     ArtifactExportProgressPill(label: "Preparing file…")
@@ -105,63 +150,203 @@ struct V2ArtifactView: View {
                 }
             }
         }
-        .task { await load() }
+        .task {
+            await load()
+            await loadOpenThreads()
+            #if DEBUG
+            // `-calm-artifact-comments` / `-calm-artifact-share` (DEBUG only).
+            if artifact != nil, CalmArtifactLaunch.on(LaunchArgument.calmArtifactComments) { showingComments = true }
+            if artifact != nil, CalmArtifactLaunch.on(LaunchArgument.calmArtifactShare) { showingShare = true }
+            #endif
+        }
     }
 
     /// Whether this record opens in the web's artifact window.
     private var usesWebWindow: Bool {
         guard let artifact else { return false }
+        #if DEBUG
+        // The calm viewer launch arguments screenshot the native viewer bar.
+        if CalmArtifactLaunch.isActive { return false }
+        #endif
         if artifact.kind == "pdf", !artifact.canEdit, artifact.version.bodyFormat == "application/pdf" { return false }
         return artifact.id.hasPrefix("art_") || SampleWorkspace.isEnabled
     }
 
-    // MARK: - Toolbar
+    // MARK: - Viewer bar
 
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Button("Close") { dismiss() }
-                .foregroundColor(Color("AccentPrimary"))
-        }
-        if let artifact {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if artifact.canEdit, ArtifactBodyEditing.isEditable(kind: artifact.kind),
-                   let model = ArtifactBodyEditing.model(kind: artifact.kind, body: artifact.version.body, format: artifact.version.bodyFormat) {
-                    Button {
-                        editModel = model
-                        showingEditor = true
-                    } label: { Image(systemName: "square.and.pencil") }
-                    .accessibilityLabel("Edit")
-                }
-                if shareSource(artifact) != nil {
-                    Button {
-                        Task { await shareFile(artifact) }
-                    } label: { Image(systemName: "square.and.arrow.up") }
-                    .disabled(isExporting)
-                    .accessibilityLabel("Save or share")
-                }
-                if ["doc", "sheet", "ops", "dashboard"].contains(artifact.kind) {
-                    Button {
-                        showingPDFTemplate = true
-                    } label: { Image(systemName: "doc.richtext") }
-                    .accessibilityLabel("PDF from template")
-                }
-                if let text = copyableText(artifact) {
-                    Button {
-                        UIPasteboard.general.string = text
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    } label: { Image(systemName: "doc.on.doc") }
-                    .accessibilityLabel("Copy content")
-                }
-                Button {
-                    Task { await archive() }
-                } label: { Image(systemName: "archivebox") }
-                .accessibilityLabel("Archive")
-                if artifact.isMine {
-                    Button(role: .destructive) { confirmDelete = true } label: { Image(systemName: "trash") }
-                        .accessibilityLabel("Delete")
-                }
+    /// Back · title · glass pill (comments with the open-thread badge, share, ⋯).
+    private var viewerBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 40, height: 40)
+                    .contentShape(Circle())
             }
+            .buttonStyle(.plain)
+            .glassSurface(cornerRadius: 20)
+            .accessibilityLabel("Back")
+
+            Text(artifact?.title ?? initialTitle ?? "Artifact")
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+
+            if let artifact {
+                HStack(spacing: 0) {
+                    barButton("bubble.left", label: openThreads.map { $0 > 0 ? "Comments, \($0) open" : "Comments" } ?? "Comments") {
+                        openComments()
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if let openThreads, openThreads > 0 {
+                            Text(openThreads > 9 ? "9+" : "\(openThreads)")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(Color("BgPrimary"))
+                                .padding(.horizontal, 4)
+                                .frame(minWidth: 16, minHeight: 16)
+                                .background(Capsule().fill(Color("TextPrimary")))
+                                .offset(x: -4, y: 4)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    barButton("square.and.arrow.up", label: "Share") {
+                        Haptics.light()
+                        shareTab = .share
+                        showingShare = true
+                    }
+                    Menu {
+                        moreMenu(artifact)
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .regular))
+                            .foregroundColor(Color("TextPrimary"))
+                            .frame(width: 42, height: 40)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("More")
+                }
+                .padding(.horizontal, 2)
+                .glassSurface(cornerRadius: 20)
+            } else {
+                Color.clear.frame(width: 40, height: 40)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color("BgPrimary"))
+    }
+
+    private func barButton(_ systemImage: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 16, weight: .regular))
+                .foregroundColor(Color("TextPrimary"))
+                .frame(width: 42, height: 40)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    @ViewBuilder
+    private func moreMenu(_ artifact: ArtifactV2) -> some View {
+        if let sessionId = sourceChatId(artifact) {
+            Button {
+                dismiss()
+                NotificationCenter.default.post(name: .openChatSession, object: nil, userInfo: ["sessionId": sessionId])
+            } label: { Label("Go to chat", systemImage: "bubble.left.and.bubble.right") }
+        }
+        Button {
+            openURL(ArtifactShareRules.appLink(artifactId: artifact.id, origin: ArtifactLiveWebView.webOrigin))
+        } label: { Label("Open in browser", systemImage: "arrow.up.right.square") }
+        Button {
+            openComments()
+        } label: { Label("View comments", systemImage: "bubble.left") }
+        if ArtifactFit.hasToggle(kind: artifact.kind) {
+            Button {
+                Haptics.selection()
+                fitRaw = fit.toggled.rawValue
+            } label: {
+                Label(fit.menuTitle, systemImage: fit == .fill ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+            }
+        }
+        Divider()
+        if artifact.canEdit, ArtifactBodyEditing.isEditable(kind: artifact.kind),
+           let model = ArtifactBodyEditing.model(kind: artifact.kind, body: artifact.version.body, format: artifact.version.bodyFormat) {
+            Button {
+                editModel = model
+                showingEditor = true
+            } label: { Label("Edit", systemImage: "square.and.pencil") }
+        }
+        Button {
+            shareTab = .export
+            showingShare = true
+        } label: { Label("Export", systemImage: "square.and.arrow.down") }
+        Button {
+            Task { await archive() }
+        } label: { Label("Archive", systemImage: "archivebox") }
+        if artifact.isMine {
+            Button(role: .destructive) { confirmDelete = true } label: { Label("Delete", systemImage: "trash") }
+        }
+    }
+
+    /// The chat the record came from (web: origin surface chat / cowork /
+    /// unset with a session id). Only the owner sees `session_id`.
+    private func sourceChatId(_ a: ArtifactV2) -> String? {
+        guard let origin = a.origin, let sessionId = origin.sessionId, !sessionId.isEmpty else { return nil }
+        guard origin.surface == nil || ["chat", "cowork"].contains(origin.surface ?? "") else { return nil }
+        return sessionId
+    }
+
+    private func openComments() {
+        Haptics.light()
+        showingComments = true
+    }
+
+    private func loadOpenThreads() async {
+        guard let artifact else { return }
+        if let items = try? await ArtifactsV2Client.shared.comments(id: artifact.id) {
+            openThreads = ArtifactCommentRules.openThreadCount(items)
+        }
+    }
+
+    // MARK: - Export (the share panel's Export tab)
+
+    private func exportActions(_ a: ArtifactV2) -> [ArtifactExportAction] {
+        var actions: [ArtifactExportAction] = []
+        if shareSource(a) != nil {
+            actions.append(ArtifactExportAction(id: "file", title: "Save or share file", systemImage: "square.and.arrow.up"))
+        }
+        if ["doc", "sheet", "ops", "dashboard"].contains(a.kind) {
+            actions.append(ArtifactExportAction(id: "pdf-template", title: "PDF from template", systemImage: "doc.richtext"))
+        }
+        if copyableText(a) != nil {
+            actions.append(ArtifactExportAction(id: "copy", title: "Copy content", systemImage: "doc.on.doc", closesPanel: false))
+        }
+        return actions
+    }
+
+    private func runExport(_ action: ArtifactExportAction, artifact a: ArtifactV2) {
+        if action.id == "copy", let text = copyableText(a) {
+            UIPasteboard.general.string = text
+            Haptics.success()
+            return
+        }
+        pendingExport = action.id
+    }
+
+    /// File and template exports open their own sheet once the panel is gone.
+    private func runPendingExport() {
+        guard let id = pendingExport, let artifact else { return }
+        pendingExport = nil
+        switch id {
+        case "file": Task { await shareFile(artifact) }
+        case "pdf-template": showingPDFTemplate = true
+        default: break
         }
     }
 
@@ -278,15 +463,15 @@ struct V2ArtifactView: View {
             CodeBodyView(code: body)
         case "image":
             if case .string("video")? = a.version.meta?["media"], let url = ArtifactBodyDecoder.firstURI(body) {
-                ArtifactVideoView(urlString: url)
+                ArtifactVideoView(urlString: url, fit: fit)
             } else if let url = ArtifactBodyDecoder.firstURI(body) {
-                ArtifactImageView(urlString: url)
+                ArtifactImageView(urlString: url, fit: fit)
             } else {
                 unreadable("image")
             }
         case "video":
             if let url = ArtifactBodyDecoder.videoURL(body: body, meta: a.version.meta) {
-                ArtifactVideoView(urlString: url)
+                ArtifactVideoView(urlString: url, fit: fit)
             } else {
                 // An unrendered video project: the web's viewer previews it.
                 ArtifactLiveWebView(artifact: a)
@@ -607,18 +792,30 @@ enum ArtifactMediaLoader {
 
 private struct ArtifactImageView: View {
     let urlString: String
+    var fit: ArtifactFit = .fit
     @State private var image: UIImage?
     @State private var failed = false
 
     var body: some View {
         Group {
             if let image {
-                ScrollView {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM))
-                        .padding(16)
+                if fit == .fill {
+                    // Fill: cover the viewer edge to edge, cropping the overflow.
+                    GeometryReader { proxy in
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: proxy.size.width, height: proxy.size.height)
+                            .clipped()
+                    }
+                } else {
+                    ScrollView {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM))
+                            .padding(16)
+                    }
                 }
             } else if failed {
                 FriendlyStateView(style: .error, icon: "photo", title: "Couldn't load the image", message: "Check your connection and try again.")
@@ -639,13 +836,14 @@ private struct ArtifactImageView: View {
 
 private struct ArtifactVideoView: View {
     let urlString: String
+    var fit: ArtifactFit = .fit
     @State private var player: AVPlayer?
     @State private var failed = false
 
     var body: some View {
         Group {
             if let player {
-                VideoPlayer(player: player)
+                ArtifactPlayerView(player: player, fill: fit == .fill)
             } else if failed {
                 FriendlyStateView(style: .error, icon: "video", title: "Couldn't load the video", message: "Check your connection and try again.")
             } else {
@@ -671,3 +869,42 @@ private struct ArtifactVideoView: View {
         .onDisappear { player?.pause() }
     }
 }
+
+/// The system player with Fit (aspect) or Fill (aspect fill) gravity;
+/// SwiftUI's `VideoPlayer` has no gravity setting.
+private struct ArtifactPlayerView: UIViewControllerRepresentable {
+    let player: AVPlayer
+    let fill: Bool
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.videoGravity = fill ? .resizeAspectFill : .resizeAspect
+        return controller
+    }
+
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        if controller.player !== player { controller.player = player }
+        controller.videoGravity = fill ? .resizeAspectFill : .resizeAspect
+    }
+}
+
+#if DEBUG
+/// `-calm-artifact-viewer`, `-calm-artifact-comments`, `-calm-artifact-share`
+/// (DEBUG only, phone calm I12): open an artifact in the native viewer (bar,
+/// comments sheet or share sheet showing). `=<id>` picks the record; with
+/// `-sample-workspace` the default is the first sample artifact.
+enum CalmArtifactLaunch {
+    static let keys = [LaunchArgument.calmArtifactViewer, LaunchArgument.calmArtifactComments, LaunchArgument.calmArtifactShare]
+
+    static func on(_ key: String) -> Bool {
+        launchArgumentEnabled(key) || launchArgumentValue(key) != nil
+    }
+
+    static var isActive: Bool { keys.contains(where: on) }
+
+    static var artifactId: String {
+        keys.compactMap { launchArgumentValue($0) }.first { $0 != "true" && !$0.isEmpty } ?? "preview-artifact-1"
+    }
+}
+#endif

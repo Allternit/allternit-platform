@@ -8,7 +8,7 @@ import UIKit
 struct PetOfferBannerLayer: View {
     @ObservedObject private var center = PetOfferCenter.shared
     @ObservedObject private var hub = AgentHubStore.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     /// Leaves after 8 s; VoiceOver users get longer to hear it.
     private var lifetime: Duration { UIAccessibility.isVoiceOverRunning ? .seconds(20) : .seconds(8) }

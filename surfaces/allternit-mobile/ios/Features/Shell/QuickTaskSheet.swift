@@ -51,7 +51,7 @@ struct QuickTaskSheet: View {
                 if run == nil {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Start") {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptics.light()
                             runId = runner.start(text: text)
                         }
                         .fontWeight(.semibold)

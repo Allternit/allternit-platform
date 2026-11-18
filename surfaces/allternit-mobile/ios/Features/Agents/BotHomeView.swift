@@ -1198,8 +1198,7 @@ struct BotHomeView: View {
     }
 
     private func hapticLight() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
     }
 
     private func masked(_ value: String) -> String {

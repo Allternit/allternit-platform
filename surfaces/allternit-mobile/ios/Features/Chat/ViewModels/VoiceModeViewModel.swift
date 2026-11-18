@@ -263,8 +263,7 @@ final class VoiceModeViewModel: ObservableObject {
     /// Mic tap toggles mute. Muting mid-turn discards any in-flight
     /// recognition; unmuting in hands-free resumes listening.
     func toggleMute() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
         isMuted.toggle()
         if inSession {
             sessionClient?.setMuted(isMuted)
@@ -303,21 +302,19 @@ final class VoiceModeViewModel: ObservableObject {
         guard isActive else { return }
         if inSession {
             guard state == .thinking || state == .speaking else { return }
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            Haptics.medium()
             sessionClient?.cancelSpeech(id: currentSpeakId)
             abortTurn()
             return
         }
         switch state {
         case .speaking:
-            let generator = UIImpactFeedbackGenerator(style: .medium)
-            generator.impactOccurred()
+            Haptics.medium()
             speaker?.stop()
             replyMessageId = nil
             advanceAfterSpeech()
         case .thinking:
-            let generator = UIImpactFeedbackGenerator(style: .medium)
-            generator.impactOccurred()
+            Haptics.medium()
             chatViewModel.stopStreaming()
             replyMessageId = nil
             advanceAfterSpeech()

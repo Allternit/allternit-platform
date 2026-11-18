@@ -13,6 +13,13 @@ final class CodeCanvasStore: ObservableObject {
     @Published private(set) var activeWorkspaceId: String? = nil
 
     private init() {
+        reset()
+    }
+
+    /// Back to the one empty default workspace. Account switch (phone calm
+    /// I14b, org and person): the leaving account's session tiles go; the
+    /// canvas fills again from the new account's sessions when it appears.
+    func reset() {
         workspaces = [
             CodeWorkspace(
                 id: "default",

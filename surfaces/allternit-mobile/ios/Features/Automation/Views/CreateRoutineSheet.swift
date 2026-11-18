@@ -245,8 +245,7 @@ struct CreateRoutineSheet: View {
         let steps = trimmedStepCommands.map { RoutineStep(command: $0, status: "pending") }
         let trimmedTrigger = trigger.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSchedule = schedule.trimmingCharacters(in: .whitespacesAndNewlines)
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
         onCreate(
             trimmedName,
             steps,

@@ -26,7 +26,7 @@ struct StageBackdropView: View {
 
     @ObservedObject private var store = StageBackdropStore.shared
     @ObservedObject private var appearance = AppearanceStore.shared
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @ReducedMotion private var systemReduceMotion
     @Environment(\.colorScheme) private var scheme
 
     private var isStill: Bool { still || systemReduceMotion || appearance.reduceMotion || store.motion == .still }
