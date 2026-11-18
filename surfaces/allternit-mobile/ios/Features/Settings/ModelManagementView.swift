@@ -36,6 +36,8 @@ struct ModelManagementListContent: View {
     @ObservedObject var modelStore: ModelStore
     @ObservedObject var store: ProviderManagementStore
     @StateObject private var freeweights = FreeweightsBrowseStore()
+    /// Search over the providers that aren't ready (the runtime catalog has ~300).
+    @State private var providerQuery = ""
 
     var body: some View {
         List {
@@ -112,8 +114,14 @@ struct ModelManagementListContent: View {
 
     // MARK: - Engines
 
+    /// Engines the selected computer uses: three group rows (each opens its
+    /// list), at most 3 "Needs you" rows, and "Other providers" (search over
+    /// the rest of the ~300-row catalog). One search box filters everything.
     @ViewBuilder
     private var enginesSection: some View {
+        let inUse = store.engines.filter(\.inUse)
+        let others = store.engines.filter { !$0.inUse }
+        let query = providerQuery.trimmingCharacters(in: .whitespaces)
         Section {
             if store.isLoading && store.engines.isEmpty {
                 ProgressView()
@@ -135,13 +143,182 @@ struct ModelManagementListContent: View {
                     message: "Add a model provider in Platform settings to see engines here."
                 )
             } else {
-                ForEach(store.engines) { engine in
-                    EngineRow(engine: engine)
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(Color("TextSecondary"))
+                    TextField("Search your providers or find one", text: $providerQuery)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.subheadline)
+                }
+                if query.isEmpty {
+                    ForEach(ProviderGroup.allCases) { group in
+                        let list = inUse.filter { $0.group == group }
+                        NavigationLink {
+                            ProviderGroupList(title: group.title, engines: list)
+                        } label: {
+                            ProviderGroupRow(group: group, engines: list)
+                        }
+                    }
+                    if !others.isEmpty {
+                        NavigationLink {
+                            OtherProvidersList(engines: others, connected: inUse)
+                        } label: {
+                            Label("Other providers", systemImage: "plus.circle")
+                                .font(.subheadline)
+                        }
+                    }
                 }
             }
         } header: {
             Text("Engines")
         }
+
+        if store.error == nil && !store.engines.isEmpty {
+            if query.isEmpty {
+                let needsYou = inUse.filter(\.needsYou)
+                if !needsYou.isEmpty {
+                    Section {
+                        ForEach(needsYou.prefix(ProviderSearch.needsYouLimit)) { engine in
+                            EngineRow(engine: engine)
+                        }
+                        if needsYou.count > ProviderSearch.needsYouLimit {
+                            Text("\(needsYou.count - ProviderSearch.needsYouLimit) more in the groups above")
+                                .font(.caption)
+                                .foregroundColor(Color("TextSecondary"))
+                        }
+                    } header: {
+                        Text("Needs you · \(needsYou.count)")
+                    }
+                }
+            } else {
+                ForEach(ProviderGroup.allCases) { group in
+                    let matches = ProviderSearch.matches(inUse.filter { $0.group == group }, query: query, limit: .max)
+                    if !matches.isEmpty {
+                        Section {
+                            ForEach(matches.prefix(3)) { EngineRow(engine: $0) }
+                            if matches.count > 3 {
+                                NavigationLink("See all \(matches.count)") {
+                                    ProviderGroupList(title: group.title, engines: matches)
+                                }
+                                .font(.subheadline)
+                            }
+                        } header: {
+                            Text("\(group.title) · \(matches.count)")
+                        }
+                    }
+                }
+                Section {
+                    let hits = ProviderSearch.matches(others, query: query)
+                    if hits.isEmpty {
+                        Text("No other provider matches “\(query)”.")
+                            .font(.caption)
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                    ForEach(hits) { EngineRow(engine: $0) }
+                } header: {
+                    Text("Other providers")
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Groups
+
+/// The three tiles of the web panel, as list rows: title, summary, logos count.
+private struct ProviderGroupRow: View {
+    let group: ProviderGroup
+    let engines: [ProviderEngine]
+
+    var body: some View {
+        let ready = engines.filter(\.isReady).count
+        let waiting = engines.count - ready
+        HStack(spacing: 12) {
+            Image(systemName: group.icon)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(Color("TextSecondary"))
+                .frame(width: 32, height: 32)
+                .background(Color("BgPanel"))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(group.title)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                Text(engines.isEmpty ? "None yet" : "\(ready) ready" + (waiting > 0 ? " · \(waiting) need\(waiting == 1 ? "s" : "") you" : ""))
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            Spacer()
+            Text("\(engines.count)")
+                .font(.system(size: 17, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(Color("TextPrimary"))
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One group's full list, with its own search.
+private struct ProviderGroupList: View {
+    let title: String
+    let engines: [ProviderEngine]
+    @State private var query = ""
+
+    var body: some View {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let rows = q.isEmpty ? engines : ProviderSearch.matches(engines, query: q, limit: .max)
+        List {
+            if rows.isEmpty {
+                Text(q.isEmpty ? "Nothing connected here yet." : "No match.")
+                    .font(.subheadline)
+                    .foregroundColor(Color("TextSecondary"))
+            }
+            ForEach(rows) { EngineRow(engine: $0) }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color("BgPrimary"))
+        .searchable(text: $query, prompt: "Search \(title.lowercased())")
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// The rest of the runtime catalog: search only, first 8 matches.
+private struct OtherProvidersList: View {
+    let engines: [ProviderEngine]
+    let connected: [ProviderEngine]
+    @State private var query = ""
+
+    var body: some View {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let hits = ProviderSearch.matches(engines, query: q)
+        let already = q.isEmpty ? [] : ProviderSearch.matches(connected, query: q, limit: .max)
+        List {
+            Section {
+                ForEach(hits) { EngineRow(engine: $0) }
+                if !already.isEmpty {
+                    Text("Already connected: " + already.map(\.name).joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundColor(Color("TextSecondary"))
+                }
+                if hits.isEmpty {
+                    Text(q.isEmpty ? "Type a provider name." : "No other provider matches.")
+                        .font(.subheadline)
+                        .foregroundColor(Color("TextSecondary"))
+                }
+            } footer: {
+                Text("\(engines.count) providers. Connect one on your computer in Settings → Account → Models & providers.")
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color("BgPrimary"))
+        .searchable(text: $query, prompt: "Search \(engines.count) providers")
+        .navigationTitle("Other providers")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -240,17 +417,60 @@ final class ProviderManagementStore: ObservableObject {
                     modelCount = provider.models.count
                 }
 
+                // An installed CLI that isn't signed in is in use and needs you;
+                // the rest of the catalog is only found by search.
+                let installedCLI = provider.isSubprocess && auth != nil && auth?.status != "not_installed"
                 return ProviderEngine(
                     id: provider.id,
                     name: provider.name,
                     kind: provider.kindLabel,
                     status: ready ? "ready" : (provider.status == "missing_key" ? "missing" : "unknown"),
                     modelCount: modelCount,
-                    isReady: ready
+                    isReady: ready,
+                    group: provider.isSubprocess ? .cli : (provider.isLocal ? .local : .api),
+                    inUse: ready || installedCLI
                 )
             }
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+}
+
+/// Name/id search over providers: names that start with the query first, at most `limit`.
+enum ProviderSearch {
+    static let limit = 8
+    static let needsYouLimit = 3
+
+    static func matches(_ engines: [ProviderEngine], query: String, limit: Int = ProviderSearch.limit) -> [ProviderEngine] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return [] }
+        let hits = engines.filter { $0.name.lowercased().contains(q) || $0.id.lowercased().contains(q) }
+        func starts(_ e: ProviderEngine) -> Bool { e.name.lowercased().hasPrefix(q) || e.id.lowercased().hasPrefix(q) }
+        return Array(hits.sorted {
+            starts($0) != starts($1) ? starts($0) : $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }.prefix(limit))
+    }
+}
+
+enum ProviderGroup: String, CaseIterable, Identifiable, Sendable {
+    case cli, api, local
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .cli: return "Coding tools"
+        case .api: return "API providers"
+        case .local: return "On this computer"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .cli: return "terminal"
+        case .api: return "key"
+        case .local: return "cpu"
         }
     }
 }
@@ -262,4 +482,9 @@ struct ProviderEngine: Identifiable, Sendable {
     let status: String
     let modelCount: Int
     let isReady: Bool
+    let group: ProviderGroup
+    /// Ready, or an installed CLI waiting for sign-in. Everything else is catalog.
+    let inUse: Bool
+
+    var needsYou: Bool { inUse && !isReady }
 }
