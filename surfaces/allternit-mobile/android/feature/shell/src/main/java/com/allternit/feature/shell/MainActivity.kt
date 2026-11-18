@@ -1,0 +1,140 @@
+package com.allternit.feature.shell
+
+import android.content.Intent
+import android.os.Bundle
+import android.util.Log
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import com.allternit.core.auth.AllternitAuth
+import com.allternit.core.auth.AuthState
+import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.FriendlyState
+import com.allternit.core.design.FriendlyStyle
+import com.allternit.core.design.ThemeMode
+import com.allternit.feature.onboarding.SignInScreen
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+
+/**
+ * The native app's only activity (PLAN.md section 2: single MainActivity). Launcher of the
+ * `nativeapp` flavor; the play and phonelink builds keep the TWA launcher.
+ *
+ * Signed out → [SignInScreen]. Signed in → [HomePlaceholder] until step 7c brings the drawer,
+ * mode dial, search and overview.
+ *
+ * Debug builds only: `adb shell am start -n com.allternit.app.ondevice/com.allternit.feature.shell.MainActivity
+ * --es ticket <sign_in_token>` signs in with a Clerk sign-in token (Maestro, emulator checks).
+ * Release builds compile the check out (BuildConfig.DEBUG is a constant).
+ */
+class MainActivity : ComponentActivity() {
+    /** Debug "Continue without signing in" (iOS skipAuth): the home without a session. */
+    private var skippedAuth by mutableStateOf(false)
+
+    @OptIn(ExperimentalComposeUiApi::class)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        AllternitAuth.start(applicationContext)
+        enableEdgeToEdge()
+        super.onCreate(savedInstanceState)
+        setContent {
+            val state by AllternitAuth.state.collectAsState()
+            val signedIn = state is AuthState.SignedIn || skippedAuth
+            // Sign-in is always dark, like iOS LoginGateView; the workspace is light by default.
+            AllternitTheme(themeMode = if (signedIn) ThemeMode.Light else ThemeMode.Dark) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(AllternitTheme.colors.bgPrimary)
+                        // Maestro selects Modifier.testTag ids as resource ids (maestro/ids.md).
+                        .semantics { testTagsAsResourceId = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when (val s = state) {
+                        is AuthState.SignedIn -> HomePlaceholder(account = s.account, onOpenWeb = ::openWebVersion)
+                        else -> if (skippedAuth) {
+                            HomePlaceholder(account = null, onOpenWeb = ::openWebVersion)
+                        } else {
+                            when (s) {
+                                AuthState.Starting, AuthState.Finishing -> CircularProgressIndicator(
+                                    modifier = Modifier.size(28.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = AllternitTheme.colors.textSecondary,
+                                )
+                                is AuthState.Unavailable -> FriendlyState(
+                                    style = FriendlyStyle.Offline,
+                                    title = "Can't reach sign-in",
+                                    message = s.message,
+                                    actionTitle = "Try again",
+                                    onAction = AllternitAuth::retry,
+                                ) {
+                                    Icon(
+                                        painter = painterResource(com.allternit.core.design.R.drawable.ph_globe),
+                                        contentDescription = null,
+                                        tint = AllternitTheme.colors.textSecondary,
+                                    )
+                                }
+                                else -> SignInScreen(
+                                    onSkipAuth = if (BuildConfig.DEBUG) ({ skippedAuth = true }) else null,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        handleDebugTicket(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDebugTicket(intent)
+    }
+
+    /**
+     * "Use web version" (PLAN.md section 3 rollback switch, first cut): the retained TWA
+     * launcher in the same package opens m.allternit.com.
+     */
+    private fun openWebVersion() {
+        startActivity(Intent().setClassName(packageName, TWA_LAUNCHER))
+    }
+
+    private fun handleDebugTicket(intent: Intent) {
+        if (!BuildConfig.DEBUG) return
+        val ticket = intent.getStringExtra(EXTRA_TICKET)?.takeIf { it.isNotBlank() } ?: return
+        intent.removeExtra(EXTRA_TICKET)
+        lifecycleScope.launch {
+            val ready = AllternitAuth.state.first { it !is AuthState.Starting }
+            if (ready !is AuthState.SignedOut) {
+                Log.i(TAG, "ticket ignored: already $ready")
+                return@launch
+            }
+            val result = AllternitAuth.signInWithTicket(ticket)
+            Log.i(TAG, "ticket sign-in: ${result.error ?: "ok"}")
+        }
+    }
+
+    private companion object {
+        const val TAG = "AllternitMain"
+        const val EXTRA_TICKET = "ticket"
+        const val TWA_LAUNCHER = "com.google.androidbrowserhelper.trusted.LauncherActivity"
+    }
+}

@@ -61,9 +61,12 @@
             <meta-data
                 android:name="android.support.customtabs.trusted.METADATA_SHARE_TARGET"
                 android:value="@string/share_target" />
+            <!-- ${twaLauncherCategory} (app/build.gradle.kts): LAUNCHER in play and phonelink,
+                 so the TWA is the app icon exactly as before; DEFAULT in nativeapp, where the
+                 native MainActivity is the icon and this activity stays as "Use web version". -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="${twaLauncherCategory}" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />

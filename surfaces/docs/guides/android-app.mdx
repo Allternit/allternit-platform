@@ -115,3 +115,31 @@ Phone Link before version 0.4.0 was a separate app called **Allternit Phone Link
   - Writes go to a staging file and upload when the writer closes it, with `base_rev`, `on_conflict: keep_both`, the device name and `utc_offset_minutes`. Up to 4 MiB uses the small write; bigger files use a resumable upload session with the pinned FastCDC chunker (`Chunker.kt`, checked against `contracts/files-drive/vectors/chunker-v1.json` by `ChunkerVectorsTest`). Queued uploads survive the process being killed and retry through `FilesUploadJobService` when the network is back.
   - Sign-in: a Keystore RSA-2048 key is made, a Custom Tab opens `m.allternit.com/files/connect-android?state&pk&alg=RSA-OAEP-SHA1&device&device_id&app`, and the page returns the cloud-api token encrypted to that key through the App Link `https://m.allternit.com/files/android-callback?state&sealed` (or `allternit-files://signin?state&sealed` for a build whose App Link is not verified, such as debug). The token is stored sealed with a Keystore AES-256-GCM key in no-backup storage. The TWA's `m.allternit.com` filter has priority -1 so the callback path goes to `FilesSignInActivity` with no chooser.
   - Protected roots use `BiometricPrompt` (screen-lock confirmation on Android 8) and send `x-allternit-unlock` for five minutes.
+
+### Native app (in testing)
+
+The Kotlin + Jetpack Compose app that will replace the Trusted Web Activity is built as a third flavor of the same module. It goes only to the Google Play internal testing track until the switch; the Google Play and Phone Link builds above are unchanged. Plan and progress: `handoffs/android-native-2026-11-18` in the workspace.
+
+- **Flavor `nativeapp`** (`app/build.gradle.kts`): same app ID and signing key, `versionCode` 1000 and up (the Trusted Web Activity builds keep 17 to 999 for fixes), version name suffix `-native`. Build it with `./gradlew :app:bundleNativeappRelease` (or `:app:assembleNativeappDebug`, installed as `com.allternit.app.ondevice`).
+- **Launcher:** `com.allternit.feature.shell.MainActivity` (`src/nativeapp/AndroidManifest.xml`). The stock `LauncherActivity` stays in the build without the launcher category (the manifest placeholder `twaLauncherCategory`), so **Use web version** on the home screen still opens `m.allternit.com`.
+- **Modules:** `:core:auth` (Clerk, session state, API token), `:feature:onboarding` (sign-in screen), `:feature:shell` (main activity; the drawer and mode dial come next). Only the `nativeapp` flavor depends on them; `scripts/android-check.sh` fails if Clerk or Compose reaches the Google Play or Phone Link build.
+- **Toolchain:** Kotlin 2.3.21, Compose BOM 2026.06.01, OkHttp 5.4.0 (`gradle/libs.versions.toml`). Clerk Android needs them.
+
+#### Sign-in
+
+Sign-in uses the Clerk Android SDK (`com.clerk:clerk-android-api` 1.4.1) against the production instance `clerk.allternit.com`, the same instance as iOS and the web. `AllternitAuth` starts Clerk in `MainActivity.onCreate` and publishes the state (`Starting`, `SignedOut`, `Finishing`, `SignedIn`, `Unavailable`) as a `StateFlow`.
+
+- **Email:** the address gets a 6-digit code. A known address signs in; a new one signs up. The screen shows the 18+, Terms and Privacy line, as on iOS.
+- **Google and GitHub:** Clerk's native OAuth in a Custom Tab, returning through Clerk's `SSOReceiverActivity` on `clerk://com.allternit.app.callback`. That redirect must be allowed for the native app in the Clerk dashboard. Sign in with Apple is iOS only.
+- **Organization:** the production instance requires one. A new account's session waits on the choose-organization task; the app uses the first membership or creates "First name's Organization", the same as iOS `finishOrganizationTaskIfNeeded`.
+- **API calls:** `AllternitAuth.tokenProvider` goes into `ApiClients.okHttp(bearer = …)`. It sends the Clerk session token (about 60 seconds) and gets a new one from Clerk's cache 10 seconds before it expires.
+
+#### Testing sign-in
+
+Debug builds accept a Clerk sign-in token as an intent extra, so Maestro and emulator checks need no password:
+
+```bash
+adb shell am start -n com.allternit.app.ondevice/com.allternit.feature.shell.MainActivity --es ticket SIGN_IN_TOKEN
+```
+
+Mint the token with the Clerk backend API (`POST /v1/sign_in_tokens`) for the test account. Release builds ignore the extra. The sign-in screen sets the shared test ids `loginHeadline`, `loginContinueEmail` and `loginSkipAuth` (debug only) from `surfaces/allternit-mobile/maestro/ids.md`.

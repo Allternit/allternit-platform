@@ -5,13 +5,9 @@ import com.allternit.core.api.BearerProvider
 /**
  * The signed-in user's API token, for every native screen.
  *
- * Only the interface exists until step 7 of the native app plan
- * (handoffs/android-native-2026-11-18/PLAN.md), which picks the implementation after
- * a device spike:
- *  - Clerk Android (`com.clerk:clerk-android`, still pre-1.0) with org auto-create, or
- *  - the Files-style sign-in that already ships: a Custom Tab to m.allternit.com mints a
- *    cloud-api token sealed to a Keystore RSA key (app `files/FilesAuth.kt`). This one
- *    also carries the TWA → native hand-off, since the user is signed in there already.
+ * Step 7b picked Clerk Android (`com.clerk:clerk-android-api`, step 7a spike): the
+ * implementation is [ClerkTokenProvider], reached as `AllternitAuth.tokenProvider`.
+ * The Files-style Custom Tab token (app `files/FilesAuth.kt`) stays the fallback only.
  *
  * It extends [BearerProvider], so any implementation plugs into
  * `ApiClients.okHttp(bearer = tokenProvider)` unchanged.

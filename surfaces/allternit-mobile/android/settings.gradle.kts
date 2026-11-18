@@ -24,3 +24,7 @@ include(":core:api")
 include(":core:auth")
 include(":core:stream")
 include(":core:data")
+// Native app screens (step 7b). Only the "nativeapp" flavor of :app depends on them, so the
+// play and phonelink (TWA) builds do not compile or ship any of this.
+include(":feature:onboarding")
+include(":feature:shell")
