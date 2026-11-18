@@ -144,13 +144,24 @@ enum ComputeGateNotice {
     static func text(_ s: ComputeStatus) -> String? {
         if s.isSuspended { return ComputeHoursLine.text(s) ?? ComputeGateCopy.outOfCredits }
         guard let c = s.computer else { return nil }
-        if s.state == "provisioning" || c.status == "starting" { return ComputeGateCopy.provisioning }
+        if isStarting(s) { return ComputeGateCopy.provisioning }
         if c.status == "sleeping" { return ComputeGateCopy.sleeping }
-        if c.kind == "credits", c.status == "running", let credits = s.paths?.credits, credits.pricePerHourUsd > 0 {
-            let hours = credits.balanceUsd / credits.pricePerHourUsd
-            if hours <= 2 { return ComputeGateCopy.lowRunway2 }
-            if hours <= 24 { return ComputeGateCopy.lowRunway24 }
-        }
+        return runway(s)
+    }
+
+    /// The hosted computer is being made or started.
+    static func isStarting(_ s: ComputeStatus) -> Bool {
+        guard let c = s.computer else { return s.state == "provisioning" }
+        return s.state == "provisioning" || c.status == "starting"
+    }
+
+    /// A credit computer running low: a day or 2 hours left, else nil.
+    static func runway(_ s: ComputeStatus) -> String? {
+        guard let c = s.computer, c.kind == "credits", c.status == "running",
+              let credits = s.paths?.credits, credits.pricePerHourUsd > 0 else { return nil }
+        let hours = credits.balanceUsd / credits.pricePerHourUsd
+        if hours <= 2 { return ComputeGateCopy.lowRunway2 }
+        if hours <= 24 { return ComputeGateCopy.lowRunway24 }
         return nil
     }
 }
@@ -408,15 +419,29 @@ struct ComputeGateView: View {
     }
 }
 
-/// The gate as a sheet (409 compute_required, or the strip's action).
+/// The gate as a sheet (409 compute_required, or the composer chip's action).
 struct ComputeGateSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var store = ComputeStatusStore.shared
+    @State private var showExplainer = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 ComputeGateView(onDone: { dismiss() })
                     .padding(16)
+                // Was under the old top strip; the chip opens this sheet now.
+                if store.status != nil {
+                    Button(ComputeGateCopy.explainerLink) { showExplainer = true }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .frame(minHeight: 44)
+                        .padding(.horizontal, 16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .sheet(isPresented: $showExplainer) {
+                ComputeExplainerSheet(status: store.status, confirmTitle: nil, onConfirm: nil)
             }
             .background(SetupPalette.bg.ignoresSafeArea())
             .navigationTitle("Computer")
@@ -425,72 +450,6 @@ struct ComputeGateSheet: View {
                 ToolbarItem(placement: .topBarTrailing) { Button("Close") { dismiss() } }
             }
         }
-    }
-}
-
-/// The small banner for agent screens: gate on and not chat-only-confirmed
-/// shows "Agents need a computer"; chat-only shows the same strip as a
-/// reminder; a failed check says so with Retry (agent screens stay closed).
-struct ComputeGateStrip: View {
-    @ObservedObject private var store = ComputeStatusStore.shared
-    @State private var showSheet = false
-    @State private var showExplainer = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            stripBody
-            if store.status != nil {
-                Button(ComputeGateCopy.explainerLink) { showExplainer = true }
-                    .font(.footnote.weight(.semibold))
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(minHeight: 44)
-                    .padding(.horizontal, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .sheet(isPresented: $showExplainer) { ComputeExplainerSheet(status: store.status, confirmTitle: nil, onConfirm: nil) }
-    }
-
-    private var stripBody: some View {
-        Group {
-            if store.loadFailed && store.status == nil {
-                row(text: ComputeGateCopy.checkFailed, action: "Retry") { Task { await store.refresh() } }
-            } else if let s = store.status, s.gate {
-                row(text: s.isSuspended ? (ComputeHoursLine.text(s) ?? ComputeGateCopy.outOfCredits) : ComputeGateCopy.title,
-                    action: "Pick a computer") { showSheet = true }
-            } else if let s = store.status, let notice = ComputeGateNotice.text(s) ?? ComputeHoursLine.text(s) {
-                row(text: notice, action: nil, perform: {})
-            }
-        }
-        .task { await store.refreshIfNeeded() }
-        .sheet(isPresented: $showSheet) { ComputeGateSheet() }
-    }
-
-    private func row(text: String, action: String?, perform: @escaping () -> Void) -> some View {
-        HStack(spacing: 12) {
-            Text(text)
-                .font(.subheadline)
-                .foregroundColor(Color("TextPrimary"))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-            if let action {
-                Button(action: perform) {
-                    Text(action)
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(Color("TextPrimary"))
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .accessibilityElement(children: .combine)
     }
 }
 

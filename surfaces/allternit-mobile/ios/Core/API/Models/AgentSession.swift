@@ -84,6 +84,9 @@ struct AgentSession: Decodable, Sendable, Identifiable {
     let readyForReview: Bool
     /// `metadata.readyForReviewAt` — ISO 8601 time the run ended.
     let readyForReviewAt: String?
+    /// `metadata.completed` — the session was marked finished (web
+    /// code-session-state.ts; the Code sessions view's Done, C6). Missing = false.
+    let completed: Bool
     // The rest of `metadata` (directory, version, permission, …) stays
     // skipped — not rendered anywhere on iOS.
 
@@ -116,6 +119,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
         case needsInputAt
         case readyForReview
         case readyForReviewAt
+        case completed
     }
 
     private struct ArtifactSessionTag: Decodable { let kind: String? }
@@ -159,6 +163,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             needsInputAt = needsInput ? ((try? metadata.decodeIfPresent(String.self, forKey: .needsInputAt)) ?? nil) : nil
             readyForReview = ((try? metadata.decodeIfPresent(Bool.self, forKey: .readyForReview)) ?? nil) ?? false
             readyForReviewAt = readyForReview ? ((try? metadata.decodeIfPresent(String.self, forKey: .readyForReviewAt)) ?? nil) : nil
+            completed = ((try? metadata.decodeIfPresent(Bool.self, forKey: .completed)) ?? nil) ?? false
             // The backend emits a bool; the create path carries the flag as
             // the string "true" inside the metadata bag.
             if let flag = try metadata.decodeIfPresent(Bool.self, forKey: .ephemeral) {
@@ -181,6 +186,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             needsInputAt = nil
             readyForReview = false
             readyForReviewAt = nil
+            completed = false
             ephemeral = false
         }
     }

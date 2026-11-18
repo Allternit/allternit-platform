@@ -423,9 +423,11 @@ final class RuntimeRelayClient: @unchecked Sendable {
         }
     }
 
+    /// Same body reading as `APIClient.validate` (contract C5): every body
+    /// shape, status text removed, and the compute gate's nested
+    /// `error.code` becomes the gate sentence so `isComputeGateRefusal` sees it.
     private static func errorMessage(from data: Data) -> String? {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return (object["message"] as? String) ?? (object["error"] as? String)
+        APIErrorBody.parse(data).calmMessage
     }
 
     private static func escapePathSegment(_ value: String) -> String {

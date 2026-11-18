@@ -44,28 +44,42 @@ struct AllternitApp: App {
         #endif
     }
 
+    @ViewBuilder
+    private var rootContent: some View {
+        if authManager.isClerkConfigured || shouldSkipAuth {
+            // Only inject Clerk.shared when the SDK was actually
+            // configured; otherwise `Clerk.shared` traps on access.
+            if authManager.isClerkConfigured {
+                gatedContent
+                    // ClerkKitUI views (AuthView) read Clerk from the environment.
+                    .environment(Clerk.shared)
+            } else {
+                gatedContent
+            }
+        } else {
+            // Publishable key placeholder not filled in — LoginGateView
+            // shows the setup hint instead of crashing on Clerk.shared.
+            // DEBUG: still expose the skip-auth affordance so the app can
+            // be opened without a configured Clerk app.
+            LoginGateView(onSkipAuth: {
+                skipAuthRequested = true
+            })
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {
-                if authManager.isClerkConfigured || shouldSkipAuth {
-                    // Only inject Clerk.shared when the SDK was actually
-                    // configured; otherwise `Clerk.shared` traps on access.
-                    if authManager.isClerkConfigured {
-                        gatedContent
-                            // ClerkKitUI views (AuthView) read Clerk from the environment.
-                            .environment(Clerk.shared)
-                    } else {
-                        gatedContent
-                    }
+                #if DEBUG
+                if CalmGallery.isEnabled {
+                    // -calm-gallery: glass, haptics and motion presets (phone calm I1).
+                    CalmGalleryView()
                 } else {
-                    // Publishable key placeholder not filled in — LoginGateView
-                    // shows the setup hint instead of crashing on Clerk.shared.
-                    // DEBUG: still expose the skip-auth affordance so the app can
-                    // be opened without a configured Clerk app.
-                    LoginGateView(onSkipAuth: {
-                        skipAuthRequested = true
-                    })
+                    rootContent
                 }
+                #else
+                rootContent
+                #endif
             }
             .environmentObject(authManager)
             .reviewPrompt()
@@ -210,6 +224,27 @@ struct AllternitApp: App {
             || launchArgumentEnabled("open-settings-data")
             || launchArgumentEnabled("open-settings-brain-spike")
             || launchArgumentEnabled("open-plus-sheet")
+            || launchArgumentEnabled("open-plus-permission")
+            || launchArgumentEnabled("open-plus-computer")
+            || launchArgumentEnabled("open-chat-menu")
+            || launchArgumentEnabled("calm-drawer-open")
+            || launchArgumentEnabled("calm-gallery")
+            || launchArgumentEnabled("calm-chip")
+            || launchArgumentEnabled("calm-deck-open")
+            || launchArgumentEnabled("calm-swipe-tip")
+            || launchArgumentEnabled("calm-fan")
+            || launchArgumentEnabled("calm-shelf")
+            || launchArgumentEnabled("calm-recents-select")
+            || launchArgumentEnabled("calm-overview-menu")
+            || launchArgumentEnabled("calm-search")
+            || launchArgumentEnabled("calm-jump-button")
+            || launchArgumentEnabled("calm-code-sessions")
+            || launchArgumentValue("calm-code-filter") != nil
+            || launchArgumentEnabled("calm-code-scheduled")
+            || launchArgumentEnabled("calm-code-start")
+            || launchArgumentEnabled("calm-code-device")
+            || launchArgumentEnabled("calm-code-connect")
+            || launchArgumentEnabled("open-mode-dial")
             || launchArgumentEnabled("open-incognito")
             || launchArgumentEnabled("enable-agent-mode")
             || launchArgumentEnabled("open-agent-sheet")

@@ -44,7 +44,7 @@ struct ShellSearchView: View {
         NavigationStack {
             List {
                 if needle.isEmpty {
-                    Text("Search chats, code threads, projects and bots.")
+                    Text("Search chats and projects.")
                         .font(.subheadline)
                         .foregroundColor(Color("TextSecondary"))
                         .listRowBackground(Color.clear)
@@ -98,7 +98,7 @@ struct ShellSearchView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(Color("TextSecondary"))
-                    TextField("Search", text: $query)
+                    TextField("Search chats and projects", text: $query)
                         .focused($focused)
                         .submitLabel(.search)
                         .autocorrectionDisabled()

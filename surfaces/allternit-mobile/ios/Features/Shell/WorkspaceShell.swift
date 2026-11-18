@@ -4,18 +4,20 @@ import SwiftUI
 
 /// Top-level shell (the PWA phone shell, allternit-ai
 /// src/fabric-session/phone/PhoneShell.tsx): one section fills the screen,
-/// no bottom bar, with the one no-computer banner above it. The menu is the
-/// Arc drawer (HistorySidebarView): min(92% of the screen, 440) wide, it
-/// springs in OVER the screen from the left edge with a 16% scrim on the
-/// strip that stays visible; the screen itself doesn't move. It closes with
-/// a tap on the scrim or a drag/flick back to the edge. Cowork is NOT a
-/// mode; it's a composer-level toggle inside Home.
+/// no bottom bar and no banner above it (the computer chip rides above the
+/// composer, ComputerChipSlot). The menu is the
+/// Arc drawer (HistorySidebarView): min(80% of the screen, 360) wide (D5). It
+/// springs in from the left edge and the page pushes right with it, scaled to
+/// 0.94 with ~36 pt corners (the menu button rides on the page). It closes
+/// with a tap on the visible page strip or a drag/flick back to the edge. Holding ☰
+/// fans the modes out over everything (MenuOverlayHost); the fan and the drawer
+/// are never open together. Cowork is NOT a mode; it's a composer-level toggle inside Home.
 struct MainWorkspaceView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @ObservedObject private var botColors = BotColorStore.shared
     @ObservedObject private var railBackdrop = RailBackdropStore.shared
     @ObservedObject private var computeGate = ComputeStatusStore.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var isSidebarOpen = false
     @State private var dragOffset: CGFloat = 0
     @State private var selectedSessionId: String? = nil
@@ -26,7 +28,7 @@ struct MainWorkspaceView: View {
     @State private var sessionLookup: SessionLookupState? = nil
 
     /// PhoneShell DRAWER_FRACTION / DRAWER_MAX.
-    private var sidebarWidth: CGFloat { min(screenWidth * 0.92, 440) }
+    private var sidebarWidth: CGFloat { min(screenWidth * 0.80, 360) }
 
     /// Drawer position from 0 (closed) to 1 (open), tracking live drags.
     private var sidebarProgress: CGFloat {
@@ -36,7 +38,7 @@ struct MainWorkspaceView: View {
 
     /// Arc spring.smooth: critically damped, never overshoots the edge.
     private var drawerAnimation: Animation {
-        reduceMotion ? .linear(duration: 0.12) : .spring(response: 0.38, dampingFraction: 1, blendDuration: 0)
+        Motion.pick(Motion.drawer, reduced: reduceMotion)
     }
 
     var body: some View {
@@ -53,37 +55,7 @@ struct MainWorkspaceView: View {
             Color("BgPrimary")
                 .edgesIgnoringSafeArea(.all)
 
-            VStack(spacing: 0) {
-                // `phone-main`: the banner, then the section.
-                ConnectComputerView(isShellBanner: true)
-                activeSection
-                    .environment(\.shellShowsNoComputer, true)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .background(Color("BgPrimary"))
-            // Hidden from VoiceOver while the menu is over it (useInert).
-            .accessibilityHidden(isSidebarOpen)
-            // Left-edge pan opens the menu (useDrawerEdgeOpen, 24pt strip).
-            .overlay(alignment: .leading) {
-                if !isSidebarOpen {
-                    Color.clear
-                        .frame(width: 24)
-                        .contentShape(Rectangle())
-                        .ignoresSafeArea()
-                        .gesture(drawerGesture)
-                }
-            }
-
-            // Scrim over the visible strip (Arc contained overlay, 16% black).
-            Color.black
-                .opacity(0.16 * sidebarProgress)
-                .ignoresSafeArea()
-                .allowsHitTesting(isSidebarOpen)
-                .onTapGesture { setSidebar(false) }
-                .gesture(drawerGesture, including: isSidebarOpen ? .all : .none)
-                .accessibilityLabel("Close menu")
-                .accessibilityAddTraits(.isButton)
-                .accessibilityHidden(!isSidebarOpen)
+            pageView
 
             // The drawer panel: rounded trailing corners, slides from the edge.
             HistorySidebarView(
@@ -105,11 +77,17 @@ struct MainWorkspaceView: View {
                 .ignoresSafeArea()
             )
             .shadow(color: .black.opacity(sidebarProgress > 0 ? 0.12 : 0), radius: 16, x: 4, y: 0)
-            .offset(x: (sidebarProgress - 1) * (sidebarWidth + 24))
+            .offset(x: reduceMotion ? 0 : (sidebarProgress - 1) * (sidebarWidth + 24))
+            .opacity(reduceMotion ? Double(sidebarProgress) : 1)
             .simultaneousGesture(drawerGesture, including: isSidebarOpen ? .all : .subviews)
             .accessibilityHidden(!isSidebarOpen)
             .accessibilityAddTraits(.isModal)
             .accessibilityLabel("\(modeStore.shellMode.label) menu")
+        }
+        .onAppear {
+            #if DEBUG
+            if launchArgumentEnabled("calm-drawer-open") { isSidebarOpen = true }
+            #endif
         }
         .background(
             GeometryReader { proxy in
@@ -118,6 +96,24 @@ struct MainWorkspaceView: View {
                     .onChange(of: proxy.size.width) { _, width in screenWidth = width }
             }
         )
+        // ☰ hold: the mode fan and the bots shelf, over the page and the
+        // drawer so the header can't clip them (C8, MenuOverlayHost).
+        .overlay { MenuOverlayHost() }
+        .onAppear {
+            MenuHoldController.shared.install(
+                modeStore: modeStore,
+                isDrawerOpen: { isSidebarOpen },
+                openDrawer: { setSidebar(true) },
+                closeDrawer: { setSidebar(false) }
+            )
+        }
+        // Opening the drawer closes the fan; the two are never open together.
+        // The light haptic plays here so every way of opening (☰ on any
+        // screen, edge pan, a binding) gets exactly one.
+        .onChange(of: isSidebarOpen) { _, open in
+            if open { Haptics.light() }
+            MenuHoldController.shared.dispatch(open ? .drawerOpened : .drawerClosed)
+        }
         // The waiting games window, over every mode (WaitingGamesLayer).
         .overlay { WaitingGamesLayer() }
         // Pet offers: the bot offers help when a run fails off-screen.
@@ -165,6 +161,8 @@ struct MainWorkspaceView: View {
                 }
             )
             .environmentObject(modeStore)
+            // The shell's fan draws under this cover: ☰ here is tap only.
+            .environment(\.menuHoldEnabled, false)
         }
         .onReceive(NotificationCenter.default.publisher(for: .shellOpenOverview)) { _ in
             Task { await ShellSessionsStore.shared.load() }
@@ -371,6 +369,46 @@ struct MainWorkspaceView: View {
         }
     }
 
+    /// The page: pushed right, scaled and rounded by the drawer progress.
+    private var pageView: some View {
+        let p = sidebarProgress
+        return VStack(spacing: 0) {
+            // `phone-main`: the section alone. No top strip (C4): the
+            // computer chip sits above each composer instead.
+            activeSection
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color("BgPrimary"))
+        // Hidden from VoiceOver while the menu is open (useInert).
+        .accessibilityHidden(isSidebarOpen)
+        .allowsHitTesting(!isSidebarOpen)
+        // Left-edge pan opens the menu (useDrawerEdgeOpen, 24pt strip).
+        .overlay(alignment: .leading) {
+            if !isSidebarOpen {
+                Color.clear
+                    .frame(width: 24)
+                    .contentShape(Rectangle())
+                    .ignoresSafeArea()
+                    .gesture(drawerGesture)
+            }
+        }
+        // Scrim over the visible page strip; a tap closes the drawer.
+        .overlay {
+            Color.black
+                .opacity(0.16 * p)
+                .ignoresSafeArea()
+                .allowsHitTesting(isSidebarOpen)
+                .onTapGesture { setSidebar(false) }
+                .gesture(drawerGesture, including: isSidebarOpen ? .all : .none)
+                .accessibilityLabel("Close menu")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHidden(!isSidebarOpen)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: reduceMotion ? 0 : 36 * p, style: .continuous))
+        .scaleEffect(reduceMotion ? 1 : 1 - 0.06 * p)
+        .offset(x: reduceMotion ? 0 : p * sidebarWidth)
+    }
+
     private func setSidebar(_ open: Bool) {
         withAnimation(drawerAnimation) {
             isSidebarOpen = open
@@ -382,7 +420,7 @@ struct MainWorkspaceView: View {
     /// panel or a quick flick); dragging an open drawer left closes it past
     /// a third, or on a flick toward the edge, else it springs back.
     private var drawerGesture: some Gesture {
-        DragGesture(minimumDistance: 10)
+        DragGesture(minimumDistance: 10, coordinateSpace: .global)
             .onChanged { gesture in
                 // Horizontal pans only: vertical scrolls stay with the lists.
                 guard abs(gesture.translation.width) > abs(gesture.translation.height) else { return }

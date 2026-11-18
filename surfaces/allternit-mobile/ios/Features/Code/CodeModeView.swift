@@ -43,6 +43,10 @@ struct CodeModeView: View {
     /// key until its session exists.
     @State private var terminalKeys = Set(UserDefaults.standard.stringArray(forKey: CodeModeView.terminalKeysKey) ?? [])
     @State private var overviewKind: CodeOverviewKind? = nil
+    /// The Code sessions view (phone calm I9), and where it opens.
+    @State private var sessionsView: CodeSessionsOpening? = nil
+    @Namespace private var sessionsZoom
+    @ReducedMotion private var reduceMotion
     @State private var pane: CodePaneKind? = nil
     @State private var isRenamePresented = false
     @State private var renameText = ""
@@ -75,6 +79,22 @@ struct CodeModeView: View {
     }
 
     private var inThread: Bool { thread != nil }
+
+    /// Every Code-surface session, archived ones too (the sessions view's
+    /// Archived filter), newest first.
+    private var allCodeSessions: [AgentSession] {
+        sessions
+            .filter { $0.originSurface == AppMode.code.originSurface }
+            .sorted { CodeSessionDates.timestamp($0) > CodeSessionDates.timestamp($1) }
+    }
+
+    /// iOS 18+ zooms the sessions view out of its icon
+    /// (`.navigationTransition(.zoom)`); iOS 17 scales it from the corner,
+    /// and reduced motion cross-fades in 120 ms (section 6).
+    private var zoomsFromIcon: Bool {
+        if #available(iOS 18.0, *) { return !reduceMotion }
+        return false
+    }
 
     static let terminalKeysKey = "allternit:code:terminal-threads"
 
@@ -139,6 +159,22 @@ struct CodeModeView: View {
             } else {
                 (darkChrome ? TerminalPalette.background : Color("BgPrimary")).ignoresSafeArea()
             }
+        }
+        .overlay {
+            if let opening = sessionsView, !zoomsFromIcon {
+                sessionsViewContent(opening)
+                    .transition(reduceMotion ? .opacity : .scale(scale: 0.06, anchor: .topTrailing).combined(with: .opacity))
+                    .zIndex(10)
+            }
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { sessionsView != nil && zoomsFromIcon },
+            set: { if !$0 { sessionsView = nil } }
+        )) {
+            // Kept drawn while it zooms back into the icon (the opening only
+            // matters on first appear).
+            sessionsViewContent(sessionsView ?? CodeSessionsOpening())
+                .modifier(CodeSessionsZoomDestination(namespace: sessionsZoom))
         }
         .backdropTouches(showsBackdrop)
         .environment(\.backdropUnderneath, showsBackdrop)
@@ -214,13 +250,8 @@ struct CodeModeView: View {
     private var header: some View {
         let ink = darkChrome ? TerminalPalette.foreground : Color("TextPrimary")
         return HStack(spacing: 0) {
-            Button(action: openDrawer) {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 19, weight: .regular))
-                    .foregroundColor(ink)
-                    .frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("Open menu")
+            // Tap opens the drawer; hold fans the modes out (C8).
+            PhoneMenuButton(tint: ink, glyphSize: 19, onOpen: openDrawer)
 
             Spacer(minLength: 4)
 
@@ -228,7 +259,12 @@ struct CodeModeView: View {
             if inThread && activeSessionId != nil && !shellOpen {
                 panesMenu(ink: ink)
             }
-            CodeSessionsButton(tint: ink) { overviewKind = .threads }
+            // Code home and threads: the Code sessions view, grown out of
+            // this icon. The shell keeps its terminal sessions overview.
+            CodeSessionsButton(tint: ink) {
+                if shellOpen { overviewKind = .terminals } else { openSessionsView() }
+            }
+            .modifier(CodeSessionsZoomSource(namespace: sessionsZoom))
         }
         .padding(.horizontal, 6)
         .frame(height: 52)
@@ -398,6 +434,64 @@ struct CodeModeView: View {
     private var greetingText: String {
         guard let name = AuthManager.shared.firstName else { return greeting }
         return greeting.hasSuffix("?") ? "\(greeting.dropLast()), \(name)?" : "\(greeting) \(name)"
+    }
+
+    // MARK: - Code sessions view
+
+    private func sessionsViewContent(_ opening: CodeSessionsOpening) -> some View {
+        CodeSessionsView(
+            sessions: allCodeSessions,
+            folder: folder,
+            opening: opening,
+            onClose: closeSessionsView,
+            onOpenSession: { session in
+                closeSessionsView()
+                shellOpen = false
+                open(sessionId: session.id)
+            },
+            onArchive: { session in archive(session.id) },
+            onStart: { prompt in
+                closeSessionsView()
+                shellOpen = false
+                startFromSessionsView(prompt)
+            },
+            onRefresh: { await loadSessions() }
+        )
+    }
+
+    private func openSessionsView(_ opening: CodeSessionsOpening = CodeSessionsOpening()) {
+        Haptics.light()
+        Task { await loadSessions() }
+        if zoomsFromIcon {
+            sessionsView = opening
+        } else {
+            withAnimation(reduceMotion ? Motion.fade : .spring(response: 0.36, dampingFraction: 0.86)) {
+                sessionsView = opening
+            }
+        }
+    }
+
+    private func closeSessionsView() {
+        if zoomsFromIcon {
+            sessionsView = nil
+        } else {
+            withAnimation(reduceMotion ? Motion.fade : .spring(response: 0.32, dampingFraction: 0.9)) {
+                sessionsView = nil
+            }
+        }
+    }
+
+    /// The start screen's prompt goes through the launchpad's own start path
+    /// (`CodeLaunchComposer.onSend`). With no brain picked it only fills the
+    /// launchpad composer, as on the web.
+    private func startFromSessionsView(_ prompt: String) {
+        activeSessionId = nil
+        if (ModelStore.shared.selectedModelId ?? "").isEmpty {
+            thread = nil
+            draft = prompt
+        } else {
+            thread = CodeThreadTarget(sessionId: nil, initialPrompt: prompt)
+        }
     }
 
     // MARK: - Actions
@@ -610,6 +704,32 @@ struct CodeModeView: View {
         if launchArgumentEnabled("mesh-proxy-selfcheck") {
             MeshClient.runProxySelfCheck()
         }
+        // Code sessions view (phone calm I9): `-calm-code-sessions`,
+        // `-calm-code-filter=<filter>`, `-calm-code-scheduled`,
+        // `-calm-code-start`, `-calm-code-device`, `-calm-code-connect`.
+        var opening = CodeSessionsOpening()
+        var wantsSessions = launchArgumentEnabled(LaunchArgument.calmCodeSessions)
+        if let raw = launchArgumentValue(LaunchArgument.calmCodeFilter), let filter = CodeSessionFilter(argument: raw) {
+            opening.filter = filter
+            wantsSessions = true
+        }
+        if launchArgumentEnabled(LaunchArgument.calmCodeScheduled) {
+            opening.screen = .scheduled
+            wantsSessions = true
+        }
+        if launchArgumentEnabled(LaunchArgument.calmCodeStart) {
+            opening.screen = .start
+            wantsSessions = true
+        }
+        if launchArgumentEnabled(LaunchArgument.calmCodeDevice) {
+            opening.deviceSheet = true
+            wantsSessions = true
+        }
+        if launchArgumentEnabled(LaunchArgument.calmCodeConnect) {
+            opening.connectSheet = true
+            wantsSessions = true
+        }
+        if wantsSessions { sessionsView = opening }
     }
     #endif
 }
@@ -683,3 +803,35 @@ struct CodeViewMenu: View {
     }
 }
 
+
+// MARK: - Zoom from the sessions icon
+
+/// The sessions icon is the zoom's source on iOS 18+ (no-op on 17).
+private struct CodeSessionsZoomSource: ViewModifier {
+    let namespace: Namespace.ID
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.matchedTransitionSource(id: CodeSessionsZoomID.value, in: namespace)
+        } else {
+            content
+        }
+    }
+}
+
+/// The Code sessions view zooms out of the icon on iOS 18+.
+private struct CodeSessionsZoomDestination: ViewModifier {
+    let namespace: Namespace.ID
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.navigationTransition(.zoom(sourceID: CodeSessionsZoomID.value, in: namespace))
+        } else {
+            content
+        }
+    }
+}
+
+private enum CodeSessionsZoomID {
+    static let value = "code-sessions-icon"
+}

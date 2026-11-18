@@ -46,6 +46,9 @@ struct CodeLaunchComposer: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // The computer chip (C4), above the prompt; ✕ folds it into the
+            // dot on `+`. Without `+` it stays up (nowhere to fold into).
+            ComputerChipSlot(dismissible: onAttach != nil)
             if contextBarRaw == CodeContextBarPosition.above.rawValue {
                 CodeContextBar(state: contextState, terminal: terminal)
             }
@@ -59,6 +62,8 @@ struct CodeLaunchComposer: View {
                             .foregroundColor(ink.secondary)
                             .frame(width: 40, height: 40)
                             .contentShape(Rectangle())
+                            // The folded computer chip.
+                            .overlay(alignment: .topTrailing) { ComputerChipDot().offset(x: -4, y: 4) }
                     }
                     .buttonStyle(.plain)
                     .padding(.vertical, 6)

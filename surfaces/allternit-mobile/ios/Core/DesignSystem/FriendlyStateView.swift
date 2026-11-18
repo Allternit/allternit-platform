@@ -17,9 +17,28 @@ struct FriendlyStateView: View {
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
 
+    /// What actually shows: error text made calm, and a compute-gate refusal
+    /// turned into the no-computer empty state (contract C5).
+    private var shown: CalmStateText {
+        CalmStateText(isError: style != .empty, icon: icon, title: title, message: message)
+    }
+
+    private var effectiveStyle: Style { shown.isNoComputer ? .empty : style }
+
+    /// The connect kit, from the no-computer state's Connect (contract C4).
+    @State private var isConnectPresented = false
+
+    /// No computer: Connect opens the connect kit instead of the caller's
+    /// Retry (a retry can't help until a computer answers).
+    private var shownActionTitle: String? { shown.isNoComputer ? "Connect" : actionTitle }
+    private var shownAction: (() -> Void)? {
+        shown.isNoComputer ? { isConnectPresented = true } : action
+    }
+
     var body: some View {
+        let shown = self.shown
         VStack(spacing: 16) {
-            Image(systemName: icon)
+            Image(systemName: shown.icon)
                 .font(.system(size: 28, weight: .medium))
                 .foregroundColor(foregroundColor)
                 .frame(width: 64, height: 64)
@@ -30,19 +49,19 @@ struct FriendlyStateView: View {
                         .stroke(borderColor, lineWidth: 1)
                 )
 
-            Text(title)
+            Text(shown.title)
                 .font(.system(.title3, design: .serif))
                 .fontWeight(.medium)
                 .foregroundColor(Color("TextPrimary"))
                 .multilineTextAlignment(.center)
 
-            Text(message)
+            Text(shown.message)
                 .font(.subheadline)
                 .foregroundColor(Color("TextSecondary"))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
 
-            if let actionTitle, let action {
+            if let actionTitle = shownActionTitle, let action = shownAction {
                 Button(action: {
                     let generator = UIImpactFeedbackGenerator(style: .light)
                     generator.impactOccurred()
@@ -64,10 +83,11 @@ struct FriendlyStateView: View {
         .padding(.top, 48)
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity)
+        .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
     }
 
     private var foregroundColor: Color {
-        switch style {
+        switch effectiveStyle {
         case .empty: return Color("AccentPrimary")
         case .error: return Theme.statusError
         case .offline: return Theme.statusWarning
@@ -75,7 +95,7 @@ struct FriendlyStateView: View {
     }
 
     private var backgroundColor: Color {
-        switch style {
+        switch effectiveStyle {
         case .empty: return Color("AccentPrimary").opacity(0.12)
         case .error: return Theme.statusError.opacity(0.12)
         case .offline: return Theme.statusWarning.opacity(0.12)
@@ -83,7 +103,7 @@ struct FriendlyStateView: View {
     }
 
     private var borderColor: Color {
-        switch style {
+        switch effectiveStyle {
         case .empty: return Color("AccentPrimary").opacity(0.25)
         case .error: return Theme.statusError.opacity(0.25)
         case .offline: return Theme.statusWarning.opacity(0.25)
@@ -107,10 +127,25 @@ struct FriendlyInlineStateView: View {
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
 
+    /// Same calm presentation as `FriendlyStateView.shown`.
+    private var shown: CalmStateText {
+        CalmStateText(isError: style != .empty, icon: icon, title: title, message: message)
+    }
+
+    private var effectiveStyle: Style { shown.isNoComputer ? .empty : style }
+
+    /// Same Connect as `FriendlyStateView` on the no-computer state.
+    @State private var isConnectPresented = false
+    private var shownActionTitle: String? { shown.isNoComputer ? "Connect" : actionTitle }
+    private var shownAction: (() -> Void)? {
+        shown.isNoComputer ? { isConnectPresented = true } : action
+    }
+
     var body: some View {
+        let shown = self.shown
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Image(systemName: icon)
+                Image(systemName: shown.icon)
                     .font(.system(size: 18, weight: .medium))
                     .foregroundColor(foregroundColor)
                     .frame(width: 36, height: 36)
@@ -118,11 +153,11 @@ struct FriendlyInlineStateView: View {
                     .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
+                    Text(shown.title)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(Color("TextPrimary"))
 
-                    Text(message)
+                    Text(shown.message)
                         .font(.subheadline)
                         .foregroundColor(Color("TextSecondary"))
                         .lineLimit(3)
@@ -131,7 +166,7 @@ struct FriendlyInlineStateView: View {
                 Spacer(minLength: 0)
             }
 
-            if let actionTitle, let action {
+            if let actionTitle = shownActionTitle, let action = shownAction {
                 Button(action: {
                     let generator = UIImpactFeedbackGenerator(style: .light)
                     generator.impactOccurred()
@@ -151,10 +186,11 @@ struct FriendlyInlineStateView: View {
         }
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
     }
 
     private var foregroundColor: Color {
-        switch style {
+        switch effectiveStyle {
         case .empty: return Color("AccentPrimary")
         case .error: return Theme.statusError
         case .offline: return Theme.statusWarning
@@ -162,7 +198,7 @@ struct FriendlyInlineStateView: View {
     }
 
     private var backgroundColor: Color {
-        switch style {
+        switch effectiveStyle {
         case .empty: return Color("AccentPrimary").opacity(0.12)
         case .error: return Theme.statusError.opacity(0.12)
         case .offline: return Theme.statusWarning.opacity(0.12)
@@ -173,7 +209,16 @@ struct FriendlyInlineStateView: View {
 /// Shared helper that turns raw URLSession / transport errors into product-
 /// friendly copy for `FriendlyStateView` and other empty/error states.
 enum FriendlyErrorMessage {
-    static func from(_ error: String) -> String {
+    /// Same as `from(_: String)`, starting from the error itself.
+    static func from(_ error: Error) -> String {
+        from(plainErrorText(error))
+    }
+
+    static func from(_ raw: String) -> String {
+        // Status numbers, status phrases and codes never reach the screen
+        // (contract C5): what is left is the message, or the fallback.
+        let error = calmMessageText(raw) ?? ""
+        if error == CalmCopy.computeRequired { return error }
         let lowered = error.lowercased()
         // cloud-api 428 (routes/beta.rs): the account has no computer yet.
         if lowered.contains("data-plane node") {
@@ -185,7 +230,7 @@ enum FriendlyErrorMessage {
         if lowered.contains("cancelled") || lowered.contains("canceled") {
             return "The request was cancelled."
         }
-        if lowered.contains("not found") || lowered.contains("404") {
+        if lowered.contains("not found") {
             return "That resource couldn't be found."
         }
         return plain(error)
@@ -212,6 +257,67 @@ enum FriendlyErrorMessage {
             return fallback
         }
         return trimmed
+    }
+}
+
+/// What a friendly state shows once made calm (contract C5): an error or
+/// offline message loses any status number or code, and a compute-gate
+/// refusal ("Agents need a computer.") shows as the no-computer empty state
+/// instead of an error, so every list that renders its load error here
+/// reads calm without a per-screen change.
+struct CalmStateText: Equatable {
+    let icon: String
+    let title: String
+    let message: String
+    let isNoComputer: Bool
+
+    init(isError: Bool, icon: String, title: String, message: String) {
+        guard isError, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            self.init(icon: icon, title: title, message: message, isNoComputer: false)
+            return
+        }
+        let calm = plainErrorText(message: message, fallback: CalmCopy.fallback)
+        if calm == CalmCopy.computeRequired || isComputeGateRefusal(APIError.httpError(statusCode: 409, message: message)) {
+            self.init(icon: "desktopcomputer", title: CalmCopy.noComputer,
+                      message: CalmCopy.noComputerDetail, isNoComputer: true)
+            return
+        }
+        self.init(icon: icon, title: stripStatusText(title).isEmpty ? title : stripStatusText(title),
+                  message: calm, isNoComputer: false)
+    }
+
+    private init(icon: String, title: String, message: String, isNoComputer: Bool) {
+        self.icon = icon
+        self.title = title
+        self.message = message
+        self.isNoComputer = isNoComputer
+    }
+}
+
+/// Reads refused by the compute gate (409 `compute_required`, 428), shared
+/// app-wide. A refused read shows no error; the no-computer chip (step 20)
+/// reads `refused` instead. Mirrors web `phone-ui-store` `computeReadRefused`.
+@MainActor
+final class ComputeReadState: ObservableObject {
+    static let shared = ComputeReadState()
+
+    @Published private(set) var refused = false
+
+    /// A GET/HEAD answered with a compute-gate refusal.
+    func noteRefused() {
+        if !refused { refused = true }
+    }
+
+    /// A computer answered (or the account paired one): the flag is stale.
+    func clear() {
+        if refused { refused = false }
+    }
+
+    /// Reads only: actions open the gate sheet instead (same rule as
+    /// `ComputeStatusStore.ignores409`).
+    nonisolated static func isRead(method: String?) -> Bool {
+        guard let m = method?.uppercased() else { return false }
+        return m == "GET" || m == "HEAD"
     }
 }
 
