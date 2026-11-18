@@ -4,15 +4,16 @@ import XCTest
 /// The folded deck band's rules (phone calm pass step 21, contract C1 + D6),
 /// same cases as the web's `deck-open.test.ts`.
 final class ComposerDeckStateTests: XCTestCase {
-    func testFoldedAtRest() {
-        XCTAssertFalse(deckOpen(focused: false, hasDraft: false, swipedOpen: false, modeArmed: false))
+    func testOpenAtRest() {
+        XCTAssertTrue(deckOpen(folded: false))
     }
 
-    func testEachConditionOpensIt() {
-        XCTAssertTrue(deckOpen(focused: true, hasDraft: false, swipedOpen: false, modeArmed: false))
-        XCTAssertTrue(deckOpen(focused: false, hasDraft: true, swipedOpen: false, modeArmed: false))
-        XCTAssertTrue(deckOpen(focused: false, hasDraft: false, swipedOpen: true, modeArmed: false))
-        XCTAssertTrue(deckOpen(focused: false, hasDraft: false, swipedOpen: false, modeArmed: true))
+    func testFoldedStaysFolded() {
+        XCTAssertFalse(deckOpen(folded: true))
+    }
+
+    func testDefaultsKey() {
+        XCTAssertEqual(deckFoldedDefaultsKey, "allternit.composer.deckFolded")
     }
 
     func testSwipeUp24Opens() {
@@ -27,17 +28,5 @@ final class ComposerDeckStateTests: XCTestCase {
 
     func testSwipeDown24Closes() {
         XCTAssertFalse(nextSwipedOpen(current: true, startY: 300, endY: 324))
-    }
-
-    func testTipShowsOnceAndNeverBesideTheChip() {
-        XCTAssertTrue(ComposerSwipeTipState.shouldShow(seen: false, deckIsOpen: false, chipVisible: false, hasDeck: true))
-        XCTAssertFalse(ComposerSwipeTipState.shouldShow(seen: true, deckIsOpen: false, chipVisible: false, hasDeck: true))
-        XCTAssertFalse(ComposerSwipeTipState.shouldShow(seen: false, deckIsOpen: false, chipVisible: true, hasDeck: true))
-        XCTAssertFalse(ComposerSwipeTipState.shouldShow(seen: false, deckIsOpen: true, chipVisible: false, hasDeck: true))
-        XCTAssertFalse(ComposerSwipeTipState.shouldShow(seen: false, deckIsOpen: false, chipVisible: false, hasDeck: false))
-    }
-
-    func testTipTextMatchesWeb() {
-        XCTAssertEqual(ComposerSwipeTipState.text, "Swipe the composer up for modes, plugins and artifacts")
     }
 }
