@@ -223,6 +223,7 @@
 		457336F9313C437A63CF5AA8 /* CloudInstancesManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BD4448061E87D93BCB1403 /* CloudInstancesManagerView.swift */; };
 		457D6E3CE854619B035B793F /* CloudDeployClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB8805AD510ACE2BA8D3054E /* CloudDeployClient.swift */; };
 		45A8017DCB89848D3575BCC3 /* DeviceRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80F54887C9A58E66A39468F9 /* DeviceRuntime.swift */; };
+		45C726779D0976CBED691AF1 /* ArtifactTileFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56C84C557603C2BBF5738654 /* ArtifactTileFilter.swift */; };
 		464E0BECC088A4762D7800B1 /* PhoneTaskCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F35A37E302DD3C63E6412452 /* PhoneTaskCardView.swift */; };
 		4658EF75ED4ADFC214C4D3A4 /* FileBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0888EDAAEA1542888D632C20 /* FileBrowserView.swift */; };
 		4674951FBBC363018718581A /* BotDesktopStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6551B8DC64E7B8F966A31F84 /* BotDesktopStore.swift */; };
@@ -686,6 +687,7 @@
 		C40138BDFC50E68F4B605C0D /* CoworkTasksListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6456273215D242B20811AD42 /* CoworkTasksListView.swift */; };
 		C5549640432B10AB4817D75C /* SharedPhoneRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39168AAAA2A1729A6320147C /* SharedPhoneRun.swift */; };
 		C5570A9FF0BE3AC2E4F2E331 /* FilesKeysView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06CC222B9C4446F9F644BDDB /* FilesKeysView.swift */; };
+		C5AC61D78B86770BB9A5A030 /* ArtifactTileFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8A1A0ACA5C2BF95BC5DBE9D /* ArtifactTileFilterTests.swift */; };
 		C65E68CEB7348A46FE2E3352 /* AgentActivityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80BE6F99828A33512D8BBF70 /* AgentActivityStore.swift */; };
 		C67B3C7EBA3FBE9AC753D8EE /* Entities.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79C58B39750008BDE881C8B /* Entities.swift */; };
 		C6B5B87F15E898467AE32F4A /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88F84CC32A63DA63F238682F /* AudioToolbox.framework */; };
@@ -1284,6 +1286,7 @@
 		5632A786043C936EE49EF52E /* RuntimeOperationsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeOperationsClient.swift; sourceTree = "<group>"; };
 		563960A3AC57DCEFE6DADD4B /* ACIEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACIEvent.swift; sourceTree = "<group>"; };
 		564D5DFAF43848F8E2FDA82C /* ChatGPTAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatGPTAuthService.swift; sourceTree = "<group>"; };
+		56C84C557603C2BBF5738654 /* ArtifactTileFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactTileFilter.swift; sourceTree = "<group>"; };
 		573BFD351AF9889BE569D9E8 /* BotModeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotModeStore.swift; sourceTree = "<group>"; };
 		5779CCA0F91ED0119455B99D /* AllternitFileProviderUI.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AllternitFileProviderUI.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		57C6D606D336906BE9658471 /* ConnectSuggestCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectSuggestCardView.swift; sourceTree = "<group>"; };
@@ -1727,6 +1730,7 @@
 		E7640CFD6314328B32B5E74B /* BrainTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrainTemplates.swift; sourceTree = "<group>"; };
 		E833C0D51467E65C4A3040EC /* BYOCStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BYOCStore.swift; sourceTree = "<group>"; };
 		E84F42A64EBD4F7B1E89EAD0 /* PetOfferCenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PetOfferCenterTests.swift; sourceTree = "<group>"; };
+		E8A1A0ACA5C2BF95BC5DBE9D /* ArtifactTileFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactTileFilterTests.swift; sourceTree = "<group>"; };
 		E8B1021918E68EBAC25DAEC2 /* TerminalServiceClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalServiceClient.swift; sourceTree = "<group>"; };
 		E90183D58848B7BC017524C2 /* BotProjectPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotProjectPage.swift; sourceTree = "<group>"; };
 		E949D97C5E108AE7428E2C54 /* DiffRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffRenderer.swift; sourceTree = "<group>"; };
@@ -2660,6 +2664,7 @@
 			isa = PBXGroup;
 			children = (
 				87918A785F9680BF0238ED4D /* AppearanceClientTests.swift */,
+				E8A1A0ACA5C2BF95BC5DBE9D /* ArtifactTileFilterTests.swift */,
 				209871E45703181D6EB7229F /* CalmErrorTests.swift */,
 				200400EF6B620633834145F4 /* CloudCreditsTests.swift */,
 				BEC3C56FBC24BBC1567917D1 /* CodeSessionStatusTests.swift */,
@@ -2935,6 +2940,7 @@
 				618D8F1B0F9B6750E88250A6 /* ArtifactFileShare.swift */,
 				1484FBF4E7FCFDF0EF1262E1 /* ArtifactLibraryStore.swift */,
 				0CE7FC9A661803D01A04DDA2 /* ArtifactStudio.swift */,
+				56C84C557603C2BBF5738654 /* ArtifactTileFilter.swift */,
 				71FBAC71A02DB3F3525F61AF /* Resources */,
 				E76542592605709295F5E294 /* Views */,
 			);
@@ -4160,6 +4166,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				EB20AD81DCE4D386834E7DBF /* AppearanceClientTests.swift in Sources */,
+				C5AC61D78B86770BB9A5A030 /* ArtifactTileFilterTests.swift in Sources */,
 				1426A892E38F70A415822BC6 /* CalmErrorTests.swift in Sources */,
 				81E63CDCE547316DEA0DFD05 /* CloudCreditsTests.swift in Sources */,
 				F5E98511E7A98F190EE215F2 /* CodeSessionStatusTests.swift in Sources */,
@@ -4287,6 +4294,7 @@
 				0CA31C2A9D8209E70F5D827D /* ArtifactStudio.swift in Sources */,
 				ABBD477A88134612DCDDCE1A /* ArtifactStudioView.swift in Sources */,
 				930C1204768B15212990D2E1 /* ArtifactTemplateCatalog.swift in Sources */,
+				45C726779D0976CBED691AF1 /* ArtifactTileFilter.swift in Sources */,
 				93BBEF8FB0B6058E47480A86 /* ArtifactsLibraryView.swift in Sources */,
 				F345B2FB5086CE638D8EED40 /* ArtifactsV2Client.swift in Sources */,
 				777E9364C938736B3BD0AF14 /* AsciiEngine.swift in Sources */,

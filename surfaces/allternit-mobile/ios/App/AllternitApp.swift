@@ -247,6 +247,8 @@ struct AllternitApp: App {
             || launchArgumentEnabled("calm-projects-pill")
             || launchArgumentEnabled("calm-projects-explainer")
             || launchArgumentEnabled("calm-new-project")
+            || launchArgumentValue("calm-artifacts-filter") != nil
+            || launchArgumentEnabled("calm-artifacts-list")
             || launchArgumentEnabled("open-mode-dial")
             || launchArgumentEnabled("open-incognito")
             || launchArgumentEnabled("enable-agent-mode")

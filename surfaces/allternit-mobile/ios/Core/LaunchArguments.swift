@@ -109,6 +109,13 @@ enum LaunchArgument {
     /// `-calm-new-project` (DEBUG only): Projects with the New project sheet open.
     static let calmNewProject = "calm-new-project"
 
+    /// `-calm-artifacts-filter=<kind>` (DEBUG only): Artifacts filtered to a tile or kind
+    /// ("docs", "slides", "doc", ...), phone calm step 28.
+    static let calmArtifactsFilter = "calm-artifacts-filter"
+
+    /// `-calm-artifacts-list` (DEBUG only): Artifacts in List layout.
+    static let calmArtifactsList = "calm-artifacts-list"
+
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
 
