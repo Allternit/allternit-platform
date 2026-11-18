@@ -240,6 +240,11 @@ struct RoutineRunRowView: View {
                         Text(routine.name)
                             .font(.subheadline.weight(.semibold))
                             .foregroundColor(Color("TextPrimary"))
+                        if !badges.isEmpty {
+                            HStack(spacing: 6) {
+                                ForEach(badges, id: \.self) { RoutineBadge(text: $0) }
+                            }
+                        }
                         Text(CronWords.describe(type: routine.scheduleType, expression: routine.scheduleExpression))
                             .font(.caption)
                             .foregroundColor(Color("TextSecondary"))
@@ -306,6 +311,16 @@ struct RoutineRunRowView: View {
         }
     }
 
+    /// Kind (Reminder / Check) and origin, for tasks the agent made with the
+    /// `automation` tool; a bot-less one also says where it posts.
+    private var badges: [String] {
+        var out: [String] = []
+        if let kind = routine.kindLabel { out.append(kind) }
+        if routine.isMadeByAgent { out.append("Made by your agent") }
+        if (routine.agentId ?? "").isEmpty, routine.deliverySessionId != nil { out.append("Posts in a chat") }
+        return out
+    }
+
     private var statusLine: String {
         if let liveRun {
             let current = liveRun.steps?.first(where: { $0.status == "in_progress" })?.content
@@ -317,6 +332,7 @@ struct RoutineRunRowView: View {
             return "Next " + next.formatted(.relative(presentation: .named))
         }
         if let last = routine.recentRuns?.first {
+            if last.isQuiet { return "Last check quiet" }
             return "Last run " + RunStrip.label(last.status).lowercased()
         }
         return "Not run yet"
@@ -353,18 +369,24 @@ struct RoutineRunRowView: View {
                 Text("History")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(Color("TextPrimary"))
-                ForEach(runs.prefix(5)) { run in
+                ForEach(RunHistoryEntry.group(runs).prefix(5)) { entry in
                     HStack {
-                        Circle().fill(RunStrip.color(run.status)).frame(width: 6, height: 6)
-                        Text(RunStrip.label(run.status))
-                        if let reason = run.reason { Text("· \(reason)") }
+                        Circle().fill(entry.quietCount > 0 ? RunStrip.color("skipped") : RunStrip.color(entry.run.status))
+                            .frame(width: 6, height: 6)
+                        if entry.quietCount > 0 {
+                            Text(entry.quietCount == 1 ? "1 quiet check" : "\(entry.quietCount) quiet checks")
+                        } else {
+                            Text(RunStrip.label(entry.run.status))
+                            if let reason = entry.run.reason { Text("· \(reason)") }
+                        }
                         Spacer()
-                        if let started = run.startedAt.flatMap(DevicePairingView.parseDate) {
+                        if let started = entry.run.startedAt.flatMap(DevicePairingView.parseDate) {
                             Text(started.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
                         }
                     }
                     .font(.caption)
                     .foregroundColor(Color("TextSecondary"))
+                    .accessibilityElement(children: .combine)
                 }
             }
             Button(action: { editDraft = AutomationTaskDraft(routine: routine) }) {
@@ -380,6 +402,45 @@ struct RoutineRunRowView: View {
             .foregroundColor(Theme.statusError)
         }
         .padding(.top, 4)
+    }
+}
+
+/// A run history line: one run, or a stretch of quiet heartbeat checks
+/// (skipped, outcome "quiet") folded into one line. `run` is the newest of
+/// the stretch.
+struct RunHistoryEntry: Identifiable {
+    let run: AutomationRunTick
+    /// 0 for an ordinary run.
+    let quietCount: Int
+
+    var id: String { run.id }
+
+    /// Newest first in, newest first out; back-to-back quiet runs collapse.
+    static func group(_ runs: [AutomationRunTick]) -> [RunHistoryEntry] {
+        var out: [RunHistoryEntry] = []
+        for run in runs {
+            if run.isQuiet, let last = out.last, last.quietCount > 0 {
+                out[out.count - 1] = RunHistoryEntry(run: last.run, quietCount: last.quietCount + 1)
+            } else {
+                out.append(RunHistoryEntry(run: run, quietCount: run.isQuiet ? 1 : 0))
+            }
+        }
+        return out
+    }
+}
+
+/// A small label on a routine row ("Reminder", "Made by your agent").
+struct RoutineBadge: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(Color("TextSecondary"))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color("FillNeutral")))
+            .lineLimit(1)
     }
 }
 

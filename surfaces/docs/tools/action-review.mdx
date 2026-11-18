@@ -1,0 +1,60 @@
+---
+title: 'Action review'
+description: 'The four action classes (hand_off, confirm_now, confirm_unless_named, free), how the reviewer picks one, what evidence counts, and how folder_access keeps deletes inside the project'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED. Rust: `cmd/allternit-api/src/computer_safety.rs` and `computer_access.rs`. TypeScript: `cmd/gizzi-code/src/runtime/tools/guard/permission/action-review.ts` and `action-classes.ts`. Shared test table: `contracts/action-classes/vectors.json`.
+</Note>
+
+## Overview
+
+Every action an agent takes, on a computer, in a browser, in the shell or through an MCP tool, falls into one of four classes. The class decides whether the action runs, asks first or never runs. The classes are fixed in code. A setting, a mode or a model can't add a class or move an action to a weaker one.
+
+| Class | What is in it | What happens |
+|---|---|---|
+| `hand_off` | The floor: wiping a disk or the home folder, formatting a disk, writing to a raw disk, a fork bomb. Also human checks such as a CAPTCHA. | Never runs, in any mode. The agent hands the step to the person with `request_human` or drops it. |
+| `confirm_now` | Money (pay, buy, subscribe, transfer, wire, invoices). Credentials (password fields, saved secrets, creating or showing API keys, changing a password). Permanent delete. Signing a document. | Asks every time, in every mode, bypass mode included. No "always allow". Refused, not queued, when no one is watching. |
+| `confirm_unless_named` | Sending (mail, messages, replies), uploading a file, publishing (posts, merges, `git push`, `npm publish`), deploying. | Runs without asking only with a live task grant or the person's own allow rule that names it. Otherwise it asks. |
+| `free` | Reads, scrolling, navigation, ordinary typing in ordinary fields. | Runs. The normal tool permission rules still apply. |
+
+## How the reviewer decides
+
+1. **Deterministic rules first.** They look at the control's label and role, the shell command, the file path, the host and the app. They match whole words: "Post" is publish, "Postal code" is not. "Send money" is money, not send.
+2. **The stricter class wins.** When rules overlap or can't tell two apart, the stricter class applies. A plain "Delete" button is `confirm_now`, because the rules can't see whether it goes to the Trash.
+3. **Optional local model, tighten only.** If a local decision model is available it can review the action too. Its answer is joined with `tighten()`: it can move an action to a stricter class, never a weaker one. With no model the reviewer is deterministic only.
+4. **Denied outcomes are remembered.** If the person denies an action and the agent tries the same thing another way (a menu instead of a button, a shell command instead of a click), the reviewer flags it and asks again.
+
+The result rides on the permission ask as review metadata. Every app shows it as a one-line reason on the card.
+
+## Evidence
+
+A task grant or an allow rule counts only when it comes from the person's own messages or settings. Text on a web page, in a file or in a tool result can't name an action. A grant also expires with its task.
+
+## What the person sees
+
+- `confirm_now` and `confirm_unless_named` asks appear on Allternit Desktop, ai.allternit.com (and its phone layout), m.allternit.com, iOS and Gizzi Code. There is no "always allow" on a `confirm_now` ask.
+- In an unattended run (a routine, a bot with no one watching), `confirm_now` is refused with a plain reason and the run carries on or stops. It never waits for an answer that may not come.
+- Bypass and yolo sessions still ask for money, credentials, permanent delete and signing.
+
+## Folder access
+
+The `folder_access` tool lets an agent ask for a folder outside the project, so it doesn't have to run shell commands to get at it.
+
+| Action | What it does |
+|---|---|
+| `request` | Ask the person for read and write access to a folder. A grant covers that folder for the session. |
+| `request_delete` | Ask separately to delete files in that folder. Approving access does not approve deleting. |
+
+When delete was not approved, a delete outside the project folder doesn't remove the file. It moves it to a `_to_delete/` folder next to it, and the person empties that folder. The redirect checks the real path, so a symlink that points out of the folder can't bypass it. Permanent deletes that do go ahead are `confirm_now`.
+
+## Shared test table
+
+`contracts/action-classes/vectors.json` lists example actions and the class each must get. The Rust and TypeScript reviewers both load it. If one side changes, the table changes in the same commit.
+
+## Related pages
+
+- [Computer access tiers](/tools/computer-access)
+- [Computer-use safety](/tools/computer-safety)
+- [Computer toolset](/tools/computer-toolset)
+- [Tool belt](/tools/tool-belt)

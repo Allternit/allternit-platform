@@ -1,0 +1,49 @@
+name: Windows terminal smoke
+
+# Code mode's terminal on Windows, checked against a released Desktop
+# installer (no build): the Factory pane engine over its named pipe (ConPTY,
+# default shell and cmd.exe), then allternit-api's /terminal routes.
+# Script: .github/scripts/windows-terminal-smoke.ps1
+
+# Run by hand after a Desktop release:
+#   gh workflow run windows-terminal-smoke.yml -R Allternit/allternit-platform [-f tag=v1.1.16]
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Allternit/desktop release tag (empty = latest)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Download and unpack the Desktop installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          $tag = if ($env:TAG) { $env:TAG } else { (gh release view -R Allternit/desktop --json tagName | ConvertFrom-Json).tagName }
+          Write-Host "Desktop release: $tag"
+          gh release download $tag -R Allternit/desktop -p 'Allternit-Setup-*.exe' -D installer
+          $exe = (Get-ChildItem installer -Filter *.exe | Select-Object -First 1).FullName
+          7z x $exe -oinst -y | Out-Null
+          $pkg = (Get-ChildItem inst -Recurse -Filter 'app-64.7z' | Select-Object -First 1).FullName
+          if (-not $pkg) { throw 'app-64.7z not found in the installer' }
+          7z x $pkg -oapp -y | Out-Null
+          Get-ChildItem app/resources/bin -ErrorAction SilentlyContinue | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Terminal smoke
+        shell: pwsh
+        run: ./.github/scripts/windows-terminal-smoke.ps1 -App "${{ github.workspace }}/app"

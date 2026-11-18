@@ -55,6 +55,10 @@
         {
           "on": "2026-11-17",
           "note": "Bot prompt blocks by signal: suggestions (duet.txt), delegation, project-thread and computer-use blocks join bot.txt from the turn's tool set; server hint project_role thread stamped by allternit-api agent_session_routes.rs from the session bag's projectRole; server-started bot turns keep the bot's own prompt first and the thread prompt under This thread. Docs: core/system-prompts.mdx, guides/project-delegate.mdx, guides/bot-threads.mdx."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "System prompts wave 3: the TUI prompt (cli/ui/ink-app/constants/prompts.ts) starts from the runtime base-code and safety text and keeps only TUI sections; built-in agent prompts (explore, plan, verification; runtime and TUI copies), the built-in catalog, both coordinator prompts, mission orchestrator and design critique prompts are rewritten as rules; the voice call persona is Gizzi (cloud-api voice_calls_cloud.rs) with a rewritten call summary prompt and coordinator worker prompts. Chat manuals load per turn (ai withInteractiveAnswers; gateway manual_for loads one template line). Guard: test/session/system-prompt-guard.test.ts. Docs: core/system-prompts.mdx."
         }
       ],
       "evidence": [
@@ -68,6 +72,13 @@
         "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
         "allternit/cmd/gizzi-code/src/runtime/session/prompt",
         "allternit/cmd/gizzi-code/src/runtime/loop/prompts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/constants/prompts.ts",
+        "allternit/cmd/gizzi-code/src/runtime/agents/builtin-catalog.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/AgentTool/built-in",
+        "allternit/cmd/gizzi-code/src/coordinator/coordinatorMode.ts",
+        "allternit/cmd/gizzi-code/src/cli/mission/orchestrator.ts",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes/critique.ts",
+        "allternit/cmd/gizzi-code/test/session/system-prompt-guard.test.ts",
         "allternit/surfaces/docs/core/system-prompts.mdx"
       ]
     },
@@ -168,6 +179,10 @@
         {
           "on": "2026-11-03",
           "note": "Eoj approved the live CI reference and interaction polish. Added an identity-only pull-request template backed by authenticated GitHub facts, reviewed revision/run-bound rerun and merge, same-card polling and repair handoff. Vendor/group responses are admitted before publication with durable turn policies; group and vendor skins render validated cards and retain complete envelopes in bounded projections. Source remains unshipped pending verification and release approval."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Chat manuals load per turn (system prompts wave 3): withInteractiveAnswers takes the turn; answer shapes always, the artifacts, app-screen, inline-app, dashboard, ops, motion and design manuals only when the turn signals call for them (plain question 36,242 to 16,590 bytes). The gateway (answer_contract.rs manual_for) sends the core manual plus the one template line it picked (14,308 to 2,846 bytes plus a line). Template schemas unchanged. Docs: core/system-prompts.mdx."
         }
       ],
       "evidence": [
@@ -223,6 +238,7 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/share-location.mdx",
+        "allternit/surfaces/docs/tools/lookup.mdx",
         "allternit/surfaces/docs/api/agent-chat.mdx",
         "allternit/cmd/allternit-api/src/client_location.rs"
       ]
@@ -627,11 +643,20 @@
         {
           "on": "2026-10-31",
           "note": "Memory and Learning page with a memory map (GET /memory-map) sits behind the bot Memory tile and in Settings; see feature:bot-hub-soul."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Wave D: memory entries have versions; append, replace and stale-edit refusal; two-device edits keep a conflict_of copy and show N memories need a look. thread_read, thread_recent and thread_wait read past chats in every session; resource reads large tool output and MCP resources by ref."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/memory-drive.mdx",
-        "allternit/surfaces/docs/api/memory-drive.mdx"
+        "allternit/surfaces/docs/api/memory-drive.mdx",
+        "allternit/surfaces/docs/tools/memory.mdx",
+        "allternit/surfaces/docs/tools/past-chats.mdx",
+        "allternit/surfaces/docs/tools/resources.mdx",
+        "allternit/surfaces/docs/tools/connectors.mdx",
+        "allternit/surfaces/docs/tools/settings.mdx"
       ]
     },
     {
@@ -1459,7 +1484,9 @@
         "allternit/cmd/allternit-api",
         "allternit/domains/computer-use/driver/packaging",
         "allternit/cmd/allternit-computer-cloud/guest",
-        "allternit/drivers/firecracker"
+        "allternit/drivers/firecracker",
+        "allternit/contracts/action-classes",
+        "allternit/cmd/gizzi-code/src/runtime/tools/guard/permission"
       ],
       "decisions": [
         {
@@ -1505,6 +1532,14 @@
         {
           "on": "2026-10-10",
           "note": "D1b (task K5): the Allternit Driver ships in every guest image (Linux systemd service, Windows logon task, container, tart VMs, Firecracker rootfs), and allternit-api routes the structured members (read_ui, act, run_batch, verify) for Target::Guest through the guest exec channel via the in-guest forwarder (cmd/allternit-api/src/guest_driver.rs). The static \"unimplemented until the guest driver image ships\" refusals are gone: a guest whose driver does not answer fails as driver_unavailable, and pixel members use the driver path first with xdotool/scrot/PowerShell as the explicit fallback."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Wave C: per-app access tiers (read/click/full) with category ceilings and 12 h session grants (resolve_access, request_access); four action classes enforced in every permission path (confirm_now asks even in bypass); folder_access with a _to_delete redirect. Docs: tools/computer-access, tools/action-review."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Wave C browser: pane_browser works by element ref (read_page, find, page text, console, tabs, plan approval scoped to listed hosts, spotlighted page text); browser_tasks runs up to 6 hidden isolated browser tasks (4 at once, 10 min each, any non-free step stops with needs_user); capture_screen_context sees the front window or the Allternit screen (asks once per session, redacted by the API, screen_context hint). Docs: tools/pane-browser, tools/browser-tasks, tools/screen-context."
         }
       ],
       "evidence": [
@@ -1518,6 +1553,9 @@
         "allternit/cmd/allternit-api/src/computer_safety.rs",
         "allternit/cmd/allternit-api/src/computer_ocr.rs",
         "allternit/surfaces/docs/tools/computer-use-replay.mdx",
+        "allternit/surfaces/docs/tools/pane-browser.mdx",
+        "allternit/surfaces/docs/tools/browser-tasks.mdx",
+        "allternit/surfaces/docs/tools/screen-context.mdx",
         "allternit/cmd/allternit-api/src/computer_replay.rs"
       ]
     },
@@ -1801,6 +1839,8 @@
       "status": "building",
       "description": "artifact_create / artifact_update / artifact_read (plus artifact_suggest, list, comment, share, delete, storage) built into gizzi-code for every model, and for CLI agents over the session MCP bridge. They save to cloud-api /api/v2/artifacts with the session's credential; without one, the result carries the full payload with persisted:false and the app saves it under the same id. artifact_check has the app render a page or design at each width (pane_render kind check, allternit-ai src/lib/artifacts/check.ts) and returns pictures, problems and a likeness to a reference, and says stop when refining stalls.",
       "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/primitives",
+        "allternit/cmd/allternit-api/src/agent_user_tools.rs",
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
         "allternit/cmd/allternit-cloud-api/src/routes/mod_*",
@@ -2845,12 +2885,20 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/agent-run-tree.mdx",
-        "allternit/cmd/gizzi-code/src/runtime/session/session-tasks.ts"
+        "allternit/cmd/gizzi-code/src/runtime/session/session-tasks.ts",
+        "allternit/surfaces/docs/tools/agent-control.mdx",
+        "allternit/surfaces/docs/tools/tool-search.mdx",
+        "allternit/surfaces/docs/tools/context-remaining.mdx",
+        "allternit/surfaces/docs/tools/task-list.mdx"
       ],
       "decisions": [
         {
           "on": "2026-10-20",
           "note": "Eoj: on every surface subagents show; Retry asks the parent agent to re-run (not the child in place)."
+        },
+        {
+          "on": "2026-11-17",
+          "note": "Primitives wave B: tasks get names, fork and effort; wait_agents and agent_control (interrupt, resume, followup, close); tool_search deferral; context notices, get_context_remaining and history_recall; todowrite ids, activeForm, blockedBy and cancelled/interrupted states."
         }
       ]
     },
@@ -3411,7 +3459,7 @@
       "label": "Decision trees (branching agent questions + Tasks Decisions deck)",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other\u2026 takes text, the answer is a path ('Branch \u2192 Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions \u00b7 N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA. The gizzi terminal's AskUserQuestion takes the same fields: risk/context line, 'Agent's pick' and caution marks, and a picked option's follow-up as a 'Then' step; the answer is the same path.",
+      "description": "gizzi's question tool takes optional risk/context and per-option recommended/caution/then (one follow-up level); such questions draw as a branching graph (DecisionTree): ask card left, measured SVG lines to options and on to follow-ups/outcomes, other branches fade, Other\u2026 takes text, the answer is a path ('Branch \u2192 Follow-up'). The docked question card shows it compact in every thread host; Tasks (desktop TasksView + phone TasksBoardScreen) shows 'Decisions \u00b7 N waiting for you' from GET /api/v1/questions across sessions. Stacks under 640px for phones/PWA. The gizzi terminal's AskUserQuestion takes the same fields: risk/context line, 'Agent's pick' and caution marks, and a picked option's follow-up as a 'Then' step; the answer is the same path. Non-blocking asks: gizzi's ask_user_later (1-3 questions plus a required assumption, saved in the question_async table, max 3 pending per thread, 7-day expiry, subagent asks go to the root session) shows in the thread dock with an Assumed line, in the iOS Decisions deck and the TUI (/answer <id>); the answer starts a new turn.",
       "touches": [
         "allternit-ai/src/components",
         "allternit-ai/src/lib/agents",
@@ -3427,6 +3475,9 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/decisions.mdx",
+        "allternit/surfaces/docs/tools/ask-user-later.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/ask-user-later.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/question/question.sql.ts",
         "allternit-ai/src/components/agent-elements/question/decision-tree.tsx",
         "allternit-ai/src/components/decisions/DecisionsDeck.tsx"
       ]
@@ -5031,6 +5082,22 @@
       "evidence": [
         "allternit/surfaces/platform.allternit.com/src/pages/ApiKeysPage.tsx",
         "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts"
+      ]
+    },
+    {
+      "id": "feature:agent-batch-sleep",
+      "label": "agent_batch and sleep",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "agent_batch runs one worker per CSV row with a flat output schema, sample mode first, resumable through a progress sidecar. sleep waits 1-900 s and wakes on a user message or cancel.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/primitives/batch",
+        "allternit/cmd/gizzi-code/src/runtime/primitives/sleep.ts"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/surfaces/docs/tools/agent-batch.mdx",
+        "allternit/surfaces/docs/tools/sleep.mdx"
       ]
     }
   ],

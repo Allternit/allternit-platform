@@ -60,6 +60,8 @@ struct ProjectColorSet: Identifiable {
     let accent: Color
     let accentInk: Color
     let bright: [Color]?
+    /// The person's own colors (`#main,#accent`); nil for a preset.
+    var custom: CustomPadColors? = nil
 
     static let all: [ProjectColorSet] = [
         .init(id: "quiet", name: "Quiet orange", accent: Color(hex: 0xC8451F), accentInk: .white, bright: nil),
@@ -71,7 +73,56 @@ struct ProjectColorSet: Identifiable {
         .init(id: "sunset", name: "Sunset", accent: Color(hex: 0x7B3FF2), accentInk: .white,
               bright: [Color(hex: 0xD93A2A), Color(hex: 0x7B3FF2), Color(hex: 0xFFA51F), Color(hex: 0xE62E86), Color(hex: 0x0F8585)]),
     ]
-    static func named(_ id: String) -> ProjectColorSet { all.first { $0.id == id } ?? all[0] }
+    static func named(_ id: String) -> ProjectColorSet {
+        if let own = CustomPadColors.parse(id) {
+            return .init(id: own.serialized, name: "Your colors", accent: own.accentColor, accentInk: own.accentInk, bright: nil, custom: own)
+        }
+        return all.first { $0.id == id } ?? all[0]
+    }
+    /// A preset id, or the person's own `#main,#accent`.
+    static func isValid(_ id: String) -> Bool { CustomPadColors.parse(id) != nil || all.contains { $0.id == id } }
+}
+
+/// A pad's own colors, stored as `#rrggbb,#rrggbb` (main, accent). Same rule as
+/// the web's `padColorStyle`: slots c/d/e mix main into the page at 28/18/10%,
+/// ink on main and accent is black or white by WCAG luminance, deep is main at 55% over black.
+struct CustomPadColors: Equatable {
+    var main: UInt32
+    var accent: UInt32
+
+    static func parse(_ raw: String) -> CustomPadColors? {
+        let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 2, raw.count == 15,
+              raw.range(of: "^#[0-9a-fA-F]{6},#[0-9a-fA-F]{6}$", options: .regularExpression) != nil,
+              let m = UInt32(parts[0].dropFirst(), radix: 16), let a = UInt32(parts[1].dropFirst(), radix: 16)
+        else { return nil }
+        return CustomPadColors(main: m, accent: a)
+    }
+
+    /// Lowercase `#rrggbb,#rrggbb`, 15 characters.
+    var serialized: String { String(format: "#%06x,#%06x", main, accent) }
+
+    /// WCAG relative luminance, 0 to 1.
+    static func luminance(_ hex: UInt32) -> Double {
+        func channel(_ shift: UInt32) -> Double {
+            let c = Double((hex >> shift) & 0xFF) / 255
+            return c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+    }
+    /// True when text on this color should be the dark ink.
+    static func prefersDarkInk(_ hex: UInt32) -> Bool { luminance(hex) > 0.4 }
+
+    static func mix(_ hex: UInt32, over base: UInt32, amount: Double) -> UInt32 {
+        func ch(_ shift: UInt32) -> UInt32 {
+            let a = Double((hex >> shift) & 0xFF), b = Double((base >> shift) & 0xFF)
+            return UInt32((a * amount + b * (1 - amount)).rounded()) << shift
+        }
+        return ch(16) | ch(8) | ch(0)
+    }
+
+    var accentColor: Color { Color(hex: accent) }
+    var accentInk: Color { Color(hex: Self.prefersDarkInk(accent) ? 0x15171C : 0xFFFFFF) }
 }
 
 private extension Color {
@@ -95,6 +146,17 @@ struct ProjectPalette {
     /// a to e, as on the web's .pl-a to .pl-e.
     func slot(_ index: Int) -> ProjectSlot {
         let i = index % 5
+        if let own = set.custom {
+            switch i {
+            case 0: return ProjectSlot(fill: Color(hex: own.main), ink: Color(hex: CustomPadColors.prefersDarkInk(own.main) ? 0x15171C : 0xFFFFFF))
+            case 1: return ProjectSlot(fill: own.accentColor, ink: own.accentInk)
+            default:
+                let amount = [0, 0, 0.28, 0.18, 0.10][i]
+                let page: UInt32 = dark ? 0x262625 : 0xFFFFFF
+                return ProjectSlot(fill: Color(hex: CustomPadColors.mix(own.main, over: page, amount: amount)),
+                                   ink: dark ? Self.inkLight : Self.inkDark)
+            }
+        }
         if let bright = set.bright {
             let inks: [Color] = set.id == "bright"
                 ? [.white, Self.inkDark, Self.inkDark, Self.inkDark, .white]
@@ -109,6 +171,7 @@ struct ProjectPalette {
         return ProjectSlot(fill: fill, ink: dark ? Self.inkLight : Self.inkDark)
     }
     var deep: Color {
+        if let own = set.custom { return Color(hex: CustomPadColors.mix(own.main, over: 0x000000, amount: 0.55)) }
         switch set.id {
         case "bright": return Color(hex: 0x0E1330)
         case "sunset": return Color(hex: 0x1F0F2E)
@@ -155,7 +218,7 @@ extension ProjectLook {
         } else if let kind = layout.flatMap(ProjectLayoutKind.init(rawValue:)) {
             look.layout = kind
         }
-        if let colors = raw["colors"] as? String, ProjectColorSet.all.contains(where: { $0.id == colors }) {
+        if let colors = raw["colors"] as? String, ProjectColorSet.isValid(colors) {
             look.colors = colors
         }
         look.hidden = tiles(raw["hidden"]) ?? []

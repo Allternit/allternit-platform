@@ -86,10 +86,12 @@ Read from Allternit Cloud (`GET /api/v1/me/usage`, the route Desktop's plan mete
 
 | Field | Description |
 |-------|-------------|
-| `Plan` | Free, Plus, Max or Ultra |
+| `Plan` | Free, Plus, Max or Ultra. A plan bought in the iPhone or Android app also says who bills it, for example `Plus (billed by Apple, manage in App Store subscriptions)`. |
 | `Credits` | Your Cloud credit balance in USD |
 | `Monthly` | Used of the plan's monthly grant, and when it resets. Free accounts have no monthly grant. |
 | `This month` | What you spent from credits this month |
+
+The billing line comes from `GET /api/v1/billing/subscription` (`billing_provider`). `/upgrade` for a plan billed by Apple or Google tells you to change it in the App Store or Google Play instead of opening web checkout.
 
 Not signed in: the section says so and names `gizzi login`. Nothing is made up.
 

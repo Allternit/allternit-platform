@@ -13,8 +13,49 @@ final class SessionTasksClient: @unchecked Sendable {
     }
 
     func listTasks(sessionId: String) async throws -> [SessionTask] {
-        let id = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
-        return try await client.get(path: "agent-sessions/\(id)/tasks")
+        try await client.get(path: "agent-sessions/\(Self.escape(sessionId))/tasks")
+    }
+
+    /// Stops a background subagent for good (kills its run).
+    func cancel(sessionId: String, taskId: String) async throws {
+        try await client.post(path: taskPath(sessionId, taskId, "cancel"))
+    }
+
+    /// Pauses a background subagent: its current turn stops and the run
+    /// settles as `interrupted`; the child session stays for Resume.
+    func interrupt(sessionId: String, taskId: String, reason: String? = nil) async throws {
+        try await client.post(path: taskPath(sessionId, taskId, "interrupt"), body: InterruptBody(reason: reason))
+    }
+
+    /// Starts a new run on the same child, continuing where it stopped.
+    func resume(sessionId: String, taskId: String, message: String? = nil) async throws {
+        try await client.post(path: taskPath(sessionId, taskId, "resume"), body: ResumeBody(message: message))
+    }
+
+    private struct InterruptBody: Encodable { let reason: String? }
+    private struct ResumeBody: Encodable { let message: String? }
+
+    private func taskPath(_ sessionId: String, _ taskId: String, _ action: String) -> String {
+        "agent-sessions/\(Self.escape(sessionId))/background-tasks/\(Self.escape(taskId))/\(action)"
+    }
+
+    private static func escape(_ s: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove("/")
+        return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
+    }
+}
+
+/// What a run tree card can ask of a background subagent.
+enum SessionTaskAction: String, Sendable {
+    case stop, pause, resume
+
+    var label: String {
+        switch self {
+        case .stop: return "Stop"
+        case .pause: return "Pause"
+        case .resume: return "Resume"
+        }
     }
 }
 
@@ -26,6 +67,10 @@ final class SessionTasksStore: ObservableObject {
     @Published private(set) var tasks: [SessionTask] = []
     @Published private(set) var loadError: String? = nil
     @Published private(set) var hasLoaded = false
+    /// Task ids with a Stop / Pause / Resume request in flight.
+    @Published private(set) var busyTaskIds: Set<String> = []
+    /// The last control request that failed, shown under the tree.
+    @Published var actionError: String? = nil
 
     private let sessionId: String?
     private let client: SessionTasksClient
@@ -54,6 +99,25 @@ final class SessionTasksStore: ObservableObject {
     func stop() {
         pollTask?.cancel()
         pollTask = nil
+    }
+
+    /// Stop, Pause or Resume one background subagent, then refresh so the
+    /// card shows the run's new state without waiting for the next poll.
+    func perform(_ action: SessionTaskAction, taskId: String) async {
+        guard let sessionId, !busyTaskIds.contains(taskId) else { return }
+        busyTaskIds.insert(taskId)
+        defer { busyTaskIds.remove(taskId) }
+        do {
+            switch action {
+            case .stop: try await client.cancel(sessionId: sessionId, taskId: taskId)
+            case .pause: try await client.interrupt(sessionId: sessionId, taskId: taskId, reason: "Paused from the iOS app")
+            case .resume: try await client.resume(sessionId: sessionId, taskId: taskId)
+            }
+            actionError = nil
+        } catch {
+            actionError = "Couldn't \(action.label.lowercased()) the agent: \(FriendlyErrorMessage.from(error.localizedDescription))"
+        }
+        await refresh(sessionId: sessionId)
     }
 
     private func refresh(sessionId: String) async {

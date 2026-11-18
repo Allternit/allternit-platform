@@ -31,6 +31,10 @@ The `tools/agent-swarm/` directory contains three reference tool implementations
 
 The registry also references tools implemented elsewhere — kernel file-system tools, Canvas connectors, Office local handlers, desktop automation, and the [ACI computer tool](/tools/computer-use). At execution time the dispatcher resolves the `entrypoint` to the right backend.
 
+## Names, effort and control
+
+Each swarm item takes an optional `name`, `model` and `effort`, like the `task` tool. After the swarm starts, the parent can wait on, pause, resume, message and close its children. See [Agent control](/tools/agent-control).
+
 ## Registry schema
 
 Each tool in `tool_registry.json` follows this shape:
@@ -277,8 +281,13 @@ Tool implementations return tool-level failures with `success: false` and an `er
 
 Permission policies may also return HTTP 202 with `approval_required` before the tool runs. See [Native Tool Belt](/tools/tool-belt) for details on approvals and policy rules.
 
+## When to use agent_batch instead
+
+Agent Swarm is a registry of tools an agent calls. To run the same task over every row of a CSV, with one worker per row and a results file, use [agent_batch](/tools/agent-batch) instead. Run its sample mode first.
+
 ## Related pages
 
+- [agent_batch](/tools/agent-batch)
 - [Native Tool Belt](/tools/tool-belt)
 - [Build a Custom Tool](/tools/build-a-tool)
 - [Server Tools](/tools/server-tools)

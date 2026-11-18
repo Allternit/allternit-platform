@@ -7,7 +7,7 @@ import { FileWatcher } from "@/shared/file/watcher"
 import { Instance } from "@/runtime/context/project/instance"
 import { Patch } from "@/runtime/integrations/patch"
 import { createTwoFilesPatch, diffLines } from "diff"
-import { assertExternalDirectory, assertSandboxWriteAllowed } from "@/runtime/tools/builtins/external-directory"
+import { assertExternalDirectory, assertSandboxWriteAllowed, FolderGrants } from "@/runtime/tools/builtins/external-directory"
 import { trimDiff } from "@/runtime/tools/builtins/edit"
 import { LSP } from "@/runtime/integrations/lsp"
 import { Filesystem } from "@/shared/util/filesystem"
@@ -53,6 +53,8 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
       diff: string
       additions: number
       deletions: number
+      /** A delete in a folder granted without request_delete: moved to `_to_delete/` instead. */
+      trash?: FolderGrants.TrashPlan
     }> = []
 
     let totalDiff = ""
@@ -144,6 +146,12 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
 
           const deletions = contentToDelete.split("\n").length
 
+          // In a folder granted with folder_access but not request_delete the
+          // file moves to <root>/_to_delete/ (decision 10), like bash deletes.
+          // Planned here so a symlink escape refuses before anything changes.
+          const disposition = FolderGrants.disposition(ctx.sessionID, filePath)
+          const trash = disposition.kind === "trash" ? FolderGrants.planTrash(disposition.grant.root, filePath) : undefined
+
           fileChanges.push({
             filePath,
             oldContent: contentToDelete,
@@ -152,6 +160,7 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
             diff: deleteDiff,
             additions: 0,
             deletions,
+            ...(trash ? { trash } : {}),
           })
 
           totalDiff += deleteDiff + "\n"
@@ -188,6 +197,7 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
 
     // Apply the changes
     const updates: Array<{ file: string; event: "add" | "change" | "unlink" }> = []
+    const trashed = new Map<string, string>()
 
     for (const change of fileChanges) {
       const edited = change.type === "delete" ? undefined : (change.movePath ?? change.filePath)
@@ -216,6 +226,13 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
           break
 
         case "delete":
+          if (change.trash) {
+            const dest = FolderGrants.applyTrash(change.trash)
+            trashed.set(change.filePath, dest)
+            updates.push({ file: change.filePath, event: "unlink" })
+            updates.push({ file: dest, event: "add" })
+            break
+          }
           await fs.unlink(change.filePath)
           updates.push({ file: change.filePath, event: "unlink" })
           break
@@ -248,12 +265,17 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
         return `A ${path.relative(Instance.worktree, change.filePath)}`
       }
       if (change.type === "delete") {
-        return `D ${path.relative(Instance.worktree, change.filePath)}`
+        const dest = trashed.get(change.filePath)
+        const line = `D ${path.relative(Instance.worktree, change.filePath)}`
+        return dest ? `${line} (moved to ${dest}, not deleted)` : line
       }
       const target = change.movePath ?? change.filePath
       return `M ${path.relative(Instance.worktree, target)}`
     })
     let output = `Success. Updated the following files:\n${summaryLines.join("\n")}`
+    if (trashed.size) {
+      output += `\n\nThe folder was granted without delete permission, so deleted files moved to ${FolderGrants.TRASH_DIR}/ inside it. Tell the person where they are. To delete for real, call folder_access with action request_delete for the folder.`
+    }
 
     // Report LSP errors for changed files
     const MAX_DIAGNOSTICS_PER_FILE = 20

@@ -17,8 +17,52 @@ import { CONTRACTS, type ToolsetName, type ToolsetRequest, type ToolsetResult } 
 import { chooseAdapter, enabledMembers, enabledV2Members, toolDescription, toolDescriptionV2, toolParameters, V2_STRUCTURED_MEMBERS, type ModelRef } from "./adapter"
 import { httpExecutor, type ExecutorClient } from "./executor-client"
 import { BROWSER_STATE_CLOSE, BROWSER_STATE_OPEN } from "./anthropic-native"
+import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 
 const log = Log.create({ service: "computer-toolset" })
+
+/**
+ * Permission class of an access ask (request_access, or an access_required
+ * step). Always asks, in every mode: an app grant is the person's own act.
+ */
+export const COMPUTER_ACCESS_PERMISSION = "computer.access"
+PermissionNext.ALWAYS_ASK.add(COMPUTER_ACCESS_PERMISSION)
+
+const TIER_RANK: Record<string, number> = { read: 0, click: 1, full: 2 }
+
+/** One app in an access ask (resolve_access entry plus the tier asked for). */
+export interface AccessEntry {
+  name: string
+  bundle_id: string
+  category?: string
+  max_tier?: string
+  tier: string
+}
+
+/** The `access` block the executor puts on access_required / request_access approval_required replies. */
+interface AccessBlock {
+  entries?: Array<Partial<AccessEntry>>
+  reason?: string
+  needed_tier?: string
+  granted_tier?: string
+  expires_in_secs?: number
+}
+
+function accessOf(body: unknown): AccessBlock | undefined {
+  const access = (body as { access?: unknown } | undefined)?.access
+  return access && typeof access === "object" ? (access as AccessBlock) : undefined
+}
+
+function textOf(body: ToolsetResult & { message?: string }): string {
+  return (body.content ?? [])
+    .filter((c) => c.type === "text")
+    .map((c) => (c as { text: string }).text)
+    .join("\n")
+}
+
+function accessSummary(entries: AccessEntry[]): string {
+  return `Let the agent use ${entries.map((e) => `${e.name || e.bundle_id} (${e.tier})`).join(", ")}`
+}
 
 /** Model frame per session + toolset: the size of the last screenshot the model saw. */
 const frames = new Map<string, { width: number; height: number }>()
@@ -79,9 +123,13 @@ export interface RunDeps {
 }
 
 /**
- * One toolset call through the executor, including the approval round trip:
- * a 409 approval_required asks the person (ctx.ask), approves the grant and
- * retries the same call once with it.
+ * One toolset call through the executor, including the approval round trips:
+ * - access_required (the app in front holds a lower tier): one computer.access
+ *   ask, request_access with that answer's grant, then the step once more;
+ * - 409 approval_required asks the person (ctx.ask; request_access asks
+ *   computer.access with its apps, tiers and reason), approves the grant and
+ *   retries the same call once with it (`approval_grant`);
+ * - tier_exceeded comes back as a clear error, with nothing asked.
  */
 export async function runToolsetCall(
   toolset: ToolsetName,
@@ -109,13 +157,37 @@ export async function runToolsetCall(
     ...(stepText ? { step: stepText } : {}),
   }
   let reply = await deps.executor.run(deps.computerId, req, ctx.abort)
+  // The app in front holds a lower tier than this step needs: ask the person
+  // for that tier, record it with request_access, then run the step once more.
+  if (reply.body.error === "access_required" && accessOf(reply.body)?.entries?.length) {
+    await grantAccessFor(member, req.call_index, reply.body, stepText, ctx, deps)
+    reply = await deps.executor.run(deps.computerId, req, ctx.abort)
+  }
   if (reply.status === 409 && reply.body.error === "approval_required" && reply.body.approval_id) {
-    await ctx.ask({
-      permission: `computer_toolset.${toolset}`,
-      patterns: [`${toolset}.${member}`],
-      always: [],
-      metadata: { toolset, member, input, risk: reply.body.risk, computer: deps.computerId },
-    })
+    const access = member === "request_access" ? accessOf(reply.body) : undefined
+    if (access) {
+      // request_access: the card shows the apps, tiers and reason.
+      const entries = accessEntries(access)
+      await ctx.ask({
+        permission: COMPUTER_ACCESS_PERMISSION,
+        patterns: entries.map((e) => `${e.bundle_id}:${e.tier}`),
+        always: [],
+        metadata: {
+          summary: accessSummary(entries),
+          toolset,
+          member,
+          computer: deps.computerId,
+          access: { entries, reason: access.reason ?? "", expires_in_secs: access.expires_in_secs },
+        },
+      })
+    } else {
+      await ctx.ask({
+        permission: `computer_toolset.${toolset}`,
+        patterns: [`${toolset}.${member}`],
+        always: [],
+        metadata: { toolset, member, input, risk: reply.body.risk, computer: deps.computerId },
+      })
+    }
     if (!(await deps.executor.approve(reply.body.approval_id, ctx.abort))) {
       throw new Error(`${member} was approved here but the approval couldn't be recorded; it did not run.`)
     }
@@ -126,14 +198,90 @@ export async function runToolsetCall(
     frames.set(frameKey, { width: body.screen.frame_width, height: body.screen.frame_height })
   }
   if (body.is_error || reply.status >= 400) {
-    const message = (body.content ?? [])
-      .filter((c) => c.type === "text")
-      .map((c) => (c as { text: string }).text)
-      .join("\n")
+    const message = textOf(body)
     log.info("toolset call failed", { toolset, member, status: reply.status, error: body.error })
+    if (body.error === "tier_exceeded") throw new Error(tierExceeded(message))
     throw new Error(message || body.message || `${member} failed (HTTP ${reply.status})`)
   }
   return renderResult(toolset, member, body)
+}
+
+function tierExceeded(message: string): string {
+  return [
+    `tier_exceeded: ${message || "An app was asked for a tier above its ceiling."}`,
+    "Nothing was granted and the person was not asked. Call resolve_access to see each app's max_tier and ask for that tier or less; for a step that needs more, ask the person to do it.",
+  ].join(" ")
+}
+
+function accessEntries(access: AccessBlock, tier?: string): AccessEntry[] {
+  return (access.entries ?? [])
+    .filter((e) => typeof e.bundle_id === "string" && e.bundle_id)
+    .map((e) => ({
+      name: e.name || e.bundle_id!,
+      bundle_id: e.bundle_id!,
+      ...(e.category ? { category: e.category } : {}),
+      ...(e.max_tier ? { max_tier: e.max_tier } : {}),
+      tier: tier ?? e.tier ?? "read",
+    }))
+}
+
+/**
+ * The access round trip for a step refused with access_required: one ask
+ * (computer.access, the app and the tier the step needs), then request_access
+ * on the person's behalf (its own approval is recorded from that same answer)
+ * so the grant exists in the executor's session. A tier above the app's
+ * ceiling never asks: the step's own message says why it can't run.
+ */
+async function grantAccessFor(
+  member: string,
+  callIndex: number | undefined,
+  body: ToolsetResult & { message?: string },
+  stepText: string,
+  ctx: Pick<Tool.Context, "sessionID" | "messageID" | "abort" | "ask">,
+  deps: RunDeps,
+): Promise<void> {
+  const access = accessOf(body)!
+  const needed = access.needed_tier ?? "click"
+  const entries = accessEntries(access, needed)
+  const message = textOf(body)
+  const over = entries.find((e) => e.max_tier !== undefined && (TIER_RANK[needed] ?? 2) > (TIER_RANK[e.max_tier] ?? 0))
+  if (!entries.length || over) throw new Error(message || `${member} needs ${needed} access, above what this app can be granted. It did not run.`)
+  const reason = (stepText || `${member} needs ${needed} access`).slice(0, 200)
+  await ctx.ask({
+    permission: COMPUTER_ACCESS_PERMISSION,
+    patterns: entries.map((e) => `${e.bundle_id}:${e.tier}`),
+    always: [],
+    metadata: {
+      summary: accessSummary(entries),
+      toolset: "computer",
+      member,
+      computer: deps.computerId,
+      access: { entries, reason, needed_tier: needed, granted_tier: access.granted_tier, expires_in_secs: access.expires_in_secs },
+    },
+  })
+  const request: ToolsetRequest = {
+    toolset: "computer",
+    member: "request_access",
+    input: { entries: entries.map((e) => ({ bundle_id: e.bundle_id, tier: e.tier })), reason },
+    run_id: ctx.sessionID,
+    turn_id: ctx.messageID,
+    // The step's own index: the executor halts a turn's later calls after a
+    // failed one, and this request stands in for the refused step.
+    call_index: callIndex,
+    coordinate_space: "pixels",
+  }
+  let reply = await deps.executor.run(deps.computerId, request, ctx.abort)
+  if (reply.status === 409 && reply.body.error === "approval_required" && reply.body.approval_id) {
+    if (!(await deps.executor.approve(reply.body.approval_id, ctx.abort))) {
+      throw new Error(`Access was approved here but the approval couldn't be recorded; ${member} did not run.`)
+    }
+    reply = await deps.executor.run(deps.computerId, { ...request, approval_grant: reply.body.approval_id }, ctx.abort)
+  }
+  if (reply.body.is_error || reply.status >= 400) {
+    const why = textOf(reply.body)
+    if (reply.body.error === "tier_exceeded") throw new Error(tierExceeded(why))
+    throw new Error(`Access for ${member} couldn't be granted: ${why || reply.body.message || `HTTP ${reply.status}`}. It did not run.`)
+  }
 }
 
 /** Members the target actually runs (executor schema), cached for 5 minutes. */

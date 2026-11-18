@@ -13,7 +13,7 @@ export {
 
 export { clearPromptCache } from "../tools/SkillTool/prompt.js"
 
-export { isKairosCronEnabled } from "../tools/ScheduleCronTool/prompt.js"
+export { isKairosCronEnabled } from "../tools/AutomationTool/prompt.js"
 
 // HISTORY_SNIP is not implemented; keep a null placeholder so conditional
 // requires of this module do not break at bundle time.

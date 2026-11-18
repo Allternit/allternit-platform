@@ -20,12 +20,15 @@ import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema }
 import { ToolDispatcher } from "@/runtime/tools/dispatch"
 import { RemoteToolHost } from "@/runtime/tools/remote-host"
 import { ToolDedupe } from "@/runtime/tools/dedupe"
-import { ToolSelection } from "@/runtime/tools/selection"
+import { ToolFamilies } from "@/runtime/primitives/tool-families"
+import { ContextNotice } from "@/runtime/primitives/context-notice"
+import { SteerSignal } from "@/runtime/primitives/steer-signal"
 import { SessionCompaction } from "@/runtime/session/compaction"
 import { Instance } from "@/runtime/context/project/instance"
 import { Bus } from "@/shared/bus"
 import { ProviderTransform } from "@/runtime/providers/adapters/transform"
 import { SystemPrompt } from "@/runtime/session/system"
+import { Clock } from "@/runtime/primitives/clock"
 import { InstructionPrompt } from "@/runtime/session/instruction"
 import { Plugin } from "@/runtime/integrations/plugin"
 import PROMPT_PLAN from "@/runtime/session/prompt/plan.txt"
@@ -37,6 +40,7 @@ import { ToolRegistry } from "@/runtime/tools/builtins/registry"
 import { MCP } from "@/runtime/tools/mcp"
 import { mcpAppMetadata } from "@/runtime/tools/mcp/apps"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
+import { Connectors } from "@/runtime/primitives/connectors"
 import type { CallToolResult } from "@modelcontextprotocol/client"
 import { LSP } from "@/runtime/integrations/lsp"
 import { ReadTool } from "@/runtime/tools/builtins/read"
@@ -56,6 +60,7 @@ import { AnswerTurnGuard } from "@/runtime/session/answer-policy"
 import { SessionProcessor } from "@/runtime/session/processor"
 import { Guardrails } from "@/runtime/session/guardrails"
 import { TaskTool } from "@/runtime/tools/builtins/task"
+import { TurnLocations, resolveTurnLocation, type TurnLocation } from "@/runtime/tools/builtins/lookup"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { SessionStatus } from "@/runtime/session/status"
@@ -82,7 +87,6 @@ import { isRoutineTurnText } from "@/runtime/bots/bot-routines"
 import { isMessageAgentSession, MessageAgentTool } from "@/runtime/tools/builtins/message-agent"
 import { SuggestTaskTool } from "@/runtime/tools/builtins/suggest-task"
 import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-permission"
-import { THREAD_TOOL_IDS } from "@/runtime/tools/builtins/thread-tools"
 import { WORKER_BOT_TOOL_IDS } from "@/runtime/tools/builtins/worker-bot-tools"
 import { isAppBotMainChat, isAppBotSession } from "@/runtime/bots/app-bot-routing"
 import { PROJECT_SEND_TOOL_IDS } from "@/runtime/tools/builtins/project-send"
@@ -196,6 +200,12 @@ export namespace SessionPrompt {
       .describe(
         "A system layer for this turn only, sent by allternit-api or the app: this turn's answer-template line, the card-repair note, the user's opt-in shared location. Held in memory for the turn and appended after `system`; deliberately not stored on the user message, never logged, never carried to later turns.",
       ),
+    turnLocation: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe(
+        "The user's opt-in shared location for this turn only, structured ({ lat, lon, accuracy_m?, time_zone?, place?, at? }; lat/lon rounded to two decimals), sent by allternit-api (client_location::turn_value) beside the prose line in `turnSystem`. Tools read it (lookup \"here\"). Held in memory for the turn like `turnSystem`: deliberately not part of `metadata` (stored on the user message), never logged, never carried to later turns. Invalid values are ignored.",
+      ),
     /**
      * Run this turn as one of the user's platform bots (sent by
      * allternit-api): the bot's identity leads, and the user's personal
@@ -250,6 +260,10 @@ export namespace SessionPrompt {
   export type PromptInput = z.infer<typeof PromptInput>
 
   export const prompt = fn(PromptInput, async (input) => {
+    // The client's time zone (`metadata.time_zone`, a hint like form_factor):
+    // kept as the runtime's last client zone for turns that carry none
+    // (routines, workers). Invalid names are ignored; never throws.
+    await Clock.rememberClientZone(input.metadata?.["time_zone"])
     // A live terminal session runs its turns in the terminal: hand the text over (TerminalLive).
     const { TerminalLive } = await import("@/runtime/session/terminal-live")
     if (TerminalLive.attached(input.sessionID)) {
@@ -398,6 +412,10 @@ const message = await createUserMessage(input)
     // So does the turn-only system layer (answer template, card-repair note, opt-in location).
     const turnLayer = input.turnSystem?.trim()
     if (turnLayer) turnSystemLayers.set(input.sessionID, turnLayer)
+    // The shared location, structured for tools (lookup "here"); same lifetime. Read from
+    // the `turnLocation` field; the `turnSystem` text only when an older API sent no field.
+    const location = resolveTurnLocation(input.turnLocation, turnLayer)
+    if (location) TurnLocations.set(input.sessionID, location)
     try {
       const result = await loop({ sessionID: input.sessionID, fallbackModels: input.fallbackModels, botPreamble })
       if (!afterTurnLimit(session, result)) afterTurnHandoff(input.sessionID, result)
@@ -405,6 +423,7 @@ const message = await createUserMessage(input)
     } finally {
       releaseMcpProxy()
       if (turnLayer && turnSystemLayers.get(input.sessionID) === turnLayer) turnSystemLayers.delete(input.sessionID)
+      if (location) TurnLocations.release(input.sessionID, location)
     }
   })
 
@@ -414,6 +433,11 @@ const message = await createUserMessage(input)
    * written to the session, its messages or the logs.
    */
   const turnSystemLayers = new Map<string, string>()
+
+  /** The opt-in shared location of the turn now running in this session (lat/lon, radius, zone), or undefined. */
+  export function turnLocation(sessionID: string): TurnLocation | undefined {
+    return TurnLocations.get(sessionID)
+  }
 
   // Cancelling a session while its environment is being set up stops the setup.
   const setupAborts = new Map<string, AbortController>()
@@ -711,6 +735,10 @@ const message = await createUserMessage(input)
         const callbacks = state()[sessionID].callbacks
         callbacks.push({ resolve, reject })
         state()[sessionID].queuedTurns += 1
+        // Primitives Wave B: a message queued behind the running turn wakes a
+        // wait_agents call in that turn. This bump also fires for background
+        // completions, so the core checks its targets first (settled before steer).
+        SteerSignal.notify(sessionID)
       })
     }
 
@@ -1212,7 +1240,7 @@ const message = await createUserMessage(input)
         const system = await composeTurnSystem({
           userSystem: lastUser.system ?? (answerGuard.required ? answerGuard.system : undefined),
           bot: botTurn,
-          environment: () => SystemPrompt.environment(model),
+          environment: () => SystemPrompt.environment(model, { turnZone: Clock.turnZoneOf(lastUser.metadata) }),
           instructions: () => InstructionPrompt.system(),
           workspace: async () => {
             const workspaceSystemPrompt = await WorkspaceContext.getWorkspaceSystemPrompt(session.directory)
@@ -1310,6 +1338,8 @@ const message = await createUserMessage(input)
       // runs inside the runtime session pipeline, so both the TUI (worker /
       // server) and headless (`gizzi run --print`) paths get the injection.
       const system = await turnSystemPromise
+      // answer_cards "widgets" (clients that draw no catalog cards): the short writing-only manual.
+      if (answerGuard.widgetsManual) system.push(answerGuard.widgetsManual)
       // The turn-only layer (answer template, card-repair note, opt-in location) goes last among the user layers.
       const turnLayer = turnSystemLayers.get(sessionID)
       if (turnLayer) system.push(turnLayer)
@@ -1327,6 +1357,13 @@ const message = await createUserMessage(input)
       const validationReminder = ToolValidationRetry.reminder(sessionID)
       if (validationReminder) tail.push(validationReminder)
       if (wrapUp) tail.push(wrapUpReminder(wrapUp.window))
+      // Primitives Wave B: context left (25% / 10% / after a compaction), as a
+      // temporary tail part; each threshold fires once (primitives/context-notice.ts).
+      const contextNotice = await ContextNotice.forTurn({ sessionID, model, messages: msgs }).catch((error) => {
+        log.warn("context notice failed", { sessionID, error })
+        return undefined
+      })
+      if (contextNotice) tail.push(contextNotice)
       // WP9: Context Compiler, shadow mode behind GIZZI_KERNEL_COMPILERS (off by
       // default). Records a ContextProjectionV1; never changes `system`.
       if (KernelTurn.enabled())
@@ -1682,7 +1719,7 @@ const message = await createUserMessage(input)
       abort: options.abortSignal!,
       messageID: input.processor.message.id,
       callID: options.toolCallId,
-      extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck },
+      extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck, location: TurnLocations.get(input.session.id) },
       agent: input.agent.name,
       messages: input.messages,
       metadata: async (val: { title?: string; metadata?: any }) => {
@@ -1788,49 +1825,14 @@ const message = await createUserMessage(input)
 
     const mcpCatalog = await mcpToolCatalog(input.session.id)
     const mcpTools = Object.entries(mcpCatalog.tools)
-    const config = await Config.get()
-    const dynamicSelection =
-      Flag.GIZZI_DYNAMIC_TOOL_SELECTION || config.experimental?.dynamic_tool_selection === true
-    const mcpNames = mcpTools.map(([name]) => name).sort()
-    const loadedMcpTools = ToolSelection.loaded(input.session.id, input.messages)
-    if (dynamicSelection && mcpNames.length) {
-      tools["select_tools"] = tool({
-        id: "select_tools" as any,
-        description: [
-          "Load one or more MCP tool schemas for the next model step. Use this when a required integration tool is not currently available.",
-          `Loadable tools: ${mcpNames.join(", ")}`,
-        ].join("\n"),
-        inputSchema: jsonSchema({
-          type: "object",
-          additionalProperties: false,
-          required: ["names"],
-          properties: {
-            names: { type: "array", items: { type: "string" }, minItems: 1 },
-          },
-        }),
-        execute: async (args: { names: string[] }, options) => {
-          const ctx = context(args, options)
-          return ToolDedupe.execute({
-            sessionID: ctx.sessionID,
-            messageID: ctx.messageID,
-            tool: "select_tools",
-            args,
-            run: () => ToolDispatcher.executeInitialized("select_tools", args, ctx, async (nextArgs) => {
-              const result = ToolSelection.load(input.session.id, nextArgs.names, mcpNames)
-              return {
-                title: "MCP tools selected",
-                metadata: result,
-                output: JSON.stringify(result),
-              }
-            }),
-          })
-        },
-      })
-    }
     // A bot's Capabilities page: MCP connectors it has off are not offered to it.
     const turnBot = BotTurn.get(input.session.id)
+    // Wave D decision 10: more than Connectors.DEFER_THRESHOLD connector tools
+    // mount none until connector_search loads them (non-connector MCP tools
+    // always mount). Loaded tools keep their own permission rules below.
+    const connectorMounted = Connectors.mountFilter(input.session.id, mcpCatalog.descriptors)
     for (const [key, item] of mcpTools) {
-      if (dynamicSelection && !loadedMcpTools.has(key)) continue
+      if (!connectorMounted(key)) continue
       if (!BotTurn.mcpOnForBot(turnBot, mcpCatalog.descriptors[key]?.connectorId)) continue
       const execute = item.execute
       if (!execute) continue
@@ -2023,10 +2025,12 @@ const message = await createUserMessage(input)
       if (!allowed) delete tools[GrantTaskPermissionTool.id]
     }
 
-    // thread_update / thread_close / thread_search: only an app bot's chat steers its own thread.
-    if (THREAD_TOOL_IDS.some((id) => id in tools)) {
+    // thread_update / thread_close: only an app bot's chat steers its own thread.
+    // The past-chat tools (thread_search, thread_read, thread_recent, thread_wait)
+    // work in every session, CLI included (Primitives Wave D, decision 8).
+    if (ToolRegistry.BOT_THREAD_TOOL_IDS.some((id) => id in tools)) {
       const allowed = await isAppBotSession(input.session.id).catch(() => false)
-      if (!allowed) for (const id of THREAD_TOOL_IDS) delete tools[id]
+      if (!allowed) for (const id of ToolRegistry.BOT_THREAD_TOOL_IDS) delete tools[id]
     }
 
     // bot_create / vendor_connect: only an app bot's chat has an owner to act for.
@@ -2048,6 +2052,12 @@ const message = await createUserMessage(input)
       const keys = Object.keys(tools).filter((k) => k !== "invalid")
       for (const key of PermissionNext.hidden(keys, ruleset)) delete tools[key]
     }
+    // Primitives Wave B: deferred tool families (built-in groups and MCP tools)
+    // stay out until tool_search or a call by name loads them; applied last so
+    // it only narrows what every gate above allowed. GIZZI_DISABLE_TOOL_SEARCH
+    // turns it off (primitives/tool-families.ts).
+    const deferral = ToolFamilies.filter({ sessionID: input.session.id, tools, messages: input.messages })
+    for (const key of Object.keys(tools)) if (!(key in deferral.tools)) delete tools[key]
     const schemaBytes = Object.values(tools).reduce((n, t) => {
       try {
         return n + JSON.stringify((t as any).inputSchema?.jsonSchema ?? (t as any).parameters ?? {}).length
@@ -2055,7 +2065,12 @@ const message = await createUserMessage(input)
         return n
       }
     }, 0)
-    log.info("resolved tools", { count: Object.keys(tools).length, schemaBytes, sessionRules: input.session.permission?.length ?? 0 })
+    log.info("resolved tools", {
+      count: Object.keys(tools).length,
+      deferred: deferral.deferred.length,
+      schemaBytes,
+      sessionRules: input.session.permission?.length ?? 0,
+    })
 
     return tools
   }

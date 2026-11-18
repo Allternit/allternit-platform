@@ -365,10 +365,11 @@ struct AutomationTasksPhoneView: View {
         return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
-    /// Routines that can run: a routine with no bot isn't on the graph or calendar.
+    /// Routines that can run: a bot runs it, or it posts into a chat
+    /// (`config.delivery.sessionId`). One with neither isn't on the graph or calendar.
     private var scheduledRoutines: [AutomationRoutine] {
         visibleRoutines
-            .filter { !($0.agentId ?? "").isEmpty }
+            .filter(\.hasRunner)
             .sorted { a, b in
                 let (botA, botB) = (a.agentId ?? "", b.agentId ?? "")
                 return botA != botB ? botA < botB : a.createdAt < b.createdAt
@@ -438,10 +439,12 @@ struct AutomationTasksPhoneView: View {
         }
     }
 
-    /// Routines as run rows; routines with no bot keep their card.
+    /// Routines as run rows; routines nothing can run (no bot and no chat
+    /// to post into) keep their card.
     private var routineList: some View {
-        let rows = visibleRoutines.filter { !($0.agentId ?? "").isEmpty }
-        let needBot = filteredTasks.filter { ($0.agentId ?? "").isEmpty }
+        let rows = visibleRoutines.filter(\.hasRunner)
+        let runnable = Set(rows.map(\.id))
+        let needBot = filteredTasks.filter { ($0.agentId ?? "").isEmpty && !runnable.contains($0.id) }
         return VStack(spacing: 24) {
             VStack(spacing: 0) {
                 if rows.isEmpty {

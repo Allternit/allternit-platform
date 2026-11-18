@@ -4,8 +4,8 @@ import { Config } from "@/runtime/context/config/config"
 import { Flag } from "@/runtime/context/flag/flag"
 import { Identifier } from "@/shared/id/id"
 import { Instance } from "@/runtime/context/project/instance"
-import { Database, eq } from "@/runtime/session/storage/db"
-import { PermissionTable, SessionTable } from "@/runtime/session/session.sql"
+import { Database, desc, eq } from "@/runtime/session/storage/db"
+import { MessageTable, PartTable, PermissionTable, SessionTable } from "@/runtime/session/session.sql"
 import { fn } from "@/shared/util/fn"
 import { Log } from "@/shared/util/log"
 import { Wildcard } from "@/shared/util/wildcard"
@@ -16,6 +16,7 @@ import { Catastrophic } from "@/runtime/tools/guard/permission/catastrophic"
 
 import { KernelTurn } from "@/runtime/kernel/compilers/turn-hook"
 import { PermissionS1 } from "@/runtime/tools/guard/permission/s1-shadow"
+import { ActionReview } from "@/runtime/tools/guard/permission/action-review"
 import { ProjectPanels } from "@/runtime/project/panels"
 export namespace PermissionNext {
   const log = Log.create({ service: "permission" })
@@ -116,8 +117,17 @@ export namespace PermissionNext {
    *
    * `project_send` gates a bot's main chat sending work into another project:
    * the person approves every send, with the project and full message on the card.
+   *
+   * `folder_access` gates a grant to folders outside the project (and
+   * `request_delete`, real deletes there); builtins/folder-access.ts.
+   *
+   * `computer.access` gates a computer access tier for an app (request_access,
+   * or the ask an access_required step raises); computer-toolset/index.ts.
+   *
+   * Listed here, not added by the tool modules when they load, so the class
+   * always asks whichever modules a process happens to import.
    */
-  export const ALWAYS_ASK = new Set(["subscription", "mcp_app", "project_send"])
+  export const ALWAYS_ASK = new Set(["subscription", "mcp_app", "project_send", "folder_access", "computer.access"])
 
   /**
    * Classes a one-task grant ("Allow for this task") never covers: money,
@@ -176,6 +186,8 @@ export namespace PermissionNext {
       {
         info: Request
         ruleset: Ruleset
+        /** The action reviewer's verdict for the pattern that asked. */
+        review?: ActionReview.Review
         resolve: (data?: ReplyData) => void
         reject: (e: any) => void
       }
@@ -272,6 +284,27 @@ export namespace PermissionNext {
             rule = { action: mode === "dontAsk" ? "deny" : "ask", permission: request.permission, pattern, source: "project" }
           }
         }
+        // The action reviewer (action-review.ts): the four action classes
+        // gate the policy's answer and an optional local model review joins
+        // through tighten(). It never loosens: bypass, yolo and auto still
+        // ask about money, credentials, deletes and signing.
+        const policyAction = rule.action
+        const decision = await ActionReview.decide({
+          sessionID: request.sessionID,
+          permission: request.permission,
+          pattern,
+          metadata: request.metadata,
+          incumbent: rule.action,
+          mode,
+          configured: ruleset,
+          approvals: s.approved,
+          task: s.task[request.sessionID] ?? [],
+          projectRoot: projectRoot(),
+        })
+        const review = decision.review
+        if (decision.action !== rule.action) {
+          rule = { action: decision.action, permission: request.permission, pattern, source: "default" }
+        }
         log.info("evaluated", { permission: request.permission, pattern, action: rule })
         const callID = request.tool?.callID
         // Q27 shadow S1 GATE: logged after the floor/policy decided; never awaited, never changes `rule`.
@@ -287,16 +320,31 @@ export namespace PermissionNext {
         if (rule.action === "deny") {
           const floor = Catastrophic.applies(request.permission) ? Catastrophic.check(pattern) : undefined
           // WP9: hand the gate's real decision to the Tool Call Compiler (no-op unless GIZZI_KERNEL_COMPILERS).
+          const byClass = policyAction !== "deny"
           KernelTurn.noteGateDecision(callID, {
             permission: request.permission,
             pattern,
             action: "deny",
-            source: floor ? "catastrophic_floor" : (rule.source ?? "default"),
+            source: floor ? "catastrophic_floor" : byClass ? "action_class" : (rule.source ?? "default"),
           })
           if (floor) throw new FloorError(floor.reason, pattern)
+          if (review.class === "hand_off") throw new HandOffError(review.reason)
+          if (byClass) throw new NeedsPersonError(review.reason)
+          // The person's own "never" for a classed action counts as a denied outcome.
+          if (isUserRule(rule)) ActionReview.recordDenied(request.sessionID, review)
           throw new DeniedError(ruleset.filter((r) => Wildcard.match(request.permission, r.permission)))
         }
         if (rule.action === "ask") {
+          // A turn a scheduler started has nobody to answer: refuse now
+          // instead of leaving the run waiting until its timeout, tell the
+          // owner once per run, and let the processor end the turn (an
+          // UnattendedError is a RejectedError). Never an approval.
+          const unattended = await unattendedTurn(request.sessionID, request.tool?.messageID)
+          if (unattended) {
+            KernelTurn.noteGateDecision(callID, { permission: request.permission, pattern, action: "deny", source: "unattended" })
+            raiseNeedsYou(unattended, request)
+            throw new UnattendedError()
+          }
           const id = askID!
           await HookDispatcher.emit({
             name: "PermissionRequest",
@@ -311,10 +359,13 @@ export namespace PermissionNext {
             const info: Request = {
               id,
               ...request,
+              // Ask metadata carries the review: {class, risk, authorized, reason}.
+              metadata: { ...request.metadata, review: ActionReview.metadata(review) },
             }
             s.pending[id] = {
               info,
               ruleset,
+              review,
               resolve: (v: any) => {
                 decided("allow")
                 resolve(v)
@@ -335,6 +386,182 @@ export namespace PermissionNext {
     },
   )
 
+  /* ---------------------------------------------------------------------- */
+  /* Unattended turns (scheduled tasks, bot routines)                        */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * A turn a scheduler started: the user message carries
+   * `metadata.automation_run` (gizzi's /cron fallback, allternit-api's
+   * scheduler) or begins with a routine's "[routine: <label>]" marker.
+   * `key` is that user message; `sessionID` the session it is in.
+   */
+  export type UnattendedTurn = { key: string; sessionID: string; jobId?: string; runId?: string; by?: string; label?: string }
+
+  /** After this many refusals in one run its session is stopped (only reached when continue_loop_on_deny is on). */
+  export const MAX_UNATTENDED_DENIALS = 5
+  const ROUTINE_LABEL = /^\[routine: ([^\]]*)\]/
+  const unattendedDenials = new Map<string, number>()
+  const unattendedBlocks = new Map<string, string>()
+
+  function remember<V>(map: Map<string, V>, key: string, value: V) {
+    map.delete(key)
+    map.set(key, value)
+    if (map.size > 500) map.delete(map.keys().next().value!)
+  }
+
+  type MessageRow = typeof MessageTable.$inferSelect
+
+  /** The user message a tool call answers: the assistant message's parent, else the session's latest user message. */
+  function turnUserRow(sessionID: string, messageID?: string): MessageRow | undefined {
+    const byId = (id: string) => Database.use((db) => db.select().from(MessageTable).where(eq(MessageTable.id, id)).get())
+    if (messageID) {
+      const row = byId(messageID)
+      const data = row?.data as { role?: string; parentID?: string } | undefined
+      if (row && data?.role === "user") return row
+      if (data?.role === "assistant" && data.parentID) {
+        const parent = byId(data.parentID)
+        if (parent && (parent.data as { role?: string }).role === "user") return parent
+      }
+    }
+    const rows = Database.use((db) =>
+      db
+        .select()
+        .from(MessageTable)
+        .where(eq(MessageTable.session_id, sessionID))
+        .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
+        .limit(20)
+        .all(),
+    )
+    return rows.find((row) => (row.data as { role?: string }).role === "user")
+  }
+
+  async function markedTurn(row: MessageRow): Promise<UnattendedTurn | undefined> {
+    const metadata = (row.data as { metadata?: Record<string, unknown> }).metadata
+    const parts = Database.use((db) =>
+      db.select().from(PartTable).where(eq(PartTable.message_id, row.id)).orderBy(PartTable.id).all(),
+    )
+    const text = parts
+      .map((part) => part.data as { type?: string; text?: string; synthetic?: boolean })
+      .find((part) => part.type === "text" && !part.synthetic)?.text
+    const { Automation } = await import("@/runtime/primitives/automation")
+    if (!Automation.isAutomationRun(metadata, text)) return undefined
+    const run = metadata?.[Automation.RUN_METADATA_KEY] as { id?: string; runId?: string; by?: string } | undefined
+    return {
+      key: row.id,
+      sessionID: row.session_id,
+      ...(typeof run?.id === "string" ? { jobId: run.id } : {}),
+      ...(typeof run?.runId === "string" ? { runId: run.runId } : {}),
+      ...(typeof run?.by === "string" ? { by: run.by } : {}),
+      ...(text && ROUTINE_LABEL.test(text) ? { label: ROUTINE_LABEL.exec(text)![1] } : {}),
+    }
+  }
+
+  /**
+   * Whether the turn that made this tool call was started by a scheduler. A
+   * subagent's session has no marker of its own, so its parent's turn
+   * decides. Never throws: on a read error the ask goes ahead as usual.
+   */
+  export async function unattendedTurn(sessionID: string, messageID?: string): Promise<UnattendedTurn | undefined> {
+    try {
+      let session: string | undefined = sessionID
+      let message = messageID
+      for (let depth = 0; session && depth < 4; depth++) {
+        const row = turnUserRow(session, message)
+        if (row) {
+          const hit = await markedTurn(row)
+          if (hit) return hit
+        }
+        const current: string = session
+        const parent = Database.use((db) =>
+          db.select({ parent: SessionTable.parent_id }).from(SessionTable).where(eq(SessionTable.id, current)).get(),
+        )
+        session = parent?.parent ?? undefined
+        message = undefined
+      }
+    } catch (error) {
+      log.warn("unattended check failed; asking as usual", { sessionID, error: String(error) })
+    }
+    return undefined
+  }
+
+  function describeAsk(request: { permission: string; patterns?: string[] }): string {
+    const patterns = (request.patterns ?? []).filter((p) => p && p !== "*")
+    const text = `use ${request.permission}${patterns.length ? ` (${patterns.join(", ")})` : ""}`
+    return text.length > 140 ? text.slice(0, 139).trimEnd() + "…" : text
+  }
+
+  /** needs_you once per run; the run's scheduler reads the block back (takeUnattendedBlock). */
+  function raiseNeedsYou(turn: UnattendedTurn, request: { sessionID: string; permission: string; patterns?: string[] }) {
+    const count = (unattendedDenials.get(turn.key) ?? 0) + 1
+    remember(unattendedDenials, turn.key, count)
+    const action = describeAsk(request)
+    if (turn.runId && !unattendedBlocks.has(turn.runId)) remember(unattendedBlocks, turn.runId, action)
+    // allternit-api's scheduler raises its own attention item for this run; one notice, not two.
+    if (count === 1 && turn.by !== "scheduler") {
+      const who = turn.label ? `Scheduled task "${turn.label}"` : "A scheduled task"
+      const preview = `${who} stopped: it needs your approval to ${action}.`
+      void import("@/runtime/bots/app-bot-routing")
+        .then(({ notifyUser }) =>
+          notifyUser(turn.sessionID, { kind: "message", level: "needs_you", preview: preview.slice(0, 200) }),
+        )
+        .catch((error) => log.warn("needs_you push not sent", { sessionID: turn.sessionID, error: String(error) }))
+    }
+    if (count >= MAX_UNATTENDED_DENIALS) {
+      void import("@/runtime/session/prompt")
+        .then(({ SessionPrompt }) => SessionPrompt.cancel(request.sessionID))
+        .catch(() => {})
+    }
+  }
+
+  /** The approval a scheduled run stopped at (its run id from `metadata.automation_run.runId`), read once. */
+  export function takeUnattendedBlock(runId: string): string | undefined {
+    const action = unattendedBlocks.get(runId)
+    unattendedBlocks.delete(runId)
+    return action
+  }
+
+  /** The project worktree, for "is this delete outside the project". */
+  function projectRoot(): string | undefined {
+    try {
+      return Instance.worktree
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Whether an open ask may now settle as allowed: the policy allows it and
+   * the action class still lets it run with the grants as they are now.
+   */
+  function settles(
+    s: { approved: Ruleset; task: Record<string, Ruleset> },
+    pending: { info: Request; ruleset: Ruleset; review?: ActionReview.Review },
+    approvals: Ruleset,
+    mode: Mode,
+    app: boolean,
+  ): boolean {
+    const sessionID = pending.info.sessionID
+    return pending.info.patterns.every((pattern) => {
+      const action = evaluatePolicy(pending.info.permission, pattern, {
+        configured: pending.ruleset,
+        approvals,
+        mode,
+        app,
+        destructive: pending.info.metadata?.destructive === true,
+      }).action
+      if (action !== "allow") return false
+      const review = pending.review
+      if (!review) return true
+      const authorized = !!ActionReview.authorizedBy(pending.info.permission, pattern, {
+        configured: pending.ruleset,
+        approvals: s.approved,
+        task: s.task[sessionID] ?? [],
+      })
+      return ActionReview.gate(action, review.class, { authorized, forced: review.forced, mode }) === "allow"
+    })
+  }
+
   function approvalsFor(s: { approved: Ruleset; task: Record<string, Ruleset> }, sessionID: string): Ruleset {
     const task = s.task[sessionID]
     return task?.length ? [...s.approved, ...task] : s.approved
@@ -354,6 +581,7 @@ export namespace PermissionNext {
     const s = await state()
     const had = !!s.task[sessionID]?.length
     delete s.task[sessionID]
+    ActionReview.forget(sessionID)
     return had
   }
 
@@ -424,6 +652,11 @@ export namespace PermissionNext {
       if (input.reply === "task" && !taskGrantable(existing.info.permission)) {
         input = { ...input, reply: "once" }
       }
+      // confirm_now (money, credentials, permanent delete, signing) and a
+      // retry of a denied outcome ask every time: nothing remembers them.
+      if ((input.reply === "always" || input.reply === "task") && existing.review?.forced) {
+        input = { ...input, reply: "once" }
+      }
       // Only always-ask classes carry reply data (a human action, an answer)
       // back to the asking tool; an ordinary approval never mints one.
       const data: ReplyData | undefined =
@@ -445,6 +678,7 @@ export namespace PermissionNext {
         payload: { tool: existing.info.permission, requestID: existing.info.id, reply: input.reply },
       })
       if (input.reply === "reject") {
+        if (existing.review) ActionReview.recordDenied(existing.info.sessionID, existing.review)
         existing.reject(input.message ? new CorrectedError(input.message) : new RejectedError())
         // A subscription card is one task's own decision (D16): declining it
         // leaves the session's other cards open.
@@ -480,15 +714,7 @@ export namespace PermissionNext {
         const app = await isAppSession(sessionID)
         for (const [id, pending] of Object.entries(s.pending)) {
           if (pending.info.sessionID !== sessionID) continue
-          const ok = pending.info.patterns.every(
-            (pattern) => evaluatePolicy(pending.info.permission, pattern, {
-              configured: pending.ruleset,
-              approvals: approvalsFor(s, sessionID),
-              mode,
-              app,
-              destructive: pending.info.metadata?.destructive === true,
-            }).action === "allow",
-          )
+          const ok = settles(s, pending, approvalsFor(s, sessionID), mode, app)
           if (!ok) continue
           delete s.pending[id]
           Bus.publish(Event.Replied, { sessionID, requestID: pending.info.id, reply: "task" })
@@ -512,15 +738,7 @@ export namespace PermissionNext {
         const app = await isAppSession(sessionID)
         for (const [id, pending] of Object.entries(s.pending)) {
           if (pending.info.sessionID !== sessionID) continue
-          const ok = pending.info.patterns.every(
-            (pattern) => evaluatePolicy(pending.info.permission, pattern, {
-              configured: pending.ruleset,
-              approvals: s.approved,
-              mode,
-              app,
-              destructive: pending.info.metadata?.destructive === true,
-            }).action === "allow",
-          )
+          const ok = settles(s, pending, s.approved, mode, app)
           if (!ok) continue
           delete s.pending[id]
           Bus.publish(Event.Replied, {
@@ -548,7 +766,9 @@ export namespace PermissionNext {
   )
 
   const READONLY_PERMISSIONS = new Set([
-    "read", "glob", "grep", "list", "websearch", "codesearch", "question", "todoread", "lsp",
+    "read", "glob", "grep", "list", "websearch", "codesearch", "question", "todoread", "lsp", "current_time",
+    // Primitives Wave B: read-only, so plan mode keeps them.
+    "get_context_remaining", "history_recall", "tool_search", "wait_agents",
   ])
 
   const EDIT_PERMISSIONS = new Set([
@@ -807,6 +1027,19 @@ export namespace PermissionNext {
     }
   }
 
+  /**
+   * Refused because nobody is there to ask: the turn was started by a
+   * scheduled task or routine. A RejectedError, so the processor ends the
+   * turn after this step instead of letting the model keep trying.
+   */
+  export class UnattendedError extends RejectedError {
+    constructor() {
+      super()
+      this.message =
+        "This step needs the owner's approval. Unattended scheduled runs can't ask; the owner has been notified."
+    }
+  }
+
   /** User rejected with message - continues with guidance */
   export class CorrectedError extends Error {
     constructor(message: string) {
@@ -820,6 +1053,32 @@ export namespace PermissionNext {
       super(
         `The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules ${JSON.stringify(ruleset)}`,
       )
+    }
+  }
+
+  /**
+   * A hand_off action (a human check such as a CAPTCHA, or the floor): it
+   * never runs from an agent in any mode. The person does it themselves.
+   */
+  export class HandOffError extends DeniedError {
+    constructor(public readonly reason: string) {
+      super([])
+      this.message =
+        `This step never runs from an agent, in any permission mode (${reason}). Hand this to the user: tell them ` +
+        `what is needed (use request_human if you have it). Do not retry it or try another way.`
+    }
+  }
+
+  /**
+   * A confirm_now (or unnamed confirm_unless_named) action in a mode where
+   * nobody can be asked (dontAsk, plan): refused, never approved.
+   */
+  export class NeedsPersonError extends DeniedError {
+    constructor(public readonly reason: string) {
+      super([])
+      this.message =
+        `This step needs the person's own approval (${reason}), and this session's mode can't ask. It did not run. ` +
+        `Do not retry it another way; tell the user what is needed.`
     }
   }
 

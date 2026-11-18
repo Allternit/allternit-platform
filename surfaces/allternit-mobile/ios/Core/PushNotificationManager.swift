@@ -152,7 +152,7 @@ final class PushNotificationManager: NSObject {
     /// A notification was tapped: open what it points at.
     /// An approval opens Decisions, where it can be answered; the rest open
     /// their link.
-    func handleTap(urlPath: String?, event: String? = nil, inboxId: String? = nil) {
+    func handleTap(urlPath: String?, event: String? = nil, inboxId: String? = nil, sessionId: String? = nil) {
         clearBadge()
         if let inboxId, !inboxId.isEmpty {
             DeepLinkRouter.shared.enqueue(.inboxItem(inboxId))
@@ -162,8 +162,8 @@ final class PushNotificationManager: NSObject {
             DeepLinkRouter.shared.enqueue(.decisions)
             return
         }
-        guard let urlPath, !urlPath.isEmpty else { return }
-        DeepLinkRouter.shared.open(path: urlPath)
+        // The url, else (an agent's message from a session with no bot) the session.
+        DeepLinkRouter.shared.openPush(urlPath: urlPath, event: event, sessionId: sessionId)
     }
 
     /// Opening the app counts as seeing what's new.

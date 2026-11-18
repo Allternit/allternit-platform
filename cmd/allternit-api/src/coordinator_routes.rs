@@ -690,7 +690,7 @@ pub fn kickoff_text(project_title: &str, t: &ThreadView) -> String {
             s.push_str(&format!("\n- {}", i.text));
         }
     }
-    s.push_str("\n\nWork on this now and report what you did and what's left.");
+    s.push_str("\n\nStay within this objective; do not take on other threads' work or promise what another bot will do. Start your report with the outcome in one line, then the evidence, then what is left.");
     s.push_str("\n\nRead the project status page in your instructions first. When you finish, update the section you changed with the project_status tool; a done state needs a proof link.");
     if !t.todo.is_empty() {
         s.push_str("\n\nEnd your report with this checklist, marking [x] only for steps you actually finished:\nChecklist:");
@@ -943,7 +943,7 @@ fn apply_worker_settings(db: &DbHandle, worker_id: &str, session_id: &str) -> Re
     bag["originSurface"] = workspace["mode"].clone();
     if let Some(directory) = workspace["directory"].as_str() { bag["directory"] = json!(directory); }
     let page = workspace["id"].as_str().and_then(|id| db.connect().ok().map(|conn| crate::project_status::prompt_context(&conn, id))).unwrap_or_default();
-    bag["systemPrompt"] = json!(format!("You work on one task in this project. Report the result and evidence honestly.\n\n{}\n\n{}", workspace["context"].as_str().unwrap_or_default(), page));
+    bag["systemPrompt"] = json!(format!("You are a worker on one task in this project. Start from the objective and checklist you are given, and stay in scope. Open your report with the outcome in one line, then the evidence, then what is left. Never promise work that other bots own. The project owner approves anything that gets sent.\n\n{}\n\n{}", workspace["context"].as_str().unwrap_or_default(), page));
     bag["codePermissionMode"] = workspace["threadPermissionMode"].as_str().map(|v| json!(v)).unwrap_or(json!("default"));
     if workspace["mode"] == "code" { bag["workspaceId"] = workspace["nativeId"].clone(); }
     if let Some((provider, model)) = selection_model(&workspace["threadModel"]) {

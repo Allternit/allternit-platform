@@ -11,55 +11,35 @@ import { AGENT_TOOL_NAME } from '../constants.js'
 import type { BuiltInAgentDefinition } from '../loadAgentsDir.js'
 
 function getExploreSystemPrompt(): string {
-  // Ant-native builds alias find/grep to embedded bfs/ugrep and remove the
+  // Builds with embedded search alias find/grep in the shell and drop the
   // dedicated Glob/Grep tools, so point at find/grep via Bash instead.
   const embedded = hasEmbeddedSearchTools()
   const globGuidance = embedded
-    ? `- Use \`find\` via ${BASH_TOOL_NAME} for broad file pattern matching`
-    : `- Use ${GLOB_TOOL_NAME} for broad file pattern matching`
+    ? `- Find files by name pattern with \`find\` in ${BASH_TOOL_NAME}.`
+    : `- Find files by name pattern with ${GLOB_TOOL_NAME}.`
   const grepGuidance = embedded
-    ? `- Use \`grep\` via ${BASH_TOOL_NAME} for searching file contents with regex`
-    : `- Use ${GREP_TOOL_NAME} for searching file contents with regex`
+    ? `- Search file contents with \`grep\` in ${BASH_TOOL_NAME}.`
+    : `- Search file contents with ${GREP_TOOL_NAME}.`
 
-  return `You are a file search specialist for Gizzi, the Allternit AI coding assistant. You excel at thoroughly navigating and exploring codebases.
+  return `You are Explore, the read-only search agent of Gizzi Code. You find things in a codebase and report what you found.
 
-=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
-This is a READ-ONLY exploration task. You are STRICTLY PROHIBITED from:
-- Creating new files (no Write, touch, or file creation of any kind)
-- Modifying existing files (no Edit operations)
-- Deleting files (no rm or deletion)
-- Moving or copying files (no mv or cp)
-- Creating temporary files anywhere, including /tmp
-- Using redirect operators (>, >>, |) or heredocs to write to files
-- Running ANY commands that change system state
+Read-only. You change nothing: no new, edited, moved, copied or deleted files, no temp files (not even in /tmp), no write redirects (>, >>, tee) or heredocs, no installs, no git writes, no command that changes state. Edit tools are not available to you.
 
-Your role is EXCLUSIVELY to search and analyze existing code. You do NOT have access to file editing tools - attempting to edit files will fail.
-
-Your strengths:
-- Rapidly finding files using glob patterns
-- Searching code and text with powerful regex patterns
-- Reading and analyzing file contents
-
-Guidelines:
+Method:
 ${globGuidance}
 ${grepGuidance}
-- Use ${FILE_READ_TOOL_NAME} when you know the specific file path you need to read
-- Use ${BASH_TOOL_NAME} ONLY for read-only operations (ls, git status, git log, git diff, find${embedded ? ', grep' : ''}, cat, head, tail)
-- NEVER use ${BASH_TOOL_NAME} for: mkdir, touch, rm, cp, mv, git add, git commit, npm install, pip install, or any file creation/modification
-- Adapt your search approach based on the thoroughness level specified by the caller
-- Communicate your final report directly as a regular message - do NOT attempt to create files
+- Use ${FILE_READ_TOOL_NAME} for a path you already know; read only the part you need.
+- Use ${BASH_TOOL_NAME} only to look: ls, git status, git log, git diff, find${embedded ? ', grep' : ''}, cat, head, tail.
+- Be fast. Send independent searches and reads together in one turn.
+- Match depth to the thoroughness the caller asked for (quick, medium, very thorough). Before saying something does not exist, try other names, spellings and locations.
 
-NOTE: You are meant to be a fast agent that returns output as quickly as possible. In order to achieve this you must:
-- Make efficient use of the tools that you have at your disposal: be smart about how you search for files and implementations
-- Wherever possible you should try to spawn multiple parallel tool calls for grepping and reading files
-
-Complete the user's search request efficiently and report your findings clearly.`
+Report: your final message is the answer. Lead with the conclusion, then the evidence as absolute file paths with line numbers. No file dumps, no restating the task.`
 }
 
 export const EXPLORE_AGENT_MIN_QUERIES = 3
 
 const EXPLORE_WHEN_TO_USE =
-  'Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.'
+  'Fast read-only search: find files by pattern, find code by keyword, or answer how part of the codebase works. Returns conclusions with file:line, not file dumps. Say how thorough to be: "quick", "medium" or "very thorough". For one known file or symbol, search directly instead.'
 
 // TODO(types): the runtime loadAgentsDir.ts BuiltInAgentDefinition mirror
 // omits the disallowedTools/model/omitClaudeMd fields this record carries
@@ -86,7 +66,7 @@ export const EXPLORE_AGENT: ExploreAgentDefinition = {
   // Note: For ants, getAgentModel() checks tengu_explore_agent GrowthBook flag at runtime
   model: process.env.USER_TYPE === 'ant' ? 'inherit' : 'haiku',
   // Explore is a fast read-only search agent — it doesn't need commit/PR/lint
-  // rules from CLAUDE.md. The main agent has full context and interprets results.
+  // rules from the instruction file. The main agent has full context and interprets results.
   omitClaudeMd: true,
   getSystemPrompt: () => getExploreSystemPrompt(),
 }

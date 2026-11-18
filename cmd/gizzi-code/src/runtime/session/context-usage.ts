@@ -7,11 +7,14 @@ import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store
 import { Provider } from "@/runtime/providers/provider"
 import { ProviderQuotas, type QuotaResult } from "@/runtime/providers/quota"
 import { Log } from "@/shared/util/log"
+import { Database, and, eq, sql } from "@/runtime/session/storage/db"
+import { MessageTable } from "@/runtime/session/session.sql"
 
 /**
  * The "Context window" panel's data for one session: what fills the window
  * (ContextBreakdown, reconciled with the provider's reported usage) and the
- * provider's plan usage limits (ProviderQuotas), in one read.
+ * provider's plan usage limits (ProviderQuotas), in one read. It also
+ * says how many times the session was compacted (Primitives Wave B).
  */
 export namespace SessionContextUsage {
   const log = Log.create({ service: "session.context-usage" })
@@ -24,9 +27,11 @@ export namespace SessionContextUsage {
       breakdown: ContextBreakdown.Snapshot.nullable(),
       /** ProviderQuotas result for the session's provider; null when not requested. */
       limits: z.any().nullable(),
+      /** How many times this session has been compacted (finished compaction summaries). */
+      compactions: z.number(),
     })
     .meta({ ref: "SessionContextUsage" })
-  export type Result = { breakdown: ContextBreakdown.Snapshot | null; limits: QuotaResult | null }
+  export type Result = { breakdown: ContextBreakdown.Snapshot | null; limits: QuotaResult | null; compactions: number }
 
   function contextTokens(tokens: MessageV2.Assistant["tokens"]) {
     return tokens.input + tokens.cache.read + tokens.cache.write + tokens.output
@@ -40,6 +45,29 @@ export namespace SessionContextUsage {
       if (contextTokens(info.tokens) > 0) return info
     }
     return undefined
+  }
+
+  /**
+   * Finished compactions in this session: assistant messages marked `summary`
+   * that reached a finish (the same test MessageV2.filterCompacted uses). A
+   * failed or running compaction does not count. One indexed count, no parts.
+   */
+  export function compactions(sessionID: string): number {
+    const row = Database.use((db) =>
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(MessageTable)
+        .where(
+          and(
+            eq(MessageTable.session_id, sessionID),
+            sql`json_extract(${MessageTable.data}, '$.role') = 'assistant'`,
+            sql`json_extract(${MessageTable.data}, '$.summary') = 1`,
+            sql`json_extract(${MessageTable.data}, '$.finish') IS NOT NULL`,
+          ),
+        )
+        .get(),
+    )
+    return Number(row?.count ?? 0)
   }
 
   async function model(providerID: string, modelID: string) {
@@ -94,6 +122,6 @@ export namespace SessionContextUsage {
     }
 
     const limits = options.limits === false || !providerID ? null : await limitsFor(providerID)
-    return { breakdown, limits }
+    return { breakdown, limits, compactions: compactions(sessionID) }
   }
 }

@@ -1,20 +1,25 @@
 import * as React from 'react';
 import type { LocalJSXCommandContext } from '../../commands';
-import { getOauthProfileFromOauthToken } from '../../services/oauth/getOauthProfile';
 import type { LocalJSXCommandOnDone } from '../../types/command';
-import { getClaudeAIOAuthTokens, isClaudeAISubscriber } from '../../utils/auth';
+import { getAllternitAccount, isStoreBilled, storeBilledNote } from '../../services/allternitAccount';
 import { openBrowser } from '../../utils/browser';
 import { logError } from '../../utils/log';
-import { Login } from '../login/login';
 export async function call(onDone: LocalJSXCommandOnDone, _context: LocalJSXCommandContext): Promise<React.ReactNode | null> {
   try {
+    // A plan bought in the iPhone or Android app is billed by the store; web checkout cannot change it.
+    const result = await getAllternitAccount({ fresh: true }).catch(() => undefined);
+    if (result?.status === 'ok' && isStoreBilled(result.account) && (result.account.billingProvider === 'apple' || result.account.billingProvider === 'google')) {
+      const store = result.account.billingProvider === 'apple' ? 'App Store' : 'Google Play';
+      setTimeout(onDone, 0, `Your ${result.account.label} plan is ${storeBilledNote(result.account.billingProvider)}. Change or cancel it in ${store} settings instead of web checkout.`);
+      return null;
+    }
     const url = 'https://platform.allternit.com/billing';
     await openBrowser(url);
-    setTimeout(onDone, 0, 'Opened https://platform.allternit.com/billing — Free, Plus, Super, and Ultra are managed there. Cloud subscriptions are not wired into this CLI yet.');
+    setTimeout(onDone, 0, 'Opened https://platform.allternit.com/billing — Free, Plus, Max, and Ultra are managed there. Cloud subscriptions are not wired into this CLI yet.');
     return null;
   } catch (error) {
     logError(error as Error);
-    setTimeout(onDone, 0, 'Failed to open browser. Visit https://platform.allternit.com/billing to manage Free, Plus, Super, or Ultra.');
+    setTimeout(onDone, 0, 'Failed to open browser. Visit https://platform.allternit.com/billing to manage Free, Plus, Max, or Ultra.');
   }
   return null;
 }

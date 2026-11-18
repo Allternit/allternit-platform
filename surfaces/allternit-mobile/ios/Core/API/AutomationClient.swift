@@ -10,6 +10,10 @@ struct AutomationRunTick: Decodable, Identifiable, Equatable, Sendable {
     let reason: String?
     let apps: [String]?
     let model: String?
+
+    /// A heartbeat check that found nothing to tell (status `skipped`,
+    /// outcome_reason `quiet`, which the list sends as `reason`).
+    var isQuiet: Bool { status == "skipped" && reason == "quiet" }
 }
 
 /// A JSON object that never fails its row's decode (a routine's `config`).
@@ -38,9 +42,12 @@ struct AutomationRoutine: Decodable, Identifiable, Equatable, Sendable {
     let createdAt: String
     let recentRuns: [AutomationRunTick]?
     let config: AutomationLooseObject?
+    /// Row metadata; `origin: "agent"` marks a task the agent made with the
+    /// `automation` tool.
+    let metadata: AutomationLooseObject?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, status, timezone, recentRuns, config
+        case id, name, description, status, timezone, recentRuns, config, metadata
         case agentId = "agent_id"
         case goalId = "goal_id"
         case scheduleType = "schedule_type"
@@ -57,6 +64,39 @@ struct AutomationRoutine: Decodable, Identifiable, Equatable, Sendable {
         if case .string(let prompt)? = config?.value["prompt"], !prompt.isEmpty { return prompt }
         return description ?? ""
     }
+
+    /// `config.kind` on tasks made with the `automation` tool: "message" (a
+    /// reminder) or "heartbeat" (a check). Nil on other routines.
+    var automationKind: String? {
+        if case .string(let kind)? = config?.value["kind"], !kind.isEmpty { return kind }
+        return nil
+    }
+
+    /// The badge for `automationKind`.
+    var kindLabel: String? {
+        switch automationKind {
+        case "message": return "Reminder"
+        case "heartbeat": return "Check"
+        default: return nil
+        }
+    }
+
+    /// The chat a task posts into (`config.delivery.sessionId`): these run
+    /// without a bot.
+    var deliverySessionId: String? {
+        guard case .object(let delivery)? = config?.value["delivery"],
+              case .string(let id)? = delivery["sessionId"], !id.isEmpty else { return nil }
+        return id
+    }
+
+    /// `metadata.origin == "agent"`: the agent made it, not the user.
+    var isMadeByAgent: Bool {
+        if case .string(let origin)? = metadata?.value["origin"] { return origin == "agent" }
+        return false
+    }
+
+    /// Something can run it: a bot, or a chat it posts into.
+    var hasRunner: Bool { !(agentId ?? "").isEmpty || deliverySessionId != nil }
 }
 
 /// `GET …/routines/:id/live`: the run in progress.

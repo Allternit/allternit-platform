@@ -1,0 +1,38 @@
+---
+title: 'Context tools'
+description: 'get_context_remaining, history_recall and the context notice'
+---
+
+## get_context_remaining
+
+Takes no input and changes nothing.
+
+| Field | Meaning |
+|---|---|
+| `window` | The model's context window. |
+| `used` | Tokens the last request used. |
+| `remaining` | Window minus used. |
+| `until_compaction` | Tokens left before automatic compaction. |
+| `compactions` | How many times this session has been compacted. |
+
+The context card on Desktop, the web and phone layouts, and the iOS meter show the compaction count as "compacted N times".
+
+## The context notice
+
+The model gets a short notice on the latest user message when the room before compaction drops to 25%, again at 10%, and after each compaction. Each fires once, and a restart does not repeat it. The notice is temporary: it is not saved and does not change the cached prompt.
+
+## history_recall
+
+When a long session is compacted, the summary may drop an exact error, path or decision. `history_recall` reads it back. It reads only this session and the sessions it continues, and what it returns is labelled as data, not instructions.
+
+| Action | Meaning |
+|---|---|
+| `windows` | List earlier stretches of history, newest first, with summaries. |
+| `search` | Find messages that contain `query`, optionally in one `window_id`. |
+| `read` | Read a `window_id` or one `item_id`. At most 8,000 characters per read. |
+
+`limit` is at most 20.
+
+## Related
+
+- [Chat sessions](/guides/chat-sessions)

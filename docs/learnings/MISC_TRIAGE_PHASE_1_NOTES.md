@@ -43,9 +43,6 @@ Surfaces referenced:
 **REAL** (for iOS). Web already has `components/marketplace/TeamSkillsPanel.tsx` (workspace-installed skills, uses `useWorkspaceStore`). Note: this is a distinct domain from `views/code/SkillsRegistryView.tsx`/`SkillsView.tsx` (browser-automation skills) and gizzi-code's own agent-capability skill system (`skills/bundledSkills.ts`, `runtime/skills/`) — naming overlaps three unrelated concepts. iOS: zero matches for "skill".
 **Next action:** Build iOS port of `TeamSkillsPanel.tsx`; disambiguate naming from the unrelated "Skills Registry" (browser automation) domain before shipping.
 
-### 6. MiroFish simulation engine (GAP → iOS, gizzi-code)
-**DEFER.** Web is fully built: `lib/mirofish/{simulation-engine.ts,persona-builder.ts,memory-store.ts,agent-chat.ts,report.ts,seed-graph.ts}` (tested), `plugins/built-in/mirofish/plugin.ts`, `views/chat/panels/MiroFishPanel.tsx`, `stores/mirofish-run.store.ts`, server routes at `/mirofish/runs`. iOS and gizzi-code: zero matches. This is a genuine gap, but it's a multi-round LLM-driven persona simulation system — porting is substantial new work, not a simple UI port.
-**Next action:** Sequence after higher-priority marketplace/plugin items; use `lib/mirofish/` + `MiroFishPanel.tsx` as the porting reference when greenlit.
 
 ---
 

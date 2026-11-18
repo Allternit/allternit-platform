@@ -103,6 +103,7 @@ struct AllternitApp: App {
                 }
             }
             .onAppear { AppLockStore.shared.appeared() }
+            .task { await AgentAskStore.shared.refreshAll() }
             .onChange(of: scenePhase) { _, newPhase in
                 AppLockStore.shared.sceneChanged(newPhase)
                 if newPhase == .active {
@@ -110,6 +111,8 @@ struct AllternitApp: App {
                     PushNotificationManager.shared.clearBadge()
                     // Voice keys saved to the account: newer copy wins (no-op while off).
                     Task { await VoiceKeySync.shared.sync() }
+                    // Pending asks (incl. async ones that arrived while closed).
+                    Task { await AgentAskStore.shared.refreshAll() }
                 } else if newPhase == .background {
                     BackgroundRefreshManager.scheduleNextRefresh()
                 }

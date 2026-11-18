@@ -13,6 +13,26 @@ import { NotebookEditTool } from './tools/NotebookEditTool/NotebookEditTool.js'
 import { WebFetchTool } from './tools/WebFetchTool/WebFetchTool.js'
 import { TaskStopTool } from './tools/TaskStopTool/TaskStopTool.js'
 import { BriefTool } from './tools/BriefTool/BriefTool.js'
+// Primitives (shared cores in runtime/primitives, same names as the runtime builtins).
+import { CurrentTimeTool } from './tools/CurrentTimeTool/CurrentTimeTool.js'
+import { LookupTool } from './tools/LookupTool/LookupTool.js'
+import { ThreadReadTool, ThreadRecentTool, ThreadWaitTool } from './tools/ThreadReadTool/ThreadReadTool.js'
+import { ResourceTool } from './tools/ResourceTool/ResourceTool.js'
+import { FolderAccessTool } from './tools/FolderAccessTool/FolderAccessTool.js'
+import { BrowserTasksTool } from './tools/BrowserTasksTool/BrowserTasksTool.js'
+import { SendUserMessageTool } from './tools/SendUserMessageTool/SendUserMessageTool.js'
+// Scheduled tasks (replaced the Ink CronCreate/CronList/CronDelete tools).
+import { AutomationTool } from './tools/AutomationTool/AutomationTool.js'
+import { AskUserLaterTool } from './tools/AskUserLaterTool/AskUserLaterTool.js'
+// Primitives Wave B (agent control + context): same tool ids as the runtime builtins.
+import { WaitAgentsTool } from './tools/WaitAgentsTool/WaitAgentsTool.js'
+import { AgentControlTool } from './tools/AgentControlTool/AgentControlTool.js'
+import { GetContextRemainingTool } from './tools/GetContextRemainingTool/GetContextRemainingTool.js'
+import { HistoryRecallTool } from './tools/HistoryRecallTool/HistoryRecallTool.js'
+// A short wait that wakes on the user's input (replaced the PROACTIVE/KAIROS stub).
+import { SleepTool } from './tools/SleepTool/SleepTool.js'
+// One subagent per CSV row with an output schema (sample first, resumable).
+import { AgentBatchTool } from './tools/AgentBatchTool/AgentBatchTool.js'
 // Dead code elimination: conditional import for ant-only tools
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 function safeRequire(path: string) {
@@ -32,19 +52,6 @@ const SuggestBackgroundPRTool =
     ? safeRequire('./tools/SuggestBackgroundPRTool/SuggestBackgroundPRTool.js')
         ?.SuggestBackgroundPRTool
     : null
-const SleepTool =
-  feature('PROACTIVE') || feature('KAIROS')
-    ? safeRequire('./tools/SleepTool/SleepTool.js')?.SleepTool
-    : null
-// Static require() so the bundler includes these (safeRequire's variable
-// path is invisible to it and resolves to null in compiled binaries).
-const cronTools = feature('AGENT_TRIGGERS')
-  ? [
-      require('./tools/ScheduleCronTool/CronCreateTool.js').CronCreateTool,
-      require('./tools/ScheduleCronTool/CronDeleteTool.js').CronDeleteTool,
-      require('./tools/ScheduleCronTool/CronListTool.js').CronListTool,
-    ]
-  : []
 const RemoteTriggerTool = feature('AGENT_TRIGGERS_REMOTE')
   ? safeRequire('./tools/RemoteTriggerTool/RemoteTriggerTool.js')
       ?.RemoteTriggerTool
@@ -85,7 +92,8 @@ import { ToolSearchTool } from './tools/ToolSearchTool/ToolSearchTool.js'
 import { EnterPlanModeTool } from './tools/EnterPlanModeTool/EnterPlanModeTool.js'
 import { EnterWorktreeTool } from './tools/EnterWorktreeTool/EnterWorktreeTool.js'
 import { ExitWorktreeTool } from './tools/ExitWorktreeTool/ExitWorktreeTool.js'
-import { ConfigTool } from './tools/ConfigTool/ConfigTool.js'
+import { ConnectorSearchTool, ConnectorSuggestTool } from './tools/ConnectorTool/ConnectorTool.js'
+import { SettingsTool } from './tools/SettingsTool/SettingsTool.js'
 import { TaskCreateTool } from './tools/TaskCreateTool/TaskCreateTool.js'
 import { TaskGetTool } from './tools/TaskGetTool/TaskGetTool.js'
 import { TaskUpdateTool } from './tools/TaskUpdateTool/TaskUpdateTool.js'
@@ -192,9 +200,29 @@ export function getAllBaseTools(): Tools {
     WebSearchTool,
     TaskStopTool,
     AskUserQuestionTool,
+    CurrentTimeTool,
+    LookupTool,
+    ThreadReadTool,
+    ThreadRecentTool,
+    ThreadWaitTool,
+    ResourceTool,
+    FolderAccessTool,
+    BrowserTasksTool,
+    SendUserMessageTool,
+    AutomationTool,
+    AskUserLaterTool,
+    WaitAgentsTool,
+    AgentControlTool,
+    GetContextRemainingTool,
+    HistoryRecallTool,
+    SleepTool,
+    AgentBatchTool,
     SkillTool,
     EnterPlanModeTool,
-    ...(process.env.USER_TYPE === 'ant' ? [ConfigTool] : []),
+    // Wave D2: settings replaces the ant-only ConfigTool and is on for every user.
+    ConnectorSearchTool,
+    ConnectorSuggestTool,
+    SettingsTool,
     ...(process.env.USER_TYPE === 'ant' ? [TungstenTool] : []),
     ...(SuggestBackgroundPRTool ? [SuggestBackgroundPRTool] : []),
     ...(WebBrowserTool ? [WebBrowserTool] : []),
@@ -209,8 +237,6 @@ export function getAllBaseTools(): Tools {
       ? [getTeamCreateTool(), getTeamDeleteTool()]
       : []),
     ...(process.env.USER_TYPE === 'ant' && REPLTool ? [REPLTool] : []),
-    ...(SleepTool ? [SleepTool] : []),
-    ...cronTools,
     ...(RemoteTriggerTool ? [RemoteTriggerTool] : []),
     BriefTool,
     ...(SendUserFileTool ? [SendUserFileTool] : []),

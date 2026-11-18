@@ -1,0 +1,12 @@
+Check how much of your context window is left.
+
+Use it before you start something long (reading many files, a big refactor, a long research pass) to decide whether to work in smaller pieces, hand work to an agent, or save notes first. You are also told on your own when about a quarter and about a tenth of the room before the next compaction is left, and after each compaction.
+
+All numbers are tokens:
+- window: the model's whole context window
+- used: what the last request used
+- remaining: window minus used
+- until_compaction: how much more fits before older messages are compacted into a summary
+- compactions: how many times this session has been compacted so far
+
+After a compaction, `history_recall` can read what was compacted away.

@@ -1460,6 +1460,22 @@ mod tests {
     }
 
     #[test]
+    fn writing_card_fence_becomes_the_draft_for_channels() {
+        let text = "Here is a draft.\n```openui\n{\"version\":1,\"template\":\"writing\",\"title\":\"Text to Sam\",\"data\":{\"variant\":\"text_message\",\"to\":\"Sam\",\"body\":\"Running 10 minutes late.\"}}\n```";
+        let plain = to_plain_text(text);
+        assert!(plain.contains("To: Sam") && plain.contains("Running 10 minutes late."), "{plain}");
+        assert!(!plain.contains("```") && !plain.contains("\"template\""), "{plain}");
+        assert!(!plain.to_lowercase().contains("send"), "{plain}");
+    }
+
+    #[test]
+    fn new_lookup_card_fences_become_readable_text() {
+        let text = "```openui\n{\"version\":1,\"template\":\"conversion\",\"title\":\"Miles\",\"data\":{\"kind\":\"unit\",\"from\":{\"value\":5,\"unit\":\"mi\"},\"to\":{\"value\":8.05,\"unit\":\"km\"},\"credit\":\"Local maths\"}}\n```";
+        let plain = to_plain_text(text);
+        assert!(plain.contains("5 mi = 8.05 km") && plain.contains("Credit: Local maths"), "{plain}");
+    }
+
+    #[test]
     fn catalog_loads() {
         assert!(catalog().len() >= 38);
         assert_eq!(catalog()["Slider"].required, vec!["label", "value", "min", "max"]);

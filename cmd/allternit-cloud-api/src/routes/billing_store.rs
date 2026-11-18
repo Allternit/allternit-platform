@@ -1992,7 +1992,7 @@ mod tests {
         let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
         let app = crate::create_router(state.clone());
         let _store = STORE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let secret = "rtdn-secret-0123456789abcdef";
+        let secret = "rtdn-secret-0123456789abcdef"; // gitleaks:allow (fake test token)
         std::env::set_var(RTDN_TOKEN_ENV, secret);
         let push = |uri: String| {
             Request::builder()
@@ -2008,7 +2008,7 @@ mod tests {
         for uri in [
             base.to_string(),
             format!("{base}?token=wrong"),
-            format!("{base}?token=rtdn-secret-0123456789abcdeX"),
+            format!("{base}?token=rtdn-secret-0123456789abcdeX"), // gitleaks:allow (fake test token)
             format!("{base}?token="),
         ] {
             let res = app.clone().oneshot(push(uri.clone())).await.unwrap();

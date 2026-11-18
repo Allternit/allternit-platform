@@ -29,6 +29,7 @@ struct PadEditSheet: View {
         NavigationStack {
             List {
                 if !isStyle { tilesSection }
+                colorsSection
                 templatesSection
                 if let line = store.statusMessage ?? store.error {
                     Section { Text(line).font(.footnote).foregroundColor(Color("TextTertiary")) }
@@ -122,6 +123,79 @@ struct PadEditSheet: View {
 
     private func remove(_ offsets: IndexSet) {
         store.save { $0.tiles.remove(atOffsets: offsets) }
+    }
+
+    // MARK: Colors
+
+    private var ownColors: CustomPadColors? { CustomPadColors.parse(store.pad.colors) }
+
+    private var colorsSection: some View {
+        Section("Colors") {
+            ForEach(ProjectColorSet.all) { set in
+                let on = ownColors == nil && ProjectColorSet.named(store.pad.colors).id == set.id
+                Button { store.save { $0.colors = set.id } } label: {
+                    HStack {
+                        Circle().fill(set.accent).frame(width: 18, height: 18)
+                        Text(set.name).foregroundColor(Color("TextPrimary"))
+                        Spacer()
+                        if on { Image(systemName: "checkmark").foregroundColor(Color("TextPrimary")) }
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(set.name)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+            Button {
+                if ownColors == nil {
+                    let base = Self.hex(ProjectColorSet.named(store.pad.colors).accent) ?? "#c8451f"
+                    store.save { $0.colors = "\(base),\(base)" }
+                }
+            } label: {
+                HStack {
+                    Text("Your colors").foregroundColor(Color("TextPrimary"))
+                    Spacer()
+                    if ownColors != nil { Image(systemName: "checkmark").foregroundColor(Color("TextPrimary")) }
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Your colors")
+            .accessibilityAddTraits(ownColors != nil ? .isSelected : [])
+            if ownColors != nil {
+                ColorPicker("Main", selection: ownBinding(\.main), supportsOpacity: false).frame(minHeight: 44)
+                ColorPicker("Accent", selection: ownBinding(\.accent), supportsOpacity: false).frame(minHeight: 44)
+            }
+        }
+    }
+
+    /// `#rrggbb`, lowercase.
+    private static func hex(_ color: Color) -> String? {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }
+        return String(format: "#%02x%02x%02x", Int((r * 255).rounded()), Int((g * 255).rounded()), Int((b * 255).rounded()))
+    }
+
+    private func ownBinding(_ path: WritableKeyPath<CustomPadColors, UInt32>) -> Binding<Color> {
+        Binding(
+            get: {
+                let v: UInt32 = ownColors?[keyPath: path] ?? 0
+                let r = Double((v >> 16) & 0xFF) / 255
+                let g = Double((v >> 8) & 0xFF) / 255
+                let b = Double(v & 0xFF) / 255
+                return Color(red: r, green: g, blue: b)
+            },
+            set: { color in
+                guard let hex = Self.hex(color), let v = UInt32(hex.dropFirst(), radix: 16) else { return }
+                store.save {
+                    var own = CustomPadColors.parse($0.colors) ?? CustomPadColors(main: v, accent: v)
+                    own[keyPath: path] = v
+                    $0.colors = own.serialized
+                }
+            }
+        )
     }
 
     // MARK: Templates

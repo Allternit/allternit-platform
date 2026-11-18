@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Computer access tiers (read/click/full per app, category ceilings, 12 h session grants via `resolve_access`/`request_access`), four action classes enforced in every permission path (`confirm_now` asks even in bypass mode), a reviewer that can only tighten, and `folder_access` with a `_to_delete/` redirect. Docs: `tools/computer-access`, `tools/action-review`.
 - Cloud continuation **substrate** (E6): `compute.cloud` placement. session/e6-0914 adds laptop→always-on ingest (envelope + bounded folder copy), 409 without URL+token, remote routine create. Still not a closed laptop path unless an operator already runs `gizzi-cloud` on that always-on API.
 
 - A:// P-T1 store-consolidation boundary (session/aproduct-0913): canonical lease-safe projection helpers in `allternit-cowork-runtime::sqlite_store` (`persist_run_record`, `persist_job_record`, `mark_job_queued_for_transport`, `transition_job_record`, `set_run_delegator`, `set_current_run_job`, `set_run_checkpoint`, `update_run_state_record`, `record_run_event_projection`) + 6 boundary tests; `cmd/allternit-cloud-api/src/db/store_boundary.rs` marking the Postgres cowork tables a product-local projection; gizzi-code `src/runtime/cowork/store-boundary.ts` gating all Cowork store writes when paired with a canonical API (+11 tests); `docs/architecture/A_STORE_BOUNDARY.md` per-store status.

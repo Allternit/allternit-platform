@@ -456,7 +456,7 @@ extension ProjectPad {
         let layoutRaw = r["layout"] as? String
         // An old "Make one" layout has no tiles of its own here, so it is the free grid.
         let layout: PadLayout = layoutRaw == "custom" ? .pad : layoutRaw.flatMap(PadLayout.init(rawValue:)) ?? .pad
-        let colors = (r["colors"] as? String).flatMap { colorIDs.contains($0) ? $0 : nil } ?? "quiet"
+        let colors = (r["colors"] as? String).flatMap { ProjectColorSet.isValid($0) ? $0 : nil } ?? "quiet"
         let template = (r["template"] as? String).flatMap { !$0.isEmpty && PadJSON.length($0) <= PadLimits.template ? $0 : nil }
         return ProjectPad(view: (r["view"] as? String) == "list" ? .list : .pad, layout: layout, colors: colors,
                           hidden: hidden, template: template, tiles: PadTile.normalize(r["tiles"]),

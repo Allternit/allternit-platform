@@ -1,0 +1,12 @@
+Manage the agents you started with `task` or `agent_swarm`. You can act only on your own agents and the agents they started.
+
+Actions:
+- list: your agents as a tree, with id, name path, status and what each one is doing. `path_prefix` narrows it (for example "/root/build").
+- interrupt: stop an agent's current turn but keep the agent and its history. It shows as interrupted, not failed.
+- resume: start an interrupted agent again where it stopped.
+- followup: send `message` to an agent. A running agent reads it as soon as it can; an idle one starts a new turn in the background. Use it to correct course or give the next piece of work to an agent that already has the context.
+- close: end an agent for good. Its own agents are closed first, deepest first. The user is asked to approve this.
+
+`target` is an agent id or a name path such as "/root/build/tests"; every action but list needs it. `reason` (interrupt, close) is shown to the user.
+
+After a followup or resume, use `wait_agents` to wait for the result instead of polling.

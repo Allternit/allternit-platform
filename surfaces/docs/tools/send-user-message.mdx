@@ -1,0 +1,64 @@
+---
+title: 'send_user_message'
+description: 'The built-in tool an agent uses to hand its user a message, finished files and, when it matters, a push notification'
+---
+
+## Overview
+
+`send_user_message` lets an agent reach its user during long or unattended work: a finished report, a build result, a blocker. It is not for the agent's normal reply, which the user already sees. It works in every session the user owns: a bot's chat, a plain chat, a bot thread, and a Gizzi Code session.
+
+## Parameters and limits
+
+| Parameter | Meaning |
+|---|---|
+| `text` | The message. At most 4,000 characters. |
+| `files` | Up to 5 absolute paths, each at most 25 MB. |
+| `display` | How a file shows: inline (the default for images, PDF, Markdown and HTML) or as a file to open. |
+| `notify` | `none` (default), `push` or `needs_you`. |
+
+Files must sit inside the project, the session's worktree or the scratchpad. Credential files (`.env`, private keys and similar) are refused, as are folders, relative paths and missing files.
+
+## Where files go
+
+Each file is copied to the Files drive folder **Agent Output**, next to a provenance record (which session and bot sent it, and when). A name that already exists is never replaced. When the Files drive is off, the file stays where it is on disk and the message still goes through.
+
+## Notify levels
+
+| Level | What happens |
+|---|---|
+| `none` | The message waits in the thread. |
+| `push` | A push to the user's devices at level Normal. [Quiet hours](/api/notifications#quiet-hours) apply. |
+| `needs_you` | The thread is marked as needing the user (`thread.needs_user`) at urgency `normal`. |
+
+An agent can never send `urgent`: an agent's own ask does not page through quiet hours.
+
+Limits: 4 pushes per thread per hour and 20 per user per day. The result reports one of these for the push:
+
+| Result | Meaning |
+|---|---|
+| `sent` | The push was requested. It does not mean the user has seen it. |
+| `not_requested` | `notify` was `none`. |
+| `rate_limited` | A limit above was hit. The message still shows in the thread. |
+| `unpaired` | This runtime is not linked to the user's account, so it forwards nothing. |
+| `unavailable` | The notify route could not be reached. |
+
+An incognito chat never pushes and writes nothing that leaves the computer.
+
+Push tags, buttons and the 12-hour stale rule are in [Notifications](/api/notifications#agent-messages).
+
+## Where the card shows
+
+The message appears as a card in the chat on Desktop, ai.allternit.com, the phone layout, the m.allternit.com app and the iOS app, in the main chat and in bot threads. Tapping the push opens the session (`/?session=<id>` on the web). In the Gizzi Code TUI it is a block in the transcript.
+
+## CLI brains
+
+CLI agents that run inside a gizzi session (any coding CLI you connect) get `send_user_message` and `current_time` through the session's CLI bridge, so the behavior is the same for every model.
+
+## Routes
+
+The tool calls two allternit-api routes: `POST /api/v1/bot-routing/user/files` and `POST /api/v1/bot-routing/user/notify`. See [Bot threads](/guides/bot-threads).
+
+## Related
+
+- [current_time](/tools/current-time)
+- [Notifications](/api/notifications)

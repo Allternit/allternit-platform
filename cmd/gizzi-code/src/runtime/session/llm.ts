@@ -37,6 +37,7 @@ import { RuntimeTelemetry } from "@/runtime/telemetry"
 import { Bus } from "@/shared/bus"
 import { SessionContext } from "./context-event"
 import { PromptSegments } from "./prompt-segments"
+import { ToolFamilies } from "@/runtime/primitives/tool-families"
 import type { OutputCallType } from "./guardrail-defaults"
 
 export namespace LLM {
@@ -388,6 +389,19 @@ export namespace LLM {
           return {
             ...failed.toolCall,
             toolName: lower,
+          }
+        }
+        // Primitives Wave B (L3): a call to a deferred tool loads its family
+        // for the next step and tells the model to call again.
+        const deferred = tools[failed.toolCall.toolName]
+          ? undefined
+          : ToolFamilies.loadOnCall(input.sessionID, failed.toolCall.toolName)
+        if (deferred) {
+          l.info("loaded deferred tool family on call", { tool: failed.toolCall.toolName, group: deferred.group })
+          return {
+            ...failed.toolCall,
+            input: JSON.stringify({ tool: failed.toolCall.toolName, error: deferred.message }),
+            toolName: "invalid",
           }
         }
         return {

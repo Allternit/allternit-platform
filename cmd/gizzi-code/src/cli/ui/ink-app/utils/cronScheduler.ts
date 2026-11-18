@@ -3,7 +3,7 @@
 // Shared by REPL (via useScheduledTasks) and SDK/-p mode (print.ts).
 //
 // Lifecycle: poll getScheduledTasksEnabled() until true (flag flips when
-// CronCreate runs or a skill on: trigger fires) → load tasks + watch the
+// the automation tool adds a task or a skill on: trigger fires) → load tasks + watch the
 // file + start a 1s check timer → on fire, call onFire(prompt). stop()
 // tears everything down.
 
@@ -476,8 +476,8 @@ export function createCronScheduler(
       logForDebugging(
         `[ScheduledTasks] scheduler start() — enabled=${getScheduledTasksEnabled()}, hasTasks=${hasCronTasksSync()}`,
       )
-      // Auto-enable when scheduled_tasks.json has entries. CronCreateTool
-      // also sets this when a task is created mid-session.
+      // Auto-enable when scheduled_tasks.json has entries. The automation
+      // tool also sets this when a task is created mid-session.
       if (
         !getScheduledTasksEnabled() &&
         (assistantMode || hasCronTasksSync())

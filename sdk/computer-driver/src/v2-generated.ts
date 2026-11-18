@@ -2,7 +2,7 @@
 /* eslint-disable */
 
 // allternit.computer.v2 (computer_toolset_20260801): every member input type.
-export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential","run_subtask","run_parallel","run_skill","skills"] as const;
+export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential","run_subtask","run_parallel","run_skill","skills","resolve_access","request_access"] as const;
 export type ComputerV2MemberName = (typeof COMPUTER_V2_MEMBER_NAMES)[number];
 /** The ten driver-backed structured members (read_ui … skills). */
 export const COMPUTER_V2_STRUCTURED_MEMBER_NAMES = ["read_ui","act","run_batch","verify","request_human","use_credential","run_subtask","run_parallel","run_skill","skills"] as const;
@@ -61,6 +61,10 @@ export type ComputerV2RunParallelInput = { subtasks: Array<{ computer?: string |
 export type ComputerV2RunSkillInput = { name: string; inputs?: Array<{ name: string; value: string }> | null; app?: string | null; pid?: number | null; window_id?: number | null; max_steps?: number | null; budget_ms?: number | null };
 /** List the saved skills (taught recordings) this person can run with run_skill: name, goal, app, input names, step count, last use. Pass forget to delete one first. */
 export type ComputerV2SkillsInput = { forget?: string | null };
+/** Look up apps before asking for access: for each app name or bundle id, returns its name, bundle_id, category and max_tier (the highest tier it can be granted). Browsers top out at read, terminals and IDEs at click, other apps at full. An app that cannot be identified comes back as category unknown with max_tier read. Sandbox and cloud computers return full for every app. Call it, then request_access with the tiers you need. */
+export type ComputerV2ResolveAccessInput = { apps: Array<string> };
+/** Ask the person to let you use apps at a tier: read (see the app: screenshots, read_ui, zoom), click (also click, scroll and move the pointer), full (also type, press keys and fill fields). The person always approves. A grant lasts for this session only (at most 12 hours) and is held in memory. Without a grant an app is read only. Ask for the lowest tier that does the job and say why in reason. A tier above the app's max_tier from resolve_access fails with tier_exceeded. Sandbox and cloud computers need no grant. */
+export type ComputerV2RequestAccessInput = { entries: Array<{ bundle_id: string; tier: "read" | "click" | "full" }>; reason: string };
 export interface ComputerV2MemberInputs {
   screenshot: ComputerV2ScreenshotInput;
   zoom: ComputerV2ZoomInput;
@@ -89,6 +93,8 @@ export interface ComputerV2MemberInputs {
   run_parallel: ComputerV2RunParallelInput;
   run_skill: ComputerV2RunSkillInput;
   skills: ComputerV2SkillsInput;
+  resolve_access: ComputerV2ResolveAccessInput;
+  request_access: ComputerV2RequestAccessInput;
 }
 
 /** The per-member JSON Schemas, for building provider function tools. */
@@ -1258,6 +1264,68 @@ export const COMPUTER_V2_TOOL_SCHEMAS = {
       }
     },
     "required": [],
+    "additionalProperties": false
+  },
+  "resolve_access": {
+    "type": "object",
+    "properties": {
+      "apps": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "items": {
+          "type": "string"
+        },
+        "description": "App names or bundle ids (e.g. 'Safari', 'com.apple.Terminal')."
+      }
+    },
+    "required": [
+      "apps"
+    ],
+    "additionalProperties": false
+  },
+  "request_access": {
+    "type": "object",
+    "properties": {
+      "entries": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "items": {
+          "type": "object",
+          "properties": {
+            "bundle_id": {
+              "type": "string",
+              "description": "The bundle id from resolve_access."
+            },
+            "tier": {
+              "type": "string",
+              "enum": [
+                "read",
+                "click",
+                "full"
+              ],
+              "description": "read, click or full."
+            }
+          },
+          "required": [
+            "bundle_id",
+            "tier"
+          ],
+          "additionalProperties": false
+        },
+        "description": "The apps and the tier wanted for each."
+      },
+      "reason": {
+        "type": "string",
+        "maxLength": 200,
+        "description": "Why you need this access, shown to the person (at most 200 characters)."
+      }
+    },
+    "required": [
+      "entries",
+      "reason"
+    ],
     "additionalProperties": false
   }
 } as const;

@@ -1,0 +1,51 @@
+---
+title: 'current_time'
+description: 'The built-in tool that tells a model the date, time and time zone of the person it is working for'
+---
+
+## Overview
+
+`current_time` is a built-in gizzi tool. Models do not know what time it is, so they call it when the answer depends on the clock: "today", "tomorrow at 9", a deadline, a reminder, a schedule. It takes no required input and changes nothing, so it is allowed in plan mode.
+
+## What it returns
+
+| Field | Meaning |
+|---|---|
+| Local time | The date and time in the chosen zone, with the weekday |
+| Zone | The IANA zone name (for example `America/Chicago`) and its UTC offset |
+| UTC | The same moment in UTC |
+| Source | Where the zone came from, so the model can say when it is guessing |
+
+An optional `time_zone` argument asks for a specific zone.
+
+## Which zone it uses
+
+The tool picks the first zone that exists:
+
+1. The `time_zone` argument.
+2. The `time_zone` the client sent with this turn.
+3. The last zone any client sent for this session.
+4. The zone of the machine the runtime runs on, labelled as the machine zone, because it may not be where the person is.
+
+The result always names the source.
+
+## The environment line
+
+Every turn's environment block carries a `Time zone:` line with the zone from step 2 or 3, so a model that never calls the tool still reads dates in the person's zone. When no client zone is known the line shows the machine zone, labelled.
+
+## Every client sends it
+
+`time_zone` is one of the three client hints described on [System prompts](/core/system-prompts#hints).
+
+| Client | Source |
+|---|---|
+| ai.allternit.com, the phone layout and the m.allternit.com app | `Intl.DateTimeFormat().resolvedOptions().timeZone` |
+| iOS app | `TimeZone.current.identifier` |
+| Gizzi Code (TUI) | The zone of the terminal process |
+
+A value that is not a valid IANA zone is ignored.
+
+## Related
+
+- [Tools overview](/tools/overview)
+- [send_user_message](/tools/send-user-message)
