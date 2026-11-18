@@ -14,8 +14,8 @@ android {
         targetSdk = 36
         // One versionCode for both builds (same app ID): the Play bundle and the
         // sideloaded APK move together.
-        versionCode = 16
-        versionName = "0.7.0"
+        versionCode = 17
+        versionName = "0.7.1"
     }
 
     // Two builds of the same app ID:

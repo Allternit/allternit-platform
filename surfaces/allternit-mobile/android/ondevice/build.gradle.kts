@@ -35,6 +35,10 @@ android {
                 arguments += listOf(
                     "-DCMAKE_BUILD_TYPE=Release",
                     "-DANDROID_STL=c++_shared",
+                    // Google Play requires 16 KB page support: link every library (our
+                    // wrapper and the fetched llama.cpp/ggml ones) with 16 KB-aligned LOAD
+                    // segments. NDK r28 does this by default; r27 needs the switch.
+                    "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
                     // Where FetchContent keeps the pinned sources (gitignored). Shared by
                     // every variant so the 39 MB llama.cpp tarball is fetched once.
                     "-DFETCHCONTENT_BASE_DIR=${project.projectDir}/.deps",
