@@ -36,9 +36,8 @@ android {
     //    plus the screen-share lane (src/phoneshare) as the fallback when the
     //    scrcpy shell server isn't running.
     //  - play: the Google Play bundle. The Allternit app (src/main), Play Billing and the
-    //    on-device engine. src/phoneshare compiles in for its shared helpers, but the play
-    //    manifest declares none of its components (no screen share, no Bluetooth control,
-    //    no Accessibility service, no foreground services: 0.7.2, 2026-11-18). None of the adb
+    //    on-device engine. No src/phoneshare (no screen share, no Bluetooth control, no
+    //    Accessibility service, no foreground services: 0.7.2, 2026-11-18). None of the adb
     //    pieces (ShellServerLauncher, ShellServerMain, AdbClient/AdbCert/AdbKeyBox,
     //    WRITE_SECURE_SETTINGS, KILL_BACKGROUND_PROCESSES), no local server, no mesh.
     flavorDimensions += "dist"
@@ -59,21 +58,16 @@ android {
         }
     }
 
-    // src/phoneshare is compiled into both flavors (no third flavor, no library
+    // src/phoneshare is compiled into the phonelink flavor only (no third flavor, no library
     // module: its classes keep the com.allternit.phonelink package and app R).
     // Each flavor's manifest declares the components (an Android source set has
-    // one manifest); FlavorAccessibility is defined once per flavor.
+    // one manifest).
     sourceSets {
         getByName("phonelink") {
             java.srcDir("src/phoneshare/java")
             res.srcDir("src/phoneshare/res")
         }
-        getByName("play") {
-            java.srcDir("src/phoneshare/java")
-            res.srcDir("src/phoneshare/res")
-        }
         getByName("testPhonelink") { java.srcDir("src/testPhoneshare/java") }
-        getByName("testPlay") { java.srcDir("src/testPhoneshare/java") }
     }
 
     signingConfigs {
