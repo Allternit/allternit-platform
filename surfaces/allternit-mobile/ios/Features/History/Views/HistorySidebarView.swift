@@ -104,11 +104,19 @@ struct HistorySidebarView: View {
                         railList
                     }
                 }
+                // Content is proposed exactly the drawer width, so nothing
+                // wider than the panel can push the rows past its edges.
+                .frame(width: width, alignment: .leading)
 
                 footer
+                    .frame(width: width)
             }
+            .frame(width: width, alignment: .leading)
         }
-        .frame(width: width)
+        // Pinned to the leading edge: content wider than the panel overflows
+        // trailing (clipped) instead of spilling off the left of the screen.
+        .frame(width: width, alignment: .topLeading)
+        .clipped()
         // The layout stays safe-area-respecting so header and footer clear
         // the island and home indicator; MainWorkspaceView paints the
         // panel (rounded trailing corners) edge to edge behind it.
