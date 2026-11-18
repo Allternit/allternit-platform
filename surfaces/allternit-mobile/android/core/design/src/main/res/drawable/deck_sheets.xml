@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Converted from iOS Assets.xcassets by scripts/convert-icons.mjs; do not edit. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+    <path
+        android:fillColor="#FFFDF8F3"
+        android:strokeColor="#FFE7DDD2"
+        android:strokeWidth="1.5"
+        android:pathData="M 9.75 0.75 L 26.25 0.75 C 31.21875 0.75 35.25 4.78125 35.25 9.75 L 35.25 26.25 C 35.25 31.21875 31.21875 35.25 26.25 35.25 L 9.75 35.25 C 4.78125 35.25 0.75 31.21875 0.75 26.25 L 0.75 9.75 C 0.75 4.78125 4.78125 0.75 9.75 0.75 Z M 9.75 0.75" />
+    <path
+        android:strokeColor="#FF107C41"
+        android:strokeWidth="2.415"
+        android:pathData="M 7.648438 5.925781 L 28.351562 5.925781 L 28.351562 30.074219 L 7.648438 30.074219 Z M 7.648438 5.925781" />
+    <path
+        android:strokeColor="#FF107C41"
+        android:strokeWidth="2.415"
+        android:pathData="M 14.550781 5.925781 L 14.550781 30.074219" />
+    <path
+        android:strokeColor="#FF107C41"
+        android:strokeWidth="2.415"
+        android:pathData="M 21.449219 5.925781 L 21.449219 30.074219" />
+    <path
+        android:strokeColor="#FF107C41"
+        android:strokeWidth="2.415"
+        android:pathData="M 7.648438 14.03125 L 28.351562 14.03125" />
+    <path
+        android:strokeColor="#FF107C41"
+        android:strokeWidth="2.415"
+        android:pathData="M 7.648438 21.96875 L 28.351562 21.96875" />
+</vector>

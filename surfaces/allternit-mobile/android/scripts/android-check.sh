@@ -24,10 +24,13 @@ run() {
   if [[ $dry_run -eq 0 ]]; then "$@"; fi
 }
 
+# 0. Design tokens must match the iOS source (no Gradle; Node 20+).
+run node ../../../contracts/design-tokens/generate.mjs --check
+
 # 1. Google Play build (the TWA app as shipped) + its unit tests + lint.
 run ./gradlew :app:assemblePlayDebug :app:testPlayDebugUnitTest :app:lintPlayDebug
 
-# 2. Native foundation modules: unit tests (only :core:stream has tests today; the
+# 2. Native foundation modules: unit tests (only :core:stream and :core:design have tests today; the
 #    others still compile through the task).
 core_tasks=()
 for m in "${core_modules[@]}"; do core_tasks+=(":core:$m:testDebugUnitTest"); done

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Converted from iOS Assets.xcassets by scripts/convert-icons.mjs; do not edit. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+    <path
+        android:fillColor="#FFFDF8F3"
+        android:strokeColor="#FFE7DDD2"
+        android:strokeWidth="1.5"
+        android:pathData="M 9.75 0.75 L 26.25 0.75 C 31.21875 0.75 35.25 4.78125 35.25 9.75 L 35.25 26.25 C 35.25 31.21875 31.21875 35.25 26.25 35.25 L 9.75 35.25 C 4.78125 35.25 0.75 31.21875 0.75 26.25 L 0.75 9.75 C 0.75 4.78125 4.78125 0.75 9.75 0.75 Z M 9.75 0.75" />
+    <path
+        android:fillColor="#FF4338CA"
+        android:fillAlpha="0.7"
+        android:pathData="M 9.03125 18 L 11.445312 18 C 12.207031 18 12.824219 18.617188 12.824219 19.378906 L 12.824219 28.695312 C 12.824219 29.457031 12.207031 30.074219 11.445312 30.074219 L 9.03125 30.074219 C 8.269531 30.074219 7.648438 29.457031 7.648438 28.695312 L 7.648438 19.378906 C 7.648438 18.617188 8.269531 18 9.03125 18 Z M 9.03125 18" />
+    <path
+        android:fillColor="#FF4338CA"
+        android:pathData="M 16.792969 11.101562 L 19.207031 11.101562 C 19.96875 11.101562 20.585938 11.71875 20.585938 12.480469 L 20.585938 28.695312 C 20.585938 29.457031 19.96875 30.074219 19.207031 30.074219 L 16.792969 30.074219 C 16.03125 30.074219 15.414062 29.457031 15.414062 28.695312 L 15.414062 12.480469 C 15.414062 11.71875 16.03125 11.101562 16.792969 11.101562 Z M 16.792969 11.101562" />
+    <path
+        android:fillColor="#FF4338CA"
+        android:fillAlpha="0.7"
+        android:pathData="M 24.554688 14.550781 L 26.96875 14.550781 C 27.730469 14.550781 28.351562 15.167969 28.351562 15.929688 L 28.351562 28.695312 C 28.351562 29.457031 27.730469 30.074219 26.96875 30.074219 L 24.554688 30.074219 C 23.792969 30.074219 23.175781 29.457031 23.175781 28.695312 L 23.175781 15.929688 C 23.175781 15.167969 23.792969 14.550781 24.554688 14.550781 Z M 24.554688 14.550781" />
+    <path
+        android:strokeColor="#FF4338CA"
+        android:strokeWidth="2.2425"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 7.648438 8.511719 L 14.550781 5.0625 L 21.449219 6.789062 L 28.351562 2.476562" />
+</vector>
