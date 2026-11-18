@@ -84,6 +84,7 @@ struct BrainSpikeView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color("BgPrimary"))
+        .accessibilityIdentifier("brainSpikeList")
         .navigationTitle("Brain Spike")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {

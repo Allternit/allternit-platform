@@ -3,6 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Release signing from the environment (native app step 4). The build train (or a
+// release Mac) sets all four; when any is missing the release build stays unsigned,
+// exactly as before, and is signed afterwards. No path or password lives in the repo.
+val releaseSigningEnv: Map<String, String>? = listOf(
+    "ALLTERNIT_ANDROID_KEYSTORE",
+    "ALLTERNIT_ANDROID_KEYSTORE_PASSWORD",
+    "ALLTERNIT_ANDROID_KEY_ALIAS",
+    "ALLTERNIT_ANDROID_KEY_PASSWORD",
+).associateWith { providers.environmentVariable(it).orNull.orEmpty() }
+    .takeIf { env -> env.values.all { it.isNotBlank() } }
+
 android {
     namespace = "com.allternit.app"
     compileSdk = 36
@@ -25,9 +36,8 @@ android {
     //    plus the screen-share lane (src/phoneshare) as the fallback when the
     //    scrcpy shell server isn't running.
     //  - play: the Google Play bundle. The Allternit app (src/main), Play Billing and the
-    //    on-device engine. src/phoneshare compiles in for its shared helpers, but the play
-    //    manifest declares none of its components (no screen share, no Bluetooth control,
-    //    no Accessibility service, no foreground services: 0.7.2, 2026-11-18). None of the adb
+    //    on-device engine. No src/phoneshare (no screen share, no Bluetooth control, no
+    //    Accessibility service, no foreground services: 0.7.2, 2026-11-18). None of the adb
     //    pieces (ShellServerLauncher, ShellServerMain, AdbClient/AdbCert/AdbKeyBox,
     //    WRITE_SECURE_SETTINGS, KILL_BACKGROUND_PROCESSES), no local server, no mesh.
     flavorDimensions += "dist"
@@ -48,26 +58,35 @@ android {
         }
     }
 
-    // src/phoneshare is compiled into both flavors (no third flavor, no library
+    // src/phoneshare is compiled into the phonelink flavor only (no third flavor, no library
     // module: its classes keep the com.allternit.phonelink package and app R).
     // Each flavor's manifest declares the components (an Android source set has
-    // one manifest); FlavorAccessibility is defined once per flavor.
+    // one manifest).
     sourceSets {
         getByName("phonelink") {
             java.srcDir("src/phoneshare/java")
             res.srcDir("src/phoneshare/res")
         }
-        getByName("play") {
-            java.srcDir("src/phoneshare/java")
-            res.srcDir("src/phoneshare/res")
-        }
         getByName("testPhonelink") { java.srcDir("src/testPhoneshare/java") }
-        getByName("testPlay") { java.srcDir("src/testPhoneshare/java") }
+    }
+
+    signingConfigs {
+        releaseSigningEnv?.let { env ->
+            create("release") {
+                storeFile = file(env.getValue("ALLTERNIT_ANDROID_KEYSTORE"))
+                storePassword = env.getValue("ALLTERNIT_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = env.getValue("ALLTERNIT_ANDROID_KEY_ALIAS")
+                keyPassword = env.getValue("ALLTERNIT_ANDROID_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (releaseSigningEnv != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             // The static "Inbox tasks" shortcut targets this app's own package.
             resValue("string", "files_app_id", "com.allternit.app")
         }

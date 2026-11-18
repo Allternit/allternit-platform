@@ -24,6 +24,7 @@ struct AgentSelectionSheet: View {
                     // Section label — same caps style as the hub's.
                     HStack {
                         Text("CHOOSE AGENT | BOT")
+                            .accessibilityIdentifier("agentSheetTitle")
                             .font(.system(size: 11, weight: .bold))
                             .tracking(1)
                             .foregroundColor(Color("TextSecondary"))
@@ -66,6 +67,7 @@ struct AgentSelectionSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
+                        .accessibilityIdentifier("agentSheetDone")
                 }
             }
         }

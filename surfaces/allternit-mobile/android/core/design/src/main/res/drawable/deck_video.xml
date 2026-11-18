@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Converted from iOS Assets.xcassets by scripts/convert-icons.mjs; do not edit. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+    <path
+        android:fillColor="#FFFDF8F3"
+        android:strokeColor="#FFE7DDD2"
+        android:strokeWidth="1.5"
+        android:pathData="M 9.75 0.75 L 26.25 0.75 C 31.21875 0.75 35.25 4.78125 35.25 9.75 L 35.25 26.25 C 35.25 31.21875 31.21875 35.25 26.25 35.25 L 9.75 35.25 C 4.78125 35.25 0.75 31.21875 0.75 26.25 L 0.75 9.75 C 0.75 4.78125 4.78125 0.75 9.75 0.75 Z M 9.75 0.75" />
+    <path
+        android:fillColor="#FF9F1239"
+        android:fillAlpha="0.7"
+        android:pathData="M 10.238281 5.925781 L 25.761719 5.925781 C 27.667969 5.925781 29.210938 7.46875 29.210938 9.375 L 29.210938 19.726562 C 29.210938 21.628906 27.667969 23.175781 25.761719 23.175781 L 10.238281 23.175781 C 8.332031 23.175781 6.789062 21.628906 6.789062 19.726562 L 6.789062 9.375 C 6.789062 7.46875 8.332031 5.925781 10.238281 5.925781 Z M 10.238281 5.925781" />
+    <path
+        android:fillColor="#FF9F1239"
+        android:pathData="M 14.550781 9.890625 L 23.175781 14.550781 L 14.550781 19.207031 Z M 14.550781 9.890625" />
+    <path
+        android:strokeColor="#FF9F1239"
+        android:strokeWidth="2.2425"
+        android:strokeAlpha="0.7"
+        android:strokeLineCap="round"
+        android:pathData="M 6.789062 30.074219 L 29.210938 30.074219" />
+    <path
+        android:fillColor="#FF9F1239"
+        android:pathData="M 16.792969 30.074219 C 16.792969 31.3125 15.789062 32.316406 14.550781 32.316406 C 13.3125 32.316406 12.308594 31.3125 12.308594 30.074219 C 12.308594 28.835938 13.3125 27.832031 14.550781 27.832031 C 15.789062 27.832031 16.792969 28.835938 16.792969 30.074219 Z M 16.792969 30.074219" />
+</vector>

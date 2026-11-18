@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Converted from iOS Assets.xcassets by scripts/convert-icons.mjs; do not edit. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+    <path
+        android:fillColor="#FFFDF8F3"
+        android:strokeColor="#FFE7DDD2"
+        android:strokeWidth="1.5"
+        android:pathData="M 9.75 0.75 L 26.25 0.75 C 31.21875 0.75 35.25 4.78125 35.25 9.75 L 35.25 26.25 C 35.25 31.21875 31.21875 35.25 26.25 35.25 L 9.75 35.25 C 4.78125 35.25 0.75 31.21875 0.75 26.25 L 0.75 9.75 C 0.75 4.78125 4.78125 0.75 9.75 0.75 Z M 9.75 0.75" />
+    <path
+        android:strokeColor="#FF4338CA"
+        android:strokeWidth="2.9325"
+        android:strokeLineCap="round"
+        android:pathData="M 8.511719 24.898438 C 11.960938 18 17.136719 14.550781 22.3125 18 C 25.761719 19.726562 25.761719 24.898438 22.3125 28.351562 C 20.585938 30.074219 17.136719 31.800781 15.414062 30.074219" />
+    <path
+        android:strokeColor="#FF4338CA"
+        android:strokeWidth="2.9325"
+        android:strokeLineCap="round"
+        android:pathData="M 23.175781 18 L 28.351562 31.800781" />
+    <path
+        android:strokeColor="#FF4338CA"
+        android:strokeWidth="2.07"
+        android:strokeAlpha="0.7"
+        android:strokeLineCap="round"
+        android:pathData="M 7.648438 33.523438 L 28.351562 33.523438" />
+</vector>

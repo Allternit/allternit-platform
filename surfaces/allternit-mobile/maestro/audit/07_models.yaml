@@ -1,0 +1,15 @@
+appId: ${APP_ID}
+---
+- launchApp:
+    appId: ${APP_ID}
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-tab: models
+- assertVisible:
+    id: "modelsTitle"
+- takeScreenshot: models_list
+- tapOn:
+    id: "phoneMenuButton"
+- takeScreenshot: models_sidebar_open
+- stopApp

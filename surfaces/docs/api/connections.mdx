@@ -220,15 +220,16 @@ Chats with plan (`plan/<vendor>/<model>`), Copilot (`copilot/<model>`) and, with
 
 | Call | Body | Returns |
 | --- | --- | --- |
-| `POST /api/v1/plan-threads` | `{ "model": "plan/claude/sonnet", "title"?: string, "messages"?: [msg] }` | `201` with a summary |
-| `GET /api/v1/plan-threads` | none | `{ "threads": [summary] }`, newest first, at most 200, no messages |
+| `POST /api/v1/plan-threads` | `{ "model": "plan/claude/sonnet", "title"?: string, "messages"?: [msg], "project_id"?: uuid }` | `201` with a summary |
+| `GET /api/v1/plan-threads?project_id=<uuid>` | none; `project_id` is optional | `{ "threads": [summary] }`, newest first, at most 200, no messages. With `project_id`, only that account project's threads (a value that is not a UUID is `400`) |
 | `GET /api/v1/plan-threads/{id}` | none | The summary plus `messages` |
 | `POST /api/v1/plan-threads/{id}/messages` | `{ "messages": [msg] }`, 1 to 50 | `200` with the summary |
 
 - `msg` is `{ "role": "user" | "assistant" | "system", "content": string, "model"?: string }`. Content is up to 200,000 characters. Any other role, such as `tool`, is `400`. A stored message also has `at`, an ISO 8601 UTC time set by the server.
-- A summary is `{ "id", "title", "model", "message_count", "created_at", "updated_at" }`. Ids start with `pth_`.
+- A summary is `{ "id", "title", "model", "message_count", "created_at", "updated_at", "project_id" }`. `project_id` is null when the thread is in no project. Ids start with `pth_`.
 - `model` on create must be a `plan/…`, `plan-…` or `copilot/…` id, or `allternit/<alias>` where the alias is in the Cloud catalog (`GET /v1/models`, hidden aliases included), otherwise `400`. For example `allternit/glm-5.3` is accepted and `nope` is not.
 - An `allternit/<alias>` thread records a chat with an Allternit Cloud model from an account with no computer. The client sends the turn to `POST /v1/chat/completions` with the bare alias (`glm-5.3`, without `allternit/`), which needs Cloud credits (see [Chat Completions](/api/chat-completions#credits-cloud-api)). With a computer connected, Cloud model chats go through the computer and are not stored here. A title is cut to 200 characters. A thread holds at most 5,000 messages.
+- `project_id` on create ties the thread to one of your own [account projects](/api/account-projects), such as a chat-only bot. It must be your project and not deleted, otherwise `400`. Deleting a bot project deletes its threads too.
 - Deleting a thread is not in this version.
 
 ### GitHub Copilot

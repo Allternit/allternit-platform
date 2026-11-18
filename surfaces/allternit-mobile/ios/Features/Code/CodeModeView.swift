@@ -42,7 +42,6 @@ struct CodeModeView: View {
     /// Threads shown as a terminal session: session ids, or a fresh thread's
     /// key until its session exists.
     @State private var terminalKeys = Set(UserDefaults.standard.stringArray(forKey: CodeModeView.terminalKeysKey) ?? [])
-    @State private var overviewKind: CodeOverviewKind? = nil
     /// The Code sessions view (phone calm I9), and where it opens.
     @State private var sessionsView: CodeSessionsOpening? = nil
     @Namespace private var sessionsZoom
@@ -137,15 +136,9 @@ struct CodeModeView: View {
                 .opacity(shellOpen ? 0 : 1)
                 .allowsHitTesting(!shellOpen)
                 if shellOpen {
-                    PhoneCodeTerminal(store: terminalStore)
-                        // The shell has no composer: the view switch sits
-                        // bottom right, over the terminal.
-                        .overlay(alignment: .bottomTrailing) {
-                            CodeViewMenu(current: .shell, tint: TerminalPalette.foreground)
-                                .background(TerminalPalette.key, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                .padding(.trailing, 12)
-                                .padding(.bottom, 64)
-                        }
+                    // The computer's own shell: no switch, no floating button,
+                    // no bot strip. Back is in the header.
+                    PhoneCodeTerminal(store: terminalStore, shellOnly: true)
                 }
             }
         }
@@ -193,6 +186,10 @@ struct CodeModeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .codePickView)) { note in
             if let kind = note.object as? CodeViewKind { selectView(kind) }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .codeOpenShell)) { _ in
+            // "Open shell" on a computer row in the environment sheet.
+            shellOpen = true
+        }
         .onChange(of: selectedSessionId) { _, id in
             // A code session picked in the drawer opens here.
             if let id, modeStore.mode == .code {
@@ -202,24 +199,6 @@ struct CodeModeView: View {
         }
         .onChange(of: permissionRaw) { _, _ in
             if let activeSessionId { applyPermission(to: activeSessionId) }
-        }
-        .sheet(item: $overviewKind) { kind in
-            CodeOverviewSheet(
-                kind: kind,
-                sessions: codeSessions,
-                terminals: terminalStore,
-                onOpenSession: { session in
-                    shellOpen = false
-                    open(sessionId: session.id)
-                },
-                onNew: {
-                    shellOpen = false
-                    newThread()
-                },
-                onArchive: { session in archive(session.id) },
-                onOpenMenu: openDrawer
-            )
-            .presentationDragIndicator(.visible)
         }
         .sheet(item: $pane) { kind in
             CodePaneSheet(
@@ -250,8 +229,23 @@ struct CodeModeView: View {
     private var header: some View {
         let ink = darkChrome ? TerminalPalette.foreground : Color("TextPrimary")
         return HStack(spacing: 0) {
-            // Tap opens the drawer; hold fans the modes out (C8).
-            PhoneMenuButton(tint: ink, glyphSize: 19, onOpen: openDrawer)
+            if shellOpen {
+                Button { shellOpen = false } label: {
+                    HStack(spacing: 2) {
+                        Image(systemName: "chevron.left").font(.system(size: 16, weight: .semibold))
+                        Text("Back").font(.system(size: 16))
+                    }
+                    .foregroundColor(ink)
+                    .padding(.horizontal, 10)
+                    .frame(height: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+            } else {
+                // Tap opens the drawer; hold fans the modes out (C8).
+                PhoneMenuButton(tint: ink, glyphSize: 19, onOpen: openDrawer)
+            }
 
             Spacer(minLength: 4)
 
@@ -260,11 +254,11 @@ struct CodeModeView: View {
                 panesMenu(ink: ink)
             }
             // Code home and threads: the Code sessions view, grown out of
-            // this icon. The shell keeps its terminal sessions overview.
-            CodeSessionsButton(tint: ink) {
-                if shellOpen { overviewKind = .terminals } else { openSessionsView() }
+            // this icon. The shell has none (Back instead).
+            if !shellOpen {
+                CodeSessionsButton(tint: ink) { openSessionsView() }
+                    .modifier(CodeSessionsZoomSource(namespace: sessionsZoom))
             }
-            .modifier(CodeSessionsZoomSource(namespace: sessionsZoom))
         }
         .padding(.horizontal, 6)
         .frame(height: 52)
@@ -276,13 +270,12 @@ struct CodeModeView: View {
     }
 
     /// Between ☰ and the right icons: the gizzi code lockup on the launchpad,
-    /// the session's name (its menu) in a thread, "Shell" in the shell.
+    /// the session's name (its menu) in a thread, the computer's name and
+    /// live status in the shell.
     @ViewBuilder
     private func headerTitle(ink: Color) -> some View {
         if shellOpen {
-            Text("Shell")
-                .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                .foregroundColor(ink)
+            ShellHeaderTitle(ink: ink)
         } else if inThread {
             Menu {
                 Button(action: beginRename) { Label("Rename", systemImage: "pencil") }
@@ -439,7 +432,7 @@ struct CodeModeView: View {
     // MARK: - Code sessions view
 
     private func sessionsViewContent(_ opening: CodeSessionsOpening) -> some View {
-        CodeSessionsView(
+        CodeSessionsOverview(
             sessions: allCodeSessions,
             folder: folder,
             opening: opening,
@@ -455,13 +448,7 @@ struct CodeModeView: View {
                 shellOpen = false
                 startFromSessionsView(prompt)
             },
-            onRefresh: { await loadSessions() },
-            onOpenCards: {
-                // The card overview is a sheet on this view: close the
-                // sessions view first so it can present.
-                closeSessionsView()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { overviewKind = .threads }
-            }
+            onRefresh: { await loadSessions() }
         )
     }
 
@@ -509,14 +496,9 @@ struct CodeModeView: View {
         }
     }
 
-    /// What's on screen: the chat, a thread's terminal look, or the shell.
-    private var viewKind: CodeViewKind {
-        shellOpen ? .shell : (terminalLook ? .terminal : .code)
-    }
-
     /// The view picker's choice. Code closes the shell and leaves the
-    /// terminal look; Terminal closes the shell and opens the terminal look;
-    /// Shell opens the computer's raw shell.
+    /// terminal look; Terminal closes the shell and opens the terminal look.
+    /// The computer's shell is opened from the environment sheet instead.
     private func selectView(_ kind: CodeViewKind) {
         switch kind {
         case .code:
@@ -525,8 +507,6 @@ struct CodeModeView: View {
         case .terminal:
             shellOpen = false
             openTerminal()
-        case .shell:
-            shellOpen = true
         }
     }
 
@@ -696,7 +676,7 @@ struct CodeModeView: View {
             shellOpen = true
         }
         if launchArgumentEnabled("open-code-overview") {
-            overviewKind = .threads
+            openSessionsView()
         }
         if launchArgumentEnabled("open-code-usage") {
             showUsage = true
@@ -742,16 +722,15 @@ struct CodeModeView: View {
 
 // MARK: - View picker
 
-/// Code mode's three views: the thread as a chat, the thread in its
-/// terminal look, or the computer's raw shell.
+/// Code mode's two views: the thread as a chat, or the thread in its
+/// terminal look. The computer's shell lives behind the computer icon.
 enum CodeViewKind: CaseIterable {
-    case code, terminal, shell
+    case code, terminal
 
     var label: String {
         switch self {
         case .code: return "Code"
         case .terminal: return "Terminal"
-        case .shell: return "Shell"
         }
     }
 
@@ -759,7 +738,6 @@ enum CodeViewKind: CaseIterable {
         switch self {
         case .code: return "The session as a chat"
         case .terminal: return "The same session, drawn as a terminal"
-        case .shell: return "The computer's own command line"
         }
     }
 
@@ -767,7 +745,6 @@ enum CodeViewKind: CaseIterable {
         switch self {
         case .code: return "bubble.left"
         case .terminal: return "apple.terminal"
-        case .shell: return "chevron.left.forwardslash.chevron.right"
         }
     }
 }
@@ -776,17 +753,21 @@ enum CodeViewKind: CaseIterable {
 extension Notification.Name {
     /// A view picked in the Code composer's view switch (object: CodeViewKind).
     static let codePickView = Notification.Name("allternit.code.pick-view")
+    /// "Open shell" on a computer row of the environment sheet.
+    static let codeOpenShell = Notification.Name("allternit.code.open-shell")
 }
 
 /// The Code view switch (bottom right of the composer, or of the shell): one
-/// tap opens Code · Terminal · Shell with the current one checked.
+/// tap opens Code · Terminal with the current one checked.
 struct CodeViewMenu: View {
     let current: CodeViewKind
     var tint: Color = Color("TextPrimary")
 
+    private var kinds: [CodeViewKind] { CodeViewKind.allCases }
+
     var body: some View {
         Menu {
-            ForEach(CodeViewKind.allCases, id: \.self) { kind in
+            ForEach(kinds, id: \.self) { kind in
                 Button {
                     NotificationCenter.default.post(name: .codePickView, object: kind)
                 } label: {
@@ -805,7 +786,7 @@ struct CodeViewMenu: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("View: \(current.label)")
-        .accessibilityHint("Switch between Code, Terminal and Shell")
+        .accessibilityHint("Switch between Code and Terminal")
     }
 }
 
@@ -840,4 +821,26 @@ private struct CodeSessionsZoomDestination: ViewModifier {
 
 private enum CodeSessionsZoomID {
     static let value = "code-sessions-icon"
+}
+
+
+/// The shell header's title: the computer's name and a live status dot.
+private struct ShellHeaderTitle: View {
+    let ink: Color
+    @ObservedObject private var relay = RuntimeRelayStore.shared
+
+    var body: some View {
+        let device = relay.activeDevice
+        HStack(spacing: 6) {
+            Circle()
+                .fill((device?.isOnline ?? false) ? Theme.statusSuccess : TerminalPalette.secondary)
+                .frame(width: 8, height: 8)
+            Text(device.map { $0.name.isEmpty ? "Allternit runtime" : $0.name } ?? "Shell")
+                .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                .foregroundColor(ink)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(device?.name ?? "Computer"), \((device?.isOnline ?? false) ? "online" : "offline")")
+    }
 }

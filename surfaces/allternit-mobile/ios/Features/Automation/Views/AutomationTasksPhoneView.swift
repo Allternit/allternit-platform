@@ -1245,6 +1245,7 @@ private struct AutomationTypeTabs: View {
                         .buttonStyle(.plain)
                         .id(tab)
                         .accessibilityAddTraits(on ? .isSelected : [])
+                        .accessibilityIdentifier("automationTab\(tab.rawValue)")
                     }
                 }
                 .padding(4)

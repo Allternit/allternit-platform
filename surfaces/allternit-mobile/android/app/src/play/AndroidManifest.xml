@@ -7,8 +7,8 @@
          (no MediaProjection, no Accessibility service, no Bluetooth keyboard, no foreground
          services) and nothing from the sideloaded build's adb lane. Screen share and
          Bluetooth control ship only in the Phone Link APK (allternit.com/android).
-         src/phoneshare still compiles in (shared helpers such as KeystoreSealer), but its
-         components are not declared here, so Android never starts them. -->
+         src/phoneshare is not compiled into this build; its shared KeystoreSealer and
+         BlobSealer live in src/main. -->
     <!-- Google Play Billing for the TWA (store purchases D15). The Play Billing Library
          declares it too; named here so the play build never depends on that. The
          phonelink build must not have it (it does not ship billing:1.2.0). -->

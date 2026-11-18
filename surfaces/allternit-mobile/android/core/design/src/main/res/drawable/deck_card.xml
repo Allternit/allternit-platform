@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Converted from iOS Assets.xcassets by scripts/convert-icons.mjs; do not edit. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+    <path
+        android:fillColor="#FFFDF8F3"
+        android:strokeColor="#FFE7DDD2"
+        android:strokeWidth="1.5"
+        android:pathData="M 9.75 0.75 L 26.25 0.75 C 31.21875 0.75 35.25 4.78125 35.25 9.75 L 35.25 26.25 C 35.25 31.21875 31.21875 35.25 26.25 35.25 L 9.75 35.25 C 4.78125 35.25 0.75 31.21875 0.75 26.25 L 0.75 9.75 C 0.75 4.78125 4.78125 0.75 9.75 0.75 Z M 9.75 0.75" />
+    <path
+        android:strokeColor="#FFA16207"
+        android:strokeWidth="2.415"
+        android:pathData="M 10.582031 5.0625 L 25.417969 5.0625 C 27.511719 5.0625 29.210938 6.761719 29.210938 8.859375 L 29.210938 27.140625 C 29.210938 29.238281 27.511719 30.9375 25.417969 30.9375 L 10.582031 30.9375 C 8.488281 30.9375 6.789062 29.238281 6.789062 27.140625 L 6.789062 8.859375 C 6.789062 6.761719 8.488281 5.0625 10.582031 5.0625 Z M 10.582031 5.0625" />
+    <path
+        android:strokeColor="#FFA16207"
+        android:strokeWidth="2.415"
+        android:strokeLineCap="round"
+        android:pathData="M 10.753906 11.617188 L 19.726562 11.617188" />
+    <path
+        android:fillColor="#FFA16207"
+        android:pathData="M 13.515625 18 L 19.378906 18 C 21.09375 18 22.484375 19.390625 22.484375 21.105469 C 22.484375 22.820312 21.09375 24.210938 19.378906 24.210938 L 13.515625 24.210938 C 11.800781 24.210938 10.410156 22.820312 10.410156 21.105469 C 10.410156 19.390625 11.800781 18 13.515625 18 Z M 13.515625 18" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 21.621094 21.105469 C 21.621094 22.34375 20.617188 23.347656 19.378906 23.347656 C 18.140625 23.347656 17.136719 22.34375 17.136719 21.105469 C 17.136719 19.867188 18.140625 18.863281 19.378906 18.863281 C 20.617188 18.863281 21.621094 19.867188 21.621094 21.105469 Z M 21.621094 21.105469" />
+</vector>

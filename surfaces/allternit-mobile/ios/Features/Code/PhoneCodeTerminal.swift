@@ -109,6 +109,8 @@ final class TerminalBotsStore: ObservableObject {
 /// so its session and scrollback are there on the way back.
 struct PhoneCodeTerminal: View {
     @ObservedObject var store: CodeTerminalStore
+    /// The computer's own shell only: no bot strip, no engine banner.
+    var shellOnly = false
     @StateObject private var botsStore = TerminalBotsStore()
     @State private var botId: String? = nil
     @State private var isConnectPresented = false
@@ -117,7 +119,7 @@ struct PhoneCodeTerminal: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            botStrip
+            if !shellOnly { botStrip }
             ZStack {
                 shell
                     .opacity(bot == nil ? 1 : 0)
@@ -130,7 +132,7 @@ struct PhoneCodeTerminal: View {
         }
         .background(TerminalPalette.background)
         .task { await store.startIfNeeded() }
-        .task { await botsStore.poll() }
+        .task { if !shellOnly { await botsStore.poll() } }
         .onChange(of: botsStore.bots) { _, bots in
             // The chosen bot left (stopped, or its pane went away): back to Shell.
             if let botId, !bots.contains(where: { $0.id == botId }), botsStore.error == nil { self.botId = nil }
@@ -180,7 +182,7 @@ struct PhoneCodeTerminal: View {
                 .padding(.vertical, 4)
             }
             if let error = botsStore.error {
-                note(error.engineMissing ? "\(FactoryError.engineMissingText)." : error.fact)
+                note(error.engineMissing ? FactoryError.engineMissingText : error.fact)
             } else if let engineNote = botsStore.engineNote {
                 note("The Factory can’t read its terminal panes right now.\(engineNote.isEmpty ? "" : " \(engineNote)")")
             }
@@ -317,35 +319,39 @@ struct PhoneCodeTerminal: View {
             .frame(minWidth: 44, minHeight: 44)
     }
 
-    /// `.phone-terminal-offline`: the calm "not connected" prompt.
+    /// `.phone-terminal-offline`: the calm no-computer state (phone calm
+    /// I2/I3): what it needs, and Connect, which opens the connect kit.
     private var offline: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("$ ").foregroundColor(TerminalPalette.secondary)
-                + Text("Not connected — connect a computer or Allternit Cloud to run commands")
+        VStack(spacing: 14) {
+            Spacer()
+            Image(systemName: "laptopcomputer")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundColor(TerminalPalette.secondary)
+            Text("Connect a computer to use Shell")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundColor(TerminalPalette.foreground)
+                .multilineTextAlignment(.center)
+            Text("Shell is your computer's own command line. Connect one, or start Allternit Cloud, and it opens here.")
+                .font(.system(size: 14))
+                .foregroundColor(TerminalPalette.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
             Button(action: { isConnectPresented = true }) {
                 Text("Connect")
-                    .padding(.horizontal, 16)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(TerminalPalette.foreground)
+                    .padding(.horizontal, 22)
                     .frame(minHeight: 44)
                     .background(TerminalPalette.key)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(TerminalPalette.keyBorder, lineWidth: 1))
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(TerminalPalette.keyBorder, lineWidth: 1))
             }
             .buttonStyle(.plain)
-            .padding(.vertical, 10)
-            HStack(spacing: 0) {
-                Text("$ ")
-                Rectangle()
-                    .fill(TerminalPalette.foreground.opacity(0.7))
-                    .frame(width: 8, height: 17)
-            }
-            .accessibilityHidden(true)
+            Spacer()
             Spacer()
         }
-        .font(.system(size: 14, design: .monospaced))
-        .lineSpacing(4)
-        .foregroundColor(TerminalPalette.foreground)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: isConnectPresented) {
             // Back from the computer picker: try again.
             if !isConnectPresented { await store.startIfNeeded() }
@@ -540,7 +546,7 @@ private struct PhoneBotPane: View {
             })
         case .error(let error):
             return AnyView(messageShell {
-                Text(error.engineMissing ? "\(FactoryError.engineMissingText)." : error.fact)
+                Text(error.engineMissing ? FactoryError.engineMissingText : error.fact)
                     .fontWeight(.medium)
                     .foregroundColor(TerminalPalette.foreground)
                 Text(error.action ?? "Start Allternit Desktop or Gizzi on this computer, then try again.")

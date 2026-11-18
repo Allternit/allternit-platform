@@ -45,9 +45,21 @@ scripts/conformance.sh          live run of ictrl_rpc.py against a phone
 
 `app/src/main/java/com/allternit/app/files/` puts every Allternit computer in Android's file picker and Files app (a `DocumentsProvider`, one root per computer), adds **Save to computer** to the share sheet, and holds the wake prompt, the biometric unlock for protected roots and the sign-in hand-off. It speaks Files drive protocol v2 (`contracts/files-drive/SPEC.md`) over the cloud relay. The contract types compile straight from `contracts/files-drive/gen/FilesDriveContract.gen.kt` (a Gradle source dir in `app/build.gradle.kts`), so regenerate them with `node contracts/files-drive/generate.mjs`, never by hand. JVM tests: `ChunkerVectorsTest` (the pinned FastCDC + BLAKE3 against `contracts/files-drive/vectors/chunker-v1.json`) and `WireJsonFixturesTest` (every valid contract fixture round-trips). User and developer notes: `surfaces/docs/guides/android-app.mdx`.
 
+## Shared UI flows
+
+The Maestro audit flows live in `surfaces/allternit-mobile/maestro/audit/` and run on both
+platforms (`appId: ${APP_ID}`; Android is `com.allternit.app`). Selectors come from one list,
+`../maestro/ids.md`: set `Modifier.testTag(id)` with `testTagsAsResourceId = true` on the root,
+using the exact same strings iOS sets as `accessibilityIdentifier`.
+
+```bash
+surfaces/allternit-mobile/maestro/audit/run-audit.sh --platform android 02_home_chat.yaml
+surfaces/allternit-mobile/scripts/parity-shots.sh 02_home_chat   # iOS sim + Android emulator, side by side
+```
+
 ## Build and test
 
-You need JDK 17 and Android SDK 35 (platform `android-35`, build-tools 35.x). The wrapper jar is not committed. Generate it once with any Gradle 8.x: `gradle wrapper --gradle-version 8.10.2`.
+You need JDK 17 and Android SDK 36 (platform `android-36`, build-tools 36.x). The Gradle wrapper (8.11.1, jar included) is committed, so `./gradlew` works as is.
 
 **Prerequisite — the mesh AAR.** The app embeds the gomobile-bound tsnet node from `infrastructure/mesh/tsnet-ios`. Build it first and copy the result to `app/libs/` (gitignored):
 
@@ -69,7 +81,29 @@ export ANDROID_HOME=$HOME/Library/Android/sdk     # or write sdk.dir in local.pr
 # -> app/build/outputs/bundle/playRelease/app-play-release.aab
 ```
 
-Toolchain: AGP 8.7.3, Kotlin 2.0.21, Gradle 8.10.2, minSdk 26, target/compileSdk 35.
+Toolchain: AGP 8.9.1, Kotlin 2.0.21, Gradle 8.11.1, minSdk 26, target/compileSdk 36. App version: versionCode 16, versionName 0.7.0 (one versionCode for both flavors). Versions for new modules live in `gradle/libs.versions.toml`.
+
+## Native app modules
+
+The native Kotlin + Jetpack Compose app that will replace the TWA launcher is built up in library modules first (plan: `handoffs/android-native-2026-11-18/PLAN.md` in the workspace). `:app` does not depend on them yet, so the Play and sideload builds are unchanged until the cutover step.
+
+| Module | Namespace | What it holds today |
+|---|---|---|
+| `:core:design` | `com.allternit.core.design` | `AllternitTheme(themeMode = ThemeMode.Light)` (Light default; `System` follows the phone only when the user's setting says so), generated `AllternitColors.Light/Dark` (all 17 iOS colorsets), `AllternitRadii`, `AllternitGlass`, `ModeAccents`, `FriendlyState`, `ThinkingOrb`, `Motion.standardSpring()` (damping 0.86, stiffness 322 = iOS `spring(0.35, 0.86)`), `Haptics` (tap, success, warning → `HapticFeedbackConstants`, with pre-API-30 fallbacks), `ph_*` icons |
+| `:core:api` | `com.allternit.core.api` | `ApiConfig` (`https://api.allternit.com/api/v1`; `/api/aci` and `/api/factory` derived the same way as iOS `AppConfig.swift`; `/api/agent-chat` on the connected instance), `cloudBaseUrl` (`https://api.allternit.com`, device tokens), `ApiClients.okHttp(bearer)` with a `BearerProvider` interceptor, and the generated client `gen/AllternitApi` + `gen/Models.gen.kt` (from `contracts/mobile-api`; every call returns `ApiResult`: `Ok` / `HttpError(status, code, message)` / `Network` / `Decode`) |
+| `:core:auth` | `com.allternit.core.auth` | `TokenProvider` interface only (Clerk Android or the Files-style Custom Tab sign-in is picked in step 7) |
+| `:core:stream` | `com.allternit.core.stream` | `SseEvent` + `SseParser`, a byte-level port of iOS `SSEParser.swift`, with its test vectors in `SseParserTest`; `AgentChatStream` (okhttp-sse → `Flow<ChatStreamEvent>`, the iOS `AgentChatEvent` frame types) |
+| `:core:data` | `com.allternit.core.data` | `Prefs`, a typed wrapper over Preferences DataStore (the stand-in for UserDefaults) |
+
+**API client.** Never hand-write a REST client: add the route to the OpenAPI spec, list its `operationId` in `contracts/mobile-api/operations.json`, then run `node contracts/mobile-api/generate.mjs` (`--check` runs in `scripts/android-check.sh`). See `contracts/mobile-api/README.md`. Only SSE and WebSocket streams are hand-written (`:core:stream`). kotlinx-serialization 1.7.3, kotlinx-coroutines 1.9.0, okhttp-sse 4.12.0.
+
+Compose comes from the Compose BOM 2025.05.01 (UI 1.8.2, material3 1.3.2) with the Kotlin 2.0.21 Compose compiler plugin (`org.jetbrains.kotlin.plugin.compose`). DataStore is 1.1.7.
+
+**Release signing.** `app/build.gradle.kts` signs release builds only when all four of `ALLTERNIT_ANDROID_KEYSTORE` (keystore path), `ALLTERNIT_ANDROID_KEYSTORE_PASSWORD`, `ALLTERNIT_ANDROID_KEY_ALIAS` and `ALLTERNIT_ANDROID_KEY_PASSWORD` are set. Otherwise the release build is unsigned, as before. Never put a keystore path or password in the repo.
+
+## Checks
+
+`scripts/android-check.sh` is what the build train runs for Android (there is no GitHub Actions workflow). It assembles the Play debug build, runs its unit tests and lint, runs the `:core:*` unit tests, builds and tests `phonelink` only when `app/libs/Mesh.aar` exists (otherwise it prints a skip), and fails if Play Billing ever shows up on the `phonelink` runtime classpath. `scripts/android-check.sh --dry-run` prints the commands without running them. Coding sessions do not run it.
 
 The app has no runtime dependencies beyond the Kotlin stdlib, the mesh AAR and `androidbrowserhelper` (the TWA launcher, Apache-2.0) (tsnet/userspace WireGuard, built in-tree). Tests use JUnit 4.13.2 (EPL-1.0, test only) and `org.json:json:20240303` (public domain, test only, because android.jar ships only stubs of org.json). Everything else is in-tree. NanoHTTPD was not needed, and the X25519 code is written from RFC 7748 rather than vendored.
 
@@ -290,3 +324,27 @@ scripts/conformance.sh 192.168.1.20:8200            # over Wi-Fi (pairing needs 
 ```
 
 The script checks `/whoami` and the device header, that an unsealed `/rpc` gets a 401, X25519 pairing, `device_info`, `is_locked`, `list_apps`, `config`, an unknown method, `page_source` (text and structured), `screen_text`, `find_element` and `screenshot`. It also confirms that a replayed nonce, a skewed timestamp and a forged tag are rejected, using `ictrl_rpc.py`'s own crypto. At the end it revokes its own key. It uses a throwaway `HOME`, so `~/.ictrl/token.json` is never touched.
+
+## Parity ledger
+
+`surfaces/allternit-mobile/PARITY.md` lists every iOS screen (`ios/Features/**`) and every web phone screen (allternit-ai `src/fabric-session/phone`) with its Android path, status (`todo` / `built` / `proved` / `N/A: <reason>`) and proof. It is generated by `scripts/parity-ledger.mjs`; hand-edit only the Android path, Status and Proof columns. The native cutover waits for 0 `todo` and 0 `built` rows.
+
+```sh
+# regenerate (merges, keeps your edits, adds new screens as todo)
+node surfaces/allternit-mobile/scripts/parity-ledger.mjs --web <allternit-ai path>   # or ALLTERNIT_AI_DIR
+# fail (exit 1) if any iOS or web screen has no row
+node surfaces/allternit-mobile/scripts/parity-ledger.mjs --web <allternit-ai path> --check
+```
+
+## Design tokens
+
+Colors, radii, glass opacities and mode accents come from the iOS design system, not from hand-copied hex.
+
+```sh
+node contracts/design-tokens/generate.mjs           # regenerate AllternitTokens.gen.kt
+node contracts/design-tokens/generate.mjs --check   # exit 1 if it is stale (runs in scripts/android-check.sh)
+node surfaces/allternit-mobile/android/scripts/convert-icons.mjs   # iOS PhIcons SVG -> res/drawable/ph_*.xml
+node surfaces/allternit-mobile/android/scripts/convert-logos.mjs --dry-run   # AppLogos -> WebP (not run in CI)
+```
+
+Never hand-edit `AllternitTokens.gen.kt` or the `ph_*` drawables: change the iOS colorset, `Color+Theme.swift` or `ModeTheme.swift`, then regenerate. The generator reads literals only and fails naming any value it cannot parse. `DeckIcons` are PDF-only on iOS, so no `deck_*` drawables exist yet. App logos (1,248 PNG, 5.6 MB) are converted to `assets/logos/*.webp` by `convert-logos.mjs` in the PR that wires Coil.

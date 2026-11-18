@@ -219,4 +219,20 @@ final class KeyboardModeTests: XCTestCase {
         XCTAssertEqual(link.sent.count, 1 + HIDReports.cornerSteps)
         XCTAssertTrue(link.sent.dropFirst().allSatisfy { $0 == .mouse(Data([0, 0x81, 0x81, 0])) })
     }
+
+    /// The App Store build ships with `AllternitKeyboardModeEnabled` false: the
+    /// service answers `unavailable` and never starts Bluetooth.
+    func testKeyboardModeIsOffInThisBuild() async {
+        XCTAssertFalse(KeyboardModeService.isBuiltIn)
+        KeyboardModeService.shared.start()
+        XCTAssertFalse(KeyboardModeService.shared.isRunning)
+        do {
+            _ = try await KeyboardModeService.shared.handle(method: "hid.key", params: ["usage": 4, "down": true])
+            XCTFail("hid.* must be unavailable")
+        } catch let e as AppPhoneRPCError {
+            XCTAssertEqual(e.code, "unavailable")
+        } catch {
+            XCTFail("unexpected \(error)")
+        }
+    }
 }

@@ -1,0 +1,15 @@
+appId: ${APP_ID}
+---
+- launchApp:
+    appId: ${APP_ID}
+    clearState: true
+    arguments:
+      skip-auth: true
+      sidebar: true
+- tapOn:
+    id: "drawerRowprojects"
+- takeScreenshot: projects_list
+- tapOn:
+    id: "phoneMenuButton"
+- takeScreenshot: projects_sidebar_open
+- stopApp

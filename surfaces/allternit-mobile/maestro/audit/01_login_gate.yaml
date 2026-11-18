@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+---
+- launchApp:
+    appId: ${APP_ID}
+    clearState: true
+- assertVisible:
+    id: "loginHeadline"
+- assertVisible:
+    id: "loginContinueEmail"
+- assertVisible:
+    id: "loginSkipAuth"
+- takeScreenshot: login_gate
+- stopApp

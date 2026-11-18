@@ -25,6 +25,9 @@ struct ProjectsPill<FilterContent: View>: View {
     @Binding var searching: Bool
     var filtersActive: Bool
     var searchLabel = "Search projects"
+    /// Overrides the accent dot (the Bots home uses amber for "waiting on you").
+    var dotColor: Color? = nil
+    var filterLabel = "Filter and layout"
     @ViewBuilder var filterContent: () -> FilterContent
 
     @State private var filterOpen = false
@@ -54,12 +57,18 @@ struct ProjectsPill<FilterContent: View>: View {
                     .foregroundColor(Color("TextPrimary"))
                     .frame(width: 44, height: 44)
                     .overlay(alignment: .topTrailing) {
-                        if filtersActive { PhoneRoundDot().offset(x: -9, y: 9) }
+                        if filtersActive {
+                            if let dotColor {
+                                Circle().fill(dotColor).frame(width: 7, height: 7).offset(x: -9, y: 9)
+                            } else {
+                                PhoneRoundDot().offset(x: -9, y: 9)
+                            }
+                        }
                     }
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Filter and layout")
+            .accessibilityLabel(filterLabel)
             .popover(isPresented: $filterOpen, arrowEdge: .top) {
                 filterContent()
                     .presentationCompactAdaptation(.popover)

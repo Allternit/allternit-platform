@@ -192,7 +192,7 @@ struct FactoryError: Error, Equatable, Sendable {
     let action: String?
     let engineMissing: Bool
 
-    static let engineMissingText = "The Factory engine isn't running on this computer"
+    static let engineMissingText = "Terminal bots need a computer. Connect one to see them here."
 }
 
 struct TerminalBotsResult: Sendable {

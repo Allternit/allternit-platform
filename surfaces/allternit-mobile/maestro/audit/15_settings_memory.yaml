@@ -1,0 +1,21 @@
+appId: ${APP_ID}
+---
+# Verifies Memory settings opens and surfaces its friendly error state offline.
+- launchApp:
+    appId: ${APP_ID}
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-settings-memory: true
+# iOS-only: system notification prompt. TODO(android step N): POST_NOTIFICATIONS dialog (grant via adb or Android branch).
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: "Dismiss notifications prompt"
+          optional: true
+- assertVisible:
+    id: "memoryLoadError"
+- takeScreenshot: settings_memory
+- stopApp

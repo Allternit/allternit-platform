@@ -26,6 +26,7 @@ struct SessionOverviewView: View {
     @ObservedObject private var pins = RailPinsStore.shared
     @State private var select = INITIAL_OVERVIEW_SELECT
     @State private var optionsOpen = false
+    @State private var layoutOpen = false
     @State private var confirmDelete = false
     @State private var seeded = false
     /// The chosen layout, kept across launches (useOverviewLayout).
@@ -131,9 +132,9 @@ struct SessionOverviewView: View {
                 selectHeader
             } else {
                 // ☰ stays tap-only here: the fan would draw under this cover.
-                PhoneHeader(title: title, wideSides: hasOptions && groups.count > 1, sectionStyle: true, onMenu: onMenu) {
+                PhoneHeader(title: title, wideSides: groups.count > 1, sectionStyle: true, onMenu: onMenu) {
                     if groups.count > 1 { filterMenu }
-                    if hasOptions { optionsButton }
+                    if hasOptions { optionsButton } else { layoutButton }
                 }
             }
             // The Bots home's List · Grid · Deck switch, on every mode's overview.
@@ -143,7 +144,6 @@ struct SessionOverviewView: View {
                     .tracking(0.72)
                     .foregroundColor(Color("TextTertiary"))
                 Spacer()
-                if !select.selecting { OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid) }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
@@ -404,8 +404,31 @@ struct SessionOverviewView: View {
         }
     }
 
+    /// Modes with no select/archive options still get the layout switch,
+    /// in a one-row popover behind a sliders button.
+    private var layoutButton: some View {
+        Button {
+            Haptics.light()
+            layoutOpen = true
+        } label: {
+            PhoneFilterButtonLabel(active: false, systemName: "slider.horizontal.3")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Layout")
+        .accessibilityIdentifier("overviewLayout")
+        .popover(isPresented: $layoutOpen) {
+            OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+                .padding(12)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
     private var optionsList: some View {
         VStack(alignment: .leading, spacing: 0) {
+            OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+            Divider().padding(.vertical, 4)
             optionRow(selectLabel, icon: "checkmark.circle", on: false, disabled: shown.isEmpty) {
                 optionsOpen = false
                 select = reduceOverviewSelect(select, .start)

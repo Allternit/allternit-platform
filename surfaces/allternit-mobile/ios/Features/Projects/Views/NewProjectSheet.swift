@@ -22,6 +22,9 @@ struct NewProjectSheet: View {
         case title, description
     }
 
+    /// Bot: the description is the bot's brief.
+    private var isBot: Bool { kind?.wrappedValue == .bot }
+
     private var canCreate: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -39,8 +42,10 @@ struct NewProjectSheet: View {
                         .clipShape(Circle())
                 }
                 .accessibilityLabel("Close")
+                .accessibilityIdentifier("newProjectClose")
                 Spacer()
                 Text("New project")
+                    .accessibilityIdentifier("newProjectTitle")
                     .font(.system(.title3, design: .serif))
                     .fontWeight(.medium)
                     .foregroundColor(Color("TextPrimary"))
@@ -54,6 +59,7 @@ struct NewProjectSheet: View {
                 }
                 .disabled(!canCreate)
                 .accessibilityLabel("Create project")
+                .accessibilityIdentifier("newProjectCreate")
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -76,6 +82,7 @@ struct NewProjectSheet: View {
                         Text("Chat").tag(LibraryProject.Mode.chat)
                         Text("Code").tag(LibraryProject.Mode.code)
                         Text("Design").tag(LibraryProject.Mode.design)
+                        Text("Bot").tag(LibraryProject.Mode.bot)
                     }
                     .pickerStyle(.segmented)
                 }
@@ -89,8 +96,8 @@ struct NewProjectSheet: View {
                 )
 
                 fieldBubble(
-                    label: "Description",
-                    placeholder: "What is this project about? (optional)",
+                    label: isBot ? "Brief" : "Description",
+                    placeholder: isBot ? "What should this bot do? (optional)" : "What is this project about? (optional)",
                     text: $descriptionText,
                     field: .description,
                     submitLabel: .done
@@ -122,7 +129,7 @@ struct NewProjectSheet: View {
                 }
 
                 Button(action: create) {
-                    Text("Create project")
+                    Text(isBot ? "Create bot" : "Create project")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(canCreate ? Color("BgPrimary") : Color("TextSecondary"))
                         .frame(maxWidth: .infinity)
@@ -169,6 +176,7 @@ struct NewProjectSheet: View {
                 .textInputAutocapitalization(field == .title ? .words : .sentences)
                 .submitLabel(submitLabel)
                 .focused($focusedField, equals: field)
+                .accessibilityIdentifier(field == .title ? "newProjectName" : "")
                 .onSubmit {
                     if field == .title {
                         focusedField = .description
