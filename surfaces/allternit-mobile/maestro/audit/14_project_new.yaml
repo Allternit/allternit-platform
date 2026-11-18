@@ -1,16 +1,21 @@
-appId: com.allternit.mobile
+appId: ${APP_ID}
 ---
 # Verifies the New Project sheet renders its form.
 - launchApp:
-    appId: com.allternit.mobile
+    appId: ${APP_ID}
     clearState: true
     arguments:
       skip-auth: true
       -open-projects: true
       -open-new-project: true
-- tapOn:
-    text: "Dismiss notifications prompt"
-    optional: true
+# iOS-only: system notification prompt. TODO(android step N): POST_NOTIFICATIONS dialog (grant via adb or Android branch).
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: "Dismiss notifications prompt"
+          optional: true
 - assertVisible: "New project"
 - assertVisible: "Name"
 - assertVisible: "Create project"

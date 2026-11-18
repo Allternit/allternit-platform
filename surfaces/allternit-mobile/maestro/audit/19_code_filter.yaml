@@ -1,0 +1,23 @@
+appId: ${APP_ID}
+---
+# Verifies the Code tab's "Filter by status" sheet opens.
+- launchApp:
+    appId: ${APP_ID}
+    clearState: true
+    arguments:
+      skip-auth: true
+      -open-code-filter: true
+# iOS-only: system notification prompt. TODO(android step N): POST_NOTIFICATIONS dialog (grant via adb or Android branch).
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: "Dismiss notifications prompt"
+          optional: true
+- assertVisible: "Filter by status"
+- takeScreenshot: code_filter_sheet
+- tapOn:
+    text: "Done"
+    optional: true
+- stopApp

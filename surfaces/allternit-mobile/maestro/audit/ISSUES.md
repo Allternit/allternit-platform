@@ -218,7 +218,7 @@ A second, file-by-file audit of every SwiftUI view in `Features/` and `Core/` fo
 - Branch: session/ios-bot-parity
 - Flows: `01_login_gate`, `02_home_chat`, `03_agent_hub`, `04_projects`, `05_artifacts`, `06_automation`, `07_models`, `08_code`, `09_aci`, `10_settings`, `11_chat_composer_plus`, `12_chat_model_picker`, `13_chat_agent_selection`, `14_project_new`, `15_settings_memory`, `16_settings_platform`, `17_settings_brain_spike`, `18_automation_loop_new`, `19_code_filter`, `20_aci_browser_chat`
 - Notes: Extended sub-view coverage is now live. Fixed launch-argument normalization so `skip-auth` and deep-link args are reliable regardless of Maestro's serialization format.
-- Screenshots: `surfaces/allternit-mobile/ios/maestro/audit/screenshots`
+- Screenshots: `surfaces/allternit-mobile/maestro/audit/screenshots`
 
 Previous runs:
 

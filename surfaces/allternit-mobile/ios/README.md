@@ -70,7 +70,7 @@ ios/
 ├── Features/            # SwiftUI surfaces (Chat, Agents, Code, Settings, ...)
 ├── AllternitWidgets/    # Live Activity widget extension
 ├── Tests/               # Unit tests
-├── maestro/             # End-to-end Maestro flows
+├── maestro/             # iOS-only Maestro flows (live activities); shared flows: ../maestro/
 ├── Assets.xcassets      # App icons, colors, images
 └── project.yml          # XcodeGen project definition
 ```
