@@ -112,7 +112,7 @@ struct ModelPickerSheet: View {
                         overviewChip(
                             icon: AnyView(LimitRingView(window: worst, size: 28) { ModelProviderMark(providerId: pid, size: 15) }),
                             title: ModelProviderNames.name(pid),
-                            detail: worst.map { $0.usedRatio >= 0.95 ? "limit reached" : "\(count) · \(Int(((1 - $0.usedRatio) * 100).rounded()))% left" } ?? "\(count) models",
+                            detail: worst.map { $0.usedRatio >= UsageThresholds.landAt ? "limit reached" : "\(count) · \(Int(((1 - $0.usedRatio) * 100).rounded()))% left" } ?? "\(count) models",
                             active: scope == .provider(pid)
                         ) { scope = .provider(pid) }
                     }

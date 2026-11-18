@@ -39,7 +39,13 @@ final class ProviderQuotaStore: ObservableObject {
     }
 
     @Published private(set) var byProvider: [String: Quota] = [:]
+    /// Providers whose quota read is in flight (Settings → Usage shows
+    /// placeholder cards until they answer).
+    @Published private(set) var pending: Set<String> = []
     private var fetchedAt: [String: Date] = [:]
+    /// Bumped by `reset()`, so a read that started before an account switch
+    /// never lands on the next account.
+    private var generation = 0
 
     private struct Wire: Decodable {
         struct Inner: Decodable {
@@ -50,18 +56,40 @@ final class ProviderQuotaStore: ObservableObject {
         let quota: Inner?
     }
 
-    func load(_ providerIds: [String]) {
+    /// Reads each provider's quota, at most once a minute unless `force`.
+    /// A failed read (no computer, 409/428 gate refusal, offline) leaves the
+    /// provider out: the Usage page shows no card for it, never an error.
+    func load(_ providerIds: [String], force: Bool = false) {
         for id in Set(providerIds) where id != "allternit" {
-            if let at = fetchedAt[id], Date().timeIntervalSince(at) < 60 { continue }
+            if !force, let at = fetchedAt[id], Date().timeIntervalSince(at) < 60 { continue }
+            if pending.contains(id) { continue }
             fetchedAt[id] = Date()
+            pending.insert(id)
+            let started = generation
             Task { [weak self] in
-                guard let wire: Wire = try? await APIClient.shared.get(path: "providers/\(id)/quota") else { return }
-                guard wire.status == "ok", let quota = wire.quota else { return }
-                self?.byProvider[id] = Quota(plan: quota.plan, windows: quota.windows.map {
+                let wire: Wire? = try? await APIClient.shared.get(path: "providers/\(id)/quota")
+                guard let self, self.generation == started else { return }
+                self.pending.remove(id)
+                guard let wire, wire.status == "ok", let quota = wire.quota else { return }
+                self.byProvider[id] = Quota(plan: quota.plan, windows: quota.windows.map {
                     ProviderLimitWindow(id: $0.id, label: $0.label, usedRatio: min(1, max(0, $0.usedRatio)), resetAt: $0.resetAt)
                 })
             }
         }
+    }
+
+    /// Drop every account's windows (account switch): the next read is the
+    /// new account's; reads still in flight are dropped.
+    func reset() {
+        generation += 1
+        byProvider = [:]
+        fetchedAt = [:]
+        pending = []
+    }
+
+    /// Pull to refresh on Settings → Usage: re-read every provider read before.
+    func refreshAll() {
+        load(Array(fetchedAt.keys), force: true)
     }
 
     /// The window closest to its limit.
@@ -70,9 +98,9 @@ final class ProviderQuotaStore: ObservableObject {
         return byProvider[providerId]?.windows.max { $0.usedRatio < $1.usedRatio }
     }
 
-    /// Allternit Cloud's monthly allowance, from `me/usage`.
+    /// Allternit Cloud's monthly allowance, from `me/usage`, with its reset
+    /// time (the same window Settings → Usage shows, `cloudUsageWindows`).
     static func cloudWindow() -> ProviderLimitWindow? {
-        guard let percent = UsageStore.shared.percentUsed else { return nil }
-        return ProviderLimitWindow(id: "month", label: "Monthly", usedRatio: min(1, max(0, percent / 100)), resetAt: nil)
+        cloudUsageWindows(UsageStore.shared.snapshot).first
     }
 }

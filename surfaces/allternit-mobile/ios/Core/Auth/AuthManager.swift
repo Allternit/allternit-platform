@@ -533,6 +533,8 @@ enum AccountSwitchCleanup {
         resetLocalState(reason: reason)
         // Plan and credits of the leaving account.
         AccountPlanStore.shared.reset()
+        // Its connected accounts' limit windows (Settings → Usage, I15).
+        ProviderQuotaStore.shared.reset()
         // Widgets: no snapshot of the leaving account; the widget keeps its
         // signed-in face and fills again in rebuild().
         AppGroupStore.clearSnapshot()

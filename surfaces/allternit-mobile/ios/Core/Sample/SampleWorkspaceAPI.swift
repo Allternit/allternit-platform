@@ -57,6 +57,12 @@ enum SampleWorkspaceAPI {
             return connections
         }
 
+        // Settings → Usage (`-calm-usage`, phone calm I15): plan, hours,
+        // credits and two connected accounts' limit windows.
+        if namespace == .v1, method == "GET", let usage = SampleUsage.read(parts: parts) {
+            return json(usage)
+        }
+
         if method != "GET" {
             return write(method: method, namespace: namespace, parts: parts, body: body)
         }
