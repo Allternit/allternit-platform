@@ -36,11 +36,15 @@ struct BotThreadsOverview: View {
     @AppStorage("allternit.session-overview.layout.bot-threads") private var layoutRaw = OverviewLayout.list.rawValue
 
     private var layout: OverviewLayout { OverviewLayout(stored: layoutRaw) ?? .list }
+    @State private var searching = false
+    @State private var query = ""
 
     /// The open threads as cards; resolved ones stay out (BotThreadsOverview).
     private var cards: [OverviewCardItem] {
         let all = botId.map { id in store.threads.filter { $0.botId == id } } ?? store.threads
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return all.filter { !$0.incognito && $0.group != "resolved" && !$0.isMainChat }
+            .filter { needle.isEmpty || $0.displayTitle.lowercased().contains(needle) }
             .sorted(by: BotModeStore.threadOrder)
             .map { thread in
                 let tone: OverviewCardItem.Tone = {
@@ -81,11 +85,17 @@ struct BotThreadsOverview: View {
                         .foregroundColor(Color("TextSecondary"))
                 }
                 Spacer()
-                OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list)
+                ProjectsPill(searching: $searching, filtersActive: false, searchLabel: "Search threads",
+                             filterLabel: "Layout") {
+                    OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list).padding(12)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
             .padding(.bottom, 4)
+            if searching || !query.isEmpty {
+                ProjectsSearchField(query: $query, placeholder: "Search threads")
+            }
             if cards.isEmpty {
                 if let error = store.threadsError, !store.isLoadingThreads {
                     FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load threads",

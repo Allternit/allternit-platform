@@ -77,6 +77,8 @@ struct BotsModeRootView: View {
     @ObservedObject private var colors = BotColorStore.shared
     @State private var isConnectionsPresented = false
     @State private var isThreadsPresented = false
+    @State private var isSearching = false
+    @State private var searchQuery = ""
     @State private var threadToOpen: BotThread?
     @StateObject private var pause = BotPauseModel()
 
@@ -95,41 +97,35 @@ struct BotsModeRootView: View {
                 .toolbar(.hidden, for: .navigationBar)
                 .safeAreaInset(edge: .top, spacing: 0) {
                     PhoneHeader(title: "Bots", wideSides: true, onMenu: { onOpenSidebar?() }) {
-                        // Threads (ThreadsQuickView), badged with what waits on you.
-                        PhoneIconButton(systemName: "checklist",
-                                        label: store.waitingCount > 0 ? "Threads · \(store.waitingCount) waiting on you" : "Threads") {
-                            isThreadsPresented = true
-                        }
-                        .overlay(alignment: .topTrailing) {
-                            if store.waitingCount > 0 {
-                                Text("\(store.waitingCount)")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 4)
-                                    .frame(minWidth: 16, minHeight: 16)
-                                    .background(Capsule().fill(Theme.statusWarning))
-                                    .offset(x: -4, y: 4)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        // Office: the bots at their desks (the web's Office view).
-                        PhoneIconButton(systemName: "building.2", label: "Office") {
-                            navigator.open(.office)
-                        }
-                        // Pause all bots (the same switch as the Pause control and the Shortcut).
-                        PhoneIconButton(systemName: pause.paused ? "play.circle.fill" : "pause.circle",
-                                        label: pause.paused ? "Resume all bots" : "Pause all bots") {
-                            Task { await pause.toggle() }
-                        }
-                        // Connections: the apps your bots can use.
-                        PhoneIconButton(systemName: "square.grid.2x2", label: "Connections") {
-                            isConnectionsPresented = true
+                        // One glass pill (the Projects and Artifacts pill): search
+                        // the team + a sliders popover with layout and the actions.
+                        ProjectsPill(
+                            searching: $isSearching,
+                            filtersActive: store.waitingCount > 0,
+                            searchLabel: "Search bots",
+                            dotColor: Theme.statusWarning,
+                            filterLabel: store.waitingCount > 0
+                                ? "Bots options · \(store.waitingCount) waiting on you" : "Bots options"
+                        ) {
+                            BotsOptionsPopover(
+                                waiting: store.waitingCount,
+                                paused: pause.paused,
+                                onThreads: { isThreadsPresented = true },
+                                onOffice: { navigator.open(.office) },
+                                onTogglePause: { Task { await pause.toggle() } },
+                                onConnections: { isConnectionsPresented = true }
+                            )
                         }
                     }
                     .environment(\.botTint, colors.activeHex)
                 }
                 .safeAreaInset(edge: .top, spacing: 0) {
-                    if pause.paused { PausedBanner() }
+                    VStack(spacing: 0) {
+                        if pause.paused { PausedBanner() }
+                        if isSearching || !searchQuery.isEmpty {
+                            ProjectsSearchField(query: $searchQuery, placeholder: "Search bots")
+                        }
+                    }
                 }
                 .task { await pause.refresh() }
                 .navigationDestination(for: BotRoute.self) { route in
@@ -237,7 +233,7 @@ struct BotsModeRootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color("BgPrimary"))
         } else {
-            BotLaunchpadView()
+            BotLaunchpadView(searchQuery: searchQuery)
         }
     }
 }
@@ -379,5 +375,71 @@ struct PausedBanner: View {
             .padding(.vertical, 10)
             .background(Theme.statusWarning.opacity(0.18))
             .accessibilityAddTraits(.isStaticText)
+    }
+}
+
+/// The Bots home's sliders popover: List · Grid · Deck, then the actions that
+/// used to be four header icons (Threads, Office, Pause, Connections).
+struct BotsOptionsPopover: View {
+    let waiting: Int
+    let paused: Bool
+    let onThreads: () -> Void
+    let onOffice: () -> Void
+    let onTogglePause: () -> Void
+    let onConnections: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("allternit.session-overview.layout.bots-home-roster") private var layoutRaw = OverviewLayout.list.rawValue
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list)
+                .padding(.bottom, 6)
+            Divider().padding(.vertical, 2)
+            row("Threads", icon: "checklist", badge: waiting,
+                label: waiting > 0 ? "Threads, \(waiting) waiting on you" : "Threads",
+                id: "botsOptionsThreads", action: onThreads)
+            row("Office", icon: "building.2", label: "Office", id: "botsOptionsOffice", action: onOffice)
+            row(paused ? "Resume all bots" : "Pause all bots",
+                icon: paused ? "play.circle.fill" : "pause.circle",
+                label: paused ? "Resume all bots" : "Pause all bots",
+                id: "botsOptionsPause", action: onTogglePause)
+            row("Connections", icon: "square.grid.2x2", label: "Connections, the apps your bots can use",
+                id: "botsOptionsConnections", action: onConnections)
+        }
+        .padding(12)
+        .frame(minWidth: 260)
+    }
+
+    private func row(_ title: String, icon: String, badge: Int = 0, label: String, id: String,
+                     action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.selection()
+            dismiss()
+            // A sheet or push started while the popover closes is dropped.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: action)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon).frame(width: 22)
+                Text(title)
+                Spacer(minLength: 8)
+                if badge > 0 {
+                    Text("\(badge)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 6)
+                        .frame(minWidth: 18, minHeight: 18)
+                        .background(Capsule().fill(Theme.statusWarning))
+                        .accessibilityHidden(true)
+                }
+            }
+            .font(.system(size: 16))
+            .foregroundColor(Color("TextPrimary"))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(id)
     }
 }
