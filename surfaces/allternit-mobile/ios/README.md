@@ -34,7 +34,8 @@ The vendored binaries `Frameworks/Mesh.xcframework`, `Frameworks/libgit2.xcframe
 SRC=<checkout that builds>/surfaces/allternit-mobile/ios
 for f in Mesh libgit2 SherpaOnnxC; do ln -s "$SRC/Frameworks/$f.xcframework" Frameworks/; done
 mkdir -p Packages/OnDeviceLLM/Frameworks
-ln -s "$SRC/Packages/OnDeviceLLM/Frameworks/llama.xcframework" Packages/OnDeviceLLM/Frameworks/
+# llama is copied, not linked: SwiftPM's binary target and the package .gitignore (llama.xcframework/) both need a real folder
+cp -R "$SRC/Packages/OnDeviceLLM/Frameworks/llama.xcframework" Packages/OnDeviceLLM/Frameworks/
 cp "$SRC/Config/Secrets.xcconfig" Config/
 ```
 
