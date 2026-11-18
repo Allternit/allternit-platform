@@ -60,6 +60,7 @@ struct ChatView: View {
                     PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
                         startNewChat()
                     }
+                    .accessibilityIdentifier("chatNewChat")
                 }
             }
             .zIndex(1)

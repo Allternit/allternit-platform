@@ -6,8 +6,10 @@ appId: ${APP_ID}
     arguments:
       skip-auth: true
       sidebar: true
-- tapOn: "Projects"
+- tapOn:
+    id: "drawerRowprojects"
 - takeScreenshot: projects_list
-- tapOn: "Open sidebar"
+- tapOn:
+    id: "phoneMenuButton"
 - takeScreenshot: projects_sidebar_open
 - stopApp

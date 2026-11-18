@@ -15,7 +15,7 @@ appId: ${APP_ID}
       - tapOn:
           text: "Dismiss notifications prompt"
           optional: true
-- assertVisible: "Memory"
-- assertVisible: "Couldn't load memory"
+- assertVisible:
+    id: "memoryLoadError"
 - takeScreenshot: settings_memory
 - stopApp

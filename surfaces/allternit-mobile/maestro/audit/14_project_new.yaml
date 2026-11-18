@@ -16,9 +16,13 @@ appId: ${APP_ID}
       - tapOn:
           text: "Dismiss notifications prompt"
           optional: true
-- assertVisible: "New project"
-- assertVisible: "Name"
-- assertVisible: "Create project"
+- assertVisible:
+    id: "newProjectTitle"
+- assertVisible:
+    id: "newProjectName"
+- assertVisible:
+    id: "newProjectCreate"
 - takeScreenshot: project_new_sheet
-- tapOn: "Close"
+- tapOn:
+    id: "newProjectClose"
 - stopApp

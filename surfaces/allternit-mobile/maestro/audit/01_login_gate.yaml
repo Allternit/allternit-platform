@@ -3,9 +3,11 @@ appId: ${APP_ID}
 - launchApp:
     appId: ${APP_ID}
     clearState: true
-- assertVisible: "Allternit"
-- assertVisible: "Sign In"
-- assertVisible: "Create Account"
-- assertVisible: "Continue without signing in"
+- assertVisible:
+    id: "loginHeadline"
+- assertVisible:
+    id: "loginContinueEmail"
+- assertVisible:
+    id: "loginSkipAuth"
 - takeScreenshot: login_gate
 - stopApp

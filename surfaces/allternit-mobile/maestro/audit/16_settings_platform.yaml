@@ -16,8 +16,9 @@ appId: ${APP_ID}
       - tapOn:
           text: "Dismiss notifications prompt"
           optional: true
-- assertVisible: "Platform"
-- assertVisible: "Language"
-- assertVisible: "Timezone"
+- assertVisible:
+    id: "platformLanguage"
+- assertVisible:
+    id: "platformTimezone"
 - takeScreenshot: settings_platform
 - stopApp

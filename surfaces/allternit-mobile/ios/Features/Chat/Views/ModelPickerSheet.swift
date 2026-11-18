@@ -98,6 +98,7 @@ struct ModelPickerSheet: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .accessibilityLabel("Search models")
+                    .accessibilityIdentifier("modelPickerSearch")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)

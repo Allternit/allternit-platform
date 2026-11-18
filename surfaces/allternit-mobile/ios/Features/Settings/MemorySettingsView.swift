@@ -114,6 +114,7 @@ struct MemorySettingsView: View {
                 action: { Task { await load() } }
             )
             .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("memoryLoadError")
         } else {
             VStack(alignment: .leading, spacing: 0) {
                 if let loadError {

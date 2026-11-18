@@ -349,6 +349,7 @@ struct LoginGateView: View {
                     .foregroundStyle(palette.ink)
                     .frame(maxWidth: .infinity)
                     .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("loginHeadline")
                 Text("Chat, build and work together.\nAll in one place.")
                     .font(.system(size: 13))
                     .multilineTextAlignment(.center)
@@ -428,6 +429,7 @@ struct LoginGateView: View {
                 } else {
                     Button("Continue with email") { showEmail = true; emailFocused = true }
                         .buttonStyle(SignInButtonStyle(kind: .outline))
+                        .accessibilityIdentifier("loginContinueEmail")
                 }
             }
             .disabled(!auth.isClerkConfigured)
@@ -451,6 +453,7 @@ struct LoginGateView: View {
                         .padding(.vertical, 12)
                 }
                 .padding(.top, 4)
+                .accessibilityIdentifier("loginSkipAuth")
             }
             #endif
 

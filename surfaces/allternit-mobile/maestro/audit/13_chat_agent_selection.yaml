@@ -16,7 +16,9 @@ appId: ${APP_ID}
       - tapOn:
           text: "Dismiss notifications prompt"
           optional: true
-- assertVisible: "CHOOSE AGENT | BOT"
+- assertVisible:
+    id: "agentSheetTitle"
 - takeScreenshot: chat_agent_selection
-- tapOn: "Done"
+- tapOn:
+    id: "agentSheetDone"
 - stopApp

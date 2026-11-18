@@ -114,6 +114,7 @@ struct LoopsListView: View {
                             .clipShape(Circle())
                     }
                     .accessibilityLabel("New loop")
+                    .accessibilityIdentifier("loopsNew")
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 10)

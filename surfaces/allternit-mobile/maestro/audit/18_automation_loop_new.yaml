@@ -7,12 +7,19 @@ appId: ${APP_ID}
     arguments:
       skip-auth: true
       sidebar: true
-- tapOn: "Automation Tasks"
-- tapOn: "Loops"
-- tapOn: "New loop"
-- assertVisible: "New loop"
-- assertVisible: "Command"
-- assertVisible: "Create loop"
+- tapOn:
+    id: "drawerRowautomation-tasks"
+- tapOn:
+    id: "automationTabloop"
+- tapOn:
+    id: "loopsNew"
+- assertVisible:
+    id: "createLoopTitle"
+- assertVisible:
+    id: "createLoopCommand"
+- assertVisible:
+    id: "createLoopSubmit"
 - takeScreenshot: automation_loop_new
-- tapOn: "Close"
+- tapOn:
+    id: "createLoopClose"
 - stopApp

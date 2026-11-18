@@ -74,6 +74,7 @@ struct ModelsTabView: View {
             }
 
             Text("Models")
+                .accessibilityIdentifier("modelsTitle")
                 .font(.system(.title3, design: .serif))
                 .fontWeight(.medium)
                 .foregroundColor(Color("TextPrimary"))

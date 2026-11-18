@@ -1,6 +1,6 @@
 appId: ${APP_ID}
 ---
-# Verifies the Code tab's "Filter by status" sheet opens.
+# Verifies the Code tab opens (the old status-filter sheet no longer exists on main; the header menu button is the stable marker).
 - launchApp:
     appId: ${APP_ID}
     clearState: true
@@ -15,9 +15,7 @@ appId: ${APP_ID}
       - tapOn:
           text: "Dismiss notifications prompt"
           optional: true
-- assertVisible: "Filter by status"
+- assertVisible:
+    id: "phoneMenuButton"
 - takeScreenshot: code_filter_sheet
-- tapOn:
-    text: "Done"
-    optional: true
 - stopApp
