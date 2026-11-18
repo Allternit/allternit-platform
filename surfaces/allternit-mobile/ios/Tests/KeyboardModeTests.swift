@@ -125,12 +125,16 @@ final class KeyboardModeTests: XCTestCase {
     }
 
     func testInputWhenOffOrNotConnectedIsTyped() async {
-        let off = KeyboardCommands(link: FakeLink(KeyboardLinkState.from(mode: .off, status: HIDPeripheralStatus())))
+        // KeyboardCommands holds its link unowned (the service owns both), so the test keeps each link alive.
+        let offLink = FakeLink(KeyboardLinkState.from(mode: .off, status: HIDPeripheralStatus()))
+        let off = KeyboardCommands(link: offLink)
         let offCode = await code { try await off.handle(method: "hid.pointer.move", params: ["dx": 5, "dy": 5]) }
         XCTAssertEqual(offCode, "hid_unavailable")
-        let waiting = KeyboardCommands(link: FakeLink(KeyboardLinkState.from(mode: .on, status: published())))
+        let waitingLink = FakeLink(KeyboardLinkState.from(mode: .on, status: published()))
+        let waiting = KeyboardCommands(link: waitingLink)
         let waitingCode = await code { try await waiting.handle(method: "hid.key", params: ["usage": 4, "down": true]) }
         XCTAssertEqual(waitingCode, "bt_not_paired")
+        withExtendedLifetime((offLink, waitingLink)) {}
     }
 
     func testMoveIsSplitIntoReportsThatAddUp() async throws {
