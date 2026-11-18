@@ -206,8 +206,7 @@ struct CreateLoopSheet: View {
             noiseRuns: 5,
             minPairs: minPairs
         )
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
         onCreate(
             trimmedCommand,
             trimmedExitCondition.isEmpty ? nil : trimmedExitCondition,

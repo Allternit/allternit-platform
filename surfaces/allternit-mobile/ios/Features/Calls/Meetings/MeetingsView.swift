@@ -432,7 +432,7 @@ private struct MeetingsEmptyUpcoming: View {
 
 /// Loading: three placeholder rows in the agenda's shape.
 private struct MeetingsSkeleton: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var dim = false
 
     var body: some View {
@@ -585,7 +585,7 @@ struct MeetingsDrawerButton: View {
     private var button: some View {
         Group {
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 action()
             } label: {
                 Image(systemName: "video")

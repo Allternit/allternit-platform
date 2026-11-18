@@ -237,7 +237,7 @@ struct FilesKeysSection: View {
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             guard !Task.isCancelled else { return }
             await refresh()
-            if isReady { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+            if isReady { Haptics.success() }
         }
     }
 
@@ -306,7 +306,7 @@ struct FilesKeysSection: View {
         do {
             notice = nil
             try await action()
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
         } catch {
             self.error = Self.message(error)
             await refreshKeepingError()

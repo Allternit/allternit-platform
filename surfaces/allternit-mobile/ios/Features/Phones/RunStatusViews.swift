@@ -97,7 +97,7 @@ struct RunStatusPill: View {
     var onReview: (() -> Void)? = nil
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private var kind: RunPillKind { RunPillKind(card.status) }
     private var text: String { kind.text(computer: card.kind == .computer) }
@@ -161,7 +161,7 @@ struct RunThoughtStream: View {
     let active: Bool
 
     @State private var showAll = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     static let maxRows = 6
 

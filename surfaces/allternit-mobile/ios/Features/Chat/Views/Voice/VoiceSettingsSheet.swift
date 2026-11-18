@@ -86,8 +86,7 @@ struct VoiceSettingsSheet: View {
         let isSelected = (settings.voiceIdentifier ?? "") == voice.id
             || (settings.voiceIdentifier == nil && voice.id == voices.first?.id)
         return Button(action: {
-            let generator = UISelectionFeedbackGenerator()
-            generator.selectionChanged()
+            Haptics.selection()
             settings.voiceIdentifier = voice.id
         }) {
             VStack(alignment: .leading, spacing: 8) {

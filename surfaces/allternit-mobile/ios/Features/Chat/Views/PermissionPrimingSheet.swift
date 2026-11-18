@@ -100,7 +100,7 @@ struct PermissionPrimingSheet: View {
                     .foregroundColor(Color("TextSecondary"))
                 Spacer()
                 Button(action: {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Haptics.light()
                     permission.markPrimed()
                     dismiss()
                     onContinue()
@@ -179,8 +179,7 @@ struct PermissionPrimingSheet: View {
 
             VStack(spacing: 10) {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     permission.markPrimed()
                     dismiss()
                     onContinue()

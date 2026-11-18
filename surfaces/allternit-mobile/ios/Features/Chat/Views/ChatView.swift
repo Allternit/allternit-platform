@@ -884,7 +884,7 @@ struct ChatLaunchGreeting: View {
     /// The bot stands on its stage above this chat: no second face here.
     @Environment(\.chatBotOnStage) private var botOnStage
     @State private var revealed = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     @MainActor private static var cachedTitle: String?
     /// The day + time-of-day bucket the cached title was made in; a new one rebuilds it.
@@ -1334,7 +1334,7 @@ private struct TerminalWorkingLine: View {
     let since: Date?
     @State private var start = Date()
     @State private var lit = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in

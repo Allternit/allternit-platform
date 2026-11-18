@@ -503,7 +503,7 @@ struct CodeModeView: View {
     // MARK: - Actions
 
     private func openDrawer() {
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Haptics.medium()
         withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
             isSidebarOpen = true
         }
@@ -553,7 +553,7 @@ struct CodeModeView: View {
 
     /// New code thread: back to the launchpad (the web's `setActiveSession(null)`).
     private func newThread() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         thread = nil
         activeSessionId = nil
         greeting = Self.greetings.randomElement() ?? greeting

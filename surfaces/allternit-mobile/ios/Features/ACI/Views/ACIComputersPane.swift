@@ -95,7 +95,7 @@ struct ACIComputersPane: View {
     private func computerRow(_ device: RelayRuntimeDevice) -> some View {
         let online = device.status != "offline"
         return Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             if files.hasFiles(device.id) {
                 detailComputer = device
             } else {

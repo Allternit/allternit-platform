@@ -32,7 +32,7 @@ struct VoiceSpeakerView<Face: View>: View {
     @ViewBuilder let face: () -> Face
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     static var scale: CGFloat { 1.78 }
 

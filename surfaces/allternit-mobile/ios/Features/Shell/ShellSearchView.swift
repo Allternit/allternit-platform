@@ -135,7 +135,7 @@ struct ShellSearchView: View {
 
     private func row(icon: String, title: String, subtitle: String?, action: @escaping () -> Void) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             action()
         } label: {
             HStack(spacing: 12) {

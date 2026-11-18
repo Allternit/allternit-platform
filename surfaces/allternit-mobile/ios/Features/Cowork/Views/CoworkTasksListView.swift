@@ -63,8 +63,7 @@ struct CoworkTasksListView: View {
                     filterMenu
 
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
+                        Haptics.light()
                         isCreateSheetPresented = true
                     }) {
                         Image(systemName: "plus")
@@ -162,8 +161,7 @@ struct CoworkTasksListView: View {
             message: "Create a task to get started.",
             actionTitle: "Create task",
             action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isCreateSheetPresented = true
             }
         )
@@ -186,8 +184,7 @@ struct CoworkTasksListView: View {
 
     private func taskRow(_ task: CoworkTask) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             detailTask = task
         }) {
             HStack(spacing: 12) {

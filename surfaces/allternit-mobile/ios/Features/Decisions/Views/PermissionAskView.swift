@@ -92,7 +92,7 @@ struct PermissionAskView: View {
         Task {
             do {
                 try await store.reply(ask, reply: reply)
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                Haptics.success()
             } catch {
                 self.error = "Couldn't send that. \(FriendlyErrorMessage.from(error.localizedDescription))"
             }

@@ -437,8 +437,7 @@ struct LoginGateView: View {
             #if DEBUG
             if let onSkipAuth {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     onSkipAuth()
                 }) {
                     Text("Continue without signing in")

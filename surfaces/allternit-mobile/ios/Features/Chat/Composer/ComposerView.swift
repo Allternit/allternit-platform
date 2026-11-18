@@ -613,7 +613,7 @@ struct ComposerView: View {
 
     private func voiceModeTapped() {
         guard isVoiceModeEnabled else { return }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         if DictationController.systemPromptsPending(), !AppPermission.microphone.hasPrimed {
             // App-owned explainer before the system prompts, once per install.
             isMicPrimingPresented = true
@@ -681,7 +681,7 @@ struct ComposerView: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color("BorderSubtle"), lineWidth: 1))
 
             Button(action: {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 attachmentStore.remove(id: attachment.id)
             }) {
                 Image(systemName: "xmark")
@@ -757,7 +757,7 @@ enum ComposerPlaceholders {
 /// Three small bars beside Stop while a turn runs (web allternit-waveform-bar).
 private struct StreamingBars: View {
     @State private var phase = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 2) {

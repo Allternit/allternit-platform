@@ -349,10 +349,10 @@ struct FactoryApprovalCard: View {
             Task {
                 do {
                     try await store.resolve(approval, decision: decision)
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    Haptics.success()
                 } catch {
                     self.error = FriendlyErrorMessage.from(error.localizedDescription)
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    Haptics.error()
                 }
                 busy = nil
             }

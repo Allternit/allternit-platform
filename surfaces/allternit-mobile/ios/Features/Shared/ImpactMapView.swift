@@ -142,7 +142,7 @@ struct ImpactMapView: View {
     @State private var confirming: MemoryMapItem?
     @State private var busy = false
     @State private var actionError: String?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private static let groupLimit = 5
 

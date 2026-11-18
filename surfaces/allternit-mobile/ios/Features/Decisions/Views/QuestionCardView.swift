@@ -385,13 +385,13 @@ struct QuestionCardView: View {
                     try await store.answer(request, answers: answers)
                     withAnimation(.easeOut(duration: 0.2)) { sentLabel = agentName.map { "Sent to \($0)" } ?? "Sent" }
                 }
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                Haptics.success()
                 isSending = false
                 onResolved()
             } catch {
                 isSending = false
                 sendError = "Couldn't send your answer. \(FriendlyErrorMessage.from(error.localizedDescription))"
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                Haptics.error()
             }
         }
     }

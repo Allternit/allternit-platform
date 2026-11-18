@@ -298,7 +298,7 @@ struct ArtifactsLibraryView: View {
             }
             .padding(.horizontal, -16)
             .onAppear {
-                if UIAccessibility.isReduceMotionEnabled { tilesShown = true } else { DispatchQueue.main.async { tilesShown = true } }
+                if ReducedMotion.current { tilesShown = true } else { DispatchQueue.main.async { tilesShown = true } }
             }
         }
     }
@@ -605,7 +605,7 @@ struct ArtifactsLibraryView: View {
     private func editorSessionRow(_ session: ArtifactStudioSession) -> some View {
         HStack(spacing: 4) {
             Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 studio = session
             } label: {
                 HStack(spacing: 10) {
@@ -783,7 +783,7 @@ struct ArtifactsLibraryView: View {
             layout: layout,
             archived: store.archived,
             onOpen: {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Haptics.light()
                 openArtifact = summary
             },
             onArchive: { changeArchive(summary) },

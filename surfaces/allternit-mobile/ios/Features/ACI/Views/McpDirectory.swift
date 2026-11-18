@@ -669,7 +669,7 @@ struct HeroIconDrift: View {
     var active = true
     var columns = 4
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     private let size: CGFloat = 44
     private let gap: CGFloat = 12
 
@@ -719,7 +719,7 @@ struct LockupSweep: View {
     var ink: Color = Color("TextPrimary")
     var active = true
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var sweep: CGFloat = -0.3
 
     var body: some View {

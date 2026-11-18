@@ -629,8 +629,7 @@ struct ProjectDetailView: View {
 
     private func addButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             VStack(spacing: 8) {
@@ -698,8 +697,7 @@ struct ProjectDetailView: View {
                 }
             } else {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     isEditingInstructions = true
                 }) {
                     Text(liveProject.instructions ?? "")
@@ -808,8 +806,7 @@ struct ProjectDetailView: View {
                     .foregroundColor(Color("TextSecondary"))
                 Spacer()
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     onNewChat(liveProject)
                 }) {
                     HStack(spacing: 6) {
@@ -838,8 +835,7 @@ struct ProjectDetailView: View {
                 VStack(spacing: 8) {
                     ForEach(chats) { session in
                         Button(action: {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
+                            Haptics.light()
                             onOpenChat(session)
                         }) {
                             HStack(spacing: 12) {

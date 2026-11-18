@@ -709,8 +709,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 // stream finished.
                 self.finishStreaming(messageId: assistantId)
                 if !streamFailed { ReviewPromptStore.shared.recordSuccessfulAnswer() }
-                let generator = UINotificationFeedbackGenerator()
-                generator.notificationOccurred(streamFailed ? .error : .success)
+                if streamFailed { Haptics.error() } else { Haptics.success() }
             } catch is CancellationError {
                 // Local cancel (stop button / backgrounding). Whoever cancelled
                 // owns the state cleanup — just don't lose buffered deltas.
@@ -741,8 +740,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                         self.reportPetOffer(error.localizedDescription)
                     }
                     self.finishStreaming(messageId: assistantId)
-                    let generator = UINotificationFeedbackGenerator()
-                    generator.notificationOccurred(.error)
+                    Haptics.error()
                 } else {
                     self.failStreaming(messageId: assistantId, error: error)
                 }
@@ -818,7 +816,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                    let reply = self.messages.first(where: { $0.id == assistantId }), !reply.content.isEmpty {
                     self.savePlanTurn(role: "assistant", content: reply.content, model: modelId)
                 }
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                Haptics.success()
             } catch is CancellationError {
                 self.flushPendingDeltas()
             } catch let error as URLError where error.code == .cancelled {
@@ -830,7 +828,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 }
                 self.updateMessage(assistantId) { $0.error = refusal.card }
                 self.finishStreaming(messageId: assistantId)
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                Haptics.error()
             } catch {
                 self.failStreaming(messageId: assistantId, error: error)
             }
@@ -1197,8 +1195,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         }
         reportPetOffer(error.localizedDescription)
         finishStreaming(messageId: messageId)
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.error)
+        Haptics.error()
     }
 
     /// True while the streaming assistant message has received nothing —

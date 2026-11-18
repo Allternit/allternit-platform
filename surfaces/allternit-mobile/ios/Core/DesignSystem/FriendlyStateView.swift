@@ -63,8 +63,7 @@ struct FriendlyStateView: View {
 
             if let actionTitle = shownActionTitle, let action = shownAction {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     action()
                 }) {
                     Text(actionTitle)
@@ -168,8 +167,7 @@ struct FriendlyInlineStateView: View {
 
             if let actionTitle = shownActionTitle, let action = shownAction {
                 Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
+                    Haptics.light()
                     action()
                 }) {
                     Text(actionTitle)

@@ -103,8 +103,7 @@ struct LoopsListView: View {
                     filterMenu
 
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
+                        Haptics.light()
                         isCreateSheetPresented = true
                     }) {
                         Image(systemName: "plus")
@@ -237,8 +236,7 @@ struct LoopsListView: View {
 
     private func loopRow(_ loop: Loop) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             detailLoop = loop
         }) {
             HStack(spacing: 12) {
@@ -280,8 +278,7 @@ struct LoopsListView: View {
             message: "Run a command on repeat until it exits clean or hits its iteration cap.",
             actionTitle: "Create loop",
             action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
+                Haptics.light()
                 isCreateSheetPresented = true
             }
         )

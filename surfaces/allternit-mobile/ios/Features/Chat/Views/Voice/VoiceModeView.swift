@@ -339,8 +339,7 @@ struct VoiceModeView: View {
 
     private func controlButton(systemName: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             Image(systemName: systemName)

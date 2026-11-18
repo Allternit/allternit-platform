@@ -168,8 +168,7 @@ struct CreateAutomationTaskSheet: View {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSchedule = schedule.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, !trimmedPrompt.isEmpty, !trimmedSchedule.isEmpty else { return }
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
         onCreate(trimmedName, trimmedPrompt, trimmedSchedule)
         dismiss()
     }

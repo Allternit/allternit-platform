@@ -13,7 +13,7 @@ typealias LibraryLayout = OverviewLayout
 /// Opens the shell drawer with the shell's spring.
 @MainActor
 func openLibraryDrawer(_ isSidebarOpen: Binding<Bool>) {
-    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    Haptics.medium()
     withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) {
         isSidebarOpen.wrappedValue = true
     }

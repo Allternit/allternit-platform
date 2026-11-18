@@ -40,7 +40,7 @@ struct BotChatSessionView: View {
     /// The bot has flown off its stage into the thread top.
     @State private var docked = false
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private var isMainChat: Bool { explicitSessionId == nil }
 
