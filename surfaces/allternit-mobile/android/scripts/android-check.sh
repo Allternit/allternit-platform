@@ -26,12 +26,14 @@ run() {
 
 # 0. Design tokens must match the iOS source (no Gradle; Node 20+).
 run node ../../../contracts/design-tokens/generate.mjs --check
+# 0b. The generated API client must match the OpenAPI specs (contracts/mobile-api).
+run node ../../../contracts/mobile-api/generate.mjs --check
 
 # 1. Google Play build (the TWA app as shipped) + its unit tests + lint.
 run ./gradlew :app:assemblePlayDebug :app:testPlayDebugUnitTest :app:lintPlayDebug
 
-# 2. Native foundation modules: unit tests (only :core:stream and :core:design have tests today; the
-#    others still compile through the task).
+# 2. Native foundation modules: unit tests (:core:api, :core:stream and :core:design have tests today;
+#    the others still compile through the task).
 core_tasks=()
 for m in "${core_modules[@]}"; do core_tasks+=(":core:$m:testDebugUnitTest"); done
 run ./gradlew "${core_tasks[@]}"

@@ -18,6 +18,12 @@ import okhttp3.OkHttpClient
  */
 data class ApiConfig(
     val apiBaseUrl: HttpUrl = DEFAULT_API_BASE_URL.toHttpUrl(),
+    /**
+     * allternit-cloud-api's origin (iOS `AppConfig.cloudAPIBaseURL`): device tokens and other
+     * cloud-only routes, which take absolute `/api/v1/...` paths. Never routed through a
+     * user's computer, so the bearer stays with the cloud.
+     */
+    val cloudBaseUrl: HttpUrl = DEFAULT_CLOUD_BASE_URL.toHttpUrl(),
 ) {
     /** [apiBaseUrl] without a trailing `v1` (a trailing slash is ignored, like iOS `lastPathComponent`). */
     private val apiRoot: HttpUrl
@@ -42,6 +48,7 @@ data class ApiConfig(
 
     companion object {
         const val DEFAULT_API_BASE_URL = "https://api.allternit.com/api/v1"
+        const val DEFAULT_CLOUD_BASE_URL = "https://api.allternit.com"
     }
 }
 

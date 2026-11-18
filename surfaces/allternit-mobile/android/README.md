@@ -78,10 +78,12 @@ The native Kotlin + Jetpack Compose app that will replace the TWA launcher is bu
 | Module | Namespace | What it holds today |
 |---|---|---|
 | `:core:design` | `com.allternit.core.design` | `AllternitTheme(themeMode = ThemeMode.Light)` (Light default; `System` follows the phone only when the user's setting says so), generated `AllternitColors.Light/Dark` (all 17 iOS colorsets), `AllternitRadii`, `AllternitGlass`, `ModeAccents`, `FriendlyState`, `ThinkingOrb`, `Motion.standardSpring()` (damping 0.86, stiffness 322 = iOS `spring(0.35, 0.86)`), `Haptics` (tap, success, warning → `HapticFeedbackConstants`, with pre-API-30 fallbacks), `ph_*` icons |
-| `:core:api` | `com.allternit.core.api` | `ApiConfig` (`https://api.allternit.com/api/v1`; `/api/aci` and `/api/factory` derived the same way as iOS `AppConfig.swift`; `/api/agent-chat` on the connected instance), `ApiClients.okHttp(bearer)` with a `BearerProvider` interceptor |
+| `:core:api` | `com.allternit.core.api` | `ApiConfig` (`https://api.allternit.com/api/v1`; `/api/aci` and `/api/factory` derived the same way as iOS `AppConfig.swift`; `/api/agent-chat` on the connected instance), `cloudBaseUrl` (`https://api.allternit.com`, device tokens), `ApiClients.okHttp(bearer)` with a `BearerProvider` interceptor, and the generated client `gen/AllternitApi` + `gen/Models.gen.kt` (from `contracts/mobile-api`; every call returns `ApiResult`: `Ok` / `HttpError(status, code, message)` / `Network` / `Decode`) |
 | `:core:auth` | `com.allternit.core.auth` | `TokenProvider` interface only (Clerk Android or the Files-style Custom Tab sign-in is picked in step 7) |
-| `:core:stream` | `com.allternit.core.stream` | `SseEvent` + `SseParser`, a byte-level port of iOS `SSEParser.swift`, with its test vectors in `SseParserTest` |
+| `:core:stream` | `com.allternit.core.stream` | `SseEvent` + `SseParser`, a byte-level port of iOS `SSEParser.swift`, with its test vectors in `SseParserTest`; `AgentChatStream` (okhttp-sse → `Flow<ChatStreamEvent>`, the iOS `AgentChatEvent` frame types) |
 | `:core:data` | `com.allternit.core.data` | `Prefs`, a typed wrapper over Preferences DataStore (the stand-in for UserDefaults) |
+
+**API client.** Never hand-write a REST client: add the route to the OpenAPI spec, list its `operationId` in `contracts/mobile-api/operations.json`, then run `node contracts/mobile-api/generate.mjs` (`--check` runs in `scripts/android-check.sh`). See `contracts/mobile-api/README.md`. Only SSE and WebSocket streams are hand-written (`:core:stream`). kotlinx-serialization 1.7.3, kotlinx-coroutines 1.9.0, okhttp-sse 4.12.0.
 
 Compose comes from the Compose BOM 2025.05.01 (UI 1.8.2, material3 1.3.2) with the Kotlin 2.0.21 Compose compiler plugin (`org.jetbrains.kotlin.plugin.compose`). DataStore is 1.1.7.
 

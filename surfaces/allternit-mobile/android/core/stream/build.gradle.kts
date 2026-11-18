@@ -22,5 +22,9 @@ android {
 }
 
 dependencies {
+    // AgentChatRequest + the request builder come from the generated client.
+    api(project(":core:api"))
+    // okhttp-sse (Apache-2.0, Square), same version as okhttp.
+    implementation(libs.okhttp.sse)
     testImplementation(libs.junit)
 }

@@ -8,6 +8,11 @@ kotlin = "2.0.21"
 composeBom = "2025.05.01"
 datastore = "1.1.7"
 okhttp = "4.12.0"
+# kotlinx-serialization 1.7.3 is built against Kotlin 2.0.20, so it runs on Kotlin 2.0.21
+# (the serialization compiler plugin is the Kotlin plugin, same version as kotlin).
+kotlinxSerialization = "1.7.3"
+# kotlinx-coroutines 1.9.0 needs Kotlin 2.0.0+.
+coroutines = "1.9.0"
 junit = "4.13.2"
 
 [libraries]
@@ -18,6 +23,9 @@ compose-foundation = { group = "androidx.compose.foundation", name = "foundation
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
@@ -26,3 +34,4 @@ android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 # Kotlin 2.x ships the Compose compiler as a Kotlin plugin; its version is the Kotlin version.
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

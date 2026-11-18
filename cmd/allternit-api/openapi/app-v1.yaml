@@ -1,0 +1,401 @@
+openapi: 3.1.0
+info:
+  title: Allternit App API (allternit-api)
+  version: "1.0.0"
+  summary: The first-party app routes the native phone apps call on allternit-api.
+  description: |
+    Internal contract for Allternit's own apps (iOS, Android), not the public
+    developer API (that is `cmd/allternit-cloud-api/openapi/platform-v1.yaml`,
+    which a router test pins to `/v1` routes only, so these routes cannot live
+    there). Not published to the docs site.
+
+    Base URLs, chosen per operation with `x-base`:
+    - `api`: `https://api.allternit.com/api/v1` (the app's `ApiConfig.apiBaseUrl`);
+      paths are relative to it.
+    - `instance`: the origin of the user's connected computer (relay, mesh or
+      direct gizzi-code); paths are absolute on that origin.
+
+    Every route takes `Authorization: Bearer <Clerk session JWT or API token>`.
+    Errors are `{ "error": "<code>", "message"?: "<text>" }`.
+
+    Source of truth for shapes is the Rust handler named in each operation's
+    `x-handler`. Kotlin is generated from this file by
+    `contracts/mobile-api/generate.mjs` (operations listed in
+    `contracts/mobile-api/operations.json`).
+servers:
+  - url: https://api.allternit.com/api/v1
+security:
+  - bearerAuth: []
+paths:
+  /me:
+    get:
+      operationId: getMe
+      summary: The signed-in user and their resolved organization
+      x-base: api
+      x-handler: cmd/allternit-api/src/me_routes.rs get_current_user
+      tags: [Account]
+      responses:
+        "200":
+          description: The profile, wrapped in `user`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /me/organization:
+    post:
+      operationId: createPersonalOrganization
+      summary: Create a personal organization (no-op when one exists)
+      x-base: api
+      x-handler: cmd/allternit-api/src/me_routes.rs create_personal_organization
+      tags: [Account]
+      responses:
+        "200":
+          description: The organization id; `created` is false when it already existed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateOrganizationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /agent-sessions:
+    get:
+      operationId: listAgentSessions
+      summary: List chat sessions (ephemeral ones are left out)
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_session_routes.rs list_sessions
+      tags: [Sessions]
+      responses:
+        "200":
+          description: Sessions and their count.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentSessionList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createAgentSession
+      summary: Create a chat session
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_session_routes.rs create_session
+      tags: [Sessions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAgentSessionRequest" }
+      responses:
+        "201":
+          description: The new session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentSession" }
+        default: { $ref: "#/components/responses/Error" }
+  /agent-sessions/{id}:
+    get:
+      operationId: getAgentSession
+      summary: One chat session
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_session_routes.rs get_session
+      tags: [Sessions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentSession" }
+        default: { $ref: "#/components/responses/Error" }
+  /agent-sessions/{id}/messages:
+    get:
+      operationId: listAgentSessionMessages
+      summary: Every message of a session, oldest first (a bare array)
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_session_routes.rs list_messages
+      tags: [Sessions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The messages.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AgentSessionMessage" }
+        default: { $ref: "#/components/responses/Error" }
+  /models:
+    get:
+      operationId: listModels
+      summary: The flattened runtime model catalog (a bare array)
+      description: Read live from the connected gizzi runtime. 503 `models_unavailable` when it cannot be read.
+      x-base: api
+      x-handler: cmd/allternit-api/src/v1_routes.rs list_available_models
+      tags: [Models]
+      responses:
+        "200":
+          description: The catalog.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RuntimeModel" }
+        default: { $ref: "#/components/responses/Error" }
+  /providers:
+    get:
+      operationId: listProviders
+      summary: Model providers (live from gizzi, else the static merge)
+      x-base: api
+      x-handler: cmd/allternit-api/src/provider_routes.rs list_providers
+      tags: [Models]
+      responses:
+        "200":
+          description: The providers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProviderList" }
+        default: { $ref: "#/components/responses/Error" }
+  /api/agent-chat:
+    post:
+      operationId: agentChat
+      summary: Send a chat turn and stream the reply (server-sent events)
+      description: |
+        Served by the user's connected computer (gizzi-code `agent-compat.ts`,
+        or allternit-api's bridge), not the gateway. The body is an SSE stream
+        of JSON `data:` frames (see `AgentChatStream.kt` for the frame types);
+        `data: [DONE]` ends it. 409 with `no_brain` when the computer has no
+        model signed in.
+      x-base: instance
+      x-stream: sse
+      x-handler: cmd/allternit-api/src/v1_routes.rs agent_chat_bridge
+      tags: [Chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentChatRequest" }
+      responses:
+        "200":
+          description: The event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  responses:
+    Error:
+      description: An error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+  schemas:
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, description: The error code. }
+        message: { type: string }
+    UserProfile:
+      type: object
+      description: me_routes.rs `UserProfile`. The fallback row (user not yet in the DB) has no `clerk_id`, `avatar_url` or `created_at`.
+      required: [id, role, status]
+      properties:
+        id: { type: string }
+        clerk_id: { type: [string, "null"] }
+        email: { type: [string, "null"] }
+        name: { type: [string, "null"] }
+        avatar_url: { type: [string, "null"] }
+        role: { type: string }
+        status: { type: string }
+        created_at: { type: string }
+        organization_id: { type: [string, "null"] }
+        organization_role: { type: [string, "null"] }
+    MeResponse:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: "#/components/schemas/UserProfile" }
+    CreateOrganizationResponse:
+      type: object
+      required: [organization_id, created]
+      properties:
+        organization_id: { type: string }
+        created: { type: boolean }
+    AgentSession:
+      type: object
+      description: agent_session_routes.rs `transform_session` always sends every field below; only `id` is required because the apps also decode sessions from other producers (cloud plan threads, a computer's gizzi directly), which can leave the rest out.
+      required: [id]
+      properties:
+        id: { type: string }
+        name: { type: [string, "null"] }
+        description: { type: [string, "null"] }
+        created_at: { type: [string, "null"] }
+        updated_at: { type: [string, "null"] }
+        last_accessed: { type: [string, "null"] }
+        message_count: { type: integer }
+        active: { type: boolean }
+        tags:
+          type: array
+          items: { type: string }
+        environment:
+          description: Code environment status, passed through from gizzi unchanged.
+          x-kotlin-raw: true
+        metadata:
+          description: Open bag. Server-synthesized keys (agentId, originSurface, ephemeral, paused, glance, mission, ...) merged with whatever the client stored at create/patch time, so values are any JSON type.
+          x-kotlin-raw: true
+    AgentSessionList:
+      type: object
+      required: [sessions, count]
+      properties:
+        sessions:
+          type: array
+          items: { $ref: "#/components/schemas/AgentSession" }
+        count: { type: integer }
+    CreateAgentSessionRequest:
+      type: object
+      description: agent_session_routes.rs `CreateSessionBody`. Every field is optional on the server.
+      properties:
+        name: { type: string }
+        agent_id: { type: string }
+        agent_name: { type: string }
+        origin_surface: { type: string }
+        ephemeral: { type: boolean }
+        metadata:
+          description: The client metadata bag (agentModeId, permissionMode, projectId, persona, ephemeral, ...). Stored as-is.
+          x-kotlin-raw: true
+        model:
+          description: gizzi `GizziModelRef`, forwarded as-is.
+          x-kotlin-raw: true
+        project_id: { type: string }
+        environmentId: { type: string }
+        repos:
+          description: "`[{ url, branch? }]`, forwarded as-is."
+          x-kotlin-raw: true
+    AgentSessionMessage:
+      type: object
+      description: agent_session_routes.rs `transform_message_with`.
+      required: [id, role, content]
+      properties:
+        id: { type: string }
+        role: { type: string }
+        content: { type: string }
+        thinking: { type: [string, "null"] }
+        timestamp: { type: [string, "null"] }
+        metadata:
+          description: "`{ agent, model, telemetry, handoff, cloudContinue, parts, error }`; `parts` are gizzi message parts, passed through unchanged."
+          x-kotlin-raw: true
+    RuntimeModelTier:
+      type: string
+      enum: [flagship, standard, fast, legacy]
+    ThinkingLevel:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+    ModelThinking:
+      type: object
+      description: model_thinking.rs `thinking_json`.
+      required: [vendor, levels, default]
+      properties:
+        vendor: { type: string }
+        vendor_name: { type: [string, "null"] }
+        term: { type: string }
+        note: { type: string }
+        toggle: { type: boolean }
+        levels:
+          type: array
+          items: { $ref: "#/components/schemas/ThinkingLevel" }
+        default: { type: string }
+        fast: { type: boolean }
+        source:
+          description: Where the entry came from; its type is not pinned by the handler.
+          x-kotlin-raw: true
+    RuntimeModel:
+      type: object
+      description: v1_routes.rs `live_model_catalog` row.
+      required: [id, name, provider]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        provider: { type: string }
+        description: { type: [string, "null"] }
+        tier: { $ref: "#/components/schemas/RuntimeModelTier" }
+        supports_effort: { type: boolean }
+        thinking: { $ref: "#/components/schemas/ModelThinking" }
+        default: { type: boolean }
+        rank: { type: [integer, "null"] }
+        hidden: { type: boolean }
+    ProviderModel:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+    ProviderInfo:
+      type: object
+      description: provider_routes.rs `ProviderInfo`.
+      required: [id, name, provider_type, api_key_set, models, status]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        provider_type: { type: string }
+        base_url: { type: [string, "null"] }
+        api_key_set: { type: boolean }
+        models:
+          type: array
+          items: { $ref: "#/components/schemas/ProviderModel" }
+        status: { type: string }
+    ProviderList:
+      type: object
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/ProviderInfo" }
+        all:
+          type: array
+          items: { $ref: "#/components/schemas/ProviderInfo" }
+    AttachmentRef:
+      type: object
+      description: A file for the turn (iOS `AttachmentRef`); the bridge turns it into a gizzi file part.
+      required: [mediaType]
+      properties:
+        url: { type: string }
+        dataBase64: { type: string }
+        mediaType: { type: string }
+        name: { type: string }
+    AgentChatMetadata:
+      type: object
+      properties:
+        tools:
+          description: The "+" sheet's tool options, forwarded to the runtime as-is.
+          x-kotlin-raw: true
+        form_factor: { type: string, description: '"phone" adds the small-screen reply block.' }
+        time_zone: { type: string, description: IANA zone name. }
+        screen_context: { type: string, description: '"available" while the app is in front.' }
+        answer_cards: { type: string, description: '"widgets": the app draws the writing/lookup cards.' }
+    AgentChatRequest:
+      type: object
+      description: v1_routes.rs `agent_chat_bridge` reads these keys from the JSON body.
+      required: [chatId, message]
+      properties:
+        chatId: { type: string, description: The agent session id. }
+        message: { type: string }
+        agentId: { type: string }
+        systemPrompt: { type: string }
+        runtimeModelId: { type: string }
+        effort: { type: string }
+        fast: { type: boolean }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/AttachmentRef" }
+        metadata: { $ref: "#/components/schemas/AgentChatMetadata" }
+        workdir: { type: string, description: The session's working folder; "" clears it. }
