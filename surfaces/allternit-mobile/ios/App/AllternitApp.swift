@@ -454,7 +454,7 @@ struct LoginGateView: View {
             }
             #endif
 
-            Text("By continuing you agree to the [Terms](https://allternit.com/terms) and [Privacy Policy](https://allternit.com/privacy).")
+            Text("By continuing you confirm you are 18 or older and agree to the [Terms](https://allternit.com/terms) and [Privacy Policy](https://allternit.com/privacy).")
                 .font(.system(size: 11.5))
                 .lineSpacing(2)
                 .foregroundStyle(palette.mut)
