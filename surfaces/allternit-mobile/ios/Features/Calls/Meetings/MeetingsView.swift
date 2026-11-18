@@ -455,7 +455,8 @@ private struct MeetingsSkeleton: View {
 /// Free plan (402): what Meetings is, and the plan link where allowed.
 struct MeetingsPaidPlanCard: View {
     @ObservedObject private var storefront = StorefrontGate.shared
-    @State private var safariURL: IdentifiableURL?
+    // Purchase pages go to the browser via the Open links in rule (step 30).
+    @Environment(\.openURL) private var openURL
     @State private var isStoreSheetPresented = false
 
     var body: some View {
@@ -477,7 +478,7 @@ struct MeetingsPaidPlanCard: View {
                     if storefront.showsStoreButtons(for: .plan) {
                         isStoreSheetPresented = true
                     } else {
-                        safariURL = IdentifiableURL(url: StorefrontGate.upgradeURL)
+                        openURL(StorefrontGate.upgradeURL)
                     }
                 }
                 .buttonStyle(SettingsPrimaryButtonStyle())
@@ -487,7 +488,6 @@ struct MeetingsPaidPlanCard: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color("FillNeutral")))
-        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
         .sheet(isPresented: $isStoreSheetPresented) { StorePurchaseSheet(focus: .plan) }
         .task { await StorePurchaseManager.shared.loadCatalog() }
     }
