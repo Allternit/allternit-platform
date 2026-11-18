@@ -29,21 +29,46 @@ The app looks and works like m.allternit.com: the same white (or graphite, in da
 
 The header shows ☰ on the left, the screen's title, and the new-chat button on the right. Tap **Recents** in the drawer for **all chats at a glance**, as a list, a grid or a deck. Every overview (this one, the Bots home, a bot's Threads and Tasks, Projects and Artifacts) uses the same List · Grid · Deck switch, and each remembers its own choice. Each card shows **Working** while its reply streams and **New reply** when something arrived since you last looked. Tap ⋯ on a card to open, rename or archive it, tap **X** to archive it, or swipe a deck card up.
 
-Tap ☰ (or swipe from the left edge) to open the drawer. Press and hold ☰ to see your bots and open one. The drawer has:
+Tap ☰ (or swipe from the left edge) to open the drawer. The drawer takes 80% of the width (up to 360 points). The page slides aside, shrinks a little and rounds its corners; tap the strip of page to close it. With **Reduce motion** on, the drawer fades in and the page stays still.
+
+### Hold ☰ for modes and bots
+
+☰ does three things:
+
+- **Tap** opens the drawer.
+- **Hold for about a third of a second** opens the **mode fan**: Home, Bots, Code and ACI. Slide to one and let go to switch, or tap one.
+- **Keep holding on Bots for a little longer** opens the **bots shelf**. Slide to a bot and let go to open its main chat. **Create a bot** is the last tile.
+
+Holding does nothing while the drawer is open. With VoiceOver on, the same shelf opens from the ☰ button's actions. ☰ on the Library, Models, Agent Hub and the task, routine and loop lists works the same way. On the session overview and the Code overview it only opens the drawer, because the fan would draw under them.
+
+The drawer has:
 
 - the **A://** button, which switches between **Home**, **Bots**, **Code** and **ACI**, the same modes as the phone web app,
 - **Inbox** (the tray button at the top): everything your bots are waiting on you for, such as approvals, held messages, missed calls and failed runs. Tap the button on a row, or swipe right for it; swipe left to snooze it for an hour or dismiss it,
 - **Search**,
 - the mode's own rows. In Home these are **Projects**, **Artifacts**, **Automation Tasks**, **Customize** and **More**. In ACI they are **MCP Apps**, **ACI Extensions**, **Computers** and **Teach**. **More** has **Show in rail** switches to hide or show rows; a dot on **More** means something is hidden,
 - **Teammates** (in Home): the bots that are working or need you right now. Tap one to open its chat,
-- **Recents**: tap the word to see every chat as List · Grid · Deck. Beside it is a filter for type, status (All, Active, Completed, Archived) and last activity. A chat shows **Working** while it answers and a dot when it has something new. Swipe left on a chat to delete it, swipe right to pin it, and press and drag a pinned chat to move it,
+- **Recents**: tap the word to see every chat as List · Grid · Deck. Beside it is a filter for type, status (All, Active, Completed, Archived) and last activity. A chat shows **Working** while it answers and a dot when it has something new. Code rows show **Needs input** or **Ready for review** when that applies. Swipe left on a chat to delete it, swipe right to pin it, and press and drag a pinned chat to move it,
 - **New chat** at the bottom. Press and hold it in Home or Code and pick **Continue CLI session** to bring a Claude Code, Codex, Grok or other CLI session from your computer into Allternit. The app copies it and leaves the original as it was,
 - **Phones** (the phone button at the bottom, with a count of unread messages): your bots' phones. Open one to see its number, email and conversations, unread first. **Give a bot a phone** connects one (see [Connect a bot](#connect-a-bot)),
 - your account, which opens **Settings**.
 
 ### The composer
 
-Home's composer is the same as the web's: **+** to add files, the **Auto** pill for how freely the chat works (Auto, Ask before actions, Read-only), the model, the context meter, and voice. The context meter is five small blocks beside the model. They fill as you use your plan, or as the chat's context fills, and the number next to them is how full the context is. Tap it to see what fills the context and how much of your plan is left. Under it, **Agent mode**, **Plugins** and **Artifacts** open their decks, with the same custom icons as Allternit Desktop. **Agent mode** lists Agent Swarm, Deep Research, Build, Docs, Sheets, Slides, Image and Video, then **Artifact** last: Allternit picks the format that fits (a doc, deck, sheet, site, image or video), says which in one line, and makes it. A new chat starts without templates. Pick **Docs**, **Slides**, **Sites** or **Sheets** in **Agent mode**, and that kind's templates open below the composer; tap one to start from it. The Bots home uses the same composer, with a **To:** row to send to your main bot as a new project or to one bot.
+Home's composer is the same as the web's: **+** to add files and more, the model, the context meter, and voice. The context meter is five small blocks beside the model. They fill as you use your plan, or as the chat's context fills, and the number next to them is how full the context is. Tap it to see what fills the context and how much of your plan is left. Under it, **Agent mode**, **Plugins** and **Artifacts** open their decks, with the same custom icons as Allternit Desktop. **Agent mode** lists Agent Swarm, Deep Research, Build, Docs, Sheets, Slides, Image and Video, then **Artifact** last: Allternit picks the format that fits (a doc, deck, sheet, site, image or video), says which in one line, and makes it. A new chat starts without templates. Pick **Docs**, **Slides**, **Sites** or **Sheets** in **Agent mode**, and that kind's templates open below the composer; tap one to start from it. The Bots home uses the same composer, with a **To:** row to send to your main bot as a new project or to one bot.
+
+The composer is quieter than before:
+
+- **The deck folds at rest.** The bar with Agent mode, Plugins and Artifacts stays hidden until you need it. It opens when you tap the text box, when the draft has text or attachments, when a mode is armed, or when you swipe the text box up by 24 points. A swipe up stays open until you swipe down. The first time, a short tip says so.
+- **Permission is in +.** The permission pill is gone. Tap **+** to open **Add to chat**, which has three groups: files and photos, tools, and settings for this chat. **Permission** opens a page with **Auto**, **Ask** and **Read-only**, the same choice as before. **Computer** and **Project** open pages in the same sheet.
+- **The mic sits beside voice.** Tap it to dictate into the draft. It is hidden when the phone has no speech recognition. If dictation fails, one plain line says so.
+- **The chat ⋯ menu** at the top of a chat holds **Share link**, **Run on my phone** and **Capture to brain**. Bot threads, Code chats and the browser chat have no ⋯, so those two items stay in **+**.
+
+### Computer chip and plain errors
+
+There is no banner across the top when no computer is connected. A small chip above the text box says **No computer** (tap **Connect**), **Can't reach your computer**, or that it is waking up. ✕ shrinks it to a dot on **+**; **+ → Computer** brings it back. The dot clears when the state changes.
+
+Errors read as sentences, never as a status number. A computer that isn't connected shows the empty screen with a **Connect** button, not an error. If something fails for another reason, the app says "Something went wrong. Try again."
 
 ### Waiting games
 
@@ -100,6 +125,16 @@ Once a session has started, the **Panes** button appears left of the sessions bu
 | Code map | The project's most important files, with how many files import each one |
 
 The Code prompt sits between two dashed lines, open at the ends.
+
+### Code sessions
+
+The Code sessions screen lists your sessions, local and cloud, with a status for each: **Needs input**, **Working**, **Ready for review**, **Done** or **Archived**. The first that applies wins, in that order. A filter at the top shows one status, with the count for each, and an empty filter says so in a line. The screen floats a new-session button at the bottom. Its header **Cards** button opens the older card overview as a Grid or Deck.
+
+- **Scheduled** lists the routines on the Code computer.
+- **Start a session** picks a computer and a folder, and offers **Connect** when none is paired. The connect sheet shows the two ways to pair: sign in to Allternit Desktop with this account, or run `ao fabric pair` in a terminal.
+- A computer's sheet lists its sessions.
+
+Opening a session clears **Ready for review**. See [Code session list](/guides/code-session-list) for what each status means.
 
 ### Teach
 
@@ -242,7 +277,7 @@ Not on the phone: WhatsApp personal. Use Desktop or ai.allternit.com for it.
 
 ## Artifacts
 
-**Artifacts** in the drawer is your library: the things you and your bots made, filtered by kind and by mine or shared. Artifacts made in a chat are saved to it. AI that a page runs is billed to you, as on the web. Links that leave Allternit open in Safari.
+**Artifacts** in the drawer is your library: the things you and your bots made. Tap a kind tile to filter by it, and use the **New** row to make one of that kind. Rows read "Kind · Edited" in one flat list, and search sits in the pill at the bottom. Artifacts made in a chat are saved to it. AI that a page runs is billed to you, as on the web. Links that leave Allternit open in Safari.
 
 Every artifact session opens on its own editor or pane, and its chat follows that session's kind: a Sheets session shows Sheets, whatever mode was last picked on Home. The composer is the same one as Home, with the same + menu, model picker, permissions, voice and sending while a reply runs. The only difference is that the mode menu becomes a fixed label for the session's kind.
 
@@ -250,7 +285,7 @@ Cards show a preview of the real content, including motion artifacts and a frame
 
 When you chat with an agent in a Docs, Sheets, Slides or Design session, it works directly on the open file with the same tools as the web, and you don't need to keep the editor on screen. Its changes save to the file, and in Docs they show as tracked changes under the agent's name. If a change fails or can't be saved, a banner says so and the agent is told. Your computer needs to be reachable, as it does for chat.
 
-Every artifact opens full screen in the same window and editors as Desktop and m.allternit.com, signed in, inside the app. The window has its version menu, share and export. If you only have view access, it opens read-only.
+Every artifact opens full screen in the same window and editors as Desktop and m.allternit.com, signed in, inside the app. The window has its version menu, share and export. If you only have view access, it opens read-only. The top bar has back, **Comments** (with a count of open threads), **Share** and **⋯**. The **⋯** menu has **Go to chat** (when the artifact came from a chat), **Open in browser**, **View comments**, and **Fill** or **Fit** for images and video, which the phone remembers. The Comments sheet lists threads, lets you add one, and says "No comments yet" when there are none. Who can comment follows the artifact's sharing: you can invite people and set general access from **Share**.
 
 **Make something new** starts a session for that kind:
 
@@ -263,7 +298,7 @@ Exports and downloads from the window, such as MP4, CSV, XLSX, DOCX and PNG, ope
 
 ## Projects
 
-**Projects** in the drawer lists your projects in the same two columns as the web. The **List · Grid · Deck** switch changes the layout. The filter button shows one kind, sorts, and shows archived projects. Search and **New project** float at the bottom.
+**Projects** in the drawer lists your projects in the same two columns as the web. The **List · Grid · Deck** switch changes the layout. The filter button shows one kind, sorts, and shows archived projects. A **Projects** pill at the bottom holds search and a menu with the List · Grid · Deck switch and the Show, Sort and Archived filters. **+ New project** floats beside it. The first time you tap it, a short note says what a project is. The create and edit sheets close with ✕ and save with ✓, and a **Cover and pad** row sets the cover; only chat projects have a pad.
 
 **New** makes a chat, code or design project. A code project asks for a folder on your computer, which you can skip. A design project opens on its canvas. Code and design projects you made on Desktop or the web show here once you've opened Allternit there with this version.
 
@@ -311,7 +346,13 @@ You can call people who joined through a bot's invite: tap the phone button in t
 
 ## Settings
 
-Settings opens from your account in the drawer. Its groups and order are the same as on m.allternit.com, and the card at the top shows your name and email.
+Settings opens from your account in the drawer. Its groups and order are the same as on m.allternit.com. The first screen has 18 rows in a few groups; every other page is under **Advanced**, so no page was removed. The card at the top shows your name and email, and the accounts you can switch to (see [Switch accounts and organizations](/guides/switch-accounts)). The **ⓘ** button holds the app version and links to Terms, Privacy, Help and support, and Status.
+
+- **Haptic feedback:** turns off every vibration in the app.
+- **Reduce motion:** replaces slides, pushes and zooms with short fades. It follows this switch, not only the iOS setting, and the status widget follows it too.
+- **Open links in:** **In app** (the default) or **Safari**. It covers links from meetings, Privacy and the status check. Purchase and App Store links always open in the browser.
+- **Appearance:** Light is the default if you never chose one. A choice you made earlier is kept.
+
 
 Most Settings screens work in the app:
 
@@ -377,6 +418,17 @@ You can buy a plan or a credit pack in the app, billed by Apple. Prices are high
 The app shows your plan, credits and usage in every country.
 
 Settings → Billing shows your plan as a member card (Plus graphite, Max gold, Ultra platinum) with your renewal date. A plan billed by Apple shows "Billed by Apple" with a link to App Store subscriptions. Settings → Usage shows a card per account that has a plan or limits, with its limits and resets. Engines that run on your own computer get no card.
+
+### Usage
+
+The **Usage** page opens with your plan limits:
+
+- **Plan windows:** one bar per window the plan reports, with when it resets. Bars are neutral, turn amber at 80% and red at 95%. Allternit Cloud reports a monthly window only, so it has no weekly bar.
+- **Allternit Cloud:** your computer hours for the month.
+- **Connected accounts:** the limits of the model accounts you connected.
+- **Credits** and **Buy credits**, which opens the store purchase sheet or the web billing page, with the same checks as before.
+
+The warning levels (80% and 95%) match the web. The cost breakdown is in [Usage dashboard](/guides/usage-dashboard).
 
 ## Delete your account
 
