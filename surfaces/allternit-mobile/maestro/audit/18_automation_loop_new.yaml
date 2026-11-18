@@ -1,8 +1,8 @@
-appId: com.allternit.mobile
+appId: ${APP_ID}
 ---
 # Verifies tapping "New loop" opens the loop creation sheet.
 - launchApp:
-    appId: com.allternit.mobile
+    appId: ${APP_ID}
     clearState: true
     arguments:
       skip-auth: true

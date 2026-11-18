@@ -55,8 +55,8 @@ xcodebuild -scheme Allternit -destination 'platform=iOS Simulator,name=iPhone 16
 For UI smoke tests we use Maestro:
 
 ```bash
-cd maestro/audit
-maestro test 01_login_gate.yaml
+# shared iOS + Android flows live in ../maestro/audit
+../maestro/audit/run-audit.sh --platform ios ../maestro/audit/01_login_gate.yaml
 ```
 
 ## Secrets and credentials
