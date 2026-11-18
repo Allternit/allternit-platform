@@ -263,7 +263,7 @@ struct DevicePairingView: View {
             approvedName = info.name
             pairing = nil
             code = ""
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Haptics.success()
             await loadDevices()
         } catch {
             pairingError = "Couldn't approve this device. \(FriendlyErrorMessage.from(error.localizedDescription))"

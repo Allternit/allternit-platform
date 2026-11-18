@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import AuthenticationServices
 import ClerkKit
+import WidgetKit
 
 /// Thin wrapper over the official Clerk iOS SDK v1.3.x (ClerkKit / ClerkKitUI).
 ///
@@ -36,6 +37,10 @@ final class AuthManager: ObservableObject {
     /// Set true to present ClerkKitUI's `AuthView` sheet (see AllternitApp).
     @Published var isPresentingAuth = false
     @Published private(set) var authEntryMode: AuthEntryMode = .signIn
+    /// "Switch account" (phone calm I14b): the email the sign-in screen fills
+    /// in after a person switch (clerk-ios `AuthView.initialIdentifier`).
+    /// Nil = empty sign-in. Cleared once someone is signed in.
+    @Published var pendingSignInEmail: String?
 
     private init() {}
 
@@ -54,6 +59,13 @@ final class AuthManager: ObservableObject {
             isSignedIn = true
             OnboardingStore.shared.skipThisLaunch()
         }
+        #if DEBUG
+        // `-calm-signin-prefill` (phone calm I14b): the sign-in screen as it
+        // opens after "Switch account", with a sample email filled in.
+        if launchArgumentEnabled(LaunchArgument.calmSignInPrefill) {
+            pendingSignInEmail = SettingsAccountsSample.prefillEmail
+        }
+        #endif
         guard !publishableKey.isEmpty else {
             #if DEBUG
             debugLog("CLERK_PUBLISHABLE_KEY is empty — Clerk SDK not configured.")
@@ -77,6 +89,25 @@ final class AuthManager: ObservableObject {
         isSignedIn = currentSession != nil
         Task { await finishOrganizationTaskIfNeeded() }
 
+        // The runtime device credential is stored per Clerk user (C7). A
+        // session that comes back as another person without a sign-out
+        // (multi-session, later) gets the per-person cleanup, a rebuild and
+        // its own pairing.
+        if isSignedIn {
+            let personChanged = RuntimePairing.shared.useAccount(userId: Clerk.shared.user?.id)
+            if personChanged, wasSignedIn {
+                Task {
+                    await AccountSwitchCleanup.run(reason: .personChanged)
+                    await AccountSwitchCleanup.rebuild()
+                    _ = try? await RuntimePairing.shared.ensurePaired()
+                }
+            }
+            // Switch account (I14b): every Clerk-confirmed sign-in goes on
+            // this device's list (no token), and the prefill is used up.
+            if !wasSignedIn || personChanged { rememberSignedInAccount() }
+            pendingSignInEmail = nil
+        }
+
         if isSignedIn, !wasSignedIn {
             // Push: send this phone's APNs token for the account now signed in.
             Task { await PushNotificationManager.shared.didSignIn() }
@@ -90,6 +121,17 @@ final class AuthManager: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Puts the signed-in Clerk user on this device's remembered accounts
+    /// (`RememberedAccounts`): id, name, email, photo URL. Skipped for an
+    /// account with no email.
+    private func rememberSignedInAccount() {
+        guard let user = Clerk.shared.user else { return }
+        let email = user.primaryEmailAddress?.emailAddress ?? user.emailAddresses.first?.emailAddress
+        let name = [user.firstName, user.lastName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
+        RememberedAccounts.remember(userId: user.id, name: name, email: email,
+                                    imageUrl: user.hasImage ? user.imageUrl : nil)
     }
 
     private var isFinishingOrganizationTask = false
@@ -381,6 +423,8 @@ final class AuthManager: ObservableObject {
             isSkippingAuth = false
             return
         }
+        // Cached plan labels of the person leaving (D14).
+        if let userId = currentUserId { AccountPlanLabels.forget(userId: userId) }
         // Stop pushes to this phone for the account leaving (needs its Bearer).
         await PushNotificationManager.shared.willSignOut()
         // Revoke the iOS runtime device credential before signing out of Clerk.
@@ -448,5 +492,119 @@ final class AuthManager: ObservableObject {
     var currentUserId: String? {
         if SampleWorkspace.isEnabled { return SampleWorkspace.userId }
         return Clerk.shared.user?.id
+    }
+}
+
+// MARK: - Account switch cleanup (plan contract C7)
+
+/// The local part of an account switch, one function for every switch path.
+/// `run(reason:)` goes before Clerk `setActive` (it still has the leaving
+/// account's Bearer); `rebuild()` goes after it, for whichever account is
+/// active then. Same rules as the web's `switchAccountCleanup`.
+///
+/// What holds one account's or organization's data, and what happens to it:
+/// - Org-scoped stores (recents, projects, bots, agents, artifacts, inbox,
+///   loops, routines, plan, usage, models, connections, computer status):
+///   `AccountPlanStore` is reset; the rest are force-reloaded in `rebuild()`
+///   with the new session, which replaces their lists.
+/// - Widgets: the status snapshot is dropped, then rebuilt from the cloud.
+/// - Spotlight: the index is deleted, then re-indexed.
+/// - Notices and Live Activities: removed (server activity tokens too).
+/// - Push: the APNs token is posted again after the switch (D3).
+/// - Per person, only when the person changes: the runtime device credential
+///   (Keychain key per user id, `RuntimePairing.useAccount`), the Files
+///   drive keys and Home Screen file domains.
+/// - Org and person (I14b): Decisions, BYOC and Code canvas stores are
+///   reset; saved selections (project, relay runtime, gizzi instance) go back
+///   to automatic.
+/// - Person only (I14b): the Brain clone + git token, the ChatGPT sign-in
+///   (revoked at OpenAI) + its disclosure, voice keys + their sync flag, the
+///   mesh node key, the paired runtime id (`EnvironmentStore`), project
+///   working folders, local project favorite/archived marks.
+/// Kept on an org switch: device preferences, the push token, the runtime
+/// device credential, the share outbox (pending shares).
+/// Never cleared here: `RememberedAccounts.defaultsKey` (the accounts used on
+/// this device). "Switch account" shows that list right after a person
+/// change, and it holds no token or workspace data.
+@MainActor
+enum AccountSwitchCleanup {
+    static func run(reason: AccountSwitchReason) async {
+        if SampleWorkspace.isEnabled { return }
+        resetLocalState(reason: reason)
+        // Plan and credits of the leaving account.
+        AccountPlanStore.shared.reset()
+        // Its connected accounts' limit windows (Settings → Usage, I15).
+        ProviderQuotaStore.shared.reset()
+        // Widgets: no snapshot of the leaving account; the widget keeps its
+        // signed-in face and fills again in rebuild().
+        AppGroupStore.clearSnapshot()
+        WidgetCenter.shared.reloadAllTimelines()
+        // Spotlight: nothing of the leaving account stays searchable.
+        SpotlightIndexer.removeAll()
+        // Notices, badge and Live Activities of the leaving account.
+        await PushNotificationManager.shared.willSwitchAccount()
+        if reason.clearsPersonData {
+            // Files drive keys are per person.
+            FilesDriveBridge.shared.clearLocal()
+            // Voice keys and the mesh node key are the leaving person's.
+            VoiceKeySync.shared.forgetLocal()
+            MeshClient.shared.forgetIdentity()
+            // Network (a last brain push, the OpenAI revoke): side by side.
+            let brainStore = BrainStore.shared
+            let chatGPTStore = ChatGPTDeviceStore.shared
+            async let brain: Void = brainStore.forgetLocal()
+            async let chatGPT: Void = chatGPTStore.forgetOnPersonChange()
+            _ = await (brain, chatGPT)
+        }
+    }
+
+    /// The store resets of a switch, no network. Runs inside `run(reason:)`,
+    /// and once more after a person switch's sign-out, so a store that
+    /// refilled while sign-out was in flight is empty again.
+    static func resetLocalState(reason: AccountSwitchReason) {
+        if SampleWorkspace.isEnabled { return }
+        DecisionsStore.shared.reset()
+        BYOCStore.shared.reset()
+        CodeCanvasStore.shared.reset()
+        // Saved selections point into the leaving account; automatic again.
+        ProjectStore.shared.selectedProjectId = nil
+        RuntimeRelayStore.shared.select(nil)
+        InstanceStore.shared.select(nil)
+        if reason.clearsPersonData {
+            EnvironmentStore.shared.unpair()
+            ProjectFolderStore.shared.reset()
+            ProjectsLibraryStore.shared.resetLocalFlags()
+        }
+    }
+
+    /// Reloads everything account-scoped for the account active now.
+    static func rebuild() async {
+        if SampleWorkspace.isEnabled { return }
+        AccountPlanStore.shared.load(force: true)
+        UsageStore.shared.refresh()
+        ProjectStore.shared.fetchProjectsIfNeeded(force: true)
+        AgentHubStore.shared.fetchAgentsIfNeeded(force: true)
+        ModelStore.shared.fetchModelsIfNeeded(force: true)
+        NotificationCenter.default.post(name: .historyMutated, object: nil)
+        // Lists load side by side; each replaces its old account's rows.
+        Task { await ShellSessionsStore.shared.load() }
+        Task { await ProjectsLibraryStore.shared.load() }
+        Task { await BotModeStore.shared.refreshAll() }
+        Task { await ArtifactLibraryStore.shared.reload() }
+        Task { await InboxStore.shared.refresh() }
+        Task { await LoopStore.shared.refresh() }
+        Task { await RoutineStore.shared.refresh() }
+        Task { await ConnectionsStore.shared.load() }
+        Task { await ComputeStatusStore.shared.refresh() }
+        // Push moves to the active account (D3); widgets and Spotlight fill
+        // from the new account's data. Network, so the switch row does not
+        // wait for it.
+        Task {
+            await PushNotificationManager.shared.didSwitchAccount()
+            await StatusSnapshotWriter.refreshFromCloud()
+            WidgetCenter.shared.reloadAllTimelines()
+            await SpotlightIndexer.refresh()
+            AllternitShortcuts.updateAppShortcutParameters()
+        }
     }
 }

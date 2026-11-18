@@ -9,9 +9,9 @@ struct MeetingLiveView: View {
     @StateObject private var live: MeetingLiveSession
     @State private var tab: Tab = .transcript
     @State private var confirmLeave = false
-    @State private var safariURL: IdentifiableURL?
+    @Environment(\.openURL) private var openURL
     @State private var showRecap = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     enum Tab: String, CaseIterable, Identifiable {
         case transcript = "Transcript", artifacts = "Artifacts", approvals = "Approvals"
@@ -69,7 +69,6 @@ struct MeetingLiveView: View {
         )) {
             Button("OK", role: .cancel) { live.actionError = nil }
         } message: { Text(live.actionError ?? "") }
-        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
         .navigationDestination(isPresented: $showRecap) {
             if let meeting = live.meeting { MeetingRecapView(meeting: meeting, session: live.session) }
         }
@@ -219,7 +218,7 @@ struct MeetingLiveView: View {
                 }
                 ForEach(live.artifacts) { artifact in
                     MeetingArtifactRow(artifact: artifact) {
-                        if let url = URL(string: artifact.url) { safariURL = IdentifiableURL(url: url) }
+                        if let url = URL(string: artifact.url) { openURL(url) }
                     }
                 }
             }

@@ -175,7 +175,7 @@ extension View {
 /// 160 ms, crossfades between bots; instant under Reduce Motion.
 struct BotColorWash: View {
     let color: String?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     init(color: String?) {
         self.color = color

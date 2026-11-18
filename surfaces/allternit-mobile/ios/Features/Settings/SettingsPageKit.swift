@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Every page the phone Settings list opens, in the PWA's order
 /// (allternit-ai src/views/settings/settings.config.ts `SETTINGS_NAV_ITEMS`:
-/// id, label, icon, `phone: {group, order}`). SF Symbols stand in for the
-/// web's Phosphor icons.
+/// id, label, icon, `phone: {section, order}`). SF Symbols stand in for the
+/// web's Phosphor icons. `SettingsRoot` says which pages sit on the root.
 enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
     case profile, appearance, signin, organization, privacy, subscriptions, billing, usage
     case setup, notifications, status, voice, memory, responseStyle = "response-style"
@@ -17,8 +17,6 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
     case selfHosted = "self-hosted"
 
     var id: String { rawValue }
-
-    enum Group { case account, assistant, bots, computers, advanced, operatorPages }
 
     var label: String {
         switch self {
@@ -116,22 +114,24 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         }
     }
 
-    /// `phone: {group, order}` from settings.config.ts.
-    var phone: (group: Group, order: Int) {
+    /// `phone: {section, order}` from settings.config.ts: where the
+    /// Advanced screen lists the page when it is not a root row. Device
+    /// Access and Self-hosted server are iPhone-only pages.
+    var phone: (section: SettingsAdvancedSection, order: Int) {
         switch self {
         case .profile: return (.account, 1)
         case .billing: return (.account, 2)
         case .usage: return (.account, 3)
         case .notifications: return (.account, 4)
         case .privacy: return (.account, 5)
-        case .organization: return (.account, 6)
-        case .signin: return (.account, 7)
+        case .signin: return (.account, 6)
+        case .organization: return (.account, 7)
         case .setup: return (.account, 8)
-        case .responseStyle: return (.assistant, 2)
-        case .memory: return (.assistant, 3)
-        case .voice: return (.assistant, 4)
-        case .appearance: return (.assistant, 5)
-        case .openModels: return (.assistant, 6)
+        case .memory: return (.assistant, 1)
+        case .voice: return (.assistant, 2)
+        case .appearance: return (.assistant, 3)
+        case .responseStyle: return (.assistant, 4)
+        case .openModels: return (.assistant, 5)
         case .subscriptions: return (.bots, 1)
         case .agentRules: return (.bots, 2)
         case .skills: return (.bots, 3)
@@ -142,17 +142,16 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .twin: return (.bots, 8)
         case .lens: return (.bots, 9)
         case .deviceAccess: return (.bots, 10)
-        case .devices: return (.computers, 1)
-        case .computers: return (.computers, 2)
-        case .desktopPet: return (.computers, 3)
-        case .extensions: return (.computers, 4)
-        case .remoteControl: return (.computers, 5)
-        case .selfHosted: return (.computers, 6)
-        case .gizziCode: return (.advanced, 1)
-        case .cowork: return (.advanced, 2)
-        case .diagnostics: return (.advanced, 3)
-        case .status: return (.advanced, 4)
-        case .about: return (.advanced, 9)
+        case .computers: return (.computers, 1)
+        case .devices: return (.computers, 2)
+        case .cowork: return (.computers, 3)
+        case .remoteControl: return (.computers, 4)
+        case .desktopPet: return (.computers, 5)
+        case .extensions: return (.computers, 6)
+        case .selfHosted: return (.computers, 7)
+        case .gizziCode: return (.developer, 1)
+        case .diagnostics: return (.developer, 2)
+        case .status: return (.developer, 3)
         case .models: return (.operatorPages, 1)
         case .imageProviders: return (.operatorPages, 2)
         case .videoProviders: return (.operatorPages, 3)
@@ -163,13 +162,149 @@ enum SettingsPageID: String, CaseIterable, Hashable, Identifiable {
         case .security: return (.operatorPages, 8)
         case .agents: return (.operatorPages, 9)
         case .webhooks: return (.operatorPages, 10)
+        case .about: return (.about, 1)
+        }
+    }
+}
+
+// MARK: - Root and Advanced (phone calm I13; web PHONE_SETTINGS_ROOT)
+
+/// Sections of the pushed Advanced screen, in order (web
+/// `PHONE_ADVANCED_SECTIONS`).
+enum SettingsAdvancedSection: String, CaseIterable, Sendable {
+    case account, assistant, bots, computers, developer
+    case operatorPages = "operator"
+    case about
+
+    var label: String {
+        switch self {
+        case .account: return "Account"
+        case .assistant: return "Assistant"
+        case .bots: return "Bots and agents"
+        case .computers: return "Computers and devices"
+        case .developer: return "Developer"
+        case .operatorPages: return "Operator"
+        case .about: return "About"
+        }
+    }
+}
+
+/// One row on the Settings root.
+enum SettingsRootRow: Hashable, Sendable {
+    /// A settings page; `label` renames it on the root only.
+    case page(SettingsPageID, label: String? = nil)
+    /// The phone's Customize screen (skills, connectors, plugins).
+    case customize
+    /// Open links in: In app / Safari (iPhone only; web has no such setting).
+    case openLinks
+    /// Haptic feedback (`Haptics.isEnabled`, key `allternit.haptics`).
+    case haptics
+    /// Reduce motion (`AppearanceStore.reduceMotion`, key `allternit.reduceMotion`).
+    case reduceMotion
+
+    var title: String {
+        switch self {
+        case .page(let page, let label): return label ?? page.label
+        case .customize: return "Customize"
+        case .openLinks: return "Open links in"
+        case .haptics: return "Haptic feedback"
+        case .reduceMotion: return "Reduce motion"
+        }
+    }
+}
+
+/// One block on the Settings root, top to bottom.
+enum SettingsRootEntry: Sendable {
+    case accounts
+    case group(label: String, rows: [SettingsRootRow])
+    case appearance
+    case advanced
+    case logout
+}
+
+/// Pushed screens of the Settings stack that are not a `SettingsPageID`.
+enum SettingsRoute: Hashable, Sendable {
+    case advanced
+    case openLinks
+}
+
+/// The Settings root (about 17 rows, the Claude iOS order) and the Advanced
+/// screen that lists every other page. Mirrors web `PHONE_SETTINGS_ROOT`,
+/// `phoneRootPageIds`, `phoneRootRowCount`, `phoneAdvancedItems`,
+/// `phoneSettingsLabel`; the App group adds Open links in.
+enum SettingsRoot {
+    static let entries: [SettingsRootEntry] = [
+        .accounts,
+        .group(label: "Account", rows: [
+            .page(.profile), .page(.billing), .page(.usage), .page(.notifications), .page(.privacy),
+        ]),
+        .group(label: "Assistant", rows: [
+            .customize, .page(.memory), .page(.voice, label: "Voice and dictation"),
+        ]),
+        .group(label: "Bots and computers", rows: [
+            .page(.subscriptions), .page(.computers, label: "Computers and devices"), .page(.agentRules),
+        ]),
+        .group(label: "App", rows: [.openLinks, .haptics, .reduceMotion]),
+        .appearance,
+        .advanced,
+        .logout,
+    ]
+
+    /// Pages with a row on the root.
+    static func pageIDs(_ entries: [SettingsRootEntry] = entries) -> [SettingsPageID] {
+        entries.flatMap { entry -> [SettingsRootRow] in
+            if case .group(_, let rows) = entry { return rows }
+            return []
+        }
+        .compactMap { row in
+            if case .page(let page, _) = row { return page }
+            return nil
         }
     }
 
-    /// The pages in one phone card, in their phone order.
-    static func items(_ group: Group) -> [SettingsPageID] {
-        allCases.filter { $0.phone.group == group }.sorted { $0.phone.order < $1.phone.order }
+    /// Rows on the root: each group row, plus Accounts, Appearance, Advanced
+    /// and Log out as one row each.
+    static func rowCount(_ entries: [SettingsRootEntry] = entries) -> Int {
+        entries.reduce(0) { count, entry in
+            if case .group(_, let rows) = entry { return count + rows.count }
+            return count + 1
+        }
     }
+
+    /// The pages Advanced lists in one section: every page not on the root,
+    /// in phone order.
+    static func advancedItems(_ section: SettingsAdvancedSection, entries: [SettingsRootEntry] = entries) -> [SettingsPageID] {
+        let onRoot = Set(pageIDs(entries))
+        return SettingsPageID.allCases
+            .filter { !onRoot.contains($0) && $0.phone.section == section }
+            .sorted { $0.phone.order < $1.phone.order }
+    }
+
+    /// How many pages the Advanced row says it holds.
+    static func advancedPageCount(_ entries: [SettingsRootEntry] = entries) -> Int {
+        SettingsAdvancedSection.allCases.reduce(0) { $0 + advancedItems($1, entries: entries).count }
+    }
+
+    /// What the phone calls a page: its root label when the root renames it.
+    static func label(for page: SettingsPageID, entries: [SettingsRootEntry] = entries) -> String {
+        for entry in entries {
+            guard case .group(_, let rows) = entry else { continue }
+            for row in rows {
+                if case .page(let id, let label?) = row, id == page { return label }
+            }
+        }
+        return page.label
+    }
+}
+
+/// The ⓘ menu's pages (web `PHONE_SETTINGS_INFO_LINKS`, with the iPhone's
+/// own Terms / Privacy URLs and the App Store listing's support URL). No
+/// Licenses row: the app has no acknowledgements page.
+enum SettingsInfoLinks {
+    static let terms = StoreViewCopy.termsURL
+    static let privacy = StoreViewCopy.privacyURL
+    static let support = URL(string: "https://allternit.com/support")!
+    static let status = SystemStatusClient.pageURL
 }
 
 // MARK: - Phone list pieces (phone.css "Settings (full sheet, grouped cards)")
@@ -514,20 +649,20 @@ struct SettingsPrimaryButtonStyle: ButtonStyle {
 struct SettingsWebPage: View {
     let page: SettingsPageID
     let intro: String
-    @State private var safariURL: IdentifiableURL? = nil
+    /// Follows Settings → App → Open links in (the root handler).
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
-        PhoneSettingsPage(title: page.label) {
-            SettingsSectionHeading(text: page.label)
+        PhoneSettingsPage(title: SettingsRoot.label(for: page)) {
+            SettingsSectionHeading(text: SettingsRoot.label(for: page))
             SettingsDescription(text: intro)
             Button("Open on the web") {
                 if let url = URL(string: "https://ai.allternit.com/settings/\(page.rawValue)") {
-                    safariURL = IdentifiableURL(url: url)
+                    openURL(url)
                 }
             }
             .buttonStyle(SettingsQuietButtonStyle())
         }
-        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
     }
 }
 

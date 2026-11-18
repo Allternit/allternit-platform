@@ -91,7 +91,7 @@ final class AppearanceClientTests: XCTestCase {
         a.image = "data:image/png;base64,iVBORw0KGgo="
         a = FolderLookEdit.applyPreset(a, FolderCoverPreset.all.first { $0.id == "badge" }!)
         a = FolderLookEdit.patchCover(a) { $0.art = .image; $0.sheets = 0; $0.tabLabel = "Quarterly plan" }
-        XCTAssertEqual(a.cover?.tabLabel, "Quarterly")
+        XCTAssertEqual(a.cover?.tabLabel, "Quarterl") // Cover.tabLabelMax = 8, same as web COVER_TAB_LABEL_MAX
         XCTAssertNil(a.cover?.preset)
         XCTAssertEqual(a.overlay, "image")
         XCTAssertFalse(a.documents)

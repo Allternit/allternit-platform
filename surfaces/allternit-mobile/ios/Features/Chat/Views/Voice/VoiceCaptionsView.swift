@@ -18,7 +18,7 @@ struct VoiceCaptionsView<Avatar: View>: View {
 
     @State private var shown = 0
     @State private var lastText = ""
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private var words: [Substring] { text.split(whereSeparator: \.isWhitespace) }
     private var visibleText: String {

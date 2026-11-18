@@ -69,6 +69,12 @@ struct CodeThreadChatView: View {
         .onChange(of: viewModel.currentSessionId) { _, id in
             onSessionChanged(id)
         }
+        // Drawer recents and the Code sessions view: this thread shows
+        // "Working" while it streams and is never unread (as ChatView does).
+        .task(id: "\(viewModel.currentSessionId ?? "")|\(viewModel.isStreaming)") {
+            ShellSessionsStore.shared.setActive(viewModel.currentSessionId, streaming: viewModel.isStreaming)
+        }
+        .onDisappear { ShellSessionsStore.shared.setActive(nil, streaming: viewModel.isStreaming) }
         .task(id: paused ? nil : sessionId) {
             guard !paused else { return }
             await pollPendingPermissions()

@@ -246,7 +246,17 @@ final class StorePurchaseTests: XCTestCase {
         manager.start()
         defer { manager.stop() }
 
-        await manager.purchase(FakeStoreBilling.pack10)
+        // Some simulators log "SKTestSession Error setting value" for askToBuyEnabled and the
+        // purchase then never returns. Bound it so one test can't hang the whole suite
+        // (train 20261118-0032 sat 6 h here); a session that can't do Ask to Buy skips.
+        let buying = Task { await manager.purchase(FakeStoreBilling.pack10) }
+        let end = Date().addingTimeInterval(20)
+        while manager.notice != .pending && Date() < end { try await Task.sleep(nanoseconds: 100_000_000) }
+        guard manager.notice == .pending else {
+            buying.cancel()
+            throw XCTSkip("StoreKitTest could not turn on Ask to Buy in this simulator; purchase never went pending")
+        }
+        _ = await buying.value
 
         XCTAssertEqual(manager.notice, .pending)
         var posted = await fake.posted

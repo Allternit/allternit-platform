@@ -159,8 +159,7 @@ struct AgentActivityDetailView: View {
 
     private func reviewButton(label: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             Text(label)

@@ -689,3 +689,217 @@ enum CodeSessionDates {
         return "\(Int(seconds / 86400))d"
     }
 }
+
+// MARK: - New session (Code sessions view's start screen)
+
+/// The Code sessions view's start screen (phone calm I9, brief item 7; web
+/// `PhoneCodeSessionsView` StartScreen): the Gizzi mark, "Hello, <first
+/// name>", then at the bottom the computer chip (C4), the computer, repo and
+/// brain chips and a composer. Sending hands the prompt back
+/// (`onStart`); Code mode runs it through its own start path, or only fills
+/// the launchpad composer when no brain is picked yet.
+struct CodeStartScreen: View {
+    let folder: CodeFolderInfo?
+    let onBack: () -> Void
+    let onConnect: () -> Void
+    let onStart: (String) -> Void
+
+    @ObservedObject private var relay = RuntimeRelayStore.shared
+    @ObservedObject private var modelStore = ModelStore.shared
+    @ReducedMotion private var reduced
+    @State private var draft = ""
+    @State private var bob = false
+    @State private var showsModels = false
+    @FocusState private var focused: Bool
+
+    private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var online: [RelayRuntimeDevice] { relay.devices.filter(\.isOnline) }
+
+    private var hello: String {
+        AuthManager.shared.firstName.map { "Hello, \($0)" } ?? "Hello"
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                CodeGlassRoundButton(icon: "chevron.left", label: "Back to Code sessions", action: onBack)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+
+            Spacer(minLength: 24)
+            VStack(spacing: 14) {
+                Image("GizziMascot")
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .frame(width: 72, height: 72)
+                    .offset(y: bob ? -4 : 0)
+                    .accessibilityHidden(true)
+                Text(hello)
+                    .font(.system(size: 26, weight: .semibold, design: .serif))
+                    .foregroundColor(Color("TextPrimary"))
+                    .accessibilityAddTraits(.isHeader)
+            }
+            Spacer(minLength: 24)
+
+            VStack(alignment: .leading, spacing: 8) {
+                ComputerChipSlot(dismissible: false)
+                HStack(spacing: 6) {
+                    computerChip
+                    repoChip
+                    Spacer(minLength: 0)
+                }
+                composer
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+        }
+        .onAppear {
+            guard !reduced else { return }
+            withAnimation(.easeInOut(duration: 1).repeatForever(autoreverses: true)) { bob = true }
+        }
+        .task {
+            modelStore.fetchModelsIfNeeded()
+            await relay.refresh()
+        }
+        .sheet(isPresented: $showsModels) { ModelPickerSheet(modelStore: modelStore) }
+    }
+
+    // MARK: Chips
+
+    /// The computer Code runs on; with none online it opens Connect.
+    @ViewBuilder
+    private var computerChip: some View {
+        let label = relay.activeDevice.flatMap { $0.isOnline ? $0.displayName : nil } ?? "Connect a computer"
+        if online.isEmpty {
+            Button(action: onConnect) { chipLabel(icon: "laptopcomputer", text: label) }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Computer: \(label)")
+        } else {
+            Menu {
+                ForEach(online) { device in
+                    Button {
+                        Haptics.selection()
+                        relay.select(device.id)
+                    } label: {
+                        if relay.activeRuntimeId == device.id {
+                            Label(device.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(device.displayName)
+                        }
+                    }
+                }
+                Divider()
+                Button(action: onConnect) { Label("Connect a computer…", systemImage: "plus") }
+            } label: {
+                chipLabel(icon: "laptopcomputer", text: label)
+            }
+            .accessibilityLabel("Computer: \(label)")
+        }
+    }
+
+    /// The repo: the computer's working folder (gizzi `v1/path`).
+    private var repoChip: some View {
+        let label = folder?.name ?? "No repo"
+        return Menu {
+            if let folder {
+                // One working folder per computer today: shown checked.
+                Button(action: { Haptics.selection() }) {
+                    Label(folder.directory, systemImage: "checkmark")
+                }
+            }
+        } label: {
+            chipLabel(icon: "arrow.triangle.branch", text: label)
+        }
+        .disabled(folder == nil)
+        .accessibilityLabel("Repo: \(label)")
+    }
+
+    private func chipLabel(icon: String, text: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.system(size: 12))
+            Text(text).font(.system(size: 13, weight: .medium)).lineLimit(1)
+        }
+        .foregroundColor(Color("TextPrimary"))
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(Color("FillNeutral"), in: Capsule())
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
+    // MARK: Composer
+
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Describe a task or ask a question…", text: $draft, axis: .vertical)
+                .font(.system(size: 16))
+                .foregroundColor(Color("TextPrimary"))
+                .lineLimit(2...6)
+                .focused($focused)
+                .submitLabel(.send)
+                .onSubmit(send)
+                .accessibilityLabel("Describe a task")
+            HStack(spacing: 8) {
+                Button(action: { showsModels = true }) {
+                    HStack(spacing: 4) {
+                        Text(ComposerModelLabel.label(modelStore))
+                            .font(.system(size: 13, weight: .medium))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundColor(Color("TextSecondary"))
+                    .frame(minHeight: 36)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Brain: \(ComposerModelLabel.label(modelStore))")
+                Spacer()
+                Button(action: send) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(trimmed.isEmpty ? Color("TextTertiary") : Color("BgPrimary"))
+                        .frame(width: 36, height: 36)
+                        .background(trimmed.isEmpty ? Color("FillNeutral") : Color("TextPrimary"), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(trimmed.isEmpty)
+                .accessibilityLabel("Start session")
+            }
+        }
+        .padding(12)
+        .background(Color("BgPanel"), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+    }
+
+    private func send() {
+        let text = trimmed
+        guard !text.isEmpty else { return }
+        Haptics.light()
+        draft = ""
+        onStart(text)
+    }
+}
+
+/// A round glass button for the Code sessions view's headers.
+struct CodeGlassRoundButton: View {
+    let icon: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(Color("TextPrimary"))
+                .frame(width: 40, height: 40)
+                .glassSurface(cornerRadius: 20)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}

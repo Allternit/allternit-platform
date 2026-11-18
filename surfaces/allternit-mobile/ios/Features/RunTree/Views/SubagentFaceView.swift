@@ -118,7 +118,7 @@ struct SubagentFaceView: View {
     var size: CGFloat = 24
 
     @ObservedObject private var catalog = SubagentCatalog.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         let look = catalog.look(for: subagent)

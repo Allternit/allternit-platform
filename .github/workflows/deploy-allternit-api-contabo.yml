@@ -14,8 +14,11 @@ on:
 
 jobs:
   # One job tests and deploys (2026-10-25). Two jobs on two fresh runners
-  # compiled the release dependencies twice (~50 min test + ~40 min build).
-  # Here the release build reuses what `cargo test --release` just compiled.
+  # compiled the dependencies twice and each restored the cache on its own.
+  # Since 2026-11-17 (PR-2) the tests build in the `ci-test` profile and the
+  # binary in `release`, so they no longer share compiled crates; the bench
+  # (run 44231866825) still measured this as faster: test 59.3 -> 43.6 min,
+  # build 18.8 -> 14.3 min. See surfaces/docs/internal/api-build-speed.mdx.
   # The API is SQLite-based: tests use throwaway sqlite databases
   # (DbHandle::new_memory in src/db.rs), so no postgres service is needed.
   test-and-deploy:
@@ -69,8 +72,11 @@ jobs:
             ${{ runner.os }}-cargo-api-contabo-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-api-contabo-
 
-      # Full suite in release mode, mirroring the VPS deploy loop and the
-      # cloud-api workflow's test gate.
+      # Full suite in the `ci-test` profile (.cargo/config.toml): dev settings
+      # with opt-level 1 and no debuginfo. Debug assertions stay on, which also
+      # exposes allternit_api::test_helpers to tests/ without the
+      # `test-helpers` feature (bench T1: 3,480 passed, 0 failed).
+      # CARGO_INCREMENTAL=0: a CI runner never reuses incremental state.
       # Test databases start as a copy of one migrated template (db.rs
       # test_template): running all migrations per test took 42 of the 76 min.
       # A build-train merge (a PR merged from a train/ branch) skips this step: the build
@@ -79,16 +85,27 @@ jobs:
       # smoke test below still runs on every deploy.
       - name: Test
         if: ${{ !contains(github.event.head_commit.message, 'from Allternit/train/') }}
+        # Measured 43.6 min (bench T1). The cap ends a hung run instead of
+        # holding the deploy queue; a cold cache still fits.
+        timeout-minutes: 90
         env:
           CARGO_BUILD_JOBS: "2"
+          CARGO_INCREMENTAL: "0"
         # Two test threads: with four, the 3,000+ test suite starved the hosted
         # runner and it "lost communication" (2026-11-16 02:18 and 17:00 runs).
-        run: cargo test --release --target x86_64-unknown-linux-gnu -p allternit-api --features test-helpers -- --test-threads=2
+        run: cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p allternit-api -- --test-threads=2
 
       - name: Build release binary
+        # Measured 14.3 min (bench R2). Same reason for the cap as the Test step.
+        timeout-minutes: 60
         env:
-          CARGO_BUILD_JOBS: "2"
-        run: cargo build --release --target x86_64-unknown-linux-gnu -p allternit-api
+          # Four jobs (bench R2, lowest free memory 4.3 GB with the swap above).
+          # Incremental stays on for release (R3 not picked at G0).
+          CARGO_BUILD_JOBS: "4"
+        run: |
+          cargo build --release --target x86_64-unknown-linux-gnu -p allternit-api
+          f=target/x86_64-unknown-linux-gnu/release/allternit-api
+          echo "allternit-api size=$(stat -c %s "$f") sha256=$(sha256sum "$f" | cut -d' ' -f1)"
 
       # Boot the new binary on a throwaway database BEFORE touching prod. A
       # router panic (duplicate route, 2026-09-30 #1094) or a failing migration

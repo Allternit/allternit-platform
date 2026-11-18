@@ -82,6 +82,19 @@ Your pinned computer is your **default computer**. It's the same on every device
 
 For developers: `GET /api/v1/runtime-devices` marks the default with `"preferred": true`, and `PUT /api/v1/runtime-devices/{id}/default` sets it (Clerk session or the account's device token; the runtime must belong to the account and not be revoked). The app picks a runtime in `pickActiveRuntime` (`src/lib/runtime-target.ts` in allternit-ai).
 
+### Models and providers on a computer
+
+**Settings → Account → Models & providers** stays the same size however many providers you connect:
+
+- **Search** at the top. Type a name to see your matching providers, grouped, and the providers you can still add.
+- **Three tiles**: **Coding tools**, **API providers** and **On this computer**. Each shows how many you have and how many are ready. Click a tile to open its full list in a side panel (a bottom sheet on a phone), with its own search.
+- **Needs you**: at most 3 rows for providers that wait for a sign-in or a key, each with its button. A coding tool that is installed but not signed in shows here.
+- **Add a provider**: opens a panel that searches the runtime's catalog of about 300 providers and shows the first 8 matches, each with **Connect**.
+
+**Models & Engines** (from **Apps & Extensions**) shows the same panel. On the iPhone app, **Models & Engines** has the same groups as rows that open their lists, a **Needs you** section and **Other providers** (search only).
+
+For developers: the rows come from `GET /api/v1/providers/auth/status` on the selected computer. A row is in use when it is `authenticated`, is an installed CLI (`provider_type: "subprocess"`, status not `not_installed`), or is mid-connect; the rest are catalog rows. The groups follow `details.provider_type` (`subprocess`, `local`, anything else = API). In allternit-ai the rules live in `src/lib/provider-list.ts` and the panel in `src/components/settings/BrainsPanel.tsx`; on iOS in `Features/Settings/ModelManagementView.swift`.
+
 ## Coding tools on any computer
 
 Settings → Connections › Coding tools installs and signs in CLI brains on the computer it names: this Mac, or the computer your phone and the web are using, such as your always-on Allternit cloud computer. Anything set up on a cloud computer keeps working while your own computer is closed. Step-by-step instructions are in [Subscriptions](/guides/subscriptions#coding-tools-on-any-computer).

@@ -222,8 +222,7 @@ struct MarketplaceListingDetailView: View {
         Task {
             do {
                 installedAgentId = try await store.install(listingId: listingId)
-                let generator = UINotificationFeedbackGenerator()
-                generator.notificationOccurred(.success)
+                Haptics.success()
             } catch {
                 installError = error.localizedDescription
             }

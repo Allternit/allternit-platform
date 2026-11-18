@@ -37,6 +37,11 @@ struct ProjectsListView: View {
     /// Which kind the New project sheet is making.
     @State private var newMode: LibraryProject.Mode = .chat
     @State private var isCreateSheetPresented = false
+    @State private var isSearching = false
+    @State private var showExplainer = false
+    /// "Cover and pad": the detail opens with its cover and pad editor.
+    @State private var openLookProjectId: String? = nil
+    @ReducedMotion private var reduced
     @State private var editing: LibraryProject? = nil
     @State private var deleting: LibraryProject? = nil
     @State private var createError: String? = nil
@@ -118,26 +123,35 @@ struct ProjectsListView: View {
         NavigationStack(path: $navigator.path) {
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
-                    LibrarySectionHeader(title: "Projects", onMenu: openMenu) { filterMenu }
+                    LibrarySectionHeader(title: "Projects", onMenu: openMenu) {
+                        ProjectsPill(searching: $isSearching, filtersActive: filtersOn) { filterPopover }
+                    }
+                    if isSearching || !searchText.isEmpty {
+                        ProjectsSearchField(query: $searchText)
+                    }
                     HStack(spacing: 8) {
                         countsLine
-                        OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 6)
                     content
                 }
-                LibraryFloatingBar(
-                    query: $searchText,
-                    placeholder: "Search projects",
-                    newLabel: "New project",
-                    wide: .new,
-                    newMenu: {
-                        Button { startNew(.chat) } label: { Label("Chat project", systemImage: "bubble.left") }
-                        Button { startNew(.code) } label: { Label("Code project", systemImage: "chevron.left.forwardslash.chevron.right") }
-                        Button { startNew(.design) } label: { Label("Design project", systemImage: "paintpalette") }
-                    }
-                )
+                ProjectsNewButton { newProjectTapped() }
+                    .padding(.bottom, 14)
+                if showExplainer {
+                    ProjectsExplainerCard(
+                        onOK: {
+                            ProjectsExplainer.markSeen()
+                            withAnimation(reduced ? Motion.fade : .easeOut(duration: 0.2)) { showExplainer = false }
+                            startNew(.chat)
+                        },
+                        onDismiss: {
+                            ProjectsExplainer.markSeen()
+                            withAnimation(reduced ? Motion.fade : .easeOut(duration: 0.2)) { showExplainer = false }
+                        }
+                    )
+                    .zIndex(5)
+                }
             }
             .background(Color("BgPrimary").ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
@@ -145,7 +159,8 @@ struct ProjectsListView: View {
                 ProjectDetailView(
                     project: project,
                     onNewChat: onNewChatInProject,
-                    onOpenChat: onOpenChat
+                    onOpenChat: onOpenChat,
+                    opensLook: project.id == openLookProjectId
                 )
             }
             .navigationDestination(item: $codeDetail) { project in
@@ -157,15 +172,23 @@ struct ProjectsListView: View {
         }
         .environmentObject(navigator)
         .sheet(isPresented: $isCreateSheetPresented) {
-            NewProjectSheet { title, description in
-                createProject(mode: newMode, title: title, description: description)
-            }
+            NewProjectSheet(
+                onCreate: { title, description in
+                    createProject(mode: newMode, title: title, description: description)
+                },
+                onCreateAndStyle: { title, description in
+                    createProject(mode: .chat, title: title, description: description, opensLook: true)
+                },
+                kind: $newMode
+            )
         }
         .fullScreenCover(item: $designCanvas) { project in
             DesignProjectCanvasView(project: project, createdHere: project.id == newDesignProjectId)
         }
         .sheet(item: $editing) { project in
-            EditProjectDetailsSheet(project: project) { title, description in
+            EditProjectDetailsSheet(project: project, onCoverAndPad: project.cowork.map { cowork in
+                { detailProject = cowork; openLookProjectId = cowork.id }
+            }) { title, description in
                 try await library.updateDetails(project, title: title, description: description)
             }
         }
@@ -187,16 +210,20 @@ struct ProjectsListView: View {
                 detailProject = projectStore.projects.first
             }
             // `-open-new-project` (DEBUG only): opens the create sheet.
-            if launchArgumentEnabled("open-new-project") {
+            if launchArgumentEnabled("open-new-project") || launchArgumentEnabled("calm-new-project") {
                 isCreateSheetPresented = true
             }
+            // `-calm-projects-pill` (DEBUG only): opens the search + filter pill's popover state (search field shown).
+            if launchArgumentEnabled("calm-projects-pill") { isSearching = true }
+            // `-calm-projects-explainer` (DEBUG only): shows the explainer regardless of the once-key.
+            if launchArgumentEnabled("calm-projects-explainer") { showExplainer = true }
         }
         #endif
     }
 
     private func openMenu() {
         if let onOpenSidebar {
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            Haptics.medium()
             onOpenSidebar()
         } else {
             dismiss()
@@ -207,29 +234,39 @@ struct ProjectsListView: View {
 
     private var filtersOn: Bool { category != .all || sortBy != .recent || showArchived }
 
-    private var filterMenu: some View {
-        Menu {
-            Section("Show") {
-                ForEach(Category.allCases, id: \.self) { option in
-                    checked("\(option.label)  \(count(option))", on: category == option) { category = option }
-                }
+    /// Popover behind the pill's filter button: List · Grid · Deck (the shared
+    /// OverviewLayoutSwitch) plus the existing Show · Sort by · Archived filters.
+    private var filterPopover: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            OverviewLayoutSwitch(raw: $layoutRaw, fallback: .grid)
+                .padding(.bottom, 6)
+            Text("Show").font(.caption.weight(.semibold)).foregroundColor(Color("TextSecondary"))
+            ForEach(Category.allCases, id: \.self) { option in
+                checked("\(option.label)  \(count(option))", on: category == option) { category = option }
             }
-            Section("Sort by") {
-                ForEach(Sort.allCases, id: \.self) { option in
-                    checked(option.label, on: sortBy == option) { sortBy = option }
-                }
+            Text("Sort by").font(.caption.weight(.semibold)).foregroundColor(Color("TextSecondary")).padding(.top, 6)
+            ForEach(Sort.allCases, id: \.self) { option in
+                checked(option.label, on: sortBy == option) { sortBy = option }
             }
             checked("Show archived  \(allProjects.filter(\.isArchived).count)", on: showArchived) { showArchived.toggle() }
-        } label: {
-            PhoneFilterButtonLabel(active: filtersOn)
+                .padding(.top, 6)
         }
-        .accessibilityLabel("Filter and sort")
+        .padding(16)
+        .frame(minWidth: 260)
     }
 
     private func checked(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            if on { Label(title, systemImage: "checkmark") } else { Text(title) }
+            HStack {
+                Text(title).font(.system(size: 15))
+                Spacer(minLength: 12)
+                if on { Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)) }
+            }
+            .foregroundColor(Color("TextPrimary"))
+            .frame(minHeight: 40)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Content
@@ -352,7 +389,7 @@ struct ProjectsListView: View {
     // MARK: - Actions
 
     private func open(_ project: LibraryProject) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         if let cowork = project.cowork {
             detailProject = cowork
         } else if let row = project.workspace {
@@ -367,14 +404,23 @@ struct ProjectsListView: View {
         await library.load()
     }
 
+    /// First tap shows the explainer; OK opens create. Later taps open create.
+    private func newProjectTapped() {
+        if ProjectsExplainer.seen() {
+            startNew(.chat)
+        } else {
+            withAnimation(reduced ? Motion.fade : .easeOut(duration: 0.2)) { showExplainer = true }
+        }
+    }
+
     private func startNew(_ mode: LibraryProject.Mode) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         newMode = mode
         isCreateSheetPresented = true
     }
 
     /// New projects open straight into their project page (Claude parity).
-    private func createProject(mode: LibraryProject.Mode, title: String, description: String?) {
+    private func createProject(mode: LibraryProject.Mode, title: String, description: String?, opensLook: Bool = false) {
         Task {
             do {
                 createError = nil
@@ -387,7 +433,9 @@ struct ProjectsListView: View {
                     newDesignProjectId = created.id
                     designCanvas = created
                 } else {
-                    detailProject = try await projectStore.createProject(title: title, description: description)
+                    let created = try await projectStore.createProject(title: title, description: description)
+                    if opensLook { openLookProjectId = created.id }
+                    detailProject = created
                 }
             } catch {
                 createError = "Couldn't create the project: \(FriendlyErrorMessage.from(error.localizedDescription))"
@@ -677,6 +725,8 @@ private struct ProjectOverviewCard<Menu: View>: View {
 /// EditProjectDetailsDialog: name and description.
 private struct EditProjectDetailsSheet: View {
     let project: LibraryProject
+    /// Nil for projects without a pad (code, design, bot).
+    let onCoverAndPad: (() -> Void)?
     let onSave: (String, String) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -685,8 +735,9 @@ private struct EditProjectDetailsSheet: View {
     @State private var saving = false
     @State private var error: String? = nil
 
-    init(project: LibraryProject, onSave: @escaping (String, String) async throws -> Void) {
+    init(project: LibraryProject, onCoverAndPad: (() -> Void)? = nil, onSave: @escaping (String, String) async throws -> Void) {
         self.project = project
+        self.onCoverAndPad = onCoverAndPad
         self.onSave = onSave
         _title = State(initialValue: project.title)
         _details = State(initialValue: project.description ?? "")
@@ -695,6 +746,34 @@ private struct EditProjectDetailsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    HStack {
+                        Spacer()
+                        FolderCoverView(title: title.isEmpty ? project.title : title, mode: project.mode.rawValue,
+                                        appearance: nil, width: 110, flat: true)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Folder cover for \(title)")
+                        Spacer()
+                    }
+                    .listRowBackground(Color.clear)
+                }
+                if let onCoverAndPad {
+                    Section {
+                        Button {
+                            Haptics.light()
+                            dismiss()
+                            onCoverAndPad()
+                        } label: {
+                            HStack {
+                                Text("Cover and pad")
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                            }
+                            .frame(minHeight: 44)
+                        }
+                        .foregroundColor(Color("TextPrimary"))
+                    }
+                }
                 Section("Name") {
                     TextField("Project name", text: $title)
                 }
@@ -708,17 +787,22 @@ private struct EditProjectDetailsSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color("BgPrimary"))
-            .navigationTitle("Edit details")
+            .navigationTitle("Project settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Close")
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
+                    Button { save() } label: { Image(systemName: "checkmark") }
+                        .accessibilityLabel("Save")
                         .disabled(saving || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .onAppear { Haptics.light() }
+        .presentationDetents([.large])
     }
 
     private func save() {

@@ -41,3 +41,8 @@ Server variables used: `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`, `GOOGLE_PLAY_RTDN_TOK
 ## Testing
 
 License testers on the internal track buy without a charge. Like the Apple sandbox, a tester account that is not on `STORE_SANDBOX_GRANT_USER_IDS` is acknowledged and consumed but granted no credits.
+
+
+## Content rating (Eoj's Play Console step, 18+)
+
+Our Terms and sign-in say users must be 18 or older. In Play Console → the app → Policy and programs → App content → Content rating, complete the IARC questionnaire with: app category "Utility, Productivity, Communication or other"; no violence, sexual content, profanity, drugs or gambling; user-generated content and chat: **Yes** (bots talk to people and models write text); unrestricted web access: **Yes**. Then, under Target audience and content, select **18 and over** only, so the app is not offered to children. Re-run the questionnaire if a feature changes the answers. The Android app has no billing UI yet, so no renewal disclosure is needed here.

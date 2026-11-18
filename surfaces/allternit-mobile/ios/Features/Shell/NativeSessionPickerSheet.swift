@@ -256,7 +256,7 @@ struct NativeSessionPickerSheet: View {
             defer { picking = nil }
             do {
                 let sessionId = try await NativeSessionsClient.pickup(item, surface: surface)
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                Haptics.success()
                 NotificationCenter.default.post(name: .historyMutated, object: nil)
                 dismiss()
                 onPicked(sessionId)

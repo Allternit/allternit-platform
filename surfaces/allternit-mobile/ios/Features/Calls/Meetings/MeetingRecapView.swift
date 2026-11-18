@@ -12,7 +12,7 @@ struct MeetingRecapView: View {
     @State private var loading = true
     @State private var error: String?
     @State private var paidPlan = false
-    @State private var safariURL: IdentifiableURL?
+    @Environment(\.openURL) private var openURL
 
     init(meeting: Meeting, session: MeetingSession? = nil) {
         self.meeting = meeting
@@ -44,7 +44,6 @@ struct MeetingRecapView: View {
         .background(Color("BgPrimary").ignoresSafeArea())
         .navigationTitle("Recap")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
         .task { await load() }
     }
 
@@ -115,7 +114,7 @@ struct MeetingRecapView: View {
             VStack(spacing: 8) {
                 ForEach(artifacts) { a in
                     MeetingArtifactRow(artifact: a) {
-                        if let url = URL(string: a.url) { safariURL = IdentifiableURL(url: url) }
+                        if let url = URL(string: a.url) { openURL(url) }
                     }
                 }
             }

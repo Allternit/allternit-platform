@@ -118,8 +118,7 @@ struct ChatErrorCardView: View {
 
     private func actionButton(title: String, systemImage: String, primary: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.impactOccurred()
+            Haptics.light()
             action()
         }) {
             HStack(spacing: 5) {

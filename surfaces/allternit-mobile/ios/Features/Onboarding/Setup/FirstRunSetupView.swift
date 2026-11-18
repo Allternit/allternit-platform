@@ -30,7 +30,7 @@ struct FirstRunSetupView: View {
 
     @StateObject private var signals = SetupSignals()
     @ObservedObject private var appearance = AppearanceStore.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     @State private var state = SetupState()
     @State private var data: SetupWizardData
@@ -651,7 +651,7 @@ struct FirstRunSetupView: View {
     // MARK: - Actions
 
     private func dispatch(_ action: SetupAction) {
-        if action.firesHaptic { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        if action.firesHaptic { Haptics.light() }
         let next = SetupReducer.reduce(state, action)
         if reduceMotion { state = next } else { withAnimation(.easeOut(duration: 0.25)) { state = next } }
     }
@@ -797,7 +797,7 @@ private struct SetupSwatch: View {
 
 /// The blinking coral square next to A://'s state.
 private struct SetupBlip: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var dim = false
 
     var body: some View {

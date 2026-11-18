@@ -115,6 +115,28 @@ final class BYOCStore: ObservableObject {
         createError = nil
     }
 
+    // MARK: - Account switch
+
+    /// Account switch (phone calm I14b, org and person): the leaving
+    /// account's profile, cloud credentials and usage go. The next screen
+    /// that needs them fetches with the new session (`fetchIfNeeded`).
+    func reset() {
+        fetchTask?.cancel()
+        fetchTask = nil
+        profile = nil
+        credentials = []
+        usageSummary = nil
+        isLoadingProfile = false
+        isLoadingCredentials = false
+        isLoadingUsage = false
+        loadError = nil
+        isCreating = false
+        createError = nil
+        isRevokingId = nil
+        isTesting = false
+        testResult = nil
+    }
+
     // MARK: - Helpers
 
     var canManageBilling: Bool {

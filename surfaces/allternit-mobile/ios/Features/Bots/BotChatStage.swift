@@ -36,7 +36,7 @@ struct BotChatStage: View {
     @ObservedObject private var store = BotModeStore.shared
     @StateObject private var live = BotStageLiveStore()
     @State private var openArtifact: ArtifactV2Summary? = nil
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var floating = false
     @State private var files: [StagedAttachment] = []
     @State private var isImporting = false

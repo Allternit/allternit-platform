@@ -52,7 +52,7 @@ struct OverviewLayoutSwitch: View {
             ForEach(OverviewLayout.allCases) { layout in
                 let on = value == layout
                 Button {
-                    UISelectionFeedbackGenerator().selectionChanged()
+                    Haptics.selection()
                     withAnimation(.easeOut(duration: 0.16)) { value = layout }
                 } label: {
                     Image(systemName: layout.icon)

@@ -13,18 +13,8 @@ struct ACIPhoneHeader: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Button {
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                onMenu()
-            } label: {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 20, weight: .regular))
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open menu")
+            // Tap opens the drawer; hold fans the modes out (C8).
+            PhoneMenuButton(onOpen: onMenu)
             Spacer()
         }
         .padding(.horizontal, 8)

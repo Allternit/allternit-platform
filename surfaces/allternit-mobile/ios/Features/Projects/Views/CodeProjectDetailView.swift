@@ -136,7 +136,7 @@ struct CodeProjectDetailView: View {
 
     private var newSessionButton: some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             thread = CodeThreadTarget(sessionId: nil)
         } label: {
             Label("New session", systemImage: "plus")

@@ -147,6 +147,18 @@ final class VoiceKeySync: ObservableObject {
         revision += 1
     }
 
+    /// Person change (phone calm I14b): the keys leave this phone and the
+    /// "Save to my Allternit account" flag goes off locally. Nothing is
+    /// deleted from the leaving person's account.
+    func forgetLocal() {
+        syncTask?.cancel()
+        syncTask = nil
+        VoiceProviderKeys.forgetAll()
+        setStored(false)
+        lastError = nil
+        revision += 1
+    }
+
     // MARK: Toggle
 
     /// The toggle is account-wide (same rule as the web): it reads ON while

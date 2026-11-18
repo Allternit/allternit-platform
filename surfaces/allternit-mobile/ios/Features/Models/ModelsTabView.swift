@@ -68,16 +68,10 @@ struct ModelsTabView: View {
     // Header bar (matches AgentHubView's/ArtifactsLibraryView's chrome).
     private var header: some View {
         HStack {
-            Button(action: {
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            // Tap opens the drawer; hold fans the modes out (step 24).
+            PhoneMenuButton {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.86, blendDuration: 0)) { isSidebarOpen.toggle() }
-            }) {
-                Image(systemName: "line.3.horizontal")
-                    .font(.title3)
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(width: 44, height: 44)
             }
-            .accessibilityLabel("Open sidebar")
 
             Text("Models")
                 .font(.system(.title3, design: .serif))
@@ -99,7 +93,7 @@ struct ModelsTabView: View {
 
     private func circleButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Haptics.light()
             action()
         }) {
             Image(systemName: icon)

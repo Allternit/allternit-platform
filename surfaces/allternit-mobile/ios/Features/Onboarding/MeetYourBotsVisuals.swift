@@ -79,7 +79,7 @@ struct MeetLookTile: View {
 /// recorded as a 16 s loop, with the speech bubbles drawn natively on top.
 /// Reduced motion shows the web's still frame and no bubbles.
 struct MeetNetworkView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var t: Double = 0
 
     /// The loop's speech (web SAYS), at the bubble anchors of a 440×340 frame.
@@ -190,7 +190,7 @@ struct MeetTeamGrid: View {
     var lockedIds: Set<String> = []
     var onRemove: (String) -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var spots: [String: CGPoint] = [:]
     @State private var dragging: (id: String, offset: CGSize)?
 
@@ -756,7 +756,7 @@ private struct MeetCalendarChip: View {
 
     @State private var drag: CGFloat = 0
     @State private var dragging = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         let at = item.rule?.at ?? 0
@@ -908,7 +908,7 @@ struct MeetFirstJobVisual: View {
     let caption: String
     let expect: String?
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var go = false
 
     var body: some View {

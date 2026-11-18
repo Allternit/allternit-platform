@@ -161,7 +161,7 @@ struct ACIExtensionsView: View {
     enum Action { case toggle, install, remove }
 
     private func perform(_ action: Action, on ext: ACIExtension) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Haptics.light()
         switch action {
         case .toggle:
             store.toggle(ext.id)

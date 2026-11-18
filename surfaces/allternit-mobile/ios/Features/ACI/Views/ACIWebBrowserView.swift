@@ -264,8 +264,7 @@ struct ACIWebBrowserView: View {
             
             // Allternit Extension chat panel button
             Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .medium)
-                generator.impactOccurred()
+                Haptics.medium()
                 isExtensionChatOpen = true
             }) {
                 HStack(spacing: 4) {

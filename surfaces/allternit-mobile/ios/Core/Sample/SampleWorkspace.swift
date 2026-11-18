@@ -336,7 +336,7 @@ enum SampleWorkspace {
                 "current_version": 1,
                 "shared_version": NSNull(),
                 "visibility": "private",
-                "my_access": "view",
+                "my_access": sampleArtifactAccess,
                 // The launch page came from Rimraf's thread (its stage montage).
                 "origin": design ? ["surface": "bot", "session_id": launchPageSession] : ["surface": "bot"],
                 "runtime_version": 1,
@@ -351,6 +351,15 @@ enum SampleWorkspace {
                 ],
             ]
         }
+    }
+
+    /// View, as on the web's sample; the calm viewer launch arguments (phone
+    /// calm I12) open them as the owner so the comment and share controls show.
+    private static var sampleArtifactAccess: String {
+        #if DEBUG
+        if CalmArtifactLaunch.isActive { return "owner" }
+        #endif
+        return "view"
     }
 
     /// List rows are summaries; the body comes with GET /:id.

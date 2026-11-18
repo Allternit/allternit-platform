@@ -60,7 +60,7 @@ struct ThinkingOrb: View {
     var label: String?
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     private var ink: Color {
         colorScheme == .dark ? Color.white.opacity(0.85) : Color.black.opacity(0.78)

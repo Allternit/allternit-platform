@@ -1,0 +1,142 @@
+name: api-build-bench
+
+# Measures allternit-api build and test time under different settings (PLAN v2 S1.1).
+# Label a PR `api-bench` or run by hand. No secrets, no deploy, read-only cache.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-build-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'api-bench')
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: R0
+            kind: build
+            jobs: "2"
+            incremental: "1"
+            bin: ""
+          - name: R1
+            kind: build
+            jobs: "2"
+            incremental: "1"
+            bin: "--bin allternit-api"
+          - name: R2
+            kind: build
+            jobs: "4"
+            incremental: "1"
+            bin: "--bin allternit-api"
+          - name: R3
+            kind: build
+            jobs: "2"
+            incremental: "0"
+            bin: "--bin allternit-api"
+          - name: T1
+            kind: test
+            jobs: "2"
+            incremental: "0"
+            bin: ""
+          - name: T2
+            kind: test
+            jobs: "4"
+            incremental: "0"
+            bin: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Add swap
+        run: |
+          sudo fallocate -l 12G /swapfile2 && sudo chmod 600 /swapfile2
+          sudo mkswap /swapfile2 && sudo swapon /swapfile2
+          free -h
+
+      - name: Install protobuf compiler
+        timeout-minutes: 10
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      # Read-only: same key and restore-keys as the deploy workflow, so this hits its cache. Never saves.
+      - name: Restore cargo cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-api-contabo-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-api-contabo-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-api-contabo-
+
+      - name: Start memory sampler
+        run: |
+          rm -f /tmp/mem.log
+          nohup bash -c 'while true; do free -m | awk "/^Mem:/ {print \$7}" >> /tmp/mem.log; sleep 10; done' >/dev/null 2>&1 &
+
+      - name: Run cargo
+        env:
+          CARGO_BUILD_JOBS: ${{ matrix.jobs }}
+          CARGO_INCREMENTAL: ${{ matrix.incremental }}
+        run: |
+          start=$(date +%s)
+          set +e
+          if [ "${{ matrix.kind }}" = "build" ]; then
+            cargo build --release --target x86_64-unknown-linux-gnu -p allternit-api ${{ matrix.bin }} --timings
+            rc=$?
+          else
+            cargo test --profile ci-test --target x86_64-unknown-linux-gnu -p allternit-api --timings -- --test-threads=2 2>&1 | tee /tmp/test.log
+            rc=${PIPESTATUS[0]}
+          fi
+          echo "$(( $(date +%s) - start ))" > /tmp/seconds
+          exit $rc
+
+      - name: Summarize
+        if: always()
+        run: |
+          seconds=$(cat /tmp/seconds 2>/dev/null || echo NA)
+          min_free=$(sort -n /tmp/mem.log 2>/dev/null | head -1)
+          size=NA; sha=NA; passed=NA
+          if [ "${{ matrix.kind }}" = "build" ]; then
+            f=target/x86_64-unknown-linux-gnu/release/allternit-api
+            if [ -f "$f" ]; then
+              size=$(stat -c %s "$f")
+              sha=$(sha256sum "$f" | cut -c1-12)
+            fi
+          else
+            grep '^test result:' /tmp/test.log || true
+            passed=$(grep '^test result:' /tmp/test.log | awk '{p+=$4} END {print p+0}')
+            failed=$(grep '^test result:' /tmp/test.log | awk '{f+=$6} END {print f+0}')
+            echo "passed=$passed failed=$failed"
+          fi
+          line="${{ matrix.name }} seconds=$seconds min_free_mb=${min_free:-NA} size=$size sha=$sha passed=$passed"
+          echo "$line"
+          echo "$line" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: timings-${{ matrix.name }}
+          path: target/cargo-timings
+          if-no-files-found: ignore

@@ -183,8 +183,7 @@ struct BotWorkspaceFilesSheet: View {
     }
 
     private func hapticLight() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
+        Haptics.light()
     }
 }
 

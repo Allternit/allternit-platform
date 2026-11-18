@@ -235,7 +235,7 @@ struct SetupGraphView: View {
 /// Node pop-in with a light spring (cubic-bezier(.2,.9,.3,1.3), 500ms).
 struct SetupPopIn: ViewModifier {
     var delay: Double
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var shown = false
 
     func body(content: Content) -> some View {
@@ -255,7 +255,7 @@ struct SetupEdge: View {
     var from: CGPoint
     var to: CGPoint
     var delay: Double
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
     @State private var drawn: CGFloat = 0
 
     var body: some View {
@@ -287,7 +287,7 @@ struct SetupPackets: View {
     var to: CGPoint
     var size: CGFloat = 7
     var period: Double = 2.6
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         if !reduceMotion {
@@ -327,7 +327,7 @@ struct SetupCoreRing: View {
     var minScale: CGFloat = 0.6
     var maxScale: CGFloat = 1.35
     var lineWidth: CGFloat = 1
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         if !reduceMotion {

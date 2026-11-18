@@ -124,7 +124,7 @@ private struct TemplateGallery: View {
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                     ForEach(templates) { template in
                         TemplateCard(template: template, modeLabel: modeLabel) {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Haptics.light()
                             onSelectTemplate(template)
                         }
                     }

@@ -29,9 +29,11 @@ final class ShortcutBridgeTests: XCTestCase {
     /// Starts a run and waits until it is pending; returns its task and request id.
     private func start(_ b: ShortcutBridge, name: String = "Send standup",
                        timeout: Int = 30) async throws -> (Task<Envelope, Never>, String) {
+        // Wait for THIS run to register: other runs may already be waiting.
+        let before = Set(b.pendingIds)
         let task = Task { Envelope(await b.run(name: name, input: nil, timeoutSeconds: timeout)) }
-        for _ in 0..<200 where b.pendingCount == 0 { await Task.yield() }
-        let id = try XCTUnwrap(b.pendingIds.first)
+        for _ in 0..<200 where b.pendingCount <= before.count { await Task.yield() }
+        let id = try XCTUnwrap(b.pendingIds.first { !before.contains($0) })
         return (task, id)
     }
 

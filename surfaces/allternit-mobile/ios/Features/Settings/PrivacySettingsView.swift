@@ -6,7 +6,7 @@ import SwiftUI
 struct PrivacySettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var appLock = AppLockStore.shared
-    @State private var safariURL: IdentifiableURL? = nil
+    @Environment(\.openURL) private var openURL
     @State private var isArchiveConfirmPresented = false
     @State private var isDeleteConfirmPresented = false
     @State private var isBulkOperationRunning = false
@@ -74,13 +74,13 @@ struct PrivacySettingsView: View {
                 .disabled(isBulkOperationRunning)
 
                 Button(action: {
-                    safariURL = IdentifiableURL(url: URL(string: "https://ai.allternit.com/settings/privacy")!)
+                    openURL(URL(string: "https://ai.allternit.com/settings/privacy")!)
                 }) {
                     SettingsRowLabel(title: "Export data", systemImage: "square.and.arrow.up")
                 }
 
                 Button(action: {
-                    safariURL = IdentifiableURL(url: URL(string: "https://allternit.com/privacy")!)
+                    openURL(URL(string: "https://allternit.com/privacy")!)
                 }) {
                     SettingsRowLabel(title: "Privacy policy", systemImage: "hand.raised")
                 }
@@ -100,7 +100,6 @@ struct PrivacySettingsView: View {
         .background(Color("BgPrimary"))
         .navigationTitle("Privacy")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
         .confirmationDialog("Archive all chats?", isPresented: $isArchiveConfirmPresented, titleVisibility: .visible) {
             Button("Archive All Chats") { Task { await archiveAllChats() } }
             Button("Cancel", role: .cancel) {}
