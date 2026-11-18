@@ -67,6 +67,21 @@ describe('isTrustedAppUrl / assertTrustedSender', () => {
     expect(() => assertTrustedSender(senderFrom(''), 'theme:set')).toThrow(/Untrusted IPC sender/);
   });
 
+  it('trusts only the exact bundled file pages it is given', () => {
+    const connect = 'file:///opt/Allternit%20Desktop/resources/app.asar/static/connect.html';
+    configureSecurity({
+      isDev: false,
+      getAppOrigins: () => [APP_ORIGIN],
+      getAppFileUrls: () => [connect],
+    });
+    expect(isTrustedAppUrl(connect)).toBe(true);
+    expect(isTrustedAppUrl(`${connect}#vps`)).toBe(true);
+    expect(() => assertTrustedSender(senderFrom(connect), 'connection:set-backend')).not.toThrow();
+    expect(isTrustedAppUrl('file:///opt/Allternit%20Desktop/resources/app.asar/static/other.html')).toBe(false);
+    expect(isTrustedAppUrl('file:///tmp/connect.html')).toBe(false);
+    expect(() => assertTrustedSender(senderFrom('file:///tmp/x'), 'connection:set-backend')).toThrow(/Untrusted IPC sender/);
+  });
+
   it('respects dev-only origins only when configured', () => {
     configure();
     expect(isTrustedAppUrl(DEV_ORIGIN)).toBe(false);

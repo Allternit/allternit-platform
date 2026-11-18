@@ -8,7 +8,7 @@
  */
 
 import { app, shell, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openPrivacySettings as openPrivacySettingsHelper, messagesAccessHint as messagesAccessHintHelper } from './messages-permissions.js';
 import { dirname, join, resolve, basename } from 'node:path';
 import * as fs from 'node:fs';
@@ -519,6 +519,9 @@ let activePlatformUrl: string = isDev ? URLS.DEV_UI : URLS.PRODUCTION_UI;
 // must never load: its CSP blocks the local API and its chunks go stale on deploy.
 let platformUiResolved = false;
 
+/** Bundled Connect screen (choose local or VPS backend). */
+const CONNECT_PAGE_PATH = join(__dirname, '../../static/connect.html');
+
 // Central security policy for this process. App origins are the platform UI
 // (remote or local static export), the HUD/office/design/session windows that
 // load from the platform origin, and in dev the Vite dev server.
@@ -531,6 +534,9 @@ configureSecurity({
     }
     return origins;
   },
+  // The Connect screen (tray > Connection settings) is a bundled file page
+  // that sets and tests the backend over guarded IPC.
+  getAppFileUrls: () => [pathToFileURL(CONNECT_PAGE_PATH).href],
 });
 
 /**
@@ -2377,7 +2383,7 @@ function showConnectionSettings(): void {
   }
   mainWindow.show();
   mainWindow.focus();
-  mainWindow.loadFile(join(__dirname, '../../static/connect.html'));
+  mainWindow.loadFile(CONNECT_PAGE_PATH);
 }
 
 /** Send a workspace command from the app menu or tray to the main window. */
