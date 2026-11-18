@@ -11,6 +11,11 @@ import UIKit
 /// credential (`allternit_runtime_…`). The device token is persisted in the
 /// Keychain and used by `APIClient` for gateway calls, matching how desktop
 /// and VPS runtimes authenticate.
+///
+/// The credential belongs to one person (plan contract C7): it is stored
+/// under a Keychain key per Clerk user id (`RuntimeCredentialKeys`).
+/// `useAccount(userId:)` loads the signed-in person's item; the old unkeyed
+/// item is moved to that key once, so a working pairing is never dropped.
 @MainActor
 final class RuntimePairing: ObservableObject {
     static let shared = RuntimePairing()
@@ -31,7 +36,10 @@ final class RuntimePairing: ObservableObject {
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
     private var pairingTask: Task<RuntimeDeviceSession, Error>?
-
+    /// Clerk user id whose credential is loaded; nil before the first
+    /// signed-in launch with per-user keys (the unkeyed item is used then).
+    private(set) var activeUserId: String?
+    private let store: SecretStore = KeychainSecretStore()
 
     enum PairingState: Equatable {
         case idle
@@ -75,7 +83,36 @@ final class RuntimePairing: ObservableObject {
         self.cloudBaseURL = cloudBaseURL
         self.jsonDecoder.dateDecodingStrategy = .iso8601
         self.jsonEncoder.dateEncodingStrategy = .iso8601
+        // The person signed in last time, so API calls made before Clerk
+        // loads its session still find their credential.
+        self.activeUserId = UserDefaults.standard.string(forKey: RuntimeCredentialKeys.activeUserDefaultsKey)
         self.session = loadSessionFromKeychain()
+    }
+
+    // MARK: - Per-person credential
+
+    /// Loads the credential of the signed-in Clerk user. Call whenever the
+    /// session is read (AuthManager.refreshAuthState). Returns true when the
+    /// person changed from an earlier signed-in person: the caller then runs
+    /// the per-person cleanup. Switching between one person's organizations
+    /// never calls this with a new id, so the credential stays.
+    @discardableResult
+    func useAccount(userId: String?) -> Bool {
+        guard let userId, !userId.isEmpty else { return false }
+        let previous = activeUserId
+        // Same person: their item was loaded (and migrated) already.
+        if previous == userId { return false }
+        let personChanged = previous != nil && previous != userId
+        if personChanged {
+            // The earlier person's pairing must not finish into this person's key.
+            pairingTask?.cancel()
+            pairingTask = nil
+            state = .idle
+        }
+        activeUserId = userId
+        UserDefaults.standard.set(userId, forKey: RuntimeCredentialKeys.activeUserDefaultsKey)
+        session = loadSessionFromKeychain()
+        return personChanged
     }
 
     // MARK: - Public API
@@ -118,7 +155,10 @@ final class RuntimePairing: ObservableObject {
 
     /// Revokes the paired runtime device and clears local storage.
     func revoke() async {
-        guard let session else { return }
+        guard let session else {
+            forgetActiveUser()
+            return
+        }
         let runtimeId = session.runtimeId
         let token = session.deviceToken
         do {
@@ -164,6 +204,9 @@ final class RuntimePairing: ObservableObject {
             guard let clerkToken = try await AuthManager.shared.getToken(), !clerkToken.isEmpty else {
                 throw PairingError.notSignedIn
             }
+            // The credential is saved under this person's key.
+            if activeUserId == nil { useAccount(userId: AuthManager.shared.currentUserId) }
+            let pairedFor = activeUserId
             #if DEBUG
             debugLog("performPairing starting with active Clerk token")
             #endif
@@ -209,6 +252,11 @@ final class RuntimePairing: ObservableObject {
             debugLog("device credential received; runtimeId: \(session.runtimeId)")
             #endif
 
+            // The person changed while this pairing ran: their credential is
+            // not this person's. Drop it (the server row expires unused).
+            if let pairedFor, pairedFor != activeUserId {
+                throw CancellationError()
+            }
             self.session = session
             saveSessionToKeychain(session)
             state = .success
@@ -348,10 +396,20 @@ final class RuntimePairing: ObservableObject {
 
     // MARK: - Persistence
 
-    private static let sessionKey = "allternit-ios-runtime-session"
+    /// The Keychain key for the loaded person; the old unkeyed key until a
+    /// signed-in person is known.
+    private var sessionKey: String {
+        activeUserId.map(RuntimeCredentialKeys.key(forUserId:)) ?? RuntimeCredentialKeys.legacy
+    }
 
     private func loadSessionFromKeychain() -> RuntimeDeviceSession? {
-        guard let json = KeychainHelper.load(Self.sessionKey),
+        let stored: String?
+        if let activeUserId {
+            stored = RuntimeCredentialKeys.loadMigrating(userId: activeUserId, store: store)
+        } else {
+            stored = store.load(RuntimeCredentialKeys.legacy)
+        }
+        guard let json = stored,
               let data = json.data(using: .utf8),
               let session = try? jsonDecoder.decode(RuntimeDeviceSession.self, from: data) else {
             return nil
@@ -364,13 +422,21 @@ final class RuntimePairing: ObservableObject {
               let json = String(data: data, encoding: .utf8) else {
             return
         }
-        KeychainHelper.save(json, for: Self.sessionKey)
+        store.save(json, for: sessionKey)
     }
 
+    /// Revoke and sign-out: this person's item and any unkeyed copy go.
     private func clearSession() {
         session = nil
-        KeychainHelper.delete(Self.sessionKey)
+        store.delete(sessionKey)
+        store.delete(RuntimeCredentialKeys.legacy)
         state = .idle
+        forgetActiveUser()
+    }
+
+    private func forgetActiveUser() {
+        activeUserId = nil
+        UserDefaults.standard.removeObject(forKey: RuntimeCredentialKeys.activeUserDefaultsKey)
     }
 }
 

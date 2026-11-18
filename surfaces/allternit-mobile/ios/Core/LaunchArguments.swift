@@ -137,6 +137,11 @@ enum LaunchArgument {
     /// `-calm-settings-info` (DEBUG only): Settings with the ⓘ menu open.
     static let calmSettingsInfo = "calm-settings-info"
 
+    /// `-calm-accounts` (DEBUG only): the Settings Accounts card with sample
+    /// organizations and cached plan labels (phone calm step 31). Pass
+    /// `-calm-settings -sample-workspace` with it.
+    static let calmAccounts = "calm-accounts"
+
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
 

@@ -183,20 +183,31 @@ struct AccountProfileView: View {
     }
 }
 
-/// Switches the active account (personal or one Clerk organization) and
-/// reloads everything account-scoped. Used by this page and the Settings
-/// root's Accounts card.
+/// Switches the active account (personal or one Clerk organization). Used by
+/// this page and the Settings root's Accounts card. Plan contract C7, in this
+/// order (`AccountSwitchOrder`): `AccountSwitchCleanup.run` while the leaving
+/// account's session still works, then Clerk `setActive`, then
+/// `AccountSwitchCleanup.rebuild()` for whichever account is active. The
+/// rebuild runs even when Clerk refuses, because the cleanup already dropped
+/// the cached data.
 @MainActor
 enum AccountSwitch {
     /// Returns the organization id now active (nil = personal).
     static func activate(sessionId: String, orgId: String?, authManager: AuthManager) async throws -> String? {
-        try await Clerk.shared.auth.setActive(sessionId: sessionId, organizationId: orgId)
-        authManager.refreshAuthState()
-        // Everything account-scoped reloads for the new account.
-        AccountPlanStore.shared.reset()
-        AccountPlanStore.shared.load(force: true)
-        UsageStore.shared.refresh()
-        NotificationCenter.default.post(name: .historyMutated, object: nil)
+        let steps = AccountSwitchSteps(
+            cleanup: { reason in await AccountSwitchCleanup.run(reason: reason) },
+            setActive: { sessionId, orgId in
+                try await Clerk.shared.auth.setActive(sessionId: sessionId, organizationId: orgId)
+            },
+            rebuild: {
+                authManager.refreshAuthState()
+                await AccountSwitchCleanup.rebuild()
+            }
+        )
+        // Organizations of the signed-in person only; another person's
+        // session (multi-session) is not offered yet (gated, see Accounts card).
+        try await AccountSwitchOrder.run(sessionId: sessionId, orgId: orgId,
+                                         reason: .organizationChanged, steps: steps)
         Haptics.selection()
         return Clerk.shared.session?.lastActiveOrganizationId ?? orgId
     }

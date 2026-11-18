@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import AuthenticationServices
 import ClerkKit
+import WidgetKit
 
 /// Thin wrapper over the official Clerk iOS SDK v1.3.x (ClerkKit / ClerkKitUI).
 ///
@@ -76,6 +77,21 @@ final class AuthManager: ObservableObject {
         let wasSignedIn = isSignedIn
         isSignedIn = currentSession != nil
         Task { await finishOrganizationTaskIfNeeded() }
+
+        // The runtime device credential is stored per Clerk user (C7). A
+        // session that comes back as another person without a sign-out
+        // (multi-session, later) gets the per-person cleanup, a rebuild and
+        // its own pairing.
+        if isSignedIn {
+            let personChanged = RuntimePairing.shared.useAccount(userId: Clerk.shared.user?.id)
+            if personChanged, wasSignedIn {
+                Task {
+                    await AccountSwitchCleanup.run(reason: .personChanged)
+                    await AccountSwitchCleanup.rebuild()
+                    _ = try? await RuntimePairing.shared.ensurePaired()
+                }
+            }
+        }
 
         if isSignedIn, !wasSignedIn {
             // Push: send this phone's APNs token for the account now signed in.
@@ -381,6 +397,8 @@ final class AuthManager: ObservableObject {
             isSkippingAuth = false
             return
         }
+        // Cached plan labels of the person leaving (D14).
+        if let userId = currentUserId { AccountPlanLabels.forget(userId: userId) }
         // Stop pushes to this phone for the account leaving (needs its Bearer).
         await PushNotificationManager.shared.willSignOut()
         // Revoke the iOS runtime device credential before signing out of Clerk.
@@ -448,5 +466,79 @@ final class AuthManager: ObservableObject {
     var currentUserId: String? {
         if SampleWorkspace.isEnabled { return SampleWorkspace.userId }
         return Clerk.shared.user?.id
+    }
+}
+
+// MARK: - Account switch cleanup (plan contract C7)
+
+/// The local part of an account switch, one function for every switch path.
+/// `run(reason:)` goes before Clerk `setActive` (it still has the leaving
+/// account's Bearer); `rebuild()` goes after it, for whichever account is
+/// active then. Same rules as the web's `switchAccountCleanup`.
+///
+/// What holds one account's or organization's data, and what happens to it:
+/// - Org-scoped stores (recents, projects, bots, agents, artifacts, inbox,
+///   loops, routines, plan, usage, models, connections, computer status):
+///   `AccountPlanStore` is reset; the rest are force-reloaded in `rebuild()`
+///   with the new session, which replaces their lists.
+/// - Widgets: the status snapshot is dropped, then rebuilt from the cloud.
+/// - Spotlight: the index is deleted, then re-indexed.
+/// - Notices and Live Activities: removed (server activity tokens too).
+/// - Push: the APNs token is posted again after the switch (D3).
+/// - Per person, only when the person changes: the runtime device credential
+///   (Keychain key per user id, `RuntimePairing.useAccount`), the Files
+///   drive keys and Home Screen file domains.
+/// Kept on an org switch: device preferences, the push token, the runtime
+/// device credential, the share outbox (pending shares), selection ids that
+/// resolve to nothing in another org.
+@MainActor
+enum AccountSwitchCleanup {
+    static func run(reason: AccountSwitchReason) async {
+        if SampleWorkspace.isEnabled { return }
+        // Plan and credits of the leaving account.
+        AccountPlanStore.shared.reset()
+        // Widgets: no snapshot of the leaving account; the widget keeps its
+        // signed-in face and fills again in rebuild().
+        AppGroupStore.clearSnapshot()
+        WidgetCenter.shared.reloadAllTimelines()
+        // Spotlight: nothing of the leaving account stays searchable.
+        SpotlightIndexer.removeAll()
+        // Notices, badge and Live Activities of the leaving account.
+        await PushNotificationManager.shared.willSwitchAccount()
+        if reason.clearsPersonData {
+            // Files drive keys are per person.
+            FilesDriveBridge.shared.clearLocal()
+        }
+    }
+
+    /// Reloads everything account-scoped for the account active now.
+    static func rebuild() async {
+        if SampleWorkspace.isEnabled { return }
+        AccountPlanStore.shared.load(force: true)
+        UsageStore.shared.refresh()
+        ProjectStore.shared.fetchProjectsIfNeeded(force: true)
+        AgentHubStore.shared.fetchAgentsIfNeeded(force: true)
+        ModelStore.shared.fetchModelsIfNeeded(force: true)
+        NotificationCenter.default.post(name: .historyMutated, object: nil)
+        // Lists load side by side; each replaces its old account's rows.
+        Task { await ShellSessionsStore.shared.load() }
+        Task { await ProjectsLibraryStore.shared.load() }
+        Task { await BotModeStore.shared.refreshAll() }
+        Task { await ArtifactLibraryStore.shared.reload() }
+        Task { await InboxStore.shared.refresh() }
+        Task { await LoopStore.shared.refresh() }
+        Task { await RoutineStore.shared.refresh() }
+        Task { await ConnectionsStore.shared.load() }
+        Task { await ComputeStatusStore.shared.refresh() }
+        // Push moves to the active account (D3); widgets and Spotlight fill
+        // from the new account's data. Network, so the switch row does not
+        // wait for it.
+        Task {
+            await PushNotificationManager.shared.didSwitchAccount()
+            await StatusSnapshotWriter.refreshFromCloud()
+            WidgetCenter.shared.reloadAllTimelines()
+            await SpotlightIndexer.refresh()
+            AllternitShortcuts.updateAppShortcutParameters()
+        }
     }
 }
