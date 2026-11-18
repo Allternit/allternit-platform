@@ -82,6 +82,12 @@ Your pinned computer is your **default computer**. It's the same on every device
 
 For developers: `GET /api/v1/runtime-devices` marks the default with `"preferred": true`, and `PUT /api/v1/runtime-devices/{id}/default` sets it (Clerk session or the account's device token; the runtime must belong to the account and not be revoked). The app picks a runtime in `pickActiveRuntime` (`src/lib/runtime-target.ts` in allternit-ai).
 
+### Models and providers on a computer
+
+**Settings → Account → Models & providers** lists the providers the selected computer can use right now: the ones you signed in to or gave a key, plus local engines such as Ollama. The runtime's catalog knows about 300 providers. The rest don't get a row. To add one, type its name in **Add a provider**. The first 8 matches show, each with **Connect**. A provider you connect stays in the list.
+
+The iPhone app's **Models & Engines** screen works the same way: ready engines are listed, and you search for the rest. The rows come from `GET /api/v1/providers/auth/status` on the selected computer. Rows with `authenticated: true` get a card. In allternit-ai the split lives in `src/lib/provider-list.ts`.
+
 ## Coding tools on any computer
 
 Settings → Connections › Coding tools installs and signs in CLI brains on the computer it names: this Mac, or the computer your phone and the web are using, such as your always-on Allternit cloud computer. Anything set up on a cloud computer keeps working while your own computer is closed. Step-by-step instructions are in [Subscriptions](/guides/subscriptions#coding-tools-on-any-computer).

@@ -36,6 +36,8 @@ struct ModelManagementListContent: View {
     @ObservedObject var modelStore: ModelStore
     @ObservedObject var store: ProviderManagementStore
     @StateObject private var freeweights = FreeweightsBrowseStore()
+    /// Search over the providers that aren't ready (the runtime catalog has ~300).
+    @State private var providerQuery = ""
 
     var body: some View {
         List {
@@ -135,8 +137,23 @@ struct ModelManagementListContent: View {
                     message: "Add a model provider in Platform settings to see engines here."
                 )
             } else {
-                ForEach(store.engines) { engine in
+                // Only ready engines get a row; the rest are found by search, a few at a time.
+                ForEach(store.engines.filter(\.isReady)) { engine in
                     EngineRow(engine: engine)
+                }
+                let others = store.engines.filter { !$0.isReady }
+                if !others.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(Color("TextSecondary"))
+                        TextField("Search \(others.count) more providers", text: $providerQuery)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.subheadline)
+                    }
+                    ForEach(ProviderSearch.matches(others, query: providerQuery)) { engine in
+                        EngineRow(engine: engine)
+                    }
                 }
             }
         } header: {
@@ -252,6 +269,21 @@ final class ProviderManagementStore: ObservableObject {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+/// Name/id search over providers: names that start with the query first, at most `limit`.
+enum ProviderSearch {
+    static let limit = 8
+
+    static func matches(_ engines: [ProviderEngine], query: String) -> [ProviderEngine] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return [] }
+        let hits = engines.filter { $0.name.lowercased().contains(q) || $0.id.lowercased().contains(q) }
+        func starts(_ e: ProviderEngine) -> Bool { e.name.lowercased().hasPrefix(q) || e.id.lowercased().hasPrefix(q) }
+        return Array(hits.sorted {
+            starts($0) != starts($1) ? starts($0) : $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }.prefix(limit))
     }
 }
 
