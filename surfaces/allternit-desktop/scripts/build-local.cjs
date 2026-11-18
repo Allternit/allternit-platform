@@ -102,6 +102,10 @@ if (process.platform === 'darwin' && !process.env.CSC_IDENTITY_AUTO_DISCOVERY) {
     extraArgs.push(`-c.mac.identity=${developerId[1]}`);
     const notarizeThis = process.env.ALLTERNIT_HOST_ONLY !== '1' || process.env.ALLTERNIT_NOTARIZE === '1';
     if (notarizeThis) process.env.APPLE_KEYCHAIN_PROFILE = process.env.APPLE_KEYCHAIN_PROFILE || 'allternit';
+    // Notarization needs a secure timestamp on every signature. A local build
+    // is not notarized: skip the per-file round trip to Apple's timestamp
+    // server (0.3 s each, measured 2026-11-17).
+    else extraArgs.push('-c.mac.timestamp=none');
     console.log(
       `[build-local] Signing with Developer ID: ${developerId[1]}` +
         (notarizeThis ? ' (notarizing)' : ' (local build: not notarized; ALLTERNIT_NOTARIZE=1 to notarize)'),
@@ -109,7 +113,7 @@ if (process.platform === 'darwin' && !process.env.CSC_IDENTITY_AUTO_DISCOVERY) {
   } else if (!process.env.CI) {
     const appleDevelopment = identities.match(/"Apple Development: ([^"]+)"/);
     if (appleDevelopment) {
-      extraArgs.push(`-c.mac.identity=${appleDevelopment[1]}`);
+      extraArgs.push(`-c.mac.identity=${appleDevelopment[1]}`, '-c.mac.timestamp=none');
       console.log(`[build-local] Signing with Apple Development: ${appleDevelopment[1]}`);
     }
   }
