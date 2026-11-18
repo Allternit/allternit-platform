@@ -1,12 +1,6 @@
 import SwiftUI
 
-/// The terminal sessions overview (code-overview-kind.tsx). Code threads
-/// have one screen: `CodeSessionsOverview`.
-enum CodeOverviewKind: String, Identifiable {
-    case terminals
-    var id: String { rawValue }
-}
-
+/// Code threads have one screen: `CodeSessionsOverview`.
 /// The Code header's sessions button: a task list, opening the sessions
 /// overview (open threads, and the way to Terminal and Shell).
 struct CodeSessionsButton: View {
@@ -23,99 +17,6 @@ struct CodeSessionsButton: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Code sessions")
     }
-}
-
-/// The terminal sessions overview, shown while the shell is on screen:
-/// ☰ · "Terminal sessions" · "N open", every tile as a card.
-struct CodeOverviewSheet: View {
-    let kind: CodeOverviewKind
-    @ObservedObject var terminals: CodeTerminalStore
-    let onOpenMenu: () -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            ScrollView { terminalCards }
-        }
-        .background(Color("BgPrimary"))
-    }
-
-    private var header: some View {
-        HStack(alignment: .top, spacing: 10) {
-            roundButton("line.3.horizontal", label: "Open menu") {
-                dismiss()
-                onOpenMenu()
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Terminal sessions")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(Color("TextPrimary"))
-                Text("\(terminals.tiles.count) open")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color("BrandAccent"))
-            }
-            .padding(.top, 4)
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
-    }
-
-    private func roundButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(Color("TextPrimary"))
-                .frame(width: 36, height: 36)
-                .background(Color("BgTertiary"))
-                .clipShape(Circle())
-                .frame(width: 44, height: 44)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-    }
-
-    private var terminalCards: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-            ForEach(terminals.tiles) { tile in
-                Button(action: {
-                    terminals.selectedId = tile.id
-                    dismiss()
-                }) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(tile.name)
-                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                                .foregroundColor(TerminalPalette.foreground)
-                            Spacer()
-                            Button(action: { terminals.closeTile(tile.id) }) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(TerminalPalette.secondary)
-                                    .frame(width: 28, height: 28)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Close \(tile.name)")
-                        }
-                        Text("$ █")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(TerminalPalette.secondary)
-                        Spacer(minLength: 40)
-                    }
-                    .padding(10)
-                    .background(TerminalPalette.background)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-    }
-
 }
 
 struct MessageRecordPreview: Identifiable, Equatable {

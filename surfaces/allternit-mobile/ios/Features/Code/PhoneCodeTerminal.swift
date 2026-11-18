@@ -109,6 +109,8 @@ final class TerminalBotsStore: ObservableObject {
 /// so its session and scrollback are there on the way back.
 struct PhoneCodeTerminal: View {
     @ObservedObject var store: CodeTerminalStore
+    /// The computer's own shell only: no bot strip, no engine banner.
+    var shellOnly = false
     @StateObject private var botsStore = TerminalBotsStore()
     @State private var botId: String? = nil
     @State private var isConnectPresented = false
@@ -117,7 +119,7 @@ struct PhoneCodeTerminal: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            botStrip
+            if !shellOnly { botStrip }
             ZStack {
                 shell
                     .opacity(bot == nil ? 1 : 0)
@@ -130,7 +132,7 @@ struct PhoneCodeTerminal: View {
         }
         .background(TerminalPalette.background)
         .task { await store.startIfNeeded() }
-        .task { await botsStore.poll() }
+        .task { if !shellOnly { await botsStore.poll() } }
         .onChange(of: botsStore.bots) { _, bots in
             // The chosen bot left (stopped, or its pane went away): back to Shell.
             if let botId, !bots.contains(where: { $0.id == botId }), botsStore.error == nil { self.botId = nil }
