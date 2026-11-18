@@ -127,6 +127,16 @@ enum LaunchArgument {
     /// `-calm-artifact-share[=<id>]` (DEBUG only): the viewer with its share sheet open.
     static let calmArtifactShare = "calm-artifact-share"
 
+    /// `-calm-settings` (DEBUG only): open the Settings sheet on its root
+    /// (phone calm step 30: Accounts card, about 17 rows).
+    static let calmSettings = "calm-settings"
+
+    /// `-calm-settings-advanced` (DEBUG only): Settings with Advanced pushed.
+    static let calmSettingsAdvanced = "calm-settings-advanced"
+
+    /// `-calm-settings-info` (DEBUG only): Settings with the ⓘ menu open.
+    static let calmSettingsInfo = "calm-settings-info"
+
     /// `-calm-gallery` (DEBUG only): show `CalmGalleryView`.
     static let calmGallery = "calm-gallery"
 

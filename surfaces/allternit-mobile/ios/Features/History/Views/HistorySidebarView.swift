@@ -188,6 +188,9 @@ struct HistorySidebarView: View {
                 || launchArgumentEnabled("open-settings-connections")
                 || launchArgumentEnabled("open-settings-brain-spike")
                 || launchArgumentEnabled("open-settings-meetings")
+                || launchArgumentEnabled(LaunchArgument.calmSettings)
+                || launchArgumentEnabled(LaunchArgument.calmSettingsAdvanced)
+                || launchArgumentEnabled(LaunchArgument.calmSettingsInfo)
                 || launchArgumentEnabled("open-usage") {
                 isSettingsPresented = true
             }
