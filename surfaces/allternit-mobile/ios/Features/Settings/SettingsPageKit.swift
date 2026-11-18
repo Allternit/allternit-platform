@@ -301,8 +301,8 @@ enum SettingsRoot {
 /// own Terms / Privacy URLs and the App Store listing's support URL). No
 /// Licenses row: the app has no acknowledgements page.
 enum SettingsInfoLinks {
-    static let terms = StorePurchaseCopy.termsURL
-    static let privacy = StorePurchaseCopy.privacyURL
+    static let terms = StoreViewCopy.termsURL
+    static let privacy = StoreViewCopy.privacyURL
     static let support = URL(string: "https://allternit.com/support")!
     static let status = SystemStatusClient.pageURL
 }
