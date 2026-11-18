@@ -109,11 +109,8 @@ struct BotLaunchpadView: View {
                 }
             }
             .transition(.opacity)
-            if let error = hub.loadError, bots.isEmpty {
-                Text("Couldn't load your bots: \(error)")
-                    .font(.system(size: 11.5))
-                    .foregroundColor(Color("TextTertiary"))
-            }
+            // Account bots + the no-computer line (no error when there is no computer).
+            AccountBotsStrip(hubError: hub.loadError, hasBots: !bots.isEmpty)
         }
     }
 
@@ -393,6 +390,8 @@ struct BotLaunchpadView: View {
 
     private func refresh() async {
         await store.refreshAll()
+        // Bots saved to the account (no computer needed) + the no-computer state.
+        await ProjectsLibraryStore.shared.load()
     }
 
     private func createFromTemplate(_ template: AgentTemplate) {
