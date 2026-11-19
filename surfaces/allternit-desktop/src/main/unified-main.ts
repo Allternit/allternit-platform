@@ -26,6 +26,7 @@ import Store from 'electron-store';
 import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
 import { startLinuxUpdater } from './linux-updater.js';
+import { passAppImageSandboxGate } from './appimage-sandbox.js';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
 import type { SystemTab } from './system-summary.js';
@@ -2979,6 +2980,11 @@ async function passKeychainGate(): Promise<boolean> {
 
 app.whenReady().then(async () => {
   console.log('[Main] App is ready...');
+
+  // Linux AppImage started without the Chromium sandbox (user namespaces
+  // blocked): offer the AppArmor fix and relaunch, or keep going with one
+  // notice. Before any window, so a relaunch never shows a half-started app.
+  if (!(await passAppImageSandboxGate(log))) return;
 
   // Phase 0 convenience hook: open the Allternit Docs editor on startup
   // when explicitly requested (e.g. dev smoke test). Delivered to the main

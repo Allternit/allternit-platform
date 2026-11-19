@@ -472,8 +472,24 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "build/icon.png",
       "category": "Utility",
@@ -538,7 +554,7 @@
       ]
     },
     "appImage": {
-      "artifactName": "Allternit-${version}${env.ALLTERNIT_BUILD_SUFFIX}.AppImage"
+      "artifactName": "Allternit-Desktop-${version}${env.ALLTERNIT_BUILD_SUFFIX}-${arch}.AppImage"
     },
     "deb": {
       "afterInstall": "build/linux/after-install.sh",
@@ -560,7 +576,35 @@
       ],
       "packageCategory": "utils",
       "priority": "optional",
-      "compression": "xz"
+      "compression": "xz",
+      "afterRemove": "build/linux/after-remove.sh"
+    },
+    "rpm": {
+      "packageName": "allternit-desktop",
+      "afterInstall": "build/linux/after-install.sh",
+      "afterRemove": "build/linux/after-remove.sh",
+      "depends": [
+        "git",
+        "bubblewrap",
+        "lsof",
+        "(gtk3 or libgtk-3-0)",
+        "(libnotify or libnotify4)",
+        "(nss or mozilla-nss)",
+        "(libXScrnSaver or libXss1)",
+        "(libXtst or libXtst6)",
+        "xdg-utils",
+        "at-spi2-core",
+        "(libuuid or libuuid1)",
+        "(libsecret or libsecret-1-0)",
+        "(mesa-libgbm or libgbm1)",
+        "(alsa-lib or libasound2)"
+      ],
+      "packageCategory": "Utility",
+      "compression": "xz",
+      "fpm": [
+        "--rpm-rpmbuild-define",
+        "_build_id_links none"
+      ]
     },
     "win": {
       "target": [

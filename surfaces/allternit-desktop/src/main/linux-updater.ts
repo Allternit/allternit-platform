@@ -3,10 +3,14 @@
  *
  * Electron's built-in autoUpdater (used on macOS and Windows through
  * update-electron-app) has no Linux support, so a Linux install never updated.
- * On Linux only, this module runs electron-updater's DebUpdater against the
- * same GitHub releases (Allternit/desktop): it reads latest-linux.yml, downloads
- * the .deb, and on Restart installs it with `pkexec dpkg -i` (the desktop's
- * polkit agent asks for the password), then relaunches.
+ * On Linux only, this module runs electron-updater against the same GitHub
+ * releases (Allternit/desktop), with the class that matches how the app was
+ * installed: DebUpdater for the .deb (`pkexec dpkg -i`), RpmUpdater for the
+ * .rpm (`pkexec zypper|dnf|yum|rpm`), AppImageUpdater for the AppImage (swaps
+ * the file in place, no password). All three read latest-linux.yml, which
+ * lists the .deb, the .rpm and the AppImage; each picks its own by extension.
+ * On Restart it installs (the desktop's polkit agent asks for the password for
+ * deb/rpm), then relaunches.
  *
  * Its events go to the same `app:update-status` broadcasts as the macOS and
  * Windows handlers, so the UI and the restart prompt are identical. When the
@@ -15,10 +19,11 @@
  *
  * Desktop 1.1.15 and older have no Linux updater: those users install the next
  * .deb by hand once (`sudo apt install ./Allternit-Desktop-<v>-amd64.deb`).
- * Every version after that updates itself.
+ * Every version after that updates itself. The .rpm and the AppImage start
+ * with the updater.
  *
  * Lab override: ALLTERNIT_LINUX_UPDATE_FEED=http://host:port/ points the
- * updater at a generic feed that serves latest-linux.yml and the .deb.
+ * updater at a generic feed that serves latest-linux.yml and the packages.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -31,11 +36,13 @@ import {
   detectElevation,
   fallbackNotice,
   LINUX_FEED_OVERRIDE_ENV,
+  needsElevation,
   LINUX_UPDATE_INTERVAL_MS,
   releasePageUrl,
   resolveLinuxFeed,
   shouldAutoDownload,
   type LinuxFallbackReason,
+  type LinuxUpdateMode,
 } from './linux-updater-logic.js';
 
 export type LinuxUpdateStatus =
@@ -64,7 +71,7 @@ export interface LinuxUpdater {
   /** Check now. `manual` (menu or Settings) shows the fallback notice again. */
   check: (manual?: boolean) => void;
   /**
-   * Install the downloaded .deb (asks for the password through pkexec) and
+   * Install the downloaded update (.deb/.rpm ask for the password through pkexec) and
    * schedule the relaunch. Returns false, after showing the fallback notice,
    * when it could not install; the app keeps running then.
    */
@@ -95,8 +102,8 @@ function readPackageType(): string | null {
   }
 }
 
-function showFallback(log: Logger, reason: LinuxFallbackReason, version?: string | null): void {
-  const notice = fallbackNotice(reason, version);
+function showFallback(log: Logger, mode: LinuxUpdateMode, reason: LinuxFallbackReason, version?: string | null): void {
+  const notice = fallbackNotice(reason, version, mode);
   log.warn(`${TAG} fallback (${reason}): ${notice.title} -> ${notice.url}`);
   try {
     if (Notification.isSupported()) {
@@ -130,7 +137,8 @@ function showFallback(log: Logger, reason: LinuxFallbackReason, version?: string
 
 /**
  * Start the Linux updater. Returns null on macOS/Windows, in dev builds, and
- * on Linux installs that are not the .deb (those cannot self-update).
+ * on Linux installs that are not a .deb, .rpm or AppImage (those cannot
+ * self-update).
  */
 export function startLinuxUpdater(deps: LinuxUpdaterDeps): LinuxUpdater | null {
   const log = deps.logger;
@@ -138,18 +146,22 @@ export function startLinuxUpdater(deps: LinuxUpdaterDeps): LinuxUpdater | null {
     platform: process.platform,
     isPackaged: app.isPackaged,
     packageType: process.platform === 'linux' && app.isPackaged ? readPackageType() : null,
+    appImagePath: process.env.APPIMAGE ?? null,
   });
   if (mode === 'off') return null;
   if (mode === 'unsupported') {
-    log.warn(`${TAG} not a .deb install (no resources/package-type=deb): app updates are off; download new versions from ${releasePageUrl()}`);
+    log.warn(`${TAG} not a .deb, .rpm or AppImage install (no resources/package-type, no APPIMAGE): app updates are off; download new versions from ${releasePageUrl()}`);
     return null;
   }
 
-  const elevation = detectElevation({ isRoot: process.getuid?.() === 0, hasCommand });
+  // The AppImage replaces its own file: no root, so no password prompt.
+  const elevation = needsElevation(mode)
+    ? detectElevation({ isRoot: process.getuid?.() === 0, hasCommand })
+    : ({ kind: 'root' } as const);
   const autoDownload = shouldAutoDownload(elevation);
   const { feed, ignoredOverride } = resolveLinuxFeed(process.env[LINUX_FEED_OVERRIDE_ENV]);
   if (ignoredOverride) log.warn(`${TAG} ignoring ${LINUX_FEED_OVERRIDE_ENV}=${ignoredOverride}: not an http(s) URL`);
-  log.info(`${TAG} deb updater: feed ${JSON.stringify(feed)}, elevation ${JSON.stringify(elevation)}, autoDownload ${autoDownload}`);
+  log.info(`${TAG} ${mode} updater: feed ${JSON.stringify(feed)}, elevation ${JSON.stringify(elevation)}, autoDownload ${autoDownload}`);
 
   let installing = false;
   let installErrorSeen = false;
@@ -158,9 +170,10 @@ export function startLinuxUpdater(deps: LinuxUpdaterDeps): LinuxUpdater | null {
 
   const ready: Promise<BaseUpdater | null> = (async () => {
     // Loaded only on Linux so macOS/Windows never load electron-updater.
-    const mod = await import('electron-updater');
-    const DebUpdaterClass = mod.DebUpdater ?? (mod as unknown as { default: typeof mod }).default.DebUpdater;
-    const updater: BaseUpdater = new DebUpdaterClass();
+    const imported = await import('electron-updater');
+    const mod = (imported.DebUpdater ? imported : (imported as unknown as { default: typeof imported }).default);
+    const UpdaterClass = mode === 'rpm' ? mod.RpmUpdater : mode === 'appimage' ? mod.AppImageUpdater : mod.DebUpdater;
+    const updater: BaseUpdater = new UpdaterClass();
     updater.logger = log;
     updater.setFeedURL(feed);
     updater.autoDownload = autoDownload;
@@ -174,7 +187,7 @@ export function startLinuxUpdater(deps: LinuxUpdaterDeps): LinuxUpdater | null {
       deps.broadcast({ state: 'available' });
       if (!autoDownload && noticeShownFor !== info.version) {
         noticeShownFor = info.version;
-        showFallback(log, 'no-elevation', info.version);
+        showFallback(log, mode, 'no-elevation', info.version);
       }
     });
     updater.on('update-not-available', () => deps.broadcast({ state: 'up-to-date' }));
@@ -194,7 +207,7 @@ export function startLinuxUpdater(deps: LinuxUpdaterDeps): LinuxUpdater | null {
       deps.broadcast({ state: 'error', message: error?.message ?? String(error) });
       if (installing && !installErrorSeen) {
         installErrorSeen = true;
-        showFallback(log, 'install-failed', downloadedVersion);
+        showFallback(log, mode, 'install-failed', downloadedVersion);
       }
     });
     return updater;
@@ -225,15 +238,17 @@ export function startLinuxUpdater(deps: LinuxUpdaterDeps): LinuxUpdater | null {
     install: async () => {
       const updater = await ready;
       if (!updater) {
-        showFallback(log, 'install-failed', downloadedVersion);
+        showFallback(log, mode, 'install-failed', downloadedVersion);
         return false;
       }
       installing = true;
       installErrorSeen = false;
       let ok = false;
       try {
-        // Synchronous: runs `pkexec /bin/bash -c 'dpkg -i <deb>'` and calls
-        // app.relaunch() when it succeeds. The caller then quits.
+        // Synchronous. deb: `pkexec /bin/bash -c 'dpkg -i <deb>'`; rpm: the same
+        // through zypper/dnf/yum/rpm; AppImage: moves the new file over
+        // $APPIMAGE. Each calls app.relaunch() (or spawns the new AppImage)
+        // when it succeeds. The caller then quits.
         ok = updater.install(false, true);
       } catch (error) {
         log.error(`${TAG} install threw`, error);
@@ -244,7 +259,7 @@ export function startLinuxUpdater(deps: LinuxUpdaterDeps): LinuxUpdater | null {
         // install() leaves its once-only guard set after a failure; clear it
         // so Restart can try again (e.g. after a cancelled password prompt).
         (updater as unknown as { quitAndInstallCalled: boolean }).quitAndInstallCalled = false;
-        if (!installErrorSeen) showFallback(log, 'install-failed', downloadedVersion);
+        if (!installErrorSeen) showFallback(log, mode, 'install-failed', downloadedVersion);
         log.warn(`${TAG} install failed; the app keeps running`);
         return false;
       }

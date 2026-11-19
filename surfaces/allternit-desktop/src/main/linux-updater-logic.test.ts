@@ -3,6 +3,7 @@ import {
   chooseLinuxUpdateMode,
   detectElevation,
   fallbackNotice,
+  needsElevation,
   releasePageUrl,
   resolveLinuxFeed,
   shouldAutoDownload,
@@ -22,9 +23,28 @@ describe('chooseLinuxUpdateMode', () => {
     expect(chooseLinuxUpdateMode({ platform: 'linux', isPackaged: true, packageType: 'deb\n' })).toBe('deb');
   });
 
-  it('does not run dpkg for an AppImage or a build without package-type', () => {
-    expect(chooseLinuxUpdateMode({ platform: 'linux', isPackaged: true, packageType: 'AppImage' })).toBe('unsupported');
+  it('uses the rpm updater for a .rpm install', () => {
+    expect(chooseLinuxUpdateMode({ platform: 'linux', isPackaged: true, packageType: 'rpm\n' })).toBe('rpm');
+  });
+
+  it('uses the AppImage updater whenever APPIMAGE is set, whatever package-type says', () => {
+    // electron-builder packs the deb, rpm and AppImage from one resources dir,
+    // so the AppImage can carry package-type=deb or rpm.
+    const appImagePath = '/home/ana/Applications/Allternit-Desktop-1.2.0-x86_64.AppImage';
+    expect(chooseLinuxUpdateMode({ platform: 'linux', isPackaged: true, packageType: 'deb', appImagePath })).toBe('appimage');
+    expect(chooseLinuxUpdateMode({ platform: 'linux', isPackaged: true, packageType: null, appImagePath })).toBe('appimage');
+    expect(chooseLinuxUpdateMode({ platform: 'linux', isPackaged: true, packageType: 'deb', appImagePath: '  ' })).toBe('deb');
+  });
+
+  it('does not self-update a build without package-type or APPIMAGE', () => {
+    expect(chooseLinuxUpdateMode({ platform: 'linux', isPackaged: true, packageType: 'pacman' })).toBe('unsupported');
     expect(chooseLinuxUpdateMode({ platform: 'linux', isPackaged: true, packageType: null })).toBe('unsupported');
+  });
+
+  it('asks for a password only for the system packages', () => {
+    expect(needsElevation('deb')).toBe(true);
+    expect(needsElevation('rpm')).toBe(true);
+    expect(needsElevation('appimage')).toBe(false);
   });
 });
 
@@ -91,5 +111,13 @@ describe('releasePageUrl and fallbackNotice', () => {
     const failed = fallbackNotice('install-failed', null);
     expect(failed.title).toBe('A new Allternit Desktop could not be installed');
     expect(failed.url).toBe('https://github.com/Allternit/desktop/releases/latest');
+  });
+
+  it('gives the install command for the package type the user has', () => {
+    expect(fallbackNotice('install-failed', '1.2.0', 'rpm').body).toContain('sudo dnf install ./<file>.rpm');
+    expect(fallbackNotice('install-failed', '1.2.0', 'rpm').body).toContain('sudo zypper install');
+    const appimage = fallbackNotice('install-failed', '1.2.0', 'appimage');
+    expect(appimage.body).toContain('chmod +x');
+    expect(appimage.body).not.toContain('password');
   });
 });

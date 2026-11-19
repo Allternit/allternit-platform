@@ -820,8 +820,9 @@ jobs:
             surfaces/allternit-desktop/release/latest.yml
           retention-days: 14
 
-  # Build Linux unpacked dir (smoke-test the linux electron-builder target;
-  # artifacts are NOT attached to the GitHub release)
+  # Build the Linux packages: .deb (Debian/Ubuntu/Mint), .rpm (Fedora, RHEL
+  # family, openSUSE) and AppImage (every other distro), all from one
+  # linux-unpacked dir, plus latest-linux.yml that lists all three.
   build-linux:
     if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'linux'
     name: Build Linux
@@ -1039,12 +1040,18 @@ jobs:
         run: npm run build
         working-directory: surfaces/allternit-desktop
 
+      - name: Install rpm packaging tools
+        # electron-builder's rpm target runs fpm -> rpmbuild. The AppImage
+        # target downloads its own runtime and mksquashfs.
+        run: sudo apt-get install -y -qq rpm rpm2cpio cpio
+
       - name: Package with electron-builder
-        # The unpacked build plus the .deb that cloud computer images install
-        # (build-cloud-computer-image.sh DESKTOP_DEB). --publish never:
-        # publishing happens ONLY in the release job, which attaches the .deb
-        # as the Linux download (the same package the images run).
-        run: npx electron-builder --linux deb --x64 --publish never
+        # Targets and arches come from build.linux.target in package.json
+        # (deb + rpm + AppImage, x64; add "arm64" there). The .deb is also what
+        # cloud computer images install (build-cloud-computer-image.sh
+        # DESKTOP_DEB). --publish never: publishing happens ONLY in the release
+        # job, which attaches all three packages and latest-linux.yml.
+        run: npx electron-builder --linux --publish never
         working-directory: surfaces/allternit-desktop
         env:
           ALLTERNIT_BUILD_SUFFIX: ""
@@ -1056,6 +1063,23 @@ jobs:
         # 2.39, so Debian 12 / Ubuntu 22.04 could not start the engine; checking the
         # shell too means an Electron upgrade cannot raise the floor silently.
         run: node scripts/check-elf-floor.mjs --dir surfaces/allternit-desktop/release/linux-unpacked --shell allternit
+
+      - name: Check glibc floor inside the .rpm and the AppImage
+        # Both pack linux-unpacked, so this should match the step above. It runs
+        # on the real package contents anyway, so a packaging change (an extra
+        # file, a different tree) cannot slip past the floor.
+        shell: bash
+        run: |
+          set -euo pipefail
+          rel=surfaces/allternit-desktop/release
+          rpm=$(ls "$rel"/*.rpm); appimage=$(ls "$rel"/*.AppImage)
+          rm -rf /tmp/rpmx /tmp/appx && mkdir -p /tmp/rpmx /tmp/appx
+          (cd /tmp/rpmx && rpm2cpio "$OLDPWD/$rpm" | cpio -idm --quiet)
+          node scripts/check-elf-floor.mjs --dir "/tmp/rpmx/opt/Allternit Desktop" --shell allternit
+          chmod +x "$appimage"
+          (cd /tmp/appx && "$OLDPWD/$appimage" --appimage-extract >/dev/null)
+          node scripts/check-elf-floor.mjs --dir /tmp/appx/squashfs-root --shell allternit
+          rpm -qp --requires "$rpm" | sed 's/^/rpm requires: /'
 
       - name: Check meeting bot in the package
         # Each artifact must carry its own OS/arch rtc-node binding
@@ -1093,20 +1117,45 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+<<<<<<< HEAD
+=======
+      - name: Upload Linux .rpm
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: allternit-desktop-linux-rpm
+          path: surfaces/allternit-desktop/release/*.rpm
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Linux AppImage
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: allternit-desktop-linux-appimage
+          path: surfaces/allternit-desktop/release/*.AppImage
+          if-no-files-found: error
+          retention-days: 30
+
+>>>>>>> aa5a1d9cbfdfe7ffa469018263e7c4fcf37b3d96
       - name: Check Linux update feed
-        # The Linux in-app updater (src/main/linux-updater.ts, electron-updater
-        # DebUpdater) reads latest-linux.yml from the Allternit/desktop release
-        # and needs resources/package-type=deb + app-update.yml in the package.
-        # electron-builder writes all three for the deb target because
-        # build.publish is set (same mechanism as latest.yml / latest-mac.yml).
+        # The Linux in-app updater (src/main/linux-updater.ts) reads
+        # latest-linux.yml from the Allternit/desktop release with
+        # electron-updater's DebUpdater, RpmUpdater or AppImageUpdater; each
+        # picks its own file from that one feed by extension. The packages need
+        # app-update.yml, and the deb/rpm need resources/package-type.
+        # electron-builder writes these because build.publish is set. It packs
+        # deb and rpm at the same time from one dir, so package-type may hold
+        # either name; build/linux/after-install.sh rewrites it on install.
         shell: bash
         working-directory: surfaces/allternit-desktop
         run: |
           set -euo pipefail
           res=release/linux-unpacked/resources
-          [ "$(tr -d '[:space:]' < "$res/package-type")" = deb ] || { echo "::error::$res/package-type is not 'deb'"; exit 1; }
+          case "$(tr -d '[:space:]' < "$res/package-type")" in deb|rpm) ;; *) echo "::error::$res/package-type is not deb or rpm"; exit 1;; esac
+          grep -q 'PACKAGE_TYPE=rpm' build/linux/after-install.sh || { echo "::error::after-install.sh no longer corrects package-type"; exit 1; }
           grep -q 'repo: desktop' "$res/app-update.yml" || { echo "::error::$res/app-update.yml does not point at Allternit/desktop"; cat "$res/app-update.yml"; exit 1; }
-          grep -Eq 'url: Allternit-Desktop-.*-amd64\.deb' release/latest-linux.yml || { echo "::error::release/latest-linux.yml does not list the .deb"; cat release/latest-linux.yml; exit 1; }
+          for pat in 'Allternit-Desktop-.*-amd64\.deb' 'Allternit-Desktop-.*-x86_64\.rpm' 'Allternit-Desktop-.*-x86_64\.AppImage'; do
+            grep -Eq "url: $pat" release/latest-linux.yml || { echo "::error::release/latest-linux.yml does not list $pat"; cat release/latest-linux.yml; exit 1; }
+          done
           cat release/latest-linux.yml
 
       - name: Upload Linux update feed
@@ -1116,7 +1165,13 @@ jobs:
           path: surfaces/allternit-desktop/release/latest-linux.yml
           if-no-files-found: error
           retention-days: 14
+<<<<<<< HEAD
   # Gate: the Linux .deb must install and start on Ubuntu 18.04/22.04/24.04 and Debian 10/12/13.
+=======
+
+  # Gate: the .deb must install and start on Ubuntu 18.04/22.04/24.04 and Debian 10/12/13,
+  # the .rpm on Fedora, and the AppImage on Ubuntu 24.04.
+>>>>>>> aa5a1d9cbfdfe7ffa469018263e7c4fcf37b3d96
   linux-desktop-smoke:
     needs: build-linux
     permissions:
@@ -1124,6 +1179,11 @@ jobs:
     uses: ./.github/workflows/linux-desktop-smoke.yml
     with:
       deb_artifact: allternit-desktop-linux-deb
+<<<<<<< HEAD
+=======
+      rpm_artifact: allternit-desktop-linux-rpm
+      appimage_artifact: allternit-desktop-linux-appimage
+>>>>>>> aa5a1d9cbfdfe7ffa469018263e7c4fcf37b3d96
 
   # Publish GitHub Release
   release:
@@ -1175,7 +1235,9 @@ jobs:
             |----------|------|
             | macOS (arm64 + x64) | `Allternit-*.dmg` |
             | Windows | `Allternit Setup *.exe` |
-            | Linux (Debian/Ubuntu x64) | `*.deb` |
+            | Linux: Ubuntu, Debian, Mint (x64) | `*-amd64.deb` |
+            | Linux: Fedora, RHEL/Alma/Rocky, openSUSE (x64) | `*-x86_64.rpm` |
+            | Linux: any other distro (x64) | `*-x86_64.AppImage` |
 
             Auto-updates are enabled — the app will notify you when a new version is available.
           files: |
@@ -1183,6 +1245,8 @@ jobs:
             artifacts/*.zip
             artifacts/*.exe
             artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.AppImage
             artifacts/*.blockmap
             artifacts/latest-mac.yml
             artifacts/latest.yml
