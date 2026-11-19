@@ -65,11 +65,11 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 
 | Screen | Area | iOS path | Web path | Android | Status | Proof |
 |---|---|---|---|---|---|---|
-| ConnectedView | Onboarding | ios/Features/Onboarding/Setup/ConnectedView.swift | — | — | todo | — |
-| FirstRunSetupView | Onboarding | ios/Features/Onboarding/Setup/FirstRunSetupView.swift | — | — | todo | — |
-| MeetYourBotsView | Onboarding | ios/Features/Onboarding/MeetYourBotsView.swift | — | — | todo | — |
-| OnboardingView | Onboarding | ios/Features/Onboarding/OnboardingView.swift | — | — | todo | — |
-| SetupGraphView | Onboarding | ios/Features/Onboarding/Setup/SetupGraphView.swift | — | — | todo | — |
+| ConnectedView | Onboarding | ios/Features/Onboarding/Setup/ConnectedView.swift | — | feature/shell/firstrun/ConnectedScreen.kt (+ SetupHandoff.kt) | built (#2621) | — |
+| FirstRunSetupView | Onboarding | ios/Features/Onboarding/Setup/FirstRunSetupView.swift | — | feature/shell/firstrun/FirstRunSetupScreen.kt (+ SetupModel.kt, SetupApi.kt, ConnectSheets.kt) | built (#2621) | — |
+| MeetYourBotsView | Onboarding | ios/Features/Onboarding/MeetYourBotsView.swift | — | feature/shell/firstrun/MeetYourBotsScreen.kt (+ MeetFinish.kt, MeetVisuals.kt) | built (#2621; vendor bots, New bot, Import and the routine time editor not yet) | — |
+| OnboardingView | Onboarding | ios/Features/Onboarding/OnboardingView.swift | — | feature/shell/firstrun/FirstRunGate.kt (+ FirstRunStore.kt) | built (#2621) | — |
+| SetupGraphView | Onboarding | ios/Features/Onboarding/Setup/SetupGraphView.swift | — | feature/shell/firstrun/SetupArt.kt (SetupGraph) | built (#2621) | — |
 
 ## Wave C. Shell rest
 

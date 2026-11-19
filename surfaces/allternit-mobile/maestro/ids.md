@@ -76,6 +76,17 @@ without an identifier; iOS should take the same id when a flow needs it.
 | `plusSheetSketch` | none (iOS PlusRow "Sketch") | `android/feature/shell/.../PlusSheet.kt` |
 | `sketchSheet`, `sketchCancel`, `sketchUndo`, `sketchAttach` | none | `android/feature/shell/.../SketchSheet.kt` |
 
+## First-run ids (wave B, no flow uses them yet)
+
+| id | iOS file that sets it | Android |
+| --- | --- | --- |
+| `conn-row-<connectionId>` | `ios/Features/Settings/Connections/ConnectionRowView.swift` | `android/feature/shell/.../firstrun/FirstRunSetupScreen.kt` (ConnectionRow) |
+| `conn-key-<keyProviderId>` | `ios/Features/Settings/Connections/ConnectSheetView.swift:186` | `android/feature/shell/.../firstrun/ConnectSheets.kt` |
+| `conn-disclosure`, `conn-disclosure-accept`, `conn-disclosure-decline` | `ios/Features/Settings/Connections/ConnectSheetView.swift:650-658` | `android/feature/shell/.../firstrun/ConnectSheets.kt` |
+| `setup-add-computer` | `ios/Features/Onboarding/Setup/SetupKitSteps.swift` | `android/feature/shell/.../firstrun/FirstRunSetupScreen.kt` |
+| `setup-splash`, `setup-checklist`, `setup-checklist-continue`, `setup-open-allternit` | none | `android/feature/shell/.../firstrun/FirstRunGate.kt`, `ConnectedScreen.kt` |
+| `meet-your-bots`, `meet-build-team`, `meet-skip-for-now`, `meet-template-<templateId>`, `meet-main-name`, `meet-job-text`, `meet-start-job`, `meet-done` | none (iOS MeetYourBotsView sets no ids) | `android/feature/shell/.../firstrun/MeetYourBotsScreen.kt` |
+
 Notes:
 
 - Ids ending in a dynamic suffix (`modeFanCard<mode>`, `drawerRow<railId>`, `automationTab<tab>`)
