@@ -117,6 +117,12 @@ class ChatViewModel(
 
     // MARK: Sessions
 
+    /**
+     * Standing instructions for a session (iOS ArtifactStudioLauncher.systemPrompt(for:)), read on
+     * every send, retry and regenerate. The shell sets it; null sends none.
+     */
+    var systemPromptFor: ((sessionId: String) -> String?)? = null
+
     fun startNewSession() {
         stopStreaming()
         transientError = null
@@ -189,6 +195,7 @@ class ChatViewModel(
             preparedRefs = null,
             userMessageId = userId,
             agentModeId = request.agentModeId,
+            systemPrompt = request.systemPrompt,
         )
     }
 
@@ -294,6 +301,7 @@ class ChatViewModel(
         preparedRefs: List<AttachmentRef>?,
         userMessageId: String?,
         agentModeId: String?,
+        systemPrompt: String? = null,
     ) {
         transientError = null
         draftToRestore = null
@@ -335,6 +343,9 @@ class ChatViewModel(
                     chatId = sessionId,
                     message = text,
                     agentId = sessionContext.agentId,
+                    // iOS ChatViewModel: the turn's own instructions, else the session's standing
+                    // ones (a studio session's artifact note), blank → none.
+                    systemPrompt = (systemPrompt ?: systemPromptFor?.invoke(sessionId))?.takeIf { it.isNotBlank() },
                     runtimeModelId = runtimeModelId,
                     effort = effort,
                     attachments = refs.ifEmpty { null },

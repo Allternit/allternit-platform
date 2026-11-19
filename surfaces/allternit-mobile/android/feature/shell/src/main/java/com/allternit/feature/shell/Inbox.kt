@@ -196,6 +196,9 @@ internal class InboxStore(private val backend: ChatBackend) {
         private set
     var error by mutableStateOf<String?>(null)
         private set
+    /** True when the last answer was "no computer" (no device, 428, compute_required), not a timeout. */
+    var noComputer by mutableStateOf(false)
+        private set
     val failures = mutableStateMapOf<String, String>()
     val busy = mutableStateMapOf<String, Boolean>()
 
@@ -205,21 +208,34 @@ internal class InboxStore(private val backend: ChatBackend) {
                 items = ((r.body as? JsonObject)?.get("needsYou") as? JsonArray).orEmpty()
                     .mapNotNull { (it as? JsonObject)?.let(InboxItem::from) }
                 isAvailable = true
+                noComputer = false
                 error = null
             }
             RuntimeCall.NoComputer -> {
                 items = emptyList()
                 isAvailable = false
+                noComputer = true
                 error = null
             }
-            is RuntimeCall.Http -> if (r.status == 404 || r.status == 503) {
+            is RuntimeCall.Http -> if (r.status == 428 || isComputeGateText(r.message)) {
+                items = emptyList()
+                isAvailable = false
+                noComputer = true
+                error = null
+            } else if (r.status == 404 || r.status == 503) {
                 items = emptyList()
                 isAvailable = false
                 error = null
             } else {
                 error = statusSentence(r.status) ?: FriendlyErrorMessage.from(r.message ?: "", "load the inbox")
             }
-            is RuntimeCall.Failed -> error = r.message
+            is RuntimeCall.Failed -> if (isComputeGateText(r.message)) {
+                // 428 / compute_required: no computer is connected, which is not a timeout.
+                items = emptyList()
+                isAvailable = false
+                noComputer = true
+                error = null
+            } else error = r.message
         }
         hasLoaded = true
     }
@@ -398,8 +414,8 @@ internal fun InboxSheet(
                 }
                 !store.isAvailable -> FriendlyState(
                     style = FriendlyStyle.Offline,
-                    title = "No inbox on this computer yet",
-                    message = "The inbox comes from your computer. Connect one, or update Allternit on it, to see what needs you.",
+                    title = if (store.noComputer) NoComputerCopy.TITLE else "No inbox on this computer yet",
+                    message = if (store.noComputer) NoComputerCopy.DETAIL else "The inbox comes from your computer. Connect one, or update Allternit on it, to see what needs you.",
                     modifier = Modifier.align(Alignment.Center).padding(20.dp),
                 ) { Icon(painterResource(DesignR.drawable.ph_desktop), contentDescription = null, tint = c.textSecondary) }
                 store.error != null && store.items.isEmpty() -> FriendlyState(
@@ -807,3 +823,7 @@ private fun HoldButtons(approveEnabled: Boolean, busy: Boolean, onDeny: () -> Un
         ) { Text(if (busy) "Working…" else "Approve", color = c.bgPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
     }
 }
+
+/** cloud-api's account-state refusals (428 "No data-plane node", compute_required, free_computers_retired): no computer, not a timeout. */
+private fun isComputeGateText(message: String?): Boolean =
+    message != null && Regex("""\b(428|compute_required|free_computers_retired|data-plane node)\b""", RegexOption.IGNORE_CASE).containsMatchIn(message)

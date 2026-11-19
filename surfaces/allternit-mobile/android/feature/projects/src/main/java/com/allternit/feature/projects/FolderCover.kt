@@ -223,30 +223,6 @@ private val presets = listOf(
     Preset("badge", "Badge", "#9B6BD6", "symbol", "sans", "center", "dots", "none", "shadow"),
 )
 
-/** Swatches for the folder, paper and tab colours (iOS uses the system colour picker). */
-private val NoPreset = Preset("", "", null, "", "", "", "", "", "")
-
-private val swatches = listOf("#397ad5", "#1F4FA8", "#2FA7A0", "#0F7F57", "#7BB08B", "#E0A526", "#D97757", "#D2453A", "#B08BC0", "#9B6BD6", "#3A3D45", "#F4F1EA", "#ffffff")
-
-@Composable
-private fun Swatches(selected: String, tagPrefix: String, onPick: (String) -> Unit) {
-    val c = AllternitTheme.colors
-    Row(Modifier.fillMaxWidth().horizontalScrollRow(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        swatches.forEach { hex ->
-            val on = hex.equals(selected, ignoreCase = true)
-            Box(
-                Modifier.size(34.dp).clip(CircleShape).background(hexColor(hex))
-                    .border(BorderStroke(if (on) 3.dp else 1.dp, if (on) c.textPrimary else c.borderSubtle), CircleShape)
-                    .testTag("$tagPrefix$hex").clickable { onPick(hex) }
-                    .semantics { contentDescription = "Colour $hex" + if (on) ", selected" else "" },
-            )
-        }
-    }
-}
-
-@Composable
-private fun Modifier.horizontalScrollRow(): Modifier = this.horizontalScroll(rememberScrollState())
-
 /**
  * iOS FolderLookSheet: preview, presets, colours, cover art (title / symbol / text / image /
  * none), cover style (font, position, pattern, frame, edge, sheets), the tab and the mode label.
@@ -300,10 +276,9 @@ fun FolderLookSheet(
                 listOf("art" to p.art, "font" to p.font, "place" to p.place, "pattern" to p.pattern, "frame" to p.frame, "edge" to p.edge).forEach { (k, v) -> d = d.withCover(k, JsonPrimitive(v)) }
                 draft = d.withCover("preset", JsonPrimitive(p.id))
             }
-            FilterLabel("Folder color")
-            Swatches(draft.color, "folderColor") { draft = draft.withField("color", JsonPrimitive(it)) }
-            FilterLabel("Paper color")
-            Swatches(draft.paperColor, "folderPaper") { draft = draft.withField("paperColor", JsonPrimitive(it)) }
+            FilterLabel("Color")
+            ColorWellRow("Folder color", draft.color, "folderColor") { draft = draft.withField("color", JsonPrimitive(it)) }
+            ColorWellRow("Paper color", draft.paperColor, "folderPaper") { draft = draft.withField("paperColor", JsonPrimitive(it)) }
             FilterLabel("Cover art")
             PillRow(listOf("title", "symbol", "text", "image", "none"), draft.art, { it.replaceFirstChar { ch -> ch.uppercase() } }, { "folderArt$it" }) { cover("art", it) }
             when (draft.art) {
@@ -333,8 +308,8 @@ fun FolderLookSheet(
             PillRow(listOf("ink", "soft", "shadow"), draft.edge, { it.replaceFirstChar { ch -> ch.uppercase() } }, { "folderEdge$it" }) { cover("edge", it) }
             FilterLabel("Sheets of paper: ${draft.sheets}")
             PillRow(listOf(0, 1, 2, 3), draft.sheets, { "$it" }, { "folderSheets$it" }) { draft = draft.withCover("sheets", JsonPrimitive(it)) }
-            FilterLabel("Tab color")
-            Swatches(draft.tabColor ?: "", "folderTab") { cover("tabColor", it) }
+            FilterLabel("Tab")
+            ColorWellRow("Tab color", draft.tabColor, "folderTab") { cover("tabColor", it) }
             Box(Modifier.padding(top = 8.dp)) {
                 LibraryField("", draft.tabLabel, "Tab label (up to 8 characters)", "folderTabLabel") { cover("tabLabel", it.take(8)) }
             }

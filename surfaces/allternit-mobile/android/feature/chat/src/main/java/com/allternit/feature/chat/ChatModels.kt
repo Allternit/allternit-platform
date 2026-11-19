@@ -38,6 +38,8 @@ data class ChatSendRequest(
     /** + sheet tool toggles (iOS ToolOptionsStore.optionsForSend). */
     val webSearch: Boolean = false,
     val research: Boolean = false,
+    /** Standing instructions for this turn (agent-chat `systemPrompt`, iOS AgentChatRequest). Null falls back to [ChatViewModel.systemPromptFor]. */
+    val systemPrompt: String? = null,
 )
 
 /** iOS ToolCallRecord.State / MessageRecord.ToolStatus.State. */

@@ -153,6 +153,9 @@ object ArtifactsV2Client {
             ArtifactListPage(o.list("items").mapNotNull(::summary), o.str("next_cursor"), o.bool("archive_supported") ?: false)
         }
 
+    /** `POST api/v2/artifacts` (iOS ArtifactV2CreateInput: kind, title, body, body_format, meta, origin, capabilities). */
+    suspend fun create(input: JsonObject): ApiResult<ArtifactV2?> = call("POST", "artifacts", input).map(::full)
+
     suspend fun get(id: String): ApiResult<ArtifactV2?> = call("GET", "artifacts/${LibraryNet.escape(id)}").map(::full)
 
     /** POST versions: `{base_version, body, body_format, meta, author:"user"}`; 409 = someone saved first. */

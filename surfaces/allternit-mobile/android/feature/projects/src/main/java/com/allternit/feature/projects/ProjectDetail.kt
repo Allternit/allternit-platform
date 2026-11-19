@@ -1,6 +1,10 @@
 package com.allternit.feature.projects
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -102,14 +106,15 @@ internal fun Breadcrumb(title: String, onBack: () -> Unit) {
     }
 }
 
-private enum class DetailTab(val label: String) { Overview("Overview"), Board("Board"), Details("Details") }
+private enum class DetailTab(val label: String) { Overview("Overview"), Delegate("Delegate"), Board("Board"), Details("Details") }
 
 /**
  * The chat project detail (iOS ProjectDetailView): the StageBackdrop behind everything, the
  * breadcrumb, the hero (cover, serif title that opens the details sheet, description, pin and
- * Customize), Overview (the pad and the threads with New chat), Board (the pad's own view) and
- * Details (instructions and files). Customize opens the folder look sheet with the Project
- * section (Project settings, Edit pad, Edit details, Archive, Delete).
+ * Customize) and the tabs. Overview: the pad, the coordinator conversation, the threads (with New
+ * chat) and the project's server threads, over the coordinator composer. Delegate and Board open
+ * full-screen panes, as on iOS. Details: status, Memory, Add files / Add instructions,
+ * Instructions, Files and Folder. The coordinator, threads and status refresh every 5 s.
  */
 @Composable
 fun ProjectDetailScreen(
@@ -127,22 +132,44 @@ fun ProjectDetailScreen(
     val padScope = remember(project.id) { ProjectPadStore.scope(project.mode, project.nativeId) }
     val pad = remember(project.id) { ProjectPadStore(context, padScope, project.mode) }
     var tab by remember { mutableStateOf(DetailTab.Overview) }
+    var pane by remember { mutableStateOf<DetailTab?>(null) }
     var customizeOpen by remember { mutableStateOf(false) }
     var detailsOpen by remember { mutableStateOf(false) }
     var padEditOpen by remember { mutableStateOf(false) }
+    var memoryOpen by remember { mutableStateOf(false) }
+    var statusOpen by remember { mutableStateOf(false) }
+    var folderOpen by remember { mutableStateOf(false) }
+    var addFilesOpen by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var files by remember { mutableStateOf<List<ProjectFile>?>(null) }
     var filesFailed by remember { mutableStateOf(false) }
     var filesReload by remember { mutableIntStateOf(0) }
     var instructions by remember(project.instructions) { mutableStateOf(project.instructions ?: "") }
+    var editingInstructions by remember { mutableStateOf(false) }
     var savingInstructions by remember { mutableStateOf(false) }
     var starting by remember { mutableStateOf(false) }
-    BackHandler(onBack = onClose)
+    var coordinatorId by remember { mutableStateOf<String?>(null) }
+    var messages by remember { mutableStateOf<List<ProjectMessage>>(emptyList()) }
+    var serverThreads by remember { mutableStateOf<List<ProjectThread>>(emptyList()) }
+    var status by remember { mutableStateOf<ProjectStatus?>(null) }
+    var sending by remember { mutableStateOf(false) }
+    var folder by remember(project.id) { mutableStateOf(ProjectDeviceFolder.get(context, project.nativeId)) }
+    BackHandler(enabled = pane == null, onBack = onClose)
 
     LaunchedEffect(project.id) { pad.load() }
+    LaunchedEffect(project.id) {
+        coordinatorId = CoordinatorClient.existing(project)
+        while (true) {
+            coordinatorId?.let { id ->
+                CoordinatorClient.messages(id)?.let { messages = it }
+                serverThreads = CoordinatorClient.threads(id)
+            }
+            CoordinatorClient.status(coordinatorId ?: project.nativeId)?.let { status = it }
+            kotlinx.coroutines.delay(5_000)
+        }
+    }
     LaunchedEffect(project.id, filesReload) {
-        if (project.mode != ProjectMode.Chat) { files = emptyList(); return@LaunchedEffect }
         when (val r = LibraryNet.get("cowork/projects/${LibraryNet.escape(project.nativeId)}/files")) {
             is ApiResult.Ok -> { files = r.value.listUnder("files").mapNotNull { o -> o.str("id")?.let { ProjectFile(it, o.str("name") ?: "File") } }; filesFailed = false }
             else -> filesFailed = true
@@ -150,6 +177,21 @@ fun ProjectDetailScreen(
     }
     val threads = store.sessions.filter { it.projectId == project.nativeId }.sortedByDescending { it.updatedAt }
     val color = hexColor(look?.color)
+    val board = ProjectBoardData(
+        status = status,
+        work = threads.map { BoardWork(it.id, it.name.ifEmpty { "Untitled" }, "queued", it.updatedAt) } +
+            serverThreads.map { BoardWork(it.id, it.title, ProjectBoardData.column(it.group), it.at) },
+        made = files.orEmpty().map { it.name },
+    )
+    val padData = PadBoardData(threads, files.orEmpty().map { it.name }, board.needsYou, board, onOpenStatus = { statusOpen = true })
+    val sessionIds = (threads.map { it.id } + serverThreads.mapNotNull { it.sessionId }).toSet()
+
+    val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
+        uris.forEachIndexed { i, u -> scope.launch { attachProjectFile(context, project.nativeId, u, "photo-${i + 1}.jpg")?.let { error = it }; filesReload += 1 } }
+    }
+    val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        uris.forEach { u -> scope.launch { attachProjectFile(context, project.nativeId, u, "file")?.let { error = it }; filesReload += 1 } }
+    }
 
     fun newChat() {
         if (starting) return
@@ -161,13 +203,38 @@ fun ProjectDetailScreen(
             starting = false
         }
     }
+    fun openPane(t: DetailTab) {
+        scope.launch {
+            if (coordinatorId == null) coordinatorId = CoordinatorClient.ensure(project, folder)
+            pane = t
+        }
+    }
+
+    when (pane) {
+        DetailTab.Delegate -> {
+            val id = coordinatorId
+            if (id != null) { DelegatePane(id, onClose = { pane = null }); return }
+            pane = null
+        }
+        DetailTab.Board -> {
+            BackHandler { pane = null }
+            Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().navigationBarsPadding().testTag("projectBoard")) {
+                com.allternit.feature.artifacts.LibraryHeader("Board", subtitle = project.title, onBack = { pane = null })
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
+                    ProjectPadCard(project.title, project.mode, pad, color, padData, onEdit = { padEditOpen = true }, onOpenThread = { nav.openSession(it, "chat") })
+                }
+            }
+            if (padEditOpen) PadEditSheet(pad, onDismiss = { padEditOpen = false })
+            return
+        }
+        else -> Unit
+    }
 
     Box(Modifier.fillMaxSize().background(c.bgPrimary)) {
         nav.backdrop(padScope)
-        Column(Modifier.fillMaxSize().statusBarsPadding().testTag("projectDetail")) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().testTag("projectDetail")) {
             Breadcrumb(project.title, onClose)
-            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                // Hero.
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     FolderCover(look, project.title, project.mode, width = 46.dp, flat = true)
                     Column(Modifier.weight(1f)) {
@@ -187,83 +254,113 @@ fun ProjectDetailScreen(
                         modifier = Modifier.clip(CircleShape).background(c.fillNeutral).testTag("projectCustomize").clickable { customizeOpen = true }.padding(horizontal = 14.dp, vertical = 12.dp),
                     )
                 }
-                PillRow(DetailTab.entries, tab, { it.label }, { "projectTab${it.name}" }) { tab = it }
+                PillRow(DetailTab.entries, tab, { it.label }, { "projectTab${it.name}" }) { t ->
+                    if (t == DetailTab.Delegate || t == DetailTab.Board) openPane(t) else tab = t
+                }
                 error?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 13.sp, modifier = Modifier.clickable { error = null }) }
-                when (tab) {
-                    DetailTab.Overview, DetailTab.Board -> {
-                        ProjectPadCard(
-                            project.title, project.mode, pad, color,
-                            PadBoardData(threads, files.orEmpty().map { it.name }, project.waiting),
-                            onEdit = { padEditOpen = true },
-                            onOpenThread = { nav.openSession(it, "chat") },
-                        )
-                        if (tab == DetailTab.Overview) {
-                            if (threads.isEmpty()) {
-                                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("Keep goals, decisions, and updates here with your project coordinator. Open a thread alongside this conversation for a specific task.", color = c.textSecondary, fontSize = 14.sp)
-                                    LibraryRowButton(if (starting) "Starting…" else "Start a thread", DesignR.drawable.ph_plus, "projectStartThread", enabled = !starting, onClick = ::newChat)
-                                }
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Threads (${threads.size})", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                                Text(
-                                    "New chat", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.clip(CircleShape).background(c.fillNeutral).testTag("projectNewChat").clickable(enabled = !starting, onClick = ::newChat).padding(horizontal = 12.dp, vertical = 9.dp),
-                                )
-                            }
-                            if (threads.isEmpty()) {
-                                Text("No threads yet", color = c.textPrimary, fontSize = 14.sp)
-                                Text("Start one from the composer.", color = c.textSecondary, fontSize = 13.sp)
-                            }
-                            threads.forEach { s ->
-                                Row(
-                                    Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(10.dp)).testTag("projectThread${s.id}")
-                                        .clickable { nav.openSession(s.id, "chat") }.padding(horizontal = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    Icon(painterResource(DesignR.drawable.ph_identification_card), null, tint = c.textSecondary, modifier = Modifier.size(18.dp))
-                                    Text(s.name.ifEmpty { "Untitled" }, color = c.textPrimary, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                    Text(relativeTime(s.updatedAt), color = c.textTertiary, fontSize = 12.sp)
-                                }
-                            }
+                if (tab == DetailTab.Overview) {
+                    ProjectPadCard(project.title, project.mode, pad, color, padData, onEdit = { padEditOpen = true }, onOpenThread = { nav.openSession(it, "chat") })
+                    if (threads.isEmpty() && messages.isEmpty()) {
+                        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Keep goals, decisions, and updates here with your project coordinator. Open a thread alongside this conversation for a specific task.", color = c.textSecondary, fontSize = 14.sp)
+                            LibraryRowButton(if (starting) "Starting…" else "Start a thread", DesignR.drawable.ph_plus, "projectStartThread", enabled = !starting, onClick = ::newChat)
                         }
                     }
-                    DetailTab.Details -> {
-                        Text("Instructions", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    if (messages.isNotEmpty()) ProjectConversation(messages, serverThreads) { t -> t.sessionId?.let { nav.openSession(it, "chat") } }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Threads (${threads.size + serverThreads.size})", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        Text(
+                            "New chat", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clip(CircleShape).background(c.fillNeutral).testTag("projectNewChat").clickable(enabled = !starting, onClick = ::newChat).padding(horizontal = 12.dp, vertical = 9.dp),
+                        )
+                    }
+                    if (threads.isEmpty() && serverThreads.isEmpty()) {
+                        Text("No threads yet", color = c.textPrimary, fontSize = 14.sp)
+                        Text("Start one from the composer.", color = c.textSecondary, fontSize = 13.sp)
+                    }
+                    threads.forEach { s -> ThreadRow(s.name.ifEmpty { "Untitled" }, relativeTime(s.updatedAt), "projectThread${s.id}") { nav.openSession(s.id, "chat") } }
+                    serverThreads.forEach { t -> ThreadRow(t.title, t.statusLine ?: relativeTime(t.at), "projectServerThread${t.id}") { t.sessionId?.let { nav.openSession(it, "chat") } } }
+                } else {
+                    // Details.
+                    val st = status
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral).testTag("projectStatusCard").clickable { statusOpen = true }.padding(14.dp)) {
+                        Text("Status · ${st?.stateLabel ?: "On track"}", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(st?.nextAction ?: st?.sections?.get("status") ?: "Goals, decisions and blockers live on the status page.", color = c.textSecondary, fontSize = 13.sp)
+                    }
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Memory", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { memoryOpen = true }, modifier = Modifier.testTag("projectViewMemory")) { Text("View memory") }
+                        }
+                        Text("Project memory will show here after a few chats.", color = c.textSecondary, fontSize = 13.sp)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Tile76("Add files", DesignR.drawable.ph_upload_simple, "projectAddFiles", Modifier.weight(1f)) { addFilesOpen = true }
+                        Tile76("Add instructions", DesignR.drawable.ph_sliders_horizontal, "projectAddInstructions", Modifier.weight(1f)) { editingInstructions = true }
+                    }
+                    Text("Instructions", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    if (editingInstructions || instructions != (project.instructions ?: "")) {
                         LibraryField("", instructions, "Tell every chat in this project how to work", "projectInstructions", singleLine = false, minHeight = 120) { instructions = it }
-                        if (instructions != (project.instructions ?: "")) Row {
-                            TextButton(onClick = { instructions = project.instructions ?: "" }) { Text("Cancel") }
+                        Row {
+                            TextButton(onClick = { instructions = project.instructions ?: ""; editingInstructions = false }) { Text("Cancel") }
                             TextButton(enabled = !savingInstructions, modifier = Modifier.testTag("projectInstructionsSave"), onClick = {
                                 savingInstructions = true
-                                scope.launch { store.saveInstructions(project, instructions).onFailure { error = it.message }; savingInstructions = false }
+                                scope.launch { store.saveInstructions(project, instructions).onSuccess { editingInstructions = false }.onFailure { error = it.message }; savingInstructions = false }
                             }) { Text(if (savingInstructions) "Saving…" else "Save", fontWeight = FontWeight.SemiBold) }
                         }
-                        Text("Files", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                        when {
-                            filesFailed -> Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Couldn't load files", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                                TextButton(onClick = { filesReload += 1 }) { Text("Retry") }
-                            }
-                            files == null -> LibrarySpinner("Loading files")
-                            files!!.isEmpty() -> Column {
-                                Text("No files yet", color = c.textPrimary, fontSize = 14.sp)
-                                Text("Add files to give every chat in this project the same context.", color = c.textSecondary, fontSize = 13.sp)
-                            }
-                            else -> files!!.forEach { f ->
-                                Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(f.name, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                    LibraryIconButton(DesignR.drawable.ph_x, "Remove ${f.name}", iconSize = 14) {
-                                        scope.launch {
-                                            val r = LibraryNet.send("DELETE", "cowork/projects/${LibraryNet.escape(project.nativeId)}/files/${LibraryNet.escape(f.id)}")
-                                            if (r is ApiResult.Ok) filesReload += 1 else error = "Couldn't remove ${f.name}: ${r.friendly("remove it")}"
-                                        }
+                    } else {
+                        Text(project.instructions?.takeIf { it.isNotBlank() } ?: "No instructions yet.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.clickable { editingInstructions = true })
+                    }
+                    Text("Files", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    when {
+                        filesFailed -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Couldn't load files", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { filesReload += 1 }) { Text("Retry") }
+                        }
+                        files == null -> LibrarySpinner("Loading files")
+                        files!!.isEmpty() -> Column {
+                            Text("No files yet", color = c.textPrimary, fontSize = 14.sp)
+                            Text("Add files to give every chat in this project the same context.", color = c.textSecondary, fontSize = 13.sp)
+                        }
+                        else -> files!!.forEach { f ->
+                            Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(f.name, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                LibraryIconButton(DesignR.drawable.ph_x, "Remove ${f.name}", iconSize = 14) {
+                                    scope.launch {
+                                        val r = LibraryNet.send("DELETE", "cowork/projects/${LibraryNet.escape(project.nativeId)}/files/${LibraryNet.escape(f.id)}")
+                                        if (r is ApiResult.Ok) filesReload += 1 else error = "Couldn't remove ${f.name}: ${r.friendly("remove it")}"
                                     }
                                 }
                             }
                         }
                     }
+                    // iOS ProjectFolderCard.
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral).padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row { Text("Folder", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f)); Text("Only you", color = c.textTertiary, fontSize = 12.sp) }
+                        Text(folder ?: "Add a folder on your computer for Allternit to work in.", color = if (folder != null) c.textPrimary else c.textSecondary, fontSize = 13.sp, fontFamily = if (folder != null) FontFamily.Monospace else FontFamily.Default)
+                        Row {
+                            TextButton(onClick = { folderOpen = true }, modifier = Modifier.testTag("projectChooseFolder")) { Text("Choose folder") }
+                            if (folder != null) TextButton(onClick = {
+                                folder = null; ProjectDeviceFolder.set(context, project.nativeId, null)
+                                scope.launch { if (coordinatorId != null && !CoordinatorClient.setDirectory(project, null)) error = "Couldn't save the folder: try again." }
+                            }) { Text("Remove folder", color = AllternitStatic.StatusError) }
+                        }
+                    }
                 }
-                Box(Modifier.heightIn(min = 24.dp))
+                Box(Modifier.heightIn(min = 12.dp))
+            }
+            if (tab == DetailTab.Overview) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CoordinatorComposer(sending) { text ->
+                        sending = true
+                        scope.launch {
+                            val id = coordinatorId ?: CoordinatorClient.ensure(project, folder).also { coordinatorId = it }
+                            if (id == null || !CoordinatorClient.send(id, text)) error = "Your coordinator didn't get that. Try sending it again."
+                            else CoordinatorClient.messages(id)?.let { messages = it }
+                            sending = false
+                        }
+                    }
+                }
             }
         }
     }
@@ -282,6 +379,25 @@ fun ProjectDetailScreen(
     }
     if (detailsOpen) ProjectDetailsSheet(project, look, store, onDismiss = { detailsOpen = false })
     if (padEditOpen) PadEditSheet(pad, onDismiss = { padEditOpen = false })
+    if (memoryOpen) ProjectMemorySheet(sessionIds, onDismiss = { memoryOpen = false })
+    if (statusOpen) ProjectStatusSheet(status, onDismiss = { statusOpen = false })
+    if (folderOpen) ProjectFolderPickerSheet(project.title, nav.runtimeGet, onPick = { picked ->
+        folderOpen = false
+        folder = picked.path
+        ProjectDeviceFolder.set(context, project.nativeId, picked.path)
+        scope.launch { if (coordinatorId != null && !CoordinatorClient.setDirectory(project, picked.path)) error = "Couldn't save the folder: try again." }
+    }, onDismiss = { folderOpen = false })
+    if (addFilesOpen) {
+        LibrarySheet("Add files", "projectAddFilesSheet", onDismiss = { addFilesOpen = false }, leading = LibrarySheetAction("Cancel") { addFilesOpen = false }) {
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LibraryRowButton("Photos", DesignR.drawable.ph_upload_simple, "projectAddPhotos") {
+                    addFilesOpen = false
+                    pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }
+                LibraryRowButton("Files", DesignR.drawable.ph_upload_simple, "projectAddFilesFiles") { addFilesOpen = false; pickFiles.launch(arrayOf("*/*")) }
+            }
+        }
+    }
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
         title = { Text("Delete this project?") },
@@ -294,6 +410,52 @@ fun ProjectDetailScreen(
         },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
     )
+}
+
+@Composable
+private fun ThreadRow(title: String, meta: String, tag: String, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(10.dp)).testTag(tag).clickable(onClick = onClick).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(painterResource(DesignR.drawable.ph_identification_card), null, tint = c.textSecondary, modifier = Modifier.size(18.dp))
+        Text(title, color = c.textPrimary, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Text(meta, color = c.textTertiary, fontSize = 12.sp, maxLines = 1)
+    }
+}
+
+/** The 76dp Add files / Add instructions tiles. */
+@Composable
+private fun Tile76(title: String, icon: Int, tag: String, modifier: Modifier, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    Column(
+        modifier.heightIn(min = 76.dp).clip(RoundedCornerShape(14.dp)).background(c.fillNeutral).testTag(tag).clickable(onClick = onClick).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(painterResource(icon), null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
+        Text(title, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+/** iOS status sheet: the state, next action and the status page's sections in order. */
+@Composable
+private fun ProjectStatusSheet(status: ProjectStatus?, onDismiss: () -> Unit) {
+    val c = AllternitTheme.colors
+    LibrarySheet("Status", "projectStatusSheet", onDismiss = onDismiss, trailing = LibrarySheetAction("Done", bold = true, onClick = onDismiss)) {
+        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(status?.stateLabel ?: "On track", color = c.textPrimary, fontSize = 20.sp, fontFamily = FontFamily.Serif)
+            status?.nextAction?.let { Text("Next: $it", color = c.textSecondary, fontSize = 14.sp) }
+            val labels = mapOf("goal" to "Goal", "status" to "Status", "next_actions" to "Next actions", "owners" to "Owners", "deadlines" to "Deadlines", "decisions" to "Decisions", "blockers" to "Blockers", "outcome" to "Outcome", "lessons" to "Lessons")
+            ProjectStatus.sectionOrder.forEach { k ->
+                status?.sections?.get(k)?.takeIf { it.isNotBlank() }?.let { text ->
+                    Text(labels[k] ?: k, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(text, color = c.textSecondary, fontSize = 14.sp)
+                }
+            }
+            if (status == null || status.sections.isEmpty()) Text("Nothing on the status page yet.", color = c.textTertiary, fontSize = 13.sp)
+        }
+    }
 }
 
 // MARK: - Code project (iOS CodeProjectDetailView)
@@ -353,24 +515,11 @@ fun CodeProjectDetailScreen(initial: LibraryProject, store: ProjectsLibraryStore
         }
     }
     if (folderOpen) {
-        var path by remember { mutableStateOf(project.directory ?: "") }
-        var saving by remember { mutableStateOf(false) }
-        LibrarySheet(
-            "Choose a folder", "codeProjectFolderSheet", onDismiss = { folderOpen = false },
-            leading = LibrarySheetAction("Cancel") { folderOpen = false },
-            trailing = LibrarySheetAction(if (saving) "Saving…" else "Save", enabled = path.isNotBlank() && !saving, bold = true, testTag = "codeProjectFolderSave") {
-                saving = true
-                scope.launch {
-                    store.setDirectory(project, path.trim()).onSuccess { folderOpen = false }.onFailure { error = it.message }
-                    saving = false
-                }
-            },
-        ) {
-            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                LibraryField("Folder on your computer", path, "~/code/my-project", "codeProjectFolderPath") { path = it }
-                Text("Sessions in this project run in this folder on your computer.", color = c.textSecondary, fontSize = 13.sp)
-            }
-        }
+        // iOS ProjectFolderPickerSheet: browse the computer's folders (or type a full path).
+        ProjectFolderPickerSheet(project.title, nav.runtimeGet, onPick = { picked ->
+            folderOpen = false
+            scope.launch { store.setDirectory(project, picked.path).onFailure { error = it.message } }
+        }, onDismiss = { folderOpen = false })
     }
 }
 

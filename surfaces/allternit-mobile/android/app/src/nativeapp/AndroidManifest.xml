@@ -15,26 +15,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- TWA → native sign-in hand-off (feature/shell TwaHandoff.kt): the page at
-                 m.allternit.com/auth/android-handoff returns the sealed sign-in token to this
-                 App Link (priority 0 beats the TWA's catch-all m.allternit.com filter at -1),
-                 or to the custom scheme when the App Link is not verified (debug signing).
-                 The token opens only with this phone's Keystore key either way. -->
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="https"
-                    android:host="m.allternit.com"
-                    android:path="/auth/android-callback" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="allternit-auth" android:host="handoff" />
-            </intent-filter>
         </activity>
     </application>
 </manifest>

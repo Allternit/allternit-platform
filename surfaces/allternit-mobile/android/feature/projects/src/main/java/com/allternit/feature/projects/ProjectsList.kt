@@ -73,6 +73,7 @@ import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.feature.artifacts.LibraryIconButton
 import com.allternit.feature.artifacts.LibraryLayout
 import com.allternit.feature.artifacts.LibraryLayoutSwitch
+import com.allternit.feature.artifacts.LibraryNewButton
 import com.allternit.feature.artifacts.LibraryRowButton
 import com.allternit.feature.artifacts.LibrarySearchField
 import com.allternit.feature.artifacts.LibrarySheet
@@ -87,6 +88,8 @@ class ProjectsNav(
     val openSession: (sessionId: String, mode: String) -> Unit,
     /** The StageBackdrop the shell draws behind project screens (iOS project variant). */
     val backdrop: @Composable (scope: String) -> Unit,
+    /** A GET on the user's computer through the runtime relay (the folder picker's `v1/path`, `v1/file/tree`). */
+    val runtimeGet: RuntimeGet = { Result.failure(IllegalStateException("No computer")) },
 )
 
 private enum class ProjectSort(val label: String) { Recent("Recent"), Name("Name"), Created("Created") }
@@ -182,7 +185,7 @@ fun ProjectsListScreen(
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding().testTag("projectsList")) {
             LibraryHeader(
-                title = "Projects", onBack = null, leading = leading,
+                title = "Projects", onBack = null, leading = leading, glass = true,
                 trailing = {
                     LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search projects", "projectsSearch") { searching = !searching }
                     LibraryIconButton(DesignR.drawable.ph_sliders_horizontal, "Filter and layout", "projectsFilter") { filterOpen = true }
@@ -202,12 +205,14 @@ fun ProjectsListScreen(
                 verticalArrangement = Arrangement.spacedBy(if (layout == LibraryLayout.List) 8.dp else 12.dp),
             ) {
                 notice?.let { n -> item(key = "notice", span = full) { Text(n, color = AllternitStatic.StatusError, fontSize = 13.sp, modifier = Modifier.clickable { notice = null }) } }
-                if (store.failures.isNotEmpty()) item(key = "failures", span = full) {
-                    FriendlyState(FriendlyStyle.Offline, "Couldn't load everything", store.failures.joinToString("\n"), actionTitle = "Retry", onAction = ::reload, modifier = Modifier.testTag("projectsError")) {
-                        Icon(painterResource(DesignR.drawable.ph_warning), null, tint = c.textSecondary)
+                // iOS: small red inline lines, one per failed source, above the grey empty text.
+                if (store.noComputer) item(key = "nocomputer", span = full) {
+                    Text("No computer connected. Connect a computer or start Allternit Cloud to use this.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("projectsNoComputer"))
+                } else store.failures.forEachIndexed { i, f ->
+                    item(key = "failure$i", span = full) {
+                        Text(f, color = AllternitStatic.StatusError, fontSize = 13.sp, modifier = Modifier.clickable { reload() }.then(if (i == 0) Modifier.testTag("projectsError") else Modifier))
                     }
                 }
-                if (store.noComputer) item(key = "nocomputer", span = full) { Text("Files and runs need a computer", color = c.textSecondary, fontSize = 13.sp) }
                 when {
                     !signedIn -> item(key = "signedout", span = full) {
                         FriendlyState(FriendlyStyle.Empty, "Sign in to see your projects", "Projects are saved to your Allternit account.") {
@@ -215,8 +220,8 @@ fun ProjectsListScreen(
                         }
                     }
                     store.loading && store.projects.isEmpty() -> item(key = "loading", span = full) { LibrarySpinner("Loading projects") }
-                    store.loaded && store.projects.isEmpty() && store.failures.isEmpty() -> item(key = "empty", span = full) {
-                        Text("No projects yet. Create one to organize your chats, tasks, code workspaces and design canvases.", color = c.textSecondary, fontSize = 15.sp, modifier = Modifier.padding(vertical = 24.dp).testTag("projectsEmpty"))
+                    store.loaded && store.projects.isEmpty() -> item(key = "empty", span = full) {
+                        Text("No projects yet. Create one to organize your chats, tasks, code workspaces and design canvases.", color = c.textTertiary, fontSize = 13.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp, horizontal = 16.dp).testTag("projectsEmpty"))
                     }
                     store.loaded && visible.isEmpty() && store.projects.isNotEmpty() -> item(key = "noresults", span = full) {
                         Text("No projects match your search.", color = c.textSecondary, fontSize = 15.sp, modifier = Modifier.padding(vertical = 24.dp))
@@ -231,18 +236,13 @@ fun ProjectsListScreen(
             }
         }
         // iOS ProjectsNewButton: the floating "New project" capsule.
-        val view = LocalView.current
-        Text(
-            "New project", color = c.bgPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp)
-                .height(50.dp).clip(RoundedCornerShape(25.dp)).background(c.textPrimary).testTag("projectsNew")
-                .clickable(role = Role.Button) {
-                    Haptics.perform(view, Haptics.Kind.Tap)
-                    val prefs = context.getSharedPreferences("allternit_projects", Context.MODE_PRIVATE)
-                    if (!prefs.getBoolean(EXPLAINER_KEY, false)) explainerOpen = true else newOpen = true
-                }
-                .padding(horizontal = 24.dp, vertical = 14.dp),
-        )
+        LibraryNewButton(
+            "New project", "projectsNew",
+            Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp),
+        ) {
+            val prefs = context.getSharedPreferences("allternit_projects", Context.MODE_PRIVATE)
+            if (!prefs.getBoolean(EXPLAINER_KEY, false)) explainerOpen = true else newOpen = true
+        }
         if (explainerOpen) ProjectsExplainer {
             context.getSharedPreferences("allternit_projects", Context.MODE_PRIVATE).edit().putBoolean(EXPLAINER_KEY, true).apply()
             explainerOpen = false
