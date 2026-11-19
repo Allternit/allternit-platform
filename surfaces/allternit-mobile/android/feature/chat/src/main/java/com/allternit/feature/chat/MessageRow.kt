@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
@@ -68,6 +69,8 @@ internal class RowActions(
     val onConnect: (String) -> Unit,
     /** "Share link…" (ThreadShareSheet); null before the chat has a session. */
     val onShareLink: (() -> Unit)? = null,
+    /** Opens an artifact card on the artifact screens (wave D); null keeps the open-the-URL fallback. */
+    val onOpenArtifact: ((ArtifactRecord) -> Unit)? = null,
 )
 
 /**
@@ -201,7 +204,7 @@ internal fun MessageRow(
                     }
                 }
                 message.error?.let { ChatErrorCard(it, actions.onChooseModel) { actions.onRetry(message.id) } }
-                message.artifacts.forEach { a -> ArtifactChip(a) }
+                message.artifacts.forEach { a -> ArtifactChip(a, actions.onOpenArtifact) }
                 if (!isUser && !message.isStreaming && message.error == null && message.role == "assistant") {
                     MessageActionBar(message, isLastAssistant, actions.onRegenerate, actions.onShareLink)
                     message.perfStats?.let { p ->
@@ -247,18 +250,23 @@ private fun ThinkingBlock(text: String, streaming: Boolean) {
     }
 }
 
-/** A typed artifact card (iOS artifact rows): opens its URL when it has one. */
+/**
+ * A typed artifact card (iOS artifact rows). With [onOpen] it opens the artifact screens
+ * (iOS ArtifactDetailsView, the V2 viewer for `art_` ids); without it, its URL when it has one.
+ */
 @Composable
-private fun ArtifactChip(a: ArtifactRecord) {
+private fun ArtifactChip(a: ArtifactRecord, onOpen: ((ArtifactRecord) -> Unit)?) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val url = a.url?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+    val openable = onOpen != null || url != null
     Row(
         Modifier
             .width(250.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(c.fillNeutral)
-            .clickable(enabled = url != null, role = Role.Button) { url?.let { openUrl(context, it) } }
+            .testTag("chatArtifactCard${a.id}")
+            .clickable(enabled = openable, role = Role.Button) { if (onOpen != null) onOpen(a) else url?.let { openUrl(context, it) } }
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -266,9 +274,9 @@ private fun ArtifactChip(a: ArtifactRecord) {
         Icon(painterResource(R.drawable.chat_file), null, tint = c.textSecondary, modifier = Modifier.size(18.dp))
         Column(Modifier.weight(1f)) {
             Text(a.title, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(if (url != null) "Click to view" else a.kind, color = c.textSecondary, fontSize = 12.sp, maxLines = 1)
+            Text(if (openable) "Click to view" else a.kind, color = c.textSecondary, fontSize = 12.sp, maxLines = 1)
         }
-        if (url != null) Icon(painterResource(DesignR.drawable.ph_arrow_square_out), null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
+        if (openable) Icon(painterResource(DesignR.drawable.ph_arrow_square_out), null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
     }
 }
 

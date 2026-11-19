@@ -52,6 +52,14 @@ import com.allternit.core.design.R as DesignR
 import com.allternit.feature.chat.ChatBackends
 import com.allternit.feature.chat.ChatViewModel
 import com.allternit.feature.chat.SessionContext
+import com.allternit.feature.artifacts.ArtifactDetailsScreen
+import com.allternit.feature.artifacts.ArtifactsLibraryScreen
+import com.allternit.feature.projects.ProjectsListScreen
+import com.allternit.feature.projects.ProjectsNav
+import com.allternit.feature.shell.backdrop.BackdropScope
+import com.allternit.feature.shell.backdrop.BackdropSurface
+import com.allternit.feature.shell.backdrop.StageBackdrop
+import com.allternit.feature.shell.backdrop.StageBackdropStore
 import kotlinx.coroutines.launch
 
 internal enum class DrawerValue { Closed, Open }
@@ -64,6 +72,10 @@ private sealed interface ShellPage {
     data object Settings : ShellPage
     data object AllChats : ShellPage
     data object Search : ShellPage
+    /** Wave D: a chat card's artifact (iOS ArtifactDetailsView sheet from ChatView). */
+    data class Artifact(val record: com.allternit.feature.artifacts.ArtifactRecordInput, val back: ShellPage) : ShellPage
+    /** Wave D: Projects opened on one project (search, a link). */
+    data class Project(val projectId: String) : ShellPage
 }
 
 /**
@@ -192,6 +204,38 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         }
     }
 
+    // Wave D: what the Projects and Artifacts screens need from the shell.
+    val shellMenuButton: @Composable () -> Unit = {
+        PhoneMenuButton(mode = mode, hold = hold, holdEnabled = !drawerOpenNow(drawer), onOpen = { setDrawer(true) }, onPick = ::pickMode)
+    }
+    val projectsNav = remember {
+        ProjectsNav(
+            openSession = { id, sessionMode ->
+                if (sessionMode == "code" && mode != ShellMode.Code) {
+                    mode = ShellMode.Code
+                    ShellModePrefs.save(context, ShellMode.Code)
+                }
+                openSessionId(id)
+            },
+            backdrop = { scopeId -> ProjectBackdrop(scopeId) },
+        )
+    }
+    // The studio's Chat pane: the shell's one chat, on the studio's session (iOS ArtifactStudioView).
+    val studioChat: @Composable (String) -> Unit = { sid ->
+        LaunchedEffect(sid) { chat.loadSession(sid) }
+        ChatPage(
+            chat = chat,
+            backend = chatBackend,
+            store = store,
+            models = models,
+            menuButton = {},
+            onNewChat = { chat.startNewSession(); page = ShellPage.Home },
+            onDeleted = { page = ShellPage.Home },
+            onOpenSection = { row -> page = ShellPage.Section(row) },
+            onOpenSettings = { page = ShellPage.Settings },
+        )
+    }
+
     /** iOS newOptions: press and hold the New pill. */
     fun newOptions(): List<NewOption> {
         val quick = NewOption("quick-task", "Quick task", R.drawable.shell_bolt) { quickTaskOpen = true }
@@ -313,8 +357,39 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             onDeleted = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
                             onOpenSettings = { page = ShellPage.Settings },
+                            onOpenArtifact = { a ->
+                                page = ShellPage.Artifact(com.allternit.feature.artifacts.ArtifactRecordInput(a.id, a.kind, a.title, a.url, a.content), back = current)
+                            },
                         )
-                        is ShellPage.Section -> SectionStub(current.row, onBack = { page = ShellPage.Home })
+                        is ShellPage.Section -> when (current.row.id) {
+                            // Wave D: the Projects and Artifacts sections (iOS WorkspaceShell .projects / .artifacts).
+                            "projects" -> ProjectsListScreen(
+                                signedIn = account != null,
+                                leading = shellMenuButton,
+                                nav = projectsNav,
+                            )
+                            "artifacts-library" -> ArtifactsLibraryScreen(
+                                signedIn = account != null,
+                                leading = shellMenuButton,
+                                studioChat = studioChat,
+                                onOpenChat = ::openSessionId,
+                                onConnectors = { page = ShellPage.Section(RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected)) },
+                                onSignIn = { page = ShellPage.Settings },
+                            )
+                            else -> SectionStub(current.row, onBack = { page = ShellPage.Home })
+                        }
+                        is ShellPage.Project -> ProjectsListScreen(
+                            signedIn = account != null,
+                            leading = shellMenuButton,
+                            nav = projectsNav,
+                            initialProjectId = current.projectId,
+                        )
+                        is ShellPage.Artifact -> ArtifactDetailsScreen(
+                            record = current.record,
+                            onClose = { page = current.back },
+                            onOpenChat = ::openSessionId,
+                            onSignIn = { page = ShellPage.Settings },
+                        )
                         ShellPage.Settings -> SettingsScreen(account, onBack = { page = ShellPage.Home })
                         ShellPage.AllChats -> SessionOverviewScreen(
                             mode = mode,
@@ -335,7 +410,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             signedIn = account != null,
                             onBack = { page = ShellPage.Home },
                             onOpenSession = { openInItsMode(it) },
-                            onOpenProject = { page = ShellPage.Section(RailRow("projects", "Projects", R.drawable.shell_folder)) },
+                            onOpenProject = { entry -> page = ShellPage.Project(entry.id) },
                             onOpenBot = { page = ShellPage.Section(RailRow("bots", "Your bots", DesignR.drawable.ph_cpu)) },
                         )
                     }
@@ -485,4 +560,18 @@ private fun launchSection(tab: String): RailRow? {
             "connectors" -> RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected)
             else -> null
         }
+}
+
+private fun drawerOpenNow(drawer: AnchoredDraggableState<DrawerValue>): Boolean = drawer.settledValue == DrawerValue.Open
+
+/**
+ * The StageBackdrop behind a project screen (iOS ProjectDetailView: the project's own look, else
+ * the Settings default for bot project homes; "plain" draws nothing over the page colour).
+ */
+@Composable
+private fun ProjectBackdrop(scopeId: String) {
+    val context = LocalContext.current
+    val backdrops = remember(context) { StageBackdropStore.get(context) }
+    val variant = backdrops.variantFor(BackdropSurface.Project, BackdropScope.project(scopeId))
+    if (variant != "plain") StageBackdrop(variant = variant, modifier = Modifier.fillMaxSize())
 }

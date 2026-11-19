@@ -102,6 +102,9 @@ internal class BackdropScope private constructor(val raw: String) {
         fun bot(id: String) = BackdropScope("bot:$id")
         fun group(id: String) = BackdropScope("group:$id")
 
+        /** A project home keeps its own look (iOS StageBackdrops scope for `.project`). */
+        fun project(id: String) = BackdropScope("project:$id")
+
         /** Code mode keeps one look per workspace. */
         fun code(workspaceId: String?) = BackdropScope("code:${workspaceId?.takeIf { it.isNotEmpty() } ?: "default"}")
     }

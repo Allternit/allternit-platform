@@ -68,6 +68,8 @@ class ChatCallbacks(
     val onConnectConnector: (String) -> Unit,
     /** "Share link…" from a reply's Share menu (the host opens ThreadShareSheet). */
     val onShareLink: () -> Unit = {},
+    /** Tapping an artifact card (wave D: the shell opens ArtifactDetailsScreen / the V2 viewer). */
+    val onOpenArtifact: ((ArtifactRecord) -> Unit)? = null,
 )
 
 /** Builds the chat's backend on the shell's shared OkHttp client and API. */
@@ -120,6 +122,7 @@ fun ChatScreen(
             onOpenSettings = callbacks.onOpenSettings,
             onConnect = callbacks.onConnectConnector,
             onShareLink = if (hasSession) callbacks.onShareLink else null,
+            onOpenArtifact = callbacks.onOpenArtifact,
         )
     }
 

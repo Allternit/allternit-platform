@@ -56,6 +56,8 @@ internal fun ChatPage(
     onDeleted: () -> Unit,
     onOpenSection: (RailRow) -> Unit,
     onOpenSettings: () -> Unit,
+    /** Wave D: an artifact card opens the artifact screens. */
+    onOpenArtifact: ((com.allternit.feature.chat.ArtifactRecord) -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     var editingId by remember { mutableStateOf<String?>(null) }
@@ -83,6 +85,7 @@ internal fun ChatPage(
             onOpenSettings = onOpenSettings,
             onConnectConnector = { onOpenSection(RailRow("connectors", "Connectors", R.drawable.shell_bolt)) },
             onShareLink = { shareOpen = true },
+            onOpenArtifact = onOpenArtifact,
         )
     }
 

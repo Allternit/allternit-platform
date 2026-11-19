@@ -61,16 +61,16 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: artifacts | — | src/fabric-session/phone/phone-nav.ts (PhoneSection artifacts) | — | todo | — |
-| ArtifactDetailsView | ios/Features/Artifacts/Views/ArtifactDetailsView.swift | — | — | todo | — |
-| ArtifactLiveWebView | ios/Features/Artifacts/Views/ArtifactLiveWebView.swift | — | — | todo | — |
-| ArtifactPageWebView | ios/Features/Artifacts/Views/ArtifactPageWebView.swift | — | — | todo | — |
-| ArtifactsLibraryView | ios/Features/Artifacts/Views/ArtifactsLibraryView.swift | — | — | todo | — |
-| ArtifactStudioView | ios/Features/Artifacts/Views/ArtifactStudioView.swift | — | — | todo | — |
-| PDFTemplateSheet | ios/Features/Artifacts/Views/PDFTemplateSheet.swift | — | — | todo | — |
-| SandboxedArtifactWebView | ios/Features/Artifacts/Views/SandboxedArtifactWebView.swift | — | — | todo | — |
-| V2ArtifactEditorView | ios/Features/Artifacts/Views/V2ArtifactEditorView.swift | — | — | todo | — |
-| V2ArtifactView | ios/Features/Artifacts/Views/V2ArtifactView.swift | — | — | todo | — |
+| section: artifacts | — | src/fabric-session/phone/phone-nav.ts (PhoneSection artifacts) | feature/shell/WorkspaceShell.kt (Section artifacts-library) | built (#WAVE_D) | — |
+| ArtifactDetailsView | ios/Features/Artifacts/Views/ArtifactDetailsView.swift | — | feature/artifacts/ArtifactSheets.kt (ArtifactDetailsScreen) | built (#WAVE_D: Preview / Code, Share, Open in browser, Copy; art_ ids open the V2 viewer) | — |
+| ArtifactLiveWebView | ios/Features/Artifacts/Views/ArtifactLiveWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (ArtifactLiveWebView) | built (#WAVE_D: app pages only, Clerk + editor + download bridge answer only the web origin's main frame via androidx.webkit; one storage per app on Android) | — |
+| ArtifactPageWebView | ios/Features/Artifacts/Views/ArtifactPageWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (ArtifactPageWebView) | built (#WAVE_D: tapped links open outside; later main-frame navigations refused) | — |
+| ArtifactsLibraryView | ios/Features/Artifacts/Views/ArtifactsLibraryView.swift | — | feature/artifacts/ArtifactsLibrary.kt | built (#WAVE_D: List / Grid / Deck, filters, studio tiles, archive / delete; cards preview text kinds only, no image / PDF / poster thumbnails; no Upload menu) | — |
+| ArtifactStudioView | ios/Features/Artifacts/Views/ArtifactStudioView.swift | — | feature/artifacts/ArtifactStudio.kt | built (#WAVE_D: Chat / Edit panes; standing instructions are kept but not yet sent per turn: Android chat has no systemPrompt field) | — |
+| PDFTemplateSheet | ios/Features/Artifacts/Views/PDFTemplateSheet.swift | — | feature/artifacts/ArtifactSheets.kt (PDFTemplateSheet) + assets/pdf-templates.js | built (#WAVE_D: same layout JS in an offscreen WebView; Android print dialog saves the PDF) | — |
+| SandboxedArtifactWebView | ios/Features/Artifacts/Views/SandboxedArtifactWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (SandboxedArtifactWebView) | built (#WAVE_D: deny-all CSP + base-uri/form-action, every navigation and sub-request refused, no DOM storage) | — |
+| V2ArtifactEditorView | ios/Features/Artifacts/Views/V2ArtifactEditorView.swift | — | feature/artifacts/V2ArtifactEditor.kt | built (#WAVE_D: markdown, doc blocks, sheet rows, simple slides; tabbed docs, table cells and block decks read-only) | — |
+| V2ArtifactView | ios/Features/Artifacts/Views/V2ArtifactView.swift | — | feature/artifacts/V2Artifact.kt | built (#WAVE_D: render by kind, comments, share link, export; PDF and video use the web viewer, no Sign this PDF, no share panel invites) | — |
 
 ## Automation
 
@@ -268,17 +268,17 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: projects | — | src/fabric-session/phone/phone-nav.ts (PhoneSection projects) | — | todo | — |
-| ProjectsScreen | — | src/fabric-session/phone/screens/ProjectsScreen.tsx | — | todo | — |
-| CodeProjectDetailView | ios/Features/Projects/Views/CodeProjectDetailView.swift | — | — | todo | — |
-| DesignProjectCanvasView | ios/Features/Projects/Views/DesignProjectCanvasView.swift | — | — | todo | — |
-| FolderCoverView | ios/Features/Projects/Views/FolderCoverView.swift | — | — | todo | — |
-| FolderLookSheet | ios/Features/Projects/Views/FolderLookSheet.swift | — | — | todo | — |
-| NewProjectSheet | ios/Features/Projects/Views/NewProjectSheet.swift | — | — | todo | — |
-| PadEditSheet | ios/Features/Projects/Views/PadEditSheet.swift | — | — | todo | — |
-| ProjectDetailView | ios/Features/Projects/Views/ProjectDetailView.swift | — | — | todo | — |
-| ProjectPadView | ios/Features/Projects/Views/ProjectPadView.swift | — | — | todo | — |
-| ProjectsListView | ios/Features/Projects/Views/ProjectsListView.swift | — | — | todo | — |
+| section: projects | — | src/fabric-session/phone/phone-nav.ts (PhoneSection projects) | feature/shell/WorkspaceShell.kt (Section projects) | built (#WAVE_D) | — |
+| ProjectsScreen | — | src/fabric-session/phone/screens/ProjectsScreen.tsx | feature/projects/ProjectsList.kt (ProjectsListScreen) | built (#WAVE_D) | — |
+| CodeProjectDetailView | ios/Features/Projects/Views/CodeProjectDetailView.swift | — | feature/projects/ProjectDetail.kt (CodeProjectDetailScreen) | built (#WAVE_D: folder is typed, no computer folder browser) | — |
+| DesignProjectCanvasView | ios/Features/Projects/Views/DesignProjectCanvasView.swift | — | feature/projects/ProjectDetail.kt (DesignProjectCanvasScreen) | built (#WAVE_D: Close does not flush a pending canvas save first) | — |
+| FolderCoverView | ios/Features/Projects/Views/FolderCoverView.swift | — | feature/projects/FolderCover.kt (FolderCover) | built (#WAVE_D: symbols drawn as glyphs, not SF Symbols) | — |
+| FolderLookSheet | ios/Features/Projects/Views/FolderLookSheet.swift | — | feature/projects/FolderCover.kt (FolderLookSheet) | built (#WAVE_D: colour swatches instead of the system colour picker) | — |
+| NewProjectSheet | ios/Features/Projects/Views/NewProjectSheet.swift | — | feature/projects/ProjectsList.kt (NewProjectSheet) | built (#WAVE_D: bot projects save to the account; NewBotSheet comes with wave E) | — |
+| PadEditSheet | ios/Features/Projects/Views/PadEditSheet.swift | — | feature/projects/ProjectPad.kt (PadEditSheet) | built (#WAVE_D: move up / down buttons for reorder; no saved account templates yet) | — |
+| ProjectDetailView | ios/Features/Projects/Views/ProjectDetailView.swift | — | feature/projects/ProjectDetail.kt (ProjectDetailScreen) | built (#WAVE_D: Overview / Board / Details; no Delegate coordinator chat, memory or Add files yet) | — |
+| ProjectPadView | ios/Features/Projects/Views/ProjectPadView.swift | — | feature/projects/ProjectPad.kt (ProjectPadCard) | built (#WAVE_D: Style tiles show a plain summary, not the full ProjectDashboard) | — |
+| ProjectsListView | ios/Features/Projects/Views/ProjectsListView.swift | — | feature/projects/ProjectsList.kt (ProjectsListScreen) | built (#WAVE_D: bot projects open the project detail until wave E's bot project page) | — |
 
 ## RunTree
 
