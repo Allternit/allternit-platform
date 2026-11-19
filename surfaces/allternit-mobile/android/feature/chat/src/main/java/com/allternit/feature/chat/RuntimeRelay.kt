@@ -78,6 +78,15 @@ class RuntimeRelay(private val okHttp: OkHttpClient, private val config: ApiConf
         pick(now)?.let { RelayPick.Computer(it) } ?: RelayPick.Unreachable
     }
 
+    /** The device list for the Connect a computer sheet (forces a refresh). Null when it can't be read. */
+    suspend fun listDevices(): List<RelayDevice>? {
+        resolve(force = true)
+        return if (lastError != null && devices.isEmpty()) null else devices
+    }
+
+    /** The computer relayed calls go to right now (no refresh). */
+    val activeRuntimeId: String? get() = pick(System.currentTimeMillis())
+
     private suspend fun refresh() {
         val url = config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/runtime-devices").build()
         when (val r = ApiCall.execute(okHttp, ApiJson.default, ApiCall.request("GET", url, null), JsonObject.serializer())) {

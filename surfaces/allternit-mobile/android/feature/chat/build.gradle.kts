@@ -41,5 +41,7 @@ dependencies {
     implementation(project(":core:stream"))
     // AllternitAuth.tokenProvider for the instance and upload calls.
     implementation(project(":core:auth"))
+    // rememberLauncherForActivityResult (save a run_code file where the person picks).
+    implementation(libs.activity.compose)
     testImplementation(libs.junit)
 }
