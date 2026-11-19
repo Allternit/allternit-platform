@@ -93,6 +93,8 @@ class PtySession(private val backend: ChatBackend, private val scope: CoroutineS
     private var closed = false
     private val main = Handler(Looper.getMainLooper())
 
+    init { screen.onReply = { send(it) } }
+
     fun start(title: String?) {
         scope.launch {
             when (val r = CodeApi.createPty(backend, title)) {
@@ -343,7 +345,7 @@ private fun ShellPane(session: PtySession, onConnect: () -> Unit, modifier: Modi
                     CodePill("Reconnect", testTag = "codeTerminalReconnect", onClick = session::retry)
                 }
             }
-            KeyBar(onSend = session::send)
+            KeyBar(screen = session.screen, onSend = session::send)
         }
     }
 }
@@ -376,7 +378,7 @@ private fun BotPane(store: CodeTerminalStore, bot: TerminalBot, modifier: Modifi
             }
             else -> {
                 TerminalSurface(mirror.screen, mirror.version, Modifier.weight(1f)) { cols, rows -> mirror.screen.resize(cols, rows) }
-                KeyBar(onSend = mirror::send)
+                KeyBar(screen = mirror.screen, onSend = mirror::send)
             }
         }
     }
@@ -405,7 +407,7 @@ private fun TerminalSurface(screen: VtScreen, version: Int, modifier: Modifier, 
 
 /** The key bar: Esc, Tab, a Ctrl latch, arrows and an input field that types straight into the shell. */
 @Composable
-private fun KeyBar(onSend: (String) -> Unit) {
+private fun KeyBar(screen: VtScreen, onSend: (String) -> Unit) {
     var ctrl by remember { mutableStateOf(false) }
     var field by remember { mutableStateOf("") }
     fun out(s: String) {
@@ -421,10 +423,14 @@ private fun KeyBar(onSend: (String) -> Unit) {
             KeyButton("Tab") { onSend("\t") }
             KeyButton("Ctrl", pressed = ctrl) { ctrl = !ctrl }
             KeyButton("^C") { onSend("\u0003") }
-            KeyButton("↑") { onSend("\u001b[A") }
-            KeyButton("↓") { onSend("\u001b[B") }
-            KeyButton("←") { onSend("\u001b[D") }
-            KeyButton("→") { onSend("\u001b[C") }
+            // Full-screen apps (vim, htop) switch the arrows to application mode (ESC O x).
+            val arrow = { c: Char -> if (screen.appCursor) "\u001bO$c" else "\u001b[$c" }
+            KeyButton("↑") { onSend(arrow('A')) }
+            KeyButton("↓") { onSend(arrow('B')) }
+            KeyButton("←") { onSend(arrow('D')) }
+            KeyButton("→") { onSend(arrow('C')) }
+            KeyButton("PgUp") { onSend("\u001b[5~") }
+            KeyButton("PgDn") { onSend("\u001b[6~") }
             KeyButton("⌫") { onSend("\u007f") }
             KeyButton("|") { onSend("|") }
             KeyButton("/") { onSend("/") }

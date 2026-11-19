@@ -86,6 +86,8 @@ sealed interface CodeRoute {
     data class Ports(val ptyId: String) : CodeRoute
     data object Overview : CodeRoute
     data object Computer : CodeRoute
+    data object Usage : CodeRoute
+    data object Scheduled : CodeRoute
     data class Permissions(val sessionId: String) : CodeRoute
 }
 
@@ -155,6 +157,8 @@ fun CodeRouteScreen(host: CodeHost, store: CodeStore, route: CodeRoute, onRoute:
         is CodeRoute.Ports -> DevServerPortsScreen(host.backend, route.ptyId, onBack = { onRoute(CodeRoute.Terminal) })
         CodeRoute.Overview -> CodeOverviewScreen(host, onBack = onClose, onOpen = { host.openSession(it); onClose() })
         CodeRoute.Computer -> CodeComputerScreen(host, onBack = onClose)
+        CodeRoute.Usage -> CodeUsageScreen(host, onBack = onClose)
+        CodeRoute.Scheduled -> CodeScheduledScreen(host, onBack = onClose)
         is CodeRoute.Permissions -> PermissionsScreen(host.backend, route.sessionId, onBack = onClose)
     }
 }
@@ -317,6 +321,8 @@ fun CodeThreadTools(host: CodeHost, sessionId: String?, onRoute: (CodeRoute) -> 
                 CodeRow("Files", "Browse and edit the working folder", "codeTool-files") { go(CodeRoute.Files) }
                 CodeRow("Terminal", "Shell and Terminal bots", "codeTool-terminal") { go(CodeRoute.Terminal) }
                 CodeRow("All threads", "Filters, rename, archive", "codeTool-overview") { go(CodeRoute.Overview) }
+                CodeRow("Scheduled", "Routines on your computer", "codeTool-scheduled") { go(CodeRoute.Scheduled) }
+                CodeRow("Usage", "Your Code activity", "codeTool-usage") { go(CodeRoute.Usage) }
                 CodeRow("Computer", "Where Code runs", "codeTool-computer") { go(CodeRoute.Computer) }
             }
         }

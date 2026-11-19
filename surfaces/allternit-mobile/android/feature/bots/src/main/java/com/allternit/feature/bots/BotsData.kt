@@ -474,6 +474,11 @@ object BotsApi {
         j.listUnder("computers").mapNotNull { o -> ComputerRow(o.str("id") ?: return@mapNotNull null, o.str("kind") ?: "managed", o.str("status") ?: "unknown", o.str("name") ?: "Computer", o.str("bot_id")) }
     }
 
+    /** Every computer on the account (iOS BotModeClient.listComputers), for the Office floor's Compute Row. */
+    suspend fun listAllComputers(): BotsResult<List<ComputerRow>> = get("computers", "load computers") { j ->
+        j.listUnder("computers").mapNotNull { o -> ComputerRow(o.str("id") ?: return@mapNotNull null, o.str("kind") ?: "managed", o.str("status") ?: "unknown", o.str("name") ?: "Computer", o.str("bot_id")) }
+    }
+
     suspend fun listWebhooks(): BotsResult<List<WebhookSubscription>> = get("beta/webhooks", "load webhooks") { j ->
         j.listUnder("subscriptions").mapNotNull { o ->
             WebhookSubscription(o.str("id") ?: return@mapNotNull null, o.str("url").orEmpty(),

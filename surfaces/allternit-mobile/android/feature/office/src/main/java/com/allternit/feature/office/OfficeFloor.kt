@@ -72,7 +72,15 @@ private const val FACILITY_ORIGIN = "https://3dfacility.allternit.com"
 private const val HOST_ORIGIN = "https://ai.allternit.com"
 
 /** The live roster in the facility's `allternit:workspace` shape (iOS feedJSON, web workspace-feed.ts parseBots). */
-internal fun workspaceFeed(entries: List<BotFloorEntry>, projects: List<com.allternit.feature.bots.BotFloorProject>, signedIn: Boolean): String {
+/** Computers for the facility (web toWorkspaceComputers): name and state only, running first, at most 12. */
+internal fun workspaceComputers(list: List<com.allternit.feature.bots.ComputerRow>): List<Triple<String, String, String>> {
+    fun state(s: String): String? = when (s) { "running", "stopped", "error" -> s; "creating" -> "starting"; else -> null }
+    val kept = list.filter { it.id.isNotEmpty() && it.name.isNotEmpty() && state(it.status) != null }
+    // A stable sort keeps the server's order inside each group.
+    return kept.sortedByDescending { it.isRunning }.take(12).map { Triple(it.id, it.name, state(it.status)!!) }
+}
+
+internal fun workspaceFeed(entries: List<BotFloorEntry>, projects: List<com.allternit.feature.bots.BotFloorProject>, signedIn: Boolean, computers: List<Triple<String, String, String>> = emptyList()): String {
     val obj = buildJsonObject {
         put("type", "allternit:workspace")
         put("bots", buildJsonArray {
@@ -89,6 +97,9 @@ internal fun workspaceFeed(entries: List<BotFloorEntry>, projects: List<com.allt
         })
         if (signedIn && projects.isNotEmpty()) {
             put("projects", buildJsonArray { projects.forEach { p -> add(buildJsonObject { put("id", p.id); put("name", p.name); put("updatedAt", p.updatedAt) }) } })
+        }
+        if (signedIn && computers.isNotEmpty()) {
+            put("computers", buildJsonArray { computers.forEach { (id, name, status) -> add(buildJsonObject { put("id", id); put("name", name); put("status", status) }) } })
         }
     }
     return obj.toString()
@@ -149,7 +160,8 @@ private class OfficePanelThread(private val store: BotModeStore, private val bac
             while (waited < 50 && chat.messages.isEmpty() && chat.transientError == null) { delay(100); waited++ }
             if (chat.isStreaming || chat.isCreatingSession || chat.currentSessionId == null) { if (botId == id) sendError = "Couldn't send. Try again."; return@launch }
             sendError = null
-            chat.send(ChatSendRequest(text = text))
+            val (modelId, effort) = OfficeFeature.selectedModel()
+            chat.send(ChatSendRequest(text = text, runtimeModelId = modelId, effort = effort))
         }
     }
 
@@ -227,13 +239,21 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
         if (store.projects.isEmpty()) store.refreshProjects()
         while (true) { store.refreshThreads(); delay(15_000) }
     }
+    var computers by remember { mutableStateOf<List<Triple<String, String, String>>>(emptyList()) }
+    LaunchedEffect(userId) {
+        if (userId == null) return@LaunchedEffect
+        while (true) {
+            (com.allternit.feature.bots.BotsApi.listAllComputers() as? com.allternit.feature.bots.BotsResult.Ok)?.let { computers = workspaceComputers(it.value) }
+            delay(15_000)
+        }
+    }
     // A cold 3D load on a slow phone can take a while (web: 25 s).
     LaunchedEffect(attempt) { delay(25_000); if (!ready) failed = true }
     // Push the roster whenever it changes, once the frame is up.
     LaunchedEffect(frameReady, attempt) {
         if (!frameReady) return@LaunchedEffect
         var last: String? = null
-        snapshotFlow { workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null) }.collectLatest { feed ->
+        snapshotFlow { workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null, computers) }.collectLatest { feed ->
             if (feed != last) { last = feed; webRef[0]?.evaluateJavascript("window.feed($feed)", null) }
         }
     }
@@ -280,7 +300,7 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
                                             evaluateJavascript("window.feed({type:'allternit:facility:init',version:1,visitor:$visitor})", null)
                                             frameReady = true
                                             ready = true
-                                            evaluateJavascript("window.feed(${workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null)})", null)
+                                            evaluateJavascript("window.feed(${workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null, computers)})", null)
                                         }
                                         "action" -> {
                                             val id = str("botId")

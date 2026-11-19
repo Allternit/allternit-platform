@@ -82,6 +82,7 @@ fun AutomationRoot(host: AutomationHost) {
     var creating by remember { mutableStateOf(false) }
     var slotCron by remember { mutableStateOf<String?>(null) }
     var local by remember { mutableStateOf(false) }
+    var hbAgent by remember { mutableStateOf<String?>(null) }
     var refreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(store, host.signedIn) { if (host.signedIn) store.load() }
@@ -121,6 +122,7 @@ fun AutomationRoot(host: AutomationHost) {
                         store.loading && !store.loaded -> Loading()
                         store.noComputer -> NoComputerState { scope.launch { store.load() } }
                         store.error != null && store.tasks.isEmpty() -> ErrorState("Couldn't load your automations", store.error.orEmpty(), { scope.launch { store.load() } })
+                        tab == TaskTab.Heartbeats && view == RoutinesView.List -> HeartbeatsTab(store, hbAgent) { hbAgent = it }
                         view == RoutinesView.Graph && tab != TaskTab.Goals -> AutomationGraph(store, shown.filter { it.type != TaskType.Goal }, tab == TaskTab.All, onOpen = { selected = it })
                         view == RoutinesView.Calendar && tab != TaskTab.Goals -> AutomationCalendar(store, shown.filter { it.type != TaskType.Goal }, onOpen = { selected = it }, onNewAt = { cron -> slotCron = cron; creating = true })
                         shown.isEmpty() -> EmptyState(
