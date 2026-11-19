@@ -146,7 +146,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | RunCodeFilesView | ios/Features/Chat/Views/RunCodeFilesView.swift | — | feature/chat/ChatCards.kt (RunCodeFilesView, UploadFileCard) | built (#2614) | — |
 | SettingsChangeCardView | ios/Features/Chat/Views/SettingsChangeCardView.swift | — | feature/chat/ChatCards.kt (SettingsChangeCard) | built (#2614: status + Open Settings; Apply/Undo on this phone with wave G) | — |
 | SketchSheet | ios/Features/Chat/Views/SketchSheet.swift | — | feature/shell/SketchSheet.kt (from PlusSheet.kt) | built (#2614) | — |
-| ThinkingSliderView | ios/Features/Chat/Views/ThinkingSliderView.swift | — | — | todo | — |
+| ThinkingSliderView | ios/Features/Chat/Views/ThinkingSliderView.swift | — | feature/shell/ThinkingSlider.kt | built (#2626) | — |
 | ThreadShareSheet | ios/Features/Chat/Views/ThreadShareSheet.swift | — | feature/chat/ThreadShare.kt (chat ⋯ menu, reply Share menu) | built (#2614) | — |
 | VoiceCaptionsView | ios/Features/Chat/Views/Voice/VoiceCaptionsView.swift | — | — | todo | — |
 | VoiceModeView | ios/Features/Chat/Views/Voice/VoiceModeView.swift | — | — | todo | — |
@@ -353,14 +353,14 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | mode: bots | — | src/fabric-session/phone/phone-nav.ts (PhoneMode bots) | — | todo | — |
 | mode: code | — | src/fabric-session/phone/phone-nav.ts (PhoneMode code) | — | todo | — |
 | mode: home | — | src/fabric-session/phone/phone-nav.ts (PhoneMode home) | — | todo | — |
-| StageBackdropView | ios/Features/Shell/Backdrop/StageBackdropView.swift | — | — | todo | — |
-| InboxSheet | ios/Features/Shell/InboxSheet.swift | — | — | todo | — |
+| StageBackdropView | ios/Features/Shell/Backdrop/StageBackdropView.swift | — | feature/shell/backdrop/StageBackdrop.kt (drawn from waves D–F: iOS draws it only on bot, group, project and Code screens, and in the drawer while one of those publishes it) | built (#2626) | — |
+| InboxSheet | ios/Features/Shell/InboxSheet.swift | — | feature/shell/Inbox.kt | built (#2626) | — |
 | ModeDialView | ios/Features/Shell/ModeDialView.swift | — | — | todo | — |
-| NativeSessionPickerSheet | ios/Features/Shell/NativeSessionPickerSheet.swift | — | — | todo | — |
+| NativeSessionPickerSheet | ios/Features/Shell/NativeSessionPickerSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |
 | PhonesSheet | ios/Features/Shell/PhonesSheet.swift | — | — | todo | — |
-| QuickTaskSheet | ios/Features/Shell/QuickTaskSheet.swift | — | — | todo | — |
-| SessionOverviewView | ios/Features/Shell/SessionOverviewView.swift | src/fabric-session/phone/screens/PhoneOverviewOverlay.tsx | — | todo | — |
-| ShellSearchView | ios/Features/Shell/ShellSearchView.swift | src/fabric-session/phone/screens/PhoneSearchOverlay.tsx | — | todo | — |
+| QuickTaskSheet | ios/Features/Shell/QuickTaskSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |
+| SessionOverviewView | ios/Features/Shell/SessionOverviewView.swift | src/fabric-session/phone/screens/PhoneOverviewOverlay.tsx | feature/shell/SessionOverview.kt | built (#2626) | — |
+| ShellSearchView | ios/Features/Shell/ShellSearchView.swift | src/fabric-session/phone/screens/PhoneSearchOverlay.tsx | feature/shell/ShellSearch.kt | built (#2626) | — |
 
 ## Unmatched web
 

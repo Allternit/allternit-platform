@@ -339,7 +339,7 @@ private fun ModelRow(m: PickerModel, models: ModelStore) {
                 if (m.isDefault) RowBadge("Default")
             }
             Text(rowSubtitle(m), color = c.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            m.thinking?.let { t -> RowBadge(t.term ?: "Thinking") }
+            m.thinking?.let { t -> RowBadge("${t.termOrDefault} · ${t.levels.size}") }
         }
         if (selectedRow) Icon(painterResource(DesignR.drawable.ph_check), contentDescription = null, tint = c.accentPrimary, modifier = Modifier.size(15.dp))
         Box(
@@ -400,24 +400,8 @@ private fun CurrentModel(m: PickerModel, models: ModelStore) {
                 modifier = Modifier.fillMaxWidth().border(1.dp, c.borderSubtle, RoundedCornerShape(14.dp)).padding(12.dp),
             )
         } else {
-            val level = models.level(m)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                thinking.levels.forEach { l ->
-                    val on = l.id == level
-                    Text(
-                        l.label,
-                        color = if (on) c.onAccent else c.textPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(if (on) c.accentPrimary else c.fillNeutral)
-                            .clickable(role = Role.RadioButton) { models.chooseEffort(l.id) }
-                            .semantics { selected = on }
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                }
-            }
+            // The block-grid slider (iOS ThinkingSliderView): its level is the effort the chat sends.
+            ThinkingSlider(thinking = thinking, value = models.level(m) ?: thinking.default) { models.chooseEffort(it) }
         }
     }
 }

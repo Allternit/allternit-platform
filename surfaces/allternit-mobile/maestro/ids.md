@@ -87,6 +87,25 @@ without an identifier; iOS should take the same id when a flow needs it.
 | `setup-splash`, `setup-checklist`, `setup-checklist-continue`, `setup-open-allternit` | none | `android/feature/shell/.../firstrun/FirstRunGate.kt`, `ConnectedScreen.kt` |
 | `meet-your-bots`, `meet-build-team`, `meet-skip-for-now`, `meet-template-<templateId>`, `meet-main-name`, `meet-job-text`, `meet-start-job`, `meet-done` | none (iOS MeetYourBotsView sets no ids) | `android/feature/shell/.../firstrun/MeetYourBotsScreen.kt` |
 
+## Shell rest ids (wave C, no flow uses them yet)
+
+| id | iOS file that sets it | Android |
+| --- | --- | --- |
+| `quickTaskInput`, `quickTaskStart`, `quickTaskOpen` | `ios/Features/Shell/QuickTaskSheet.swift` | `android/feature/shell/.../StartSheets.kt` |
+| `shellSearchField` | `ios/Features/Shell/ShellSearchView.swift` | `android/feature/shell/.../ShellSearch.kt` |
+| `phoneOverview`, `recentsOptions`, `overviewLayout`, `overviewSelectBar` | `ios/Features/Shell/SessionOverviewView.swift` | `android/feature/shell/.../SessionOverview.kt` |
+| `drawerNewPill` (hold for `drawerNew<optionId>`: `continue-cli`, `scheduled`, `quick-task`) | `ios/Features/History/Views/HistorySidebarView.swift` (drawerNewPill) | `android/feature/shell/.../ShellDrawer.kt` |
+| `inboxSheet`, `inboxDone`, `inboxList`, `inboxEmpty`, `inboxRow<id>`, `inboxPrimary<id>`, `inboxDeny<id>`, `inboxSwipePrimary<id>`, `inboxSnooze<id>`, `inboxDismiss<id>`, `inboxReview`, `inboxReviewDone`, `inboxReviewApprove`, `inboxReviewDeny`, `inboxReviewRetry`, `drawerInboxCount` | none (iOS InboxSheet sets no ids) | `android/feature/shell/.../Inbox.kt`, `ShellDrawer.kt` |
+| `quickTaskSheet`, `quickTaskClose`, `quickTaskStatus`, `nativeSessionPicker`, `nativeSessionCancel`, `nativeSessionSearch`, `nativeHarness<id>`, `nativeSession<harness:id>` | none | `android/feature/shell/.../StartSheets.kt` |
+| `overviewLayout<list\|grid\|deck>`, `overviewSelect`, `overviewView<All\|Pinned\|Archived>`, `overviewRow<id>`, `overviewCard<id>`, `overviewRename`, `overviewSearch`, `overviewNew`, `overviewEmpty`, `overviewDeleteConfirm`, `overviewFilter`, `overviewGroupAll`, `overviewTeleport` | none | `android/feature/shell/.../SessionOverview.kt` |
+| `shellSearch`, `shellSearchClose`, `shellSearchEmpty`, `searchSession<id>`, `searchProject<id>`, `searchBot<id>` | none | `android/feature/shell/.../ShellSearch.kt` |
+| `thinkingSlider`, `thinkingLevel<levelId>` | none | `android/feature/shell/.../ThinkingSlider.kt` |
+
+Launch arguments: the iOS flows pass `skip-auth`, `sidebar` and `-open-tab <id>` as launch arguments.
+Android debug builds read the same keys as intent extras (Maestro's `launchApp: arguments:`), with
+leading dashes stripped and string or boolean values: `skip-auth`, `open-tab`, `sidebar`,
+`shell-mode`, `open-inbox`, `open-quick-task`, `open-continue-cli`. Release builds ignore them.
+
 Notes:
 
 - Ids ending in a dynamic suffix (`modeFanCard<mode>`, `drawerRow<railId>`, `automationTab<tab>`)

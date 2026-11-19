@@ -169,6 +169,81 @@ class ChatBackend(
     suspend fun rejectQuestion(id: String): ApiResult<Unit> =
         ApiCall.executeUnit(okHttp, json, ApiCall.request("POST", v1("questions", id, "reject"), "{}"))
 
+    // MARK: Runtime REST (allternit-api on the user's computer)
+
+    /**
+     * One JSON call to a route that lives on the user's computer (iOS
+     * InstanceConnection.runtimeAPIData + RuntimeRelayClient.send): the request rides the relay
+     * envelope to the picked computer, and the relay's response IS the computer's response.
+     * [path] is the runtime path with its query, e.g. `/api/v1/inbox?scope=needs_you`.
+     * 503 `runtime_warming` waits and retries for up to about 45 s like iOS; an offline
+     * computer is marked unreachable for the next pick.
+     */
+    suspend fun runtimeJson(method: String, path: String, jsonBody: String? = null): RuntimeCall {
+        val runtimeId = when (val pick = relay.resolve()) {
+            is RelayPick.Computer -> pick.runtimeId
+            RelayPick.NoComputer -> return RuntimeCall.NoComputer
+            RelayPick.Unreachable -> return RuntimeCall.Failed(ChatErrors.UNREACHABLE)
+            is RelayPick.Failed -> return if (pick.gate) RuntimeCall.NoComputer else RuntimeCall.Failed(pick.message)
+        }
+        val envelope = buildJsonObject {
+            put("method", method)
+            put("path", path)
+            put("headers", buildJsonObject {
+                put("accept", "application/json")
+                if (jsonBody != null) put("content-type", "application/json")
+            })
+            if (jsonBody != null) put("body", jsonBody)
+            put("bodyEncoding", "utf8")
+        }.toString()
+        repeat(WARM_TRIES) { attempt ->
+            val request = ApiCall.request("POST", relay.proxyUrl(runtimeId), envelope)
+            when (val r = ApiCall.execute(okHttp, json, request, kotlinx.serialization.json.JsonElement.serializer())) {
+                is ApiResult.Ok -> {
+                    relay.markReachable(runtimeId)
+                    return RuntimeCall.Ok(r.value)
+                }
+                is ApiResult.Decode -> {
+                    // An empty 2xx body (a bare 204-style answer) is still a success.
+                    relay.markReachable(runtimeId)
+                    return RuntimeCall.Ok(kotlinx.serialization.json.JsonNull)
+                }
+                is ApiResult.HttpError -> when {
+                    r.status == 503 && r.code == "runtime_warming" && attempt < WARM_TRIES - 1 ->
+                        kotlinx.coroutines.delay(WARM_DELAY_MS)
+                    r.status == 503 && (r.code == "runtime_offline" || r.code == "runtime_warming") -> {
+                        relay.markUnreachable(runtimeId)
+                        return RuntimeCall.Failed(ChatErrors.UNREACHABLE)
+                    }
+                    ChatErrors.isComputeGate(r.status, r.code, r.message) -> return RuntimeCall.NoComputer
+                    else -> return RuntimeCall.Http(r.status, r.code, r.message)
+                }
+                is ApiResult.Network -> return RuntimeCall.Failed("Could not connect to the server. Check your connection and try again.")
+            }
+        }
+        return RuntimeCall.Failed(ChatErrors.UNREACHABLE)
+    }
+
+    /**
+     * A binary GET on the user's computer through the relay (iOS PhoneTaskClient.crop): the
+     * status and body as the computer sent them, or null when no computer answers.
+     */
+    suspend fun runtimeBytes(path: String, accept: String): Pair<Int, ByteArray>? {
+        val runtimeId = (relay.resolve() as? RelayPick.Computer)?.runtimeId ?: return null
+        val envelope = buildJsonObject {
+            put("method", "GET")
+            put("path", path)
+            put("headers", buildJsonObject { put("accept", accept) })
+            put("bodyEncoding", "utf8")
+        }.toString()
+        val request = ApiCall.request("POST", relay.proxyUrl(runtimeId), envelope, accept = accept)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                okHttp.newCall(request).execute().use { it.code to (it.body?.bytes() ?: ByteArray(0)) }
+            }.getOrNull()
+        }
+    }
+
     // MARK: Chat stream
 
     /**
@@ -243,3 +318,17 @@ internal object PermissionAsks {
         else -> "Use $permission"
     }
 }
+
+/** The outcome of [ChatBackend.runtimeJson]. */
+sealed interface RuntimeCall {
+    data class Ok(val body: kotlinx.serialization.json.JsonElement) : RuntimeCall
+    /** No computer on the account (or the compute gate refused): not an error, an empty state. */
+    data object NoComputer : RuntimeCall
+    /** The computer answered with an error status. */
+    data class Http(val status: Int, val code: String?, val message: String?) : RuntimeCall
+    /** Network, relay or unreachable computer; [message] is already friendly. */
+    data class Failed(val message: String) : RuntimeCall
+}
+
+private const val WARM_TRIES = 15
+private const val WARM_DELAY_MS = 3_000L

@@ -2,7 +2,9 @@ package com.allternit.feature.shell
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -75,6 +77,9 @@ internal fun ShellDrawer(
     onRetry: () -> Unit,
     onSearch: () -> Unit,
     onViewAll: () -> Unit,
+    onInbox: () -> Unit = {},
+    inboxCount: Int = 0,
+    newOptions: List<NewOption> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val c = AllternitTheme.colors
@@ -96,9 +101,7 @@ internal fun ShellDrawer(
     val rows = railRows(mode)
     Box(modifier.fillMaxSize().statusBarsPadding()) {
         Column(Modifier.fillMaxSize()) {
-            DrawerHeader(mode = mode, onModeDial = onModeDial, onInbox = {
-                onRow(RailRow("inbox", "Needs you", R.drawable.shell_tray))
-            }, onSearch = onSearch)
+            DrawerHeader(mode = mode, onModeDial = onModeDial, onInbox = onInbox, inboxCount = inboxCount, onSearch = onSearch)
             LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 items(rows.filter { it.id !in hidden }, key = { "rail-${it.id}" }) { row -> DrawerNavRow(row.label, row.icon, "drawerRow${row.id}") { onRow(row) } }
                 item(key = "rail-more") {
@@ -163,6 +166,7 @@ internal fun ShellDrawer(
             onSettings = onSettings,
             onPhones = { onRow(RailRow("phones", "Phones", R.drawable.shell_device_mobile)) },
             onNew = onNew,
+            newOptions = newOptions,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -170,7 +174,7 @@ internal fun ShellDrawer(
 
 /** `phone-drawer-top-modes`: the mode dial, the wordmark, Inbox and Search (iOS header). */
 @Composable
-private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, onInbox: () -> Unit, onSearch: () -> Unit) {
+private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, onInbox: () -> Unit, inboxCount: Int, onSearch: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     Row(
@@ -206,7 +210,24 @@ private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, onInbox: () ->
                 else -> PixelWordmark(height = 16.dp)
             }
         }
-        RoundButton(R.drawable.shell_tray, "Needs you", "drawerInbox", onInbox)
+        Box {
+            RoundButton(R.drawable.shell_tray, if (inboxCount > 0) "Needs you, $inboxCount waiting" else "Needs you", "drawerInbox", onInbox)
+            if (inboxCount > 0) {
+                // The waiting count (iOS inbox badge on the drawer's Inbox button).
+                Text(
+                    if (inboxCount > 99) "99+" else "$inboxCount",
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .clip(CircleShape)
+                        .background(AllternitStatic.AccentChat)
+                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                        .testTag("drawerInboxCount"),
+                )
+            }
+        }
         RoundButton(DesignR.drawable.ph_magnifying_glass, "Search chats, projects and bots", "drawerSearch", onSearch)
     }
 }
@@ -463,6 +484,7 @@ internal fun RecentRow(session: AgentSession, onClick: () -> Unit) {
  * `phone-rail-foot` (iOS footer): the account avatar in its ring (Settings), the Phones button
  * (the pixel A in ink, iOS PhonesDrawerButton) and the mode's floating New pill.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DrawerFooter(
     mode: ShellMode,
@@ -470,10 +492,12 @@ private fun DrawerFooter(
     onSettings: () -> Unit,
     onPhones: () -> Unit,
     onNew: () -> Unit,
+    newOptions: List<NewOption>,
     modifier: Modifier = Modifier,
 ) {
     val c = AllternitTheme.colors
     val view = LocalView.current
+    var newMenu by remember { mutableStateOf(false) }
     val name = account?.displayName ?: "Not signed in"
     Row(
         modifier = modifier
@@ -516,6 +540,7 @@ private fun DrawerFooter(
             MatrixLogo(size = 22.dp, ink = c.textPrimary)
         }
         Spacer(Modifier.weight(1f))
+        Box {
         Row(
             modifier = Modifier
                 .shadow(8.dp, RoundedCornerShape(22.dp), ambientColor = Color.Black.copy(alpha = 0.10f), spotColor = Color.Black.copy(alpha = 0.10f))
@@ -523,10 +548,19 @@ private fun DrawerFooter(
                 .background(c.bgPrimary)
                 .border(1.dp, c.textPrimary.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
                 .testTag("drawerNewPill")
-                .clickable(role = Role.Button) {
+                // Tap starts the mode's new item; press and hold opens more ways to start (iOS newPill Menu).
+                .combinedClickable(
+                    role = Role.Button,
+                    onLongClickLabel = "More ways to start",
+                    onLongClick = if (newOptions.isEmpty()) null else ({
+                        Haptics.perform(view, Haptics.Kind.Tap)
+                        newMenu = true
+                    }),
+                ) {
                     Haptics.perform(view, Haptics.Kind.Tap)
                     onNew()
                 }
+                .semantics { contentDescription = "${mode.newLabel}. Press and hold for more ways to start" }
                 .height(44.dp)
                 .padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -535,8 +569,25 @@ private fun DrawerFooter(
             Icon(painterResource(R.drawable.shell_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
             Text(mode.newLabel, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
         }
+        DropdownMenu(
+            expanded = newMenu,
+            onDismissRequest = { newMenu = false },
+            shape = RoundedCornerShape(16.dp),
+            containerColor = c.bgPrimary,
+        ) {
+            newOptions.forEach { option ->
+                MenuRow(option.icon, option.label, testTag = "drawerNew${option.id}") {
+                    newMenu = false
+                    option.action()
+                }
+            }
+        }
+        }
     }
 }
+
+/** A press-and-hold way to start from the New pill (iOS HistorySidebarView NewOption). */
+internal data class NewOption(val id: String, val label: String, val icon: Int, val action: () -> Unit)
 
 /** The account initial in a neutral circle (iOS avatarInitial on BorderStrong). */
 @Composable

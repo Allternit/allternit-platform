@@ -48,6 +48,7 @@ import com.allternit.core.auth.Account
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.Haptics
 import com.allternit.core.design.Motion
+import com.allternit.core.design.R as DesignR
 import com.allternit.feature.chat.ChatBackends
 import com.allternit.feature.chat.ChatViewModel
 import com.allternit.feature.chat.SessionContext
@@ -75,17 +76,30 @@ private sealed interface ShellPage {
  * [openSettingsOnStart] opens Settings first (a first-run checklist fix).
  */
 @Composable
-internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = false) {
+internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = false, launch: ShellLaunch = ShellLaunch()) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val view = LocalView.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
-    var mode by remember { mutableStateOf(ShellModePrefs.load(context)) }
-    // A first-run checklist fix opens Settings once the workspace is up (iOS DeepLinkRouter).
-    var page by remember { mutableStateOf<ShellPage>(if (openSettingsOnStart) ShellPage.Settings else ShellPage.Home) }
-    val store = remember { ShellSessionsStore() }
+    var mode by remember { mutableStateOf(launch.mode ?: ShellModePrefs.load(context)) }
+    // A first-run checklist fix opens Settings once the workspace is up (iOS DeepLinkRouter);
+    // a debug `open-tab` extra opens a section (iOS AppModeStore `-open-tab`).
+    var page by remember {
+        mutableStateOf(
+            when {
+                openSettingsOnStart || launch.tab == "settings" -> ShellPage.Settings
+                launch.tab == "search" -> ShellPage.Search
+                launch.tab == "chats" || launch.tab == "overview" -> ShellPage.AllChats
+                launch.tab != null -> launchSection(launch.tab)?.let { ShellPage.Section(it) } ?: ShellPage.Home
+                else -> ShellPage.Home
+            },
+        )
+    }
+    val store = remember {
+        ShellSessionsStore().also { it.seenPrefs = context.getSharedPreferences("allternit_shell", android.content.Context.MODE_PRIVATE) }
+    }
     val models = remember { ModelStore(context) }
     // One chat for the shell (iOS keeps one ChatViewModel): a running reply survives a trip
     // to the home and back. It shares the shell's OkHttp client and API.
@@ -93,13 +107,21 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     val chat = remember { ChatViewModel(chatBackend, context.contentResolver) }
     DisposableEffect(chat) { onDispose { chat.dispose() } }
     val hold = remember { MenuHoldState() }
-    val drawer = remember { AnchoredDraggableState(DrawerValue.Closed) }
+    val drawer = remember { AnchoredDraggableState(if (launch.sidebar) DrawerValue.Open else DrawerValue.Closed) }
+    // Wave C sheets: Inbox (drawer tray), Quick task and Continue CLI session (New pill hold).
+    val inbox = remember { InboxStore(chatBackend) }
+    val quickTasks = remember { QuickTaskRunner(chatBackend, context.contentResolver) }
+    DisposableEffect(quickTasks) { onDispose { quickTasks.dispose() } }
+    var inboxOpen by remember { mutableStateOf(launch.sheet == "inbox") }
+    var quickTaskOpen by remember { mutableStateOf(launch.sheet == "quick-task") }
+    var cliPickerSurface by remember { mutableStateOf(if (launch.sheet == "continue-cli") (if (mode == ShellMode.Code) "code" else "chat") else null) }
 
     fun reload() {
         if (account != null) scope.launch { store.load() }
     }
     // A new or deleted session shows in Recents right away.
     chat.onSessionsChanged = ::reload
+    quickTasks.onSessionsChanged = ::reload
     chat.sessionContext = SessionContext(
         originSurface = when (mode) {
             ShellMode.Code -> "code"
@@ -112,7 +134,14 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         if (session == null) chat.startNewSession() else chat.loadSession(session.id)
         page = ShellPage.Chat(session = session, draft = ComposerDraft())
     }
-    LaunchedEffect(account?.userId) { if (account != null) store.load() }
+    LaunchedEffect(account?.userId) {
+        if (account != null) {
+            store.load()
+            // The drawer's Inbox count (iOS HistorySidebarView task: inbox.refresh()).
+            inbox.refresh()
+        }
+    }
+
 
     fun setDrawer(open: Boolean) {
         scope.launch { drawer.animateTo(if (open) DrawerValue.Open else DrawerValue.Closed, Motion.standardSpring()) }
@@ -141,6 +170,47 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     fun openPage(p: ShellPage) {
         page = p
         setDrawer(false)
+    }
+
+    /** A session from search, the overview, a quick task or a CLI pick-up: open it in its mode. */
+    fun openInItsMode(session: AgentSession) {
+        val owner = ShellMode.entries.firstOrNull { session.belongs(it) && it != ShellMode.Bots }
+        if (owner != null && owner != mode && session.agentId == null) {
+            mode = owner
+            ShellModePrefs.save(context, owner)
+        }
+        openSession(session)
+    }
+
+    /** Opens a session by id once the list has it (a quick task, a picked-up CLI session). */
+    fun openSessionId(id: String) {
+        scope.launch {
+            if (account != null) store.load()
+            val s = store.sessions.firstOrNull { it.id == id } ?: AgentSession(id = id)
+            openInItsMode(s)
+            setDrawer(false)
+        }
+    }
+
+    /** iOS newOptions: press and hold the New pill. */
+    fun newOptions(): List<NewOption> {
+        val quick = NewOption("quick-task", "Quick task", R.drawable.shell_bolt) { quickTaskOpen = true }
+        val scheduled = NewOption("scheduled", "New scheduled task", R.drawable.shell_clock) {
+            openPage(ShellPage.Section(RailRow(if (mode == ShellMode.Code) "code-automations" else "automation-tasks", "Automation Tasks", R.drawable.shell_clock)))
+        }
+        fun continueCli(surface: String) = NewOption("continue-cli", "Continue CLI session", DesignR.drawable.ph_terminal) { cliPickerSurface = surface }
+        return when (mode) {
+            ShellMode.Home -> listOf(continueCli("chat"), scheduled, quick)
+            ShellMode.Code -> listOf(continueCli("code"), scheduled, quick)
+            ShellMode.Aci, ShellMode.Bots -> listOf(quick)
+        }
+    }
+
+    // The overview's Working / New reply (iOS ChatView → ShellSessionsStore.setActive).
+    val chatOnScreen = page is ShellPage.Chat
+    LaunchedEffect(chatOnScreen, chat.currentSessionId, chat.isStreaming) {
+        store.setActive(if (chatOnScreen) chat.currentSessionId else null, chat.isStreaming)
+        if (!chatOnScreen) store.setStreaming(chat.currentSessionId, chat.isStreaming)
     }
 
     val drawerOpen = drawer.settledValue == DrawerValue.Open || drawer.targetValue == DrawerValue.Open
@@ -246,8 +316,28 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                         )
                         is ShellPage.Section -> SectionStub(current.row, onBack = { page = ShellPage.Home })
                         ShellPage.Settings -> SettingsScreen(account, onBack = { page = ShellPage.Home })
-                        ShellPage.AllChats -> AllChatsScreen(mode, store, onBack = { page = ShellPage.Home }) { openSession(it) }
-                        ShellPage.Search -> ShellSearchScreen(store, onBack = { page = ShellPage.Home }) { openSession(it) }
+                        ShellPage.AllChats -> SessionOverviewScreen(
+                            mode = mode,
+                            store = store,
+                            isWorking = { id ->
+                                (chat.isStreaming && chat.currentSessionId == id) ||
+                                    quickTasks.runs.any { it.sessionId == id && it.status == QuickTaskRunner.Status.Running }
+                            },
+                            onBack = { page = ShellPage.Home },
+                            onOpen = { openInItsMode(it) },
+                            onNew = {
+                                chat.startNewSession()
+                                page = ShellPage.Home
+                            },
+                        )
+                        ShellPage.Search -> ShellSearchScreen(
+                            store = store,
+                            signedIn = account != null,
+                            onBack = { page = ShellPage.Home },
+                            onOpenSession = { openInItsMode(it) },
+                            onOpenProject = { page = ShellPage.Section(RailRow("projects", "Projects", R.drawable.shell_folder)) },
+                            onOpenBot = { page = ShellPage.Section(RailRow("bots", "Your bots", DesignR.drawable.ph_cpu)) },
+                        )
                     }
                 }
                 if (p > 0f) {
@@ -326,11 +416,73 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                     onRetry = ::reload,
                     onSearch = { openPage(ShellPage.Search) },
                     onViewAll = { openPage(ShellPage.AllChats) },
+                    onInbox = { inboxOpen = true },
+                    inboxCount = inbox.items.size,
+                    newOptions = newOptions(),
                 )
             }
         }
 
         ModeFanOverlay(hold = hold, current = mode, onPick = ::pickMode)
+
+        if (inboxOpen) {
+            InboxSheet(
+                store = inbox,
+                focusedId = launch.inboxItem,
+                onOpenBot = { openPage(ShellPage.Section(RailRow("bots", "Your bots", DesignR.drawable.ph_cpu))) },
+                onOpenSettings = { openPage(ShellPage.Settings) },
+                onDismiss = { inboxOpen = false },
+            )
+        }
+        if (quickTaskOpen) {
+            QuickTaskSheet(
+                runner = quickTasks,
+                models = models,
+                onOpenChat = ::openSessionId,
+                onDismiss = { quickTaskOpen = false },
+            )
+        }
+        cliPickerSurface?.let { surface ->
+            NativeSessionPickerSheet(
+                surface = surface,
+                signedIn = account != null,
+                onPicked = ::openSessionId,
+                onDismiss = { cliPickerSurface = null },
+            )
+        }
     }
     }
+}
+
+/**
+ * Debug launch extras for screenshots and Maestro (iOS `-open-tab`, `-sidebar`, `-shell-mode`,
+ * `-open-inbox` …), parsed by MainActivity in debug builds only. Release always passes the default.
+ */
+internal data class ShellLaunch(
+    /** A section or page: a rail id (`projects`, `artifacts-library`, …), `settings`, `search`, `chats`. */
+    val tab: String? = null,
+    /** Start with the drawer open (iOS `-sidebar`). */
+    val sidebar: Boolean = false,
+    /** Start in this mode (iOS `-shell-mode`). */
+    val mode: ShellMode? = null,
+    /** Open a sheet on launch: `inbox`, `quick-task`, `continue-cli`. */
+    val sheet: String? = null,
+    /** The inbox item a link asked for (iOS `allternit://inbox/<id>`). */
+    val inboxItem: String? = null,
+)
+
+/** iOS ModeBarItem raw values and the web rail ids → the drawer row they open. */
+private fun launchSection(tab: String): RailRow? {
+    val id = when (tab) {
+        "artifacts" -> "artifacts-library"
+        "automation", "tasks" -> "automation-tasks"
+        "agents", "bots" -> "bots"
+        else -> tab
+    }
+    return ShellMode.entries.flatMap { railRows(it) }.firstOrNull { it.id == id }
+        ?: when (id) {
+            "models" -> RailRow("models", "Models", DesignR.drawable.ph_cpu)
+            "connectors" -> RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected)
+            else -> null
+        }
 }
