@@ -326,6 +326,10 @@ pub fn apply_ops_typed(
             Some(f) => {
                 changed += 1;
                 rel::set_fact_type(&conn, user_id, &f.id, t)?;
+                if updates.is_some() {
+                    // An update to an existing memory is a surprise (Sleep write score).
+                    let _ = crate::sleep::score::note_surprise(&conn, user_id, &f.id);
+                }
                 outcome.produced.push((f.id.clone(), t));
                 Some(f.id)
             }
@@ -422,6 +426,11 @@ fn apply_ops_drive(
             Some(id) => {
                 changed += 1;
                 outcome.produced.push((id.clone(), t));
+                // Sleep write-time scores (no model call); no-ops with Sleep off.
+                let _ = crate::sleep::score::score_written_fact(conn, user_id, &id, &fact, observation_id);
+                if updates.is_some() {
+                    let _ = crate::sleep::score::note_surprise(conn, user_id, &id);
+                }
                 Some(id)
             }
             None => existing_fact_id(conn, user_id, &fact)?,

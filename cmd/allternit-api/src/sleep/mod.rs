@@ -18,4 +18,5 @@
 pub mod config;
 pub mod routes;
 pub mod strength;
+pub mod score;
 pub mod types;
