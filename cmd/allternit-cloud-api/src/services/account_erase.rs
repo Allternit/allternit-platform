@@ -121,6 +121,14 @@ pub const ERASE: &[(&str, &str)] = &[
     ("platform_phone_runs", OWNER_USER),
     ("platform_idempotency", "key_id IN (SELECT id FROM api_keys WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("api_keys", "user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
+    // Sign in with Allternit (migration 150). The person's grants on any app
+    // (tokens and spend cascade), then their own apps (redirect URIs cascade),
+    // before platform_projects. Test-user rows go by account or address; the
+    // address is read before SCRUB clears it.
+    ("oauth_grants", "user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
+    ("oauth_auth_requests", "user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
+    ("oauth_app_test_users", "user_id = $1 OR email IN (SELECT lower(email) FROM users WHERE id = $1) OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
+    ("oauth_apps", "owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
     ("platform_agents", PROJECT),
     ("platform_accounts", PROJECT),
     ("platform_projects", OWNER_USER),
@@ -269,6 +277,7 @@ const SCRUB: &[&str] = &[
     "UPDATE task_assignments SET assigned_by = NULL WHERE assigned_by = $1",
     "UPDATE audit_log SET user_email = NULL, ip_address = NULL, user_agent = NULL WHERE user_id = $1",
     "UPDATE audit_logs SET ip_address = NULL WHERE user_id = $1",
+    "UPDATE oauth_audit_log SET actor = 'deleted', ip = NULL, ua = NULL WHERE actor = $1",
     // The user as a participant in someone else's meeting: the owner keeps the
     // record of what was said, without the link to the account or the address.
     "UPDATE meeting_participants SET user_id = NULL, email = NULL WHERE user_id = $1",
