@@ -151,6 +151,15 @@ including unpacking); poll `GET /v1/models` for progress, or start them
 early with `POST /v1/models/<pack>`. Gizzi Code's `/voice` and Desktop dictation wait up to 5 minutes
 for that first request.
 
+## How the assistant answers a spoken turn
+
+On a voice call the system prompt adds a few spoken-turn rules (see [System prompts](/core/system-prompts)):
+
+- **Mishearing tolerance.** The transcript may mishear. The assistant reads odd words as sound-alikes that fit and answers the likely meaning. If an unclear word matters, it says what it did not catch. After a silence it checks in once, gently.
+- **One search per spoken turn.** It runs one search, answers, and offers to dig deeper. It does not chain searches while you wait.
+- **Relative dates.** It says "tomorrow" or "last week" first. It does not read out hashes or ports, and gives an error as what failed, what it means and what happens next.
+- **Natural pacing.** It varies its acknowledgements, adds no "mm-hm" while you speak, drops a held answer if the topic moved on, and matches your pace and length.
+
 ## Performance
 
 Measured with `examples/voice_bench.rs` (CPU only, 2 threads, 40

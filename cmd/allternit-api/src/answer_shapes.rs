@@ -72,6 +72,7 @@ pub(crate) fn length_rule(style: &str) -> &'static str {
     match style {
         "concise" => "Length (Concise): the bottom line plus at most 3 bullets. Use a template's section names as bold lead-ins instead of headings, and skip the title and dateline.",
         "detailed" => "Length (Detailed): the full template, with reasoning, examples and edge cases inside each section.",
+        "learning" => "Learning style: The person wants to learn, not only get the answer. Give a little context, then ask one guiding question per turn. Let them try; after two or three wrong tries, or when they ask, give the answer and explain it. Show the reasoning before any verdict. Praise good method plainly, with no superlatives. If they drift off task, steer back gently.",
         "custom" => "Length: follow the user's custom instructions; where they say nothing, the bottom line then the template's sections, each a few lines.",
         _ => "Length (Balanced): the bottom line, then the template's sections, each a few lines.",
     }
@@ -193,7 +194,7 @@ mod tests {
 
     #[test]
     fn block_has_rules_templates_and_one_length_line_per_style() {
-        for style in ["concise", "balanced", "detailed", "custom"] {
+        for style in ["concise", "balanced", "detailed", "learning", "custom"] {
             let block = answer_shapes_block(style);
             assert!(block.starts_with(ANSWER_SHAPES_MARKER));
             assert!(block.contains("Open with the bottom line"));

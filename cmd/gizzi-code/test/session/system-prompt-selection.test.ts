@@ -19,6 +19,9 @@ import DUET from "@/runtime/session/prompt/duet.txt"
 import DELEGATION from "@/runtime/session/prompt/delegation.txt"
 import PROJECT_THREAD from "@/runtime/session/prompt/project-thread.txt"
 import COMPUTER_USE from "@/runtime/session/prompt/computer-use.txt"
+import UNATTENDED from "@/runtime/session/prompt/unattended.txt"
+import MEMORY_USE from "@/runtime/session/prompt/memory-use.txt"
+import { Automation } from "@/runtime/primitives/automation"
 
 const model = (id: string) => ({ api: { id } })
 const claude = model("claude-sonnet-4-5")
@@ -70,7 +73,7 @@ describe("2026-11-16 audit: no vendor names or Allternit Shell in prompts", () =
   test("finds the prompt files", () => {
     expect(files.length).toBeGreaterThan(10)
     const names = files.map((file) => path.basename(file))
-    for (const name of ["duet.txt", "delegation.txt", "project-thread.txt", "computer-use.txt", "care.txt", "bash.txt"]) {
+    for (const name of ["duet.txt", "delegation.txt", "project-thread.txt", "computer-use.txt", "care.txt", "bash.txt", "unattended.txt", "memory-use.txt"]) {
       expect(names).toContain(name)
     }
   })
@@ -186,6 +189,47 @@ describe("voice and phone blocks from turn metadata", () => {
   })
 })
 
+describe("unattended block from automation_run metadata", () => {
+  const run = { [Automation.RUN_METADATA_KEY]: { id: "job-1", runId: "run-1" } }
+
+  test("the key matches the scheduler's", () => {
+    expect(SystemPrompt.AUTOMATION_RUN_KEY).toBe(Automation.RUN_METADATA_KEY)
+  })
+
+  test("a scheduler's turn gets unattended.txt on bot and non-bot turns, before voice and phone", () => {
+    const ctx = SystemPrompt.context("chat", { ...run, reply_mode: "voice", form_factor: "phone" })
+    expect(ctx.automationRun).toBe(true)
+    const provider = SystemPrompt.provider(claude, undefined, ctx)
+    expect(provider.slice(-3)).toEqual([UNATTENDED, VOICE, PHONE])
+    expect(SystemPrompt.bot(undefined, ctx).slice(-3)).toEqual([UNATTENDED, VOICE, PHONE])
+    expect(SystemPrompt.provider(claude, undefined, SystemPrompt.context("code", run))).toEqual([BASE_CODE, SAFETY, UNATTENDED])
+  })
+
+  test("no flag, or an empty one, adds no unattended block", () => {
+    for (const metadata of [undefined, {}, { [Automation.RUN_METADATA_KEY]: null }, { reply_mode: "voice" }]) {
+      const ctx = SystemPrompt.context("chat", metadata)
+      expect(ctx.automationRun).toBeUndefined()
+      const text = [...SystemPrompt.provider(claude, undefined, ctx), ...SystemPrompt.bot(undefined, ctx)].join("\n")
+      expect(text).not.toContain(UNATTENDED)
+    }
+  })
+})
+
+describe("memory-use block", () => {
+  test("follows the memory tools block when memory is on", () => {
+    const section = SystemPrompt.memorySection("# Memory\n\n- [Prefers tea](tea.md)")
+    expect(section).toContain(MEMORY_USE.trim())
+    expect(section.indexOf(MEMORY_USE.trim())).toBeGreaterThan(section.indexOf("## Memory tools"))
+    expect(section.endsWith(MEMORY_USE.trim())).toBe(true)
+  })
+
+  test("is left out when memory is off", () => {
+    const section = SystemPrompt.memorySection("")
+    expect(section).toContain("Persistent memory is turned off")
+    expect(section).not.toContain(MEMORY_USE.trim())
+  })
+})
+
 describe("Codex OAuth instructions", () => {
   test("instructions() is provider() joined, mode included", () => {
     const ctx = { surface: "chat" as const, formFactor: "phone" as const }
@@ -268,6 +312,8 @@ describe("byte caps (PLAN.md token budgets)", () => {
     ["addendum-open", ADDENDUM_OPEN, 700],
     ["voice", VOICE, 2_000],
     ["phone", PHONE, 700],
+    ["unattended", UNATTENDED, 700],
+    ["memory-use", MEMORY_USE, 1_300],
   ]
   for (const [name, text, cap] of caps) {
     test(`${name} ≤ ${cap} bytes`, () => {

@@ -14,3 +14,4 @@ After it returns:
 - The card already shows the numbers and the credit. Do not write the same card again, and add at most one card per fact.
 - Still state the fact in words in your reply, so it stands alone where no card is drawn, and name the credited source.
 - If it fails, say so and use websearch or webfetch instead, citing the source.
+- Show an image only when it directly answers the question.

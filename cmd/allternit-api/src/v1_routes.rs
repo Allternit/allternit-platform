@@ -3566,7 +3566,7 @@ mod tests {
 
     #[test]
     fn compose_sends_the_shapes_with_each_response_style() {
-        for style in ["concise", "balanced", "detailed", "custom"] {
+        for style in ["concise", "balanced", "detailed", "learning", "custom"] {
             let out = compose_system_instructions(None, None, None, None, style, "", None, None).unwrap();
             assert!(out.contains("## Answer shape\n"), "{style}");
             assert!(out.contains("Open with the bottom line"), "{style}");
