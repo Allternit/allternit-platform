@@ -14,7 +14,11 @@
 //!   evidence the incumbent showed the model is `used` when the reply
 //!   restates it (lexical overlap, weak label, source `memory.answer_used`),
 //!   else `unused`; items only the pipeline found were never shown, so they
-//!   get `not_shown` and no S1 outcome.
+//!   get `not_shown` and no S1 outcome. With Allternit Sleep stage
+//!   `labels_live` on (step 3.1) it also labels the incumbent recall itself,
+//!   S1 or not: `memory_recall_logs.label_used` = JSON array of the result ids
+//!   the reply used, `label_source = 'answer'`, `labeled_at` (see
+//!   [`label_incumbent`]).
 //!
 //! Spaces: facts / entities / observations / documents (index chunks of
 //! memory documents) / procedures (`procedural_memory`) / notes
@@ -588,13 +592,75 @@ pub struct LabelReport {
     pub unused: Vec<String>,
     pub not_shown: usize,
     pub outcomes_reported: usize,
+    /// Sleep step 3.1: the incumbent recall labelled on `memory_recall_logs`
+    /// (None when stage `labels_live` is off or there was nothing to label).
+    pub incumbent: Option<IncumbentLabel>,
 }
 
-/// Label the newest unlabelled shadow recall of this session (last 30 min)
-/// from the assistant's reply. See module docs.
+/// Answer-used labels written on one incumbent `memory_recall_logs` row.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct IncumbentLabel {
+    pub recall_id: String,
+    pub used: Vec<String>,
+    pub unused: Vec<String>,
+}
+
+/// `memory_recall_logs.label_source` for labels taken from the reply.
+pub const INCUMBENT_LABEL_SOURCE: &str = "answer";
+
+/// Sleep step 3.1 (stage `labels_live`): label the incumbent recall the turn
+/// actually used, i.e. the session's newest recall in the last 30 minutes, from
+/// the assistant's reply. Skips when that recall is already labelled (a later
+/// reply never relabels an earlier turn's recall).
+///
+/// `memory_recall_logs` stores one row per recall with every shown item in the
+/// `results` JSON, so the labels live on that row as V291 defines them:
+/// `label_used` = JSON array of the result ids the reply used; every other id in
+/// `results` is unused. `label_source = 'answer'`, `labeled_at = now`. No S1 call.
+pub fn label_incumbent(conn: &Connection, user_id: &str, session_id: &str, answer: &str) -> rusqlite::Result<Option<IncumbentLabel>> {
+    let newest: Option<(String, String, Option<String>)> = conn
+        .query_row(
+            "SELECT id, results, labeled_at FROM memory_recall_logs
+             WHERE user_id = ?1 AND session_id = ?2 AND created_at >= datetime('now', '-30 minutes')
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            params![user_id, session_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((recall_id, results, None)) = newest else { return Ok(None) };
+    let shown: Vec<RecallResult> = serde_json::from_str(&results).unwrap_or_default();
+    let (used, unused): (Vec<&RecallResult>, Vec<&RecallResult>) = shown.iter().partition(|r| answer_uses(answer, &r.content));
+    let label = IncumbentLabel {
+        recall_id,
+        used: used.iter().map(|r| r.id.clone()).collect(),
+        unused: unused.iter().map(|r| r.id.clone()).collect(),
+    };
+    conn.execute(
+        "UPDATE memory_recall_logs SET label_used = ?2, label_source = ?3, labeled_at = CURRENT_TIMESTAMP
+         WHERE id = ?1 AND labeled_at IS NULL",
+        params![label.recall_id, json!(label.used).to_string(), INCUMBENT_LABEL_SOURCE],
+    )?;
+    Ok(Some(label))
+}
+
+/// From the assistant's reply: with Sleep stage `labels_live` on, label the
+/// incumbent recall ([`label_incumbent`]); with S1 on, label the newest
+/// unlabelled shadow recall of this session (last 30 min). See module docs.
 pub async fn label_from_answer(client: &S1Client, db: &DbHandle, user_id: &str, session_id: &str, answer: &str) -> LabelReport {
     let mut report = LabelReport::default();
     let Ok(conn) = db.connect() else { return report };
+    let labels_live = crate::sleep::config::load(&conn, user_id)
+        .map(|c| c.stage_on(crate::sleep::types::Stage::LabelsLive))
+        .unwrap_or(false);
+    if labels_live {
+        match label_incumbent(&conn, user_id, session_id, answer) {
+            Ok(l) => report.incumbent = l,
+            Err(e) => debug!(error = %e, "memory incumbent labels not written"),
+        }
+    }
+    if !client.enabled {
+        return report;
+    }
     let log: Option<(String, String)> = conn
         .query_row(
             "SELECT l.id, l.results FROM memory_recall_logs l

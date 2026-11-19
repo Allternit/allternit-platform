@@ -1148,18 +1148,18 @@ async fn retain_turn_v2_handler(
         };
     }
 
-    // The assistant's reply labels the session's last shadow recall
-    // (which shown evidence the answer used) — WP-M1c outcome labels.
+    // The assistant's reply labels the session's last recall (which shown
+    // evidence the answer used): the shadow recall when S1 is on (WP-M1c) and
+    // the incumbent recall when Sleep stage `labels_live` is on (step 3.1).
+    // label_from_answer checks both switches.
     if payload.role == "assistant" {
         if let Some(session_id) = payload.session_id.clone() {
             let client = crate::memory_relations::S1Client::from_env();
-            if client.enabled {
-                let (db, uid, answer) = (state.db.clone(), user.user_id.clone(), payload.content.clone());
-                tokio::spawn(async move {
-                    let r = crate::memory_retrieve::label_from_answer(&client, &db, &uid, &session_id, &answer).await;
-                    tracing::debug!(?r, "memory retrieve labels");
-                });
-            }
+            let (db, uid, answer) = (state.db.clone(), user.user_id.clone(), payload.content.clone());
+            tokio::spawn(async move {
+                let r = crate::memory_retrieve::label_from_answer(&client, &db, &uid, &session_id, &answer).await;
+                tracing::debug!(?r, "memory retrieve labels");
+            });
         }
     }
 

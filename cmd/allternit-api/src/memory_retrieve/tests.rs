@@ -258,6 +258,58 @@ async fn shadow_is_skipped_when_s1_is_off() {
     assert!(shadow_recall(&client, &db, "u1", None, "rec_x", "Maya", None, &[], &RetrieveConfig::with_k(3)).await.is_none());
 }
 
+/// Sleep step 3.1: with stage `labels_live` on and S1 shadow off, the reply
+/// labels the incumbent recall on `memory_recall_logs`; with it off, nothing.
+#[tokio::test]
+async fn labels_live_labels_the_incumbent_recall_from_the_answer_with_s1_off() {
+    let db = db();
+    seed(&db);
+    let mut client = S1Client::new("http://127.0.0.1:9");
+    client.enabled = false;
+    let (shown, recall_id) = kernel::recall_logged(&db, "u1", None, Some("sess-2"), "where does Maya live", None, 5).unwrap();
+    let shown_ids: Vec<String> = shown.iter().map(|r| r.id.clone()).collect();
+    assert!(shown_ids.contains(&"f_denver".to_string()) && shown_ids.len() >= 2, "{shown_ids:?}");
+    let answer = "She is in Denver now.";
+    let labels = |db: &DbHandle| -> (Option<String>, Option<String>, Option<String>) {
+        db.connect()
+            .unwrap()
+            .query_row("SELECT label_used, label_source, labeled_at FROM memory_recall_logs WHERE id = ?1", params![recall_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+    };
+
+    // Flag off (the default): exactly today's behaviour, nothing written.
+    let off = label_from_answer(&client, &db, "u1", "sess-2", answer).await;
+    assert_eq!(off, LabelReport::default());
+    assert_eq!(labels(&db), (None, None, None));
+
+    crate::sleep::config::set_owner(
+        &db.connect().unwrap(),
+        "u1",
+        crate::sleep::config::Group::Setting,
+        &[("enabled".into(), json!(true)), ("stage.labels_live".into(), json!(true))],
+    )
+    .unwrap();
+    let on = label_from_answer(&client, &db, "u1", "sess-2", answer).await;
+    assert_eq!(on.recall_id, None, "S1 is off: no shadow labels");
+    let inc = on.incumbent.expect("incumbent labelled");
+    assert_eq!(inc.recall_id, recall_id);
+    assert_eq!(inc.used, vec!["f_denver".to_string()], "{inc:?}");
+    assert!(!inc.unused.is_empty() && inc.unused.iter().all(|id| id != "f_denver" && shown_ids.contains(id)), "{inc:?}");
+    let (used, source, at) = labels(&db);
+    let used: Vec<String> = serde_json::from_str(&used.expect("label_used")).unwrap();
+    // used=true for the item the reply restated, false (absent) for the rest.
+    assert_eq!(used, vec!["f_denver".to_string()]);
+    assert!(inc.unused.iter().all(|id| !used.contains(id)));
+    assert_eq!(source.as_deref(), Some(INCUMBENT_LABEL_SOURCE));
+    assert!(at.is_some());
+
+    // Labelled once: a later reply does not relabel this recall.
+    let again = label_from_answer(&client, &db, "u1", "sess-2", "Maya lives in Austin.").await;
+    assert_eq!(again.incumbent, None);
+    let (used_after, _, _) = labels(&db);
+    assert_eq!(serde_json::from_str::<Vec<String>>(&used_after.unwrap()).unwrap(), vec!["f_denver".to_string()]);
+}
+
 #[test]
 fn answer_use_is_lexical_overlap_of_the_memory() {
     assert!(answer_uses("Maya lives in Denver these days", "Maya lives in Denver now."));
