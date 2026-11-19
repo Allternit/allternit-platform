@@ -85,9 +85,9 @@ fun PhonesSheet(host: PhonesHost, onDismiss: () -> Unit) {
     LaunchedEffect(host.signedIn, attempt) {
         if (!host.signedIn) return@LaunchedEffect
         load = null
-        load = BotPhonesApi.load()
+        load = BotPhonesApi.load().also { PhonesUnread.update(it) }
         // iOS refreshes every minute while the sheet is up.
-        while (true) { delay(60_000); load = BotPhonesApi.load() }
+        while (true) { delay(60_000); load = BotPhonesApi.load().also { PhonesUnread.update(it) } }
     }
     LibrarySheet("Your bots' phones", "phonesSheet", onDismiss, leading = LibrarySheetAction("Done", testTag = "phonesDone", onClick = onDismiss)) {
         Column(Modifier.fillMaxWidth().heightIn(min = 320.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

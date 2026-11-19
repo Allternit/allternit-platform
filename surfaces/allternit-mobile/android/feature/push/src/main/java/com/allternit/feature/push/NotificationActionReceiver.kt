@@ -82,7 +82,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         // A cold process (the app was closed): start auth so the bearer is there.
         AllternitAuth.start(context)
         if (AllternitAuth.tokenProvider.bearerToken().isNullOrBlank()) return Result.SignedOut
-        return when (val r = ChatBackends.create(context).runtimeJson("POST", path, body.toString())) {
+        return when (val r = ChatBackends.create(context).runtimeJson("POST", path, body.toString(), targetRuntimeId = data["runtimeId"])) {
             is RuntimeCall.Ok -> Result.Done
             is RuntimeCall.Http -> when (r.status) {
                 404 -> Result.AlreadyHandled

@@ -61,6 +61,15 @@ sealed interface PhonesLoad {
     data class Failed(val message: String) : PhonesLoad
 }
 
+/** iOS BotPhonesStore.totalUnread: the badge on the drawer's Phones button. */
+object PhonesUnread {
+    var total by androidx.compose.runtime.mutableStateOf(0)
+        private set
+    fun update(load: PhonesLoad) { if (load is PhonesLoad.Ok) total = load.entries.sumOf { it.unread } }
+    suspend fun refresh() { update(BotPhonesApi.load()) }
+    fun clear() { total = 0 }
+}
+
 object BotPhonesApi {
     /** iOS BotPhonesStore.refresh: every bot's channels, numbers and unread conversations. */
     suspend fun load(): PhonesLoad = coroutineScope {

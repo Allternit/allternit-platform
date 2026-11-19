@@ -203,8 +203,8 @@ class MainActivity : ComponentActivity() {
             "inbox" -> ShellLaunch(sheet = "inbox", inboxItem = segments.getOrNull(1), nonce = nonce)
             // Bots mode opens the bot's chat; "main" is the first bot of the roster (BotsLaunch.openBotId null opens the launchpad).
             "bot" -> ShellLaunch(mode = ShellMode.Bots, botId = segments.getOrNull(1)?.takeIf { it != "main" }, nonce = nonce)
-            // The call is the chat's voice mode on the home chat; the shell has no separate call screen.
-            "call" -> ShellLaunch(mode = ShellMode.Home, nonce = nonce)
+            // iOS DeepLinkHost .callMain: the main bot's chat in Bots mode (its voice button starts the call).
+            "call" -> ShellLaunch(mode = ShellMode.Bots, openMain = true, nonce = nonce)
             "handoff" -> ShellLaunch(mode = ShellMode.Bots, nonce = nonce)
             "routines", "routine" -> ShellLaunch(tab = "automation-tasks", nonce = nonce)
             else -> ShellLaunch(mode = ShellMode.Home, nonce = nonce)
@@ -225,7 +225,8 @@ class MainActivity : ComponentActivity() {
             tap.inboxItem != null -> ShellLaunch(sheet = "inbox", inboxItem = tap.inboxItem, nonce = nonce)
             tap.event == "approval.requested" -> ShellLaunch(sheet = "inbox", nonce = nonce)
             url.contains("settings") -> ShellLaunch(tab = "settings", nonce = nonce)
-            tap.botId != null || tap.sessionId != null -> ShellLaunch(mode = ShellMode.Bots, nonce = nonce)
+            tap.botId != null -> ShellLaunch(mode = ShellMode.Bots, botId = tap.botId, sessionId = tap.sessionId, nonce = nonce)
+            tap.sessionId != null -> ShellLaunch(mode = ShellMode.Bots, nonce = nonce)
             else -> ShellLaunch(mode = ShellMode.Home, nonce = nonce)
         }
     }

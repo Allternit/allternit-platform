@@ -70,6 +70,15 @@ object CloudCreditsCopy {
     }
 }
 
+/** iOS CloudCreditsGate: a Cloud model the account can't run yet opens the credits sheet; null when it is open to them. */
+object CloudCreditsGate {
+    fun lockedRequest(modelName: String?, catalogProvider: String?, inputPer1mUsd: Double?, outputPer1mUsd: Double?): CloudCreditsRequest? {
+        val e = AccountPlan.credits?.cloudModels ?: return null
+        if (!e.isLocked(catalogProvider)) return null
+        return CloudCreditsRequest(e.reason, modelName, inputPer1mUsd, outputPer1mUsd)
+    }
+}
+
 /** What the sheet is about (iOS CloudCreditsRequest). */
 data class CloudCreditsRequest(
     val reason: String?,
