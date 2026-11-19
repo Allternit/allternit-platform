@@ -30,7 +30,8 @@ Today the result is `{ ok, text }` (`phone-tools.ts` `readUi`). It gains three f
 |---|---|---|---|
 | `app` | string | `""` | Android package, or iOS bundle id when known. `""` = unknown. |
 | `activity` | string or null | `null` | Android activity class of the focused window. iPhone: always `null`. |
-| `nodes[].index` | int | n/a | Position in the same filtered list as `text`. Same index the model sees. |
+| `app_version` | string or null | `null` | Android `versionName`. Only when the caller passes `with_version: true` (one extra adb call). Linked phones: `null` until the helper sends it. |
+| `nodes[].index` | int | n/a | Position in the same filtered list as `text`. Same index the model sees. Under `filter` it is NOT the position in the full dump. |
 | `nodes[].class`, `label` | string | `""` | Same as `UiEl.class` and `UiEl.label`. |
 | `nodes[].resource_id` | string | `""` | Same as `UiEl.id`. |
 | `nodes[].bounds` | `[x1,y1,x2,y2]` ints | n/a | Screen pixels, same as `text`. |
@@ -38,8 +39,9 @@ Today the result is `{ ok, text }` (`phone-tools.ts` `readUi`). It gains three f
 
 Rules:
 - `nodes` honours `filter` and `max_elements` the same way `text` does.
+- Opt-in args (step 2, PR #2606): `with_activity: true` fills `activity` (one extra `dumpsys activity activities` call, shared with `adbForeground`); otherwise `activity` is `null`. `with_version: true` fills `app_version`. The Rust map code (steps 4-6) MUST pass `with_activity: true`, or fingerprints fall back to package-only.
 - adb branch: change `uiDump` (:1293), `parseUiDump` (:830), `formatUiElement` (:851) and `readUi` (:1300). `app` comes from the `package` attribute of the root node. `activity` comes from the focused window (to confirm in step 2: `dumpsys window` vs `dumpsys activity top`; if it costs more than one extra adb call, leave `null`).
-- Phone-Linked branch: `read_ui` for linked serials goes through `linkedCall` (:1197) and skips `readUi`. Map the helper `page_source` structured nodes, read today by `linkedScreen` (:1862), into the same fields.
+- Phone-Linked branch: `read_ui` for linked serials goes through `linkedCall` (:1197) to `phone-link-backend.ts` `readUi` (~:633), which returns only `{ok, text}`. Step 2 (PR #2606) adds a second structured `page_source` call and maps its nodes into the same fields. Step 3 makes `phone-link-backend.ts` return `nodes[]`, `app` and `activity` in the one `read_ui` call and drops the second call.
 - Helper `page_source` (Kotlin, `UiTree.kt`, `PhoneLinkAccessibilityService.kt`) adds `activity` (class of the last `TYPE_WINDOW_STATE_CHANGED` event; to confirm in step 3) and per-node `checkable`. `clickable`, `scrollable` and `package` already exist (`UiTree.kt` :45-55).
 - iPhone (OCR path): `app` = `""` unless the route reports one, `activity` = `null`, `nodes[]` from OCR boxes with `class: "Text"`, `resource_id: ""`, all flags false.
 - Old clients: a client that does not send these fields means maps are off for that phone. The API MUST NOT error. A new Desktop with an old API ignores the extra fields.
