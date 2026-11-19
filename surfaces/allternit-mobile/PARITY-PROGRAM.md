@@ -172,24 +172,24 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | MiniAppsStoreView | ACI | ios/Features/ACI/Views/MiniAppsStoreView.swift | — | — | todo | — |
 | TeachView | ACI | ios/Features/ACI/Views/TeachView.swift | src/fabric-session/phone/screens/PhoneTeachOverlay.tsx | — | todo | — |
 | section: aci | ACI | — | src/fabric-session/phone/phone-nav.ts (PhoneSection aci) | — | todo | — |
-| AutomationHubView | Automation | ios/Features/Automation/Views/AutomationHubView.swift | — | — | todo | — |
-| AutomationScheduleGraphView | Automation | ios/Features/Automation/Views/AutomationScheduleGraphView.swift | — | — | todo | — |
-| AutomationSchedulerView | Automation | ios/Features/Automation/Views/AutomationSchedulerView.swift | — | — | todo | — |
-| AutomationTaskDetailView | Automation | ios/Features/Automation/Views/AutomationTaskDetailView.swift | — | — | todo | — |
-| AutomationTasksListView | Automation | ios/Features/Automation/Views/AutomationTasksListView.swift | — | — | todo | — |
-| AutomationTasksPhoneView | Automation | ios/Features/Automation/Views/AutomationTasksPhoneView.swift | — | — | todo | — |
-| AutomationWizardSheet | Automation | ios/Features/Automation/Views/AutomationWizardSheet.swift | — | — | todo | — |
-| CreateAutomationTaskSheet | Automation | ios/Features/Automation/Views/CreateAutomationTaskSheet.swift | — | — | todo | — |
-| CreateLoopSheet | Automation | ios/Features/Automation/Views/CreateLoopSheet.swift | — | — | todo | — |
-| CreateRoutineSheet | Automation | ios/Features/Automation/Views/CreateRoutineSheet.swift | — | — | todo | — |
-| LoopDetailView | Automation | ios/Features/Automation/Views/LoopDetailView.swift | — | — | todo | — |
-| LoopsListView | Automation | ios/Features/Automation/Views/LoopsListView.swift | — | — | todo | — |
-| RoutineDetailView | Automation | ios/Features/Automation/Views/RoutineDetailView.swift | — | — | todo | — |
-| RoutinesListView | Automation | ios/Features/Automation/Views/RoutinesListView.swift | — | — | todo | — |
-| ScheduledTaskSheet | Automation | ios/Features/Automation/Views/ScheduledTaskSheet.swift | — | — | todo | — |
-| TasksBoardScreen | Automation | ios/Features/Automation/Views/TasksBoardScreen.swift | — | — | todo | — |
-| section: automation | Automation | — | src/fabric-session/phone/phone-nav.ts (PhoneSection automation) | — | todo | — |
-| section: tasks | Automation | — | src/fabric-session/phone/phone-nav.ts (PhoneSection tasks) | — | todo | — |
+| AutomationHubView | Automation | ios/Features/Automation/Views/AutomationHubView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationHub.kt` | built (#@@PR@@) | — |
+| AutomationScheduleGraphView | Automation | ios/Features/Automation/Views/AutomationScheduleGraphView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationCalendar.kt` (AutomationGraph) | built (#@@PR@@) | — |
+| AutomationSchedulerView | Automation | ios/Features/Automation/Views/AutomationSchedulerView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationCalendar.kt` | built (#@@PR@@) | — |
+| AutomationTaskDetailView | Automation | ios/Features/Automation/Views/AutomationTaskDetailView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationHub.kt` (AutomationTaskDetailSheet) | built (#@@PR@@) | — |
+| AutomationTasksListView | Automation | ios/Features/Automation/Views/AutomationTasksListView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationHub.kt` (TaskCard list) | built (#@@PR@@) | — |
+| AutomationTasksPhoneView | Automation | ios/Features/Automation/Views/AutomationTasksPhoneView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationHub.kt` (AutomationRoot) | built (#@@PR@@) | — |
+| AutomationWizardSheet | Automation | ios/Features/Automation/Views/AutomationWizardSheet.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationSheets.kt` | built (#@@PR@@) | — |
+| CreateAutomationTaskSheet | Automation | ios/Features/Automation/Views/CreateAutomationTaskSheet.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationSheets.kt` | built (#@@PR@@) | — |
+| CreateLoopSheet | Automation | ios/Features/Automation/Views/CreateLoopSheet.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationLocal.kt` | built (#@@PR@@) | — |
+| CreateRoutineSheet | Automation | ios/Features/Automation/Views/CreateRoutineSheet.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationLocal.kt` | built (#@@PR@@) | — |
+| LoopDetailView | Automation | ios/Features/Automation/Views/LoopDetailView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationLocal.kt` | built (#@@PR@@) | — |
+| LoopsListView | Automation | ios/Features/Automation/Views/LoopsListView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationLocal.kt` | built (#@@PR@@) | — |
+| RoutineDetailView | Automation | ios/Features/Automation/Views/RoutineDetailView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationLocal.kt` | built (#@@PR@@) | — |
+| RoutinesListView | Automation | ios/Features/Automation/Views/RoutinesListView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationLocal.kt` | built (#@@PR@@) | — |
+| ScheduledTaskSheet | Automation | ios/Features/Automation/Views/ScheduledTaskSheet.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationSheets.kt` | built (#@@PR@@) | — |
+| TasksBoardScreen | Automation | ios/Features/Automation/Views/TasksBoardScreen.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/TasksBoard.kt` | built (#@@PR@@) | — |
+| section: automation | Automation | — | src/fabric-session/phone/phone-nav.ts (PhoneSection automation) | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationHub.kt` (drawer row automation-tasks) | built (#@@PR@@) | — |
+| section: tasks | Automation | — | src/fabric-session/phone/phone-nav.ts (PhoneSection tasks) | `android/feature/automation/src/main/java/com/allternit/feature/automation/TasksBoard.kt` (Board tab of the hub) | built (#@@PR@@) | — |
 | ChangesetReviewSheet | Code | ios/Features/Code/ChangesetReviewSheet.swift | — | feature/code/CodeDiffs.kt (ChangesetReviewSheet, PendingChangesBanner) | built (#2640) | — |
 | CodeEditorView | Code | ios/Features/Code/CodeEditor/CodeEditorView.swift | — | feature/code/CodeFiles.kt (CodeEditorScreen: line numbers, highlight, Save through files/write) | built (#2640) | — |
 | CodeModeView | Code | ios/Features/Code/CodeModeView.swift | — | feature/code/CodeHome.kt (CodeHome, CodeRouteScreen, CodeThreadTools) + feature/shell/WorkspaceShell.kt (Code card in the mode fan opens it) | built (#2640) | — |
