@@ -32,7 +32,9 @@ internal fun PixelWordmark(height: Dp = 16.dp, suffix: String = "", ink: Color =
     val width = height * (cols.toFloat() / PixelGlyphs.ROWS)
     val label = "Allternit $suffix".trim()
     Canvas(modifier.size(width, height).semantics { contentDescription = label }) {
-        val scale = size.height / (PixelGlyphs.ROWS * PixelGlyphs.CELL)
+        // Fit both ways: when the row is narrower than the wordmark (drawer header with two
+        // buttons), scale down instead of drawing past the box into the buttons (Moto/emulator run).
+        val scale = minOf(size.height / (PixelGlyphs.ROWS * PixelGlyphs.CELL), size.width / (cols * PixelGlyphs.CELL))
         PixelGlyphs.markCells.forEach { pixel(it, scale, ink) }
         letters.forEach { pixel(it, scale, ink) }
         pixel(PixelGlyphs.coreCell, scale, PixelCoral)
