@@ -246,11 +246,11 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| MeetYourBotsView | ios/Features/Onboarding/MeetYourBotsView.swift | — | — | todo | — |
-| OnboardingView | ios/Features/Onboarding/OnboardingView.swift | — | — | todo | — |
-| ConnectedView | ios/Features/Onboarding/Setup/ConnectedView.swift | — | — | todo | — |
-| FirstRunSetupView | ios/Features/Onboarding/Setup/FirstRunSetupView.swift | — | — | todo | — |
-| SetupGraphView | ios/Features/Onboarding/Setup/SetupGraphView.swift | — | — | todo | — |
+| MeetYourBotsView | ios/Features/Onboarding/MeetYourBotsView.swift | — | — | todo (not ported; Android setup skips the Main bot step, as iOS does with it off) | — |
+| OnboardingView | ios/Features/Onboarding/OnboardingView.swift | — | feature/shell/firstrun/FirstRunGate.kt (+ FirstRunStore.kt) | built (#2621) | — |
+| ConnectedView | ios/Features/Onboarding/Setup/ConnectedView.swift | — | feature/shell/firstrun/ConnectedScreen.kt | built (#2621) | — |
+| FirstRunSetupView | ios/Features/Onboarding/Setup/FirstRunSetupView.swift | — | feature/shell/firstrun/FirstRunSetupScreen.kt (+ SetupModel.kt, SetupApi.kt, ConnectSheets.kt) | built (#2621) | — |
+| SetupGraphView | ios/Features/Onboarding/Setup/SetupGraphView.swift | — | feature/shell/firstrun/SetupArt.kt (SetupGraph) | built (#2621) | — |
 | LoginArrivalView | ios/Features/Onboarding/SignInStage/LoginArrivalView.swift | — | — | todo | — |
 | SignInStageView | ios/Features/Onboarding/SignInStage/SignInStageView.swift | — | — | todo | — |
 

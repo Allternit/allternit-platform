@@ -5,6 +5,7 @@ import com.allternit.core.api.ApiJson
 import com.allternit.feature.shell.ShellApi
 import java.io.IOException
 import java.time.Instant
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
@@ -18,7 +19,6 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -85,7 +85,8 @@ internal object SetupHttp {
                 else -> null
             }
             val request = Request.Builder().url(url).header("Accept", "application/json").method(method, payload).build()
-            val client = if (authed) ShellApi.okHttp else publicHttp
+            // The shared client never times out a read (SSE); setup calls give up after 20 s, like iOS's request timeouts.
+            val client = (if (authed) ShellApi.okHttp else publicHttp).newBuilder().callTimeout(20, TimeUnit.SECONDS).build()
             val response = try {
                 client.newCall(request).execute()
             } catch (e: IOException) {
