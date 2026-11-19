@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use windows::core::{Interface, Result, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Foundation::Collections::IVector;
 use windows::Storage::Provider::*;
+use windows::Security::Cryptography::CryptographicBuffer;
 use windows::Storage::{IStorageFolder, StorageFolder};
 use windows::Win32::Foundation::{HANDLE, HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
@@ -98,9 +99,16 @@ fn register_storage_provider(spec: &Spec, id: &str) -> Result<()> {
     // windows 0.58 has no StorageFolder -> IStorageFolder conversion for Param; cast it.
     info.SetPath(&folder.cast::<IStorageFolder>()?)?;
     info.SetDisplayNameResource(&HSTRING::from(format!("Allternit · {}", spec.display_name)))?;
-    if let Some(icon) = spec.icon {
-        info.SetIconResource(&HSTRING::from(icon.as_os_str()))?;
+    // Register needs an icon (it crashed with none, 2026-11-19 CI). Without
+    // allternit.ico next to the helper, fall back to the system cloud-folder icon.
+    match spec.icon {
+        Some(icon) => info.SetIconResource(&HSTRING::from(icon.as_os_str()))?,
+        None => info.SetIconResource(&HSTRING::from(r"%SystemRoot%\system32\imageres.dll,-1043"))?,
     }
+    // Register also expects a context buffer (Microsoft's CloudMirror sample sets
+    // one); ours is the root identity, the same bytes cfapi registration uses.
+    let ctx = RootIdentity { v: 1, computer_id: spec.computer_id.to_string() }.encode();
+    info.SetContext(&CryptographicBuffer::CreateFromByteArray(&ctx)?)?;
     info.SetHydrationPolicy(StorageProviderHydrationPolicy::Full)?;
     info.SetHydrationPolicyModifier(StorageProviderHydrationPolicyModifier::None)?;
     info.SetPopulationPolicy(StorageProviderPopulationPolicy::Full)?;
