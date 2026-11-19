@@ -6,15 +6,25 @@
  * registers this adapter; G7-9 (PR11g) builds it out in this folder and never
  * edits tools.ts.
  */
-import { available } from '@/runtime/tools/builtins/end-conversation'
+import { available, EndConversationTool as RuntimeEndConversationTool } from '@/runtime/tools/builtins/end-conversation'
 import { END_CONVERSATION_TOOL_ID, EndConversationInput } from '@/runtime/primitives/gap-types'
 import DESCRIPTION_TXT from '@/runtime/tools/builtins/end-conversation.txt'
+import { getSessionId } from '../../bootstrap/state'
 import { buildTool, type ToolDef } from '../../Tool.js'
 
 export const END_CONVERSATION_TOOL_NAME = END_CONVERSATION_TOOL_ID
 
 type InputSchema = typeof EndConversationInput
-type Output = { ok: false; message: string }
+type Output = { ok: boolean; message: string; ended?: boolean }
+
+/** What the TUI shows once the chat has ended. */
+export const CHAT_ENDED_NOTICE = 'This chat has ended. Start a new one with /clear.'
+
+let endedSession: string | null = null
+/** True once end_conversation succeeded in this TUI session; /clear switches to a new session id, which clears it. */
+export function isChatEnded(): boolean {
+  return endedSession !== null && endedSession === getSessionId()
+}
 
 export const EndConversationTool = buildTool({
   name: END_CONVERSATION_TOOL_ID,
@@ -38,7 +48,31 @@ export const EndConversationTool = buildTool({
   renderToolUseMessage() {
     return ''
   },
-  async call() {
-    return { data: { ok: false, message: 'This tool is not available in this version.' } }
+  async call(input, context) {
+    const sessionID = getSessionId()
+    try {
+      const tool = await RuntimeEndConversationTool.init()
+      const out = await tool.execute(input, {
+        sessionID,
+        messageID: String(context.agentId ?? sessionID),
+        agent: 'gizzi',
+        abort: context.abortController.signal,
+        extra: {},
+        messages: [],
+        metadata() {},
+        async ask() {},
+      })
+      const ok = out.metadata.ok === true
+      if (ok) endedSession = sessionID
+      return { data: { ok, ended: ok, message: ok ? `${out.output}\n${CHAT_ENDED_NOTICE}` : out.output } }
+    } catch (e) {
+      // A terminal chat may have no runtime session row (the TUI keeps its own transcript).
+      // End it locally under the same rules: abuse only after a warning; a request is the person's own.
+      if (input.reason === 'user_requested' || input.warned === true) {
+        endedSession = sessionID
+        return { data: { ok: true, ended: true, message: `The chat has ended.\n${CHAT_ENDED_NOTICE}` } }
+      }
+      return { data: { ok: false, message: e instanceof Error ? e.message : 'Could not end the chat.' } }
+    }
   },
 } satisfies ToolDef<InputSchema, Output>)

@@ -5,9 +5,7 @@ description: 'End a chat after sustained abuse or on request'
 
 ## Overview
 
-`end_conversation` ends one of Gizzi's own chats. It is for sustained abuse after a warning, or when you ask for it. You can always start a new chat.
-
-This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
+`end_conversation` ends one of Gizzi's own chats. It is used only after a warning and failed redirects, or after you ask and confirm. It is never used when someone may be in crisis. You can always start a new chat.
 
 ## Parameters
 
@@ -19,12 +17,12 @@ This tool turns on with its feature PR. Until then it is registered as a stub an
 
 ## Result
 
-The reason and `ended: true`. The session moves to an ended state and the composer offers a new chat.
+The reason and `ended: true`. An ended chat refuses new messages (HTTP 409, "This chat has ended. Start a new chat."), and the apps show **Start a new chat**.
 
 ## Permission
 
-It is on for Gizzi's own chats and off for bots on customer channels. It is allowed in every mode.
+It is on for Gizzi's own chats only, never for bots or customer channels. It is allowed in every mode.
 
 ## Surfaces
 
-Desktop, web, phone layout, PWA, iOS and the terminal show the ended state. Android follows the PWA. Delivered by the phone PR (PR11g). Family: `session`.
+Desktop, web, phone layout, PWA, iOS and the terminal show the ended state. Android follows the PWA. Family: `session`.

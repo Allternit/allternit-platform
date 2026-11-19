@@ -87,6 +87,9 @@ struct AgentSession: Decodable, Sendable, Identifiable {
     /// `metadata.completed` — the session was marked finished (web
     /// code-session-state.ts; the Code sessions view's Done, C6). Missing = false.
     let completed: Bool
+    /// `metadata.ended` {at, reason}: the chat was ended (end_conversation). It
+    /// refuses new prompts; the composer shows "Start a new chat". nil = open.
+    let ended: EndedInfo?
     /// `metadata.worktree.branch` / `.path` — the session runs in a git
     /// worktree (agent_session_routes.rs). nil when not in one.
     let worktreeBranch: String?
@@ -124,9 +127,11 @@ struct AgentSession: Decodable, Sendable, Identifiable {
         case readyForReview
         case readyForReviewAt
         case completed
+        case ended
         case worktree
     }
 
+    struct EndedInfo: Decodable, Sendable, Equatable { let at: String?; let reason: String? }
     private struct ArtifactSessionTag: Decodable { let kind: String? }
     private struct SourceRefTag: Decodable { let harness: String? }
     private struct MissionTag: Decodable { let label: String? }
@@ -173,6 +178,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             readyForReview = ((try? metadata.decodeIfPresent(Bool.self, forKey: .readyForReview)) ?? nil) ?? false
             readyForReviewAt = readyForReview ? ((try? metadata.decodeIfPresent(String.self, forKey: .readyForReviewAt)) ?? nil) : nil
             completed = ((try? metadata.decodeIfPresent(Bool.self, forKey: .completed)) ?? nil) ?? false
+            ended = ((try? metadata.decodeIfPresent(EndedInfo.self, forKey: .ended)) ?? nil)
             // The backend emits a bool; the create path carries the flag as
             // the string "true" inside the metadata bag.
             if let flag = try metadata.decodeIfPresent(Bool.self, forKey: .ephemeral) {
@@ -196,6 +202,7 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             readyForReview = false
             readyForReviewAt = nil
             completed = false
+            ended = nil
             worktreeBranch = nil
             worktreePath = nil
             ephemeral = false

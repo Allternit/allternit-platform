@@ -258,7 +258,7 @@ export const UserLocationMetadata = z.object({
   ok,
   precision: LocationPrecision.optional(),
   /** What happened on the client. */
-  status: z.enum(["granted", "denied", "unavailable", "timeout"]).optional(),
+  status: z.enum(["granted", "denied", "unavailable", "timeout", "requested"]).optional(),
   city: z.string().optional(),
   region: z.string().optional(),
   country: z.string().optional(),

@@ -374,6 +374,10 @@ struct GizziSessionInfo {
     /// `{ path, branch }`. Passed through unchanged; absent outside a worktree.
     #[serde(default)]
     worktree: Option<serde_json::Value>,
+    /// Set once the chat ended (`end_conversation` tool): `{ at, reason }`.
+    /// The session then refuses new prompts; clients offer a new chat.
+    #[serde(default)]
+    ended: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -557,6 +561,7 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
     metadata.insert("glance".to_string(), json!(info.glance));
     metadata.insert("mission".to_string(), json!(info.mission));
     metadata.insert("worktree".to_string(), json!(info.worktree));
+    metadata.insert("ended".to_string(), json!(info.ended));
     for (key, value) in stored_metadata {
         metadata.insert(key, value);
     }
@@ -2559,6 +2564,7 @@ async fn transform_bus_event(
                         "glance": info.glance,
                         "mission": info.mission,
                         "worktree": info.worktree,
+                        "ended": info.ended,
                     },
                     "environment": info.environment,
                 })

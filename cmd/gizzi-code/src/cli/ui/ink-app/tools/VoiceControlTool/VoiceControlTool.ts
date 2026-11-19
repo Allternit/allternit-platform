@@ -1,20 +1,29 @@
 /**
- * voice_control in the Gizzi TUI: prompt-gap contract stub (G3). Same id, input
- * schema and description as the runtime builtin
- * (runtime/tools/builtins/voice-control.ts), and enabled only while that module's
- * `available` is true, so flipping it there turns on both. tools.ts already
- * registers this adapter; G7 (PR9) builds it out in this folder and never
- * edits tools.ts.
+ * voice_control in the Gizzi TUI (G7, PR9). Same id, input schema and
+ * description as the runtime builtin (runtime/tools/builtins/voice-control.ts),
+ * enabled while that module's `available` is true and voice dictation is on
+ * (`/voice`), since TUI voice is push-to-talk dictation only.
+ *
+ * Only end_call applies here: it stops a recording in progress. The TUI has no
+ * spoken output, language or speed, so reply mode, language and speed are
+ * applied in the apps only and the result says so.
  */
 import { available } from '@/runtime/tools/builtins/voice-control'
 import { VOICE_CONTROL_TOOL_ID, VoiceControlInput } from '@/runtime/primitives/gap-types'
 import DESCRIPTION_TXT from '@/runtime/tools/builtins/voice-control.txt'
 import { buildTool, type ToolDef } from '../../Tool.js'
+import { getInitialSettings } from '../../utils/settings/settings.js'
 
 export const VOICE_CONTROL_TOOL_NAME = VOICE_CONTROL_TOOL_ID
 
 type InputSchema = typeof VoiceControlInput
-type Output = { ok: false; message: string }
+type Output = { ok: boolean; message: string }
+
+const APPS_ONLY: Record<string, string> = {
+  set_language: 'Language is applied in the apps only: terminal voice has no spoken output.',
+  set_speed: 'Speed is applied in the apps only: terminal voice has no spoken output.',
+  set_reply_mode: 'Reply mode is applied in the apps only: terminal replies are always text.',
+}
 
 export const VoiceControlTool = buildTool({
   name: VOICE_CONTROL_TOOL_ID,
@@ -24,7 +33,7 @@ export const VoiceControlTool = buildTool({
     return VoiceControlInput
   },
   isEnabled() {
-    return available
+    return available && getInitialSettings().voiceEnabled === true
   },
   async description() {
     return DESCRIPTION_TXT
@@ -38,7 +47,13 @@ export const VoiceControlTool = buildTool({
   renderToolUseMessage() {
     return ''
   },
-  async call() {
-    return { data: { ok: false, message: 'This tool is not available in this version.' } }
+  async call(input) {
+    if (input.action !== 'end_call') {
+      return { data: { ok: false, message: APPS_ONLY[input.action] ?? 'Applied in the apps only.' } }
+    }
+    // Loaded on use: the voice service pulls in the recorder.
+    const { stopRecording } = await import('../../services/voice.js')
+    stopRecording()
+    return { data: { ok: true, message: 'Stopped the voice recording. Reply in text from here on.' } }
   },
 } satisfies ToolDef<InputSchema, Output>)

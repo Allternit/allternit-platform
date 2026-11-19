@@ -1,9 +1,9 @@
 ---
 title: Device Access
-description: "Let your bots read and add calendar events and reminders, and search contacts, on your iPhone. Each type is off until you turn it on, and bots reach it only while the Allternit app is open."
+description: "Let your bots read, add, change and delete calendar events and reminders, search contacts, and see your location, on your iPhone. Each type is off until you turn it on, and bots reach it only while the Allternit app is open."
 ---
 
-Device Access lets your bots use three things on your iPhone: **Calendar**, **Reminders** and **Contacts**. It does not include Health. Each one is off until you turn it on, and you can turn it off at any time.
+Device Access lets your bots use four things on your iPhone: **Calendar**, **Reminders**, **Contacts** and **Location**. It does not include Health. Each one is off until you turn it on, and you can turn it off at any time.
 
 ## Turn it on
 
@@ -19,11 +19,22 @@ A type reaches a bot only when both the switch is on and iOS allows it. If you t
 | --- | --- | --- |
 | `phone.calendar.list` | List events between two times (up to 62 days) | No |
 | `phone.calendar.create` | Add one event to your default calendar | Yes |
+| `phone.calendar.delete` | Delete one event | Yes |
 | `phone.reminders.list` | List open or completed reminders | No |
 | `phone.reminders.create` | Add one reminder to your default list | Yes |
+| `phone.reminders.update` | Change a reminder's title, due time, notes or done state | Yes |
 | `phone.contacts.search` | Search contacts by name (names, numbers, emails; read only) | No |
+| `phone.location.get` | Where the phone is | Precise only |
 
-Adding an event or a reminder always shows what will be added on your computer in Allternit Desktop, and nothing is added unless you tap **Allow**.
+Adding, changing or deleting an event or a reminder always shows the change on your computer in Allternit Desktop first, and nothing happens unless you tap **Allow**.
+
+## Location
+
+The **Location** switch gives bots your location. It is approximate by default (city level). A precise location asks you on the phone each time. A location is never saved to memory.
+
+## Android
+
+Android has no device calendar tools. Bots use your account calendars through the calendar connector instead.
 
 ## When a bot can't reach your iPhone
 
@@ -36,6 +47,6 @@ The bot reaches your iPhone through the same private connection as the screen an
 
 ## For developers
 
-The tools are defined in `surfaces/allternit-desktop/src/main/phone-tools.ts` and handled in `phone-app-store.ts`. They call `POST /api/v1/phones/app/:phoneId/rpc` with `device.calendar.list`, `device.calendar.create`, `device.reminders.list`, `device.reminders.create` or `device.contacts.search`. That route is Desktop-only and looks the phone up by account and phone id.
+The tools are defined in `surfaces/allternit-desktop/src/main/phone-tools.ts` and handled in `phone-app-store.ts`. They call `POST /api/v1/phones/app/:phoneId/rpc` with `device.calendar.list`, `device.calendar.create`, `device.calendar.delete`, `device.reminders.list`, `device.reminders.create`, `device.reminders.update`, `device.contacts.search` or `device.location.get`. `device.location.get` takes `precision` and defaults to approximate when it is omitted. The route is validated in `cmd/allternit-api/src/phone_app.rs`. That route is Desktop-only and looks the phone up by account and phone id.
 
-The app reports which types are on in its `state` frame as `deviceAccess` (`calendar`, `reminders`, `contacts`, each true only when the switch is on and iOS allows it). The node refuses a `device.*` call for a type that isn't true with `device_access_off`, and the app checks again, answering `device_access_off` or `permission_denied`. Writes go through the Desktop approval dialog before they are sent. The app side is `Core/Device/` and `Features/Settings/DeviceAccessSettingsView.swift` in `surfaces/allternit-mobile/ios`.
+The app reports which types are on in its `state` frame as `deviceAccess` (`calendar`, `reminders`, `contacts`, `location`, each true only when the switch is on and iOS allows it). The node refuses a `device.*` call for a type that isn't true with `device_access_off`, and the app checks again, answering `device_access_off` or `permission_denied`. Writes go through the Desktop approval dialog before they are sent. The app side is `Core/Device/` and `Features/Settings/DeviceAccessSettingsView.swift` in `surfaces/allternit-mobile/ios`.

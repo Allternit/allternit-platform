@@ -777,10 +777,21 @@ fn speakable_chunks(reply: &str) -> Vec<String> {
 /// channel path writes none, so nothing is written twice); the internal
 /// `toolCallId` (and the call's `input` / `output` / `error`) are not part of the
 /// stream's event shape. `usage` events are dropped.
+///
+/// A `control` event (from a finished `voice_control` call) goes to the call
+/// client as `call.control` with `language` / `speed` / `reply_mode` /
+/// `end_call`. `end_call` means: hang up once the current speech has played,
+/// then post `call.ended` with the `reason` given here (`assistant_ended`).
 fn forward_turn_event(db: &DbHandle, call: &CallRow, call_id: &str, mut ev: Value, out: &mpsc::UnboundedSender<Value>) {
     // Token usage is for Platform API text turns; a call is billed by the minute.
     if ev["type"] == "usage" {
         return;
+    }
+    if ev["type"] == "control" {
+        ev["type"] = json!("call.control");
+        if ev["end_call"] == true {
+            ev["reason"] = json!(ASSISTANT_ENDED);
+        }
     }
     if ev["type"] == "tool" {
         let id = ev.as_object_mut().and_then(|o| o.remove("toolCallId")).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
@@ -801,6 +812,9 @@ fn forward_turn_event(db: &DbHandle, call: &CallRow, call_id: &str, mut ev: Valu
     }
     let _ = out.send(ev);
 }
+
+/// The `call.ended` reason when the assistant hung up (`voice_control` end_call).
+pub(crate) const ASSISTANT_ENDED: &str = "assistant_ended";
 
 /// Aborts the turn when the SSE response is dropped (the relay hung up) while
 /// that turn is still the call's current one.
@@ -863,7 +877,7 @@ async fn turn_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<A
             match result {
                 Ok(reply) => {
                     if let TurnReply::Final(reply) = reply {
-                        for chunk in speakable_chunks(&crate::openui_text::to_spoken_text(&reply)) {
+                        for chunk in speakable_chunks(&crate::voice_turn_stream::strip_voice_tags(&crate::openui_text::to_spoken_text(&reply))) {
                             let _ = tx.send(json!({ "type": "text.delta", "text": chunk }));
                         }
                     }
