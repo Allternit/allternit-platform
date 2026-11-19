@@ -14,6 +14,7 @@ import com.allternit.core.api.gen.AllternitApi
 import com.allternit.core.auth.AllternitAuth
 import com.allternit.core.design.FriendlyErrorMessage
 import com.allternit.core.design.ModeAccents
+import com.allternit.core.design.R as DesignR
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -27,9 +28,9 @@ import java.time.OffsetDateTime
  */
 internal enum class ShellMode(val raw: String, val label: String, @DrawableRes val icon: Int, val accent: Color) {
     Home("home", "Home", R.drawable.shell_house, ModeAccents.Chat.accent),
-    Bots("bots", "Bots", com.allternit.core.design.R.drawable.ph_cpu, ModeAccents.Cowork.accent),
-    Code("code", "Code", com.allternit.core.design.R.drawable.ph_terminal, ModeAccents.Code.accent),
-    Aci("aci", "ACI", com.allternit.core.design.R.drawable.ph_globe, ModeAccents.Browser.accent);
+    Bots("bots", "Bots", DesignR.drawable.ph_cpu, ModeAccents.Cowork.accent),
+    Code("code", "Code", DesignR.drawable.ph_terminal, ModeAccents.Code.accent),
+    Aci("aci", "ACI", DesignR.drawable.ph_globe, ModeAccents.Browser.accent);
 
     /** PhoneDrawer WORDMARK_SUFFIX beside A://TERNIT (iOS draws GIZZI CODE for Code). */
     val wordmark: String
@@ -92,32 +93,31 @@ internal object ShellModePrefs {
 internal data class RailRow(val id: String, val label: String, @DrawableRes val icon: Int)
 
 internal fun railRows(mode: ShellMode): List<RailRow> {
-    val d = com.allternit.core.design.R.drawable
     val projects = RailRow("projects", "Projects", R.drawable.shell_folder)
     val artifacts = RailRow("artifacts-library", "Artifacts", R.drawable.shell_file_text)
     return when (mode) {
         ShellMode.Home -> listOf(
             projects, artifacts,
             RailRow("automation-tasks", "Automation Tasks", R.drawable.shell_clock),
-            RailRow("customize", "Customize", d.ph_sliders_horizontal),
+            RailRow("customize", "Customize", DesignR.drawable.ph_sliders_horizontal),
         )
         ShellMode.Code -> listOf(
             projects, artifacts,
             RailRow("code-automations", "Automation Tasks", R.drawable.shell_clock),
         )
         ShellMode.Aci -> listOf(
-            RailRow("mcp-apps", "MCP Apps", d.ph_plugs_connected),
-            RailRow("browser-extensions", "ACI Extensions", d.ph_puzzle_piece),
-            RailRow("computers", "Computers", d.ph_desktop),
-            RailRow("site-apis", "Teach", d.ph_record_fill),
+            RailRow("mcp-apps", "MCP Apps", DesignR.drawable.ph_plugs_connected),
+            RailRow("browser-extensions", "ACI Extensions", DesignR.drawable.ph_puzzle_piece),
+            RailRow("computers", "Computers", DesignR.drawable.ph_desktop),
+            RailRow("site-apis", "Teach", DesignR.drawable.ph_record_fill),
         )
         // iOS shows the bots rail (BotsDrawerRail) here; Bots mode arrives in a later step.
-        ShellMode.Bots -> listOf(RailRow("bots", "Your bots", d.ph_cpu), projects)
+        ShellMode.Bots -> listOf(RailRow("bots", "Your bots", DesignR.drawable.ph_cpu), projects)
     }
 }
 
 /** The extra drawer row that opens m.allternit.com in the retained TWA. */
-internal val WebVersionRow = RailRow("web", "Use web version", com.allternit.core.design.R.drawable.ph_arrow_square_out)
+internal val WebVersionRow = RailRow("web", "Use web version", DesignR.drawable.ph_arrow_square_out)
 
 // MARK: - Session metadata (iOS AgentSession.swift decoding of `metadata`)
 
