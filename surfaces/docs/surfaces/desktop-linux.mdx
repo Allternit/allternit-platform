@@ -7,16 +7,19 @@ Allternit Desktop runs on Linux as a `.deb` (Ubuntu, Debian, Mint), an `.rpm` (F
 
 ## Supported systems
 
-- Ubuntu 18.04+, Debian 10+, Linux Mint 19+ (`.deb`); Fedora, RHEL/Alma/Rocky 8+, openSUSE Leap 15+ and Tumbleweed (`.rpm`); any other distro with glibc 2.27+ (AppImage). All amd64 (x86_64).
-- amd64 only. arm64 is not supported yet.
+- Ubuntu 18.04+, Debian 10+, Linux Mint 19+ (`.deb`); Fedora, RHEL/Alma/Rocky 8+, openSUSE Leap 15+ and Tumbleweed (`.rpm`); any other distro with glibc 2.27+ (AppImage).
+- Two architectures: amd64 (x86_64: most PCs and laptops) and arm64 (aarch64: Raspberry Pi 4 and 5, ARM laptops, Linux VMs on Apple Silicon Macs). Every package comes in both.
+- Raspberry Pi needs a 64-bit OS (Raspberry Pi OS 64-bit or Ubuntu for Raspberry Pi). The 32-bit Raspberry Pi OS cannot run Desktop.
+- A Linux VM on an Apple Silicon Mac (UTM, Parallels, VMware Fusion, Lima) is arm64: use the arm64 files.
 - On Ubuntu 18.04 (glibc 2.27) everything works except the Meeting bot, which needs glibc 2.28. Debian 10 and newer run the Meeting bot.
 
 Why 2.27: it is the oldest glibc on which the app's window (Electron) starts. Every program the app ships is built to run there, and each release is tested on Ubuntu 18.04 and Debian 10 before it goes out.
 
-Check your glibc version:
+Check your glibc version and your architecture (`x86_64` = amd64, `aarch64` = arm64):
 
 ```bash
 ldd --version
+uname -m
 ```
 
 <Note>
@@ -25,7 +28,15 @@ Desktop 1.1.15 and older need glibc 2.38 or newer. From the next release, Deskto
 
 ## Install
 
-Download the file for your system from [github.com/Allternit/desktop/releases/latest](https://github.com/Allternit/desktop/releases/latest). In the commands below, replace `VERSION` with the number in the file name you downloaded.
+Download the file for your system from [github.com/Allternit/desktop/releases/latest](https://github.com/Allternit/desktop/releases/latest). In the commands below, replace `VERSION` with the number in the file name you downloaded. The commands show the amd64 files; on arm64 use the arm64 twin of each:
+
+| | amd64 (`x86_64`) | arm64 (`aarch64`) |
+|---|---|---|
+| `.deb` | `Allternit-Desktop-VERSION-amd64.deb` | `Allternit-Desktop-VERSION-arm64.deb` |
+| `.rpm` | `Allternit-Desktop-VERSION-x86_64.rpm` | `Allternit-Desktop-VERSION-aarch64.rpm` |
+| AppImage | `Allternit-Desktop-VERSION-x86_64.AppImage` | `Allternit-Desktop-VERSION-arm64.AppImage` |
+
+Installing the wrong one fails with an architecture error (apt: `package architecture (arm64) does not match system (amd64)`, or the other way round; dnf: `intended for a different architecture`).
 
 **Ubuntu, Debian, Mint: the `.deb`.** `apt` also pulls in `bubblewrap`, `lsof`, `libgbm1` and `libasound2`.
 
@@ -71,13 +82,15 @@ Open Allternit, click **Sign in to pair**, and sign in. The computer pairs with 
 
 ## Updates
 
-From the next release, the app updates itself. The `.deb` and `.rpm` ask for your password to install the update. The AppImage replaces its own file, so it needs no password, but its folder must be one you can write to.
+From the next release, the app updates itself. Each install updates from its own architecture's files, so an arm64 install stays arm64. The `.deb` and `.rpm` ask for your password to install the update. The AppImage replaces its own file, so it needs no password, but its folder must be one you can write to.
 
 On 1.1.15 and older (`.deb` only), install the next `.deb` by hand once. After that, updates arrive on their own.
 
 ## Troubleshooting
 
 **"GLIBC_2.38 not found" or "Initialization Error".** Your system is older than 1.1.15 supports. Install the next release.
+
+**"package architecture (arm64) does not match system (amd64)", or the other way round.** You downloaded the other architecture. Run `uname -m`: `x86_64` takes the `amd64`/`x86_64` files, `aarch64` takes the `arm64`/`aarch64` files. On a Raspberry Pi, `armv7l` means a 32-bit OS: install the 64-bit Raspberry Pi OS first.
 
 **"libgbm.so.1: cannot open shared object file".** The app needs `libgbm1`. Install the `.deb` with `apt` (not `dpkg -i`) so its dependencies come with it, or run `sudo apt install libgbm1`.
 
