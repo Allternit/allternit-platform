@@ -257,6 +257,13 @@ ALTER TABLE memory_facts ADD COLUMN tether TEXT;
 ALTER TABLE memory_facts ADD COLUMN last_reconsolidated_at DATETIME;
 ALTER TABLE memory_facts ADD COLUMN source_type TEXT CHECK (source_type IS NULL OR source_type IN ('user_said', 'tool_observed', 'model_inferred', 'dream_generated', 'imported'));
 ALTER TABLE memory_facts ADD COLUMN insight_score REAL;
+-- Write-time scores (step 3.3, no model call). attention: how much this deserves keeping
+-- (remember markers, self-disclosure, repetition, use, surprise, stakes, goal link).
+-- credence: how likely it is true, set by source, never by emphasis. flashbulb: 1 = the
+-- user flagged it ("remember this"); it raises priority only, never credence.
+ALTER TABLE memory_facts ADD COLUMN attention REAL;
+ALTER TABLE memory_facts ADD COLUMN credence REAL;
+ALTER TABLE memory_facts ADD COLUMN flashbulb INTEGER;
 
 -- Answer-used labels on the incumbent recall (step 3.1).
 -- label_used: JSON array of the result ids the reply used. label_source: answer | user | shadow
