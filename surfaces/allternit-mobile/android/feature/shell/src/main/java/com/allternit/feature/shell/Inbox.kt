@@ -15,6 +15,23 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.AnchoredDraggableDefaults
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.animateTo
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.IntOffset
+import com.allternit.core.design.Motion
+import kotlin.math.roundToInt
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -103,6 +120,8 @@ internal data class InboxItem(
     val isCritical: Boolean get() = kind == "attention" && severity == "critical"
     /** A phone approval hold: Review only, never approved from the row. */
     val isPhoneAction: Boolean get() = subkind == "phone_action"
+    /** The hold id behind an `approval:<id>` item. */
+    val holdId: String get() = if (id.startsWith("approval:")) id.removePrefix("approval:") else id
 
     /** `detail.phone` of a phone hold (every field optional). */
     data class PhoneHold(
@@ -114,6 +133,7 @@ internal data class InboxItem(
         val text: String?,
         val element: String?,
         val step: Int?,
+        val tool: String? = null,
     )
 
     companion object {
@@ -130,6 +150,7 @@ internal data class InboxItem(
                     text = p.s("text"),
                     element = (p["element"] as? JsonObject)?.s("label"),
                     step = (p["step"] as? JsonPrimitive)?.intOrNull,
+                    tool = p.s("tool"),
                 )
             }
             return InboxItem(
@@ -228,6 +249,63 @@ internal class InboxStore(private val backend: ChatBackend) {
         busy.remove(item.id)
     }
 
+    /** A notification or the Review pane already answered this item. */
+    fun removeLocally(id: String) {
+        items = items.filterNot { it.id == id }
+    }
+
+    // MARK: Phone holds (iOS PhoneTaskClient.hold / crop, PhoneHoldReviewView.decide)
+
+    /** `GET /api/v1/phones/holds/:id` state: pending, approved, denied, changed, expired; "gone" on 404. Null when unknown. */
+    suspend fun holdState(holdId: String): String? {
+        val escaped = URLEncoder.encode(holdId, "UTF-8").replace("+", "%20")
+        return when (val r = backend.runtimeJson("GET", "/api/v1/phones/holds/$escaped")) {
+            is RuntimeCall.Ok -> when (val raw = (r.body as? JsonObject)?.s("state")) {
+                "approved" -> "approved"
+                "denied", "rejected" -> "denied"
+                "changed" -> "changed"
+                "expired" -> "expired"
+                else -> if (raw == null) null else "pending"
+            }
+            is RuntimeCall.Http -> if (r.status == 404) "gone" else null
+            else -> null
+        }
+    }
+
+    /** The review image (`GET /api/v1/phones/holds/:id/crop`); null when there is none or it can't load. */
+    suspend fun crop(holdId: String): android.graphics.Bitmap? {
+        val escaped = URLEncoder.encode(holdId, "UTF-8").replace("+", "%20")
+        val (status, bytes) = backend.runtimeBytes("/api/v1/phones/holds/$escaped/crop", "image/*") ?: return null
+        if (status != 200 || bytes.isEmpty()) return null
+        return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    }
+
+    /** Approve (with the hash the pane showed) or deny from the Review pane. */
+    sealed interface Decision {
+        data object Done : Decision
+        /** 409: the hold moved since the bot asked. */
+        data object Conflict : Decision
+        data class Failed(val message: String) : Decision
+    }
+
+    suspend fun decideReviewed(item: InboxItem, approve: Boolean): Decision {
+        val escaped = URLEncoder.encode(item.id, "UTF-8").replace("+", "%20")
+        val body = if (approve) buildJsonObject {
+            put("surface", "app")
+            item.contentHash?.takeIf { it.isNotEmpty() }?.let { put("contentHash", it) }
+        } else buildJsonObject { put("decision", "deny") }
+        return when (val r = backend.runtimeJson("POST", "/api/v1/inbox/$escaped/approve", body.toString())) {
+            is RuntimeCall.Ok -> Decision.Done.also { removeLocally(item.id) }
+            is RuntimeCall.Http -> when (r.status) {
+                409 -> Decision.Conflict
+                404 -> Decision.Done.also { removeLocally(item.id) }
+                else -> Decision.Failed(statusSentence(r.status) ?: FriendlyErrorMessage.from(r.message ?: "", "answer that"))
+            }
+            RuntimeCall.NoComputer -> Decision.Failed(NoComputerCopy.DETAIL)
+            is RuntimeCall.Failed -> Decision.Failed(r.message)
+        }
+    }
+
     suspend fun approve(item: InboxItem) = act(item, "approve")
     /** From the open Review pane: `surface: "app"` and the hash it showed, so a changed hold answers 409. */
     suspend fun approveReviewed(item: InboxItem) = act(item, "approve", buildJsonObject {
@@ -268,8 +346,8 @@ internal fun inboxAgo(iso: String, now: Long = System.currentTimeMillis()): Stri
 
 /**
  * The drawer's Inbox, "Needs you": everything across the bots that waits on you, with the main
- * action on the row. iOS swipes (right for the main action, left to snooze or dismiss) are the
- * row's ⋯ button here: Android lists have no two-button swipe. [focusedId] is the item a link or
+ * action on the row. Swipe right for the main action, left for Snooze and Dismiss (iOS
+ * swipeActions, same tints). [focusedId] is the item a link or
  * notification asked for. [onOpenBot] opens where the item lives; [onOpenSettings] opens Settings
  * for memories waiting to move to the Memory Drive.
  */
@@ -365,8 +443,9 @@ internal fun InboxSheet(
                             )
                         }
                         items(store.items, key = { it.id }) { item ->
-                            InboxRow(
+                            InboxSwipeRow(
                                 item = item,
+                                primaryTitle = if (item.isPhoneAction) "Review" else item.primaryLabel,
                                 store = store,
                                 focused = item.id == focusedId,
                                 onPrimary = { primary(item) },
@@ -384,18 +463,7 @@ internal fun InboxSheet(
     }
 
     reviewing?.let { item ->
-        PhoneHoldReview(
-            item = item,
-            onApprove = {
-                reviewing = null
-                scope.launch { store.approveReviewed(item) }
-            },
-            onDeny = {
-                reviewing = null
-                scope.launch { store.deny(item) }
-            },
-            onClose = { reviewing = null },
-        )
+        PhoneHoldReviewSheet(item = item, store = store, onClose = { reviewing = null })
     }
 }
 
@@ -406,13 +474,11 @@ private fun InboxRow(
     focused: Boolean,
     onPrimary: () -> Unit,
     onDeny: () -> Unit,
-    onSnooze: () -> Unit,
-    onDismissItem: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val busy = store.busy[item.id] == true
-    var menu by remember { mutableStateOf(false) }
     val label = when {
         item.isPeerHeld -> "Other agent"
         item.isPhoneAction -> "Approval · Phone"
@@ -424,9 +490,9 @@ private fun InboxRow(
         else -> if (item.isPeerHeld) "Refuse" else "Deny"
     }
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .background(if (focused) c.accentPrimary.copy(alpha = 0.12f) else Color.Transparent)
+            .background(if (focused) c.accentPrimary.copy(alpha = 0.12f).compositeOver(c.bgPrimary) else c.bgPrimary)
             .testTag("inboxRow${item.id}")
             .padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -442,28 +508,6 @@ private fun InboxRow(
                 modifier = Modifier.weight(1f),
             )
             Text(inboxAgo(item.at), color = c.textSecondary, fontSize = 11.sp)
-            Box {
-                Box(
-                    Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .clickable(role = Role.Button, onClickLabel = "More") { menu = true }
-                        .semantics { contentDescription = "More for ${item.summary}" },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(painterResource(R.drawable.shell_dots), contentDescription = null, tint = c.textTertiary, modifier = Modifier.size(16.dp))
-                }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp), containerColor = c.bgPrimary) {
-                    MenuRow(R.drawable.shell_clock, "Snooze", testTag = "inboxSnooze") {
-                        menu = false
-                        onSnooze()
-                    }
-                    MenuRow(DesignR.drawable.ph_x, "Dismiss", testTag = "inboxDismiss") {
-                        menu = false
-                        onDismissItem()
-                    }
-                }
-            }
         }
         Text(item.summary, color = c.textPrimary, fontSize = 15.sp)
         if (item.isPeerHeld && !item.text.isNullOrEmpty()) {
@@ -488,7 +532,7 @@ private fun InboxRow(
                 Haptics.perform(view, Haptics.Kind.Tap)
                 onPrimary()
             }
-            if (!item.isPhoneAction && item.canApprove && item.primaryAction == "approve") {
+            if (item.isPhoneAction || (item.canApprove && item.primaryAction == "approve")) {
                 InboxButton(title = denyLabel, prominent = false, enabled = !busy, testTag = "inboxDeny${item.id}", onClick = onDeny)
             }
         }
@@ -513,33 +557,253 @@ private fun InboxButton(title: String, prominent: Boolean, enabled: Boolean, tes
     }
 }
 
+private enum class SwipeSlot { Leading, Closed, Trailing }
+
 /**
- * A phone hold's Review (iOS PhoneHoldReviewSheet, short form): what the bot wants to do on which
- * phone, then Approve or Deny. Approve sends the hash this pane showed.
+ * iOS `swipeActions`: swipe right to reveal the main action (accent), swipe left to reveal
+ * Snooze (grey) and Dismiss (red). A revealed button acts on tap; the row's own buttons stay.
  */
 @Composable
-private fun PhoneHoldReview(item: InboxItem, onApprove: () -> Unit, onDeny: () -> Unit, onClose: () -> Unit) {
+private fun InboxSwipeRow(
+    item: InboxItem,
+    primaryTitle: String,
+    store: InboxStore,
+    focused: Boolean,
+    onPrimary: () -> Unit,
+    onDeny: () -> Unit,
+    onSnooze: () -> Unit,
+    onDismissItem: () -> Unit,
+) {
     val c = AllternitTheme.colors
-    val p = item.phone
-    val lines = listOfNotNull(
-        p?.phoneName?.let { "Phone: $it" },
-        p?.app?.let { "App: $it" },
-        (p?.goal ?: p?.intent)?.let { "Wants to: $it" },
-        p?.element?.let { "Tap: $it" },
-        p?.to?.let { "To: $it" },
-        p?.text?.let { "Text: “$it”" },
-    )
-    AlertDialog(
-        onDismissRequest = onClose,
-        containerColor = c.bgPrimary,
-        title = { Text("Review", color = c.textPrimary) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.testTag("inboxReview")) {
-                Text(item.summary, color = c.textPrimary, fontSize = 15.sp)
-                lines.forEach { Text(it, color = c.textSecondary, fontSize = 13.sp) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val slotPx = with(density) { 84.dp.toPx() }
+    val state = remember(item.id) { AnchoredDraggableState(SwipeSlot.Closed) }
+    LaunchedEffect(slotPx) {
+        state.updateAnchors(
+            DraggableAnchors {
+                SwipeSlot.Leading at slotPx
+                SwipeSlot.Closed at 0f
+                SwipeSlot.Trailing at -2 * slotPx
+            },
+            state.targetValue,
+        )
+    }
+    val fling = AnchoredDraggableDefaults.flingBehavior(state, { d: Float -> d * 0.5f }, Motion.standardSpring())
+    val offset = state.offset.let { if (it.isNaN()) 0f else it }
+    fun close(then: () -> Unit) {
+        scope.launch { state.animateTo(SwipeSlot.Closed, Motion.standardSpring()) }
+        then()
+    }
+    Box(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        // Under the row: the leading action on the left, the trailing pair on the right.
+        Row(Modifier.matchParentSize()) {
+            if (offset > 0f) {
+                SwipeButton(primaryTitle, c.accentPrimary, c.onAccent, Modifier.width(with(density) { offset.toDp() }), "inboxSwipePrimary${item.id}") { close(onPrimary) }
             }
-        },
-        confirmButton = { TextButton(onClick = onApprove, modifier = Modifier.testTag("inboxReviewApprove")) { Text("Approve", color = c.textPrimary) } },
-        dismissButton = { TextButton(onClick = onDeny, modifier = Modifier.testTag("inboxReviewDeny")) { Text("Deny", color = AllternitStatic.StatusError) } },
-    )
+            Spacer(Modifier.weight(1f))
+            if (offset < 0f) {
+                val w = with(density) { (-offset / 2f).toDp() }
+                SwipeButton("Snooze", Color(0xFF8E8E93), Color.White, Modifier.width(w), "inboxSnooze${item.id}") { close(onSnooze) }
+                SwipeButton("Dismiss", AllternitStatic.StatusError, Color.White, Modifier.width(w), "inboxDismiss${item.id}") { close(onDismissItem) }
+            }
+        }
+        InboxRow(
+            item = item,
+            store = store,
+            focused = focused,
+            onPrimary = onPrimary,
+            onDeny = onDeny,
+            modifier = Modifier
+                .offset { IntOffset(offset.roundToInt(), 0) }
+                .anchoredDraggable(state = state, orientation = Orientation.Horizontal, enabled = true, flingBehavior = fling),
+        )
+    }
+}
+
+@Composable
+private fun SwipeButton(title: String, background: Color, ink: Color, modifier: Modifier, testTag: String, onClick: () -> Unit) {
+    Box(
+        modifier
+            .fillMaxHeight()
+            .background(background)
+            .testTag(testTag)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(title, color = ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Clip)
+    }
+}
+
+private enum class HoldPhase { Loading, Shown, Failed, Approved, Denied, Changed, Expired }
+
+private fun holdPhase(state: String?): HoldPhase? = when (state) {
+    "approved" -> HoldPhase.Approved
+    "denied" -> HoldPhase.Denied
+    "changed" -> HoldPhase.Changed
+    "expired", "gone" -> HoldPhase.Expired
+    else -> null
+}
+
+/**
+ * The phone approval Review pane as a sheet over the inbox (iOS PhoneHoldReviewSheet +
+ * PhoneHoldReviewView, Option B): the large screen image, the details, then Deny / Approve.
+ * Approve turns on only after the image has loaded; Deny always works. States: loading, shown,
+ * failed, approved, denied, changed, expired. A 409 on Approve re-reads the hold.
+ */
+@Composable
+private fun PhoneHoldReviewSheet(item: InboxItem, store: InboxStore, onClose: () -> Unit) {
+    val c = AllternitTheme.colors
+    val scope = rememberCoroutineScope()
+    var phase by remember(item.id) { mutableStateOf(HoldPhase.Loading) }
+    var image by remember(item.id) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val phone = item.phone
+    val phoneName = phone?.phoneName?.trim()?.takeIf { it.isNotEmpty() } ?: "your phone"
+    val actionLabel = phone?.element?.trim()?.takeIf { it.isNotEmpty() }
+        ?: phone?.intent?.trim()?.takeIf { it.isNotEmpty() } ?: phone?.tool ?: "this step"
+
+    suspend fun loadCrop(keepPhase: Boolean = false) {
+        if (!keepPhase) phase = HoldPhase.Loading
+        val loaded = store.crop(item.holdId)?.asImageBitmap()
+        image = loaded
+        if (!keepPhase) phase = if (loaded == null) HoldPhase.Failed else HoldPhase.Shown
+    }
+
+    LaunchedEffect(item.id) {
+        val done = holdPhase(store.holdState(item.holdId))
+        if (done != null) {
+            phase = done
+            if (done == HoldPhase.Changed) loadCrop(keepPhase = true)
+        } else {
+            loadCrop()
+        }
+    }
+
+    fun decide(approve: Boolean) {
+        if (busy) return
+        busy = true
+        error = null
+        scope.launch {
+            when (val r = store.decideReviewed(item, approve)) {
+                InboxStore.Decision.Done -> phase = if (approve) HoldPhase.Approved else HoldPhase.Denied
+                InboxStore.Decision.Conflict -> phase = holdPhase(store.holdState(item.holdId)) ?: HoldPhase.Changed
+                is InboxStore.Decision.Failed -> error = r.message
+            }
+            busy = false
+        }
+    }
+
+    ShellSheet(
+        title = "Review",
+        onDismiss = onClose,
+        testTag = "inboxReview",
+        trailing = SheetAction("Done", onClose, bold = true, testTag = "inboxReviewDone"),
+    ) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("APPROVAL · PHONE", color = c.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text(item.summary, color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                Text(listOfNotNull(phoneName, phone?.app?.takeIf { it.isNotBlank() }).joinToString(" · "), color = c.textSecondary, fontSize = 12.sp)
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(380.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(c.fillNeutral)
+                    .border(1.dp, c.borderSubtle, RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                when (phase) {
+                    HoldPhase.Loading -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = c.textSecondary)
+                        Text("Loading the phone's screen…", color = c.textSecondary, fontSize = 13.sp)
+                    }
+                    HoldPhase.Failed -> Column(
+                        Modifier.padding(horizontal = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(painterResource(R.drawable.shell_photo), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(26.dp))
+                        Text("Could not load the screen. Approve stays off until you can see it.", color = c.textPrimary, fontSize = 13.sp, textAlign = TextAlign.Center)
+                        InboxButton("Try again", prominent = false, enabled = true, testTag = "inboxReviewRetry") { scope.launch { loadCrop() } }
+                    }
+                    else -> image?.let {
+                        androidx.compose.foundation.Image(
+                            bitmap = it,
+                            contentDescription = "Screenshot of $phoneName at this step",
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize().padding(8.dp).clip(RoundedCornerShape(10.dp)),
+                        )
+                    }
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                phone?.goal?.takeIf { it.isNotBlank() }?.let { HoldDetail("Goal", it) }
+                phone?.to?.takeIf { it.isNotBlank() }?.let { HoldDetail("To", it) }
+                phone?.text?.takeIf { it.isNotBlank() }?.let { HoldDetail("Message", it) }
+                HoldDetail("Action", actionLabel)
+            }
+            when (phase) {
+                HoldPhase.Approved -> HoldOutcome(DesignR.drawable.ph_check_circle_fill, AllternitStatic.StatusSuccess, "Approved. Your bot taps \"$actionLabel\" now.")
+                HoldPhase.Denied -> HoldOutcome(DesignR.drawable.ph_x, AllternitStatic.StatusError, "Denied. The task stopped and nothing was done on your phone.")
+                HoldPhase.Expired -> HoldOutcome(R.drawable.shell_clock, c.textSecondary, "Expired. Nobody answered in 5 minutes, so the task ended and nothing was done.")
+                HoldPhase.Changed -> {
+                    HoldOutcome(DesignR.drawable.ph_arrows_down_up, AllternitStatic.StatusWarning, "Changed. The screen moved since your bot asked. Check the new screen, then decide.")
+                    HoldButtons(approveEnabled = false, busy = busy, onDeny = { decide(false) }, onApprove = { decide(true) })
+                }
+                else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (phase != HoldPhase.Shown) Text("Approve turns on when the screen has loaded.", color = c.textSecondary, fontSize = 13.sp)
+                    error?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 13.sp) }
+                    HoldButtons(approveEnabled = phase == HoldPhase.Shown, busy = busy, onDeny = { decide(false) }, onApprove = { decide(true) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HoldDetail(title: String, value: String) {
+    val c = AllternitTheme.colors
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.width(64.dp))
+        Text(value, color = c.textPrimary, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun HoldOutcome(icon: Int, tint: Color, text: String) {
+    val c = AllternitTheme.colors
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+        Text(text, color = c.textPrimary, fontSize = 15.sp)
+    }
+}
+
+/** Deny (outlined) and Approve (ink on paper in both themes, iOS). */
+@Composable
+private fun HoldButtons(approveEnabled: Boolean, busy: Boolean, onDeny: () -> Unit, onApprove: () -> Unit) {
+    val c = AllternitTheme.colors
+    val shape = RoundedCornerShape(12.dp)
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(
+            Modifier.weight(1f).heightIn(min = 44.dp).clip(shape).background(c.fillNeutral).border(1.dp, c.borderSubtle, shape)
+                .testTag("inboxReviewDeny").clickable(enabled = !busy, role = Role.Button, onClick = onDeny),
+            contentAlignment = Alignment.Center,
+        ) { Text("Deny", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
+        Box(
+            Modifier.weight(1f).heightIn(min = 44.dp).clip(shape).background(c.textPrimary.copy(alpha = if (approveEnabled) 1f else 0.28f))
+                .testTag("inboxReviewApprove").clickable(enabled = approveEnabled && !busy, role = Role.Button, onClick = onApprove)
+                .semantics { if (!approveEnabled) stateDescription = "Turns on when the screen has loaded" },
+            contentAlignment = Alignment.Center,
+        ) { Text(if (busy) "Working…" else "Approve", color = c.bgPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
+    }
 }

@@ -224,6 +224,26 @@ class ChatBackend(
         return RuntimeCall.Failed(ChatErrors.UNREACHABLE)
     }
 
+    /**
+     * A binary GET on the user's computer through the relay (iOS PhoneTaskClient.crop): the
+     * status and body as the computer sent them, or null when no computer answers.
+     */
+    suspend fun runtimeBytes(path: String, accept: String): Pair<Int, ByteArray>? {
+        val runtimeId = (relay.resolve() as? RelayPick.Computer)?.runtimeId ?: return null
+        val envelope = buildJsonObject {
+            put("method", "GET")
+            put("path", path)
+            put("headers", buildJsonObject { put("accept", accept) })
+            put("bodyEncoding", "utf8")
+        }.toString()
+        val request = ApiCall.request("POST", relay.proxyUrl(runtimeId), envelope, accept = accept)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                okHttp.newCall(request).execute().use { it.code to (it.body?.bytes() ?: ByteArray(0)) }
+            }.getOrNull()
+        }
+    }
+
     // MARK: Chat stream
 
     /**

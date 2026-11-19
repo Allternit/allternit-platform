@@ -95,9 +95,9 @@ without an identifier; iOS should take the same id when a flow needs it.
 | `shellSearchField` | `ios/Features/Shell/ShellSearchView.swift` | `android/feature/shell/.../ShellSearch.kt` |
 | `phoneOverview`, `recentsOptions`, `overviewLayout`, `overviewSelectBar` | `ios/Features/Shell/SessionOverviewView.swift` | `android/feature/shell/.../SessionOverview.kt` |
 | `drawerNewPill` (hold for `drawerNew<optionId>`: `continue-cli`, `scheduled`, `quick-task`) | `ios/Features/History/Views/HistorySidebarView.swift` (drawerNewPill) | `android/feature/shell/.../ShellDrawer.kt` |
-| `inboxSheet`, `inboxDone`, `inboxList`, `inboxEmpty`, `inboxRow<id>`, `inboxPrimary<id>`, `inboxDeny<id>`, `inboxSnooze`, `inboxDismiss`, `inboxReview`, `drawerInboxCount` | none (iOS InboxSheet sets no ids) | `android/feature/shell/.../Inbox.kt`, `ShellDrawer.kt` |
+| `inboxSheet`, `inboxDone`, `inboxList`, `inboxEmpty`, `inboxRow<id>`, `inboxPrimary<id>`, `inboxDeny<id>`, `inboxSwipePrimary<id>`, `inboxSnooze<id>`, `inboxDismiss<id>`, `inboxReview`, `inboxReviewDone`, `inboxReviewApprove`, `inboxReviewDeny`, `inboxReviewRetry`, `drawerInboxCount` | none (iOS InboxSheet sets no ids) | `android/feature/shell/.../Inbox.kt`, `ShellDrawer.kt` |
 | `quickTaskSheet`, `quickTaskClose`, `quickTaskStatus`, `nativeSessionPicker`, `nativeSessionCancel`, `nativeSessionSearch`, `nativeHarness<id>`, `nativeSession<harness:id>` | none | `android/feature/shell/.../StartSheets.kt` |
-| `overviewLayout<list\|grid\|deck>`, `overviewSelect`, `overviewView<All\|Pinned\|Archived>`, `overviewRow<id>`, `overviewCard<id>`, `overviewRename`, `overviewSearch`, `overviewNew`, `overviewEmpty`, `overviewDeleteConfirm` | none | `android/feature/shell/.../SessionOverview.kt` |
+| `overviewLayout<list\|grid\|deck>`, `overviewSelect`, `overviewView<All\|Pinned\|Archived>`, `overviewRow<id>`, `overviewCard<id>`, `overviewRename`, `overviewSearch`, `overviewNew`, `overviewEmpty`, `overviewDeleteConfirm`, `overviewFilter`, `overviewGroupAll`, `overviewTeleport` | none | `android/feature/shell/.../SessionOverview.kt` |
 | `shellSearch`, `shellSearchClose`, `shellSearchEmpty`, `searchSession<id>`, `searchProject<id>`, `searchBot<id>` | none | `android/feature/shell/.../ShellSearch.kt` |
 | `thinkingSlider`, `thinkingLevel<levelId>` | none | `android/feature/shell/.../ThinkingSlider.kt` |
 

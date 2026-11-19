@@ -353,7 +353,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | mode: bots | — | src/fabric-session/phone/phone-nav.ts (PhoneMode bots) | — | todo | — |
 | mode: code | — | src/fabric-session/phone/phone-nav.ts (PhoneMode code) | — | todo | — |
 | mode: home | — | src/fabric-session/phone/phone-nav.ts (PhoneMode home) | — | todo | — |
-| StageBackdropView | ios/Features/Shell/Backdrop/StageBackdropView.swift | — | feature/shell/backdrop/StageBackdrop.kt | built (#2626) | — |
+| StageBackdropView | ios/Features/Shell/Backdrop/StageBackdropView.swift | — | feature/shell/backdrop/StageBackdrop.kt (drawn from waves D–F: iOS draws it only on bot, group, project and Code screens, and in the drawer while one of those publishes it) | built (#2626) | — |
 | InboxSheet | ios/Features/Shell/InboxSheet.swift | — | feature/shell/Inbox.kt | built (#2626) | — |
 | ModeDialView | ios/Features/Shell/ModeDialView.swift | — | — | todo | — |
 | NativeSessionPickerSheet | ios/Features/Shell/NativeSessionPickerSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |

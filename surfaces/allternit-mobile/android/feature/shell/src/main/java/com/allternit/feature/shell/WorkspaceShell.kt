@@ -97,7 +97,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             },
         )
     }
-    val store = remember { ShellSessionsStore() }
+    val store = remember {
+        ShellSessionsStore().also { it.seenPrefs = context.getSharedPreferences("allternit_shell", android.content.Context.MODE_PRIVATE) }
+    }
     val models = remember { ModelStore(context) }
     // One chat for the shell (iOS keeps one ChatViewModel): a running reply survives a trip
     // to the home and back. It shares the shell's OkHttp client and API.
@@ -202,6 +204,13 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             ShellMode.Code -> listOf(continueCli("code"), scheduled, quick)
             ShellMode.Aci, ShellMode.Bots -> listOf(quick)
         }
+    }
+
+    // The overview's Working / New reply (iOS ChatView → ShellSessionsStore.setActive).
+    val chatOnScreen = page is ShellPage.Chat
+    LaunchedEffect(chatOnScreen, chat.currentSessionId, chat.isStreaming) {
+        store.setActive(if (chatOnScreen) chat.currentSessionId else null, chat.isStreaming)
+        if (!chatOnScreen) store.setStreaming(chat.currentSessionId, chat.isStreaming)
     }
 
     val drawerOpen = drawer.settledValue == DrawerValue.Open || drawer.targetValue == DrawerValue.Open

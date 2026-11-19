@@ -119,9 +119,9 @@ internal fun sessionSurfaceLabel(session: AgentSession): String = when {
  * modes without select (ACI) get the layout switch behind a sliders button. Select mode swaps to
  * checkbox rows and a bottom bar of Archive (Unarchive) · Pin (Unpin) · Delete. A floating
  * search field and the New pill sit at the bottom. [isWorking] marks a session streaming now.
- *
- * Not on Android yet: the project group filter (Projects arrive in wave D), the Local / Cloud
- * badge and Teleport (Code arrives later), and "New reply" (no per-session seen state yet).
+ * The filter button (shown when there is more than one group) narrows to one project ("repos" in
+ * Code). Each card shows where it runs (Local / Cloud, `teleports/placements`); Code cards'
+ * ⋯ adds Teleport to cloud / Bring back to this Mac. "New reply" marks activity since last seen.
  */
 @Composable
 internal fun SessionOverviewScreen(
@@ -148,6 +148,15 @@ internal fun SessionOverviewScreen(
     var editingId by remember { mutableStateOf<String?>(null) }
     var draft by remember { mutableStateOf("") }
     var actionError by remember { mutableStateOf<String?>(null) }
+    /** null = all projects. */
+    var group by remember { mutableStateOf<String?>(null) }
+    var filterOpen by remember { mutableStateOf(false) }
+    var projects by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        projects = SearchSources.list("cowork/projects", "projects", "title").associate { it.id to it.title }
+    }
+    fun groupLabel(s: AgentSession): String = s.projectId?.let { projects[it] } ?: "No project"
+    val working: (String) -> Boolean = { id -> isWorking(id) || store.isStreaming(id) }
 
     val hasOptions = mode == ShellMode.Home || mode == ShellMode.Code
     fun selectable(s: AgentSession) = hasOptions && !s.isTerminal
@@ -169,10 +178,14 @@ internal fun SessionOverviewScreen(
     val items = if (viewFilter == OverviewView.Archived) {
         store.archivedOf(mode)
     } else {
-        store.of(mode).filter { viewFilter != OverviewView.Pinned || it.id in pins }.sortedByDescending { isWorking(it.id) }
+        store.of(mode).filter { viewFilter != OverviewView.Pinned || it.id in pins }.sortedByDescending { working(it.id) }
     }
+    val groups = items.groupingBy(::groupLabel).eachCount().let { counts -> items.map(::groupLabel).distinct().map { it to (counts[it] ?: 0) } }
     val needle = query.trim().lowercase()
-    val shown = items.filter { needle.isEmpty() || it.title.lowercase().contains(needle) || it.description.orEmpty().lowercase().contains(needle) }
+    val shown = items.filter { s ->
+        (group == null || groupLabel(s) == group) &&
+            (needle.isEmpty() || s.title.lowercase().contains(needle) || s.description.orEmpty().lowercase().contains(needle))
+    }
     // Ticks only cover what is on screen (reduceOverviewSelect .visible).
     if (selecting) {
         val visible = shown.map { it.id }.toSet()
@@ -236,8 +249,17 @@ internal fun SessionOverviewScreen(
         }
     }
 
+    fun teleport(s: AgentSession, toCloud: Boolean) {
+        Haptics.perform(view, Haptics.Kind.Tap)
+        scope.launch { store.teleport(s.id, toCloud)?.let { actionError = it } }
+    }
+
     val cardActions = CardActions(
         editable = editable,
+        groupLabel = ::groupLabel,
+        place = { store.cloudPlaces[it] },
+        unread = { store.isUnread(it) },
+        teleport = if (mode == ShellMode.Code) ({ s, toCloud -> teleport(s, toCloud) }) else null,
         editingId = editingId,
         draft = draft,
         onDraft = { draft = it.take(120) },
@@ -274,8 +296,34 @@ internal fun SessionOverviewScreen(
         } else {
             PhoneHeader(
                 title = title,
+                wideSides = groups.size > 1,
                 leading = { PhoneIconButton(DesignR.drawable.ph_caret_left, "Back", testTag = "shellBack", onClick = onBack) },
                 trailing = {
+                    if (groups.size > 1) {
+                        Box {
+                            PhoneIconButton(R.drawable.shell_list, "Filter", testTag = "overviewFilter", iconSize = 20) { filterOpen = true }
+                            if (group != null) Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(7.dp).clip(CircleShape).background(c.accentPrimary))
+                            DropdownMenu(
+                                expanded = filterOpen,
+                                onDismissRequest = { filterOpen = false },
+                                shape = RoundedCornerShape(16.dp),
+                                containerColor = c.bgPrimary,
+                                modifier = Modifier.width(260.dp),
+                            ) {
+                                val noun = if (mode == ShellMode.Code) "repos" else "projects"
+                                MenuRow(null, "All $noun (${items.size})", checked = group == null, testTag = "overviewGroupAll") {
+                                    filterOpen = false
+                                    group = null
+                                }
+                                groups.forEach { (label, count) ->
+                                    MenuRow(null, "$label ($count)", checked = group == label) {
+                                        filterOpen = false
+                                        group = label
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Box {
                         if (hasOptions) {
                             PhoneIconButton(R.drawable.shell_dots, "Recents options", testTag = "recentsOptions", iconSize = 20) { optionsOpen = true }
@@ -336,7 +384,7 @@ internal fun SessionOverviewScreen(
                     items(shown, key = { it.id }) { s ->
                         OverviewListRow(
                             s,
-                            working = isWorking(s.id),
+                            working = working(s.id),
                             selecting = selecting,
                             selectable = selectable(s),
                             ticked = s.id in selected,
@@ -353,7 +401,7 @@ internal fun SessionOverviewScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(shown, key = { it.id }) { s ->
-                        OverviewCard(s, tall = false, working = isWorking(s.id), actions = cardActions, onTap = { tap(s) })
+                        OverviewCard(s, tall = false, working = working(s.id), actions = cardActions, onTap = { tap(s) })
                     }
                 }
                 else -> LazyRow(
@@ -362,7 +410,7 @@ internal fun SessionOverviewScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(shown, key = { it.id }) { s ->
-                        DeckCard(s, working = isWorking(s.id), actions = cardActions, onTap = { tap(s) }, onSwipeClose = { close(s) })
+                        DeckCard(s, working = working(s.id), actions = cardActions, onTap = { tap(s) }, onSwipeClose = { close(s) })
                     }
                 }
             }
@@ -443,6 +491,12 @@ private const val LAYOUT_KEY = "allternit-phone-overview-layout"
 /** What a card can do (open, rename in place, archive). */
 private class CardActions(
     val editable: Boolean,
+    val groupLabel: (AgentSession) -> String,
+    /** The cloud computer's label when the session runs there; null = local. */
+    val place: (String) -> String?,
+    val unread: (AgentSession) -> Boolean,
+    /** Code only: move the session to the cloud (true) or back to the Mac (false). */
+    val teleport: ((AgentSession, Boolean) -> Unit)?,
     val editingId: String?,
     val draft: String,
     val onDraft: (String) -> Unit,
@@ -525,6 +579,31 @@ private fun WorkingPill() {
     }
 }
 
+/** "Working" while streaming, else "New reply" when there is unseen activity (OverviewStatusPill). */
+@Composable
+private fun StatusPill(s: AgentSession, working: Boolean, actions: CardActions) {
+    if (working) {
+        WorkingPill()
+    } else if (actions.unread(s)) {
+        Text("New reply", color = AllternitTheme.colors.textTertiary, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(vertical = 2.dp))
+    }
+}
+
+/** Local / Cloud: where the session runs, as on the web session header. */
+@Composable
+private fun PlaceBadge(s: AgentSession, actions: CardActions) {
+    val c = AllternitTheme.colors
+    val label = actions.place(s.id)
+    Row(
+        Modifier.semantics { contentDescription = label?.let { "Running on $it" } ?: "Running on this Mac" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(painterResource(if (label == null) DesignR.drawable.ph_desktop else DesignR.drawable.ph_globe), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(10.dp))
+        Text(if (label == null) "Local" else "Cloud", color = c.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
 @Composable
 private fun TitleOrField(s: AgentSession, actions: CardActions, size: Float, lines: Int, modifier: Modifier) {
     val c = AllternitTheme.colors
@@ -563,6 +642,13 @@ private fun CardControls(s: AgentSession, actions: CardActions, deck: Boolean) {
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp), containerColor = c.bgPrimary) {
             MenuRow(DesignR.drawable.ph_arrow_square_out, "Open") { menu = false; actions.onOpen(s) }
             MenuRow(R.drawable.shell_note_pencil, "Rename") { menu = false; actions.onRename(s) }
+            actions.teleport?.let { move ->
+                val inCloud = actions.place(s.id) != null
+                MenuRow(if (inCloud) DesignR.drawable.ph_desktop else DesignR.drawable.ph_upload_simple, if (inCloud) "Bring back to this Mac" else "Teleport to cloud", testTag = "overviewTeleport") {
+                    menu = false
+                    move(s, !inCloud)
+                }
+            }
             MenuRow(R.drawable.shell_tray, "Archive") { menu = false; actions.onClose(s) }
         }
     }
@@ -590,7 +676,7 @@ private fun OverviewListRow(
             .clickable(role = Role.Button, onClick = onTap)
             .alpha(if (selecting && !selectable) 0.45f else 1f)
             .semantics {
-                contentDescription = if (working) "${s.title}, Working" else s.title
+                contentDescription = if (working) "${s.title}, Working" else if (actions.unread(s)) "${s.title}, New reply" else s.title
                 if (selecting && selectable) stateDescription = if (ticked) "Selected" else "Not selected"
             }
             .heightIn(min = 60.dp)
@@ -615,7 +701,8 @@ private fun OverviewListRow(
                 Text(relativeTime(s.timestampMillis), color = c.textSecondary, fontSize = 12.sp)
             }
             s.description?.takeIf { it.isNotEmpty() }?.let { Text(it, color = c.textSecondary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            if (working) WorkingPill()
+            StatusPill(s, working, actions)
+            PlaceBadge(s, actions)
         }
         if (actions.editable) Row { CardControls(s, actions, deck = false) }
     }
@@ -635,21 +722,22 @@ private fun OverviewCard(s: AgentSession, tall: Boolean, working: Boolean, actio
             .border(1.dp, if (working) Coral else c.borderSubtle, shape)
             .testTag("overviewCard${s.id}")
             .clickable(role = Role.Button, onClick = onTap)
-            .semantics { contentDescription = if (working) "${s.title}, Working" else s.title }
+            .semantics { contentDescription = if (working) "${s.title}, Working" else if (actions.unread(s)) "${s.title}, New reply" else s.title }
             .then(if (tall) Modifier.fillMaxSize() else Modifier.fillMaxWidth().heightIn(min = 150.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Icon(painterResource(sessionIcon(s)), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(13.dp))
-            Text("No project", color = c.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.weight(1f))
+            Text(actions.groupLabel(s), color = c.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.weight(1f))
             Text(relativeTime(s.timestampMillis), color = c.textSecondary, fontSize = 11.sp)
         }
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             TitleOrField(s, actions, if (tall) 15.5f else 15f, 2, Modifier.weight(1f))
             if (actions.editable) CardControls(s, actions, deck = tall)
         }
-        if (working) WorkingPill()
+        StatusPill(s, working, actions)
+        PlaceBadge(s, actions)
         s.description?.takeIf { it.isNotEmpty() }?.let {
             Text(it, color = c.textSecondary, fontSize = 13.sp, maxLines = if (tall) 12 else 4, overflow = TextOverflow.Ellipsis)
         }

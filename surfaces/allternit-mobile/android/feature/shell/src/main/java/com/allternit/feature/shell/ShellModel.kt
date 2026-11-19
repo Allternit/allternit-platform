@@ -151,6 +151,8 @@ private fun AgentSession.metaBool(key: String): Boolean = (meta(key) as? JsonPri
 
 internal val AgentSession.originSurface: String get() = metaString("originSurface").orEmpty()
 internal val AgentSession.agentId: String? get() = metaString("agent_id")?.takeIf { it.isNotEmpty() }
+/** The cowork project the session belongs to (`metadata.project_id`, iOS AgentSession.projectId). */
+internal val AgentSession.projectId: String? get() = metaString("project_id")?.takeIf { it.isNotEmpty() }
 internal val AgentSession.archived: Boolean get() = metaBool("archived")
 internal val AgentSession.ephemeral: Boolean get() = metaBool("ephemeral")
 internal val AgentSession.isTerminal: Boolean
@@ -211,6 +213,68 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
     /** The last load was refused by the compute gate: this account has no computer yet. */
     var noComputer by mutableStateOf(false)
         private set
+    /** Sessions running on a cloud computer: id → its label (`GET teleports/placements`). Absent = local. */
+    var cloudPlaces by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+
+    // MARK: Working / unread (iOS ShellSessionsStore seen, activeId, streaming)
+
+    /** Where "last seen" lives (iOS UserDefaults `allternit-phone-session-seen`); set by the shell. */
+    var seenPrefs: android.content.SharedPreferences? = null
+        set(value) {
+            field = value
+            seen.clear()
+            value?.getString(SEEN_KEY, null)?.let { raw ->
+                runCatching {
+                    (kotlinx.serialization.json.Json.parseToJsonElement(raw) as? JsonObject)?.forEach { (k, v) ->
+                        (v as? JsonPrimitive)?.contentOrNull?.toLongOrNull()?.let { seen[k] = it }
+                    }
+                }
+            }
+        }
+    private val seen = androidx.compose.runtime.mutableStateMapOf<String, Long>()
+    private var activeId by mutableStateOf<String?>(null)
+    private var streamingIds by mutableStateOf<Set<String>>(emptySet())
+
+    fun isStreaming(id: String): Boolean = id in streamingIds
+
+    /** New activity since the session was last seen, not while it streams or is on screen. */
+    fun isUnread(session: AgentSession): Boolean {
+        if (session.id == activeId || session.id in streamingIds) return false
+        val last = seen[session.id] ?: return false
+        return session.timestampMillis > last
+    }
+
+    /** The chat reports its session and whether a reply is streaming; null = it left the screen. */
+    fun setActive(id: String?, streaming: Boolean) {
+        val previous = activeId
+        if (previous != null && previous != id) {
+            markSeen(previous)
+            if (id != null) streamingIds = streamingIds - previous
+        }
+        activeId = id
+        if (id == null) return
+        streamingIds = if (streaming) streamingIds + id else streamingIds - id
+        markSeen(id)
+    }
+
+    /** A reply that keeps running (or ends) while its chat is off screen. */
+    fun setStreaming(id: String?, streaming: Boolean) {
+        if (id == null) return
+        streamingIds = if (streaming) streamingIds + id else streamingIds - id
+    }
+
+    fun markSeen(id: String) {
+        val at = sessions.firstOrNull { it.id == id }?.timestampMillis ?: 0L
+        seen[id] = maxOf(at, seen[id] ?: 0L)
+        saveSeen()
+    }
+
+    private fun saveSeen() {
+        val prefs = seenPrefs ?: return
+        val body = kotlinx.serialization.json.buildJsonObject { seen.forEach { (k, v) -> put(k, JsonPrimitive(v)) } }
+        prefs.edit().putString(SEEN_KEY, body.toString()).apply()
+    }
 
     suspend fun load() {
         if (isLoading) return
@@ -224,11 +288,16 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
                     loadError = null
                     noComputer = false
                     hasLoaded = true
+                    // First sighting is the baseline: only later activity counts as unread.
+                    sessions.forEach { s -> if (seen[s.id] == null || s.id == activeId) seen[s.id] = s.timestampMillis }
+                    saveSeen()
+                    loadPlaces()
                 }
                 is ApiResult.HttpError -> if (isNoComputer(r)) {
                     // No computer is not an error (iOS ShellSessionsStore.isNoComputer): the list is
                     // just empty, and the composer's computer chip says why.
                     sessions = emptyList()
+                    cloudPlaces = emptyMap()
                     noComputer = true
                     loadError = null
                     hasLoaded = true
@@ -292,6 +361,26 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
         return error
     }
 
+    /** `GET teleports/placements` → `{ placements: { id: { targetId, label } } }`. An older backend has none: all local. */
+    suspend fun loadPlaces() {
+        val url = ApiConfig().apiBaseUrl.newBuilder().addPathSegments("teleports/placements").build()
+        val r = ApiCall.execute(ShellApi.okHttp, ApiJson.default, ApiCall.request("GET", url, null), JsonObject.serializer())
+        if (r is ApiResult.Ok) {
+            cloudPlaces = (r.value["placements"] as? JsonObject).orEmpty().mapNotNull { (id, v) ->
+                ((v as? JsonObject)?.get("label") as? JsonPrimitive)?.contentOrNull?.let { id to it }
+            }.toMap()
+        }
+    }
+
+    /** Move a Code session between the Mac and the cloud computer (`POST native-sessions/teleport`). */
+    suspend fun teleport(id: String, toCloud: Boolean): String? {
+        val url = ApiConfig().apiBaseUrl.newBuilder().addPathSegments("native-sessions/teleport").build()
+        val body = """{"sessionId":${JsonPrimitive(id)},"to":"${if (toCloud) "cloud" else "local"}"}"""
+        val error = describe(ApiCall.executeUnit(ShellApi.okHttp, ApiJson.default, ApiCall.request("POST", url, body)))
+        if (error == null) loadPlaces()
+        return error
+    }
+
     /** Archived sessions of [mode] (the overview's Archived view). */
     fun archivedOf(mode: ShellMode): List<AgentSession> = sessions.filter { it.archived && it.belongs(mode) }
 
@@ -303,6 +392,8 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
  * The compute gate's account-state refusals (iOS APIError.isComputeGateRefusal): cloud-api's 428
  * ("No data-plane node", pair a device), and 409/410 `compute_required` / `free_computers_retired`.
  */
+private const val SEEN_KEY = "allternit-phone-session-seen"
+
 internal fun isNoComputer(r: ApiResult.HttpError): Boolean {
     if (r.status == 428) return true
     if (r.status != 409 && r.status != 410) return false
