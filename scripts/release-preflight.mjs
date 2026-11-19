@@ -682,6 +682,7 @@ function checkUpdaterFeed() {
   const publish = (pkg.build && Array.isArray(pkg.build.publish) ? pkg.build.publish : [])[0] || {};
   const publishOwner = publish.owner;
   const publishRepo = publish.repo;
+  const updaterSrc = read('surfaces/allternit-desktop/src/main/app-updater-logic.ts');
   const mainSrc = read('surfaces/allternit-desktop/src/main/unified-main.ts');
   const manifestSrc = read('surfaces/allternit-desktop/src/main/manifest.ts');
   const expected = `${publishOwner}/${publishRepo}`;
@@ -691,14 +692,23 @@ function checkUpdaterFeed() {
     fail('updater: surfaces/allternit-desktop/package.json build.publish is missing owner/repo');
     return;
   }
-  const repoRe = new RegExp(`repo:\\s*['"]${expected}['"]`);
-  if (repoRe.test(mainSrc)) {
-    pass(`updater: updateElectronApp repo is ${expected} (matches publish)`);
+  // electron-updater (app-updater.ts) is the one app updater on every OS; its
+  // feed is DESKTOP_RELEASE_OWNER/DESKTOP_RELEASE_REPO in app-updater-logic.ts.
+  const ownerM = /DESKTOP_RELEASE_OWNER\s*=\s*'([^']+)'/.exec(updaterSrc);
+  const repoM = /DESKTOP_RELEASE_REPO\s*=\s*'([^']+)'/.exec(updaterSrc);
+  const updaterFeed = ownerM && repoM ? `${ownerM[1]}/${repoM[1]}` : null;
+  if (updaterFeed === expected) {
+    pass(`updater: electron-updater feed is ${expected} (matches publish)`);
   } else {
     fail(
-      `updater: unified-main.ts updateElectronApp repo does not match electron-builder publish ` +
+      `updater: app-updater-logic.ts feed ${updaterFeed ?? '(not found)'} does not match electron-builder publish ` +
         `${expected} — auto-update would look at a 404 feed (desktop-v1.1.1 consumer-packaging P5).`
     );
+  }
+  if (/update-electron-app|\bautoUpdater\.(checkForUpdates|quitAndInstall)\(/.test(mainSrc)) {
+    fail('updater: unified-main.ts still uses update-electron-app / Electron autoUpdater; app-updater.ts is the only updater');
+  } else {
+    pass('updater: no update-electron-app / built-in autoUpdater in unified-main.ts');
   }
   const feedRe = new RegExp(`desktopFeedUrl:\\s*'https://github.com/${expected}/releases/latest'`);
   if (feedRe.test(manifestSrc)) {

@@ -15,7 +15,7 @@ also point it at your own Allternit instance running on a VPS.
 │  │  • Rust API server (allternit-api, spawned locally)      │   │
 │  │  • gizzi-code brain, allternit-factory, voice service   │   │
 │  │  • vendored ripgrep, Lume, platform static export       │   │
-│  │  • Auto-updater (update-electron-app / Squirrel)        │   │
+│  │  • App updater (electron-updater, every OS)             │   │
 │  │  • System tray                                          │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │         │ HTTPS/WebSocket (local: 127.0.0.1:8013 by default)     │
@@ -115,12 +115,14 @@ Then in Allternit Desktop, select **VPS** mode and enter your URL.
 ## Updating
 
 ### Desktop App (UI)
-Auto-updates use `update-electron-app` (Squirrel) against the GitHub Releases
-feed of `Allternit/desktop` — explicit in `src/main/unified-main.ts`
-(`updateElectronApp({ repo: 'Allternit/desktop', updateInterval: '1 hour' })`)
-and in `build.publish` in `package.json`. The app checks the latest release
-on that repo about once an hour and prompts via the renderer when a new
-version is available.
+`src/main/app-updater.ts` runs electron-updater on macOS (MacUpdater +
+`src/main/mac-app-swap.ts`, no Squirrel.Mac), Windows (NsisUpdater) and the
+Linux .deb (DebUpdater) against the latest release of `Allternit/desktop`
+(`DESKTOP_RELEASE_OWNER`/`DESKTOP_RELEASE_REPO` in `app-updater-logic.ts`,
+matching `build.publish` in `package.json`; `scripts/release-preflight.mjs`
+checks they agree). It checks at start and hourly, downloads in the
+background and prompts via the renderer (`app:update-status`). See
+surfaces/docs/surfaces/desktop.mdx, "App updates".
 
 ### Backend (Your Server)
 You control when to update your backend:
