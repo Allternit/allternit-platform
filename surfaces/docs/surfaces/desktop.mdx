@@ -189,10 +189,10 @@ Check a build with `codesign --verify --deep --strict "Allternit Desktop.app"`. 
 
 ## Linux release smoke test
 
-Every Linux Desktop release is gated by `.github/workflows/linux-desktop-smoke.yml`. `release-desktop.yml` calls it on the built `.deb`, and the release job waits for it. For each of Debian 12, Debian 13, Ubuntu 22.04 and Ubuntu 24.04 it:
+Every Linux Desktop release is gated by `.github/workflows/linux-desktop-smoke.yml`. `release-desktop.yml` calls it on the built `.deb`, and the release job waits for it. For each of Ubuntu 18.04, Debian 10, Debian 12, Debian 13, Ubuntu 22.04 and Ubuntu 24.04 it (Debian 10 uses `archive.debian.org`, since it is end of life):
 
 1. runs `apt-get install ./deb`, which must work with the package's own `Depends`;
-2. runs `scripts/check-elf-floor.mjs` on the bundled binaries, when that script exists on the ref;
+2. runs `scripts/check-elf-floor.mjs` on the whole extracted app, the Electron shell included, when that script exists on the ref (every ELF must need glibc 2.27 or older; only the LiveKit Meeting bot binding is allowlisted);
 3. starts the bundled `allternit-api` and waits up to 30 seconds for `/health/live`, which fails on a `GLIBC ... not found` error;
 4. starts the app as a normal user under Xvfb with `--no-sandbox` (a container cannot run Chromium's sandbox), connects over CDP, and checks that the startup window (`#btn-get-started`) rendered and that `main.log` has no "Initialization Error".
 

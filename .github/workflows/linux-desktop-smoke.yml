@@ -1,6 +1,7 @@
 name: Linux Desktop smoke
 
-# Gates every Linux Desktop release. Installs the .deb in four clean distros,
+# Gates every Linux Desktop release. Installs the .deb in six clean distros
+# (Ubuntu 18.04 / Debian 10 are the glibc 2.27 / 2.28 floor end),
 # starts the bundled engine for real, then starts the app and checks that the
 # startup window rendered. No sign-in and no secrets: see
 # scripts/linux-desktop-lab/README.md.
@@ -37,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ['debian:12', 'debian:13', 'ubuntu:22.04', 'ubuntu:24.04']
+        image: ['ubuntu:18.04', 'debian:10', 'debian:12', 'debian:13', 'ubuntu:22.04', 'ubuntu:24.04']
     env:
       LAB: scripts/linux-desktop-lab
       RES: /opt/Allternit Desktop/resources
@@ -72,10 +73,18 @@ jobs:
           deb=$(find deb-in -name "*.deb" | head -1)
           cp "$deb" /tmp/allternit.deb
           echo "testing $(basename "$deb")"
+          slug="${{ matrix.image }}"; echo "SLUG=${slug//[:.]/}" >> "$GITHUB_ENV"
           # --network host: the runner's node drives the app's CDP port directly.
           docker run -d --name lab --network host \
             -v "$PWD/$LAB:/lab:ro" -v /tmp/allternit.deb:/tmp/allternit.deb:ro \
             "${{ matrix.image }}" sleep infinity
+          # Debian 10 (buster) is end of life: its packages moved to archive.debian.org,
+          # whose Release files are past Valid-Until.
+          docker exec lab bash -c 'if grep -q "VERSION_CODENAME=buster" /etc/os-release; then
+              printf "deb http://archive.debian.org/debian buster main\ndeb http://archive.debian.org/debian-security buster/updates main\n" > /etc/apt/sources.list
+              rm -f /etc/apt/sources.list.d/*.list
+              echo "Acquire::Check-Valid-Until \"false\";" > /etc/apt/apt.conf.d/99archive
+            fi'
           docker exec lab bash -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates xvfb xauth dbus-x11 gnome-keyring libsecret-tools fonts-dejavu-core >/dev/null'
 
       - name: 1. apt-get install ./deb (its own Depends only)
@@ -83,14 +92,14 @@ jobs:
           docker exec lab bash -c 'cp /tmp/allternit.deb /tmp/a.deb && chmod 644 /tmp/a.deb && cd /tmp && DEBIAN_FRONTEND=noninteractive apt-get install -y ./a.deb 2>&1 | tail -5; exit ${PIPESTATUS[0]}' || { echo "::error::deb does not install on ${{ matrix.image }}"; exit 1; }
           docker exec lab bash -c 'dpkg -s allternit-desktop | grep -E "^(Package|Version)"'
 
-      - name: 2. ELF glibc floor
+      - name: 2. ELF glibc floor (whole app, Electron shell included)
         run: |
           if [ ! -f scripts/check-elf-floor.mjs ]; then
             echo "::notice::scripts/check-elf-floor.mjs is not on this ref (arrives with PR #2587); skipping"
             exit 0
           fi
           rm -rf /tmp/debx && mkdir /tmp/debx && dpkg-deb -x /tmp/allternit.deb /tmp/debx
-          node scripts/check-elf-floor.mjs --dir "/tmp/debx$RES"
+          node scripts/check-elf-floor.mjs --dir "/tmp/debx/opt/Allternit Desktop" --shell allternit
 
       - name: 3. allternit-api starts and answers /health/live
         run: docker exec lab bash /lab/smoke-api.sh
@@ -115,7 +124,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
-          name: linux-smoke-${{ strategy.job-index }}-${{ matrix.image == 'debian:12' && 'debian12' || matrix.image == 'debian:13' && 'debian13' || matrix.image == 'ubuntu:22.04' && 'ubuntu2204' || 'ubuntu2404' }}
+          name: linux-smoke-${{ strategy.job-index }}-${{ env.SLUG }}
           path: shots
           if-no-files-found: warn
           retention-days: 14

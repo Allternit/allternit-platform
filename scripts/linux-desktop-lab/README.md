@@ -1,13 +1,19 @@
 # Linux Desktop test lab
 
 Checks that a released Allternit Desktop `.deb` installs and starts on the Linux
-versions we support: Debian 12, Debian 13, Ubuntu 22.04 and Ubuntu 24.04.
+versions we support, from the oldest up: Ubuntu 18.04 (glibc 2.27, the floor),
+Debian 10 (2.28), Ubuntu 22.04, Debian 12, Debian 13 and Ubuntu 24.04. The floor
+is the oldest glibc on which the Electron shell starts; see
+`scripts/build-linux-sidecars.sh`. Debian 10 is end of life, so CI points its apt
+at `archive.debian.org` first. On Ubuntu 18.04 the Meeting bot cannot run (its
+LiveKit prebuilt needs glibc 2.28); nothing here starts it.
 The same scripts run in CI (`.github/workflows/linux-desktop-smoke.yml`) and by
 hand on the standby incus host.
 
 | File | What it does |
 | --- | --- |
 | `lab.sh <name> <image> [deb]` | Makes an incus container, installs X/dbus/keyring/fonts, creates user `tester`, runs `apt-get install ./deb`, then runs `--version` on each sidecar. Proves the install resolves its own `Depends` and the sidecars link against this OS's glibc. |
+| `../check-elf-floor.mjs --dir <app> --shell allternit` | CI step 2: every ELF in the extracted package, the Electron shell included, needs glibc <= the floor (the shell can never be allowlisted). |
 | `smoke-api.sh` | Starts the bundled `allternit-api` and polls `/health/live` for 30 s. Fails on a `GLIBC ... not found` error or an early exit. Proves the engine can run on this OS. |
 | `smoke-app.sh [user]` | Starts the app as a non-root user under Xvfb with a dbus session and an unlocked keyring, with `--no-sandbox --remote-debugging-port=9222`. |
 | `smoke-logs.sh [user]` | Greps `main.log` and the app output for "Initialization Error", "Failed to initialize bundled mode" and GLIBC errors. |

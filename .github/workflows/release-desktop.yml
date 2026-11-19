@@ -1071,7 +1071,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Gate: the Linux .deb must install and start on Debian 12/13 and Ubuntu 22.04/24.04.
+  # Gate: the Linux .deb must install and start on Ubuntu 18.04/22.04/24.04 and Debian 10/12/13.
   linux-desktop-smoke:
     needs: build-linux
     permissions:
