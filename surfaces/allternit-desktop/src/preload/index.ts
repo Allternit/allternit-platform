@@ -34,11 +34,13 @@ const sdkAPI = {
 // ─── Connection / Backend mode ────────────────────────────────────────────────
 
 const connectionAPI = {
-  test: (): Promise<{ mode: string; url: string; status: string; lastError?: string }> =>
-    ipcRenderer.invoke('connection:test'),
+  /** Checks the active engine, or `target.remoteUrl` before it is saved (Connect page). */
+  test: (target?: { remoteUrl?: string }): Promise<{ mode: string; url: string; status: string; latencyMs?: number; lastError?: string }> =>
+    ipcRenderer.invoke('connection:test', target),
   getBackend: (): Promise<{ mode: 'bundled' | 'remote' | 'development'; url: string }> =>
     ipcRenderer.invoke('connection:get-backend'),
-  setBackend: (config: { mode: 'bundled' | 'remote'; remoteUrl?: string }): Promise<void> =>
+  /** `restart: true` relaunches the app after saving (Connect page "Save and restart"). */
+  setBackend: (config: { mode: 'bundled' | 'remote'; remoteUrl?: string; restart?: boolean }): Promise<void> =>
     ipcRenderer.invoke('connection:set-backend', config),
   onStateChange: (callback: (state: unknown) => void): (() => void) => {
     const handler = (_: IpcRendererEvent, state: unknown) => callback(state);

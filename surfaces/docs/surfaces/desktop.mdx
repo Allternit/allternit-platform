@@ -39,7 +39,7 @@ If another app already owns one of these chords, Allternit can't register it and
 
 ## Menu bar icon
 
-The A mark (the A from the app icon, drawn as square blocks on whole pixels in a 19 pt square) sits in the macOS menu bar, beside the other status icons. Click it to open the HUD, the same as `Cmd/Ctrl+Shift+H`. Right-click or Control-click it for the status menu: backend status and mode, Connection Settings, permissions, Show Window, the desktop pet, Allternit Office, Quick Chat, Toggle HUD and Quit. With **menu bar mode** on, a click shows or hides the main window instead. On Windows and Linux the tray shows the colour app icon instead, since a black mark would vanish on a dark taskbar. A click opens the HUD and right-click opens the same menu.
+The A mark (the A from the app icon, drawn as square blocks on whole pixels in a 19 pt square) sits in the macOS menu bar, beside the other status icons. Click it to open the HUD, the same as `Cmd/Ctrl+Shift+H`. Right-click or Control-click it for the status menu: backend status and mode, Connection Settings (opens **Settings › Computers** in the app; see [Pairing this computer](#pairing-this-computer)), permissions, Show Window, the desktop pet, Allternit Office, Quick Chat, Toggle HUD and Quit. With **menu bar mode** on, a click shows or hides the main window instead. On Windows and Linux the tray shows the colour app icon instead, since a black mark would vanish on a dark taskbar. A click opens the HUD and right-click opens the same menu.
 
 The icon is a template image (`surfaces/allternit-desktop/build/trayTemplate.png` and `@2x`), so macOS draws it white on a dark menu bar. Code: `createTray` in `src/main/unified-main.ts`.
 
@@ -237,6 +237,22 @@ allternit-desktop/
 | `mini-window:toggle` | Renderer to main | Show or hide it |
 
 The main process registers many other channels (for example `miniApps:*`); see `src/main/unified-main.ts`.
+
+## Pairing this computer
+
+The first time Desktop opens, or after you sign out, it shows the pairing window. It has the same "Allternit ⇄ computer" header as the in-app **Connect a computer** sheet, this computer's name and system, and three steps: **Sign in to your Allternit account**, **Approve this computer** and **Start Allternit**. Press **Sign in to pair**. A sign-in window opens. Signing in pairs the computer, so there is no code to type.
+
+The window shows each step as it happens: **Signing in** while the sign-in window is open, **Approving** while Allternit checks the computer with your account, then **Connected** with the account email, and the workspace opens. **Cancel**, or closing the sign-in window, goes back to the start. If pairing fails, a card says what happened in plain words and what to do next: **Try again**, **Sign in again** when the sign-in was not accepted, **Manage your computers** when the plan's computer limit is reached, or **Check Allternit status** when the problem is on Allternit's side. The raw error code goes to the app log (`~/Library/Logs/@allternit/desktop/main.log` on Mac, `~/.config/@allternit/desktop/logs/main.log` on Linux), not on screen.
+
+The window is app white and follows the system's dark mode (graphite).
+
+**Connection Settings (tray).** Once the workspace is open, the tray's **Connection Settings** opens **Settings › Computers** in the main window, the same connect kit every Allternit surface uses. The separate **Where Allternit runs** page shows only when the app can't load the workspace (Desktop opens it by itself when the workspace fails to load). It offers **On this computer** (the engine built into Desktop) or **On my Allternit server or cloud computer** (an address you enter). **Check** tests the choice without saving it and says **Works** with the response time or **Can't reach**. **Save and restart** saves it and restarts the app.
+
+For developers:
+- The pairing window is `src/main/startup-window.ts`; its page is built by `src/main/startup-page.ts` (`buildStartupHtml`, `renderPairingCard`). The primary button keeps the id `btn-get-started`, which the Linux lab driver clicks.
+- `src/main/auth-manager.ts` sends the re-rendered card on `pairing:render` at each change. Phases, steps and the error cards are in `src/main/pairing-state.ts` (`pairingStepAt`, `pairingErrorView`; failures are `PairingFailure` with a kind and status). The startup preload adds `cancelLogin` (`auth:cancel-login`), `openApp` (`startup:open-app`) and `onPairing`.
+- The tray decision is `connectionSettingsTarget` in `src/main/window-chrome.ts`. It opens Settings › Computers by dispatching the workspace's `allternit:open-settings` event with `{ section: 'computers' }`.
+- `static/connect.html` uses `window.allternit.connection`: `test({ remoteUrl })` checks a typed address before saving (trusted senders only), and `setBackend({ ..., restart: true })` saves and relaunches.
 
 ## Cloud sign-in
 
