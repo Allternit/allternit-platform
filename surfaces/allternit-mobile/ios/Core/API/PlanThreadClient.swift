@@ -55,10 +55,11 @@ struct PlanThreadClient: Sendable {
 
     static let shared = PlanThreadClient()
 
-    /// The models the store keeps: plan/…, copilot/… and Allternit Cloud
+    /// The models the store keeps: plan/…, copilot/…, linked Claude
+    /// organization chats (`linked/claude/<model>`) and Allternit Cloud
     /// chats with no computer as `allternit/<alias>` (D7). Not `chatgpt/…`.
     static func isStored(model: String) -> Bool {
-        model.hasPrefix("plan/") || model.hasPrefix("copilot/") || ModelStore.cloudAlias(model) != nil
+        model.hasPrefix("plan/") || model.hasPrefix("copilot/") || model.hasPrefix("linked/") || ModelStore.cloudAlias(model) != nil
     }
     static func isThreadId(_ id: String) -> Bool { id.hasPrefix(idPrefix) }
 
