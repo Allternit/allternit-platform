@@ -134,7 +134,10 @@ class MainActivity : ComponentActivity() {
      * launcher in the same package opens m.allternit.com.
      */
     private fun openWebVersion() {
-        startActivity(Intent().setClassName(packageName, TWA_LAUNCHER))
+        // NEW_TASK is required: without it androidbrowserhelper's LauncherActivity restarts
+        // itself in a new task, the second copy sees the first still alive
+        // (sLauncherActivitiesAlive > 1) and finishes, so nothing opens (Moto, 2026-11-18).
+        startActivity(Intent().setClassName(packageName, TWA_LAUNCHER).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     private fun handleDebugTicket(intent: Intent) {
