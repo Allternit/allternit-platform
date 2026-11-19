@@ -26,7 +26,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -97,13 +96,17 @@ fun LoginArrival(paused: Boolean, modifier: Modifier = Modifier) {
                     view.stopLoading()
                     view.destroy()
                 },
-                modifier = Modifier.fillMaxSize().alpha(if (loaded) 1f else 0f),
+                // Always fully opaque: a WebView under a Compose alpha layer that starts at 0
+                // never shows its frames (seen on the Moto: the page painted, the screen stayed
+                // empty). The fallback below covers it until the page has loaded instead.
+                modifier = Modifier.fillMaxSize(),
             )
         }
         if (!loaded) {
             Column(
+                modifier = Modifier.matchParentSize().background(ArrivalBackground),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(24.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
             ) {
                 Image(
                     painter = painterResource(R.drawable.allternit_wordmark),
