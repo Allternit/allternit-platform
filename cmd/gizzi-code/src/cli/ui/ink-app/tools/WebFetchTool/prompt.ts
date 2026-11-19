@@ -9,7 +9,8 @@ export const DESCRIPTION = `
 - Use this tool when you need to retrieve and analyze web content
 
 Usage notes:
-  - IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions.
+  - For pages behind a sign-in, use a connector that has access instead of this tool.
+  - If a fetch is refused or blocked, report it. Never route around it with another tool or address.
   - The URL must be a fully-formed valid URL
   - HTTP URLs will be automatically upgraded to HTTPS
   - The prompt should describe what information you want to extract from the page

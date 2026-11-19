@@ -16,13 +16,11 @@ import {
   getUndercoverInstructions,
   isUndercover,
 } from '../../utils/undercover.js'
-import { AGENT_TOOL_NAME } from '../AgentTool/constants.js'
 import { FILE_EDIT_TOOL_NAME } from '../FileEditTool/constants.js'
 import { FILE_READ_TOOL_NAME } from '../FileReadTool/prompt.js'
 import { FILE_WRITE_TOOL_NAME } from '../FileWriteTool/prompt.js'
 import { GLOB_TOOL_NAME } from '../GlobTool/prompt.js'
 import { GREP_TOOL_NAME } from '../GrepTool/prompt.js'
-import { TodoWriteTool } from '../TodoWriteTool/TodoWriteTool.js'
 import { BASH_TOOL_NAME } from './toolName.js'
 
 export function getDefaultTimeoutMs(): number {
@@ -90,8 +88,8 @@ Git Safety Protocol:
 - NEVER run destructive git commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly requests these actions. Taking unauthorized destructive actions is unhelpful and can result in lost work, so it's best to ONLY run these commands when given direct instructions 
 - NEVER skip hooks (--no-verify, --no-gpg-sign, etc) unless the user explicitly requests it
 - NEVER run force push to main/master, warn the user if they request it
-- CRITICAL: Always create NEW commits rather than amending, unless the user explicitly requests a git amend. When a pre-commit hook fails, the commit did NOT happen — so --amend would modify the PREVIOUS commit, which may result in destroying work or losing previous changes. Instead, after hook failure, fix the issue, re-stage, and create a NEW commit
-- When staging files, prefer adding specific files by name rather than using "git add -A" or "git add .", which can accidentally include sensitive files (.env, credentials) or large binaries
+- CRITICAL: Always create NEW commits. Amend only when the user explicitly asks for it. If a pre-commit hook fails, the commit did NOT happen: fix the cause, stage again and make a NEW commit. Never amend after a hook failure; it would rewrite the PREVIOUS commit
+- Stage files by name. Never bulk-add (git add with -A or a bare dot); it can pull in secrets (.env, credentials) or large binaries
 - NEVER commit changes unless the user explicitly asks you to. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive
 
 1. Run the following bash commands in parallel, each using the ${BASH_TOOL_NAME} tool:
@@ -104,7 +102,7 @@ Git Safety Protocol:
   - Draft a concise (1-2 sentences) commit message that focuses on the "why" rather than the "what"
   - Ensure it accurately reflects the changes and their purpose
 3. Run the following commands in parallel:
-   - Add relevant untracked files to the staging area.
+   - Stage the relevant files by name.
    - Create the commit with a message${commitAttribution ? ` ending with:\n   ${commitAttribution}` : '.'}
    - Run git status after the commit completes to verify success.
    Note: git status depends on the commit completing, so run it sequentially after the commit.
@@ -112,7 +110,6 @@ Git Safety Protocol:
 
 Important notes:
 - NEVER run additional commands to read or explore code, besides git bash commands
-- NEVER use the ${TodoWriteTool.name} or ${AGENT_TOOL_NAME} tools
 - DO NOT push to the remote repository unless the user explicitly asks you to do so
 - IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
 - IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
@@ -154,7 +151,6 @@ EOF
 </example>
 
 Important:
-- DO NOT use the ${TodoWriteTool.name} or ${AGENT_TOOL_NAME} tools
 - Return the PR URL when you're done, so the user can see it
 
 # Other common operations
@@ -303,7 +299,7 @@ export function getSimplePrompt(): string {
   ]
 
   const gitSubitems = [
-    'Prefer to create a new commit rather than amending an existing commit.',
+    'Make a new commit rather than amending, unless the user asks for an amend. Stage files by name, never in bulk.',
     'Before running destructive operations (e.g., git reset --hard, git push --force, git checkout --), consider whether there is a safer alternative that achieves the same goal. Only use destructive operations when they are truly the best approach.',
     'Never skip hooks (--no-verify) or bypass signing (--no-gpg-sign, -c commit.gpgsign=false) unless the user has explicitly asked for it. If a hook fails, investigate and fix the underlying issue.',
   ]

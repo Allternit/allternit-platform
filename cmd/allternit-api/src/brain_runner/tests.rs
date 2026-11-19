@@ -331,7 +331,7 @@ fn brain_runner_turn_messages_are_chat_only() {
         vec![wire("system", json!("B")), wire("user", json!([{"type": "text", "text": "Hi"}]))],
     )
     .unwrap();
-    assert_eq!(system, "A\n\nB");
+    assert_eq!(system, format!("A\n\nB\n\n{}", vendors::HARD_LIMITS));
     assert_eq!(history, vec![Msg { user: true, content: "Hi".into() }]);
     assert!(normalize(None, vec![wire("user", json!("Hi")), wire("tool", json!("ls output"))]).is_err());
     assert!(normalize(None, vec![wire("user", json!([{"type": "image_url", "image_url": {"url": "x"}}]))]).is_err());
@@ -514,7 +514,7 @@ async fn brain_runner_fake_socket_drives_login_and_a_streamed_turn() {
         {"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}, {"role": "user", "content": "Reply with the single word OK."}]});
     send(&mut ws, turn).await;
     let (text, end) = collect_turn(&mut ws, "t1").await;
-    assert_eq!(text, "OK (3 lines, sonnet, Be brief)");
+    assert_eq!(text, format!("OK (3 lines, sonnet, Be brief\n\n{})", vendors::HARD_LIMITS));
     assert_eq!(end, json!({"type": "turn_done", "id": "t1", "input_tokens": 15, "output_tokens": 2}));
 
     // Signed out → login_expired.
@@ -534,7 +534,7 @@ async fn brain_runner_fake_socket_drives_login_and_a_streamed_turn() {
     send(&mut ws, json!({"type": "turn", "id": "t5", "vendor": "claude", "messages": [{"role": "user", "content": "Hi"}]})).await;
     let (text, end) = collect_turn(&mut ws, "t5").await;
     assert_eq!(end["type"], "turn_done", "the cancelled turn sent nothing and freed the slot: {end}");
-    assert_eq!(text, "OK (1 lines, sonnet, You are a helpful assistant. Answer in plain text.)");
+    assert_eq!(text, format!("OK (1 lines, sonnet, {})", vendors::DEFAULT_SYSTEM));
 
     // Vendors off the list and tool messages are refused.
     send(&mut ws, json!({"type": "turn", "id": "t6", "vendor": "grok", "messages": [{"role": "user", "content": "Hi"}]})).await;
