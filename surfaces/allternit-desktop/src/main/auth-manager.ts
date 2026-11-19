@@ -39,6 +39,12 @@ import { URLS } from './config.js';
 import { dropRuntimeCredentialForGizzi, isGizziOwnedRelayPath, isGizziProviderListPath } from './relay-gizzi-credential.js';
 import { isDesktopAuthNavigation, pairingLookupFailureMessage, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
+import {
+  clerkFrontendApiHost,
+  clerkSessionFromJwtPayload,
+  clerkTokenRequest,
+  jwtFromClerkTokenResponse,
+} from './clerk-session-refresh.js';
 import { cloudAccountMismatch, type CloudReconnectResult } from './cloud-account.js';
 import {
   consumeProvisionedBootstrap,
@@ -245,6 +251,8 @@ export class DesktopAuthManager {
   private authSessionProtocolRegistered = false;
   private oauthPopupInFlight = false;
   private pendingClerkEmail: string | null = null;
+  /** The last direct (windowless) Clerk refresh failed; logged once per streak. */
+  private directRefreshFailing = false;
   // Clerk session JWT for cloud calls. Never makes a caller wait out the
   // hidden-window refresh (see clerk-token-broker.ts).
   private readonly clerkTokens = new ClerkTokenBroker({
@@ -843,6 +851,9 @@ export class DesktopAuthManager {
     });
 
     window.on('closed', () => {
+      // closeAuthWindow() already let go of this window (and may have opened
+      // the next one): only a window the user closed ends the sign-in.
+      if (this.authWindow !== window) return;
       this.authWindow = null;
       if (this.clerkTokenRejecter) {
         this.clerkTokenRejecter(new Error('Sign-in window was closed.'));
@@ -855,12 +866,18 @@ export class DesktopAuthManager {
     return window;
   }
 
+  /**
+   * Destroy, not close: close() can be vetoed (a beforeunload in the Clerk
+   * page, a hidden window that never finished loading), and the reference was
+   * dropped either way, so a vetoed window stayed alive, hidden and orphaned.
+   * destroy() still emits 'closed'.
+   */
   private closeAuthWindow(): void {
-    log.info('[Auth] closeAuthWindow called; authWindow =', this.authWindow ? 'present' : 'null');
-    if (this.authWindow && !this.authWindow.isDestroyed()) {
-      this.authWindow.close();
-    }
+    const window = this.authWindow;
     this.authWindow = null;
+    if (!window) return;
+    log.info('[Auth] destroying the sign-in window');
+    if (!window.isDestroyed()) window.destroy();
   }
 
   /**
@@ -879,16 +896,19 @@ export class DesktopAuthManager {
    * foo-123.clerk.accounts.dev -> foo-123.accounts.dev
    */
   private clerkAuthServingDomain(): string | null {
+    const frontendApiHost = this.clerkFrontendApiHost();
+    if (!frontendApiHost) return null;
+    return frontendApiHost.endsWith('.clerk.accounts.dev')
+      ? frontendApiHost.replace('.clerk.accounts.dev', '.accounts.dev')
+      : frontendApiHost.replace(/^clerk\./, 'accounts.');
+  }
+
+  /** The Clerk Frontend API host from the publishable key in clerk-config.json. */
+  private clerkFrontendApiHost(): string | null {
     try {
       const configPath = join(__dirname, '../renderer/auth/clerk-config.json');
       const { publishableKey } = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { publishableKey?: string };
-      const encoded = publishableKey?.split('_')[2];
-      if (!encoded) return null;
-      const frontendApiHost = Buffer.from(encoded, 'base64').toString('utf8').replace(/\$+$/, '');
-      if (!frontendApiHost) return null;
-      return frontendApiHost.endsWith('.clerk.accounts.dev')
-        ? frontendApiHost.replace('.clerk.accounts.dev', '.accounts.dev')
-        : frontendApiHost.replace(/^clerk\./, 'accounts.');
+      return clerkFrontendApiHost(publishableKey);
     } catch (error) {
       log.warn('[Auth] Could not decode Clerk auth serving domain:', error);
       return null;
@@ -1032,19 +1052,12 @@ export class DesktopAuthManager {
   async reconnectCloud(): Promise<CloudReconnectResult> {
     if (!this.session) return { ok: false, error: 'This device is not signed in.' };
     if (this.pendingPairing) return { ok: false, error: 'Sign-in is already in progress.' };
-    // A background refresh may own the (hidden) auth window: end it first, and
-    // wait for the window to close so its close event can't end this sign-in.
+    // A background refresh may own the (hidden) auth window: end it first.
+    // Its late 'closed' event is ignored once it is no longer authWindow.
     this.clerkTokenRejecter?.(new Error('Replaced by a visible sign-in'));
     this.clerkTokenResolver = null;
     this.clerkTokenRejecter = null;
-    const previous = this.authWindow;
-    if (previous && !previous.isDestroyed()) {
-      await new Promise<void>((resolve) => {
-        previous.once('closed', () => resolve());
-        previous.close();
-      });
-    }
-    this.authWindow = null;
+    this.closeAuthWindow();
     try {
       const clerk = await this.requestClerkSession({ hidden: false });
       this.closeAuthWindow();
@@ -1070,6 +1083,19 @@ export class DesktopAuthManager {
       if (cached) return cached;
       throw new Error('Pairing in progress');
     }
+    // One Frontend API call with the sign-in cookie, like clerk-js does. The
+    // hidden auth window is only the fallback (it loads the whole Clerk page).
+    try {
+      const token = await this.refreshClerkTokenDirect();
+      if (this.directRefreshFailing) log.info('[Auth] Clerk token refresh without a window works again');
+      this.directRefreshFailing = false;
+      return token;
+    } catch (error) {
+      if (!this.directRefreshFailing) {
+        log.warn('[Auth] Clerk token refresh without a window failed; using the hidden sign-in window:', error instanceof Error ? error.message : error);
+      }
+      this.directRefreshFailing = true;
+    }
     try {
       const clerk = await this.requestClerkSession({ hidden: true, timeoutMs: 20_000 });
       this.closeAuthWindow();
@@ -1080,6 +1106,50 @@ export class DesktopAuthManager {
       this.closeAuthWindow();
       throw error;
     }
+  }
+
+  /**
+   * POST /v1/client/sessions/<sid>/tokens on the Clerk Frontend API with the
+   * auth partition's cookies (net.fetch + bypassCustomProtocolHandlers, the
+   * same path forwardThroughAuthSession uses), keeping any rotated cookie.
+   */
+  private async refreshClerkTokenDirect(): Promise<string> {
+    const cached = this.clerkTokens.cachedToken();
+    const sessionInfo = clerkSessionFromJwtPayload(cached ? decodeJwtPayload(cached) : null);
+    if (!sessionInfo) throw new Error('no cached Clerk session token to refresh');
+    const frontendApiHost = this.clerkFrontendApiHost();
+    if (!frontendApiHost) throw new Error('Clerk Frontend API host unknown');
+    const request = clerkTokenRequest({
+      frontendApiHost,
+      originHost: this.clerkAuthServingDomain(),
+      sessionId: sessionInfo.sessionId,
+      organizationId: sessionInfo.organizationId,
+    });
+    const authSession = session.fromPartition(AUTH_SESSION_PARTITION);
+    const cookies = await authSession.cookies.get({ url: request.url });
+    if (cookies.length === 0) throw new Error('no Clerk cookies in the auth session');
+    const headers = new Headers(request.headers);
+    headers.set('Cookie', cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; '));
+    const response = await net.fetch(request.url, {
+      method: request.method,
+      headers,
+      body: request.body,
+      bypassCustomProtocolHandlers: true,
+      signal: AbortSignal.timeout(15_000),
+    });
+    for (const raw of setCookiesFromResponse(response)) {
+      try {
+        await setCookieOnSession(authSession, cookieFromSetCookieHeader(raw, request.url));
+      } catch (error) {
+        log.warn('[Auth] Failed to persist Clerk Set-Cookie:', error);
+      }
+    }
+    if (!response.ok) throw new Error(`Clerk token endpoint answered ${response.status}`);
+    const token = jwtFromClerkTokenResponse(await response.json(), sessionInfo.sessionId, decodeJwtPayload);
+    if (!token) throw new Error('Clerk token response had no token for this session');
+    const email = preferredEmail(emailFromJwt(token));
+    if (email) this.applyAccountEmail(email);
+    return token;
   }
 
   private applyAccountEmail(email: string): void {
