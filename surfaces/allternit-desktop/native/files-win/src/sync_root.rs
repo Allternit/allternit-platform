@@ -91,9 +91,7 @@ pub fn user_sid() -> Result<String> {
 }
 
 fn register_storage_provider(spec: &Spec, id: &str) -> Result<()> {
-    eprintln!("[files-win] register: storage provider");
     let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(spec.path.as_os_str()))?.get()?;
-    eprintln!("[files-win] register: got folder");
     let info = StorageProviderSyncRootInfo::new()?;
     info.SetId(&HSTRING::from(id))?;
     // windows 0.58 has no StorageFolder -> IStorageFolder conversion for Param; cast it.
@@ -125,7 +123,6 @@ fn register_storage_provider(spec: &Spec, id: &str) -> Result<()> {
         d.SetDisplayNameResource(&HSTRING::from(b.label()))?;
         defs.Append(&d)?;
     }
-    eprintln!("[files-win] register: calling Register");
     StorageProviderSyncRootManager::Register(&info)
 }
 
@@ -199,7 +196,6 @@ pub fn register(spec: &Spec, state_dir: &Path) -> Result<Registration> {
         Err(e) => {
             crate::emit(&serde_json::json!({"type": "log", "level": "warn",
                 "message": format!("StorageProviderSyncRootManager refused ({e}); using CfRegisterSyncRoot")}));
-            eprintln!("[files-win] register: cfapi fallback ({e})");
             register_cfapi(spec)?;
             let clsid = paths::nav_pane_clsid(spec.computer_id);
             add_nav_pane(&clsid, &format!("Allternit · {}", spec.display_name), spec.path, spec.icon);
