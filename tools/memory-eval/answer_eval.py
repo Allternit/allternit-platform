@@ -170,7 +170,20 @@ def load_questions(fx, sample, seed):
         for i, qa in enumerate(c["qa"]):
             items.append((c, i, qa))
     if sample and sample < len(items):
-        items = random.Random(seed).sample(items, sample)
+        # Stratified by question category: round-robin over categories so a
+        # small sample still covers every type (step 1.2 reads per-category).
+        rng = random.Random(seed)
+        groups = {}
+        for it in items:
+            groups.setdefault(str(it[2].get("category", "all")), []).append(it)
+        for g in groups.values():
+            rng.shuffle(g)
+        picked = []
+        while len(picked) < sample:
+            for k in sorted(groups):
+                if groups[k] and len(picked) < sample:
+                    picked.append(groups[k].pop())
+        items = picked
     return items
 
 
