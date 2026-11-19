@@ -29,7 +29,7 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | A | Chat test account with a computer or Allternit Cloud (allternitpbc gets 428 "No data-plane node") | asked Eoj 11-19 |
 | A | No-computer state in chat: clear message + path to connect (plan chats stay first-class) | built (#2614, feature/chat/ComputeGate.kt) |
 | C | -open-tab / sidebar / skip-auth debug extras for Maestro flows | built (#2626, feature/shell/MainActivity.kt readDebugLaunch) |
-| C | TWA → native sign-in handoff (user already signed in on m.allternit.com) | built (#2626, Android side: feature/shell/TwaHandoff.kt); server route + m.allternit.com page needed, see #2626 "Needs" |
+| C | TWA → native sign-in handoff (user already signed in on m.allternit.com) | N/A: Eoj 11-19, people sign in once more after the switch |
 | C | Continue with Apple retest (needs return URL on Services ID com.allternit.signin — owner) | blocked on owner |
 | I | FCM device tokens: backend accepts platform android (step 6 finding c) | todo |
 | J | Web / Desktop / Gizzi links to the Play app | todo |

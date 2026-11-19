@@ -62,9 +62,6 @@ import kotlinx.coroutines.launch
  * The iOS launch arguments work as extras too ([readDebugLaunch]): `skip-auth`, `open-tab <id>`,
  * `sidebar`, `shell-mode <home|bots|code|aci>`, `open-inbox`, `open-quick-task`,
  * `open-continue-cli`. Release builds compile the checks out (BuildConfig.DEBUG is a constant).
- *
- * Every build: the TWA → native sign-in hand-off ([TwaHandoff]) on the first signed-out launch
- * after the update from the old Play app, and its callback link.
  */
 class MainActivity : ComponentActivity() {
     /** Debug "Continue without signing in" (iOS skipAuth): the home without a session. */
@@ -72,9 +69,6 @@ class MainActivity : ComponentActivity() {
 
     /** Debug launch extras for the workspace (iOS `-open-tab`, `-sidebar`, …); default in release. */
     private var shellLaunch by mutableStateOf(ShellLaunch())
-
-    private val twaHandoff by lazy { TwaHandoff(applicationContext) }
-    private var twaHandoffChecked = false
 
     /** A Settings section a setup checklist fix asked for, opened once the workspace is up. */
     private var openSettingsOnStart by mutableStateOf(false)
@@ -166,8 +160,6 @@ class MainActivity : ComponentActivity() {
         }
         if (BuildConfig.DEBUG) readDebugLaunch(intent)
         handleDebugTicket(intent)
-        handleHandoffCallback(intent)
-        maybeStartTwaHandoff()
     }
 
     /**
@@ -189,7 +181,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleDebugTicket(intent)
-        handleHandoffCallback(intent)
     }
 
     /**
@@ -237,47 +228,6 @@ class MainActivity : ComponentActivity() {
             sheet = sheet,
             inboxItem = value("inbox-item"),
         )
-    }
-
-    /** First signed-out launch after the TWA app: try the sign-in hand-off once ([TwaHandoff]). */
-    private fun maybeStartTwaHandoff() {
-        if (twaHandoffChecked || skippedAuth) return
-        twaHandoffChecked = true
-        lifecycleScope.launch {
-            val ready = AllternitAuth.state.first { it !is AuthState.Starting }
-            if (ready is AuthState.SignedIn) {
-                // Already signed in natively: the hand-off never applies to this install.
-                twaHandoff.markTried()
-                return@launch
-            }
-            if (ready !is AuthState.SignedOut || !twaHandoff.shouldTry()) return@launch
-            twaHandoff.markTried()
-            if (!twaHandoff.isEnabled(ShellApi.okHttp)) {
-                Log.i(TAG, "twa hand-off: not available, normal sign-in")
-                return@launch
-            }
-            if (!twaHandoff.launch(this@MainActivity)) Log.i(TAG, "twa hand-off: no browser, normal sign-in")
-        }
-    }
-
-    /** The hand-off page's callback link: sign in with the token, else stay on sign-in. */
-    private fun handleHandoffCallback(intent: Intent) {
-        val uri = intent.data
-        if (!twaHandoff.isCallback(uri)) return
-        intent.data = null
-        lifecycleScope.launch {
-            val ticket: String? = try {
-                twaHandoff.complete(uri!!)
-            } catch (e: Exception) {
-                Log.i(TAG, "twa hand-off refused: ${e.message}")
-                null
-            }
-            if (ticket == null) return@launch
-            val ready = AllternitAuth.state.first { it !is AuthState.Starting }
-            if (ready !is AuthState.SignedOut) return@launch
-            val result = AllternitAuth.signInWithTicket(ticket)
-            Log.i(TAG, "twa hand-off sign-in: ${result.error ?: "ok"}")
-        }
     }
 
     private fun handleDebugTicket(intent: Intent) {

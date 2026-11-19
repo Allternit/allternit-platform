@@ -135,7 +135,7 @@ The native app is built to match the iPhone app screen for screen, in ten waves.
 | Home shell | Home, drawer, mode fan, composer, **+** sheet, **Pick a brain** | Built, in testing |
 | A. Chat | Sending, streamed replies, thinking, tool calls, permission asks, attachments, chat history, no-computer state | Built, in testing |
 | B. First run | "Which AI should I think with?", the setup graph, Meet your bots, Everything connected, the hand-off into the app | Built, in testing |
-| C. Rest of the shell | Search, session overview, Inbox, Quick task, Continue a CLI session, thinking slider, stage backdrop, test extras, moving from the old app's sign-in | Built, in testing. The sign-in move waits on a server route and an m.allternit.com page. |
+| C. Rest of the shell | Search, session overview, Inbox, Quick task, Continue a CLI session, thinking slider, stage backdrop, test extras | Built, in testing |
 | D. Projects and artifacts | Projects (List, Grid, Deck), folder covers and **Folder look**, new project, project detail and pad, code and design projects, the artifacts library, artifact viewer and editor, studio, comments, PDF from template | Built, in testing |
 | E. Bots | Bots, agents, activity, run tree, decisions, bot chat | Not started |
 | F. Modes | Automation, Cowork, Code, Computer (remote desktop, Teach, mini apps), Connect, Phones, Office, Models | Not started |
@@ -239,6 +239,7 @@ Debug builds also read the iOS launch arguments as intent extras, for Maestro (`
 adb shell am start -n com.allternit.app.ondevice/com.allternit.feature.shell.MainActivity --ez skip-auth true --es open-tab projects --ez sidebar true
 ```
 
-#### Moving from the old app's sign-in
+#### After the switch
 
-People who used the Google Play app before the switch are signed in to m.allternit.com inside Chrome (the Trusted Web Activity), not in the native app. On the first signed-out launch after the update (only on an update install, once per install), the app asks Allternit Cloud whether the hand-off is available (`GET /api/v1/auth/android-handoff/config`). If it is, a Custom Tab opens `m.allternit.com/auth/android-handoff`. It uses the same Chrome sign-in as the old app. Signed in, the page mints a one-time sign-in token, sealed to a key that lives only in this phone's Keystore, and sends it back to `m.allternit.com/auth/android-callback` (or `allternit-auth://handoff` on builds whose App Link is not verified). The app opens it and signs you in. Signed out, the page comes straight back and the normal sign-in screen stays. The Files sign-in (`/files/connect-android`) works the same way. The Android side is built. Until the cloud route and the page ship, the config check fails and you see the normal sign-in screen, as before. Release builds ignore the extra. The sign-in screen sets the shared test ids `loginHeadline`, `loginContinueEmail` and `loginSkipAuth` (debug only) from `surfaces/allternit-mobile/maestro/ids.md`.
+After the switch, people who used the Google Play app sign in once more.
+
