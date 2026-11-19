@@ -19,6 +19,8 @@ import {
   type AppPhoneLane,
   type RateStore,
   type ToolResult,
+  parseForegroundActivity,
+  parseVersionName,
 } from './phone-tools.js';
 import type { PhoneLane } from './phone-route.js';
 import { PhoneApiUnavailable, type PhoneApi } from './phone-runs.js';
@@ -313,7 +315,7 @@ describe('screen reading over adb (uiautomator dump)', () => {
   it('phone.read_ui turns the dump into the shared text form', async () => {
     const { r, calls } = dumpRunner(DUMP);
     const res = await r.call('phone.read_ui', {});
-    expect(res).toEqual({
+    expect(res).toMatchObject({
       ok: true,
       text: [
         'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
@@ -324,15 +326,83 @@ describe('screen reading over adb (uiautomator dump)', () => {
     expect(calls[0]).toEqual(['exec-out', 'uiautomator', 'dump', '/dev/tty']);
   });
 
+  it('phone.read_ui adds app, activity and nodes[] beside the unchanged text', async () => {
+    const xml = `<hierarchy>
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.example.app" content-desc="" checkable="false" clickable="false" focused="false" scrollable="false" password="false" bounds="[0,0][1080,2400]">
+    <node index="0" text="Name" resource-id="com.example.app:id/name" class="android.widget.EditText" package="com.example.app" content-desc="" checkable="false" clickable="true" focused="true" scrollable="false" password="false" bounds="[24,96][1056,180]" />
+    <node index="1" text="Secret" resource-id="com.example.app:id/pw" class="android.widget.EditText" package="com.example.app" content-desc="" checkable="false" clickable="true" focused="false" scrollable="false" password="true" bounds="[24,200][1056,280]" />
+    <node index="2" text="Wi-Fi" resource-id="com.example.app:id/sw" class="android.widget.Switch" package="com.example.app" content-desc="" checkable="true" clickable="true" focused="false" scrollable="false" password="false" bounds="[0,300][1080,420]" />
+    <node index="3" text="" resource-id="com.example.app:id/list" class="androidx.recyclerview.widget.RecyclerView" package="com.example.app" content-desc="" checkable="false" clickable="false" focused="false" scrollable="true" password="false" bounds="[0,420][1080,2400]" />
+  </node>
+</hierarchy>`;
+    const { r, calls } = dumpRunner(xml);
+    const res = (await r.call('phone.read_ui', {})) as unknown as { text: string; app: string; activity: unknown; nodes: Record<string, unknown>[] };
+    expect(res.text).toBe(
+      [
+        'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
+        'android.widget.EditText "Name" [com.example.app:id/name] {{24, 96}, {1032, 84}}',
+        'android.widget.EditText "Secret" [com.example.app:id/pw] {{24, 200}, {1032, 80}}',
+        'android.widget.Switch "Wi-Fi" [com.example.app:id/sw] {{0, 300}, {1080, 120}}',
+        'androidx.recyclerview.widget.RecyclerView [com.example.app:id/list] {{0, 420}, {1080, 1980}}',
+      ].join('\n'),
+    );
+    expect(res.app).toBe('com.example.app');
+    expect(res.activity).toBeNull();
+    expect(res.nodes).toHaveLength(5);
+    expect(res.nodes[1]).toEqual({
+      index: 1, class: 'android.widget.EditText', label: 'Name', resource_id: 'com.example.app:id/name',
+      bounds: [24, 96, 1056, 180], clickable: true, scrollable: false, checkable: false, editable: true, password: false, focused: true,
+    });
+    expect(res.nodes[2]).toMatchObject({ editable: true, password: true });
+    expect(res.nodes[3]).toMatchObject({ checkable: true, clickable: true, editable: false });
+    expect(res.nodes[4]).toMatchObject({ scrollable: true, bounds: [0, 420, 1080, 2400] });
+    expect(calls).toHaveLength(1); // no extra adb call unless with_activity / with_version
+    const capped = (await r.call('phone.read_ui', { filter: { type: 'switch' } })) as unknown as { nodes: { index: number; label: string }[] };
+    expect(capped.nodes).toHaveLength(1);
+    expect(capped.nodes[0]).toMatchObject({ index: 0, label: 'Wi-Fi' });
+  });
+
+  it('phone.read_ui with_activity and with_version make one extra adb call each', async () => {
+    const calls: string[][] = [];
+    const adb = (async (args: string[]) => {
+      calls.push(args);
+      const cmd = args.join(' ');
+      if (cmd.includes('topResumedActivity')) {
+        return { stdout: '  topResumedActivity=ActivityRecord{1a2b u0 com.openai.chat/.MainActivity t42}\n', stderr: '', code: 0 };
+      }
+      if (cmd.includes('versionName')) return { stdout: '    versionName=1.2.3\n', stderr: '', code: 0 };
+      return { stdout: '', stderr: '', code: 0 };
+    }) as AdbCall;
+    adb.binary = async () => Buffer.from(DUMP, 'utf8');
+    const r = new PhoneToolRunner({
+      adb,
+      gate: { request: async () => 'denied' },
+      rates: { load: () => [], save: () => {} },
+      artemis: () => null,
+      onlineSerials: () => ['10.0.0.7:5555'],
+    });
+    const res = (await r.call('phone.read_ui', { with_activity: true, with_version: true })) as unknown as Record<string, unknown>;
+    expect(res).toMatchObject({ ok: true, app: 'com.openai.chat', activity: 'com.openai.chat.MainActivity', app_version: '1.2.3' });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('parses activity and version lines', () => {
+    expect(parseForegroundActivity('mResumedActivity: ActivityRecord{x u0 com.android.settings/com.android.settings.Settings$WifiSettingsActivity t9}')).toBe('com.android.settings.Settings$WifiSettingsActivity');
+    expect(parseForegroundActivity('topResumedActivity=ActivityRecord{x u0 com.whatsapp/.HomeActivity t1}')).toBe('com.whatsapp.HomeActivity');
+    expect(parseForegroundActivity('nothing')).toBeNull();
+    expect(parseVersionName('    versionName=14\n')).toBe('14');
+    expect(parseVersionName('')).toBe('');
+  });
+
   it('phone.read_ui filters by label and type and caps max_elements', async () => {
     const { r } = dumpRunner(DUMP);
-    expect(await r.call('phone.read_ui', { filter: { label: 'sign' } })).toEqual({
+    expect(await r.call('phone.read_ui', { filter: { label: 'sign' } })).toMatchObject({
       ok: true,
       text: 'android.widget.Button "Sign in" [com.openai.chat:id/login] {{24, 836}, {312, 48}}',
     });
     expect(await r.call('phone.read_ui', { filter: { type: 'textview' } })).toMatchObject({ ok: true });
     expect(((await r.call('phone.read_ui', { filter: { type: 'textview' } })) as unknown as { text: string }).text).not.toContain('Button');
-    expect(await r.call('phone.read_ui', { max_elements: 1 })).toEqual({
+    expect(await r.call('phone.read_ui', { max_elements: 1 })).toMatchObject({
       ok: true,
       text: 'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
     });
@@ -405,6 +475,62 @@ describe('Phone-Linked phones in the runner', () => {
     });
     return { r, links, adbCalls: calls };
   }
+
+  it('linked read_ui keeps the helper text and adds app, activity and nodes[] from page_source', async () => {
+    const { adb } = makeAdb();
+    const { backend } = linksBackend(['link:dev-1']);
+    const helperCalls: { method: string; params?: Record<string, unknown> }[] = [];
+    const linked = {
+      ...backend,
+      call: async () => ({ ok: true, text: 'HELPER TEXT' }) as import('./phone-tools.js').ToolResult,
+      helperCall: async (_s: string, method: string, params?: Record<string, unknown>) => {
+        helperCalls.push({ method, params });
+        return {
+          foreground_app: 'com.android.settings',
+          activity: 'com.android.settings.Settings$WifiSettingsActivity',
+          nodes: [
+            { class: 'android.widget.TextView', label: 'Wi-Fi', resource_id: 'android:id/title', bounds: { x: 0, y: 210, width: 1080, height: 120 }, clickable: true, focused: false },
+            { class: 'android.widget.EditText', text: 'pw', bounds: { x: 0, y: 400, width: 100, height: 50 }, password: true, checkable: true },
+            { class: 'bad', bounds: { x: 'a' } },
+          ],
+        };
+      },
+    };
+    const r = new PhoneToolRunner({
+      adb,
+      gate: { request: async () => 'denied' },
+      rates: { load: () => [], save: () => {} },
+      artemis: () => null,
+      onlineSerials: () => [],
+      links: () => linked,
+    });
+    const res = (await r.call('phone.read_ui', {})) as unknown as Record<string, unknown>;
+    expect(res).toMatchObject({ ok: true, text: 'HELPER TEXT', app: 'com.android.settings', activity: 'com.android.settings.Settings$WifiSettingsActivity' });
+    expect(res.nodes).toEqual([
+      { index: 0, class: 'android.widget.TextView', label: 'Wi-Fi', resource_id: 'android:id/title', bounds: [0, 210, 1080, 330], clickable: true, scrollable: false, checkable: false, editable: false, password: false, focused: false },
+      { index: 1, class: 'android.widget.EditText', label: 'pw', resource_id: '', bounds: [0, 400, 100, 450], clickable: false, scrollable: false, checkable: true, editable: true, password: true, focused: false },
+    ]);
+    expect(helperCalls[0].method).toBe('page_source');
+  });
+
+  it('linked read_ui returns the plain result when the helper has no structured nodes', async () => {
+    const { adb } = makeAdb();
+    const { backend } = linksBackend(['link:dev-1']);
+    const linked = {
+      ...backend,
+      call: async () => ({ ok: true, text: 'T' }) as import('./phone-tools.js').ToolResult,
+      helperCall: async () => ({ source: 'T' }),
+    };
+    const r = new PhoneToolRunner({
+      adb,
+      gate: { request: async () => 'denied' },
+      rates: { load: () => [], save: () => {} },
+      artemis: () => null,
+      onlineSerials: () => [],
+      links: () => linked,
+    });
+    expect(await r.call('phone.read_ui', {})).toEqual({ ok: true, text: 'T' });
+  });
 
   it('routes calls to the links lane by link: serial, defaulting to the only online phone', async () => {
     const { r, links, adbCalls } = linkedRunner(['link:dev-1']);

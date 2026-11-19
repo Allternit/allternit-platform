@@ -311,7 +311,7 @@ export const PHONE_TOOLS = [
   },
   {
     name: 'phone.read_ui',
-    description: 'Read the screen as text: one line per element (class, label, id, bounds). On Phone-Linked phones it uses the helper\'s own read; on Android it parses the accessibility dump; on a USB-Agent iPhone use phone.screenshot instead.',
+    description: 'Read the screen as text: one line per element (class, label, id, bounds). Also returns app, activity and nodes[] (structured elements with clickable/scrollable/checkable/editable/password/focused flags). On Phone-Linked phones it uses the helper\'s own read; on Android it parses the accessibility dump; on a USB-Agent iPhone use phone.screenshot instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -319,6 +319,8 @@ export const PHONE_TOOLS = [
         filter: { type: 'object', properties: { label: { type: 'string' }, type: { type: 'string' } }, additionalProperties: false },
         visible_only: { type: 'boolean' },
         max_elements: { type: 'integer', minimum: 1, maximum: 1000 },
+        with_activity: { type: 'boolean', description: 'Android over adb: also look up the focused activity (one extra adb call). Otherwise activity is null.' },
+        with_version: { type: 'boolean', description: 'Android over adb: also look up the foreground app\'s versionName as app_version (one extra adb call).' },
       },
       additionalProperties: false,
     },
@@ -828,7 +830,29 @@ function unescapeXml(value: string): string {
 
 /** uiautomator dump XML (binary-clean, from `exec-out … /dev/tty`) → elements. */
 export function parseUiDump(xml: string): UiElement[] {
-  const out: UiElement[] = [];
+  return parseUiDumpNodes(xml).map((n) => n.el);
+}
+
+/** A structured read_ui node (contract §1), before the index is assigned. */
+export interface UiNode {
+  index: number;
+  class: string;
+  label: string;
+  resource_id: string;
+  bounds: [number, number, number, number];
+  clickable: boolean;
+  scrollable: boolean;
+  checkable: boolean;
+  editable: boolean;
+  password: boolean;
+  focused: boolean;
+}
+
+type UiNodeFlags = Omit<UiNode, 'index' | 'class' | 'label' | 'resource_id' | 'bounds'>;
+
+/** Same walk as parseUiDump, with the flags and the root package kept (for read_ui nodes and app). */
+export function parseUiDumpNodes(xml: string): { el: UiElement; flags: UiNodeFlags; package: string }[] {
+  const out: { el: UiElement; flags: UiNodeFlags; package: string }[] = [];
   for (const tag of xml.matchAll(/<node\b[^>]*?>/g)) {
     const attrs: Record<string, string> = {};
     for (const m of tag[0].matchAll(/([\w:.-]+)="([^"]*)"/g)) attrs[m[1]] = unescapeXml(m[2]);
@@ -837,14 +861,38 @@ export function parseUiDump(xml: string): UiElement[] {
     if (!bounds) continue;
     const [x1, y1, x2, y2] = [Number(bounds[1]), Number(bounds[2]), Number(bounds[3]), Number(bounds[4])];
     out.push({
-      className: attrs.class,
-      label: attrs.text || attrs['content-desc'] || '',
-      id: attrs['resource-id'] || '',
-      bounds: `{{${x1}, ${y1}}, {${x2 - x1}, ${y2 - y1}}}`,
-      rect: { x: x1, y: y1, w: x2 - x1, h: y2 - y1 },
+      el: {
+        className: attrs.class,
+        label: attrs.text || attrs['content-desc'] || '',
+        id: attrs['resource-id'] || '',
+        bounds: `{{${x1}, ${y1}}, {${x2 - x1}, ${y2 - y1}}}`,
+        rect: { x: x1, y: y1, w: x2 - x1, h: y2 - y1 },
+      },
+      flags: {
+        clickable: attrs.clickable === 'true',
+        scrollable: attrs.scrollable === 'true',
+        checkable: attrs.checkable === 'true',
+        editable: isEditableClass(attrs.class) || /\btext-entry\b/.test(attrs.hint ?? ''),
+        password: attrs.password === 'true',
+        focused: attrs.focused === 'true',
+      },
+      package: attrs.package || '',
     });
   }
   return out;
+}
+
+const isEditableClass = (cls: string): boolean => /EditText|TextField|TextInput/.test(cls);
+
+function toNode(index: number, el: UiElement, flags: UiNodeFlags): UiNode {
+  return {
+    index,
+    class: el.className,
+    label: el.label,
+    resource_id: el.id,
+    bounds: [el.rect.x, el.rect.y, el.rect.x + el.rect.w, el.rect.y + el.rect.h],
+    ...flags,
+  };
 }
 
 /** The shared text form: `class "label" [id] {{x, y}, {w, h}}` (empty fields omitted). */
@@ -1075,7 +1123,8 @@ export class PhoneToolRunner {
       // Linked phones: mark bot use so background account reads wait (phone-account-reader.ts).
       links.noteActivity?.(serial, 1);
       try {
-        return withHints(name, a, await this.linkedCall(links, name, serial, a));
+        const res = await this.linkedCall(links, name, serial, a);
+        return withHints(name, a, name === 'phone.read_ui' && res.ok ? await this.addLinkedNodes(links, serial, a, res) : res);
       } finally {
         links.noteActivity?.(serial, -1);
       }
@@ -1306,10 +1355,31 @@ export class PhoneToolRunner {
     }
     const xml = await this.uiDump(serial);
     if (typeof xml !== 'string') return xml;
-    let els = parseUiDump(xml);
-    if (filter.label) els = els.filter((e) => e.label.toLowerCase().includes(filter.label!.toLowerCase()));
-    if (filter.type) els = els.filter((e) => e.className.toLowerCase().includes(filter.type!.toLowerCase()));
-    return { ok: true, text: els.slice(0, max as number).map(formatUiElement).join('\n') };
+    const parsed = parseUiDumpNodes(xml);
+    let all = parsed;
+    if (filter.label) all = all.filter((e) => e.el.label.toLowerCase().includes(filter.label!.toLowerCase()));
+    if (filter.type) all = all.filter((e) => e.el.className.toLowerCase().includes(filter.type!.toLowerCase()));
+    all = all.slice(0, max as number);
+    // app: the first package attribute in the dump (free). activity / app_version cost one adb call each, so opt-in.
+    const app = parsed.find((n) => n.package)?.package ?? '';
+    let activity: string | null = null;
+    if (a.with_activity === true) activity = (await this.adbForegroundInfo(serial))?.activity ?? null;
+    const res: ToolResult = {
+      ok: true,
+      text: all.map((e) => formatUiElement(e.el)).join('\n'),
+      app,
+      activity,
+      nodes: all.map((e, i) => toNode(i, e.el, e.flags)),
+    };
+    if (a.with_version === true && app) res.app_version = await this.adbAppVersion(serial, app);
+    return res;
+  }
+
+  /** versionName of an installed package (`dumpsys package`), "" when unknown. */
+  private async adbAppVersion(serial: string, pkg: string): Promise<string> {
+    if (!/^[A-Za-z][\w]*(?:\.[\w]+)+$/.test(pkg)) return '';
+    const res = await this.deps.adb(['shell', `dumpsys package ${pkg} | grep -m1 versionName`], { serial, timeoutMs: 5_000 });
+    return res.code === 0 ? parseVersionName(res.stdout) : '';
   }
 
   private async screenText(serial: string): Promise<ToolResult> {
@@ -1682,8 +1752,38 @@ export class PhoneToolRunner {
 
   /** The app in front on an adb phone (`dumpsys activity`, the resumed activity's package). */
   private async adbForeground(serial: string): Promise<string | undefined> {
+    return (await this.adbForegroundInfo(serial))?.package;
+  }
+
+  /** Same one `dumpsys activity` line as adbForeground, read for the package and the full activity class. */
+  private async adbForegroundInfo(serial: string): Promise<{ package: string; activity: string | null } | undefined> {
     const res = await this.deps.adb(['shell', 'dumpsys activity activities | grep -E "topResumedActivity|mResumedActivity"'], { serial, timeoutMs: 5_000 });
-    return res.code === 0 ? parseForegroundPackage(res.stdout) ?? undefined : undefined;
+    if (res.code !== 0) return undefined;
+    const pkg = parseForegroundPackage(res.stdout);
+    return pkg ? { package: pkg, activity: parseForegroundActivity(res.stdout) } : undefined;
+  }
+
+  /**
+   * Adds app, activity and nodes[] to a linked phone's read_ui. `text` is the helper's own and stays as is.
+   * One extra structured page_source; if it fails the plain result is returned unchanged.
+   */
+  private async addLinkedNodes(links: PhoneLinkBackend, serial: string, a: Record<string, unknown>, res: ToolResult): Promise<ToolResult> {
+    if (!res.ok || !links.helperCall) return res;
+    try {
+      const got = linkedNodes(await links.helperCall(serial, 'page_source', { format: 'text', structured: true, visible_only: true }, 5_000));
+      if (!got.nodes.length && !got.app) return res;
+      const filter = parseFilter(a);
+      let nodes = got.nodes;
+      if (!('ok' in filter)) {
+        if (filter.label) nodes = nodes.filter((n) => n.label.toLowerCase().includes(filter.label!.toLowerCase()));
+        if (filter.type) nodes = nodes.filter((n) => n.class.toLowerCase().includes(filter.type!.toLowerCase()));
+      }
+      const max = Number.isInteger(a.max_elements) ? (a.max_elements as number) : 200;
+      nodes = nodes.slice(0, max).map((n, i) => ({ ...n, index: i }));
+      return { ...res, app: got.app, activity: got.activity, nodes };
+    } catch {
+      return res;
+    }
   }
 
   /** A Phone-Linked phone's name for the hold dialog (only looked up when a hold is made). */
@@ -1833,6 +1933,48 @@ function phonePlatform(serial: string, lanes: GuardLanes): 'android' | 'ios' | u
 export function parseForegroundPackage(stdout: string): string | null {
   const m = /(?:topResumedActivity|mResumedActivity)[^\n]*?\s([A-Za-z][\w]*(?:\.[\w]+)+)\/[\w.$]+/.exec(stdout);
   return m ? m[1] : null;
+}
+
+/** `… com.whatsapp/.HomeActivity t42}` → "com.whatsapp.HomeActivity" (a leading dot is relative to the package). */
+export function parseForegroundActivity(stdout: string): string | null {
+  const m = /(?:topResumedActivity|mResumedActivity)[^\n]*?\s([A-Za-z][\w]*(?:\.[\w]+)+)\/([\w.$]+)/.exec(stdout);
+  if (!m) return null;
+  return m[2].startsWith('.') ? `${m[1]}${m[2]}` : m[2];
+}
+
+/** `    versionName=14` → "14". */
+export function parseVersionName(stdout: string): string {
+  return /versionName=(\S+)/.exec(stdout)?.[1] ?? '';
+}
+
+/** The Phone Link helper's structured page_source → read_ui nodes (contract §1), app and activity. */
+export function linkedNodes(r: unknown): { app: string; activity: string | null; nodes: UiNode[] } {
+  const o = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>;
+  const app = asText(o.foreground_app) || asText(o.bundle_id) || asText(o.package);
+  const activity = asText(o.activity) || null;
+  const nodes: UiNode[] = [];
+  for (const n of Array.isArray(o.nodes) ? o.nodes : []) {
+    if (!n || typeof n !== 'object') continue;
+    const v = n as Record<string, unknown>;
+    const b = (v.bounds && typeof v.bounds === 'object' ? v.bounds : {}) as Record<string, unknown>;
+    const [x, y, w, h] = [b.x, b.y, b.width, b.height];
+    if (![x, y, w, h].every((q) => typeof q === 'number' && Number.isFinite(q))) continue;
+    const cls = asText(v.class);
+    nodes.push({
+      index: nodes.length,
+      class: cls,
+      label: asText(v.label) || asText(v.text) || asText(v.content_desc),
+      resource_id: asText(v.resource_id),
+      bounds: [x as number, y as number, (x as number) + (w as number), (y as number) + (h as number)],
+      clickable: v.clickable === true,
+      scrollable: v.scrollable === true,
+      checkable: v.checkable === true,
+      editable: v.editable === true || isEditableClass(cls),
+      password: v.password === true,
+      focused: v.focused === true,
+    });
+  }
+  return { app, activity, nodes };
 }
 
 /** uiautomator XML → elements with the focused and password flags, and the first node's package. */
