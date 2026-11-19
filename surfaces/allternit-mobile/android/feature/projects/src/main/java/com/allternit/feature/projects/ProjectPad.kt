@@ -473,6 +473,11 @@ fun PadEditSheet(store: ProjectPadStore, onDismiss: () -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var confirmTemplate by remember { mutableStateOf<PadTemplate?>(null) }
+    // iOS PadTemplatesStore: "Your templates" (the account's saved pads, cloud-api account/pad-templates).
+    val yours = remember { PadTemplatesClient() }
+    var naming by remember { mutableStateOf(false) }
+    var templateName by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { if (!yours.loaded) yours.load() }
     val pad = store.pad
     LibrarySheet(
         if (pad.isStyle) "Choose a pad" else "Edit pad", "padEditSheet", onDismiss = onDismiss,
@@ -534,9 +539,50 @@ fun PadEditSheet(store: ProjectPadStore, onDismiss: () -> Unit) {
                     if (pad.template == tpl.id) Text("In use", color = c.textTertiary, fontSize = 12.sp)
                 }
             }
+            FilterLabel("Your templates")
+            when {
+                yours.loading -> Text("Loading your templates", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp, top = 6.dp).testTag("padYourTemplatesLoading"))
+                yours.error != null -> Row(Modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(yours.error ?: "", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { scope.launch { yours.load() } }, modifier = Modifier.testTag("padYourTemplatesRetry")) { Text("Retry") }
+                }
+                yours.templates.isEmpty() -> Text("Templates you save show here.", color = c.textTertiary, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp, top = 6.dp))
+                else -> yours.templates.forEach { tpl ->
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(10.dp)).clickable { if (pad.template != tpl.id) confirmTemplate = tpl }.padding(horizontal = 8.dp).testTag("padTemplate${tpl.id}"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(tpl.name, color = c.textPrimary, fontSize = 15.sp)
+                            if (tpl.blurb.isNotEmpty()) Text(tpl.blurb, color = c.textSecondary, fontSize = 12.sp)
+                        }
+                        if (pad.template == tpl.id) Text("In use", color = c.textTertiary, fontSize = 12.sp)
+                    }
+                }
+            }
+            TextButton(
+                onClick = { templateName = ""; naming = true },
+                enabled = yours.loaded && !yours.saving && pad.tiles.isNotEmpty(),
+                modifier = Modifier.testTag("padSaveTemplate"),
+            ) { Text(if (yours.saving) "Saving…" else "Save as template") }
+            yours.message?.let { Text(it, color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp)) }
             (store.status ?: store.error)?.let { Text(it, color = c.textTertiary, fontSize = 12.sp) }
         }
     }
+    if (naming) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { naming = false },
+        title = { Text("Save as template") },
+        text = {
+            androidx.compose.material3.OutlinedTextField(templateName, { templateName = it.take(60) }, singleLine = true, placeholder = { Text("Template name") }, modifier = Modifier.testTag("padTemplateName"))
+        },
+        confirmButton = {
+            TextButton(enabled = templateName.isNotBlank(), onClick = {
+                naming = false
+                scope.launch { yours.save(templateName.trim(), store.pad.tiles) }
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = { naming = false }) { Text("Cancel") } },
+    )
     confirmTemplate?.let { tpl ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirmTemplate = null },
@@ -545,5 +591,59 @@ fun PadEditSheet(store: ProjectPadStore, onDismiss: () -> Unit) {
             confirmButton = { TextButton(onClick = { store.save(store.pad.copy(layout = "pad", template = tpl.id, tiles = tpl.tiles), scope); confirmTemplate = null }) { Text("Replace tiles") } },
             dismissButton = { TextButton(onClick = { confirmTemplate = null }) { Text("Cancel") } },
         )
+    }
+}
+
+
+/**
+ * The account's saved pad templates (iOS PadTemplatesClient + PadTemplatesStore):
+ * `GET/PUT {cloud}/api/v1/account/pad-templates` with `{ templates, modeDefaults }`. A save keeps
+ * every other field of the doc (modeDefaults) and adds the new template first (at most 24).
+ */
+internal class PadTemplatesClient {
+    var templates by mutableStateOf<List<PadTemplate>>(emptyList()); private set
+    var loading by mutableStateOf(false); private set
+    var loaded by mutableStateOf(false); private set
+    var saving by mutableStateOf(false); private set
+    var error by mutableStateOf<String?>(null); private set
+    var message by mutableStateOf<String?>(null); private set
+    private var doc: JsonObject = JsonObject(emptyMap())
+
+    private val url get() = LibraryNet.config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/account/pad-templates").build()
+
+    private fun parse(o: JsonObject): List<PadTemplate> = o.list("templates").mapNotNull { t ->
+        val id = t.str("id") ?: return@mapNotNull null
+        PadTemplate(id, t.str("name") ?: "Template", t.str("blurb").orEmpty(),
+            t.list("tiles").mapNotNull { tile -> PadTileId.of(tile.str("id"))?.let { tid -> PadTile(tid, PadSize.entries.firstOrNull { it.name == tile.str("size") } ?: tid.defaultSize) } })
+    }
+
+    suspend fun load() {
+        loading = true
+        error = null
+        when (val r = com.allternit.core.api.ApiCall.execute(LibraryNet.okHttp, ApiJson.default, com.allternit.core.api.ApiCall.request("GET", url, null), JsonObject.serializer())) {
+            is ApiResult.Ok -> { doc = r.value; templates = parse(r.value); loaded = true }
+            is ApiResult.HttpError -> error = if (r.status == 401 || r.status == 403) "Sign in to save templates to your account." else "Could not load your templates"
+            else -> error = "Could not load your templates"
+        }
+        loading = false
+    }
+
+    suspend fun save(name: String, tiles: List<PadTile>) {
+        saving = true
+        message = null
+        val entry = buildJsonObject {
+            put("id", "user-" + java.util.UUID.randomUUID().toString().lowercase())
+            put("name", name)
+            putJsonArray("tiles") { tiles.take(24).forEach { t -> add(buildJsonObject { put("id", t.id.raw); put("size", t.size.name) }) } }
+        }
+        val list = listOf<kotlinx.serialization.json.JsonElement>(entry) + (doc["templates"] as? kotlinx.serialization.json.JsonArray).orEmpty()
+        val next = JsonObject(doc + ("templates" to kotlinx.serialization.json.JsonArray(list.take(24))))
+        when (val r = com.allternit.core.api.ApiCall.execute(LibraryNet.okHttp, ApiJson.default, com.allternit.core.api.ApiCall.request("PUT", url, next.toString()), JsonObject.serializer())) {
+            is ApiResult.Ok -> { doc = r.value; templates = parse(r.value); message = "Saved \"$name\"." }
+            is ApiResult.Decode -> { doc = next; templates = parse(next); message = "Saved \"$name\"." }
+            is ApiResult.HttpError -> message = if (r.status == 401 || r.status == 403) "Sign in to save templates to your account." else "Couldn't save the template. Try again."
+            is ApiResult.Network -> message = "You're offline. Check your connection and try again."
+        }
+        saving = false
     }
 }

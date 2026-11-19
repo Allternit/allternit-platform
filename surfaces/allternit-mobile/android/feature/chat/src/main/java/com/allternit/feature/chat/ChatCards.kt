@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -192,7 +193,7 @@ internal fun ChatErrorCard(error: ChatError, onChooseModel: () -> Unit, onRetry:
 // MARK: - Permission ask (iOS PermissionAskView)
 
 @Composable
-internal fun PermissionAskCard(ask: PermissionAsk, onReply: (String, (String) -> Unit) -> Unit) {
+fun PermissionAskCard(ask: PermissionAsk, onReply: (String, (String) -> Unit) -> Unit) {
     val c = AllternitTheme.colors
     var problem by remember(ask.id) { mutableStateOf<String?>(null) }
     var sending by remember(ask.id) { mutableStateOf(false) }
@@ -226,7 +227,7 @@ internal fun PermissionAskCard(ask: PermissionAsk, onReply: (String, (String) ->
 // MARK: - Question (iOS QuestionCardView)
 
 @Composable
-internal fun QuestionCard(ask: QuestionAsk, onAnswer: (List<List<String>>, (String) -> Unit) -> Unit, onSkip: ((String) -> Unit) -> Unit) {
+fun QuestionCard(ask: QuestionAsk, onAnswer: (List<List<String>>, (String) -> Unit) -> Unit, onSkip: ((String) -> Unit) -> Unit) {
     val c = AllternitTheme.colors
     if (ask.closed) return
     val picks = remember(ask.id) { mutableStateListOf<Set<String>>().apply { repeat(ask.questions.size) { add(emptySet()) } } }
@@ -302,9 +303,14 @@ internal object ToolDescriber {
 internal fun formatDuration(ms: Long): String = if (ms < 1000) "${ms}ms" else String.format(java.util.Locale.US, "%.1fs", ms / 1000.0)
 
 @Composable
-internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, waiting: Boolean) {
+internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, waiting: Boolean, backend: ChatBackend? = null) {
     val c = AllternitTheme.colors
     var open by remember { mutableStateOf(false) }
+    // Wave E: a reply that handed work to other agents opens the run tree (iOS AgentRunTreeSheet from MessageRow).
+    val agentSteps = calls.count { isAgentStep(it) }
+    var treeOpen by remember { mutableStateOf(false) }
+    val treeSession = LocalRunTreeSession.current
+    if (treeOpen) AgentRunTreeSheet(calls, treeSession, streaming, backend, onDismiss = { treeOpen = false })
     val failed = calls.count { it.state == ToolState.Failed }
     val n = calls.size
     val noun = if (n == 1) "tool" else "tools"
@@ -331,6 +337,10 @@ internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, wait
             if (streaming) com.allternit.core.design.ThinkingOrb(size = com.allternit.core.design.ThinkingOrbSize.Inline, state = com.allternit.core.design.ThinkingOrbState.forToolName(calls.lastOrNull()?.toolName ?: ""))
             Text(header, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Icon(painterResource(if (open) R.drawable.chat_caret_up else R.drawable.chat_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
+            if (agentSteps > 0) Text(
+                "· $agentSteps ${if (agentSteps == 1) "agent" else "agents"}", color = c.accentPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.testTag("toolRailAgents").clickable(role = Role.Button, onClickLabel = "Show the agents") { treeOpen = true },
+            )
         }
         if (open) {
             calls.forEach { call ->

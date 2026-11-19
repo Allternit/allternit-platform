@@ -169,6 +169,16 @@ class ChatBackend(
     suspend fun rejectQuestion(id: String): ApiResult<Unit> =
         ApiCall.executeUnit(okHttp, json, ApiCall.request("POST", v1("questions", id, "reject"), "{}"))
 
+    // MARK: Session tasks (iOS SessionTasksClient, wave E run tree)
+
+    /** `GET agent-sessions/:id/tasks`: the gizzi tasks (subagents) of a session. */
+    suspend fun sessionTasks(sessionId: String): ApiResult<kotlinx.serialization.json.JsonElement> =
+        ApiCall.execute(okHttp, json, ApiCall.request("GET", v1("agent-sessions", sessionId, "tasks"), null), kotlinx.serialization.json.JsonElement.serializer())
+
+    /** `POST agent-sessions/:id/background-tasks/:task/(cancel|interrupt|resume)`. */
+    suspend fun backgroundTask(sessionId: String, taskId: String, action: String, jsonBody: String = "{}"): ApiResult<Unit> =
+        ApiCall.executeUnit(okHttp, json, ApiCall.request("POST", v1("agent-sessions", sessionId, "background-tasks", taskId, action), jsonBody))
+
     // MARK: Runtime REST (allternit-api on the user's computer)
 
     /**

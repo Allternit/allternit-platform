@@ -174,6 +174,7 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     items(messages, key = { it.id }) { m ->
+                        androidx.compose.runtime.CompositionLocalProvider(LocalRunTreeSession provides viewModel.currentSessionId) {
                         MessageRow(
                             message = m,
                             isLastAssistant = m.id == viewModel.lastAssistantMessageId,
@@ -182,6 +183,7 @@ fun ChatScreen(
                             backend = backend,
                             actions = actions,
                         )
+                        }
                     }
                     if (gate != null) {
                         item(key = "computeGate") {
