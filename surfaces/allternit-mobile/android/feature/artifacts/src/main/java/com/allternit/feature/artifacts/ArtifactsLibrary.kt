@@ -226,6 +226,7 @@ fun ArtifactsLibraryScreen(
     var studio by remember { mutableStateOf<StudioSession?>(null) }
     var launching by remember { mutableStateOf<StudioKind?>(null) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
+    var newOpen by remember { mutableStateOf(false) }
 
     fun reload() { scope.launch { store.load() } }
 
@@ -270,6 +271,7 @@ fun ArtifactsLibraryScreen(
         startSession(kind)
     }
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().statusBarsPadding().testTag("artifactsLibrary")) {
         LibraryHeader(
             title = "",
@@ -421,6 +423,28 @@ fun ArtifactsLibraryScreen(
         }
     }
 
+    // iOS: the floating "New artifact" capsule (its menu is a sheet here, reached by tap).
+    Text(
+        "New artifact", color = c.bgPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp)
+            .height(50.dp).clip(RoundedCornerShape(25.dp)).background(c.textPrimary).testTag("artifactsNew")
+            .clickable(role = Role.Button) { newOpen = true }.padding(horizontal = 24.dp, vertical = 14.dp),
+    )
+    }
+
+    if (newOpen) {
+        NewArtifactSheet(
+            tiles = StudioKind.entries.filter { k -> k.templateKind?.let { store.allows(it) } ?: true },
+            signedIn = signedIn,
+            onTile = { startSession(it) },
+            onConnectors = onConnectors,
+            onUploading = { store.notice = it },
+            onUploaded = { r -> r.onSuccess { id -> store.notice = null; reload(); openId = id }.onFailure { store.notice = it.message } },
+            onDismiss = { newOpen = false },
+            scope = scope,
+        )
+    }
+
     if (filterOpen) {
         LibrarySheet("Filter", "artifactsFilterSheet", onDismiss = { filterOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { filterOpen = false; reload() }) {
             Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
@@ -502,49 +526,16 @@ private fun StudioTile(k: StudioKind, selected: Boolean, busy: Boolean, onTap: (
     }
 }
 
-/** Card body text cache (iOS ArtifactCardContent, keyed id@version). */
-private object CardPreviewCache {
-    val map = mutableStateMapOf<String, String>()
-}
-
-/** First lines of an artifact body for its card (a lighter ArtifactCardPreview: text kinds only). */
-internal fun previewText(kind: String, body: String): String {
-    val text = when (kind) {
-        "page", "design" -> body.replace(Regex("(?s)<(script|style)[^>]*>.*?</\\1>"), " ").replace(Regex("<[^>]+>"), " ")
-        "sheet" -> runCatching {
-            val rows = LibraryJson.parse(body).list("rows")
-            rows.take(6).joinToString("\n") { it.values.take(4).joinToString("  ") { v -> v.toString().trim('"') } }
-        }.getOrDefault(body)
-        else -> body
-    }
-    return text.lines().map { it.trim() }.filter { it.isNotEmpty() }.take(16).joinToString("\n").take(600)
-}
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ArtifactCard(a: ArtifactSummary, layout: LibraryLayout, modifier: Modifier, onOpen: () -> Unit, onMore: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
-    val cacheKey = "${a.id}@${a.currentVersion}"
-    val textKind = a.kind in setOf("doc", "code", "page", "design", "sheet", "slides", "diagram")
-    LaunchedEffect(cacheKey) {
-        if (textKind && CardPreviewCache.map[cacheKey] == null) {
-            val r = ArtifactsV2Client.get(a.id)
-            CardPreviewCache.map[cacheKey] = (r as? ApiResult.Ok)?.value?.let { previewText(it.kind, it.body) } ?: ""
-        }
-    }
-    val preview = CardPreviewCache.map[cacheKey].orEmpty()
     val thumbH = when (layout) { LibraryLayout.List -> 58; LibraryLayout.Grid -> 110; LibraryLayout.Deck -> 180 }
     val shape = RoundedCornerShape(16.dp)
     val subtitle = "${ArtifactKinds.noun(a.kind)} · Edited ${relativeTime(parseTime(a.updatedAt)).lowercase().ifEmpty { "recently" }}"
     val body: @Composable (Modifier) -> Unit = { m ->
-        Box(m.clip(RoundedCornerShape(10.dp)).background(c.bgPrimary).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(10.dp)).padding(8.dp)) {
-            if (preview.isNotEmpty()) {
-                Text(preview, color = c.textSecondary, fontSize = 8.5.sp, lineHeight = 11.sp, fontFamily = if (a.kind == "code") FontFamily.Monospace else FontFamily.Default, overflow = TextOverflow.Clip)
-            } else {
-                Icon(painterResource(ArtifactKinds.icon(a.kind)), null, tint = c.textTertiary, modifier = Modifier.size(32.dp).align(Alignment.Center))
-            }
-        }
+        ArtifactCardPreview(a, m.clip(RoundedCornerShape(10.dp)).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(10.dp)))
     }
     val click = Modifier.combinedClickable(
         role = Role.Button,
