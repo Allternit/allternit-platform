@@ -20,20 +20,20 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: aci | — | src/fabric-session/phone/phone-nav.ts (PhoneSection aci) | feature/shell/WorkspaceShell.kt (mcp-apps / browser-extensions / computers rows → AciRoot) | built (#PRNUM) | — |
-| AciScreen | — | src/fabric-session/phone/screens/AciScreen.tsx | feature/computer/AciScreen.kt (AciRoot) | built (#PRNUM) | — |
-| ACIAgentRunView | ios/Features/ACI/Views/ACIAgentRunView.swift | — | feature/computer/AciRun.kt (AciAgentRunView, AciRunModel) | built (#PRNUM) | — |
-| ACIComputerDetailView | ios/Features/ACI/Views/ACIComputerDetailView.swift | src/fabric-session/phone/screens/PhoneComputerViewOverlay.tsx | core/rfb/ComputerDrive.kt (ComputerDriveScreen) + feature/computer/AciComputers.kt | built (#PRNUM): Desktop path (live screen, take control, start); its Files and Inbox requests rows wait for the Android Files drive | — |
-| ACIExtensionsView | ios/Features/ACI/Views/ACIExtensionsView.swift | — | — | left (#PRNUM): the ACI tab shows a plain 'arrives in the next update' line; next ACI step | — |
-| ACIMcpAppsView | ios/Features/ACI/Views/ACIMcpAppsView.swift | — | — | left (#PRNUM): the ACI tab shows a plain 'arrives in the next update' line; next ACI step | — |
-| ACITabView | ios/Features/ACI/Views/ACITabView.swift | — | feature/computer/AciScreen.kt (AciRoot, landing, target picker, nudge) | built (#PRNUM) | — |
-| ACIWebBrowserView | ios/Features/ACI/Views/ACIWebBrowserView.swift | — | feature/computer/AciRun.kt (AciWebBrowser) | built (#PRNUM) | — |
-| AppScreenWebView | ios/Features/ACI/Views/AppScreenWebView.swift | — | — | left (#PRNUM): next ACI step | — |
-| BrowserChatView | ios/Features/ACI/Views/BrowserChatView.swift | — | — | left (#PRNUM): a browser session from the drawer opens in the shared chat page; the 'Browser chat' header is next | — |
-| FilesInboxRequestsView | ios/Features/ACI/Views/Files/FilesInboxRequestsView.swift | — | — | left (#PRNUM): waits for the Android Files drive | — |
-| MiniAppRuntimeView | ios/Features/ACI/Views/MiniAppRuntimeView.swift | src/fabric-session/phone/screens/PhoneMiniAppOverlay.tsx | — | left (#PRNUM): next ACI step | — |
-| MiniAppsStoreView | ios/Features/ACI/Views/MiniAppsStoreView.swift | — | — | left (#PRNUM): next ACI step | — |
-| TeachView | ios/Features/ACI/Views/TeachView.swift | src/fabric-session/phone/screens/PhoneTeachOverlay.tsx | — | left (#PRNUM): the drawer's Teach row still opens the section stub; next ACI step | — |
+| section: aci | — | src/fabric-session/phone/phone-nav.ts (PhoneSection aci) | feature/shell/WorkspaceShell.kt (mcp-apps / browser-extensions / computers rows → AciRoot) | built (#2644) | — |
+| AciScreen | — | src/fabric-session/phone/screens/AciScreen.tsx | feature/computer/AciScreen.kt (AciRoot) | built (#2644) | — |
+| ACIAgentRunView | ios/Features/ACI/Views/ACIAgentRunView.swift | — | feature/computer/AciRun.kt (AciAgentRunView, AciRunModel) | built (#2644) | — |
+| ACIComputerDetailView | ios/Features/ACI/Views/ACIComputerDetailView.swift | src/fabric-session/phone/screens/PhoneComputerViewOverlay.tsx | core/rfb/ComputerDrive.kt (ComputerDriveScreen) + feature/computer/AciComputers.kt | built (#2644): Desktop path (live screen, take control, start); its Files and Inbox requests rows wait for the Android Files drive | — |
+| ACIExtensionsView | ios/Features/ACI/Views/ACIExtensionsView.swift | — | — | left (#2644): the ACI tab shows a plain 'arrives in the next update' line; next ACI step | — |
+| ACIMcpAppsView | ios/Features/ACI/Views/ACIMcpAppsView.swift | — | — | left (#2644): the ACI tab shows a plain 'arrives in the next update' line; next ACI step | — |
+| ACITabView | ios/Features/ACI/Views/ACITabView.swift | — | feature/computer/AciScreen.kt (AciRoot, landing, target picker, nudge) | built (#2644) | — |
+| ACIWebBrowserView | ios/Features/ACI/Views/ACIWebBrowserView.swift | — | feature/computer/AciRun.kt (AciWebBrowser) | built (#2644) | — |
+| AppScreenWebView | ios/Features/ACI/Views/AppScreenWebView.swift | — | — | left (#2644): next ACI step | — |
+| BrowserChatView | ios/Features/ACI/Views/BrowserChatView.swift | — | — | left (#2644): a browser session from the drawer opens in the shared chat page; the 'Browser chat' header is next | — |
+| FilesInboxRequestsView | ios/Features/ACI/Views/Files/FilesInboxRequestsView.swift | — | — | left (#2644): waits for the Android Files drive | — |
+| MiniAppRuntimeView | ios/Features/ACI/Views/MiniAppRuntimeView.swift | src/fabric-session/phone/screens/PhoneMiniAppOverlay.tsx | — | left (#2644): next ACI step | — |
+| MiniAppsStoreView | ios/Features/ACI/Views/MiniAppsStoreView.swift | — | — | left (#2644): next ACI step | — |
+| TeachView | ios/Features/ACI/Views/TeachView.swift | src/fabric-session/phone/screens/PhoneTeachOverlay.tsx | — | left (#2644): the drawer's Teach row still opens the section stub; next ACI step | — |
 
 ## AgentActivity
 
@@ -53,7 +53,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | BotHomeView | ios/Features/Agents/BotHomeView.swift | — | feature/bots/Agents.kt (BotHomeScreen) | built (wave E PR): desktop preview card waits on wave F | — |
 | BotWebhooksSheet | ios/Features/Agents/BotWebhooksSheet.swift | — | feature/bots/Agents.kt (BotWebhooksSheet) | built (wave E PR) | — |
 | BotWorkspaceFilesSheet | ios/Features/Agents/BotWorkspaceFilesSheet.swift | — | feature/bots/Agents.kt (BotWorkspaceFilesSheet) | built (wave E PR) | — |
-| BotDesktopView | ios/Features/Agents/Desktop/BotDesktopView.swift | src/fabric-session/phone/screens/PhoneDesktopOverlay.tsx | core/rfb/RemoteScreen.kt + feature/bots/BotDesktop.kt (BotDesktopView, BotComputerScreen) | built (#PRNUM) | — |
+| BotDesktopView | ios/Features/Agents/Desktop/BotDesktopView.swift | src/fabric-session/phone/screens/PhoneDesktopOverlay.tsx | core/rfb/RemoteScreen.kt + feature/bots/BotDesktop.kt (BotDesktopView, BotComputerScreen) | built (#2644) | — |
 | MarketplaceView | ios/Features/Agents/MarketplaceView.swift | — | feature/bots/Agents.kt (MarketplaceScreen, MarketplaceListingScreen) | built (wave E PR) | — |
 | WorkspaceFileEditorView | ios/Features/Agents/WorkspaceFileEditorView.swift | — | feature/bots/Agents.kt (WorkspaceFileEditorScreen) | built (wave E PR): "Edit with chat" assist (EditWithChat.kt: instruction → streamed revision in a bot session, line diff, Apply / Discard) | — |
 
@@ -352,7 +352,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| mode: aci | — | src/fabric-session/phone/phone-nav.ts (PhoneMode aci) | feature/shell/WorkspaceShell.kt (ShellMode.Aci → AciRoot) | built (#PRNUM) | — |
+| mode: aci | — | src/fabric-session/phone/phone-nav.ts (PhoneMode aci) | feature/shell/WorkspaceShell.kt (ShellMode.Aci → AciRoot) | built (#2644) | — |
 | mode: bots | — | src/fabric-session/phone/phone-nav.ts (PhoneMode bots) | feature/shell/WorkspaceShell.kt (ShellMode.Bots → BotsModeRoot) | built (wave E PR) | — |
 | mode: code | — | src/fabric-session/phone/phone-nav.ts (PhoneMode code) | — | todo | — |
 | mode: home | — | src/fabric-session/phone/phone-nav.ts (PhoneMode home) | — | todo | — |
