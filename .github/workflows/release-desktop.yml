@@ -1184,7 +1184,7 @@ jobs:
           retention-days: 30
 
       - name: Check Linux update feed
-        # The Linux in-app updater (src/main/linux-updater.ts) reads
+        # The Linux in-app updater (src/main/app-updater.ts) reads
         # latest-linux.yml (x64) / latest-linux-arm64.yml (arm64) from the
         # Allternit/desktop release with
         # electron-updater's DebUpdater, RpmUpdater or AppImageUpdater; each
@@ -1273,6 +1273,37 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Check the app updater feeds
+        # Desktop updates itself through electron-updater on every OS
+        # (src/main/app-updater.ts), reading the latest Allternit/desktop
+        # release: latest-mac.yml -> the -arm64/-x64 zips (MacUpdater),
+        # latest.yml -> Allternit-Setup-<v>.exe (NsisUpdater), latest-linux.yml
+        # -> the x64 .deb, .rpm and AppImage (Deb/Rpm/AppImageUpdater),
+        # latest-linux-arm64.yml -> the arm64 ones. A release missing a feed, or a feed naming a
+        # file that is not attached, silently stops updates on that OS. Every
+        # file checked here must be uploaded to the Allternit/desktop release
+        # (docs/Operations/DESKTOP_RELEASE.md).
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifacts
+          fail=0
+          need() { [ -f "$1" ] || { echo "::error::missing $1"; fail=1; }; }
+          for feed in latest-mac.yml latest.yml latest-linux.yml latest-linux-arm64.yml; do
+            need "$feed"
+            [ -f "$feed" ] || continue
+            echo "== $feed"; cat "$feed"
+            # Every file a feed names must be attached next to it.
+            for f in $(sed -nE 's/^ *- url: (.+)$/\1/p' "$feed"); do need "$f"; done
+          done
+          grep -Eq 'url: .*-arm64\.zip$' latest-mac.yml || { echo "::error::latest-mac.yml lists no arm64 zip"; fail=1; }
+          grep -Eq 'url: .*-x64\.zip$' latest-mac.yml || { echo "::error::latest-mac.yml lists no x64 zip"; fail=1; }
+          grep -Eq 'url: .*\.exe$' latest.yml || { echo "::error::latest.yml lists no installer"; fail=1; }
+          # Differential downloads read the blockmaps; a missing one only costs
+          # a full download, so warn.
+          for f in *.zip *.exe; do [ -f "$f.blockmap" ] || echo "::warning::no blockmap for $f"; done
+          exit $fail
+
       - name: Create Release
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
         if: startsWith(github.ref, 'refs/tags/')
@@ -1293,7 +1324,7 @@ jobs:
             | Platform | File |
             |----------|------|
             | macOS (arm64 + x64) | `Allternit-*.dmg` |
-            | Windows | `Allternit Setup *.exe` |
+            | Windows | `Allternit-Setup-*.exe` |
             | Linux: Ubuntu, Debian, Mint (x64) | `*-amd64.deb` |
             | Linux: Ubuntu, Debian, Raspberry Pi OS 64-bit (arm64) | `*-arm64.deb` |
             | Linux: Fedora, RHEL/Alma/Rocky, openSUSE (x64) | `*-x86_64.rpm` |
@@ -1301,7 +1332,7 @@ jobs:
             | Linux: any other distro (x64) | `*-x86_64.AppImage` |
             | Linux: any other distro (arm64) | `*-arm64.AppImage` |
 
-            Auto-updates are enabled — the app will notify you when a new version is available.
+            The app updates itself on macOS, Windows and Linux (.deb) and asks you to restart when a new version is ready. Desktop 1.1.15 and older need this version installed by hand once.
           files: |
             artifacts/*.dmg
             artifacts/*.zip
