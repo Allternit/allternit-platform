@@ -93,7 +93,10 @@ export function extractZipSafely(
     if (target !== root && !target.startsWith(root + path.sep)) {
       return `Archive entry escapes the install directory: ${e.name}`;
     }
-    if (e.isDirectory) { fs.mkdirSync(target, { recursive: true }); continue; }
+    if (e.isDirectory) {
+      try { fs.mkdirSync(target, { recursive: true }); } catch (err) { return `Could not create ${e.name}: ${err instanceof Error ? err.message : String(err)}`; }
+      continue;
+    }
     if (e.offset + 30 > buf.length || buf.readUInt32LE(e.offset) !== 0x04034b50) return 'Corrupt zip local header';
     const start = e.offset + 30 + buf.readUInt16LE(e.offset + 26) + buf.readUInt16LE(e.offset + 28);
     const raw = buf.subarray(start, start + e.compressedSize);
@@ -106,9 +109,14 @@ export function extractZipSafely(
       return `Could not extract ${e.name}: ${err instanceof Error ? err.message : String(err)}`;
     }
     if (data.length !== e.size) return `Zip entry size mismatch: ${e.name}`;
-    fs.mkdirSync(path.dirname(target), { recursive: true });
     const exec = (e.unixMode & 0o111) !== 0;
-    fs.writeFileSync(target, data, { mode: exec ? 0o755 : 0o644 });
+    try {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      // wx: a duplicate entry name fails instead of overwriting an earlier file.
+      fs.writeFileSync(target, data, { mode: exec ? 0o755 : 0o644, flag: 'wx' });
+    } catch (err) {
+      return `Could not write ${e.name}: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
   return null;
 }
