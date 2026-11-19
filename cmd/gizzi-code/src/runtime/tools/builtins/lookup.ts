@@ -54,6 +54,10 @@ export interface TurnLocation {
   timeZone?: string
   /** A place name, when the client sent one. */
   place?: string
+  /** Shared precise for this turn only (the person tapped "Share precise location"). */
+  precise?: boolean
+  /** Radius in metres for a precise share (never finer than 10). */
+  accuracyM?: number
 }
 
 const LOCATION_LINE =
@@ -81,13 +85,15 @@ export function turnLocationFromField(raw: unknown): TurnLocation | undefined {
   if (!raw || typeof raw !== "object") return undefined
   const v = raw as Record<string, unknown>
   const meters = typeof v.accuracy_m === "number" && Number.isFinite(v.accuracy_m) && v.accuracy_m > 0 ? v.accuracy_m : undefined
+  const precise = v.precision === "precise"
   return turnLocationOf({
     lat: v.lat,
     lon: v.lon,
-    // Never finer than 1 km, as allternit-api states it to the model.
+    // Never finer than 1 km, as allternit-api states it to the model, unless shared precise for this turn.
     accuracyKm: meters === undefined ? undefined : Math.max(1, Math.round(meters / 1000)),
     timeZone: v.time_zone,
     place: v.place,
+    ...(precise ? { precise: true, accuracyM: meters === undefined ? 10 : Math.max(10, Math.round(meters)) } : {}),
   })
 }
 
@@ -112,7 +118,16 @@ export function turnLocationOf(raw: unknown): TurnLocation | undefined {
   const accuracyKm = typeof v.accuracyKm === "number" && Number.isFinite(v.accuracyKm) && v.accuracyKm > 0 ? v.accuracyKm : undefined
   const timeZone = Clock.validZone(v.timeZone)
   const place = typeof v.place === "string" && v.place.trim() ? v.place.trim().slice(0, 200) : undefined
-  return { lat, lon, ...(accuracyKm ? { accuracyKm } : {}), ...(timeZone ? { timeZone } : {}), ...(place ? { place } : {}) }
+  const precise = v.precise === true
+  const accuracyM = precise && typeof v.accuracyM === "number" && Number.isFinite(v.accuracyM) ? Math.max(10, v.accuracyM) : undefined
+  return {
+    lat,
+    lon,
+    ...(accuracyKm ? { accuracyKm } : {}),
+    ...(timeZone ? { timeZone } : {}),
+    ...(place ? { place } : {}),
+    ...(precise ? { precise: true, ...(accuracyM ? { accuracyM } : {}) } : {}),
+  }
 }
 
 /**

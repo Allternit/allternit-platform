@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// Conversation ended card: a title row and one line of metadata. Stub: G4-G7 fill it in.
+/// Conversation ended card: the agent ended this chat.
 struct EndConversationRow: View {
     let gap: GapToolMetadata
 
     private var line: String {
-        gap.reason ?? ""
+        gap.reason.map { "This chat was ended. \($0)" } ?? "This chat was ended."
     }
 
     var body: some View {

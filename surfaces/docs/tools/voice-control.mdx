@@ -7,8 +7,6 @@ description: 'Change language, speed or reply mode in a voice session, or end th
 
 `voice_control` changes how a voice session behaves. It is mounted on voice turns only.
 
-This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
-
 ## Parameters
 
 | Parameter | Type | Meaning |
@@ -22,10 +20,12 @@ This tool turns on with its feature PR. Until then it is registered as a stub an
 
 The action and the new value. `end_call` is used after a spoken goodbye.
 
+It is available on voice turns only. App voice streams carry the change as a `control` event (`language`, `speed`, `reply_mode` or `end_call`). Phone calls carry it as `call.control`. Style tags such as `[tag]` are stripped from speech for now.
+
 ## Permission
 
 It changes only the voice session you are in, so it is allowed in every mode.
 
 ## Surfaces
 
-Web, phone layout, PWA, iOS and Desktop show the controls. Android follows the PWA. The terminal does not have it: a terminal has no voice session. See [Voice calls](/tools/voice-calls). Delivered by the phone PR (PR9). Family: `voice`.
+Web, phone layout, PWA, iOS and Desktop show the controls. Android follows the PWA. In the terminal only `end_call` applies: language and speed are not available there. See [Voice calls](/tools/voice-calls). Family: `voice`.

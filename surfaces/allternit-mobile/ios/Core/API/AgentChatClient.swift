@@ -295,6 +295,37 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         let metadata: Metadata?
         /// The session's working folder (its project's); "" clears it.
         let workdir: String?
+        /// This turn's location (the card's Share location). Optional; omitted when nil.
+        let client_location: ClientLocation?
+    }
+
+    /// `client_location` of a chat send: `at` is RFC 3339 UTC, `time_zone` IANA,
+    /// `precision` is "precise" only for a precise share (omitted for approximate).
+    struct ClientLocation: Codable, Sendable, Equatable {
+        let lat: Double
+        let lon: Double
+        let accuracyM: Int
+        let timeZone: String
+        let at: String
+        let precision: String?
+
+        enum CodingKeys: String, CodingKey {
+            case lat, lon, at, precision
+            case accuracyM = "accuracy_m"
+            case timeZone = "time_zone"
+        }
+
+        /// Approximate shares are rounded to 2 decimals; precise ones go as-is.
+        init(lat: Double, lon: Double, accuracyM: Int, precise: Bool) {
+            self.lat = precise ? lat : (lat * 100).rounded() / 100
+            self.lon = precise ? lon : (lon * 100).rounded() / 100
+            self.accuracyM = accuracyM
+            self.timeZone = TimeZone.current.identifier
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            self.at = f.string(from: Date())
+            self.precision = precise ? "precise" : nil
+        }
     }
 
     /// Sends `text` to the session and streams the response frames.
@@ -307,7 +338,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     /// never reached the phone.
     ///
     /// Throws `AgentChatClientError.noReachableNode` when no computer resolves.
-    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
+    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil, clientLocation: ClientLocation? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -338,7 +369,8 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         fast: UserDefaults.standard.bool(forKey: "allternit-model-fast") ? true : nil,
                         attachments: attachments,
                         metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, screen_context: screenContext, answer_cards: "widgets"),
-                        workdir: workdir
+                        workdir: workdir,
+                        client_location: clientLocation
                     ))
 
                     let (bytes, response) = try await InstanceConnection.bytes(for: request)

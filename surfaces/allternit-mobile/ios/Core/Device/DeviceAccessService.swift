@@ -1,4 +1,5 @@
 import Contacts
+import CoreLocation
 import EventKit
 import Foundation
 import UIKit
@@ -11,6 +12,11 @@ import UIKit
 /// switch must be on (`device_access_off`) and iOS must have granted access
 /// (`permission_denied`). Errors go back as `AppPhoneRPCError` codes the
 /// Desktop turns into messages the bot can explain.
+///
+/// Calendar delete and reminder update are writes: like create, the Desktop
+/// asks the person before it sends them (phone-app-store.ts DEVICE_WRITES).
+/// `device.location.get` is approximate unless `precision` is `precise` and
+/// the person allows full accuracy when iOS asks.
 ///
 /// Phone Use (docs/contracts/CONTRACT-phone-use-2026-11-16.md §9.1) adds
 /// `device.shortcuts.run`, `device.home.list|set|scene` (behind the same two
@@ -42,8 +48,11 @@ enum DeviceAccessService {
         switch method {
         case "device.calendar.list": return try listEvents(params)
         case "device.calendar.create": return try createEvent(params)
+        case "device.calendar.delete": return try deleteEvent(params)
         case "device.reminders.list": return try await listReminders(params)
         case "device.reminders.create": return try createReminder(params)
+        case "device.reminders.update": return try updateReminder(params)
+        case "device.location.get": return try await getLocation(params)
         case "device.contacts.search": return try searchContacts(params)
         case "device.shortcuts.run": return try await runShortcut(params)
         case "device.home.list":
@@ -115,6 +124,19 @@ enum DeviceAccessService {
         return ["created": true, "id": event.eventIdentifier ?? "", "calendar": calendar.title]
     }
 
+    private static func deleteEvent(_ p: [String: Any]) throws -> Any {
+        guard let id = itemId(p) else { throw bad("id is required.") }
+        let store = EKEventStore()
+        guard let event = store.event(withIdentifier: id) else {
+            throw AppPhoneRPCError(code: "not_found", message: "No event with that id on this iPhone.")
+        }
+        let title = event.title ?? ""
+        do { try store.remove(event, span: .thisEvent, commit: true) } catch {
+            throw AppPhoneRPCError(code: "device_failed", message: error.localizedDescription)
+        }
+        return ["deleted": true, "id": id, "title": title]
+    }
+
     // MARK: - Reminders
 
     private static func listReminders(_ p: [String: Any]) async throws -> Any {
@@ -165,6 +187,87 @@ enum DeviceAccessService {
             throw AppPhoneRPCError(code: "device_failed", message: error.localizedDescription)
         }
         return ["created": true, "id": reminder.calendarItemIdentifier, "list": calendar.title]
+    }
+
+    /// Only the fields sent change. A null field counts as not sent.
+    private static func updateReminder(_ p: [String: Any]) throws -> Any {
+        guard let id = itemId(p) else { throw bad("id is required.") }
+        let title = field(p, "title"), due = field(p, "due"), completed = field(p, "completed"), notes = field(p, "notes")
+        guard title != nil || due != nil || completed != nil || notes != nil else {
+            throw bad("Send title, due, completed or notes.")
+        }
+        let store = EKEventStore()
+        guard let reminder = store.calendarItem(withIdentifier: id) as? EKReminder else {
+            throw AppPhoneRPCError(code: "not_found", message: "No reminder with that id on this iPhone.")
+        }
+        if let title {
+            guard let text = (title as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+                throw bad("title must be non-empty text.")
+            }
+            reminder.title = String(text.prefix(200))
+        }
+        if let notes {
+            guard let text = notes as? String else { throw bad("notes must be text.") }
+            reminder.notes = String(text.prefix(2000))
+        }
+        if let due {
+            guard let date = date(due) else { throw bad("due must be an ISO 8601 time.") }
+            reminder.dueDateComponents = Calendar.current.dateComponents(
+                [.year, .month, .day, .hour, .minute], from: date)
+        }
+        if let completed {
+            guard let done = completed as? Bool else { throw bad("completed must be true or false.") }
+            reminder.isCompleted = done
+        }
+        do { try store.save(reminder, commit: true) } catch {
+            throw AppPhoneRPCError(code: "device_failed", message: error.localizedDescription)
+        }
+        var row: [String: Any] = [
+            "updated": true,
+            "id": reminder.calendarItemIdentifier,
+            "title": reminder.title ?? "",
+            "completed": reminder.isCompleted,
+            "list": reminder.calendar?.title ?? "",
+        ]
+        if let d = reminder.dueDateComponents?.date { row["due"] = iso(d) }
+        return row
+    }
+
+    // MARK: - Location
+
+    /// Approximate (the default): reduced accuracy, rounded to about 1 km,
+    /// with city and region. Precise: full accuracy only when the person has
+    /// it on or allows it for now when iOS asks; otherwise the answer stays
+    /// approximate and says so in `precision`.
+    private static func getLocation(_ p: [String: Any]) async throws -> Any {
+        let wantsPrecise: Bool
+        switch p["precision"] {
+        case nil, is NSNull: wantsPrecise = false
+        case let s as String where s == "approximate" || s == "precise": wantsPrecise = s == "precise"
+        default: throw bad("precision must be approximate or precise.")
+        }
+        let locator = DeviceLocator.shared
+        let precise = wantsPrecise ? await locator.allowFullAccuracy() : false
+        guard let fix = await locator.currentFix(precise: precise) else {
+            throw AppPhoneRPCError(code: "device_failed", message: "This iPhone could not find its location just now.")
+        }
+        var lat = fix.lat, lon = fix.lon, accuracy = fix.accuracy
+        if !precise {
+            // Two decimals is about 1.1 km of latitude.
+            lat = (lat * 100).rounded() / 100
+            lon = (lon * 100).rounded() / 100
+            accuracy = max(accuracy, 1000)
+        }
+        var row: [String: Any] = [
+            "lat": lat,
+            "lon": lon,
+            "accuracy_m": Int(accuracy.rounded()),
+            "precision": precise ? "precise" : "approximate",
+        ]
+        let place = await locator.place(lat: lat, lon: lon)
+        if let city = place.city { row["city"] = city }
+        if let region = place.region { row["region"] = region }
+        return row
     }
 
     // MARK: - Contacts
@@ -278,6 +381,18 @@ enum DeviceAccessService {
 
     // MARK: - Helpers
 
+    private nonisolated static func itemId(_ p: [String: Any]) -> String? {
+        guard let id = (p["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !id.isEmpty, id.count <= 200 else { return nil }
+        return id
+    }
+
+    /// A field that was sent, with JSON null treated as not sent.
+    private nonisolated static func field(_ p: [String: Any], _ key: String) -> Any? {
+        guard let value = p[key], !(value is NSNull) else { return nil }
+        return value
+    }
+
     private nonisolated static func bad(_ message: String) -> AppPhoneRPCError {
         AppPhoneRPCError(code: "bad_params", message: message)
     }
@@ -296,5 +411,109 @@ enum DeviceAccessService {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f.string(from: date)
+    }
+}
+
+/// One-shot when-in-use location for `device.location.get`. Created on the
+/// main thread, so CoreLocation calls the delegate there.
+@MainActor
+final class DeviceLocator: NSObject {
+    static let shared = DeviceLocator()
+
+    struct Fix: Sendable { let lat: Double, lon: Double, accuracy: Double }
+
+    /// The purpose key in Info.plist NSLocationTemporaryUsageDescriptionDictionary.
+    private static let purposeKey = "PreciseAnswer"
+    private static let fixTimeout: UInt64 = 15_000_000_000
+
+    private let manager = CLLocationManager()
+    private let geocoder = CLGeocoder()
+    private var authWaiters: [CheckedContinuation<Void, Never>] = []
+    private var fixWaiters: [UUID: CheckedContinuation<Fix?, Never>] = [:]
+
+    override init() {
+        super.init()
+        manager.delegate = self
+    }
+
+    private var hasWhenInUse: Bool {
+        manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways
+    }
+
+    /// Asks iOS for when-in-use access the first time; true when granted.
+    func requestWhenInUse() async -> Bool {
+        if manager.authorizationStatus == .notDetermined {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                authWaiters.append(c)
+                manager.requestWhenInUseAuthorization()
+            }
+        }
+        return hasWhenInUse
+    }
+
+    /// True when full accuracy is on, or the person allows it for now. iOS
+    /// asks each time the app has only approximate location.
+    func allowFullAccuracy() async -> Bool {
+        if manager.accuracyAuthorization == .fullAccuracy { return true }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            manager.requestTemporaryFullAccuracyAuthorization(withPurposeKey: Self.purposeKey) { @Sendable _ in c.resume() }
+        }
+        return manager.accuracyAuthorization == .fullAccuracy
+    }
+
+    func currentFix(precise: Bool) async -> Fix? {
+        guard hasWhenInUse else { return nil }
+        let token = UUID()
+        return await withCheckedContinuation { (c: CheckedContinuation<Fix?, Never>) in
+            fixWaiters[token] = c
+            manager.desiredAccuracy = precise ? kCLLocationAccuracyBest : kCLLocationAccuracyReduced
+            manager.requestLocation()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: Self.fixTimeout)
+                self?.fixWaiters.removeValue(forKey: token)?.resume(returning: nil)
+            }
+        }
+    }
+
+    /// City and region for a point; empty when the lookup fails.
+    func place(lat: Double, lon: Double) async -> (city: String?, region: String?) {
+        let names: [String?] = await withCheckedContinuation { (c: CheckedContinuation<[String?], Never>) in
+            geocoder.reverseGeocodeLocation(CLLocation(latitude: lat, longitude: lon)) { @Sendable marks, _ in
+                let mark = marks?.first
+                c.resume(returning: [mark?.locality, mark?.administrativeArea ?? mark?.country])
+            }
+        }
+        return (names[0], names[1])
+    }
+
+    fileprivate func authorizationChanged() {
+        guard manager.authorizationStatus != .notDetermined else { return }
+        let waiters = authWaiters
+        authWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    fileprivate func deliver(_ fix: Fix?) {
+        let waiters = fixWaiters
+        fixWaiters.removeAll()
+        waiters.values.forEach { $0.resume(returning: fix) }
+    }
+}
+
+extension DeviceLocator: CLLocationManagerDelegate {
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        MainActor.assumeIsolated { self.authorizationChanged() }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let last = locations.last else { return }
+        let fix = Fix(lat: last.coordinate.latitude, lon: last.coordinate.longitude, accuracy: last.horizontalAccuracy)
+        MainActor.assumeIsolated { self.deliver(fix) }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        // "Unknown for now" is not final: keep waiting until the timeout.
+        if (error as? CLError)?.code == .locationUnknown { return }
+        MainActor.assumeIsolated { self.deliver(nil) }
     }
 }

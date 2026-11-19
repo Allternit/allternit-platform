@@ -1,3 +1,7 @@
-Get the person's location from their device.
+Get the location the person's app shared with this message.
 
-Ask only when the answer depends on where they are and they have not said: nearby places, local weather, travel time. Approximate (city level) is the default and is enough for most questions. Precise location asks the person every time; request it only when distance matters. Give a short reason, which the person sees. If they decline, ask them for a place instead. Never save a location to memory.
+Use it only when the answer depends on where they are and they have not said: nearby places, local weather, travel time. Approximate (city or region, about 1 km) comes first and is enough for most questions. Ask for precise only when distance matters; the person allows it each time. Give a short reason, which the person sees.
+
+If nothing is shared, the tool asks the person to tap "Share location". Say plainly that you don't have their location, and continue without it: answer what you can or ask them to name a place.
+
+Never save a location to memory or repeat it later.

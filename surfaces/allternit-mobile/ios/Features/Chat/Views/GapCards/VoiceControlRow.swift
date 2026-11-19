@@ -1,11 +1,18 @@
 import SwiftUI
 
-/// Voice card: a title row and one line of metadata. Stub: G4-G7 fill it in.
+/// Voice card: shows what the voice_control tool changed.
 struct VoiceControlRow: View {
     let gap: GapToolMetadata
 
+    /// What changed, in words: "Language en", "Speed 1.2x", "Replies as text", "Call ended".
     private var line: String {
-        [gap.action, gap.language, gap.speed.map { String(format: "%.1fx", $0) }, gap.replyMode].compactMap { $0 }.joined(separator: " \u{00B7} ")
+        var parts: [String] = []
+        if let language = gap.language, !language.isEmpty { parts.append("Language \(language)") }
+        if let speed = gap.speed { parts.append("Speed " + String(format: "%.1fx", speed)) }
+        if let mode = gap.replyMode { parts.append(mode == "text" ? "Replies as text" : mode == "both" ? "Replies spoken and as text" : "Replies spoken") }
+        if gap.action == "end_call" { parts.append("Call ends after this reply") }
+        if parts.isEmpty, let action = gap.action { parts.append(action) }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     var body: some View {

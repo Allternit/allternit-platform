@@ -190,6 +190,9 @@ const RPC_METHODS: &[&str] = &[
     "device.calendar.create",
     "device.reminders.list",
     "device.reminders.create",
+    "device.reminders.update",
+    "device.calendar.delete",
+    "device.location.get",
     "device.contacts.search",
     // Phone Use, `official` route (contract §9.1). describe and screen.read
     // are reads with no switch; shortcuts and home need their switch on.
@@ -223,7 +226,7 @@ const PHONE_USE_METHODS: &[&str] = &[
 ];
 const SCREEN_READ: &str = "device.screen.read";
 /// Device Access kinds the app reports in its `state` frame (`deviceAccess`).
-const DEVICE_ACCESS_KINDS: &[&str] = &["calendar", "reminders", "contacts", "shortcuts", "home"];
+const DEVICE_ACCESS_KINDS: &[&str] = &["calendar", "reminders", "contacts", "shortcuts", "home", "location"];
 /// `device.*` kinds that are reads with no switch.
 const OPEN_DEVICE_KINDS: &[&str] = &["describe", "screen"];
 
@@ -1411,6 +1414,33 @@ fn validate_rpc(method: &str, params: &Value) -> Result<(), &'static str> {
     {
         return Err("device.contacts.search needs a query");
     }
+    {
+        let s = |f: &str, max: usize| params[f].as_str().is_some_and(|v| !v.trim().is_empty() && v.len() <= max);
+        match method {
+            "device.calendar.delete" if !s("id", 200) => return Err("device.calendar.delete needs an id"),
+            "device.reminders.update" => {
+                if !s("id", 200) {
+                    return Err("device.reminders.update needs an id");
+                }
+                let bad_text = |f: &str, max: usize| params.get(f).is_some_and(|v| !v.as_str().is_some_and(|t| t.len() <= max));
+                if bad_text("title", 200) || bad_text("notes", 2000) || bad_text("due", 64) {
+                    return Err("title up to 200, notes up to 2000, due a short string");
+                }
+                if params.get("completed").is_some_and(|c| !c.is_boolean()) {
+                    return Err("completed must be true or false");
+                }
+                if !["title", "due", "completed", "notes"].iter().any(|f| params.get(*f).is_some_and(|v| !v.is_null())) {
+                    return Err("device.reminders.update needs title, due, completed or notes");
+                }
+            }
+            "device.location.get" => {
+                if params.get("precision").is_some_and(|p| !matches!(p.as_str(), Some("approximate" | "precise"))) {
+                    return Err("precision must be approximate or precise");
+                }
+            }
+            _ => {}
+        }
+    }
     if PHONE_USE_METHODS.contains(&method)
         && params.get("timeout_s").is_some_and(|t| !t.as_u64().is_some_and(|s| (1..=PHONE_USE_MAX_TIMEOUT_S).contains(&s)))
     {
@@ -2197,6 +2227,25 @@ mod tests {
         assert!(validate_rpc("device.screen.read", &json!({ "filter": { "label": "Send" } })).is_ok());
         assert!(validate_rpc("device.screen.read", &json!({ "filter": "Send" })).is_err());
         assert!(validate_rpc("device.actions.run", &json!({})).is_err(), "not answered by the iPhone app yet");
+    }
+
+    #[test]
+    fn location_and_update_methods_are_gated_and_validated() {
+        let off = json!({ "deviceAccess": { "calendar": true, "location": false } });
+        let on = json!({ "deviceAccess": { "location": true } });
+        assert_eq!(device_gate(&off, "device.location.get"), Err("device_access_off"));
+        assert_eq!(device_gate(&json!({}), "device.location.get"), Err("device_access_off"));
+        assert!(device_gate(&on, "device.location.get").is_ok());
+        assert!(validate_rpc("device.location.get", &json!({})).is_ok());
+        assert!(validate_rpc("device.location.get", &json!({ "precision": "precise" })).is_ok());
+        assert!(validate_rpc("device.location.get", &json!({ "precision": "exact" })).is_err());
+        assert!(validate_rpc("device.calendar.delete", &json!({ "id": "e1" })).is_ok());
+        assert!(validate_rpc("device.calendar.delete", &json!({ "id": " " })).is_err());
+        assert!(validate_rpc("device.reminders.update", &json!({ "id": "r1", "completed": true })).is_ok());
+        assert!(validate_rpc("device.reminders.update", &json!({ "id": "r1" })).is_err());
+        assert!(validate_rpc("device.reminders.update", &json!({ "completed": true })).is_err());
+        assert!(validate_rpc("device.reminders.update", &json!({ "id": "r1", "title": "x".repeat(201) })).is_err());
+        assert!(validate_rpc("device.reminders.update", &json!({ "id": "r1", "notes": "x".repeat(2001) })).is_err());
     }
 
     /// Regression: the state frame kept only calendar, reminders and contacts,

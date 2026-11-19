@@ -29,6 +29,7 @@ import { startPreventSleep, stopPreventSleep } from '../services/preventSleep';
 import { useTerminalNotification } from '../ink/useTerminalNotification';
 import { hasCursorUpViewportYankBug } from '../ink/terminal';
 import { createFileStateCacheWithSizeLimit, mergeFileStateCaches, READ_FILE_STATE_CACHE_SIZE } from '../utils/fileStateCache';
+import { isChatEnded, CHAT_ENDED_NOTICE } from '../tools/EndConversationTool/EndConversationTool.js';
 import { updateLastInteractionTime, getLastInteractionTime, getOriginalCwd, getProjectRoot, getSessionId, switchSession, setResumeHandler, setCostStateForRestore, getTurnHookDurationMs, getTurnHookCount, resetTurnHookDuration, getTurnToolDurationMs, getTurnToolCount, resetTurnToolDuration, getTurnClassifierDurationMs, getTurnClassifierCount, resetTurnClassifierDuration, getCwdState } from '../bootstrap/state';
 import { asSessionId, asAgentId } from '../types/ids';
 import { logForDebugging } from '../utils/debug';
@@ -3672,6 +3673,12 @@ export function REPL({
     // Re-pin scroll to bottom on submit so the user always sees the new
     // exchange (matches common agent auto-scroll behavior).
     repinScroll();
+
+    // An ended chat takes no new input (end_conversation).
+    if (isChatEnded() && !input.trim().startsWith('/')) {
+      addNotification({ key: 'chat-ended', text: CHAT_ENDED_NOTICE, priority: 'high' });
+      return;
+    }
 
     // Stop + send (ctrl+x enter, ctrl+s): stop the running turn the same way
     // esc does, then send below as a fresh turn. abort('interrupt') alone

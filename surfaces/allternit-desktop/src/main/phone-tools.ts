@@ -548,6 +548,16 @@ export const PHONE_TOOLS = [
     },
   },
   {
+    name: 'phone.calendar.delete',
+    description: 'iPhone with the Allternit app only: delete one calendar event by id (get the id from phone.calendar.list). The person always approves on the Desktop screen first. Device Access > Calendar must be on and the app open on the phone.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, id: { type: 'string', minLength: 1, maxLength: 200, description: 'Event id from phone.calendar.list.' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'phone.reminders.list',
     description: 'iPhone with the Allternit app only: list reminders (Device Access > Reminders must be on and the app open). Returns reminders [{id, title, due?, completed, list}].',
     inputSchema: {
@@ -568,6 +578,32 @@ export const PHONE_TOOLS = [
         notes: { type: 'string', maxLength: 2000 },
       },
       required: ['title'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.reminders.update',
+    description: 'iPhone with the Allternit app only: change one reminder by id (get the id from phone.reminders.list): title, due time, done or not, notes. Send only the fields to change. The person always approves on the Desktop screen first. Device Access > Reminders must be on and the app open.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: appSerialProp,
+        id: { type: 'string', minLength: 1, maxLength: 200, description: 'Reminder id from phone.reminders.list.' },
+        title: { type: 'string', minLength: 1, maxLength: 200 },
+        due: { type: 'string', maxLength: 40, description: 'ISO 8601.' },
+        completed: { type: 'boolean' },
+        notes: { type: 'string', maxLength: 2000 },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.location.get',
+    description: 'iPhone with the Allternit app only: get where the phone is. Use approximate (the default) unless distance truly matters; precise asks the person on the phone each time. Device Access > Location must be on and the app open. Never save a location to memory.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, precision: { type: 'string', enum: ['approximate', 'precise'] } },
       additionalProperties: false,
     },
   },
@@ -1139,8 +1175,8 @@ export class PhoneToolRunner {
       if (name === 'phone.web.snapshot' && res.ok && Array.isArray(res.elements)) this.webEls.set(serial, res.elements as Array<Record<string, unknown>>);
       return res;
     }
-    if (name.startsWith('phone.web.') || name === 'phone.screen.request' || name.startsWith('phone.calendar.') || name.startsWith('phone.reminders.') || name.startsWith('phone.contacts.')) {
-      return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"); calendar, reminders and contacts are not available on other phones. On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
+    if (name.startsWith('phone.web.') || name === 'phone.screen.request' || name.startsWith('phone.calendar.') || name.startsWith('phone.reminders.') || name.startsWith('phone.contacts.') || name.startsWith('phone.location.')) {
+      return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"); calendar, reminders, contacts and location are not available on other phones. On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
     }
     // Every lane: phone.task runs on the bot's brain in allternit-api; skills replay there too.
     if (name === 'phone.task') return this.task(serial, a, usb, links);

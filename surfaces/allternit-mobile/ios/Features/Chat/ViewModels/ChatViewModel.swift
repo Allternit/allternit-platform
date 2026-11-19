@@ -137,6 +137,19 @@ enum ChatSendError: LocalizedError {
     }
 }
 
+/// One location fix waiting for the next send (UserLocationCard sets it, the
+/// send path takes it). Expires after two minutes so a stale fix never rides a later turn.
+@MainActor
+enum PendingClientLocation {
+    private static var value: (loc: AgentChatClient.ClientLocation, at: Date)?
+    static func set(_ loc: AgentChatClient.ClientLocation) { value = (loc, Date()) }
+    static func take() -> AgentChatClient.ClientLocation? {
+        defer { value = nil }
+        guard let v = value, Date().timeIntervalSince(v.at) < 120 else { return nil }
+        return v.loc
+    }
+}
+
 @MainActor
 final class ChatViewModel: ObservableObject {    @Published var messages: [MessageRecord] = [] {
         didSet { if !branches.isEmpty, !isStreaming { remapEditedVersions() } }
@@ -490,7 +503,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// are the composer's staged files — each is uploaded
     /// (`POST /api/v1/uploads`) before the stream starts and referenced from
     /// the agent-chat body; an upload failure fails the send.
-    func sendMessage(_ text: String, attachments: [StagedAttachment] = [], runtimeModelId: String? = nil, effort: String? = nil, enrich: Bool = true) {
+    func sendMessage(_ text: String, attachments: [StagedAttachment] = [], runtimeModelId: String? = nil, effort: String? = nil, enrich: Bool = true, clientLocation: AgentChatClient.ClientLocation? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isStreaming, !isCreatingSession else { return }
 
@@ -500,8 +513,14 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         // The UI shows the user's original text; prefixes (web search, style)
         // are injected only into the stream payload (ChatComposer.tsx parity).
         let streamText = enrich ? ToolOptionsStore.shared.enrichedText(trimmed) : trimmed
-        startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId)
+        // A card's Share location parks the fix in PendingClientLocation, then sends a
+        // short message; this send picks it up (once, and only while it is fresh).
+        let location = clientLocation ?? PendingClientLocation.take()
+        startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId, clientLocation: location)
     }
+
+    /// The live voice session, if any (set by VoiceHost); `control` events go to it.
+    weak var voiceModel: VoiceModeViewModel?
 
     /// Error-card "Retry": drops the failed assistant placeholder and
     /// re-streams the last sent text WITHOUT re-appending the user bubble
@@ -630,7 +649,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// never-landed rollback removes it along with the placeholder.
     /// `stagedAttachments` are uploaded first; `preparedRefs` skips the
     /// upload step (retry of an already-uploaded send).
-    private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil) {
+    private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil, clientLocation: AgentChatClient.ClientLocation? = nil) {
         // A locked Allternit Cloud model (D9): nothing is sent; the text goes
         // back to the composer and the credits sheet opens. The 402 is the backstop.
         if let modelId = runtimeModelId, ModelStore.shared.isCloudLocked(modelId) {
@@ -708,7 +727,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     effort: effort,
                     attachments: attachmentRefs.isEmpty ? nil : attachmentRefs,
                     tools: ToolOptionsStore.shared.optionsForSend,
-                    workdir: self.threadProjectId.map { ProjectFolderStore.shared.folder(for: $0)?.path ?? "" }
+                    workdir: self.threadProjectId.map { ProjectFolderStore.shared.folder(for: $0)?.path ?? "" },
+                    clientLocation: clientLocation
                 ) {
                     try Task.checkCancellation()
                     if self.apply(event, to: assistantId) {
@@ -1038,6 +1058,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
 
         case .sessionStatus(let status):
             updateMessage(messageId) { $0.busyLine = status.busy ? status.line : nil }
+
+        case .control(let control):
+            voiceModel?.applyControl(control)
 
         case .messageStart, .done, .ignored:
             // messageStart carries only model labels (not rendered); done is

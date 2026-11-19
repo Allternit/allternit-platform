@@ -146,7 +146,7 @@ struct MessageRow: View {
                         case GapToolMetadata.prComments: PrCommentsCard(gap: gap)
                         case GapToolMetadata.statusUpdate: StatusUpdateRow(gap: gap)
                         case GapToolMetadata.feedbackNote: FeedbackNoteCard(gap: gap)
-                        case GapToolMetadata.userLocation: UserLocationCard(gap: gap)
+                        case GapToolMetadata.userLocation: UserLocationCard(gap: gap, onSend: onSendPrompt)
                         case GapToolMetadata.voiceControl: VoiceControlRow(gap: gap)
                         case GapToolMetadata.endConversation: EndConversationRow(gap: gap)
                         case GapToolMetadata.worktreeEnter, GapToolMetadata.worktreeExit: WorktreeCard(gap: gap)

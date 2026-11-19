@@ -84,8 +84,19 @@ enum AgentChatEvent: Decodable, Sendable {
     /// The tool calls rail draws Deny / Allow on the matching tool row.
     case permissionAsked(AgentPermissionAsk)
 
+    /// `{"type":"control",language?,speed?,reply_mode?,end_call?}`: a voice_control
+    /// tool part asked the voice session to change.
+    case control(VoiceControl)
+
     /// Known-but-unrendered or unknown frame — parser tolerance.
     case ignored
+
+    struct VoiceControl: Sendable, Equatable {
+        var language: String? = nil
+        var speed: Double? = nil
+        var replyMode: String? = nil
+        var endCall: Bool = false
+    }
 
     struct MessageStart: Decodable, Sendable {
         let messageId: String?
@@ -399,6 +410,16 @@ enum AgentChatEvent: Decodable, Sendable {
                 phase: body?.phase,
                 note: body?.note
             ))
+
+        case "control":
+            struct ControlBody: Decodable {
+                let language: String?; let speed: Double?
+                let replyMode: String?; let endCall: Bool?
+                enum CodingKeys: String, CodingKey { case language, speed, replyMode = "reply_mode", endCall = "end_call" }
+            }
+            let body = try ControlBody(from: decoder)
+            self = .control(VoiceControl(language: body.language, speed: body.speed,
+                                         replyMode: body.replyMode, endCall: body.endCall ?? false))
 
         case "finish":
             self = .finish(try Finish(from: decoder))

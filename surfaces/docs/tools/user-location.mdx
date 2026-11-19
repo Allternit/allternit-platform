@@ -1,13 +1,11 @@
 ---
 title: 'user_location'
-description: 'Ask the person where they are, approximately by default'
+description: 'Use the location shared with the message, approximate by default'
 ---
 
 ## Overview
 
-`user_location` asks your device for your location when the answer depends on where you are, such as nearby places or local time. It is a round trip to the app you are using.
-
-This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
+`user_location` uses the location shared with your message when the answer depends on where you are, such as nearby places or local time. Approximate is rounded to about 1 km. If no location was shared, or the assistant needs a precise one, the result asks for it and the chat shows a **Share location** card.
 
 ## Parameters
 
@@ -18,12 +16,12 @@ This tool turns on with its feature PR. Until then it is registered as a stub an
 
 ## Result
 
-A status of `granted`, `denied`, `unavailable` or `timeout`. A granted approximate answer has city, region, country and time zone. A precise answer adds latitude, longitude and accuracy in meters.
+A status of `granted`, `requested`, `denied`, `unavailable` or `timeout`. A granted approximate answer has city, region, country and time zone. `requested` means the card asks you to tap **Share location** (approximate or precise); the location is sent with your next message. A precise share (about 11 m) is kept for that one message only. A location is never saved to memory.
 
 ## Permission
 
-The app asks you first. You can deny it. Precise location asks each time it matters, in every mode, including Auto.
+You choose whether to share. Precise location asks each time, in every mode, including Auto.
 
 ## Surfaces
 
-Web, phone layout, PWA and iOS (as a Location kind in Device Access). Desktop shows the same prompt. Android follows the PWA. The terminal does not have it: a terminal has no location service, and the time zone comes from the clock. See [Device access](/guides/device-access). Delivered by the phone PR (PR4). Family: `location`.
+Web, phone layout, PWA and iOS (as a Location kind in Device Access). Desktop shows the same prompt. Android follows the PWA. The terminal does not have it: a terminal has no location service, and the time zone comes from the clock. See [Device access](/guides/device-access). Family: `location`.
