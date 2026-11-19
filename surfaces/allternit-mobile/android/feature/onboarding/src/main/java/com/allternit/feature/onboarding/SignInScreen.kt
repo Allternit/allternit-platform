@@ -23,7 +23,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -69,18 +68,18 @@ import com.allternit.core.design.Haptics
 import com.clerk.api.sso.OAuthProvider
 import kotlinx.coroutines.launch
 
-/** Which part of the sign-in rail is open (iOS LoginGateView: buttons, email form, Clerk's code step). */
-private enum class Step { Options, Email, Code }
+/** Which part of the sign-in rail is open: the buttons with the email field, or the emailed code. */
+private enum class Step { Options, Code }
 
 private val SignInPage = Color(0xFF141413)
 
 /**
- * Native sign-in, the Android twin of iOS `LoginGateView` (ios/App/AllternitApp.swift): the
- * offline wordmark/Gizzi/cast loop ([LoginArrival]), headline, Google, GitHub and Apple with
- * their logos (all three through Clerk OAuth in a Custom Tab; Google leads on Android the way
- * Apple leads on iOS), "Continue with email" with the emailed code, "Secured by clerk" and the
- * 18+ / Terms / Privacy line. Like iOS it is always dark; the caller wraps it in
- * `AllternitTheme(ThemeMode.Dark)`.
+ * Native sign-in, laid out like the phone sign-in on m.allternit.com (allternit-ai
+ * SignInRail, `.ast-rail-compact`) and iOS `LoginGateView`: the offline wordmark/Gizzi/cast loop
+ * ([LoginArrival]), headline, the cream "Continue with Apple" button, GitHub and Google with
+ * their logos (all through Clerk OAuth in a Custom Tab), an "or" line, the Email field with a
+ * cream Continue that sends a 6-digit code, "Secured by clerk" and the 18+ / Terms / Privacy line.
+ * Like iOS and the web it is always dark; the caller wraps it in `AllternitTheme(ThemeMode.Dark)`.
  *
  * Test ids (maestro/ids.md): `loginHeadline`, `loginContinueEmail`, `loginSkipAuth`.
  * [onSkipAuth] is non-null only in debug builds, as on iOS.
@@ -116,6 +115,15 @@ fun SignInScreen(
                 error = result.error
             }
         }
+    }
+
+    fun sendCode() {
+        if (email.isBlank()) {
+            Haptics.perform(view, Haptics.Kind.Warning)
+            error = "Enter your email address."
+            return
+        }
+        run("email", { AllternitAuth.sendEmailCode(email) }) { code = ""; step = Step.Code }
     }
 
     Box(
@@ -160,28 +168,17 @@ fun SignInScreen(
 
             when (step) {
                 Step.Options -> {
-                    // Google, GitHub, Apple: Google leads on Android the way Apple leads on iOS.
-                    SocialButton("Continue with Google", R.drawable.logo_google, tint = false, busy == "google", enabled = busy == null) {
-                        run("google", { AllternitAuth.signInWithOAuth(OAuthProvider.GOOGLE) })
+                    // Same order as m.allternit.com: Apple (cream), GitHub, Google.
+                    SocialButton("Continue with Apple", R.drawable.logo_apple, tint = true, busy == "apple", enabled = busy == null, filled = true) {
+                        run("apple", { AllternitAuth.signInWithOAuth(OAuthProvider.APPLE) })
                     }
                     SocialButton("Continue with GitHub", R.drawable.logo_github, tint = true, busy == "github", enabled = busy == null) {
                         run("github", { AllternitAuth.signInWithOAuth(OAuthProvider.GITHUB) })
                     }
-                    SocialButton("Continue with Apple", R.drawable.logo_apple, tint = true, busy == "apple", enabled = busy == null) {
-                        run("apple", { AllternitAuth.signInWithOAuth(OAuthProvider.APPLE) })
+                    SocialButton("Continue with Google", R.drawable.logo_google, tint = false, busy == "google", enabled = busy == null) {
+                        run("google", { AllternitAuth.signInWithOAuth(OAuthProvider.GOOGLE) })
                     }
-                    ErrorLine(error)
-                    OutlinedButton(
-                        onClick = { error = null; step = Step.Email },
-                        enabled = busy == null,
-                        shape = RoundedCornerShape(AllternitRadii.MD),
-                        border = BorderStroke(1.dp, c.borderStrong),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = c.textPrimary),
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(44.dp).testTag("loginContinueEmail"),
-                    ) { Text("Continue with email", fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
-                }
-
-                Step.Email -> {
+                    OrDivider()
                     FieldLabel("Email")
                     AuthField(
                         value = email,
@@ -189,17 +186,13 @@ fun SignInScreen(
                         placeholder = "you@company.com",
                         keyboardType = KeyboardType.Email,
                         contentType = ContentType.EmailAddress,
-                        onDone = { run("email", { AllternitAuth.sendEmailCode(email) }) { code = ""; step = Step.Code } },
+                        // Flows tap this id to start email sign-in (maestro/ids.md).
+                        tag = "loginContinueEmail",
+                        onDone = { sendCode() },
                     )
-                    InkButton("Continue", busy == "email", enabled = busy == null && email.isNotBlank()) {
-                        run("email", { AllternitAuth.sendEmailCode(email) }) { code = ""; step = Step.Code }
-                    }
+                    // Always cream like the web's Continue; an empty field says so instead of greying out.
+                    InkButton("Continue", busy == "email", enabled = busy == null) { sendCode() }
                     ErrorLine(error)
-                    QuietButton("All sign-in options") {
-                        AllternitAuth.cancelEmail()
-                        error = null
-                        step = Step.Options
-                    }
                 }
 
                 Step.Code -> {
@@ -217,6 +210,7 @@ fun SignInScreen(
                         // Manager offer to save the code as the account's password (Moto run).
                         keyboardType = KeyboardType.Number,
                         contentType = ContentType.SmsOtpCode,
+                        autoFocus = true,
                         onDone = { run("code", { AllternitAuth.verifyEmailCode(code) }) },
                     )
                     InkButton("Continue", busy == "code", enabled = busy == null && code.length == 6) {
@@ -229,7 +223,7 @@ fun SignInScreen(
                     QuietButton("Use a different email") {
                         AllternitAuth.cancelEmail()
                         error = null
-                        step = Step.Email
+                        step = Step.Options
                     }
                 }
             }
@@ -265,18 +259,29 @@ fun SignInScreen(
 
 /** iOS SignInSocialButton: the raised outline button with the provider's 18 dp logo. */
 @Composable
-private fun SocialButton(title: String, logo: Int, tint: Boolean, busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun SocialButton(
+    title: String,
+    logo: Int,
+    tint: Boolean,
+    busy: Boolean,
+    enabled: Boolean,
+    filled: Boolean = false,
+    onClick: () -> Unit,
+) {
     val c = AllternitTheme.colors
+    // `filled` is the web's cream Apple button: ink background, page-colored label and logo.
+    val container = if (filled) c.textPrimary else c.bgTertiary
+    val content = if (filled) SignInPage else c.textPrimary
     Button(
         onClick = onClick,
         enabled = enabled,
         shape = RoundedCornerShape(AllternitRadii.MD),
-        border = BorderStroke(1.dp, c.borderStrong),
+        border = BorderStroke(1.dp, if (filled) c.textPrimary else c.borderStrong),
         colors = ButtonDefaults.buttonColors(
-            containerColor = c.bgTertiary,
-            contentColor = c.textPrimary,
-            disabledContainerColor = c.bgTertiary,
-            disabledContentColor = c.textTertiary,
+            containerColor = container,
+            contentColor = content,
+            disabledContainerColor = container,
+            disabledContentColor = content.copy(alpha = 0.6f),
         ),
         modifier = Modifier.fillMaxWidth().height(44.dp).semantics { contentDescription = title },
     ) {
@@ -287,7 +292,7 @@ private fun SocialButton(title: String, logo: Int, tint: Boolean, busy: Boolean,
                 Image(
                     painter = painterResource(logo),
                     contentDescription = null,
-                    colorFilter = if (tint) ColorFilter.tint(c.textPrimary) else null,
+                    colorFilter = if (tint) ColorFilter.tint(content) else null,
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -312,6 +317,21 @@ private fun InkButton(title: String, busy: Boolean, enabled: Boolean, onClick: (
         modifier = Modifier.fillMaxWidth().height(44.dp),
     ) {
         if (busy) Spinner() else Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** "—— or ——" between the provider buttons and the Email field (web `.ast-or`). */
+@Composable
+private fun OrDivider() {
+    val c = AllternitTheme.colors
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+    ) {
+        Box(Modifier.weight(1f).height(1.dp).background(c.borderStrong))
+        Text("or", color = c.textTertiary, fontSize = 11.5.sp)
+        Box(Modifier.weight(1f).height(1.dp).background(c.borderStrong))
     }
 }
 
@@ -341,12 +361,14 @@ private fun AuthField(
     placeholder: String,
     keyboardType: KeyboardType,
     contentType: ContentType,
+    tag: String? = null,
+    autoFocus: Boolean = false,
     onDone: () -> Unit,
 ) {
     val c = AllternitTheme.colors
-    // iOS focuses the field as soon as the step opens, so the keyboard is up at once.
+    // The code field takes focus when its step opens, so the keyboard is up at once.
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    if (autoFocus) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -367,7 +389,8 @@ private fun AuthField(
         modifier = Modifier
             .fillMaxWidth()
             .focusRequester(focus)
-            .semantics { this.contentType = contentType },
+            .semantics { this.contentType = contentType }
+            .let { if (tag != null) it.testTag(tag) else it },
     )
 }
 

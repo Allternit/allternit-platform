@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.provider.Settings
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -138,6 +139,10 @@ private fun WebView.sendState(paused: Boolean, reducedMotion: Boolean) {
 @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 private fun arrivalWebView(context: Context, html: String, onLoaded: () -> Unit): WebView =
     WebView(context).apply {
+        // AndroidView hands its view WRAP_CONTENT params; a WRAP_CONTENT WebView sizes its
+        // viewport to the content, so the page's height:100% became 0 and the canvas never
+        // showed (Moto, CDP: html 0px tall while the canvas painted). Fill the box instead.
+        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         setBackgroundColor(ArrivalBackground.toArgbInt())
         isVerticalScrollBarEnabled = false
         isHorizontalScrollBarEnabled = false
