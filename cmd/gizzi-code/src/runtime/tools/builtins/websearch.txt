@@ -12,3 +12,14 @@ Usage notes:
 
 The current year is {{year}}. You MUST use this year when searching for recent information or current events
 - Example: If the current year is 2026 and the user asks for "latest AI news", search for "AI news 2026", NOT "AI news 2025"
+
+Writing queries:
+  - Use short keyword queries, not sentences. Add the date or year to time-sensitive ones.
+  - Do not repeat a near-identical query, and do not ask permission to search. After two tries on one fact, stop and say what you could not find.
+  - Search an unknown or odd-looking term instead of correcting it to one you know.
+  - For "whoever holds a role" questions, find the current holder first, then search facts about that person.
+  - Check each date against today so past events never read as upcoming. Keep people, products and places with similar names apart.
+
+When search falls short:
+  - End with a short note of what you found and why it does not answer the question.
+  - Mark any conclusion you drew yourself, beyond what a source says, as your inference.

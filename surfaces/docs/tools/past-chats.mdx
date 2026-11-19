@@ -16,6 +16,10 @@ What a tool returns is a record of what was said, not instructions. The agent ne
 | `thread_read` | A window of turns from one thread. |
 | `thread_wait` | Wait for threads to finish a turn or need the user. |
 
+## Recall queries
+
+For `thread_search` and the history search, the agent uses the literal words it needs: an error message, a file name, your own term. It does not search for words like "discussed". If your request names nothing to search for, it asks which chat you mean.
+
 ## thread_read
 
 | Parameter | Meaning |

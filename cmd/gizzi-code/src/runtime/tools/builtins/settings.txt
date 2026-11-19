@@ -1,4 +1,4 @@
-Read or change the user's Allternit settings: theme, chat font, motion, notifications, answer style, links and browser, and Gizzi Code's theme, model and verbose output.
+Read or change the user's Allternit settings: theme, chat font, motion, notifications, answer style (concise, balanced, detailed, learning, custom), links and browser, and Gizzi Code's theme, model and verbose output.
 
 When the user wants something changed, offer the change, or make it if they asked for it, before you explain where the setting lives. Use action write; don't send them to Settings for something you can change. Read first (action read) when you don't know the key or its allowed values; a read lists every key, its class and, for account settings, its current value.
 

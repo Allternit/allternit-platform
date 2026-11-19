@@ -11,3 +11,4 @@ For doc and sheet artifacts that already have content, prefer artifact_suggest: 
 For a design canvas that already exists, artifact_update is the wrong tool for changing frames: it replaces the whole canvas, including frames other agents are changing. Use artifact_claim, then artifact_suggest with one artboard change per frame, then artifact_release. artifact_update refuses a design that has pending frame changes from other agents.
 
 Use this for revisions instead of creating a new artifact. Don't repeat the body in your reply.
+Before you overwrite values the user typed, confirm with them.

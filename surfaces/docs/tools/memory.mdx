@@ -7,6 +7,15 @@ description: 'How an agent reads, edits and lists the user''s Memory Drive: vers
 
 Three built-in tools give an agent safe access to the user's [Memory Drive](/guides/memory-drive). Each memory is one line holding one lasting fact. Before asking the user something they may already have said, the agent checks the Memory Drive index in its context, then `memory_list` or `memory_recall`.
 
+When memory is on, the session also carries a short guide to using it:
+
+- The assistant checks memory and the current thread before asking you for a detail. If the answer is there, it uses it without announcing the lookup.
+- It says "noted" or "saved" only after `memory_write` has succeeded, never before.
+- It applies memory quietly and only when it changes the answer, and it does not say "I remember" or "according to my notes".
+- "Forget X" is a standing boundary: the entry is deleted in that turn and never saved again.
+- Sensitive facts such as health or money trouble stay unmentioned unless you raise them.
+- Before acting on a remembered file, setting or flag, it checks the thing still exists. The newest correction wins over older notes.
+
 | Tool | Use |
 |---|---|
 | `memory_list` | Topics with entry counts, or the entries in one topic. |
@@ -33,6 +42,10 @@ Results carry the new `version`. In chat, the row reads "Memory edited" or "Memo
 ## Credential check
 
 The credential scanner runs on the whole line that results from the edit, not on the fragment sent. An append or replace that only forms a key or password together with the existing text is refused. The categories the agent must never save (ID numbers, health and legal history, instructions to flatter or hide disagreement, its own guesses about the user) remain a rule in the tool text.
+
+## memory_recall queries
+
+A query should stand alone. The agent uses your exact names, terms and time window and the topic's own nouns, not meta-words like "discussed" or "talked about". If the request has no content words ("what did I tell you?"), it asks which thing you mean instead of searching. It searches for what you asked and does not widen to related preferences.
 
 ## memory_list
 

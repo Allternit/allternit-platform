@@ -293,6 +293,7 @@ struct ResponseStyleSettingsPage: View {
         case .balanced: return "The answer in one line, then short sections."
         case .detailed: return "The full layout, with reasoning, examples and edge cases."
         case .custom: return "Your instructions below set the length. The layout stays the same."
+        case .learning: return "Guides you with questions instead of giving the answer right away."
         }
     }
 

@@ -1,0 +1,36 @@
+---
+title: 'Learning style'
+description: 'The Learning response style: the assistant guides you to the answer with one question at a time instead of handing it over'
+---
+
+## Overview
+
+Learning is the fifth answer style, next to Concise, Balanced, Detailed and Custom. Pick it when you want to understand something, not only get the result.
+
+In Learning style the assistant:
+
+- gives a little context first, then asks one guiding question per turn;
+- lets you try, and after two or three wrong tries, or when you ask, gives the answer and explains it;
+- shows its reasoning before it gives a verdict;
+- praises good method plainly, with no superlatives;
+- steers you back gently if you drift off the task.
+
+It changes how the assistant answers, not what it can do. Tools, memory and safety rules work the same.
+
+## Where to pick it
+
+| Surface | Where |
+|---|---|
+| Web (ai.allternit.com), Desktop and the phone layout | Settings, then Response style |
+| iOS | Settings, then the Response style page |
+| Per agent | The picker on the agent's detail page |
+
+The Allternit Settings tool also accepts `learning` when you ask an agent to change your style in chat.
+
+## Gizzi Code in the terminal
+
+The terminal has no answer styles, so Learning is not offered there.
+
+## How it works
+
+The style is not part of the runtime system prompt. The Allternit API adds the style's rule to the answer shapes it sends with each turn, so it applies on every chat surface that sends a style. See [System prompts](/core/system-prompts) and [Interactive answers](/guides/interactive-answers).

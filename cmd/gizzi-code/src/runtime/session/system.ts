@@ -20,6 +20,8 @@ import PROMPT_DUET from "@/runtime/session/prompt/duet.txt"
 import PROMPT_DELEGATION from "@/runtime/session/prompt/delegation.txt"
 import PROMPT_PROJECT_THREAD from "@/runtime/session/prompt/project-thread.txt"
 import PROMPT_COMPUTER_USE from "@/runtime/session/prompt/computer-use.txt"
+import PROMPT_UNATTENDED from "@/runtime/session/prompt/unattended.txt"
+import PROMPT_MEMORY_USE from "@/runtime/session/prompt/memory-use.txt"
 import type { Provider } from "@/runtime/providers/provider"
 import type { Session } from "@/runtime/session"
 
@@ -32,17 +34,19 @@ import type { Session } from "@/runtime/session"
  *   chat, cowork, browser, design → base-chat, capabilities, safety, care
  *   code or unset (gizzi CLI)     → base-code, safety
  *   then: addendum (gpt | gemini | open; none for claude ids), mode,
- *         project-thread, computer-use, voice, phone
+ *         project-thread, computer-use, unattended, voice, phone
  *
  * Bot turns (`bot`): mode, bot, duet, delegation, project-thread,
- * capabilities (chat surfaces), safety, care, computer-use, voice, phone.
+ * capabilities (chat surfaces), safety, care, computer-use, unattended,
+ * voice, phone.
  *
  * The tool-signal blocks come from the turn's resolved tool set (already
  * gated in prompt.ts resolveTools), so a block is sent only when the model
  * has the tools it talks about: duet (`suggest_task` / `grant_task_permission`,
  * bot turns only), delegation (`project_send`, bot turns only),
  * project-thread (a project task thread) and computer-use (a browser or
- * computer tool).
+ * computer tool). Unattended comes from the turn's metadata: a scheduler
+ * started it (`metadata.automation_run`), so nobody is there to answer.
  */
 export namespace SystemPrompt {
   export type Mode = "plan" | "build"
@@ -53,6 +57,8 @@ export namespace SystemPrompt {
     replyMode?: "voice"
     /** The user is on a phone (user metadata `form_factor: "phone"`). */
     formFactor?: "phone"
+    /** A scheduler started the turn (user metadata `automation_run`; unattended.txt). */
+    automationRun?: boolean
     /** An app bot's chat: the turn has `suggest_task` or `grant_task_permission` (duet.txt, bot turns only). */
     appBot?: boolean
     /** A bot's main chat that can send work to projects: the turn has `project_send` (delegation.txt, bot turns only). */
@@ -110,6 +116,13 @@ export namespace SystemPrompt {
   export const COMPUTER_TOOL_IDS: readonly string[] = ["pane_browser", "browser", "computer", "computer_v2", "computers", "browser_tasks"]
 
   /**
+   * The user-message metadata key a scheduler sets on every run turn
+   * (Automation.RUN_METADATA_KEY in primitives/automation.ts; kept as a
+   * literal so this module does not load the automation and bot stores).
+   */
+  export const AUTOMATION_RUN_KEY = "automation_run"
+
+  /**
    * The turn's prompt context from the session surface, the user message's
    * metadata and the turn's signals: its resolved tool ids and, for app bot
    * chats, the roster caller (`appBotCaller`). A project thread is either a
@@ -130,6 +143,7 @@ export namespace SystemPrompt {
       surface,
       ...(metadata?.["reply_mode"] === "voice" ? { replyMode: "voice" as const } : {}),
       ...(metadata?.["form_factor"] === "phone" ? { formFactor: "phone" as const } : {}),
+      ...(metadata?.[AUTOMATION_RUN_KEY] ? { automationRun: true } : {}),
       ...(has(APP_BOT_TOOL_IDS) ? { appBot: true } : {}),
       ...(ids.has(PROJECT_SEND_TOOL_ID) ? { projectSend: true } : {}),
       ...(inThread ? { projectThread: true } : {}),
@@ -145,6 +159,7 @@ export namespace SystemPrompt {
 
   function signals(ctx: PromptContext): string[] {
     return [
+      ...(ctx.automationRun ? [PROMPT_UNATTENDED] : []),
       ...(ctx.replyMode === "voice" ? [PROMPT_VOICE] : []),
       ...(ctx.formFactor === "phone" ? [PROMPT_PHONE] : []),
     ]
@@ -232,9 +247,16 @@ export namespace SystemPrompt {
     // The user's Memory Drive (personal + mounted drives): each MEMORY.md
     // (bounded), its checkout path for reading topic files with normal
     // tools, and how to save with memory_write. Waits briefly for the
-    // session-start sync, never blocks on the network. What to save and how
-    // to use it lives in the base prompt; these are only the tool mechanics.
-    const context = await MemoryDrive.sessionContext({ writeTool: "memory_write" }).catch(() => "")
+    // session-start sync, never blocks on the network.
+    return memorySection(await MemoryDrive.sessionContext({ writeTool: "memory_write" }).catch(() => ""))
+  }
+
+  /**
+   * The memory section from the drive's session context: the context, the
+   * tool mechanics, then how to use memory (memory-use.txt). An empty
+   * context means memory is off: only the off note, never memory-use.
+   */
+  export function memorySection(context: string): string {
     if (context) {
       return [
         context,
@@ -242,6 +264,8 @@ export namespace SystemPrompt {
         "## Memory tools",
         "- Use `memory_recall` before assuming a preference or convention, and to find a memory's id before changing it",
         "- \"remember X\" → `memory_write`; \"forget X\" → find it with `memory_recall`, then `memory_write` with action delete",
+        "",
+        PROMPT_MEMORY_USE.trim(),
       ].join("\n")
     }
     return "# Memory\n\nPersistent memory is turned off for this session (GIZZI_MEMORY_DRIVE=0)."

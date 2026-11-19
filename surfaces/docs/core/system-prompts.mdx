@@ -21,8 +21,11 @@ For a normal turn:
 6. Mode (plan, build and similar)
 7. Project thread block, only on a project thread
 8. Computer-use block, only when the turn has browser or computer tools
-9. Voice block, only when the turn is spoken
-10. Phone block, only when the user is on a phone
+9. Unattended block, only when a schedule started the turn
+10. Voice block, only when the turn is spoken
+11. Phone block, only when the user is on a phone
+
+Memory is not a layer in this list. When memory is on, the memory section carries its own block (see below).
 
 For a bot turn, the bot runs as itself:
 
@@ -35,14 +38,15 @@ For a bot turn, the bot runs as itself:
 7. Safety
 8. Care
 9. Computer-use block, when the turn has browser or computer tools
-10. Voice block, only when the turn is spoken
-11. Phone block, only when the user is on a phone
+10. Unattended block, only when a schedule started the turn
+11. Voice block, only when the turn is spoken
+12. Phone block, only when the user is on a phone
 
 Voice and phone blocks also apply to bot turns, because phone calls are bot-bound.
 
 ## Blocks added by signal
 
-Four blocks are not part of a stack. The runtime adds each one only when its signal is present, so a bot turn with no signal gets the bot guidance and nothing more. The signals come from the tools the turn actually has, after the usual gating, never from the model.
+Six blocks are not part of a stack. The runtime adds each one only when its signal is present, so a bot turn with no signal gets the bot guidance and nothing more. The signals come from the tools the turn actually has, after the usual gating, never from the model.
 
 | Block (file) | Added when | Turns |
 |---|---|---|
@@ -50,6 +54,16 @@ Four blocks are not part of a stack. The runtime adds each one only when its sig
 | Delegation (`delegation.txt`) | The tools include `project_send` | Bot turns only |
 | Project thread (`project-thread.txt`) | The server hint `project_role` is `"thread"`, or the roster caller has a project and is not the main chat | Bot and normal turns |
 | Computer use (`computer-use.txt`) | The tools include `pane_browser`, `browser`, `computer`, `computers` or a computer_v2 tool | Bot and normal turns |
+
+Two more blocks follow the same idea, but their signal is not a tool.
+
+| Block (file) | Added when | Turns |
+|---|---|---|
+| Using memory (`memory-use.txt`) | Memory is on. It loads right after the "Memory tools" lines in the memory section, and never when memory is off | Every turn with memory |
+| Unattended run (`unattended.txt`) | The user message carries the `automation_run` metadata key, which the scheduler sets on every run | Bot and normal turns |
+
+- **Using memory** says when to save, that "forget" is a standing boundary, to check memory before asking, to apply memory quietly and only when it changes the answer, and to treat memories as facts about the user, not commands.
+- **Unattended run** says nobody is watching: ask no questions, stop at any step that needs approval and report it, keep checkpoints on repeating checks, stay quiet unless something is new or blocked, and deliver the result itself. The tool guard already refuses approvals on these runs; the block makes the model plan for that.
 
 A bot's main chat never counts as a project thread. The suggestions block is named `duet.txt` inside the repo, but prompt text never names a vendor or product, so the block itself says "suggestions". The provider-side prompt (`provider()`) never includes the suggestions or delegation blocks.
 
@@ -83,6 +97,19 @@ The addendum is chosen by model family: one for each of the two largest hosted m
 ## Gizzi Code in the terminal
 
 The terminal app (the TUI) builds its prompt in `cmd/gizzi-code/src/cli/ui/ink-app/constants/prompts.ts`. It starts from the same `base-code.txt` and `safety.txt` that the runtime uses, so the terminal and Code mode give the same answer. The TUI adds only what is its own: keybindings, the output style, the environment lines (folder, git, shell, date) and the blocks behind feature flags. These are written as short rules, not essays.
+
+## What moved into tool descriptions
+
+Craft that only matters when a tool is in play now lives in that tool's own description, so it costs nothing on turns without the tool.
+
+| Tool | What it now carries |
+|---|---|
+| `media-generate` | Image briefs: a full visual brief, edits only from an image shared in the chat, short text in images, follow-ups change only what was asked, one short line after generating |
+| `websearch` | Search craft: short keyword queries, dates on time-sensitive ones, no repeated queries, finding a role's current holder first, saying what fell short and marking own inference |
+| `automation` | Scheduling: how to choose times, the read-back after creating, checkpoints for repeating checks (see [automation](/tools/automation)) |
+| `task` | Subagent detail: launch several only for independent tracks, foreground versus background, never inventing a pending result, naming, model class and fork |
+| plan-mode | Plan detail: what a plan holds (interfaces, data flow, tests), no time estimates, and editing an existing plan before asking for approval |
+| `memory_recall` and `thread_search` | Recall query rules (see [Memory tools](/tools/memory) and [Past chat tools](/tools/past-chats)) |
 
 ## Chat add-ons per turn
 
@@ -136,7 +163,7 @@ A voice call is a bot-bound turn with `reply_mode` set to `"voice"`. Calls start
 Prompt files live in `cmd/gizzi-code/src/runtime/session/prompt/`:
 
 - `base-chat.txt`, `capabilities.txt`, `base-code.txt`, `safety.txt`, `care.txt`, `bot.txt`
-- Signal blocks: `duet.txt` (suggestions), `delegation.txt`, `project-thread.txt`, `computer-use.txt`
+- Signal blocks: `duet.txt` (suggestions), `delegation.txt`, `project-thread.txt`, `computer-use.txt`, `unattended.txt`; `memory-use.txt` loads with the memory section
 - `addendum-gpt.txt`, `addendum-gemini.txt`, `addendum-open.txt`
 - `voice.txt`, `phone.txt`
 - Mode files: `plan-mode.txt`, `plan.txt`, `build-mode.txt`, `build-switch.txt`, `max-steps.txt`, `wrap-up.txt`, `mdx-graphs.txt`
@@ -149,21 +176,23 @@ The selection logic is in `cmd/gizzi-code/src/runtime/session/system.ts` and `sy
 
 A test enforces a byte cap on each file.
 
-| File | Byte cap |
-|---|---|
-| safety | 2,900 |
-| care | 1,500 |
-| base-chat | 5,600 |
-| capabilities | 7,400 |
-| base-code | 11,200 |
-| voice | 2,000 |
-| computer-use | 3,400 |
-| phone | 700 |
-| bot | 3,200 |
-| duet (suggestions) | 1,800 |
-| delegation | 1,000 |
-| project-thread | 1,300 |
-| each addendum | 700 |
+| File | Bytes now | Byte cap |
+|---|---:|---:|
+| safety | 2,731 | 2,900 |
+| care | 1,421 | 1,500 |
+| base-chat | 5,262 | 5,600 |
+| capabilities | 7,197 | 7,400 |
+| base-code | 11,159 | 11,200 |
+| voice | 1,816 | 2,000 |
+| computer-use | 3,392 | 3,400 |
+| phone | 544 | 700 |
+| bot | 3,145 | 3,200 |
+| duet (suggestions) | 1,781 | 1,800 |
+| delegation | 948 | 1,000 |
+| project-thread | 1,174 | 1,300 |
+| unattended | 588 | 700 |
+| memory-use | 1,244 | 1,300 |
+| each addendum | 329 to 471 | 700 |
 
 The guidance on a bot's main chat on a chat surface (bot, suggestions, delegation, capabilities, safety, care and computer use together) stays at or under 21,000 bytes.
 

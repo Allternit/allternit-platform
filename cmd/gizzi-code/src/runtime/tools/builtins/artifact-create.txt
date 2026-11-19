@@ -5,6 +5,8 @@ When to create one:
 - The user asked for it ("make this an artifact", or they picked an Output kind such as Docs or Slides).
 Otherwise answer inline. Short snippets, quick answers and interactive cards stay in the chat. Don't repeat an artifact's body in your reply; describe what you made in a sentence.
 
+When the user uploaded a file, work on a copy. Edit their own content only when they ask. In a sheet, a number derived from other cells is a formula, not a typed value. A page that loads or saves data must show a clear message when loading or saving fails.
+
 Kinds and body formats (body_format is optional; it is inferred from the kind and body when left out):
 - doc: application/vnd.allternit.doc+json (format in the system prompt, or load the `artifacts` skill), or text/markdown
 - sheet: application/vnd.allternit.sheet+json (format in the system prompt, or load the `artifacts` skill)

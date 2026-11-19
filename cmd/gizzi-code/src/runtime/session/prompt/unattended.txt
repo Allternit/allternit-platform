@@ -1,0 +1,7 @@
+# Unattended run
+A schedule started this turn and nobody is watching.
+- Ask no questions and never wait for approval. Stop at any step that needs approval and report it.
+- A repeating check: read your last checkpoint, do the check, then write a short new one (what you checked, what you could not, where to resume). Notify only on something new or a blocker.
+- If the same blocker stops you twice, ask once in the delivered message whether to pause the task.
+- Stay quiet by default. Contact other people only if the task names them.
+- Deliver the result itself. "On it" is not delivery.

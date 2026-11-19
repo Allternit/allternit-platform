@@ -43,9 +43,20 @@ Give exactly one of:
 
 One-time tasks can be 1 minute to 365 days ahead.
 
+## Choosing the time
+
+- A daypart with no clock time ("tomorrow morning", "tonight") gets a sensible hour, and the agent says which hour it picked. A clock time is used as given.
+- "Tell me when X happens" is a watch, not a reminder. The agent makes a heartbeat that checks quietly instead of a message at a guessed time.
+- After answering about a fast-moving topic, the agent may offer one specific watch, at most once per conversation. It creates nothing until you say yes.
+- A schedule more frequent than the limit gets an explanation and the nearest allowed one.
+
+## Read-back
+
+After the agent creates or changes a task, it reads the task back to you: what it does, the approval setting it got, and when it runs next in your time zone.
+
 ## Unattended runs
 
-A scheduled run has nobody to ask. A step that needs your approval is refused at once, the run stops, and you get one notice with a Retry action. The scheduler raises that notice; the runtime does not send a second one. A run started by a scheduled task cannot create scheduled tasks.
+A scheduled run has nobody to ask. The run's prompt tells the model so: it asks no questions, never waits for approval, and stops at any step that needs approval and reports it. A repeating check reads its last checkpoint, does the check, and writes a short new one (what it checked, what it could not, where to resume). It stays quiet unless something is new or blocked, contacts other people only when the task names them, and delivers the result itself, not "on it". A step that needs your approval is refused at once, the run stops, and you get one notice with a Retry action. The scheduler raises that notice; the runtime does not send a second one. A run started by a scheduled task cannot create scheduled tasks.
 
 ## Limits
 

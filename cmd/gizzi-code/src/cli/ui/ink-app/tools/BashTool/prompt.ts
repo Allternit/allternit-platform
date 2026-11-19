@@ -312,6 +312,11 @@ export function getSimplePrompt(): string {
     'If you must poll an external process, use a check command (e.g. `gh run view`) rather than sleeping first.',
     'If you must sleep, keep the duration short (1-5 seconds) to avoid blocking the user.',
   ]
+  const safeRunSubitems = [
+    'Run commands non-interactively: pass yes or template flags, use run-once test modes (not watch mode), and disable pagers (e.g. `git --no-pager`).',
+    'Never print a secret or type it into the command text. Pass it through an environment variable; shell state does not carry over, so set it in the same command from where it is stored.',
+    'Check values taken from the web or a download against the exact form the command expects before you use them.',
+  ]
   const backgroundNote = getBackgroundUsageNote()
 
   const instructionItems: Array<string | string[]> = [
@@ -322,6 +327,8 @@ export function getSimplePrompt(): string {
     ...(backgroundNote !== null ? [backgroundNote] : []),
     'When issuing multiple commands:',
     multipleCommandsSubitems,
+    'Running commands safely:',
+    safeRunSubitems,
     'For git commands:',
     gitSubitems,
     'Avoid unnecessary `sleep` commands:',
