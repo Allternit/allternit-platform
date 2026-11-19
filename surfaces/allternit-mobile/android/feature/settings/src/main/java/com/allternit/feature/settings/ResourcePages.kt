@@ -336,6 +336,7 @@ internal fun CloudBackupsPage(back: () -> Unit) {
             createTitle = "Make a restore point now", createPath = "$base/snapshots",
         ),
         back = { computer = null },
+        footer = ({ ComputerExportRow(base) }),
     )
 }
 

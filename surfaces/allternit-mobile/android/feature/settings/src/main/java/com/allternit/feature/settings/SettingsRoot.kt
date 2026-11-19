@@ -243,6 +243,7 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
                 if (account.organizationId != null) {
                     SDivider()
                     SRow("Organization", "settingsOrgRow", icon = DesignR.drawable.ph_globe, detail = "Bots, chats and billing follow the active account.", onClick = { push("organization") })
+                    OrgSwitcher(account.organizationId)
                 }
             } else {
                 AccountRow("Account", "Sign in to sync across devices", "settingsAccountRow") { push("profile") }

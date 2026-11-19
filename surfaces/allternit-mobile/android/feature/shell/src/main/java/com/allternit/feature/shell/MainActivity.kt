@@ -173,6 +173,8 @@ class MainActivity : ComponentActivity() {
                     openedDocument?.let { uri ->
                         com.allternit.feature.office.LocalDocumentScreen(uri, onClose = { openedDocument = null })
                     }
+                    // Privacy > "Lock with screen lock" (iOS AppLockStore): covers the app at launch and after it was in the background.
+                    if (signedIn) com.allternit.feature.settings.AppLockGate()
                     // Over setup and then over the freshly mounted workspace (iOS runs it in its own window).
                     handoff?.let { spec ->
                         SetupHandoffOverlay(spec, dark = !signedIn, onDone = { handoff = null })

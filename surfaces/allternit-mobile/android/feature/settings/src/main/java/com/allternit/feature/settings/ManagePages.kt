@@ -167,6 +167,11 @@ internal fun McpPage(host: SettingsHost, back: () -> Unit) {
     val (load, reload) = rememberLoad("mcp") { relay(host, "GET", "/api/v1/mcp") }
     var busyName by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var adding by remember { mutableStateOf(false) }
+    if (adding) {
+        AddMcpServer(host, onCancel = { adding = false }, onSaved = { adding = false; reload() })
+        return
+    }
     SPage("MCP", tag = "settingsMcp", onBack = back) {
         SNote("Servers that give your bots extra tools. They run on your computer.")
         LoadView(load, reload, "load MCP servers") { body ->
@@ -192,6 +197,7 @@ internal fun McpPage(host: SettingsHost, back: () -> Unit) {
                 }
             }
         }
+        SCard(Modifier.padding(top = 18.dp)) { SRow("Add MCP server", "mcp_add", chevron = false, onClick = { adding = true }) }
         SError(error)
     }
 }

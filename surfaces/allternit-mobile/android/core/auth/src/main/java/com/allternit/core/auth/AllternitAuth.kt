@@ -301,6 +301,30 @@ object AllternitAuth {
         signOutHooks += hook
     }
 
+    /** One organization the person belongs to (iOS SettingsView memberships). */
+    data class OrgMembership(val id: String, val name: String)
+
+    /** The person's organizations: the cached list first, then a refresh (a failed refresh keeps the cached list). */
+    suspend fun organizations(): List<OrgMembership> {
+        val user = Clerk.user ?: return emptyList()
+        var list = user.organizationMemberships.orEmpty().mapNotNull { m -> m.organization?.let { OrgMembership(it.id, it.name) } }
+        val fresh = user.getOrganizationMemberships()
+        if (fresh is ClerkResult.Success) {
+            list = fresh.value.data.mapNotNull { m -> m.organization?.let { OrgMembership(it.id, it.name) } }
+        }
+        return list
+    }
+
+    /** iOS AccountSwitch.activate: `setActive` on the current session with the picked organization. */
+    suspend fun switchOrganization(orgId: String): StepResult {
+        val session = Clerk.session ?: return StepResult("You're signed out.")
+        tokenProvider.clear()
+        return when (val r = Clerk.auth.setActive(session.id, orgId)) {
+            is ClerkResult.Success -> StepResult.OK
+            is ClerkResult.Failure -> StepResult(r.message())
+        }
+    }
+
     /** Signs out of Clerk on this device and forgets the cached token. */
     suspend fun signOut(): StepResult {
         for (hook in signOutHooks) runCatching { hook() }

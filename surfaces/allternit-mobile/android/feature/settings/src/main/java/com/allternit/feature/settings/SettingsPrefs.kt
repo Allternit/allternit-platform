@@ -36,6 +36,10 @@ object SettingsPrefs {
     fun improveModel(context: Context): Boolean = prefs(context).getBoolean("allternit.improveModel", false)
     fun setImproveModel(context: Context, on: Boolean) = prefs(context).edit().putBoolean("allternit.improveModel", on).apply()
 
+    /** Privacy: lock the app with the phone's screen lock (iOS `allternit-face-id-lock`). Off by default. */
+    fun appLock(context: Context): Boolean = prefs(context).getBoolean("allternit.appLock", false)
+    fun setAppLock(context: Context, on: Boolean) = prefs(context).edit().putBoolean("allternit.appLock", on).apply()
+
     /** Device Access toggles (one per kind), off until the person turns them on. */
     fun deviceAccess(context: Context, kind: String): Boolean = prefs(context).getBoolean("allternit.deviceAccess.$kind", false)
     fun setDeviceAccess(context: Context, kind: String, on: Boolean) = prefs(context).edit().putBoolean("allternit.deviceAccess.$kind", on).apply()
