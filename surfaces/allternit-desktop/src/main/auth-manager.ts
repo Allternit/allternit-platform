@@ -726,7 +726,8 @@ export class DesktopAuthManager {
       resizable: false,
       alwaysOnTop: !hidden,
       titleBarStyle: 'hiddenInset',
-      title: 'Allternit — Sign in',
+      title: 'Allternit',
+      autoHideMenuBar: true,
       parent: hidden ? undefined : this.splashWindow ?? undefined,
       modal: hidden ? false : Boolean(this.splashWindow),
       webPreferences: {
@@ -736,6 +737,9 @@ export class DesktopAuthManager {
         session: authSession,
       },
     });
+
+    window.on('page-title-updated', (event) => event.preventDefault());
+    if (process.platform !== 'darwin') window.setMenuBarVisibility(false);
 
     window.webContents.on('console-message', (event) => {
       log.info(`[AuthRenderer] ${event.message} (${event.sourceId}:${event.lineNumber})`);

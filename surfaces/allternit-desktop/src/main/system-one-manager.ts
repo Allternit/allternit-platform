@@ -28,6 +28,7 @@ import * as os from 'os';
 import * as path from 'path';
 import log from 'electron-log';
 import { spawnSidecar as lifelineSpawnSidecar } from './process-lifeline.js';
+import { uvInstallHint } from './window-chrome.js';
 
 export const SYSTEM_ONE_DEFAULT_PORT = 7717;
 export const LAYA_DEFAULT_PORT = 7718;
@@ -36,8 +37,7 @@ export const EMBED_DEFAULT_PORT = 7719;
 export const LAYA_VERSION = '0.3.22';
 /** Q29: convaiinnovations/laya, typed-decisions, rev 55cf4c4. */
 export const LAYA_PINNED_REVISION = '55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851';
-export const UV_INSTALL_HINT =
-  "Laya needs uv. Install it with 'brew install uv' or 'curl -LsSf https://astral.sh/uv/install.sh | sh', then choose Repair.";
+export const UV_INSTALL_HINT = uvInstallHint(process.platform);
 
 const S1_HEALTH_TIMEOUT_MS = 30_000;
 /** First Laya start downloads ~600 MB of weights. */

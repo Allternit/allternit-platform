@@ -87,6 +87,7 @@ import { OfficeAddinManager, type OfficeProductId } from './office-addin-manager
 
 import { tunnelManager } from './tunnel-manager.js';
 import { authManager, FULL_CLERK_REFRESH_WAIT_MS } from './auth-manager.js';
+import { APP_WINDOW_TITLE, hidesMenuBarBeforePairing, isPrePairingPage, mayOpenHud } from './window-chrome.js';
 // Side-effect import: constructing the manager registers the device-pairing:*
 // IPC handlers. A named import that is never read gets elided by tsc, which
 // left Settings → Devices failing with "No handler registered".
@@ -1114,7 +1115,7 @@ function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow 
     y: secondary && bounds.y !== undefined ? bounds.y + 28 * listMainWindows().length : bounds.y,
     minWidth,
     minHeight,
-    title: 'Allternit Desktop',
+    title: APP_WINDOW_TITLE,
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 16 },
     show: true, // Show immediately
@@ -1158,7 +1159,21 @@ function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow 
     mainWindow = window;
     noteMainWindowFocused(window);
   });
-  window.webContents.on('page-title-updated', () => installAppMenu());
+  window.webContents.on('page-title-updated', (event) => {
+    // The Connect page keeps the product title; its <title> is not for the title bar.
+    if (isPrePairingPage(window.webContents.getURL())) event.preventDefault();
+    installAppMenu();
+  });
+  // Connect page and pairing error screens: no File/Edit/View bar on Linux and
+  // Windows. The workspace keeps its menu (accelerators work either way).
+  if (hidesMenuBarBeforePairing(process.platform)) {
+    const syncMenuBar = () => {
+      if (window.isDestroyed()) return;
+      window.setMenuBarVisibility(!isPrePairingPage(window.webContents.getURL()));
+    };
+    window.webContents.on('did-navigate', syncMenuBar);
+    window.webContents.on('did-finish-load', syncMenuBar);
+  }
 
   // Route operator + cloud-api calls through the allternit-api custom protocol.
   // Local `/api/*` gets the paired device token. Cloud host `cloud` is a
@@ -2369,6 +2384,10 @@ function createMiniWindow(): BrowserWindow {
 }
 
 function toggleMiniWindow(): void {
+  if (!mayOpenHud(authManager.hasSession())) {
+    log.info('[QuickChat] Not opening before pairing');
+    return;
+  }
   if (!miniWindow || miniWindow.isDestroyed()) {
     miniWindow = createMiniWindow();
     miniWindow.once('ready-to-show', () => {
@@ -3956,6 +3975,7 @@ function hudUrl(): string {
  * (attachPetToHud puts the pet at the HUD's top-right corner).
  */
 function openHudForCompanion(agentId: string | null, anchor?: Electron.Rectangle): void {
+  if (!mayOpenHud(authManager.hasSession())) return;
   if (!anchor && hudCompanionAgentId === agentId && isHudAlive() && hudWindow!.isVisible()) {
     hideHudWindow();
     return;
@@ -4068,6 +4088,7 @@ function createHudWindow({ show }: { show: boolean }): BrowserWindow {
 /** Create the HUD window and wire its handlers. `show:false` pre-warms it. */
 function ensureHudWindow({ show }: { show: boolean }): BrowserWindow {
   if (isHudAlive()) return hudWindow!;
+  if (!mayOpenHud(authManager.hasSession())) throw new Error('HUD is unavailable until this computer is paired');
   log.info('[HUD] Creating floating HUD window', { show });
   const win = createHudWindow({ show });
   hudWindow = win;
@@ -4118,6 +4139,10 @@ function ensureHudWindow({ show }: { show: boolean }): BrowserWindow {
 }
 
 function openHudWindow({ place = true }: { place?: boolean } = {}): void {
+  if (!mayOpenHud(authManager.hasSession())) {
+    log.info('[HUD] Not opening before pairing');
+    return;
+  }
   if (isHudAlive()) {
     showHudWindow({ place });
     return;
@@ -4129,7 +4154,7 @@ function openHudWindow({ place = true }: { place?: boolean } = {}): void {
 /** Pre-create the HUD hidden once the main window is up, so the first summon is instant. */
 let hudPrewarmTimer: ReturnType<typeof setTimeout> | null = null;
 function prewarmHudWindowSoon(): void {
-  if (HEADLESS || hudPrewarmTimer || isHudAlive()) return;
+  if (HEADLESS || !mayOpenHud(authManager.hasSession()) || hudPrewarmTimer || isHudAlive()) return;
   hudPrewarmTimer = setTimeout(() => {
     if (isHudAlive() || (app as unknown as { isQuitting?: boolean }).isQuitting) return;
     try {
@@ -4141,6 +4166,10 @@ function prewarmHudWindowSoon(): void {
 }
 
 function toggleHudWindow(): void {
+  if (!mayOpenHud(authManager.hasSession())) {
+    log.info('[HUD] Not opening before pairing');
+    return;
+  }
   if (isHudAlive()) {
     if (hudWindow!.isVisible() && hudWindow!.isFocused()) {
       hideHudWindow();
