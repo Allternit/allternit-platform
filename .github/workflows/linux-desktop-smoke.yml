@@ -269,7 +269,7 @@ jobs:
           docker cp lab:/tmp/app.out shots/app.out 2>/dev/null || true
           rc=$cdp_rc
           docker exec lab bash /lab/smoke-logs.sh tester || { echo "::error::app logs show a failed start"; rc=1; }
-          docker exec lab bash -c 'grep -h "appimageSandbox\|linuxUpdater" /home/tester/.config/@allternit/desktop/main.log 2>/dev/null | tail -4' || true
+          docker exec lab bash -c 'grep -h "appimageSandbox\|appUpdater" /home/tester/.config/@allternit/desktop/main.log 2>/dev/null | tail -4' || true
           [ "$cdp_rc" = 0 ] || echo "::error::startup window did not render"
           exit $rc
 
