@@ -6,6 +6,7 @@ import { Identifier } from "@/shared/id/id"
 import { LSP } from "@/runtime/integrations/lsp"
 import { Snapshot } from "@/runtime/session/snapshot"
 import { fn } from "@/shared/util/fn"
+import { fenceUntrusted, type FenceSource } from "@/runtime/tools/guard/untrusted"
 import { Database, eq, desc, inArray } from "@/runtime/session/storage/db"
 import { MessageTable, PartTable } from "@/runtime/session/session.sql"
 import { ProviderTransform } from "@/runtime/providers/adapters/transform"
@@ -547,6 +548,33 @@ export namespace MessageV2 {
     return options.bare ? text : `[Attached file: ${name}]\n${text}\n[/Attached file]`
   }
 
+  const CLEARED_TOOL_RESULT = "[Old tool result content cleared]"
+
+  /**
+   * Tools whose results carry text the person did not write (web pages, mail,
+   * connector and MCP results, past chats, resources), by tool id. Their text
+   * reaches the model inside an untrusted fence. Mail reaches the runtime
+   * through connector and MCP tools; the agent-email tools return only status.
+   */
+  const UNTRUSTED_TOOL_SOURCE: Record<string, FenceSource> = {
+    webfetch: "web",
+    websearch: "web",
+    codesearch: "web",
+    lookup: "web",
+    connector_search: "connector",
+    history_recall: "past_chat",
+    thread_read: "past_chat",
+    thread_recent: "past_chat",
+    thread_search: "past_chat",
+    resource: "resource",
+  }
+
+  /** The fence source for a tool id, or undefined when its result is not fenced. */
+  export function untrustedSourceOf(toolName: string): FenceSource | undefined {
+    if (toolName.startsWith("mcp__")) return "mcp"
+    return UNTRUSTED_TOOL_SOURCE[toolName]
+  }
+
   export function toModelMessages(input: WithParts[], model: Provider.Model): ModelMessage[] {
     const result: UIMessage[] = []
     const toolNames = new Set<string>()
@@ -569,9 +597,14 @@ export namespace MessageV2 {
       return false
     })()
 
-    const toModelOutput = (output: unknown) => {
+    // Results whose text someone other than the person wrote are fenced here,
+    // on the model-facing copy only; stored parts and the UI keep the raw text.
+    const fence = (text: string, source: FenceSource | undefined) =>
+      source && text && text !== CLEARED_TOOL_RESULT ? fenceUntrusted(text, source) : text
+
+    const toModelOutput = (output: unknown, source?: FenceSource) => {
       if (typeof output === "string") {
-        return { type: "text", value: output }
+        return { type: "text", value: fence(output, source) }
       }
 
       if (typeof output === "object") {
@@ -586,7 +619,7 @@ export namespace MessageV2 {
         return {
           type: "content",
           value: [
-            { type: "text", text: outputObject.text },
+            { type: "text", text: fence(outputObject.text, source) },
             ...attachments.map((attachment) => ({
               type: "media",
               mediaType: attachment.mime,
@@ -688,7 +721,7 @@ export namespace MessageV2 {
           if (part.type === "tool") {
             toolNames.add(part.tool)
             if (part.state.status === "completed") {
-              const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output
+              const outputText = part.state.time.compacted ? CLEARED_TOOL_RESULT : part.state.output
               const attachments = part.state.time.compacted ? [] : (part.state.attachments ?? [])
 
               // For providers that don't support media in tool results, extract media files
@@ -773,7 +806,12 @@ export namespace MessageV2 {
       }
     }
 
-    const tools = Object.fromEntries(Array.from(toolNames).map((toolName) => [toolName, { toModelOutput }]))
+    const tools = Object.fromEntries(
+      Array.from(toolNames).map((toolName) => {
+        const source = untrustedSourceOf(toolName)
+        return [toolName, { toModelOutput: (output: unknown) => toModelOutput(output, source) }]
+      }),
+    )
 
     return convertToModelMessages(
       result.filter((msg) => msg.parts.some((part) => part.type !== "step-start")),

@@ -1,0 +1,3 @@
+Leave the worktree this session is in and return to the main checkout.
+
+Choose keep or remove. Keep is the safe default: the tree and its branch stay on disk. Remove only a worktree this session created, and only when it has no uncommitted changes and no unpushed commits; otherwise it is kept and the result says why. Never remove a worktree you did not create. Tell the person the path and branch of any tree you keep.

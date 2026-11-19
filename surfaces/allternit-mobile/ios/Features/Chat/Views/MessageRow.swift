@@ -129,6 +129,23 @@ struct MessageRow: View {
                     }
                 }
 
+                // Gap tools: one stub card per tool (G4-G7 fill them in).
+                ForEach(message.toolCalls) { call in
+                    if let gap = call.gap {
+                        switch call.toolName {
+                        case GapToolMetadata.secondOpinion: SecondOpinionCard(gap: gap)
+                        case GapToolMetadata.prComments: PrCommentsCard(gap: gap)
+                        case GapToolMetadata.statusUpdate: StatusUpdateRow(gap: gap)
+                        case GapToolMetadata.feedbackNote: FeedbackNoteCard(gap: gap)
+                        case GapToolMetadata.userLocation: UserLocationCard(gap: gap)
+                        case GapToolMetadata.voiceControl: VoiceControlRow(gap: gap)
+                        case GapToolMetadata.endConversation: EndConversationRow(gap: gap)
+                        case GapToolMetadata.worktreeEnter, GapToolMetadata.worktreeExit: WorktreeCard(gap: gap)
+                        default: EmptyView()
+                        }
+                    }
+                }
+
                 // agent_batch / sleep: progress card and wait row.
                 ForEach(message.toolCalls) { call in
                     let n = ToolDescriber.normalized(call.toolName)

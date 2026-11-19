@@ -69,6 +69,20 @@ A bot's main chat never counts as a project thread. The suggestions block is nam
 
 The roster lookup runs only when the tools include `suggest_task` or `thread_update`, and its result is cached per session.
 
+## Mode, run and engine blocks
+
+Five more blocks load from the turn's own settings, not from a tool.
+
+| Block (file) | Loads when |
+|---|---|
+| Auto (`mode-auto.txt`) | The permission mode is auto, acceptEdits, dontAsk, yolo or bypassPermissions |
+| Ask (`mode-ask.txt`) | The permission mode is `default` or `manual` |
+| Background code (`background-code.txt`) | The turn hint `run_kind` is `background_code` (the `--run-kind` flag or the GitHub action) |
+| On-device (`addendum-ondevice.txt`) | The provider is `allternit-devices`. It loads in place of `addendum-open.txt` |
+| Voice tags (`voice-tags.txt`) | The turn is spoken and the voice engine supports style tags (turn hint `voice_tags`) |
+
+Neither mode block loads in plan mode, which has its own guidance. See [Autonomy modes](/guides/autonomy-modes) and [Background runs](/cli/background-runs).
+
 ## Safety and care
 
 Two blocks cover how the model treats people and risk.
@@ -164,7 +178,8 @@ Prompt files live in `cmd/gizzi-code/src/runtime/session/prompt/`:
 
 - `base-chat.txt`, `capabilities.txt`, `base-code.txt`, `safety.txt`, `care.txt`, `bot.txt`
 - Signal blocks: `duet.txt` (suggestions), `delegation.txt`, `project-thread.txt`, `computer-use.txt`, `unattended.txt`; `memory-use.txt` loads with the memory section
-- `addendum-gpt.txt`, `addendum-gemini.txt`, `addendum-open.txt`
+- `addendum-gpt.txt`, `addendum-gemini.txt`, `addendum-open.txt`, `addendum-ondevice.txt`
+- `mode-auto.txt`, `mode-ask.txt`, `background-code.txt`, `voice-tags.txt`
 - `voice.txt`, `phone.txt`
 - Mode files: `plan-mode.txt`, `plan.txt`, `build-mode.txt`, `build-switch.txt`, `max-steps.txt`, `wrap-up.txt`, `mdx-graphs.txt`
 
@@ -192,7 +207,12 @@ A test enforces a byte cap on each file.
 | project-thread | 1,174 | 1,300 |
 | unattended | 588 | 700 |
 | memory-use | 1,244 | 1,300 |
-| each addendum | 329 to 471 | 700 |
+| mode-auto | 600 | 700 |
+| mode-ask | 300 | 400 |
+| background-code | 600 | 700 |
+| addendum-ondevice | 300 | 400 |
+| voice-tags | 250 | 300 |
+| each other addendum | 329 to 471 | 700 |
 
 The guidance on a bot's main chat on a chat surface (bot, suggestions, delegation, capabilities, safety, care and computer use together) stays at or under 21,000 bytes.
 

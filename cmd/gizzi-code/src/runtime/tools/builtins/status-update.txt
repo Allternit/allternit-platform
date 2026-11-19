@@ -1,0 +1,3 @@
+Post a short progress line for long work, shown as the session's status.
+
+Use it during work that runs for many minutes or many steps: a long build, a migration, a large refactor. Give the phase in a few words and, if useful, one sentence of progress. Update it when the phase changes, not after every step. Do not use it for quick tasks, and do not repeat the status in your replies.

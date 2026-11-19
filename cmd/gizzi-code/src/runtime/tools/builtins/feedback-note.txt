@@ -1,0 +1,3 @@
+Save a short diagnostic note about a problem with the product: a bug, a confusing result, or something missing.
+
+The note stays on this device. Nothing is sent until the person reviews it and chooses to send it. Write one line on what went wrong and, if useful, the steps and error text. Never include secrets, passwords or private content. Do not mention the note unless the person asks about it.

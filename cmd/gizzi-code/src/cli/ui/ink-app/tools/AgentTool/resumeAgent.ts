@@ -132,6 +132,7 @@ export async function resumeAgentBackground({
         toolUseContext.options.mainLoopModel,
         additionalWorkingDirectories,
         toolUseContext.options.mcpClients,
+        appState.toolPermissionContext.mode,
       )
       forkParentSystemPrompt = buildEffectiveSystemPrompt({
         mainThreadAgentDefinition,

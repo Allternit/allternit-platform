@@ -6,6 +6,7 @@ import { Skill } from "@/runtime/skills/skill"
 import * as BotTurn from "@/runtime/bots/bot-turn"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { Ripgrep } from "@/shared/file/ripgrep"
+import DESCRIPTION from "@/runtime/tools/builtins/skill.txt"
 import { iife } from "@/shared/util/iife"
 
 export const SkillTool = Tool.define("skill", async (ctx) => {
@@ -26,18 +27,9 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
 
   const description =
     accessibleSkills.length === 0
-      ? "Load a specialized skill that provides domain-specific instructions and workflows. No skills are currently available."
+      ? `${DESCRIPTION.trim()}\n\nNo skills are currently available.`
       : [
-          "Load a specialized skill that provides domain-specific instructions and workflows.",
-          "",
-          "When you recognize that a task matches one of the available skills listed below, use this tool to load the full skill instructions.",
-          "",
-          "The skill will inject detailed instructions, workflows, and access to bundled resources (scripts, references, templates) into the conversation context.",
-          "",
-          'Tool output includes a `<skill_content name="...">` block with the loaded content.',
-          "",
-          "The following skills provide specialized sets of instructions for particular tasks",
-          "Invoke this tool to load a skill when a task matches one of the available skills listed below:",
+          DESCRIPTION.trim(),
           "",
           "<available_skills>",
           ...accessibleSkills.flatMap((skill) => [

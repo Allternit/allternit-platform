@@ -34,10 +34,25 @@ import {
   type ToolSearchInput,
   type ToolSearchResult,
 } from "@/runtime/primitives/wave-b-types"
+import {
+  END_CONVERSATION_TOOL_ID,
+  FEEDBACK_NOTE_TOOL_ID,
+  PR_COMMENTS_TOOL_ID,
+  SECOND_OPINION_TOOL_ID,
+  STATUS_UPDATE_TOOL_ID,
+  USER_LOCATION_TOOL_ID,
+  VOICE_CONTROL_TOOL_ID,
+  WORKTREE_ENTER_TOOL_ID,
+  WORKTREE_EXIT_TOOL_ID,
+  type GapToolFamily,
+} from "@/runtime/primitives/gap-types"
 
 export namespace ToolFamilies {
+  /** Every deferred family: the Wave B set plus the prompt-gap families (gap-types.ts). */
+  export type Family = ToolFamily | GapToolFamily
+
   /** Built-in tools of each deferred family ("mcp" is filled per server at run time). */
-  export const FAMILY_TOOLS: Record<Exclude<ToolFamily, "mcp">, readonly string[]> = {
+  export const FAMILY_TOOLS: Record<Exclude<Family, "mcp">, readonly string[]> = {
     "skill-growth": [
       "skill_propose",
       "skill_evaluate",
@@ -71,10 +86,16 @@ export namespace ToolFamilies {
     projects: ["project_list", "project_send", "project_status"],
     computers: ["computers"],
     context: ["get_context_remaining", "history_recall"],
+    // Prompt-gap tools (G3). A family only matters once its tools are
+    // registered (each stub's `available`); until then nothing is listed.
+    "code-review": [WORKTREE_ENTER_TOOL_ID, WORKTREE_EXIT_TOOL_ID, SECOND_OPINION_TOOL_ID, PR_COMMENTS_TOOL_ID],
+    location: [USER_LOCATION_TOOL_ID],
+    voice: [VOICE_CONTROL_TOOL_ID],
+    session: [FEEDBACK_NOTE_TOOL_ID, END_CONVERSATION_TOOL_ID],
   }
 
   /** Words that load a family by keyword (besides its name and its tool names). */
-  export const FAMILY_KEYWORDS: Record<ToolFamily, readonly string[]> = {
+  export const FAMILY_KEYWORDS: Record<Family, readonly string[]> = {
     "skill-growth": ["skill", "skills", "propose", "evaluate", "rollback", "import", "grow", "learn", "improve"],
     scratchpad: ["scratchpad", "scratch", "note", "notes", "jot", "draft"],
     goals: ["goal", "goals", "budget", "objective", "target"],
@@ -88,6 +109,11 @@ export namespace ToolFamilies {
     computers: ["computer", "computers", "machine", "sandbox", "vm"],
     context: ["context", "tokens", "window", "remaining", "compaction", "compacted", "history", "earlier"],
     mcp: ["mcp", "connector", "connectors", "integration", "integrations", "server"],
+    // Kept narrow: common words ("call", "bug", "end", "where") would load these on ordinary coding turns.
+    "code-review": ["worktree", "worktrees", "review", "reviewer", "opinion", "pull", "comments"],
+    location: ["location", "nearby", "city", "distance"],
+    voice: ["voice", "speak", "speech", "spoken", "accent"],
+    session: ["feedback", "diagnostic", "abuse", "abusive", "terminate"],
   }
 
   /** Always loaded (for reference and tests; anything outside FAMILY_TOOLS is always loaded too). */
@@ -117,6 +143,7 @@ export namespace ToolFamilies {
     "send_user_message",
     "wait_agents",
     "agent_control",
+    STATUS_UPDATE_TOOL_ID,
   ]
 
   const MCP_PREFIX = "mcp__"
@@ -127,8 +154,8 @@ export namespace ToolFamilies {
   /** Sessions kept in memory (catalog and loaded set); the file keeps the rest. */
   const MAX_SESSIONS = 500
 
-  const builtinFamily = new Map<string, Exclude<ToolFamily, "mcp">>()
-  for (const [family, ids] of Object.entries(FAMILY_TOOLS) as [Exclude<ToolFamily, "mcp">, readonly string[]][]) {
+  const builtinFamily = new Map<string, Exclude<Family, "mcp">>()
+  for (const [family, ids] of Object.entries(FAMILY_TOOLS) as [Exclude<Family, "mcp">, readonly string[]][]) {
     for (const id of ids) builtinFamily.set(id, family)
   }
 
@@ -153,7 +180,7 @@ export namespace ToolFamilies {
   }
 
   /** The deferred family a tool id belongs to, or undefined when it is always loaded. */
-  export function familyOf(toolID: string): ToolFamily | undefined {
+  export function familyOf(toolID: string): Family | undefined {
     if (mcpServer(toolID)) return "mcp"
     return builtinFamily.get(toolID)
   }
@@ -376,7 +403,7 @@ export namespace ToolFamilies {
         matched.add(group)
         continue
       }
-      const family = group.startsWith(MCP_GROUP_PREFIX) ? "mcp" : (group as ToolFamily)
+      const family = group.startsWith(MCP_GROUP_PREFIX) ? "mcp" : (group as Family)
       const keywords = new Set<string>([...words(group), ...FAMILY_KEYWORDS[family]])
       for (const id of ids) for (const w of words(id)) if (w !== "mcp") keywords.add(w)
       const exact = new Set<string>()

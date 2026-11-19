@@ -117,7 +117,10 @@ export namespace LLM {
       toolIds.includes("suggest_task") || toolIds.includes("thread_update")
         ? await appBotCaller(input.sessionID).catch(() => null)
         : null
-    const promptContext = SystemPrompt.context(input.surface, input.user.metadata, { toolIds, caller })
+    // The session's permission mode picks the autonomy block (mode-auto or
+    // mode-ask; none in plan). getMode caches per session after one read.
+    const permissionMode = await PermissionNext.getMode(input.sessionID).catch(() => undefined)
+    const promptContext = SystemPrompt.context(input.surface, input.user.metadata, { toolIds, caller, permissionMode })
     const system = []
     system.push(
       headerParts({
