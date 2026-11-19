@@ -580,6 +580,7 @@
       "afterRemove": "build/linux/after-remove.sh"
     },
     "rpm": {
+      "packageName": "allternit-desktop",
       "afterInstall": "build/linux/after-install.sh",
       "afterRemove": "build/linux/after-remove.sh",
       "depends": [
