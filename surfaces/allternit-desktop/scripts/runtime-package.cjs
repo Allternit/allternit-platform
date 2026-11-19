@@ -237,30 +237,37 @@ function signingKey() {
 }
 
 /**
- * Linux only: the highest GLIBC any packaged ELF needs, read with scripts/check-elf-floor.mjs.
+ * Linux only: the highest GLIBC the package's ELFs need, read with scripts/check-elf-floor.mjs.
  * Desktop refuses a package whose stamp is above the machine's glibc, so a package built
- * above GLIBC_FLOOR (build-linux-sidecars.sh) is not published unless
+ * above GLIBC_FLOOR (build-linux-sidecars.sh, 2.27 = Ubuntu 18.04) is not published unless
  * ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1. Other platforms: undefined (no stamp).
+ *
+ * ELFs on scripts/elf-floor-allowlist.json (the LiveKit rtc-node binding, GLIBC_2.28) do
+ * not raise the stamp: they are optional features that stay unavailable below their need,
+ * exactly as in the bundled app. Counting them would keep every Ubuntu 18.04 machine off
+ * runtime updates for the engine because of the Meeting bot alone.
  */
 function linuxMinGlibc(files) {
   if (TARGET_OS !== 'linux') return undefined;
   const script = path.join(REPO_ROOT, 'scripts', 'check-elf-floor.mjs');
   const floor = execFileSync('node', [script, '--print-floor'], { encoding: 'utf8' }).trim();
-  // Only the files this package ships: resources/ also holds app-only ELFs (lima/limactl
-  // needs GLIBC_2.34) that never reach a runtime package and must not raise its stamp.
+  // Only the files this package ships: resources/ also holds app-only ELFs that never
+  // reach a runtime package and must not raise its stamp.
   const list = path.join(os.tmpdir(), `runtime-elf-files-${process.pid}.txt`);
   fs.writeFileSync(list, Object.keys(files).map(sourceOf).join('\n'));
-  // --floor 99.0 so the checker never fails the run; the comparison is done here.
-  const res = spawnSync('node', [script, '--files', list, '--floor', '99.0', '--allowlist', '/dev/null/none', '--json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  // The checker exits 1 when an ELF is over the floor and still prints the JSON; the
+  // decision is made here. Any other status is a real error.
+  const res = spawnSync('node', [script, '--files', list, '--floor', floor, '--json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   fs.rmSync(list, { force: true });
-  if (res.status !== 0) die(`check-elf-floor failed: ${res.stderr || res.stdout}`);
+  if (res.status !== 0 && res.status !== 1) die(`check-elf-floor failed: ${res.stderr || res.stdout}`);
   const rows = JSON.parse(res.stdout).rows;
   const cmp = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; } return 0; };
+  for (const r of rows.filter((r) => r.status === 'allowed')) console.log(`  minGlibc ignores allowlisted ${r.file} (GLIBC_${r.glibc}: ${r.reason})`);
   let max = null;
-  for (const r of rows) if (r.glibc && (max === null || cmp(r.glibc, max) > 0)) max = r.glibc;
+  for (const r of rows) if (r.status !== 'allowed' && r.glibc && (max === null || cmp(r.glibc, max) > 0)) max = r.glibc;
   max = max || floor;
   if (cmp(max, floor) > 0) {
-    const over = rows.filter((r) => r.glibc && cmp(r.glibc, floor) > 0).map((r) => `${r.file} (GLIBC_${r.glibc})`);
+    const over = rows.filter((r) => r.status === 'FAIL').map((r) => `${r.file} (GLIBC_${r.glibc})`);
     const msg = `linux runtime needs GLIBC_${max}, above the floor GLIBC_${floor}:\n  ${over.join('\n  ')}`;
     if (process.env.ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR === '1') console.warn(`! ${msg}\n  publishing anyway (ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1); the stamp keeps older machines on the bundled runtime`);
     else die(`${msg}\n  Rebuild with scripts/build-linux-sidecars.sh, or set ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1 to publish on purpose.`);

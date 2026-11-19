@@ -47,7 +47,7 @@ export interface RuntimeManifest {
   build: number;
   platform: string;
   shellApi: number;
-  /** Highest GLIBC the package's ELF files need (linux only), e.g. "2.31". */
+  /** Highest GLIBC the package's ELF files need (linux only), e.g. "2.27". */
   minGlibc?: string;
   files: Record<string, { sha256: string; size: number }>;
 }
@@ -58,7 +58,7 @@ export interface FeedEntry {
   version: string;
   build: number;
   shellApi: number;
-  /** Highest GLIBC the package's ELF files need (linux only), e.g. "2.31". */
+  /** Highest GLIBC the package's ELF files need (linux only), e.g. "2.27". */
   minGlibc?: string;
   /** format 1: the tarball. */
   url?: string;

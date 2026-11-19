@@ -844,7 +844,7 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          key: allternit-api-linux-glibc231
+          key: allternit-api-linux-glibc217
 
       # ── Step 2: Build gizzi-code for Linux ─────────────────────────────────
       - name: Setup Bun
@@ -895,8 +895,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-glibc231-${{ github.sha }}-${{ github.run_id }}
-          restore-keys: prebuilt-rust-linux-glibc231-
+          key: prebuilt-rust-linux-glibc217-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: prebuilt-rust-linux-glibc217-
 
       - name: Reuse prebuilt Rust binaries if unchanged
         id: prebuilt
@@ -906,7 +906,8 @@ jobs:
       - name: Build allternit-api (Linux)
         if: steps.prebuilt.outputs.hit != 'true'
         # glibc floor pinned by cargo-zigbuild (scripts/build-linux-sidecars.sh,
-        # GLIBC_FLOOR): Debian 12 / Ubuntu 22.04 hosts run this binary.
+        # ZIG_GLIBC 2.17, under GLIBC_FLOOR 2.27 = Ubuntu 18.04, the oldest glibc
+        # the Electron shell starts on).
         run: scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/bin api
 
       - name: Copy allternit-api binary
@@ -926,7 +927,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-glibc231-${{ github.sha }}-${{ github.run_id }}
+          key: prebuilt-rust-linux-glibc217-${{ github.sha }}-${{ github.run_id }}
 
       - name: Build voice service sidecar (Linux)
         # Same as macOS/Windows: allternit-voice-service (STT + API, no GPL)
@@ -1003,6 +1004,14 @@ jobs:
         run: npm run prepare:meeting-bot
         working-directory: surfaces/allternit-desktop
 
+      - name: Build Cua Driver from source (Linux)
+        # The upstream Linux prebuilt needs glibc 2.30; built here at glibc 2.17 with
+        # cargo-zigbuild from the trycua/cua commit pinned in prepare-cua-driver.cjs.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libx11-dev libxi-dev libxkbcommon-dev
+          scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/computer-use/linux cua-driver
+
       - name: Stage Cua Driver
         run: npm run prepare:cua-driver
         working-directory: surfaces/allternit-desktop
@@ -1011,9 +1020,9 @@ jobs:
         run: npm run prepare:allternit-driver
         working-directory: surfaces/allternit-desktop
 
-      - name: Download Lima
-        run: npm run download:lima
-        working-directory: surfaces/allternit-desktop
+      # No Lima on Linux: Linux Desktop has no Lima VM feature and the upstream
+      # limactl needs glibc 2.34 (above GLIBC_FLOOR). download-lima.cjs and the
+      # linux extraResources are macOS-only.
 
       - name: Build TypeScript
         run: npm run build
@@ -1030,11 +1039,12 @@ jobs:
           ALLTERNIT_BUILD_SUFFIX: ""
 
       - name: Check glibc floor of every packaged ELF
-        # Fails the job if any shipped binary needs a newer glibc than
-        # GLIBC_FLOOR (scripts/build-linux-sidecars.sh). 1.1.15 shipped
-        # allternit-api at 2.39 and voice at 2.39, so Debian 12 / Ubuntu 22.04
-        # could not start the engine.
-        run: node scripts/check-elf-floor.mjs --dir surfaces/allternit-desktop/release/linux-unpacked/resources --floor "$(node scripts/check-elf-floor.mjs --print-floor)"
+        # Fails the job if any shipped ELF, the Electron shell `allternit` included,
+        # needs a newer glibc than GLIBC_FLOOR (2.27, Ubuntu 18.04; see
+        # scripts/build-linux-sidecars.sh). 1.1.15 shipped allternit-api and voice at
+        # 2.39, so Debian 12 / Ubuntu 22.04 could not start the engine; checking the
+        # shell too means an Electron upgrade cannot raise the floor silently.
+        run: node scripts/check-elf-floor.mjs --dir surfaces/allternit-desktop/release/linux-unpacked --shell allternit
 
       - name: Check meeting bot in the package
         # Each artifact must carry its own OS/arch rtc-node binding

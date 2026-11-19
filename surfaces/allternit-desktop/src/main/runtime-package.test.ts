@@ -312,6 +312,12 @@ describe('runtime glibc stamp', () => {
     expect(runtimeGlibcAllows('linux-x64', undefined, '2.36')).toBe(false);
     expect(runtimeGlibcAllows('linux-x64', undefined, '2.39')).toBe(true);
   });
+  it('allows a floor (2.27) package on Ubuntu 18.04 and refuses a 2.28 one there', () => {
+    expect(runtimeGlibcAllows('linux-x64', '2.27', '2.27')).toBe(true);
+    expect(runtimeGlibcAllows('linux-x64', '2.28', '2.27')).toBe(false);
+    expect(runtimeGlibcAllows('linux-x64', '2.27', '2.28')).toBe(true);
+  });
+
   it('allows a 2.31 package on 2.36 and a 2.39 package on 2.39', () => {
     expect(runtimeGlibcAllows('linux-x64', '2.31', '2.36')).toBe(true);
     expect(runtimeGlibcAllows('linux-x64', '2.39', '2.39')).toBe(true);

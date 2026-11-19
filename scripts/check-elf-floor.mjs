@@ -11,11 +11,21 @@
 // "scan". Statically linked ELFs have no verneed and report "-".
 //
 // The floor default is read from GLIBC_FLOOR in scripts/build-linux-sidecars.sh
-// (the single source of truth); --floor overrides it.
+// (the single source of truth); --floor overrides it. The floor is 2.27 (Ubuntu
+// 18.04): the oldest glibc on which the Electron shell actually starts (it needs
+// GLIBC_2.25; Ubuntu 18.04 and Debian 10 were tested in docker). It follows what
+// users run, so every packaged ELF must stay at or under it.
 //
-// Flags: --dir <path> | --files <list> [--floor 2.31] [--json] [--allowlist <file>] [--glibcxx-floor 3.4.28]
+// The Electron shell is checked too and can never be allowlisted: the shell sets
+// the real floor, so a future Electron upgrade that needs a newer glibc fails here
+// instead of silently dropping older distros. When --dir is the app root
+// (linux-unpacked), its top-level `allternit` ELF is the shell; --shell <path>
+// (relative to --dir, or absolute) names it explicitly and fails if it is missing.
+//
+// Flags: --dir <path> | --files <list> [--shell <path>] [--floor 2.27] [--json] [--allowlist <file>] [--glibcxx-floor 3.4.28]
+//        --files <list>  check exactly these files (one absolute path per line) instead of walking --dir
 //        --print-floor   print the floor from build-linux-sidecars.sh and exit
-// Allowlist (default scripts/elf-floor-allowlist.json, empty): [{"path":"suffix/of/file","reason":"why"}]
+// Allowlist (default scripts/elf-floor-allowlist.json): [{"path":"suffix/of/file","reason":"why"}]
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,13 +43,15 @@ const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : d; };
 if (args.includes('--print-floor')) { console.log(readFloorConst()); process.exit(0); }
 const dir = opt('--dir');
-// --files <list>: check exactly these files (one absolute path per line) instead of walking --dir.
 const filesList = opt('--files');
-if (!dir && !filesList) { console.error('usage: check-elf-floor.mjs (--dir <path> | --files <list>) [--floor 2.31] [--json] [--allowlist f] [--glibcxx-floor 3.4.28]'); process.exit(2); }
+if (!dir && !filesList) { console.error('usage: check-elf-floor.mjs (--dir <path> | --files <list>) [--shell <path>] [--floor 2.27] [--json] [--allowlist f] [--glibcxx-floor 3.4.28]'); process.exit(2); }
 const floor = opt('--floor', readFloorConst());
 const cxxFloor = opt('--glibcxx-floor', null);
 const asJson = args.includes('--json');
 const allowFile = opt('--allowlist', path.join(here, 'elf-floor-allowlist.json'));
+const shellOpt = opt('--shell', null);
+// With --files and no --dir there is no app root, so only an explicit --shell is a shell.
+const shellPath = shellOpt ? path.resolve(dir || '.', shellOpt) : dir ? path.join(dir, 'allternit') : null;
 
 let allow = [];
 if (fs.existsSync(allowFile)) {
@@ -99,13 +111,20 @@ function scan(buf) {
   return [...names].map((name) => ({ file: '?', name }));
 }
 
-const rows = [];
-const targets = filesList
+if (shellOpt && !(fs.existsSync(shellPath) && isElf(shellPath))) {
+  console.error(`--shell ${shellOpt}: no ELF at ${shellPath}`);
+  process.exit(1);
+}
+const files = filesList
   ? fs.readFileSync(filesList, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean)
   : [...walk(dir)];
-for (const p of targets) {
+if (shellOpt && !files.some((f) => path.resolve(f) === shellPath)) files.push(shellPath); // shell outside --dir
+const rows = [];
+let shellRow = null;
+for (const p of files) {
   if (!isElf(p)) continue;
   const rel = dir ? path.relative(dir, p) : p;
+  const isShell = shellPath !== null && path.resolve(p) === path.resolve(shellPath);
   const buf = fs.readFileSync(p);
   let method = 'verneed', ents = null;
   try { ents = verneed(buf); } catch { ents = null; }
@@ -117,22 +136,26 @@ for (const p of targets) {
     else if ((m = name.match(/^GLIBCXX_(\d+(?:\.\d+)+)$/))) cxx.push(m[1]);
   }
   const g = maxOf(glibc), x = maxOf(cxx);
-  const al = allow.find((e) => rel === e.path || rel.endsWith(e.path));
+  // The shell is never allowlisted: it defines the floor.
+  const al = isShell ? undefined : allow.find((e) => rel === e.path || rel.endsWith(e.path));
   let status = 'ok';
   if (g && cmp(g, floor) > 0) status = al ? 'allowed' : 'FAIL';
   else if (cxxFloor && x && cmp(x, cxxFloor) > 0) status = al ? 'allowed' : 'FAIL';
-  rows.push({ file: rel, glibc: g, glibcxx: x, method, status, reason: al ? al.reason : undefined });
+  const row = { file: rel, glibc: g, glibcxx: x, method, status, reason: al ? al.reason : isShell ? 'Electron shell' : undefined };
+  if (isShell) { row.shell = true; shellRow = row; }
+  rows.push(row);
 }
 rows.sort((a, b) => a.file.localeCompare(b.file));
 const fails = rows.filter((r) => r.status === 'FAIL');
 
 if (asJson) {
-  console.log(JSON.stringify({ floor, dir, checked: rows.length, failed: fails.length, rows }, null, 2));
+  console.log(JSON.stringify({ floor, dir, shell: shellRow ? shellRow.file : null, checked: rows.length, failed: fails.length, rows }, null, 2));
 } else {
   const w = Math.min(70, Math.max(10, ...rows.map((r) => r.file.length)));
   console.log(`ELF floor check: GLIBC <= ${floor}${cxxFloor ? `, GLIBCXX <= ${cxxFloor}` : ''}  (${rows.length} ELF files in ${dir || filesList})`);
   console.log(`${'FILE'.padEnd(w)}  GLIBC   GLIBCXX   METHOD   STATUS`);
   for (const r of rows) console.log(`${r.file.slice(-w).padEnd(w)}  ${(r.glibc || '-').padEnd(6)}  ${(r.glibcxx || '-').padEnd(8)}  ${r.method.padEnd(7)}  ${r.status}${r.reason ? ' (' + r.reason + ')' : ''}`);
+  console.log(shellRow ? `Electron shell: ${shellRow.file} needs GLIBC ${shellRow.glibc || '-'} (${shellRow.status})` : 'Electron shell: not in --dir (pass --dir <linux-unpacked> or --shell <path> to check it)');
   console.log(fails.length ? `\nFAIL: ${fails.length} ELF file(s) need GLIBC above ${floor}` : `\nPASS: every ELF needs GLIBC <= ${floor}`);
 }
 process.exit(fails.length ? 1 : 0);
