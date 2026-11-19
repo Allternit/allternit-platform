@@ -86,6 +86,8 @@ pub fn register(table: RouteTable) -> RouteTable {
         .add("/v1/phones", &["GET"], get(list_phones))
         .add("/v1/phones/skills", &["GET"], get(list_skills))
         .add("/v1/phones/skills/:name/run", &["POST"], post(run_skill))
+        .add("/v1/phones/maps", &["GET"], get(list_maps))
+        .add("/v1/phones/maps/:app", &["GET"], get(get_map))
         .add("/v1/phones/:serial/history", &["GET"], get(history))
         .add("/v1/phones/:serial/tool", &["POST"], post(tool_call))
         .add("/v1/phones/:serial/task", &["POST"], post(run_task))
@@ -723,6 +725,16 @@ pub(crate) struct TaskBody {
     pub session_id: Option<String>,
     #[serde(default)]
     pub source: Option<String>,
+    /// `"auto"` | `"always"`: when the task looks at the screen picture. Omitted = the runtime's default.
+    #[serde(default)]
+    pub vision: Option<String>,
+}
+
+fn check_vision(vision: &Option<String>) -> Result<(), PlatformError> {
+    match vision.as_deref() {
+        None | Some("auto") | Some("always") => Ok(()),
+        Some(_) => Err(PlatformError::invalid_request("invalid_phone_request", "vision must be \"auto\" or \"always\".").with_param("vision")),
+    }
 }
 
 fn started(out: &Value) -> Value {
@@ -751,10 +763,14 @@ pub(crate) async fn op_task(db: &PgPool, host: &dyn PhoneHost, caller: &Platform
     gate(caller)?;
     let serial = check_serial(serial)?;
     check_goal(&body.goal, body.max_steps)?;
+    check_vision(&body.vision)?;
     if fleet.is_none() {
         check_phone_runs(db, caller, 1).await?;
     }
-    let payload = json!({ "goal": body.goal.trim(), "max_steps": body.max_steps, "bot_id": body.bot_id, "brain": body.brain, "thread_id": body.thread_id, "session_id": body.session_id, "source": body.source, "background": true });
+    let mut payload = json!({ "goal": body.goal.trim(), "max_steps": body.max_steps, "bot_id": body.bot_id, "brain": body.brain, "thread_id": body.thread_id, "session_id": body.session_id, "source": body.source, "background": true });
+    if let (Some(v), Some(o)) = (body.vision.as_ref(), payload.as_object_mut()) {
+        o.insert("vision".into(), json!(v));
+    }
     let path = format!("/api/v1/phones/{}/task", enc(&serial));
     let (_, out) = relay_ok(host, caller, named(&serial), "POST", &path, payload).await?;
     if let Some(run_id) = out.get("run_id").and_then(Value::as_str) {
@@ -841,6 +857,76 @@ async fn list_skills(State(state): State<Arc<ApiState>>, caller: PlatformCaller,
         })
         .collect();
     Ok(Json(page(data)))
+}
+
+// ---------------------------------------------------------------------------
+// App Maps (read only; Explore and Forget stay owner-only on the Desktop)
+// ---------------------------------------------------------------------------
+
+fn check_app(app: &str) -> Result<String, PlatformError> {
+    let a = app.trim();
+    if a.is_empty() || a.len() > 200 || a.chars().any(|c| c.is_control() || c == '/' || c == '\\') {
+        return Err(PlatformError::invalid_request("invalid_phone_request", "app must be a package or bundle id, e.g. com.android.settings.").with_param("app"));
+    }
+    Ok(a.to_string())
+}
+
+/// `GET /phones/maps[/:app]` on the owner's runtime, answered as the runtime sends it.
+pub(crate) async fn op_maps(host: &dyn PhoneHost, caller: &PlatformCaller, serial: Option<&str>, app: Option<&str>, platform: Option<&str>) -> Result<Value, PlatformError> {
+    gate(caller)?;
+    let serial = match serial {
+        Some(s) => Some(check_serial(s)?),
+        None => None,
+    };
+    let mut path = "/api/v1/phones/maps".to_string();
+    if let Some(app) = app {
+        path = format!("{path}/{}", enc(&check_app(app)?));
+    }
+    match platform {
+        None => {}
+        Some(p @ ("android" | "ios")) => path = format!("{path}?platform={p}"),
+        Some(_) => return Err(PlatformError::invalid_request("invalid_phone_request", "platform must be \"android\" or \"ios\".").with_param("platform")),
+    }
+    let (_, out) = relay_ok(host, caller, serial.as_deref().and_then(named), "GET", &path, Value::Null).await?;
+    Ok(out)
+}
+
+/// The MCP view: no locators, no labels. A list of summaries, or one summary plus screen names and the edge count.
+pub(crate) async fn op_maps_summary(host: &dyn PhoneHost, caller: &PlatformCaller, serial: Option<&str>, app: Option<&str>) -> Result<Value, PlatformError> {
+    let out = op_maps(host, caller, serial, app, None).await?;
+    if app.is_none() {
+        return Ok(json!({ "ok": true, "maps": out.get("maps").cloned().unwrap_or_else(|| json!([])) }));
+    }
+    let map = out.get("map").cloned().unwrap_or(Value::Null);
+    let screens: Vec<Value> = map
+        .get("screens")
+        .and_then(Value::as_object)
+        .map(|o| o.values().filter_map(|sc| sc.get("name").cloned()).collect())
+        .unwrap_or_default();
+    let edges = map.get("edges").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+    Ok(json!({
+        "ok": true,
+        "map": {
+            "app": map.get("app"), "platform": map.get("platform"), "app_version": map.get("app_version"),
+            "truncated": map.get("truncated"), "screen_names": screens, "screens": screens.len(), "edges": edges,
+        }
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct MapsQuery {
+    serial: Option<String>,
+    platform: Option<String>,
+}
+
+async fn list_maps(State(state): State<Arc<ApiState>>, caller: PlatformCaller, layered: HostExt, ApiQuery(q): ApiQuery<MapsQuery>) -> Result<Json<Value>, PlatformError> {
+    let host = host_for(&state, layered);
+    Ok(Json(op_maps(&*host, &caller, q.serial.as_deref(), None, q.platform.as_deref()).await?))
+}
+
+async fn get_map(State(state): State<Arc<ApiState>>, caller: PlatformCaller, layered: HostExt, Path(app): Path<String>, ApiQuery(q): ApiQuery<MapsQuery>) -> Result<Json<Value>, PlatformError> {
+    let host = host_for(&state, layered);
+    Ok(Json(op_maps(&*host, &caller, q.serial.as_deref(), Some(&app), q.platform.as_deref()).await?))
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1160,10 +1246,11 @@ pub fn mcp_tools() -> Vec<Value> {
         tool("phone_type", "Type text into the focused field on the phone. Typing into a password, passcode or card field is held until the project owner approves it; then repeat with hold_id.", obj(json!({ "serial": serial, "text": { "type": "string" }, "hold_id": { "type": "string", "description": "On a retry after the owner approved a held action: its approval_id." } }), &["serial", "text"])),
         tool("phone_open_app", "Open an app on the phone by name or package. Opening a bank, wallet or broker app is held until the project owner approves it; then repeat with hold_id.", obj(json!({ "serial": serial, "app": { "type": "string" }, "hold_id": { "type": "string", "description": "On a retry after the owner approved a held action: its approval_id." } }), &["serial", "app"])),
         tool("phone_tool", "Run any phone tool (e.g. phone.swipe, phone.read_ui, phone.sms.read). phone.sms.send and phone.call.dial wait for the owner to approve on their Desktop. A sensitive action is held until the project owner approves it in the Allternit app; then repeat with hold_id.", obj(json!({ "serial": serial, "name": { "type": "string" }, "arguments": { "type": "object" }, "hold_id": { "type": "string", "description": "On a retry after the owner approved a held action: its approval_id." } }), &["serial", "name"])),
-        tool("phone_task", "Give a phone a goal; the Desktop drives it in the background. Returns a run_id for phone_run_status.", obj(json!({ "serial": serial, "goal": { "type": "string", "maxLength": MAX_GOAL }, "max_steps": { "type": "integer", "minimum": 1, "maximum": 40 }, "bot_id": { "type": "string" }, "brain": { "type": "string" } }), &["serial", "goal"])),
+        tool("phone_task", "Give a phone a goal; the Desktop drives it in the background. Returns a run_id for phone_run_status.", obj(json!({ "serial": serial, "goal": { "type": "string", "maxLength": MAX_GOAL }, "max_steps": { "type": "integer", "minimum": 1, "maximum": 40 }, "bot_id": { "type": "string" }, "brain": { "type": "string" }, "vision": { "type": "string", "enum": ["auto", "always"], "description": "auto (default): skip the screenshot when the screen text is rich. always: look at the screenshot every step." } }), &["serial", "goal"])),
         tool("phone_run_status", "The state of a phone task or skill run, with its latest steps.", obj(json!({ "serial": serial, "run_id": { "type": "string" } }), &["serial", "run_id"])),
         tool("phone_skill_run", "Replay a saved phone skill in the background. Returns a run_id.", obj(json!({ "skill": { "type": "string" }, "serial": serial, "inputs": { "type": "object", "additionalProperties": { "type": "string" } }, "bot_id": { "type": "string" }, "brain": { "type": "string" } }), &["skill"])),
         tool("phone_history", "A phone's recent tool calls and runs (no frames or screen text).", obj(json!({ "serial": serial, "run_id": { "type": "string" } }), &["serial"])),
+        tool("phone_maps", "Read only. Lists the App Maps Allternit has learned on the owner's Desktop (one summary per app), or with app, one app's map: screen names and edge count. Exploring and forgetting a map are not available here.", obj(json!({ "serial": serial, "app": { "type": "string", "description": "Package or bundle id, e.g. com.android.settings." } }), &[])),
         tool("phone_live_url", "A view-only live view of the phone's screen for 10 minutes: an embeddable viewer URL and its token.", obj(json!({ "serial": serial }), &["serial"])),
     ]
 }
@@ -1187,7 +1274,7 @@ pub async fn mcp_call(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller
         "phone_open_app" => op_tool(db, host, caller, &serial, "phone.open_app", with_hold(Some(pick(&["app"])), hold.as_deref())?, None).await,
         "phone_tool" => op_tool(db, host, caller, &serial, &need("name")?, with_hold(args.get("arguments").cloned(), hold.as_deref())?, None).await,
         "phone_task" => {
-            let task = TaskBody { goal: need("goal")?, max_steps: args.get("max_steps").and_then(Value::as_u64).map(|n| n as u32), bot_id: s("bot_id"), brain: s("brain"), thread_id: s("thread_id"), session_id: s("session_id"), source: s("source") };
+            let task = TaskBody { goal: need("goal")?, max_steps: args.get("max_steps").and_then(Value::as_u64).map(|n| n as u32), bot_id: s("bot_id"), brain: s("brain"), thread_id: s("thread_id"), session_id: s("session_id"), source: s("source"), vision: s("vision") };
             op_task(db, host, caller, &serial, &task, None).await
         }
         "phone_run_status" => op_run_status(db, host, caller, &serial, &need("run_id")?).await,
@@ -1197,6 +1284,7 @@ pub async fn mcp_call(db: &PgPool, host: &dyn PhoneHost, caller: &PlatformCaller
         }
         "phone_history" => op_history(host, caller, &serial, s("run_id").as_deref(), None).await,
         "phone_live_url" => op_live(host, caller, &serial).await,
+        "phone_maps" => op_maps_summary(host, caller, s("serial").as_deref(), s("app").as_deref()).await,
         _ => Err(PlatformError::not_found("unknown_tool", format!("{name} is not a phone tool."))),
     }
 }
