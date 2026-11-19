@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -52,6 +53,7 @@ import com.allternit.core.design.Haptics
 import com.allternit.core.design.ThinkingOrb
 import com.allternit.core.design.ThinkingOrbSize
 import com.allternit.feature.chat.RelayDevice
+import com.allternit.feature.chat.RuntimeRelay
 import kotlinx.coroutines.launch
 
 /** The brain this setup picked: the connection id and the provider saved as the default (iOS SetupKitBrain). */
@@ -93,21 +95,28 @@ internal object SetupKit {
  */
 @Composable
 internal fun FirstRunSetupScreen(
-    devices: suspend () -> List<RelayDevice>?,
+    relay: RuntimeRelay,
+    accountFirstName: String?,
     onFinish: suspend (SetupState, SetupWizardData, String?) -> Unit,
 ) {
     val c = setupColors
     val view = LocalView.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val handoff = LocalSetupHandoff.current
     var state by remember { mutableStateOf(SetupState()) }
     var data by remember { mutableStateOf(SetupWizardData()) }
     var kitBrain by remember { mutableStateOf<SetupKitBrain?>(null) }
     var catalog by remember { mutableStateOf<List<SetupModelRow>>(emptyList()) }
     var opening by remember { mutableStateOf(false) }
+    // The account's main bot when Meet your bots opened (to tell a new one apart); unset = not read yet.
+    var mainBotBefore by remember { mutableStateOf<Result<String?>?>(null) }
     val connections = remember { ConnectionsStore() }
+    val devices: suspend () -> List<RelayDevice>? = { relay.listDevices() }
+    val reload: suspend () -> Unit = { connections.load(relay) }
 
     LaunchedEffect(Unit) { catalog = SetupApi.cloudModelCatalog() }
-    LaunchedEffect(Unit) { connections.load(devices) }
+    LaunchedEffect(Unit) { reload() }
 
     fun dispatch(action: SetupAction) {
         if (action.firesHaptic) Haptics.perform(view, Haptics.Kind.Tap)
@@ -130,28 +139,55 @@ internal fun FirstRunSetupScreen(
         dispatch(SetupAction.ChooseAI(BrainChoice.forProvider(brain.provider) ?: BrainChoice.Other))
     }
 
+    /** "Meet your bots" Done or Skip: seen on this phone and the account, then on to Connected. */
+    fun finishMeetYourBots() {
+        dispatch(SetupAction.Next)
+        scope.launch {
+            BotsIntro.markSeen(context)
+            // The main bot counts as set up now only when it changed in that step.
+            val main = runCatching { MeetAgentsApi.roster() }.getOrNull()?.firstOrNull { it.isMain }?.id ?: return@launch
+            val before = mainBotBefore?.getOrNull()
+            if (mainBotBefore?.isSuccess == true && before != main) dispatch(SetupAction.MainBot(main))
+        }
+    }
+
+    fun finish(fix: String?) {
+        scope.launch {
+            try { onFinish(effective, data, fix) } finally { opening = false }
+        }
+    }
+
     AnimatedContent(
-        targetState = state.step == SetupStep.Connected,
+        targetState = state.step,
+        contentKey = { if (it == SetupStep.Ai || it == SetupStep.Phone) SetupStep.Ai else it },
         transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
         label = "setup-step",
         modifier = Modifier.fillMaxSize().background(c.bg),
-    ) { connected ->
-        if (connected) {
-            ConnectedScreen(
+    ) { step ->
+        when (step) {
+            SetupStep.Connected -> ConnectedScreen(
                 facts = SessionFacts(effective),
                 devices = devices,
                 onBack = { dispatch(SetupAction.Back) },
-                onOpen = { fix ->
+                onOpen = { fix, sources ->
                     if (!opening) {
                         opening = true
                         scope.launch {
-                            try { onFinish(effective, data, fix) } finally { opening = false }
+                            // The name on WELCOME: Settings → Profile's preferred name, else the account's first name.
+                            val name = handoffName(SetupApi.preferredName()) ?: handoffName(accountFirstName)
+                            // iOS plays the branded hand-off and finishes at 3.3 s under it; without one, at once.
+                            if (!handoff.start(sources, name) { finish(fix) }) finish(fix)
                         }
                     }
                 },
             )
-        } else {
-            SetupRail(
+            SetupStep.MainBot -> {
+                LaunchedEffect(Unit) {
+                    if (mainBotBefore == null) mainBotBefore = runCatching { MeetAgentsApi.roster().firstOrNull { it.isMain }?.id }
+                }
+                MeetYourBotsScreen(onFinish = { finishMeetYourBots() }, doneLabel = "See it all")
+            }
+            else -> SetupRail(
                 state = effective,
                 kitBrain = kitBrain,
                 connections = connections,
@@ -166,7 +202,7 @@ internal fun FirstRunSetupScreen(
                     dispatch(SetupAction.Skip)
                 },
                 onNext = { dispatch(SetupAction.Next) },
-                devices = devices,
+                reload = reload,
             )
         }
     }
@@ -182,7 +218,7 @@ private fun SetupRail(
     onBack: () -> Unit,
     onSkip: () -> Unit,
     onNext: () -> Unit,
-    devices: suspend () -> List<RelayDevice>?,
+    reload: suspend () -> Unit,
 ) {
     val c = setupColors
     val field = state.field
@@ -227,13 +263,13 @@ private fun SetupRail(
                 when (state.step) {
                     SetupStep.Ai -> {
                         Question(SetupCopy.question(SetupField.Ai))
-                        SetupKitAIStep(connections, kitBrain, allternitModel, onPick, devices)
+                        SetupKitAIStep(connections, kitBrain, allternitModel, onPick, reload)
                         if (kitBrain != null) resultCard(state, SetupField.Ai)?.let { SetupResultCardView(it, busy, Modifier.padding(top = 4.dp)) }
                     }
                     SetupStep.Phone -> {
                         Question(SetupCopy.question(SetupField.Phone))
                         resultCard(state, SetupField.Phone)?.let { SetupResultCardView(it, false) }
-                        SetupKitPhoneStep(connections, devices)
+                        SetupKitPhoneStep(connections, reload)
                     }
                     else -> {}
                 }
@@ -316,7 +352,7 @@ private fun SetupKitAIStep(
     brain: SetupKitBrain?,
     allternitModel: String?,
     onPick: (SetupKitBrain) -> Unit,
-    devices: suspend () -> List<RelayDevice>?,
+    reload: suspend () -> Unit,
 ) {
     val c = setupColors
     val scope = rememberCoroutineScope()
@@ -400,9 +436,9 @@ private fun SetupKitAIStep(
         ConnectSheetHost(
             sheet = s,
             store = store,
-            onConnected = { id -> sheet = null; connected(id); scope.launch { store.load(devices) } },
+            onConnected = { id -> sheet = null; connected(id); scope.launch { reload() } },
             onFallback = ::fallback,
-            onDismiss = { sheet = null; scope.launch { store.load(devices) } },
+            onDismiss = { sheet = null; scope.launch { reload() } },
         )
     }
 }
@@ -454,7 +490,7 @@ private fun ConnectionRow(
 
 /** Step 2: Your phone. The phone is already here; a computer is offered for later (iOS SetupKitPhoneStep). */
 @Composable
-private fun SetupKitPhoneStep(store: ConnectionsStore, devices: suspend () -> List<RelayDevice>?) {
+private fun SetupKitPhoneStep(store: ConnectionsStore, reload: suspend () -> Unit) {
     val c = setupColors
     val scope = rememberCoroutineScope()
     var showPair by remember { mutableStateOf(false) }
@@ -474,6 +510,6 @@ private fun SetupKitPhoneStep(store: ConnectionsStore, devices: suspend () -> Li
     }
     if (showPair) {
         ConnectSheetHost(ConnSheet.OnComputer("this-mac"), store, onConnected = { showPair = false }, onFallback = {},
-            onDismiss = { showPair = false; scope.launch { store.load(devices) } })
+            onDismiss = { showPair = false; scope.launch { reload() } })
     }
 }

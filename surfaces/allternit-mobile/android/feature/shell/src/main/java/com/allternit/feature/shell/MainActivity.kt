@@ -38,8 +38,13 @@ import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.ThemeMode
 import com.allternit.feature.onboarding.SignInScreen
+import androidx.compose.runtime.CompositionLocalProvider
 import com.allternit.feature.shell.firstrun.FirstRunGate
 import com.allternit.feature.shell.firstrun.FirstRunStore
+import com.allternit.feature.shell.firstrun.LocalSetupHandoff
+import com.allternit.feature.shell.firstrun.SetupHandoffHost
+import com.allternit.feature.shell.firstrun.SetupHandoffOverlay
+import com.allternit.feature.shell.firstrun.SetupHandoffSpec
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -62,6 +67,12 @@ class MainActivity : ComponentActivity() {
 
     /** A Settings section a setup checklist fix asked for, opened once the workspace is up. */
     private var openSettingsOnStart by mutableStateOf(false)
+
+    /** The branded setup hand-off, drawn above everything so it outlives the swap to the workspace. */
+    private var handoff by mutableStateOf<SetupHandoffSpec?>(null)
+    private val handoffHost = SetupHandoffHost { sources, name, finish ->
+        if (handoff != null) false else { handoff = SetupHandoffSpec(sources, name, finish); true }
+    }
 
     private fun applySystemBars(darkContent: Boolean) {
         val style = if (darkContent) {
@@ -99,10 +110,11 @@ class MainActivity : ComponentActivity() {
                         .semantics { testTagsAsResourceId = true },
                     contentAlignment = Alignment.Center,
                 ) {
+                    CompositionLocalProvider(LocalSetupHandoff provides handoffHost) {
                     when (val s = state) {
                         is AuthState.SignedIn -> when {
                             !firstRun.loaded -> Unit
-                            !firstRun.isComplete -> FirstRunGate(firstRun, onDone = ::openSetupFix)
+                            !firstRun.isComplete -> FirstRunGate(firstRun, s.account.firstName, onDone = ::openSetupFix)
                             else -> WorkspaceShell(account = s.account, openSettingsOnStart = openSettingsOnStart)
                         }
                         else -> if (skippedAuth) {
@@ -132,6 +144,11 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                    }
+                    }
+                    // Over setup and then over the freshly mounted workspace (iOS runs it in its own window).
+                    handoff?.let { spec ->
+                        SetupHandoffOverlay(spec, dark = !signedIn, onDone = { handoff = null })
                     }
                 }
             }

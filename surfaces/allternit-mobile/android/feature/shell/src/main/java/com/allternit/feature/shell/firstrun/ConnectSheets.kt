@@ -153,7 +153,7 @@ private fun KeyRow(p: ConnKeyProvider, store: ConnectionsStore, open: Boolean, o
         store.setConnecting(p.id, true)
         scope.launch {
             try {
-                val fresh = ConnectionsClient.submit(p.id, key)
+                val fresh = ConnectionsClient.submit(p.id, null, key)
                 if (fresh != null) store.apply(fresh)
                 when (fresh?.state) {
                     ConnState.On -> { draft = ""; onConnected(p.id) }
@@ -257,8 +257,10 @@ private fun LoginSheet(id: String, store: ConnectionsStore, onConnected: (String
         opened = false
         copied = false
         store.setConnecting(id, true)
+        // Computer rows connect on that computer; the rest on cloud-api (iOS store.target(for:)).
+        val target = store.target(id)
         try {
-            val (state, login) = ConnectionsClient.connect(id, accepted)
+            val (state, login) = ConnectionsClient.connect(id, target, accepted)
             if (state == ConnState.On && login == null) {
                 store.markOn(id)
                 phase = LoginPhase.Done
@@ -276,7 +278,7 @@ private fun LoginSheet(id: String, store: ConnectionsStore, onConnected: (String
                 now = Instant.now()
                 // A poll can fail while the person is in the browser; keep polling until the code expires.
                 val poll = try {
-                    ConnectionsClient.login(id)
+                    ConnectionsClient.login(id, target)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -321,7 +323,7 @@ private fun LoginSheet(id: String, store: ConnectionsStore, onConnected: (String
         submitting = true
         scope.launch {
             try {
-                val row = ConnectionsClient.submit(id, value)
+                val row = ConnectionsClient.submit(id, store.target(id), value)
                 if (row != null) store.apply(row)
                 if (row?.state == ConnState.On) { phase = LoginPhase.Done; onConnected(id) }
             } catch (e: CancellationException) {

@@ -5,7 +5,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.allternit.core.data.Prefs
-import com.allternit.feature.chat.RelayDevice
+import com.allternit.feature.chat.RelayPick
+import com.allternit.feature.chat.RuntimeRelay
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
@@ -80,27 +81,53 @@ internal class ConnectionsStore {
     var loadError by mutableStateOf<String?>(null)
         private set
     var computerOnline by mutableStateOf(false)
+        private set
     private var connecting by mutableStateOf<Set<String>>(emptySet())
     private var loading = false
 
-    suspend fun load(devices: suspend () -> List<RelayDevice>?) {
+    /** The computer the runtime rows came from, null when none answered (iOS `runtimeId`). */
+    var runtimeId by mutableStateOf<String?>(null)
+        private set
+
+    /**
+     * Reads cloud-api and the active computer and merges them (contract §3, iOS
+     * ConnectionsStore.load): unknown ids are dropped, and a computer row replaces a cloud row
+     * with the same id only when it is `on`. With no computer answering, rows that need one fall
+     * back to the catalog.
+     */
+    suspend fun load(relay: RuntimeRelay) {
         if (loading) return
         loading = true
         try {
             coroutineScope {
-                val list = async { runCatching { ConnectionsClient.list() } }
-                computerOnline = devices()?.any { it.isOnline } == true
-                list.await()
-                    .onSuccess { r ->
-                        loadError = null
-                        rows = r.filter { it.id in ConnectionsCatalog.knownIds }.associateBy { it.id }
-                    }
-                    .onFailure { loadError = ConnectionsClient.describe(it) }
+                val cloud = async { runCatching { ConnectionsClient.list(null) } }
+                val active = (relay.resolve() as? RelayPick.Computer)?.runtimeId
+                val runtimeRows = active?.let { id -> runCatching { ConnectionsClient.list(id) }.getOrNull() }
+                val answered = if (runtimeRows != null) active else null
+                val merged = mutableMapOf<String, ConnectionWire>()
+                val cloudResult = cloud.await()
+                cloudResult.onSuccess { list -> list.filter { it.id in ConnectionsCatalog.knownIds }.forEach { merged[it.id] = it } }
+                loadError = cloudResult.exceptionOrNull()?.let(ConnectionsClient::describe)
+                runtimeRows.orEmpty().filter { it.id in ConnectionsCatalog.knownIds }.forEach { row ->
+                    // A runtime row without a source still lives on that computer.
+                    val r = if (row.source == null && answered != null) row.copy(source = "runtime:$answered") else row
+                    if (merged[r.id] == null || r.state == ConnState.On) merged[r.id] = r
+                }
+                rows = merged
+                runtimeId = answered
+                computerOnline = answered != null
             }
         } finally {
             loading = false
             loaded = true
         }
+    }
+
+    /** Rows that live on a computer go to that computer; everything else to cloud-api (iOS target(for:)). */
+    fun target(id: String): String? {
+        rows[id]?.runtimeId?.let { return it }
+        val rid = runtimeId ?: return null
+        return if (id in ConnectionsCatalog.cliLoginIds || id == "local" || (id == "chatgpt" && rows[id]?.source == null)) rid else null
     }
 
     fun row(id: String): ConnectionWire {

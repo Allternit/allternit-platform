@@ -18,17 +18,13 @@ internal enum class SetupStep(val label: String) {
     Ai("Your AI"), Phone("Your phone"), MainBot("Main bot"), Connected("Connected"),
 }
 
-/**
- * iOS `setupStepOrder(mainBot:)`. The Main bot step is "Meet your bots"; Android passes false
- * until MeetYourBotsView is ported (PARITY-PROGRAM.md wave B), which is the order iOS runs
- * when `setupMainBotStepEnabled` is off.
- */
+/** iOS `setupStepOrder(mainBot:)`: the Main bot step is "Meet your bots". */
 internal fun setupStepOrder(mainBot: Boolean): List<SetupStep> =
     if (mainBot) listOf(SetupStep.Ai, SetupStep.Phone, SetupStep.MainBot, SetupStep.Connected)
     else listOf(SetupStep.Ai, SetupStep.Phone, SetupStep.Connected)
 
-/** Android has no Meet-your-bots screen yet, so the Main bot step is not in its order. */
-internal const val SETUP_MAIN_BOT_STEP_ENABLED = false
+/** The main-bot step runs between Your phone and Connected, like iOS and the web (MAIN_BOT_STEP_ENABLED). */
+internal const val SETUP_MAIN_BOT_STEP_ENABLED = true
 
 internal enum class SetupField(val title: String) { Ai("Your AI"), Phone("Your phone") }
 

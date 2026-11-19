@@ -43,6 +43,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
@@ -309,13 +311,16 @@ internal fun ConnectedScreen(
     facts: SessionFacts,
     devices: suspend () -> List<RelayDevice>?,
     onBack: () -> Unit,
-    onOpen: (String?) -> Unit,
+    /** Finishes setup; `fix` is a fix to open, `sources` the connected nodes in window pixels (the hand-off). */
+    onOpen: (fix: String?, sources: List<Offset>) -> Unit,
 ) {
     val c = setupColors
     var inventory by remember { mutableStateOf<ConnectedInventory.Inventory?>(null) }
     var focus by remember { mutableStateOf<String?>(null) }
     var checklistOpen by remember { mutableStateOf(true) }
     var opening by remember { mutableStateOf(false) }
+    var graphBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
 
     LaunchedEffect(Unit) { inventory = ConnectedInventory.load(devices().orEmpty()) }
 
@@ -327,7 +332,16 @@ internal fun ConnectedScreen(
     fun open(fix: String?) {
         if (opening) return
         opening = true
-        onOpen(fix)
+        // Connected nodes collapse into the mark's blocks from where they sit on screen; the rest fly in from afar.
+        val b = graphBounds
+        val sources = if (b == null || b.width <= 0f) emptyList() else {
+            val scale = minOf(b.width / (PW * density), b.height / (PH * density), 1.15f)
+            val ox = b.center.x - PW * density * scale / 2
+            val oy = b.center.y - PH * density * scale / 2
+            val live = placed.filter { it.node.status != ConnectedInventory.NodeStatus.Avail }
+            live.ifEmpty { placed }.take(23).map { Offset(ox + it.at.x * density * scale, oy + it.at.y * density * scale) }
+        }
+        onOpen(fix, sources)
     }
 
     Box(Modifier.fillMaxSize().background(c.bg)) {
@@ -353,7 +367,7 @@ internal fun ConnectedScreen(
                     }
                 } else {
                     val t = loopClock(22f, "connected")
-                    SetupFitBox(PW, PH, Modifier.fillMaxSize()) {
+                    SetupFitBox(PW, PH, Modifier.fillMaxSize().onGloballyPositioned { graphBounds = it.boundsInWindow() }) {
                         Box(Modifier.fillMaxSize()) {
                             Canvas(Modifier.fillMaxSize()) {
                                 fun p(o: Offset) = Offset(o.x.dp.toPx(), o.y.dp.toPx())

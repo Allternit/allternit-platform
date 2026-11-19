@@ -55,8 +55,8 @@ internal object SetupHttp {
     private val config = ApiConfig()
 
     /** `/api/v1/<path>`. */
-    suspend fun v1(method: String, path: String, body: JsonElement? = null): JsonElement =
-        send(method, config.apiBaseUrl.newBuilder().addPathSegments(path).build(), body)
+    suspend fun v1(method: String, path: String, body: JsonElement? = null, query: Map<String, String> = emptyMap()): JsonElement =
+        send(method, config.apiBaseUrl.newBuilder().addPathSegments(path).apply { query.forEach { (k, v) -> addQueryParameter(k, v) } }.build(), body)
 
     /** `/api/<path>` on the runtime (the onboarding router is not under /api/v1; iOS drops a trailing v1). */
     suspend fun api(method: String, path: String, body: JsonElement? = null): JsonElement {
@@ -76,6 +76,27 @@ internal object SetupHttp {
     }
 
     val cloudBase: HttpUrl get() = config.cloudBaseUrl
+
+    /**
+     * A REST call on the person's computer through cloud-api's runtime relay (iOS
+     * RuntimeRelayClient): the request goes as a `{ method, path, headers, body, bodyEncoding }`
+     * envelope to `{cloud}/api/v1/runtime-devices/:id/proxy`, and the relay answers with the
+     * computer's own response.
+     */
+    suspend fun relay(runtimeId: String, method: String, path: String, body: JsonElement? = null): JsonElement {
+        val envelope = buildJsonObject {
+            put("method", method)
+            put("path", path)
+            put("headers", buildJsonObject {
+                put("accept", "application/json")
+                put("content-type", "application/json")
+            })
+            if (body != null) put("body", body.toString())
+            put("bodyEncoding", "utf8")
+        }
+        val url = config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/runtime-devices").addPathSegment(runtimeId).addPathSegment("proxy").build()
+        return send("POST", url, envelope)
+    }
 
     suspend fun send(method: String, url: HttpUrl, body: JsonElement?, authed: Boolean = true): JsonElement =
         withContext(Dispatchers.IO) {
@@ -308,8 +329,13 @@ internal object ConnectionsClient {
     /** Every cloud call says `caps=runner`: this app knows the disclosure step (contract §9.1). */
     private val caps = mapOf("caps" to "runner")
 
-    private suspend fun send(rest: String, method: String = "GET", body: JsonElement? = null): JsonElement = try {
-        SetupHttp.cloud(method, "api/v1/connections" + if (rest.isEmpty()) "" else "/$rest", body, caps)
+    /**
+     * [target] is the computer a row lives on (its runtime id), or null for cloud-api. Computer
+     * rows (CLI sign-ins, the local brain) are read and connected on that computer, like iOS.
+     */
+    private suspend fun send(rest: String, target: String?, method: String = "GET", body: JsonElement? = null): JsonElement = try {
+        val path = "api/v1/connections" + if (rest.isEmpty()) "" else "/$rest"
+        if (target != null) SetupHttp.relay(target, method, "/$path", body) else SetupHttp.cloud(method, path, body, caps)
     } catch (e: SetupError) {
         val inner = e.body["error"]
         if (inner["code"].str() == "disclosure_required") {
@@ -325,11 +351,11 @@ internal object ConnectionsClient {
         throw e
     }
 
-    suspend fun list(): List<ConnectionWire> = send("")["connections"].arr().mapNotNull(ConnectionWire::parse)
+    suspend fun list(target: String? = null): List<ConnectionWire> = send("", target)["connections"].arr().mapNotNull(ConnectionWire::parse)
 
     /** Returns the login to show next, or null when the row is already on. */
-    suspend fun connect(id: String, acceptDisclosure: String? = null): Pair<ConnState?, ConnLogin?> {
-        val json = send("$id/connect", "POST", buildJsonObject {
+    suspend fun connect(id: String, target: String?, acceptDisclosure: String? = null): Pair<ConnState?, ConnLogin?> {
+        val json = send("$id/connect", target, "POST", buildJsonObject {
             put("way", "code")
             if (acceptDisclosure != null) put("accept_disclosure", acceptDisclosure)
         })
@@ -340,12 +366,12 @@ internal object ConnectionsClient {
         return json["state"].str()?.let(ConnState::of) to login
     }
 
-    suspend fun submit(id: String, value: String): ConnectionWire? =
-        ConnectionWire.parse(send("$id/submit", "POST", buildJsonObject { put("value", value) }))
+    suspend fun submit(id: String, target: String?, value: String): ConnectionWire? =
+        ConnectionWire.parse(send("$id/submit", target, "POST", buildJsonObject { put("value", value) }))
 
     /** `pending`, `done`, `expired` or `failed`, with the fresh row when done. */
-    suspend fun login(id: String): Pair<String, ConnectionWire?> {
-        val json = send("$id/login")
+    suspend fun login(id: String, target: String?): Pair<String, ConnectionWire?> {
+        val json = send("$id/login", target)
         return (json["status"].str() ?: "failed") to json["row"]?.let(ConnectionWire::parse)
     }
 
@@ -422,6 +448,9 @@ internal object ConnectionsCatalog {
 
     val knownIds: Set<String> = entries.map { it.id }.toSet() + keyProviders.map { it.id }
     val runnerIds = setOf("claude", "grok", "kimi")
+
+    /** The coding tools whose sign-in runs on a computer (contract §4, runtime CLI logins). */
+    val cliLoginIds = setOf("claude-code", "codex", "gemini-cli", "cursor", "grok-cli", "kimi-cli")
 
     /** The key sheet "Use a key instead" opens for a plan row. */
     fun keyFallback(id: String) = when (id) {

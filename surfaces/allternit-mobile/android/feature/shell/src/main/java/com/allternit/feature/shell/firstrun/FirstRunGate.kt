@@ -45,7 +45,7 @@ import kotlinx.coroutines.withTimeout
  * [onDone] gets the Settings section a checklist fix asked to open, or null.
  */
 @Composable
-internal fun FirstRunGate(store: FirstRunStore, onDone: (fix: String?) -> Unit) {
+internal fun FirstRunGate(store: FirstRunStore, accountFirstName: String?, onDone: (fix: String?) -> Unit) {
     val context = LocalContext.current
     val relay = remember { RuntimeRelay(ShellApi.okHttp, ApiConfig(), context) }
     var server by remember { mutableStateOf(SetupServerAnswer.Pending) }
@@ -87,7 +87,8 @@ internal fun FirstRunGate(store: FirstRunStore, onDone: (fix: String?) -> Unit) 
     Crossfade(decision == PhoneSetupDecision.Run, animationSpec = tween(250), label = "first-run") { run ->
         if (run) {
             FirstRunSetupScreen(
-                devices = { relay.listDevices() },
+                relay = relay,
+                accountFirstName = accountFirstName,
                 onFinish = { _, data, fix ->
                     finish(context, data)
                     // The fix is queued before the root swaps to the workspace.
