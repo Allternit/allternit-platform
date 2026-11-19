@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
 import com.allternit.feature.artifacts.bool
+import com.allternit.feature.artifacts.child
 import com.allternit.feature.artifacts.list
 import com.allternit.feature.artifacts.obj
 import com.allternit.feature.artifacts.str
@@ -47,7 +48,7 @@ import kotlinx.serialization.json.JsonObject
 
 /** One Files root (`GET /roots`), a folder item (`GET /roots/:id/list`) and an inbox task (`/inbox/tasks`). */
 internal data class FilesRoot(val id: String, val kind: String, val name: String, val rootItemId: String)
-internal data class FilesItem(val id: String, val name: String, val isFolder: Boolean, val size: Long, val modifiedAt: String?)
+internal data class FilesItem(val id: String, val name: String, val isFolder: Boolean, val size: Long, val modifiedAt: String?, val canDelete: Boolean = true)
 internal data class FilesTask(val id: String, val name: String, val droppedBy: String, val createdAt: String?)
 internal data class FilesFreshness(val state: String, val snapshotAt: String?, val servedBy: String?) {
     val asleep: Boolean get() = servedBy == "snapshot" || state == "asleep"
@@ -99,7 +100,7 @@ internal class FilesApi(private val runtimeId: String) {
             when (val r = run("GET", q)) {
                 is Out.Ok -> {
                     r.value.list("items").forEach { o ->
-                        items += FilesItem(o.str("id") ?: return@forEach, o.str("name").orEmpty(), o.str("kind") == "folder", o.long("size") ?: 0L, o.str("modified_at"))
+                        items += FilesItem(o.str("id") ?: return@forEach, o.str("name").orEmpty(), o.str("kind") == "folder", o.long("size") ?: 0L, o.str("modified_at"), o.child("permissions").bool("delete") != false)
                     }
                     token = r.value.str("next_page_token")
                     fresh = r.value.freshness()

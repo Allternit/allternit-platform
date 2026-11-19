@@ -58,7 +58,10 @@ internal class WakeNeeded(val computerName: String) : java.io.IOException("Waiti
  */
 internal class FilesDrive private constructor(val context: Context) {
     val auth = FilesAuth(context)
-    val cache = DriveCache(File(context.noBackupFilesDir, "files-drive"))
+    val cache = DriveCache(File(context.noBackupFilesDir, "files-drive")).also { c ->
+        // Kept on this phone (FilesPins): never evicted from the content cache.
+        c.keptKeys = { com.allternit.core.files.FilesPins.all(context).map { (cid, iid) -> c.key(cid, iid) }.toSet() }
+    }
     val authority = FilesConfig.authority(context)
 
     /** Provider network work: never on a binder thread (spike 8 lesson). */

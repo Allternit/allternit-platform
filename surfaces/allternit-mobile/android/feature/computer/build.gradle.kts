@@ -42,6 +42,8 @@ dependencies {
     // LibraryNet (the /api/v1 routes), the JSON helpers and the library chrome.
     implementation(project(":feature:artifacts"))
     implementation(project(":core:auth"))
+    // FilesPins (Keep on this phone) and the Files device id.
+    implementation(project(":core:files"))
     implementation(libs.okhttp)
     // BackHandler (the browser and a run go back like the system Back on iOS swipe).
     implementation(libs.activity.compose)

@@ -58,6 +58,21 @@ internal object VoiceKeySync {
         state.value = state.value.copy(enabled = on)
     }
 
+    /**
+     * Person change (iOS forgetLocal, phone calm I14b): the keys leave this phone and the "Save to my Allternit
+     * account" flag goes off locally. Nothing is deleted from the leaving person's account.
+     */
+    fun forgetLocal(context: Context) {
+        val app = context.applicationContext
+        for (v in VoiceVendor.entries) {
+            VoiceKeys.remove(app, v)
+            setOptedOut(app, v, false)
+        }
+        setStored(app, false)
+        loaded = true
+        state.value = State()
+    }
+
     fun isOptedOut(context: Context, v: VoiceVendor) = SettingsPrefs.flag(context, "voice.byok.optOut.${v.id}", false)
     fun setOptedOut(context: Context, v: VoiceVendor, on: Boolean) = SettingsPrefs.setFlag(context, "voice.byok.optOut.${v.id}", on)
 

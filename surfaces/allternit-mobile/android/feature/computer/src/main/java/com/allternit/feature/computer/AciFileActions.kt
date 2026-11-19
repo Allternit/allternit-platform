@@ -54,6 +54,11 @@ import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitTheme
 import com.allternit.feature.artifacts.LibraryNet
 import com.allternit.feature.artifacts.child
+import com.allternit.core.files.FilesKeyRing
+import com.allternit.core.files.FilesPins
+import com.allternit.feature.chat.RuntimeCall
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import com.allternit.feature.artifacts.friendly
 import com.allternit.feature.artifacts.obj
 import com.allternit.feature.artifacts.str
@@ -284,6 +289,48 @@ internal class AciFileActions(private val context: Context, val device: AciDevic
         start(Intent.createChooser(send, item.name))
     }
 
+    fun isKept(item: FilesItem) = FilesPins.isPinned(context, device.id, item.id)
+
+    /**
+     * Keep on this phone (iOS setKeptOffline + FilesPinKeeper): `POST /pin` on the computer (no wake), then the copy is
+     * downloaded through the provider, which never evicts it and opens it offline, here and in the Files app.
+     */
+    fun setKept(root: FilesRoot, item: FilesItem, on: Boolean, revert: () -> Unit) {
+        scope.launch {
+            val body = buildJsonObject {
+                put("item_id", JsonPrimitive(item.id))
+                put("device_id", JsonPrimitive(FilesKeyRing.deviceId(context)))
+                put("pinned", JsonPrimitive(on))
+            }.toString()
+            when (val r = AciRelay.call(device.id, "POST", "/api/v1/files/v2/pin", body)) {
+                is RuntimeCall.Ok -> {
+                    FilesPins.set(context, device.id, item.id, on)
+                    if (on) {
+                        try {
+                            fetched(root, item)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            say("Kept. ${item.name} downloads when $name is awake.")
+                        }
+                    }
+                }
+                else -> {
+                    revert()
+                    say(r.failureText() ?: "Couldn't change this. Try again.")
+                }
+            }
+        }
+    }
+
+    /** Move to Trash (iOS trash: `permanent: false`, so it stays in the computer's trash), through the provider. */
+    fun trash(root: FilesRoot, item: FilesItem) = needingWake("open_file", item.id, item.name) {
+        withContext(Dispatchers.IO) { DocumentsContract.deleteDocument(context.contentResolver, FilesDocs.item(context, device.id, root.id, item.id)) }
+        FilesPins.set(context, device.id, item.id, false)
+        revision++
+        say("${item.name} moved to Trash.")
+    }
+
     /** Save to this phone: the system "save as" picker, then a copy through the provider. */
     fun saveToPhone(root: FilesRoot, item: FilesItem) = needingWake("open_file", item.id, item.name) {
         val launch = launchSave ?: return@needingWake
@@ -414,14 +461,14 @@ internal fun rememberAciFileActions(device: AciDevice): AciFileActions {
 
 /** Big full-width button from the design's sheets (iOS FilesBigButton). */
 @Composable
-private fun FilesBigButton(title: String, tag: String, primary: Boolean = true, enabled: Boolean = true, onClick: () -> Unit) {
+private fun FilesBigButton(title: String, tag: String, primary: Boolean = true, enabled: Boolean = true, destructive: Boolean = false, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     Box(
         Modifier.fillMaxWidth().heightIn(min = 50.dp).clip(RoundedCornerShape(14.dp))
             .background(if (primary) c.textPrimary else c.fillNeutral)
             .clickable(enabled = enabled, onClick = onClick).testTag(tag),
         contentAlignment = Alignment.Center,
-    ) { Text(title, color = if (primary) c.bgPrimary else c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
+    ) { Text(title, color = if (destructive) androidx.compose.ui.graphics.Color(0xFFD64545) else if (primary) c.bgPrimary else c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
 }
 
 /** The sheets of a computer's Files screens: one file, add (upload or scan), and "Share with…". */
@@ -445,6 +492,39 @@ internal fun AciFileSheets(actions: AciFileActions) {
                 FilesBigButton("Share with…", "filesItemShareWith", primary = false) {
                     actions.itemSheet = null
                     actions.shareSheet = FilesShareTarget(root.id, item.id, item.name, isFolder = false)
+                }
+                var kept by remember(item.id) { mutableStateOf(actions.isKept(item)) }
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Keep on this phone", color = c.textPrimary, fontSize = 16.sp)
+                        Text("Opens without the network, in this app and the Files app.", color = c.textSecondary, fontSize = 12.sp)
+                    }
+                    Switch(checked = kept, onCheckedChange = { on ->
+                        kept = on
+                        actions.setKept(root, item, on) { kept = !on }
+                    }, modifier = Modifier.testTag("filesItemKeep"))
+                }
+                var confirmTrash by remember(item.id) { mutableStateOf(false) }
+                if (item.canDelete) {
+                    FilesBigButton("Move to Trash", "filesItemTrash", primary = false, destructive = true) { confirmTrash = true }
+                }
+                if (confirmTrash) {
+                    AlertDialog(
+                        onDismissRequest = { confirmTrash = false },
+                        title = { Text("Move ${item.name} to Trash?") },
+                        text = { Text("It stays in the computer's trash, so you can restore it.") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                confirmTrash = false
+                                actions.itemSheet = null
+                                actions.trash(root, item)
+                            }, modifier = Modifier.testTag("filesItemTrashConfirm")) { Text("Move to Trash", color = androidx.compose.ui.graphics.Color(0xFFD64545)) }
+                        },
+                        dismissButton = { TextButton(onClick = { confirmTrash = false }) { Text("Cancel") } },
+                    )
                 }
             }
         }
