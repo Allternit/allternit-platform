@@ -3,6 +3,7 @@ package com.allternit.core.auth
 import android.content.Context
 import android.util.Log
 import com.clerk.api.Clerk
+import com.clerk.api.ClerkConfigurationOptions
 import com.clerk.api.auth.types.VerificationType
 import com.clerk.api.network.model.error.ClerkErrorResponse
 import com.clerk.api.network.serialization.ClerkResult
@@ -80,6 +81,9 @@ object AllternitAuth {
     /** Public by design (same key as ios/project.yml), instance clerk.allternit.com. */
     const val PUBLISHABLE_KEY = "pk_live_Y2xlcmsuYWxsdGVybml0LmNvbSQ"
 
+    /** Clerk Frontend API proxy (worker allternit-clerk-proxy), shared with ai.allternit.com. */
+    const val PROXY_URL = "https://allternit.com/__clerk"
+
     private const val TAG = "AllternitAuth"
     private const val CHOOSE_ORG_FALLBACK_NAME = "My Organization"
 
@@ -99,7 +103,15 @@ object AllternitAuth {
     /** Starts Clerk once per process. Safe to call from every activity's onCreate. */
     fun start(context: Context, publishableKey: String = PUBLISHABLE_KEY) {
         if (!started.compareAndSet(false, true)) return
-        Clerk.initialize(context.applicationContext, publishableKey)
+        // Through the same proxy the web app uses (infrastructure/clerk-proxy). Google's OAuth
+        // client only allows https://allternit.com/__clerk/v1/oauth_callback; talking to
+        // clerk.allternit.com directly sends that host's callback and Google answers
+        // redirect_uri_mismatch (seen on the Moto 2026-11-18).
+        Clerk.initialize(
+            context.applicationContext,
+            publishableKey,
+            ClerkConfigurationOptions(enableDebugMode = false, proxyUrl = PROXY_URL),
+        )
         scope.launch {
             combine(Clerk.isInitialized, Clerk.initializationError, Clerk.sessionFlow, Clerk.userFlow) { ready, error, session, user ->
                 derive(ready, error, session, user)

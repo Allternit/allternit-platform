@@ -1,9 +1,12 @@
 package com.allternit.feature.shell
 
 import android.content.Intent
+import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -12,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +53,16 @@ class MainActivity : ComponentActivity() {
     /** Debug "Continue without signing in" (iOS skipAuth): the home without a session. */
     private var skippedAuth by mutableStateOf(false)
 
+    private fun applySystemBars(darkContent: Boolean) {
+        val style = if (darkContent) {
+            SystemBarStyle.dark(Color.TRANSPARENT)
+        } else {
+            SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+        }
+        enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
+    }
+
     @OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         AllternitAuth.start(applicationContext)
@@ -58,6 +72,12 @@ class MainActivity : ComponentActivity() {
             val state by AllternitAuth.state.collectAsState()
             val signedIn = state is AuthState.SignedIn || skippedAuth
             // Sign-in is always dark, like iOS LoginGateView; the workspace is light by default.
+            // System bar icons follow the screen: light icons on the dark sign-in, dark icons on
+            // the light workspace. Bars stay transparent (no grey 3-button nav scrim).
+            DisposableEffect(signedIn) {
+                applySystemBars(darkContent = !signedIn)
+                onDispose {}
+            }
             AllternitTheme(themeMode = if (signedIn) ThemeMode.Light else ThemeMode.Dark) {
                 Box(
                     modifier = Modifier
