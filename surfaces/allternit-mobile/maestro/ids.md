@@ -194,3 +194,20 @@ iOS Bots mode sets few ids (`botsOptionsThreads`, `botsOptionsOffice`, `botsOpti
 | `runtime_mode_<plan\|safe\|auto>`, `nodes_token`, `nodes_token_copy` | none (iOS has no ids here) | `android/feature/settings/.../SettingsExtras.kt` |
 | `settingsOrg_<id>`, `privacy_appLock`, `appLockCover`, `appLockUnlock`, `drive_purge`, `purge_entry_<n>`, `purge_confirm`, `history_diff`, `history_compare`, `history_restore`, `mcp_add`, `mcp_name`, `mcp_command`, `mcp_save`, `customize_more_sources`, `customize_more_publish`, `source_*`, `publish_*`, `cloudBackups_export`, `cloudBackups_downloadCopy` | none (iOS has no ids here) | `android/feature/settings/.../SettingsExtras.kt`, `AppLock.kt`, `CustomizeExtras.kt`, `MemoryPages.kt` |
 | `connectPhone*`, `connectTelegram*`, `connectOAuth*`, `connectDiscord*`, `aciMcpHero*`, `aciMcpCollectionClear`, `aciTeachProfile*`, `aciTeachSchedule*`, `aciTeachStrike-<n>`, `aciTeachTimeline`, `meetings_connectGoogle`, `meetings_pasteCalendar`, `meetings_connectZoom`, `meetings_zoomDisconnectButton`, `meetings_cal*`, `settingsUsage`, `usage_credits`, `chatNotificationsCard`, `chatNotificationsTurnOn`, `chatNotificationsNotNow`, `botsOffice` | none (iOS has no ids here) | `android/feature/phones/.../ConnectFlows.kt`, `feature/computer/.../AciDirectoryHero.kt`, `AciTeachExtras.kt`, `feature/settings/.../OperatorPages.kt`, `BillingPages.kt`, `feature/chat/.../ChatCards.kt`, `feature/bots/.../BotsRoot.kt` |
+
+## On-phone models and voice engines ids (gap run GS-D, no flow uses them yet)
+
+| id | where |
+|---|---|
+| modelsDevice | Models › On this phone (OnThisPhoneScreen) |
+| modelsDeviceEngine | engine row (llama.cpp, Ready / Not available on this build) |
+| modelsDeviceStop | Running now › Stop |
+| modelsDeviceDownload&lt;key&gt; | one download row |
+| modelsDevicePause / modelsDeviceResume / modelsDeviceCancel / modelsDeviceDismiss | download actions |
+| modelsDeviceInstalled&lt;key&gt; | one downloaded model |
+| modelsDeviceUse / modelsDeviceRemove | Use in chat / Remove |
+| modelsDeviceStorage | storage line |
+| modelsDeviceEmpty | empty state |
+| modelPhoneBuilds | model page › Run on this phone |
+| modelPhoneDownload&lt;quant&gt; | Download for one build |
+| modelPhoneUnavailable | "Not available on this build." |
