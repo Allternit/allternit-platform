@@ -114,10 +114,11 @@ internal fun PlatformPage(back: () -> Unit) {
 
 /** iOS RuntimeOperationsView: the runtime budget dashboard (iOS BudgetDashboardView), then Prewarm and Replay. */
 @Composable
-internal fun RuntimeOpsPage(back: () -> Unit, push: (String) -> Unit) {
+internal fun RuntimeOpsPage(host: SettingsHost, back: () -> Unit, push: (String) -> Unit) {
     SPage("Runtime operations", tag = "settingsRuntimeOps", onBack = back) {
         SNote("How many credits your bots may use each hour, and the tools that keep the runtime fast.")
         BudgetDashboard()
+        ExecutionModeCard(host)
         SCard(Modifier.padding(top = 18.dp)) {
             SRow("Prewarm", "runtime_prewarm", onClick = { push("prewarm") })
             SDivider()

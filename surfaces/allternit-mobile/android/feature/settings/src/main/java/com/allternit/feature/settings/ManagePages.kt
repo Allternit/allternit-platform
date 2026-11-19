@@ -91,7 +91,7 @@ internal fun SubagentsPage(host: SettingsHost, back: () -> Unit) {
             if (rows.isEmpty()) SNote("No subagents yet.") else SCard {
                 rows.forEachIndexed { i, t ->
                     val slug = t.str("slug") ?: t.str("id") ?: return@forEachIndexed
-                    val builtin = t.bool("builtin") == true || t.bool("built_in") == true || t.bool("readOnly") == true
+                    val builtin = t.bool("is_custom") == false
                     if (i > 0) SDivider()
                     SRow(t.str("name") ?: slug, "subagent_$slug", detail = t.str("description"), value = if (builtin) "Built in" else null, onClick = { editing = t })
                 }
@@ -105,7 +105,7 @@ internal fun SubagentsPage(host: SettingsHost, back: () -> Unit) {
 @Composable
 private fun SubagentEditor(existing: JsonObject?, onBack: () -> Unit, onSaved: () -> Unit) {
     val scope = rememberCoroutineScope()
-    val builtin = existing?.bool("builtin") == true || existing?.bool("built_in") == true || existing?.bool("readOnly") == true
+    val builtin = existing?.bool("is_custom") == false
     var name by remember { mutableStateOf(existing.str("name") ?: "") }
     var description by remember { mutableStateOf(existing.str("description") ?: "") }
     var prompt by remember { mutableStateOf(existing.str("prompt") ?: existing.str("instructions") ?: "") }
@@ -123,8 +123,17 @@ private fun SubagentEditor(existing: JsonObject?, onBack: () -> Unit, onSaved: (
                     busy = true
                     error = null
                     scope.launch {
-                        val body = buildJsonObject { put("name", name.trim()); put("slug", slug); put("description", description.trim()); put("prompt", prompt) }
-                        val r = Net.send("PUT", "subagent-types/${LibraryNet.escape(slug)}", body)
+                        // iOS SubagentTypeFields: slug (create only), name, description, model_class, tools, max_steps, look, prompt.
+                        val body = buildJsonObject {
+                            if (existing == null) put("slug", slug)
+                            put("name", name.trim()); put("description", description.trim())
+                            put("model_class", existing.str("model_class") ?: "small")
+                            put("tools", existing?.get("tools") ?: kotlinx.serialization.json.JsonArray(emptyList()))
+                            put("max_steps", existing?.get("max_steps") ?: kotlinx.serialization.json.JsonPrimitive(40))
+                            put("look", existing?.get("look") ?: buildJsonObject { put("pack", "default"); put("face", "default") })
+                            put("prompt", prompt)
+                        }
+                        val r = if (existing == null) Net.send("POST", "subagent-types", body) else Net.send("PATCH", "subagent-types/${LibraryNet.escape(slug)}", body)
                         if (r is ApiResult.Ok) onSaved() else error = r.friendly("save the subagent")
                         busy = false
                     }
@@ -228,7 +237,7 @@ internal fun WebhooksPage(host: SettingsHost, back: () -> Unit) {
                     rows.forEachIndexed { i, t ->
                         val id = t.str("id") ?: return@forEachIndexed
                         if (i > 0) SDivider()
-                        SRow(t.str("name") ?: id, "webhook_$id", detail = t.str("url") ?: t.str("agent_id"), onClick = { selected = t })
+                        SRow(t.str("name") ?: id, "webhook_$id", detail = "/webhooks/inbound/$id", onClick = { selected = t })
                     }
                 }
             }
@@ -248,8 +257,8 @@ internal fun WebhooksPage(host: SettingsHost, back: () -> Unit) {
                 Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SButton("Create", "webhook_create", enabled = name.isNotBlank() && botId != null) {
                         scope.launch {
-                            val r = Net.send("POST", "webhook-triggers", buildJsonObject { put("name", name.trim()); put("agent_id", botId ?: "") })
-                            if (r is ApiResult.Ok) { creating = false; name = ""; botId = null; message = r.value.obj.str("url")?.let { "Created. URL: $it" } ?: "Created."; reload() } else error = r.friendly("create the webhook")
+                            val r = Net.send("POST", "webhook-triggers", buildJsonObject { put("name", name.trim()); put("target_bot_id", botId ?: "") })
+                            if (r is ApiResult.Ok) { creating = false; name = ""; botId = null; message = (r.value.obj["trigger"] as? JsonObject)?.str("id")?.let { "Created. Inbound URL: /webhooks/inbound/$it" } ?: "Created."; reload() } else error = r.friendly("create the webhook")
                         }
                     }
                     SButton("Cancel", "webhook_cancel") { creating = false }
