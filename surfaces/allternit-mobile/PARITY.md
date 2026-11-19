@@ -320,7 +320,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | MemoryDriveView | ios/Features/Settings/MemoryDriveView.swift | — | feature/settings/MemoryPages.kt (MemoryDrivePage) | built (#2653) | purge and write are not built |
 | MemorySettingsView | ios/Features/Settings/MemorySettingsView.swift | — | feature/settings/MemoryPages.kt (MemoryPage) | built (#2653) | memories can be forgotten; editing a memory and About you are not built |
 | ModelManagementView | ios/Features/Settings/ModelManagementView.swift | — | feature/settings/ManagePages.kt (ModelsPage) | built (#2653) | provider keys are managed on Connections |
-| NodesManagerView | ios/Features/Settings/NodesManagerView.swift | — | feature/settings/ResourcePages.kt (NODES) | built (#2655) | Join token screen not built |
+| NodesManagerView | ios/Features/Settings/NodesManagerView.swift | — | feature/settings/ResourcePages.kt (NODES), SettingsExtras.kt (NodeJoinToken) | built (#2655, #2674) | — |
 | NotificationsSettingsView | ios/Features/Settings/NotificationsSettingsView.swift | — | feature/settings/AccountPages.kt (NotificationsPage) | built (#2653) | event choices, critical-alert texts and quiet hours; the system permission and Live Activities rows are iOS-only |
 | OrganizationAccessView | ios/Features/Settings/OrganizationAccessView.swift | — | feature/settings/AccountPages.kt (OrganizationPage) | built (#2653) | — |
 | PlatformSettingsView | ios/Features/Settings/PlatformSettingsView.swift | — | feature/settings/OperatorPages.kt (PlatformPage) | built (#2655) | — |
@@ -328,16 +328,16 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | PrivacySettingsView | ios/Features/Settings/PrivacySettingsView.swift | — | feature/settings/AccountPages.kt (PrivacyPage) | built (#2653) | Face ID lock row not built (needs the biometric library) |
 | ProductsSettingsView | ios/Features/Settings/ProductsSettingsView.swift | — | — | todo | — |
 | ReplayManagerView | ios/Features/Settings/ReplayManagerView.swift | — | feature/settings/OperatorPages.kt (REPLAY) | built (#2655) | — |
-| RuntimeOperationsView | ios/Features/Settings/RuntimeOperationsView.swift | — | feature/settings/OperatorPages.kt (RuntimeOpsPage) | built (#2655) | Execution mode switch not built |
+| RuntimeOperationsView | ios/Features/Settings/RuntimeOperationsView.swift | — | feature/settings/OperatorPages.kt (RuntimeOpsPage), SettingsExtras.kt (ExecutionModeCard) | built (#2655, #2674) | — |
 | SafariView | ios/Features/Settings/SafariView.swift | — | feature/settings/SettingsKit.kt (openLink: Custom Tab) | built (#2653) | honours Open links in |
 | SelfHostedSessionView | ios/Features/Settings/SelfHosted/SelfHostedSessionView.swift | — | feature/settings/OperatorPages.kt (SelfHostedSessionPage) | built (#2655) | Live event stream not built |
 | SelfHostedSettingsView | ios/Features/Settings/SelfHosted/SelfHostedSettingsView.swift | — | feature/settings/OperatorPages.kt (SelfHostedPage) | built (#2655) | — |
 | SettingsView | ios/Features/Settings/SettingsView.swift | — | feature/settings/SettingsRoot.kt (SettingsRoot, RootList, AdvancedPage) | built (#2653) | Accounts card shows the person and organization; switching organizations and other remembered accounts is not built. Customize and part-2 pages show a placeholder naming the screen |
-| SubagentsSettingsView | ios/Features/Settings/SubagentsSettingsView.swift | — | feature/settings/ManagePages.kt (SubagentsPage) | built (#2653) | — |
+| SubagentsSettingsView | ios/Features/Settings/SubagentsSettingsView.swift | — | feature/settings/ManagePages.kt (SubagentsPage) | built (#2653, #2674 field names) | — |
 | TwinSettingsView | ios/Features/Settings/TwinSettingsView.swift | — | feature/settings/OperatorPages.kt (TwinPage) | built (#2655) | — |
 | VoiceKeyScannerView | ios/Features/Settings/VoiceKeyScannerView.swift | — | feature/settings/VoicePage.kt (VoiceKeyHandoffSheet, QrScanner), core/files/VoiceHandoffCrypto.kt | built (#2669) | CameraX + ML Kit; same P-256/HKDF/AES-GCM hand-off as iOS; Save to my account not ported |
 | VPSServersManagerView | ios/Features/Settings/VPSServersManagerView.swift | — | feature/settings/ResourcePages.kt (VPS_SERVERS) | built (#2655) | Connection test not built |
-| WebhooksSettingsView | ios/Features/Settings/WebhooksSettingsView.swift | — | feature/settings/ManagePages.kt (WebhooksPage) | built (#2653) | — |
+| WebhooksSettingsView | ios/Features/Settings/WebhooksSettingsView.swift | — | feature/settings/ManagePages.kt (WebhooksPage) | built (#2653, #2674 field names) | — |
 
 ## Shared
 
