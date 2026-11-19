@@ -159,7 +159,7 @@ internal data class InboxItem(
                 botId = o.s("botId").orEmpty(),
                 botName = o.s("botName").orEmpty(),
                 person = o.s("person"),
-                summary = o.s("summary").orEmpty(),
+                summary = displayName(o.s("summary")).orEmpty(),
                 at = o.s("at").orEmpty(),
                 primaryAction = primary?.s("action") ?: "open",
                 primaryLabel = primary?.s("label") ?: "Open",

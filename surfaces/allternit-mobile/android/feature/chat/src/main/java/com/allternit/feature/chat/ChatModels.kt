@@ -209,7 +209,7 @@ data class MessageRecord(
             return MessageRecord(
                 id = record.id,
                 role = record.role,
-                content = record.content,
+                content = if (tools.isEmpty()) record.content else stripToolMarkers(record.content),
                 reasoning = record.thinking.orEmpty(),
                 toolCalls = tools,
                 artifacts = if (record.role == "user") emptyList() else artifacts,
@@ -217,6 +217,10 @@ data class MessageRecord(
                 createdAt = parseMillis(record.timestamp) ?: System.currentTimeMillis(),
             )
         }
+
+        /** The gateway's `[Tool name]` placeholder lines duplicate the tool chip rendered from parts; drop them. */
+        private val toolMarker = Regex("""^[ \t]*\[Tool [^\]\n]*\][ \t]*\r?\n?""", RegexOption.MULTILINE)
+        private fun stripToolMarkers(text: String): String = text.replace(toolMarker, "").trim()
 
         private fun parseMillis(value: String?): Long? =
             value?.let { runCatching { OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull() }
