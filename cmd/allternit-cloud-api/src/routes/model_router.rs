@@ -4,6 +4,9 @@
 //! - `GET /v1/models` — public list of available models.
 //! - `POST /v1/chat/completions` — auth-protected OpenAI-compatible chat
 //!   completions, with optional streaming.
+//!
+//! `linked/claude/<model>` ids bill the person's linked Claude organization
+//! through Anthropic ([`anthropic_linked`], CONTRACT-oauth-linked-billing B3/B4).
 
 use axum::{
     extract::{Extension, State},
@@ -22,6 +25,8 @@ use crate::{
     services::{inference_keys, inference_pool, inference_settlement},
     ApiError, ApiState,
 };
+
+mod anthropic_linked;
 
 /// Permission required to invoke chat completions.
 const REQUIRED_PERMISSION: &str = "models:write";
@@ -46,8 +51,10 @@ pub struct ModelListResponse {
 /// Public endpoint listing the models Allternit can route: default model
 /// first (each row with `default: bool`), unlisted aliases last with
 /// `hidden: true` (pickers skip them; saved ids still route). Enriched with
-/// live upstream metadata when providers are healthy.
-pub async fn list_models(State(state): State<Arc<ApiState>>) -> Result<Json<ModelListResponse>, ApiError> {
+/// live upstream metadata when providers are healthy. A signed-in person whose
+/// Claude organization is linked also gets `linked/claude/<model>` rows
+/// (`billed_to: "claude_org"`, group `"Claude organization"`), last.
+pub async fn list_models(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Json<ModelListResponse>, ApiError> {
     let mut models = state.model_router.list_models().await;
     // A disabled shared pool is refused by chat_completions. Do not offer its
     // models in the apps' picker either. Unseeded providers keep the existing
@@ -59,6 +66,8 @@ pub async fn list_models(State(state): State<Arc<ApiState>>) -> Result<Json<Mode
     .await
     .map_err(ApiError::DatabaseError)?;
     models.retain(|model| !disabled.iter().any(|id| model.provider.as_ref() == Some(id)));
+    // The linked rows bill the person's own org: no shared pool, no funding filter.
+    models.extend(anthropic_linked::models_for_caller(&state, &headers).await);
 
     Ok(Json(ModelListResponse {
         object: "list".to_string(),
@@ -177,7 +186,8 @@ async fn captured_request_body(
 /// Every response, errors and streams included, carries `x-request-id`; the
 /// usage row records it with the key's project, the key and the client.
 /// A "Sign in with Allternit" token (`alt_oat_`, the `OAuthCaller` extension)
-/// takes its own path: [`oauth_chat_completions`].
+/// takes its own path: [`oauth_chat_completions`]. A `linked/claude/<model>`
+/// id takes [`anthropic_linked::chat_completions`].
 pub async fn chat_completions(
     State(state): State<Arc<ApiState>>,
     Extension(auth): Extension<AuthContext>,
@@ -223,6 +233,14 @@ async fn chat_completions_attributed(
             "Missing required permission: {} (or 'inference')",
             REQUIRED_PERMISSION
         )));
+    }
+
+    // Linked Claude organization (CONTRACT-oauth-linked-billing B3): the
+    // person's own org pays through Anthropic. Ahead of plans, the session
+    // alias check, BYOK, the funding reroute and every credits gate, and
+    // never rerouted to another provider or payer.
+    if anthropic_linked::is_linked_model(&request.model) {
+        return anthropic_linked::chat_completions(state, &auth.user.user_id, request, attribution).await;
     }
 
     // Plan and Copilot models (contract 9.3): the person's own plan on their
@@ -439,6 +457,10 @@ async fn oauth_chat_completions(
     // is never handed off.
     let _ = crate::services::open_lane::take_request_options(&mut request);
 
+    // A linked Claude organization answers only the person's own sends (D8).
+    if anthropic_linked::is_linked_model(&request.model) {
+        return Ok(anthropic_linked::Refusal::person_only().into_response());
+    }
     // Plan and Copilot models answer only the person's own sends (contract 9.3).
     if is_person_only_model(&request.model) {
         return Ok(plan_person_only());
@@ -694,11 +716,16 @@ mod tests {
 
 use crate::services::brain_runners::{self, ChatMessage, TurnEvent, Vendor, VendorState};
 
-/// Plan (`plan/…`, web's in-app `plan-…`) and Copilot (`copilot/…`) ids:
-/// person-sent chat only. Every other route that takes a model refuses them.
+/// Plan (`plan/…`, web's in-app `plan-…`), Copilot (`copilot/…`) and linked
+/// Claude organization (`linked/claude/…`, CONTRACT-oauth-linked-billing D8)
+/// ids: person-sent chat only. Every other route that takes a model refuses
+/// them (open lane, artifact runtimes, Platform responses).
 pub fn is_person_only_model(model: &str) -> bool {
     let model = model.trim();
-    model.starts_with("plan/") || model.starts_with("plan-") || model.starts_with("copilot/")
+    model.starts_with("plan/")
+        || model.starts_with("plan-")
+        || model.starts_with("copilot/")
+        || anthropic_linked::is_linked_model(model)
 }
 
 /// `plan/<vendor>/<model>` (wire) or `plan-<vendor>/<model>` (web in-app).
