@@ -83,7 +83,7 @@ internal class ModelStore(context: Context) {
         prefs.edit().putString(KEY_SELECTED, id).apply()
     }
 
-    fun setEffort(level: String) {
+    fun chooseEffort(level: String) {
         effort = level
         prefs.edit().putString(KEY_EFFORT, level).apply()
     }

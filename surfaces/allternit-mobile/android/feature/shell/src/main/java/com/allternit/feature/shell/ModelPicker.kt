@@ -412,7 +412,7 @@ private fun CurrentModel(m: PickerModel, models: ModelStore) {
                         modifier = Modifier
                             .clip(CircleShape)
                             .background(if (on) c.accentPrimary else c.fillNeutral)
-                            .clickable(role = Role.RadioButton) { models.setEffort(l.id) }
+                            .clickable(role = Role.RadioButton) { models.chooseEffort(l.id) }
                             .semantics { selected = on }
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     )
