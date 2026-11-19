@@ -173,7 +173,7 @@ npm run build:electron:dmg   # same, DMG target
 
 ### Linux .deb install
 
-`apt install ./Allternit-Desktop-<version>-amd64.deb` installs the app in `/opt/Allternit Desktop` and links `/usr/bin/allternit`. The package depends on `bubblewrap` and `lsof` (the app uses both), and on `libgbm1` and `libasound2` (Electron's graphics buffer and audio libraries), so apt installs them with it. Without `libgbm1` the app does not start (`libgbm.so.1: cannot open shared object file`); minimal installs and containers often lack it.
+`apt install ./Allternit-Desktop-<version>-amd64.deb` installs the app in `/opt/Allternit Desktop` and links `/usr/bin/allternit`. The package depends on `bubblewrap` and `lsof` (the app uses both), on `libgbm1` and `libasound2` (Electron's graphics buffer and audio libraries), and on `python3` (the phone remote's input helper; it also uses `xdotool` when present), so apt installs them with it. Without `python3` the phone remote still shows the screen but takes no input, and logs `[input] helper could not start` once in `phone-remote.log`; it no longer crashes and restarts in a loop. Without `libgbm1` the app does not start (`libgbm.so.1: cannot open shared object file`); minimal installs and containers often lack it.
 
 ### Linux .rpm and AppImage
 
