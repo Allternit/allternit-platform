@@ -4,7 +4,7 @@ description: The packaged Electron app, the primary distribution surface for All
 ---
 
 <Note>
-**Status:** Implementation IMPLEMENTED × Exposure PUBLIC (macOS builds). Windows and Linux targets exist in the electron-builder config but macOS is the shipped target.
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC (macOS builds). Windows and Linux targets exist in the electron-builder config but macOS is the shipped target. For Linux (.deb) install, pairing and troubleshooting, see the [Desktop on Linux guide](/surfaces/desktop-linux).
 </Note>
 
 ## Overview
@@ -89,7 +89,7 @@ Menus open in full. When you open the model picker, the context meter or a menu 
 
 Long drafts show in full. When a draft makes the message box taller than the HUD, the window grows upward with its bottom edge fixed, up to the 520 px limit; the message box takes at most 40% of that, and a longer draft scrolls inside it. As the draft gets shorter it shrinks back, never below the size it had before. If you resize the HUD by hand, that size becomes the new base. For developers: `useHudComposerFit` (`src/shell/hud/composer-fit.ts`) watches the composer (`[data-hud-composer]` on `ChatBottomBar`) and sets the window with `shell.hud.setBounds`. It pauses while a menu has grown the window or a resize handle is dragged.
 
-Drag the dotted handle to move the HUD, or drag its edges to resize it. On Linux with native Wayland the compositor places windows, so the HUD opens where the compositor puts it and you move it by dragging its top strip (the compositor does the move). Launch with `--ozone-platform=x11` to get app-placed positions back.
+Drag the dotted handle to move the HUD, or drag its edges to resize it. On Linux with native Wayland the compositor places windows, so the HUD opens where the compositor puts it and you move it by dragging its top strip (the compositor does the move). Launch with `--ozone-platform=x11` to get app-placed positions back. More Linux help is in the [Desktop on Linux guide](/surfaces/desktop-linux).
 
 The HUD floats above other windows on every desktop and over full-screen apps. On Windows and Linux it sits below system menus and notifications.
 
