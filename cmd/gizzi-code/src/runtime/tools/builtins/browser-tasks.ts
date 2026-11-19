@@ -17,6 +17,7 @@
  * reason otherwise.
  */
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import { generateText, jsonSchema, stepCountIs, tool, type Tool as AITool } from "ai"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import DESCRIPTION from "@/runtime/tools/builtins/browser-tasks.txt"
@@ -194,9 +195,11 @@ type Metadata = {
   running?: Array<{ id: string; start_url?: string; goal?: string }>
 }
 
-export const BrowserTasksTool = Tool.define<typeof BrowserTasks.Input, Metadata>("browser_tasks", {
+const parameters = BrowserTasks.Input.extend(LabelField)
+
+export const BrowserTasksTool = Tool.define<typeof parameters, Metadata>("browser_tasks", {
   description: DESCRIPTION,
-  parameters: BrowserTasks.Input,
+  parameters,
   async execute(params, ctx) {
     const problem = BrowserTasks.validate(params)
     if (problem) throw new Error(problem)

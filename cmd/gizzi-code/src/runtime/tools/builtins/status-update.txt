@@ -1,3 +1,5 @@
-Post a short progress line for long work, shown as the session's status.
+Post a short progress line for long work. It shows in the session's status line.
 
-Use it during work that runs for many minutes or many steps: a long build, a migration, a large refactor. Give the phase in a few words and, if useful, one sentence of progress. Update it when the phase changes, not after every step. Do not use it for quick tasks, and do not repeat the status in your replies.
+Use it on tasks that run many minutes or many steps, such as a long build, a migration or a large refactor. Call it when the phase changes (for example "Running tests"), and no more than once every few minutes. The phase is a short label of a few words. The note is one short sentence of progress, and is optional.
+
+Do not use it for quick tasks. Do not call it after every step. It never replaces the final answer: when the work is done, say what happened in your reply.

@@ -23,3 +23,4 @@ Writing queries:
 When search falls short:
   - End with a short note of what you found and why it does not answer the question.
   - Mark any conclusion you drew yourself, beyond what a source says, as your inference.
+label: optional, 3-8 words saying what this call does.

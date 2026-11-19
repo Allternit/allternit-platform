@@ -27,3 +27,4 @@ Usage notes:
 9. Pick the model class for the work: small is haiku-class (lookups, searches, checks), standard is sonnet-class (normal building), deep is opus-class. Use deep only for risky work: many files, migrations, auth, billing, or a bug with no known cause. effort (low, medium, high) sets how hard that model thinks.
 10. fork="all" hands the child a copy of this conversation up to your last finished message, so you need not restate context: tell it only what to do and what is out of scope. It runs on your own model, so it takes no model or effort. Use it when the child needs what you already know; leave fork unset (none) for a fresh child with only your prompt, which is cheaper and the right default.
 11. If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
+label: optional, 3-8 words saying what this call does.

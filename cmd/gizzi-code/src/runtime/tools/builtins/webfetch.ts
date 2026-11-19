@@ -7,6 +7,7 @@ import * as SsrfGuard from "@/shared/utils/hooks/ssrfGuard"
 const guardedWebFetch = (input: string | URL | Request, init?: RequestInit) =>
   SsrfGuard.createGuardedFetch({ allowLoopback: false })(input, init)
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "@/runtime/tools/builtins/webfetch.txt"
@@ -20,6 +21,7 @@ const MAX_TIMEOUT = 120 * 1000 // 2 minutes
 export const WebFetchTool = Tool.define("webfetch", {
   description: DESCRIPTION,
   parameters: z.object({
+    ...LabelField,
     url: z.string().describe("The URL to fetch content from"),
     format: z
       .enum(["text", "markdown", "html"])

@@ -86,6 +86,15 @@ struct MessageRow: View {
                     toolStatusLine(toolStatus)
                 }
 
+                // One-line run status ("phase - note"), only while busy.
+                if message.isStreaming, let busy = message.busyLine, !busy.isEmpty {
+                    Text(busy)
+                        .font(.caption)
+                        .foregroundColor(Color("TextSecondary"))
+                        .lineLimit(1)
+                        .accessibilityLabel("Status: \(busy)")
+                }
+
                 // Message tools: a draft card, or the held-for-approval line.
                 ForEach(message.toolCalls) { call in
                     switch MessageToolResult.parse(toolName: call.toolName, output: call.output) {

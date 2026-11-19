@@ -6,7 +6,7 @@
  * registers this adapter; G4-5 (PR11c) builds it out in this folder and never
  * edits tools.ts.
  */
-import { available } from '@/runtime/tools/builtins/feedback-note'
+import { available, FeedbackNoteTool as RuntimeFeedbackNoteTool } from '@/runtime/tools/builtins/feedback-note'
 import { FEEDBACK_NOTE_TOOL_ID, FeedbackNoteInput } from '@/runtime/primitives/gap-types'
 import DESCRIPTION_TXT from '@/runtime/tools/builtins/feedback-note.txt'
 import { buildTool, type ToolDef } from '../../Tool.js'
@@ -14,7 +14,7 @@ import { buildTool, type ToolDef } from '../../Tool.js'
 export const FEEDBACK_NOTE_TOOL_NAME = FEEDBACK_NOTE_TOOL_ID
 
 type InputSchema = typeof FeedbackNoteInput
-type Output = { ok: false; message: string }
+type Output = { ok: boolean; message: string }
 
 export const FeedbackNoteTool = buildTool({
   name: FEEDBACK_NOTE_TOOL_ID,
@@ -38,7 +38,20 @@ export const FeedbackNoteTool = buildTool({
   renderToolUseMessage() {
     return ''
   },
-  async call() {
-    return { data: { ok: false, message: 'This tool is not available in this version.' } }
+  async call(input, context) {
+    // The runtime tool saves the note on this device; nothing is sent.
+    const sessionID = String(context.agentId ?? 'tui')
+    const tool = await RuntimeFeedbackNoteTool.init()
+    const out = await tool.execute(input, {
+      sessionID,
+      messageID: sessionID,
+      agent: 'gizzi',
+      abort: context.abortController.signal,
+      extra: {},
+      messages: [],
+      metadata() {},
+      async ask() {},
+    })
+    return { data: { ok: out.metadata.ok !== false, message: out.output } }
   },
 } satisfies ToolDef<InputSchema, Output>)

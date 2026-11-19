@@ -59,6 +59,10 @@ enum AgentChatEvent: Decodable, Sendable {
     /// `error` comes from `metadata.error` (v1_routes.rs:267-309).
     case finish(Finish)
 
+    /// `{"type":"session_status","status":{"type":"busy","phase","note"}}`:
+    /// the run's one-line status. `busy == false` (idle) clears it.
+    case sessionStatus(SessionStatus)
+
     /// Non-terminal error (`{"type":"error"}` or `chunk_type:"error"`).
     /// Note: the web surfaces `chunk_type:"error"` chunks as plain message
     /// text via its blanket `onChunk` call; we map them here instead (see
@@ -125,6 +129,17 @@ enum AgentChatEvent: Decodable, Sendable {
         let toolCallId: String
         let toolName: String
         var detail: ToolDetail? = nil
+    }
+
+    struct SessionStatus: Sendable, Equatable {
+        var busy: Bool
+        var phase: String? = nil
+        var note: String? = nil
+        /// "phase - note", or nil when neither is set.
+        var line: String? {
+            let text = [phase, note].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " \u{2014} ")
+            return text.isEmpty ? nil : text
+        }
     }
 
     struct ToolResult: Sendable {
@@ -317,9 +332,17 @@ enum AgentChatEvent: Decodable, Sendable {
             let gap = GapToolMetadata.isGapTool(toolName)
                 ? ((try? container.decodeIfPresent(GapToolMetadata.self, forKey: .metadata)) ?? nil)
                 : nil
+            // `metadata.label`: the model's own short title for this call.
+            struct LabelMeta: Decodable { let label: String? }
+            let label = ((try? container.decodeIfPresent(LabelMeta.self, forKey: .metadata)) ?? nil)?.label?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             var detail: ToolDetail? = nil
             if userMessage != nil || automation != nil || lookupCard != nil || gap != nil {
                 detail = ToolDetail(userMessage: userMessage, automation: automation, lookupCard: lookupCard, gap: gap)
+            }
+            if let label, !label.isEmpty {
+                detail = detail ?? ToolDetail()
+                detail?.title = label
             }
             if Self.resultCardTools.contains(toolName),
                let result = (try? container.decodeIfPresent(String.self, forKey: .result)) ?? nil {
@@ -350,6 +373,15 @@ enum AgentChatEvent: Decodable, Sendable {
                 toolCallId: try container.decodeIfPresent(String.self, forKey: .toolCallId) ?? "",
                 toolName: try container.decodeIfPresent(String.self, forKey: .toolName),
                 error: try container.decodeIfPresent(String.self, forKey: .error) ?? "Tool execution failed"
+            ))
+
+        case "session_status":
+            struct StatusBody: Decodable { let type: String?; let phase: String?; let note: String? }
+            let body = (try? container.decodeIfPresent(StatusBody.self, forKey: .status)) ?? nil
+            self = .sessionStatus(SessionStatus(
+                busy: body?.type == "busy",
+                phase: body?.phase,
+                note: body?.note
             ))
 
         case "finish":
@@ -789,6 +821,9 @@ struct GapToolMetadata: Decodable, Equatable, Sendable {
     var at: Double? = nil
     /// feedback_note.
     var noteId: String? = nil
+    /// feedback_note: the one-line summary and when it was saved (ms).
+    var summary: String? = nil
+    var createdAt: Double? = nil
     /// user_location.
     var precision: String? = nil
     var status: String? = nil
@@ -809,7 +844,8 @@ struct GapToolMetadata: Decodable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case ok, action, path, branch, base, result, reason, kind, verdict, reasons, tier
         case pr, url, comments, phase, note, at, precision, status, city, region, country
-        case latitude, longitude, accuracy, language, speed, ended
+        case latitude, longitude, accuracy, language, speed, ended, summary
+        case createdAt = "created_at"
         case createdBy = "created_by"
         case replyId = "reply_id"
         case noteId = "note_id"
@@ -844,6 +880,8 @@ struct GapToolMetadata: Decodable, Equatable, Sendable {
         note = opt(String.self, .note)
         at = opt(Double.self, .at)
         noteId = opt(String.self, .noteId)
+        summary = opt(String.self, .summary)
+        createdAt = opt(Double.self, .createdAt)
         precision = opt(String.self, .precision)
         status = opt(String.self, .status)
         city = opt(String.self, .city)

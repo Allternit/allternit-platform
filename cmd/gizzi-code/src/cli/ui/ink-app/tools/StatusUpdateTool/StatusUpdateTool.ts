@@ -6,7 +6,7 @@
  * registers this adapter; G4-5 (PR8b) builds it out in this folder and never
  * edits tools.ts.
  */
-import { available } from '@/runtime/tools/builtins/status-update'
+import { available, StatusUpdateTool as RuntimeStatusUpdateTool } from '@/runtime/tools/builtins/status-update'
 import { STATUS_UPDATE_TOOL_ID, StatusUpdateInput } from '@/runtime/primitives/gap-types'
 import DESCRIPTION_TXT from '@/runtime/tools/builtins/status-update.txt'
 import { buildTool, type ToolDef } from '../../Tool.js'
@@ -14,7 +14,7 @@ import { buildTool, type ToolDef } from '../../Tool.js'
 export const STATUS_UPDATE_TOOL_NAME = STATUS_UPDATE_TOOL_ID
 
 type InputSchema = typeof StatusUpdateInput
-type Output = { ok: false; message: string }
+type Output = { ok: boolean; message: string; phase?: string; note?: string }
 
 export const StatusUpdateTool = buildTool({
   name: STATUS_UPDATE_TOOL_ID,
@@ -35,10 +35,24 @@ export const StatusUpdateTool = buildTool({
   mapToolResultToToolResultBlockParam(output, toolUseID) {
     return { tool_use_id: toolUseID, type: 'tool_result', content: output.message }
   },
-  renderToolUseMessage() {
-    return ''
+  renderToolUseMessage(input: { phase?: string; note?: string }) {
+    // Dim one-liner in the transcript: "▸ <phase>: <note>".
+    return input.phase ? `▸ ${input.phase}${input.note ? `: ${input.note}` : ''}` : ''
   },
-  async call() {
-    return { data: { ok: false, message: 'This tool is not available in this version.' } }
+  async call(input, context) {
+    // The runtime tool publishes session.status with the phase and note.
+    const sessionID = String(context.agentId ?? 'tui')
+    const tool = await RuntimeStatusUpdateTool.init()
+    const out = await tool.execute(input, {
+      sessionID,
+      messageID: sessionID,
+      agent: 'gizzi',
+      abort: context.abortController.signal,
+      extra: {},
+      messages: [],
+      metadata() {},
+      async ask() {},
+    })
+    return { data: { ok: true, message: out.output, phase: out.metadata.phase, note: out.metadata.note } }
   },
 } satisfies ToolDef<InputSchema, Output>)

@@ -1241,9 +1241,16 @@ fn tool_frames_for_part(
     let status = part.pointer("/state/status").and_then(|v| v.as_str()).unwrap_or("");
     let tool_name = part.get("tool").and_then(|v| v.as_str()).unwrap_or("tool");
     let settled = status == "completed" || status == "error";
+    // G4 label: the tool part's `metadata.label` (stripped from the args by
+    // Tool.define, saved on the part), passed through unchanged on every frame.
+    let label = part
+        .pointer("/metadata/label")
+        .or_else(|| part.pointer("/state/metadata/label"))
+        .filter(|v| v.is_string())
+        .cloned();
     let mut frames = Vec::new();
     if !sent.contains_key(call_id) && (settled || status == "pending" || status == "running") {
-        frames.push(json!({
+        let mut start = json!({
             "type": "content_block_start",
             "messageId": msg_id,
             "content_block": {
@@ -1252,7 +1259,12 @@ fn tool_frames_for_part(
                 "name": tool_name,
                 "input": part.pointer("/state/input").cloned().unwrap_or_else(|| json!({})),
             },
-        }));
+        });
+        if let Some(label) = &label {
+            start["label"] = label.clone();
+            start["content_block"]["label"] = label.clone();
+        }
+        frames.push(start);
         sent.insert(call_id.to_string(), ToolFrameState::Started);
     }
     if settled {
@@ -1274,15 +1286,22 @@ fn tool_frames_for_part(
                     frame["metadata"] = meta.clone();
                 }
             }
+            if let Some(label) = &label {
+                frame["label"] = label.clone();
+            }
             frame
         } else {
-            json!({
+            let mut frame = json!({
                 "type": "tool_error",
                 "messageId": msg_id,
                 "toolCallId": call_id,
                 "toolName": tool_name,
                 "error": part.pointer("/state/error").and_then(|v| v.as_str()).unwrap_or("Tool execution failed"),
-            })
+            });
+            if let Some(label) = &label {
+                frame["label"] = label.clone();
+            }
+            frame
         });
         sent.insert(call_id.to_string(), ToolFrameState::Ended);
     }
@@ -2750,6 +2769,16 @@ async fn agent_chat_bridge(
                             .and_then(|s| s.get("type"))
                             .and_then(|t| t.as_str())
                             .unwrap_or("");
+
+                        // G4: status_update's `phase` + `note` ride the status
+                        // object; forward it whole so they pass unchanged.
+                        if let Some(status) = props.get("status").filter(|s| s.get("phase").is_some() || s.get("note").is_some()) {
+                            yield Ok(sse_frame(trace_cursor).data(json!({
+                                "type": "session_status",
+                                "messageId": msg_id,
+                                "status": status,
+                            }).to_string()));
+                        }
 
                         if status_type == "busy" {
                             was_busy = true;

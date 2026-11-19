@@ -13,6 +13,7 @@
  * the model to get a place from the user, before any permission or fetch.
  */
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { Clock } from "@/runtime/primitives/clock"
 import { LOOKUP_KINDS, LookupError, isLocalLookup, lookup, placeOrHere, type ClientLocation, type LookupCard, type LookupKind } from "@/runtime/primitives/lookup"
@@ -21,6 +22,7 @@ import DESCRIPTION from "@/runtime/tools/builtins/lookup.txt"
 export type LookupToolMetadata = { kind: LookupKind; card?: LookupCard; credit?: string; error?: string }
 
 export const LOOKUP_PARAMETERS = z.object({
+  ...LabelField,
   kind: z.enum(LOOKUP_KINDS).describe("What to look up: weather, time, convert, link, places or images"),
   query: z.string().min(1).max(500).describe("The place, search, URL or moment, depending on kind"),
   place: z.string().max(200).optional().describe("Where: the place for weather, or where to search for places"),

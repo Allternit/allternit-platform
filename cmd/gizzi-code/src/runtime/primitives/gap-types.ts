@@ -234,6 +234,10 @@ export const FeedbackNoteMetadata = z.object({
   /** Local note id; nothing leaves the device until the person sends it. */
   note_id: z.string().optional(),
   kind: z.enum(["bug", "confusion", "missing", "other"]).optional(),
+  /** One-line summary for the card and the Diagnostics list. */
+  summary: z.string().optional(),
+  /** Epoch milliseconds. */
+  created_at: z.number().optional(),
 })
 export type FeedbackNoteMetadata = z.infer<typeof FeedbackNoteMetadata>
 

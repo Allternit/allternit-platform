@@ -4,6 +4,7 @@ import type { Agent } from "@/runtime/loop/agent"
 import type { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { Truncate } from "@/runtime/tools/builtins/truncation"
 import { ToolValidationRetry } from "@/runtime/tools/validation-retry"
+import { LabelField, ToolCallLabel } from "@/runtime/primitives/gap-types"
 
 export namespace Tool {
   interface Metadata {
@@ -65,7 +66,16 @@ export namespace Tool {
       init: async (initCtx) => {
         const toolInfo = init instanceof Function ? await init(initCtx) : init
         const execute = toolInfo.execute
-        toolInfo.execute = async (args, ctx) => {
+        const labelled = takesLabel(toolInfo.parameters)
+        toolInfo.execute = async (rawArgs, ctx) => {
+          // PR8a: `label` is for the person watching, not the tool. Take it off
+          // before validation and execute; a bad label is dropped, never fatal.
+          const { args, label } = labelled ? splitLabel(rawArgs) : { args: rawArgs, label: undefined }
+          if (label) {
+            const report = ctx.metadata.bind(ctx)
+            ctx = { ...ctx, metadata: (input) => report({ ...input, metadata: { ...input.metadata, label } as any }) }
+            ctx.metadata({})
+          }
           try {
             toolInfo.parameters.parse(args)
           } catch (error) {
@@ -92,7 +102,8 @@ export namespace Tool {
             )
           }
           ToolValidationRetry.recordSuccess(ctx.sessionID, id)
-          const result = await execute(args, ctx)
+          const run = await execute(args, ctx)
+          const result = label ? { ...run, metadata: { ...run.metadata, label } } : run
           // skip truncation for tools that handle it themselves
           if (result.metadata.truncated !== undefined) {
             return result
@@ -111,6 +122,19 @@ export namespace Tool {
         return toolInfo
       },
     }
+  }
+
+  /** True when the schema spreads `LabelField` (checked by identity, so a tool's own `label` field is left alone). */
+  function takesLabel(parameters: z.ZodType): boolean {
+    return parameters instanceof z.ZodObject && (parameters.shape as Record<string, unknown>).label === LabelField.label
+  }
+
+  /** Split `label` off a call's args; returns it only when it passes `ToolCallLabel`. */
+  function splitLabel<A>(raw: A): { args: A; label: string | undefined } {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || !("label" in raw)) return { args: raw, label: undefined }
+    const { label, ...rest } = raw as Record<string, unknown>
+    const parsed = ToolCallLabel.safeParse(label)
+    return { args: rest as A, label: parsed.success ? parsed.data : undefined }
   }
 }
 

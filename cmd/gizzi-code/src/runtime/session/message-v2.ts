@@ -299,6 +299,18 @@ export namespace MessageV2 {
   })
   export type ToolPart = z.infer<typeof ToolPart>
 
+  /**
+   * PR8a: the call's label (3 to 8 words for the activity row). Tool.define
+   * saves it as `state.metadata.label`; before that lands, the model's own
+   * `input.label` is used.
+   */
+  export function toolLabel(part: Pick<ToolPart, "state">): string | undefined {
+    const state = part.state
+    const saved = "metadata" in state ? state.metadata?.label : undefined
+    const label = saved ?? state.input?.label
+    return typeof label === "string" && label.trim() ? label.trim() : undefined
+  }
+
   const Base = z.object({
     id: z.string(),
     sessionID: z.string(),

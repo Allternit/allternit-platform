@@ -180,7 +180,22 @@ enum ToolDescriber {
         return ["delegate_task", "spawn_agent", "collab_spawn", "collab_agent_spawn"].contains(raw)
     }
 
+    /// The call's `label` input (a computer tool's `step`) names what it does for the person watching, so it wins over the generic verb. Agent steps keep their subagent title.
     static func describe(_ call: ToolCallRecord) -> ToolDescription {
+        var base = describeBase(call)
+        guard !isAgentTool(call.toolName) else { return base }
+        let isComputer = ["computer", "computerv2", "browser"].contains(normalized(call.toolName))
+        let keys = isComputer ? ["step", "label"] : ["label"]
+        for key in keys {
+            if let t = call.input[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+                base.verb = firstLine(t)
+                break
+            }
+        }
+        return base
+    }
+
+    private static func describeBase(_ call: ToolCallRecord) -> ToolDescription {
         let running = call.state == .running
         let name = normalized(call.toolName)
         let inp = call.input

@@ -15,3 +15,4 @@ The result is JSON: `exit_code`, `stdout`, `stderr`, `files` (what was saved to 
 
 Print concise results (e.g. `df.describe().to_markdown()` is unavailable without tabulate; use `df.to_string()` or build a markdown table yourself). If the script fails, read stderr, fix the code and call again.
 For long results, summarize in the reply and save the full data to `out/`. Don't dump it.
+label: optional, 3-8 words saying what this call does.
