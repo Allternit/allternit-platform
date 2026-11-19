@@ -2699,7 +2699,7 @@
       "label": "Sign-in screen",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Shared dark sign-in with the offline wordmark/Gizzi/cast loop and real Clerk authentication on web, Desktop and native iPhone.",
+      "description": "Shared dark sign-in with the offline wordmark/Gizzi/cast loop and real Clerk authentication on web, Desktop, native iPhone and the native Android app (nativeapp flavor).",
       "touches": [
         "allternit-ai/src/components/auth",
         "allternit-ai/src/pages",
@@ -2709,7 +2709,8 @@
         "surface:pwa",
         "surface:desktop",
         "allternit/surfaces/allternit-mobile/ios/App/AllternitApp.swift",
-        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding/SignInStage/LoginArrivalView.swift"
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding/SignInStage/LoginArrivalView.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/onboarding"
       ],
       "decisions": [
         {
@@ -2719,6 +2720,10 @@
         {
           "on": "2026-11-02",
           "note": "Eoj approved the full wordmark assembly, Gizzi arrival, website cast joining/leaving, Gizzi spark catch and dissolve loop. Replace sign-in product-demo scenes on iOS and shared web/PWA. Ship byte-identical self-contained network-free illustration assets; keep native/web Clerk authentication and a usable static fallback."
+        },
+        {
+          "on": "2026-11-18",
+          "note": "Native Android sign-in (nativeapp flavor) plays the same shared login-arrival.html (copied into :feature:onboarding assets at build time, WebView with network and navigation blocked) above Google, GitHub and Apple buttons with logos. All three use Clerk OAuth in a Custom Tab through the allternit.com/__clerk proxy; Google leads on Android the way Apple leads on iOS."
         }
       ],
       "evidence": [

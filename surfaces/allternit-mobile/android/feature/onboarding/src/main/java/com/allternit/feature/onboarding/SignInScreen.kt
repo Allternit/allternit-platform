@@ -1,9 +1,11 @@
 package com.allternit.feature.onboarding
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,6 +37,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
@@ -43,6 +47,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -62,10 +67,12 @@ import kotlinx.coroutines.launch
 private enum class Step { Options, Email, Code }
 
 /**
- * Native sign-in, the Android twin of iOS `LoginGateView` (ios/App/AllternitApp.swift):
- * headline, Google and GitHub (Apple is iOS-only), "Continue with email" with the emailed
- * code, "Secured by Clerk" and the 18+ / Terms / Privacy line. Like iOS it is always dark;
- * the caller wraps it in `AllternitTheme(ThemeMode.Dark)`.
+ * Native sign-in, the Android twin of iOS `LoginGateView` (ios/App/AllternitApp.swift): the
+ * offline wordmark/Gizzi/cast loop ([LoginArrival]), headline, Google, GitHub and Apple with
+ * their logos (all three through Clerk OAuth in a Custom Tab; Google leads on Android the way
+ * Apple leads on iOS), "Continue with email" with the emailed code, "Secured by clerk" and the
+ * 18+ / Terms / Privacy line. Like iOS it is always dark; the caller wraps it in
+ * `AllternitTheme(ThemeMode.Dark)`.
  *
  * Test ids (maestro/ids.md): `loginHeadline`, `loginContinueEmail`, `loginSkipAuth`.
  * [onSkipAuth] is non-null only in debug builds, as on iOS.
@@ -115,9 +122,10 @@ fun SignInScreen(
                 .widthIn(max = 480.dp)
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 24.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            LoginArrival(paused = step != Step.Options || busy != null)
             Text(
                 text = "Your bots.\nYour workspace.",
                 color = c.textPrimary,
@@ -128,7 +136,6 @@ fun SignInScreen(
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 48.dp)
                     .semantics { heading() }
                     .testTag("loginHeadline"),
             )
@@ -142,12 +149,15 @@ fun SignInScreen(
 
             when (step) {
                 Step.Options -> {
-                    // Google first, then GitHub (iOS sorts Google ahead of the web's order).
-                    SocialButton("Continue with Google", busy == "google", enabled = busy == null) {
+                    // Google, GitHub, Apple: Google leads on Android the way Apple leads on iOS.
+                    SocialButton("Continue with Google", R.drawable.logo_google, tint = false, busy == "google", enabled = busy == null) {
                         run("google", { AllternitAuth.signInWithOAuth(OAuthProvider.GOOGLE) })
                     }
-                    SocialButton("Continue with GitHub", busy == "github", enabled = busy == null) {
+                    SocialButton("Continue with GitHub", R.drawable.logo_github, tint = true, busy == "github", enabled = busy == null) {
                         run("github", { AllternitAuth.signInWithOAuth(OAuthProvider.GITHUB) })
+                    }
+                    SocialButton("Continue with Apple", R.drawable.logo_apple, tint = true, busy == "apple", enabled = busy == null) {
+                        run("apple", { AllternitAuth.signInWithOAuth(OAuthProvider.APPLE) })
                     }
                     ErrorLine(error)
                     OutlinedButton(
@@ -156,8 +166,8 @@ fun SignInScreen(
                         shape = RoundedCornerShape(AllternitRadii.MD),
                         border = BorderStroke(1.dp, c.borderStrong),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = c.textPrimary),
-                        modifier = Modifier.fillMaxWidth().height(44.dp).padding(top = 4.dp).testTag("loginContinueEmail"),
-                    ) { Text("Continue with email", fontSize = 14.sp) }
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(44.dp).testTag("loginContinueEmail"),
+                    ) { Text("Continue with email", fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
                 }
 
                 Step.Email -> {
@@ -209,12 +219,21 @@ fun SignInScreen(
                 }
             }
 
+            // "Secured by clerk" (Clerk's footer on the web; iOS securedBy).
             Text(
-                text = "Secured by Clerk",
-                color = c.textTertiary,
-                fontSize = 11.sp,
+                text = buildAnnotatedString {
+                    append("Secured by ")
+                    pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                    append("clerk")
+                    pop()
+                },
+                color = c.textSecondary,
+                fontSize = 13.sp,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 20.dp)
+                    .semantics { contentDescription = "Secured by Clerk" },
             )
 
             if (onSkipAuth != null) {
@@ -229,22 +248,36 @@ fun SignInScreen(
     }
 }
 
+/** iOS SignInSocialButton: the raised outline button with the provider's 18 dp logo. */
 @Composable
-private fun SocialButton(title: String, busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun SocialButton(title: String, logo: Int, tint: Boolean, busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     Button(
         onClick = onClick,
         enabled = enabled,
         shape = RoundedCornerShape(AllternitRadii.MD),
+        border = BorderStroke(1.dp, c.borderStrong),
         colors = ButtonDefaults.buttonColors(
             containerColor = c.bgTertiary,
             contentColor = c.textPrimary,
             disabledContainerColor = c.bgTertiary,
             disabledContentColor = c.textTertiary,
         ),
-        modifier = Modifier.fillMaxWidth().height(44.dp),
+        modifier = Modifier.fillMaxWidth().height(44.dp).semantics { contentDescription = title },
     ) {
-        if (busy) Spinner() else Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (busy) {
+                Spinner()
+            } else {
+                Image(
+                    painter = painterResource(logo),
+                    contentDescription = null,
+                    colorFilter = if (tint) ColorFilter.tint(c.textPrimary) else null,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 
