@@ -76,7 +76,7 @@ function parseReference(query: string | undefined, ctx: LookupContext): Referenc
   const q = (query ?? "").trim()
   if (!q || /^now$/i.test(q)) return { at: now, label: "now" }
   // Optional leading date, a time, then an optional place or zone.
-  const m = q.match(/^(?:(\d{4})-(\d{2})-(\d{2})[ T,]*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*(Z|UTC))?\s*(?:in|at)?\s*(.*)$/i)
+  const m = q.match(/^(?:(\d{4})-(\d{2})-(\d{2})[ T,]*)?(\d{1,2})(?::(\d{2}))?\s*(?:(am|pm)\b)?(?:\s*(Z|UTC)\b)?\s*(?:(?:in|at)\b)?\s*(.*)$/i)
   if (!m || (!m[6] && !m[5] && !m[1])) throw new LookupError("time", `Could not read "${q}" as a time. Use "now", "9am Chicago", or "2026-03-08 14:30 America/New_York".`)
   let hour = Number(m[4])
   const minute = m[5] ? Number(m[5]) : 0
@@ -86,8 +86,8 @@ function parseReference(query: string | undefined, ctx: LookupContext): Referenc
     hour = (hour % 12) + (mer === "pm" ? 12 : 0)
   }
   if (hour > 23 || minute > 59) throw new LookupError("time", `"${q}" is not a valid time of day.`)
-  const place = m[7] ? m[7].trim() : ""
-  const zone = m[8] ? "UTC" : place ? zoneFor(place) : (ctx.timeZone && Clock.validZone(ctx.timeZone)) || undefined
+  const place = m[8] ? m[8].trim() : ""
+  const zone = m[7] ? "UTC" : place ? zoneFor(place) : (ctx.timeZone && Clock.validZone(ctx.timeZone)) || undefined
   if (place && !zone) throw new LookupError("time", `"${place}" is not a zone this lookup knows. Use an IANA name such as America/Chicago.`)
   const base = zone ?? "UTC"
   let y: number, mo: number, d: number

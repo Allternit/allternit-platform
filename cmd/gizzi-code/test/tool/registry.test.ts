@@ -228,7 +228,7 @@ describe("tool.registry", () => {
   })
 
   test("Wave B tools reach every client; select_tools is gone (tool_search replaces it)", async () => {
-    const botOnly = new Set<string>([...THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
+    const botOnly = new Set<string>([...ToolRegistry.BOT_THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
     const prev = process.env.GIZZI_CLIENT
     await using tmp = await tmpdir()
     try {

@@ -208,7 +208,7 @@ describe("lookup: the shared location for \"here\"", () => {
     const tool = await LookupTool.init()
     for (const params of [
       { kind: "weather", query: "here" },
-      { kind: "weather", query: "", place: "near me" },
+      { kind: "weather", query: "weather", place: "near me" },
       { kind: "places", query: "coffee", place: "near me" },
     ] as const) {
       const asks: any[] = []
