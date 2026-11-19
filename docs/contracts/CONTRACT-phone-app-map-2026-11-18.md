@@ -374,3 +374,14 @@ From step 4 (PR #2608):
 - `stale_edges` compares each edge with the newest `app_version` the map has seen. The summary route has no live phone to read.
 - The guard decision is `Decision::Refused { effect, reason: "explore_denies" }` (not `Deny`). It is returned before owner, grant and old-approval checks, so a standing grant does not let Explore through either. JSON: `{"decision":"denied","reason":"explore_denies"}`.
 - Writes are atomic (unique 0600 temp file, fsync, rename) under one process-wide lock. `phone-skills/` itself is not atomic today.
+
+From step 5 (PR #2611):
+- Rich tree (vision `auto` skips the screenshot) = at least 5 nodes with a label or resource id AND at least one of them clickable. No `nodes` = poor. iPhone OCR reads are never rich.
+- Skill replay never sends `with_version`; tasks send it on the first read only.
+- `go_to` on an unmatched screen is rejected with `invalid action: no map`. An unknown screen id is rejected without touching the phone.
+- A screen that changes under a hold during `go_to` counts as a fallback with no `record_fail`. After a landing mismatch, `go_to` records where the tap actually led.
+- The guard takes `app` from every read that names a foreground, not only after `open_app`.
+- Step entries gain `map_steps`, `foreground` and `note`. The web task report also carries the five report fields.
+- The fingerprint title skips editable nodes, so typed text never enters a hash or a screen name (Android). iPhone OCR bands can still show typed text: known risk.
+- Platform rule (`phone_map::platform_for`): Desktop `phone.devices` entry first (one call per run); else serial prefix `usb:` = iOS, `link:` / `app:` = unknown (maps off), anything else = Android.
+- `vision` exists on the allternit-api task request only (`TaskIn.vision`, bad value = 400 `invalid_args`). Step 7 adds it to MCP `phone_task` / `TaskBody`; step 8 to Desktop `phone.task`.
