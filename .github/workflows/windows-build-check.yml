@@ -1,0 +1,79 @@
+name: Windows build check
+
+# The build train compiles and tests on the Mac only (Windows is never
+# cross-compiled there), so Windows-only breakage used to surface first in
+# release-desktop.yml, one error per ~70 min run (train 20261118-1646 took four
+# runs: lopdf unix-only, files-win never compiled, the helper exe path, a runner
+# image's MSVC vs zig clang). This compiles every Rust binary the Windows Desktop
+# build ships, on the same runner image, in about 20-30 min. `train green` starts
+# it on the train branch and `train ship` refuses until it passes.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows build check
+    # Same image as release-desktop.yml build-windows (see the pin comment there).
+    runs-on: windows-2025
+    timeout-minutes: 75
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install protoc
+        shell: pwsh
+        run: choco install protoc --yes --no-progress
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-build-check
+
+      - name: Install Zig 0.15.2
+        shell: bash
+        run: |
+          curl -fsSL https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip -o "$RUNNER_TEMP/zig.zip"
+          echo "3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c  $RUNNER_TEMP/zig.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/zig.zip" -d "$RUNNER_TEMP"
+          echo "ZIG=$RUNNER_TEMP/zig-x86_64-windows-0.15.2/zig.exe" >> "$GITHUB_ENV"
+          echo "ZIG_GLOBAL_CACHE_DIR=$RUNNER_TEMP/zig-global-cache" >> "$GITHUB_ENV"
+
+      - name: allternit-api
+        shell: bash
+        run: cargo check --target x86_64-pc-windows-msvc -p allternit-api --bins
+
+      - name: allternit-factory (runs the zig build of libghostty-vt)
+        shell: bash
+        run: cargo check --target x86_64-pc-windows-msvc -p allternit-factory
+
+      - name: voice-service and allternit-tts
+        shell: bash
+        run: |
+          cargo check --target x86_64-pc-windows-msvc -p voice-service
+          cargo check --target x86_64-pc-windows-msvc -p allternit-tts
+
+      - name: local-engine
+        shell: bash
+        run: cargo check --target x86_64-pc-windows-msvc --manifest-path services/local-engine/Cargo.toml
+
+      - name: Files drive helper (unit tests, release build, exe where the release copies it from)
+        shell: bash
+        run: |
+          cargo test --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml --lib --bins
+          cargo build --release --target x86_64-pc-windows-msvc --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml
+          test -f target/x86_64-pc-windows-msvc/release/allternit-files-win.exe
