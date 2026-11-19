@@ -475,19 +475,22 @@
         {
           "target": "deb",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         },
         {
           "target": "rpm",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         },
         {
           "target": "AppImage",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         }
       ],
@@ -524,7 +527,7 @@
           "to": "decision-runtime/"
         },
         {
-          "from": "resources/computer-use/driver-python/linux-x64/",
+          "from": "resources/computer-use/driver-python/linux-${arch}/",
           "to": "computer-use/driver/python/"
         },
         {
@@ -548,7 +551,7 @@
           "to": "computer-use/acu/"
         },
         {
-          "from": "resources/computer-use/acu-site/linux-x64/",
+          "from": "resources/computer-use/acu-site/linux-${arch}/",
           "to": "computer-use/acu/site-packages/"
         }
       ]

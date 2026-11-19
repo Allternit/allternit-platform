@@ -22,7 +22,13 @@
 // (linux-unpacked), its top-level `allternit` ELF is the shell; --shell <path>
 // (relative to --dir, or absolute) names it explicitly and fails if it is missing.
 //
-// Flags: --dir <path> [--shell <path>] [--floor 2.27] [--json] [--allowlist <file>] [--glibcxx-floor 3.4.28]
+// Architecture: the verneed walk is the same for every ELF64 little-endian machine, so
+// x86-64 (e_machine 62) and aarch64 (e_machine 183) packages are checked the same way.
+// Every row shows its machine. --arch x64|arm64 also fails any ELF built for another
+// machine (an x64 sidecar staged into the arm64 package would install and then fail
+// with "Exec format error"); wrong-arch files can never be allowlisted.
+//
+// Flags: --dir <path> [--shell <path>] [--arch x64|arm64] [--floor 2.27] [--json] [--allowlist <file>] [--glibcxx-floor 3.4.28]
 //        --print-floor   print the floor from build-linux-sidecars.sh and exit
 // Allowlist (default scripts/elf-floor-allowlist.json): [{"path":"suffix/of/file","reason":"why"}]
 import fs from 'node:fs';
@@ -42,12 +48,15 @@ const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : d; };
 if (args.includes('--print-floor')) { console.log(readFloorConst()); process.exit(0); }
 const dir = opt('--dir');
-if (!dir) { console.error('usage: check-elf-floor.mjs --dir <path> [--shell <path>] [--floor 2.27] [--json] [--allowlist f] [--glibcxx-floor 3.4.28]'); process.exit(2); }
+if (!dir) { console.error('usage: check-elf-floor.mjs --dir <path> [--shell <path>] [--arch x64|arm64] [--floor 2.27] [--json] [--allowlist f] [--glibcxx-floor 3.4.28]'); process.exit(2); }
 const floor = opt('--floor', readFloorConst());
 const cxxFloor = opt('--glibcxx-floor', null);
 const asJson = args.includes('--json');
 const allowFile = opt('--allowlist', path.join(here, 'elf-floor-allowlist.json'));
 const shellOpt = opt('--shell', null);
+const MACHINES = { 3: 'x86', 40: 'arm', 62: 'x64', 183: 'arm64', 243: 'riscv64' };
+const archOpt = opt('--arch', null);
+if (archOpt && !['x64', 'arm64'].includes(archOpt)) { console.error(`--arch must be x64 or arm64 (got ${archOpt})`); process.exit(2); }
 const shellPath = shellOpt ? path.resolve(dir, shellOpt) : path.join(dir, 'allternit');
 
 let allow = [];
@@ -131,26 +140,30 @@ for (const p of files) {
     else if ((m = name.match(/^GLIBCXX_(\d+(?:\.\d+)+)$/))) cxx.push(m[1]);
   }
   const g = maxOf(glibc), x = maxOf(cxx);
+  const em = buf.length >= 0x14 ? (buf[5] === 2 ? buf.readUInt16BE(0x12) : buf.readUInt16LE(0x12)) : -1;
+  const machine = MACHINES[em] || `e_machine ${em}`;
   // The shell is never allowlisted: it defines the floor.
   const al = isShell ? undefined : allow.find((e) => rel === e.path || rel.endsWith(e.path));
   let status = 'ok';
-  if (g && cmp(g, floor) > 0) status = al ? 'allowed' : 'FAIL';
+  if (archOpt && machine !== archOpt) status = 'WRONG-ARCH';
+  else if (g && cmp(g, floor) > 0) status = al ? 'allowed' : 'FAIL';
   else if (cxxFloor && x && cmp(x, cxxFloor) > 0) status = al ? 'allowed' : 'FAIL';
-  const row = { file: rel, glibc: g, glibcxx: x, method, status, reason: al ? al.reason : isShell ? 'Electron shell' : undefined };
+  const row = { file: rel, machine, glibc: g, glibcxx: x, method, status, reason: status === 'WRONG-ARCH' ? `built for ${machine}, package is ${archOpt}` : al ? al.reason : isShell ? 'Electron shell' : undefined };
   if (isShell) { row.shell = true; shellRow = row; }
   rows.push(row);
 }
 rows.sort((a, b) => a.file.localeCompare(b.file));
-const fails = rows.filter((r) => r.status === 'FAIL');
+const fails = rows.filter((r) => r.status === 'FAIL' || r.status === 'WRONG-ARCH');
 
 if (asJson) {
-  console.log(JSON.stringify({ floor, dir, shell: shellRow ? shellRow.file : null, checked: rows.length, failed: fails.length, rows }, null, 2));
+  console.log(JSON.stringify({ floor, arch: archOpt, dir, shell: shellRow ? shellRow.file : null, checked: rows.length, failed: fails.length, rows }, null, 2));
 } else {
   const w = Math.min(70, Math.max(10, ...rows.map((r) => r.file.length)));
-  console.log(`ELF floor check: GLIBC <= ${floor}${cxxFloor ? `, GLIBCXX <= ${cxxFloor}` : ''}  (${rows.length} ELF files in ${dir})`);
-  console.log(`${'FILE'.padEnd(w)}  GLIBC   GLIBCXX   METHOD   STATUS`);
-  for (const r of rows) console.log(`${r.file.slice(-w).padEnd(w)}  ${(r.glibc || '-').padEnd(6)}  ${(r.glibcxx || '-').padEnd(8)}  ${r.method.padEnd(7)}  ${r.status}${r.reason ? ' (' + r.reason + ')' : ''}`);
+  console.log(`ELF floor check: GLIBC <= ${floor}${cxxFloor ? `, GLIBCXX <= ${cxxFloor}` : ''}${archOpt ? `, arch ${archOpt}` : ''}  (${rows.length} ELF files in ${dir})`);
+  console.log(`${'FILE'.padEnd(w)}  ARCH    GLIBC   GLIBCXX   METHOD   STATUS`);
+  for (const r of rows) console.log(`${r.file.slice(-w).padEnd(w)}  ${r.machine.padEnd(6)}  ${(r.glibc || '-').padEnd(6)}  ${(r.glibcxx || '-').padEnd(8)}  ${r.method.padEnd(7)}  ${r.status}${r.reason ? ' (' + r.reason + ')' : ''}`);
   console.log(shellRow ? `Electron shell: ${shellRow.file} needs GLIBC ${shellRow.glibc || '-'} (${shellRow.status})` : 'Electron shell: not in --dir (pass --dir <linux-unpacked> or --shell <path> to check it)');
-  console.log(fails.length ? `\nFAIL: ${fails.length} ELF file(s) need GLIBC above ${floor}` : `\nPASS: every ELF needs GLIBC <= ${floor}`);
+  const wrong = fails.filter((r) => r.status === 'WRONG-ARCH').length;
+  console.log(fails.length ? `\nFAIL: ${fails.length - wrong} ELF file(s) need GLIBC above ${floor}${wrong ? `, ${wrong} built for the wrong arch` : ''}` : `\nPASS: every ELF needs GLIBC <= ${floor}${archOpt ? ` and is ${archOpt}` : ''}`);
 }
 process.exit(fails.length ? 1 : 0);
