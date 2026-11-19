@@ -710,7 +710,9 @@ jobs:
         run: |
           cargo build --release --target x86_64-pc-windows-msvc --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml
           mkdir -p surfaces/allternit-desktop/resources/files-win/icons
-          cp surfaces/allternit-desktop/native/files-win/target/x86_64-pc-windows-msvc/release/allternit-files-win.exe \
+          # .cargo/config.toml sets target-dir = "target" (repo root), so the exe lands
+          # in the root target/, not native/files-win/target/ (release run 44535241075).
+          cp target/x86_64-pc-windows-msvc/release/allternit-files-win.exe \
              surfaces/allternit-desktop/resources/files-win/allternit-files-win.exe
           cp surfaces/allternit-desktop/native/files-win/icons/*.ico surfaces/allternit-desktop/resources/files-win/icons/
           ls -lh surfaces/allternit-desktop/resources/files-win surfaces/allternit-desktop/resources/files-win/icons
