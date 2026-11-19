@@ -140,11 +140,11 @@ impl UiNode {
         El { class: self.class.clone(), label: self.label.clone(), id: self.resource_id.clone() }
     }
 
-    fn area(&self) -> i64 {
+    pub(crate) fn area(&self) -> i64 {
         (self.bounds[2] - self.bounds[0]).max(0) * (self.bounds[3] - self.bounds[1]).max(0)
     }
 
-    fn inside(&self, outer: &UiNode) -> bool {
+    pub(crate) fn inside(&self, outer: &UiNode) -> bool {
         let (a, o) = (&self.bounds, &outer.bounds);
         a[0] >= o[0] && a[1] >= o[1] && a[2] <= o[2] && a[3] <= o[3]
     }
@@ -205,7 +205,7 @@ pub struct Fp {
 
 /// A resource id that changes between runs: its name is digits, ends in a
 /// separator plus digits (`item_3`), or holds a hex run of 8 or more.
-fn dynamic_id(id: &str) -> bool {
+pub(crate) fn dynamic_id(id: &str) -> bool {
     let name = id.rsplit(|c: char| c == '/' || c == ':').next().unwrap_or(id);
     let stem = name.trim_end_matches(|c: char| c.is_ascii_digit());
     if stem.len() < name.len() && (stem.is_empty() || stem.ends_with(|c: char| matches!(c, '_' | '-' | '.'))) {
@@ -1071,7 +1071,7 @@ pub fn find_screen<'a>(map: &'a AppMap, want: &str) -> Option<&'a Screen> {
 
 // ─── Routes (contract section 4) ───────────────────────────────────────────
 
-fn err(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
+pub(crate) fn err(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
     (status, Json(json!({ "ok": false, "error": code, "message": message.into() }))).into_response()
 }
 
@@ -1090,7 +1090,7 @@ fn platform_of(q: &MapQuery) -> Result<Option<Platform>, Response> {
 }
 
 /// The `:app` path value checked: 400 when malformed, 403 for a money app.
-fn app_of(app: &str) -> Result<String, Response> {
+pub(crate) fn app_of(app: &str) -> Result<String, Response> {
     file_stem(app).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid_args", e))?;
     if phone_guard::is_money_app(app) {
         return Err(err(StatusCode::FORBIDDEN, "money_app", "maps are never kept for bank, wallet or broker apps"));

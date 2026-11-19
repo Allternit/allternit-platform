@@ -672,6 +672,81 @@ pub fn record_run_completed(db: &crate::db::DbHandle, report: &Value, source: &s
     record_event(db, "phone.run.completed", run_event(report, source), format!("phone-run:{run}:completed"));
 }
 
+// ─── Active runs: the stop flag and the busy check (contract sections 4, 7) ─
+
+struct Active {
+    serial: String,
+    kind: &'static str,
+    flag: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Phone runs in flight, by run id. `POST /api/aci/stop/:id` sets the flag
+/// ([`request_stop`]); a task, skill or Explore loop checks it before each
+/// step. The same table answers "is something already running on this phone"
+/// ([`busy_on`]).
+static ACTIVE: once_cell::sync::Lazy<std::sync::Mutex<std::collections::HashMap<String, Active>>> = once_cell::sync::Lazy::new(Default::default);
+
+/// A registered run. The entry goes when this drops, whatever way the run ends.
+pub struct RunReg {
+    run_id: String,
+    flag: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl RunReg {
+    /// Register `run_id` on `serial` (`None` = the only phone). `flag` lets the
+    /// caller share its own cancel flag (tests do); otherwise a fresh one.
+    pub fn enter(run_id: &str, serial: Option<&str>, kind: &'static str, flag: Option<Arc<std::sync::atomic::AtomicBool>>) -> RunReg {
+        let flag = flag.unwrap_or_default();
+        if let Ok(mut m) = ACTIVE.lock() {
+            m.insert(run_id.to_string(), Active { serial: serial.unwrap_or_default().to_string(), kind, flag: flag.clone() });
+        }
+        RunReg { run_id: run_id.to_string(), flag }
+    }
+
+    pub fn flag(&self) -> &Arc<std::sync::atomic::AtomicBool> {
+        &self.flag
+    }
+
+    pub fn stopped(&self) -> bool {
+        self.flag.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl Drop for RunReg {
+    fn drop(&mut self) {
+        if let Ok(mut m) = ACTIVE.lock() {
+            m.remove(&self.run_id);
+        }
+    }
+}
+
+/// [`RunReg::enter`] unless a run is already active on `serial`: then
+/// `Err((run_id, kind))` of that run. Check and insert happen under one lock.
+pub fn try_enter(run_id: &str, serial: &str, kind: &'static str) -> Result<RunReg, (String, &'static str)> {
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut m = ACTIVE.lock().map_err(|_| (String::new(), "unknown"))?;
+    if let Some((id, a)) = m.iter().find(|(_, a)| a.serial == serial || a.serial.is_empty()) {
+        return Err((id.clone(), a.kind));
+    }
+    m.insert(run_id.to_string(), Active { serial: serial.to_string(), kind, flag: flag.clone() });
+    Ok(RunReg { run_id: run_id.to_string(), flag })
+}
+
+/// Ask a running phone run to stop. `false` for an unknown or finished id.
+pub fn request_stop(run_id: &str) -> bool {
+    match ACTIVE.lock() {
+        Ok(m) => m.get(run_id).map(|a| a.flag.store(true, std::sync::atomic::Ordering::SeqCst)).is_some(),
+        Err(_) => false,
+    }
+}
+
+/// The run active on `serial`, as `(run_id, kind)`. A run that named no
+/// serial (Desktop picks the only phone) counts for every serial.
+pub fn busy_on(serial: &str) -> Option<(String, &'static str)> {
+    let m = ACTIVE.lock().ok()?;
+    m.iter().find(|(_, a)| a.serial == serial || a.serial.is_empty()).map(|(id, a)| (id.clone(), a.kind))
+}
+
 // ─── Routes ────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
