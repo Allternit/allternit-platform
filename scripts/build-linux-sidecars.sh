@@ -48,7 +48,7 @@ mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 # at once: the default 1024 fds fails with ProcessFdQuotaExceeded.
 ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 
-# ── inside the bullseye container: `voice-docker` ─────────────────────────────
+# ── inside the ubuntu:20.04 container: `voice-docker` ─────────────────────────────
 if [ "${COMPONENTS[*]}" = voice-docker ]; then
   ldd --version | head -1
   [ "$(ldd --version | head -1 | grep -o '[0-9]*\.[0-9]*$')" = "$GLIBC_FLOOR" ] || { echo "container glibc is not $GLIBC_FLOOR" >&2; exit 1; }
@@ -81,6 +81,12 @@ if [ "${COMPONENTS[*]}" = voice-docker ]; then
   install -m 0755 "$CARGO_TARGET_DIR/$TARGET/release/voice-service" /out/allternit-voice-service
   install -m 0755 "$CARGO_TARGET_DIR/$TARGET/release/allternit-tts" /out/allternit-tts
   ls -lh /out/allternit-voice-service /out/allternit-tts
+  # The container runs as root; hand the outputs and target dir back to the caller
+  # (the CI runner user), or the workflow's chmod and rust-cache cleanup hit EPERM.
+  if [ -n "${HOST_UID:-}" ]; then
+    chown "$HOST_UID:$HOST_GID" /out/allternit-voice-service /out/allternit-tts
+    chown -R "$HOST_UID:$HOST_GID" "$CARGO_TARGET_DIR"
+  fi
   exit 0
 fi
 
@@ -124,7 +130,7 @@ for c in "${COMPONENTS[@]}"; do
       TD="${CARGO_TARGET_DIR:-$REPO/target}/docker"; mkdir -p "$TD"
       docker run --rm -v "$REPO":/src -v "$OUT":/out -v "$TD":/target \
         -v "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")":/build-linux-sidecars.sh:ro \
-        -e CARGO_TARGET_DIR=/target -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
+        -e CARGO_TARGET_DIR=/target -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
         -w /src ubuntu:20.04 \
         bash /build-linux-sidecars.sh /out voice-docker ;;
     *) echo "unknown component: $c" >&2; exit 2 ;;
