@@ -356,3 +356,21 @@ The task outcome line adds `map_steps`, `tokens_in + tokens_out`, `model_calls` 
 | C9 | Outcome line in Gizzi Code | 11 |
 | C10 | How the live app version is read | 2 |
 | C11 | Resolver name and signature shared with skills (`resolve`) and where the 12-edge replay cap sits | 5 |
+
+## 13. Corrections from the builds
+
+These override the sections above where they differ.
+
+From step 3 (PR #2607):
+- The helper already sent `editable`; only `checkable` was new. Before, `checked` was sent only for checkable nodes.
+- Linked `read_ui` now passes the caller's params straight to the helper `page_source` with `structured: true`. `nodes` match the `text` lines exactly, ancestors included. One call, no second `page_source`.
+- Helper `activity` stays `null` until the package has shown one real Activity window since the accessibility service started (dialogs, popups, IME and `android.widget.*` / `android.view.*` are skipped).
+
+From step 4 (PR #2608):
+- Map file has two more fields: `next_screen` (int, so ids are never reused after the cap drops a screen) and optional `name` (app label for the summary).
+- A dynamic resource id is one whose name is all digits, ends in `_`, `-` or `.` plus digits, or holds a hex run of 8 or more. Plain `button1` / `text1` stay as keys.
+- `open_app` edges are recorded only when the package before and after is the same (a relaunch). Every map belongs to one app.
+- `DELETE /phones/maps/:app` returns 403 `money_app` for a money app, the same as GET.
+- `stale_edges` compares each edge with the newest `app_version` the map has seen. The summary route has no live phone to read.
+- The guard decision is `Decision::Refused { effect, reason: "explore_denies" }` (not `Deny`). It is returned before owner, grant and old-approval checks, so a standing grant does not let Explore through either. JSON: `{"decision":"denied","reason":"explore_denies"}`.
+- Writes are atomic (unique 0600 temp file, fsync, rename) under one process-wide lock. `phone-skills/` itself is not atomic today.
