@@ -66,6 +66,8 @@ class ChatCallbacks(
     val onOpenSettings: () -> Unit,
     /** "Connect" on a connector suggestion (the shell's Connectors page). */
     val onConnectConnector: (String) -> Unit,
+    /** "Share link…" from a reply's Share menu (the host opens ThreadShareSheet). */
+    val onShareLink: () -> Unit = {},
 )
 
 /** Builds the chat's backend on the shell's shared OkHttp client and API. */
@@ -99,7 +101,8 @@ fun ChatScreen(
     val list = rememberLazyListState()
     val messages = viewModel.messages
 
-    val actions = remember(viewModel, callbacks) {
+    val hasSession = viewModel.currentSessionId != null
+    val actions = remember(viewModel, callbacks, hasSession) {
         RowActions(
             onChooseModel = callbacks.onChooseModel,
             onRetry = { id ->
@@ -116,6 +119,7 @@ fun ChatScreen(
             onSkip = { q, err -> viewModel.skipQuestion(q, err) },
             onOpenSettings = callbacks.onOpenSettings,
             onConnect = callbacks.onConnectConnector,
+            onShareLink = if (hasSession) callbacks.onShareLink else null,
         )
     }
 

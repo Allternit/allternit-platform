@@ -344,10 +344,19 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                     let (bytes, response) = try await InstanceConnection.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
                     guard (200...299).contains(http.statusCode) else {
-                        if http.statusCode == 409 {
+                        if [409, 410, 428].contains(http.statusCode) {
                             var body = ""
                             for try await line in bytes.lines where body.count < 4096 { body += line }
-                            if body.contains("\"no_brain\"") { throw AgentChatClientError.noBrain }
+                            if http.statusCode == 409, body.contains("\"no_brain\"") { throw AgentChatClientError.noBrain }
+                            // A relayed compute-gate refusal (428, or 409/410 compute_required /
+                            // free_computers_retired) is the no-computer state, not a raw error:
+                            // open the gate as APIClient.validate does and carry the gate sentence,
+                            // so isComputeGateRefusal holds for the send's error too.
+                            if http.statusCode == 428
+                                || body.range(of: #"\b(compute_required|free_computers_retired)\b"#, options: .regularExpression) != nil {
+                                await MainActor.run { ComputeStatusStore.shared.noteComputeRequired(method: "POST") }
+                                throw APIError.httpError(statusCode: http.statusCode, message: CalmCopy.computeRequired)
+                            }
                         }
                         throw APIError.httpError(statusCode: http.statusCode, message: nil)
                     }

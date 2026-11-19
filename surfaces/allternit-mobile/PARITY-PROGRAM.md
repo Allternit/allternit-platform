@@ -10,14 +10,14 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 
 | Wave | What | Rows | Plan step |
 |---|---|---|---|
-| A | Chat works | 20 | 8 |
+| A | Chat works | 19 | 8 |
 | B | First run | 5 | 7c |
 | C | Shell rest | 10 | 7c |
 | D | Projects + artifacts | 21 | 9 |
 | E | Bots | 32 | 10 |
 | F | Modes | 75 | 12–14 |
 | G | Settings | 44 | 15 |
-| H | Money + voice | 14 | 16–17 |
+| H | Money + voice | 15 | 16–17 |
 | I | System | 11 | 11, 18–19 |
 | J | Other surfaces + cutover | 0 | 20–24 |
 | | **Total** | **232** | |
@@ -41,7 +41,7 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 
 | Screen | Area | iOS path | Web path | Android | Status | Proof |
 |---|---|---|---|---|---|---|
-| AgentSelectionSheet | Chat | ios/Features/Chat/Views/AgentSelectionSheet.swift | — | — | n/a (#2614): iOS has no caller for this sheet (dead view); no Android-only screens | — |
+| AgentSelectionSheet | Chat | ios/Features/Chat/Views/AgentSelectionSheet.swift | — | — | N/A: no caller on iOS (dead code) | — |
 | AnswerCardView | Chat | ios/Features/Chat/Views/AnswerCards/AnswerCardView.swift | — | feature/chat/ChatCards.kt (AnswerCard, WritingDraftCard) | built (#2614) | — |
 | ChatErrorCardView | Chat | ios/Features/Chat/Views/ChatErrorCardView.swift | — | feature/chat/ChatCards.kt (ChatErrorCard) | built (#2614) | — |
 | ChatView | Chat | ios/Features/Chat/Views/ChatView.swift | — | feature/chat/ChatScreen.kt + feature/shell/ChatPage.kt | built (#2614) | — |
@@ -49,13 +49,12 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | ComposerPlusSheet | Chat | ios/Features/Chat/Views/ComposerPlusSheet.swift | — | feature/shell/PlusSheet.kt | built (#2614: photos, camera, files, GitHub upload on send) | — |
 | ComposerView | Chat | ios/Features/Chat/Composer/ComposerView.swift | — | feature/shell/Composer.kt | built (#2614: send, stop, edit, no-brain pick) | — |
 | ConnectSuggestCardView | Chat | ios/Features/Chat/Views/ConnectSuggestCardView.swift | — | feature/chat/ChatCards.kt (ConnectSuggestCard) | built (#2614) | — |
-| FormSurfacesView | Chat | ios/Features/Chat/Views/FormSurfacesView.swift | — | — | n/a (#2614): iOS has no caller for this sheet (dead view); no Android-only screens | — |
+| FormSurfacesView | Chat | ios/Features/Chat/Views/FormSurfacesView.swift | — | — | N/A: no caller on iOS (dead code) | — |
 | ModelPickerSheet | Chat | ios/Features/Chat/Views/ModelPickerSheet.swift | — | feature/shell/ModelPicker.kt | built (#2614: the pick drives the send) | — |
-| PermissionPrimingSheet | Chat | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | — | n/a (#2614): Android photo picker, camera intent and speech screen need no runtime permission, so there is nothing to prime | — |
 | RunCodeFilesView | Chat | ios/Features/Chat/Views/RunCodeFilesView.swift | — | feature/chat/ChatCards.kt (RunCodeFilesView, UploadFileCard) | built (#2614) | — |
 | SettingsChangeCardView | Chat | ios/Features/Chat/Views/SettingsChangeCardView.swift | — | feature/chat/ChatCards.kt (SettingsChangeCard) | built (#2614: status + Open Settings; Apply/Undo on this phone with wave G) | — |
-| SketchSheet | Chat | ios/Features/Chat/Views/SketchSheet.swift | — | — | todo | — |
-| ThreadShareSheet | Chat | ios/Features/Chat/Views/ThreadShareSheet.swift | — | — | todo | — |
+| SketchSheet | Chat | ios/Features/Chat/Views/SketchSheet.swift | — | feature/shell/SketchSheet.kt (from PlusSheet.kt) | built (#2614) | — |
+| ThreadShareSheet | Chat | ios/Features/Chat/Views/ThreadShareSheet.swift | — | feature/chat/ThreadShare.kt (chat ⋯ menu, reply Share menu) | built (#2614) | — |
 | section: chats | Chat | — | src/fabric-session/phone/phone-nav.ts (PhoneSection chats) | feature/shell/ShellScreens.kt (AllChatsScreen) | built (#2614) | — |
 | HistorySidebarView | History | ios/Features/History/Views/HistorySidebarView.swift | — | feature/shell/ShellDrawer.kt | built (#2614: Recents open the chat) | — |
 | ComputeGateView | Shared | ios/Features/Shared/ComputeGateView.swift | — | feature/chat/ComputeGate.kt (ComputeGateCard) | built (#2614) | — |
@@ -283,6 +282,7 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 
 | Screen | Area | iOS path | Web path | Android | Status | Proof |
 |---|---|---|---|---|---|---|
+| PermissionPrimingSheet | Chat | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | — | todo (wave H): priming before the RECORD_AUDIO / POST_NOTIFICATIONS system dialog | — |
 | MeetingLiveView | Calls | ios/Features/Calls/Meetings/MeetingLiveView.swift | — | — | todo | — |
 | MeetingRecapView | Calls | ios/Features/Calls/Meetings/MeetingRecapView.swift | — | — | todo | — |
 | MeetingsView | Calls | ios/Features/Calls/Meetings/MeetingsView.swift | src/fabric-session/phone/phone-nav.ts (PhoneSection meetings) | — | todo | — |

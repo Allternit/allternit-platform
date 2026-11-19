@@ -82,6 +82,7 @@ internal fun PlusSheet(
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var githubOpen by remember { mutableStateOf(false) }
     var githubUrl by remember { mutableStateOf("") }
+    var sketchOpen by remember { mutableStateOf(false) }
 
     val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
         uris.forEach { onAttach(ComposerAttachment(displayName(context, it), it.toString(), "photo")) }
@@ -167,6 +168,9 @@ internal fun PlusSheet(
                             onDismiss()
                         }
                     }
+                    PlusDivider()
+                    // iOS: Camera · Add files · GitHub link · Sketch (full-screen canvas).
+                    PlusRow(R.drawable.shell_scribble, "Sketch", testTag = "plusSheetSketch") { sketchOpen = true }
                 }
                 PlusGroup {
                     PlusRow(R.drawable.shell_shield_check, "Permission settings", chevron = true) {
@@ -200,6 +204,15 @@ internal fun PlusSheet(
                 }
             }
         }
+    }
+    if (sketchOpen) {
+        SketchSheet(
+            onAttach = { a ->
+                onAttach(a)
+                onDismiss()
+            },
+            onDismiss = { sketchOpen = false },
+        )
     }
 }
 

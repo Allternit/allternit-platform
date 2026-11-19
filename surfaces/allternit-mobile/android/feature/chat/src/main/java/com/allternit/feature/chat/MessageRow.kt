@@ -66,6 +66,8 @@ internal class RowActions(
     val onSkip: (QuestionAsk, (String) -> Unit) -> Unit,
     val onOpenSettings: () -> Unit,
     val onConnect: (String) -> Unit,
+    /** "Share link…" (ThreadShareSheet); null before the chat has a session. */
+    val onShareLink: (() -> Unit)? = null,
 )
 
 /**
@@ -201,7 +203,7 @@ internal fun MessageRow(
                 message.error?.let { ChatErrorCard(it, actions.onChooseModel) { actions.onRetry(message.id) } }
                 message.artifacts.forEach { a -> ArtifactChip(a) }
                 if (!isUser && !message.isStreaming && message.error == null && message.role == "assistant") {
-                    MessageActionBar(message, isLastAssistant, actions.onRegenerate)
+                    MessageActionBar(message, isLastAssistant, actions.onRegenerate, actions.onShareLink)
                     message.perfStats?.let { p ->
                         Text(
                             "${formatDuration(p.timeToFirstTokenMs)} to first token · ~${p.tokensPerSecond.toInt()} tok/s",
@@ -311,7 +313,7 @@ private fun EditedChip(versions: List<MessageBranch>) {
  * (local only: the backend has no feedback endpoint), and Retry on the last reply.
  */
 @Composable
-private fun MessageActionBar(message: MessageRecord, isLast: Boolean, onRegenerate: () -> Unit) {
+private fun MessageActionBar(message: MessageRecord, isLast: Boolean, onRegenerate: () -> Unit, onShareLink: (() -> Unit)?) {
     val context = LocalContext.current
     val view = LocalView.current
     var feedback by remember(message.id) { mutableStateOf(0) }
@@ -322,7 +324,23 @@ private fun MessageActionBar(message: MessageRecord, isLast: Boolean, onRegenera
             block()
         }
         ActionIcon(DesignR.drawable.ph_copy, "Copy") { tap { copyToClipboard(context, message.content) } }
-        ActionIcon(R.drawable.chat_share, "Share") { tap { shareText(context, message.content) } }
+        // Share: with a saved chat, a menu of Share text / Share link… (iOS); otherwise the share sheet.
+        var shareMenu by remember { mutableStateOf(false) }
+        Box {
+            ActionIcon(R.drawable.chat_share, "Share") {
+                tap { if (onShareLink != null) shareMenu = true else shareText(context, message.content) }
+            }
+            DropdownMenu(expanded = shareMenu, onDismissRequest = { shareMenu = false }, containerColor = AllternitTheme.colors.bgPrimary) {
+                DropdownMenuItem(text = { Text("Share text", color = AllternitTheme.colors.textPrimary) }, onClick = {
+                    shareMenu = false
+                    shareText(context, message.content)
+                })
+                DropdownMenuItem(text = { Text("Share link…", color = AllternitTheme.colors.textPrimary) }, onClick = {
+                    shareMenu = false
+                    onShareLink?.invoke()
+                })
+            }
+        }
         ActionIcon(if (speaking) R.drawable.chat_stop else R.drawable.chat_speaker, if (speaking) "Stop" else "Read aloud") {
             tap { Speaker.toggle(context, message.id, MarkdownPlain.from(message.content)) }
         }

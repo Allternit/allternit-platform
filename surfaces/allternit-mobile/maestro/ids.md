@@ -71,6 +71,10 @@ without an identifier; iOS should take the same id when a flow needs it.
 | `chatMenuDelete` | none | `android/feature/shell/.../ChatPage.kt` |
 | `composerStop` | none (label "Stop") | `android/feature/shell/.../Composer.kt` |
 | `chatComputeGate`, `chatComputeGateLink`, `chatComputeGatePlans`, `chatComputeGateCredits` | none | `android/feature/chat/.../ComputeGate.kt` |
+| `chatMenushareLink` | none (iOS ChatMenuPopover row "Share link") | `android/feature/shell/.../ChatPage.kt` |
+| `threadShareSheet` | none | `android/feature/chat/.../ThreadShare.kt` |
+| `plusSheetSketch` | none (iOS PlusRow "Sketch") | `android/feature/shell/.../PlusSheet.kt` |
+| `sketchSheet`, `sketchCancel`, `sketchUndo`, `sketchAttach` | none | `android/feature/shell/.../SketchSheet.kt` |
 
 Notes:
 

@@ -26,6 +26,7 @@ import com.allternit.feature.chat.ChatCallbacks
 import com.allternit.feature.chat.ChatScreen
 import com.allternit.feature.chat.ChatSendRequest
 import com.allternit.feature.chat.ChatViewModel
+import com.allternit.feature.chat.ThreadShareSheet
 import androidx.compose.foundation.layout.padding
 
 /** A composer send → the chat's send request (iOS ChatView onSend: model, effort, files, tools). */
@@ -61,6 +62,7 @@ internal fun ChatPage(
     var prefill by remember { mutableStateOf<String?>(null) }
     var pickerRequest by remember { mutableIntStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
+    var shareOpen by remember { mutableStateOf(false) }
 
     // A send that never reached the computer hands its text back (iOS draftToRestore).
     LaunchedEffect(chat.draftToRestore) {
@@ -80,6 +82,7 @@ internal fun ChatPage(
             },
             onOpenSettings = onOpenSettings,
             onConnectConnector = { onOpenSection(RailRow("connectors", "Connectors", R.drawable.shell_bolt)) },
+            onShareLink = { shareOpen = true },
         )
     }
 
@@ -96,6 +99,10 @@ internal fun ChatPage(
                         if (chat.currentSessionId == null) {
                             Text("Send a message to start this chat.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
                         } else {
+                            MenuRow(icon = R.drawable.shell_link, title = "Share link", testTag = "chatMenushareLink") {
+                                menuOpen = false
+                                shareOpen = true
+                            }
                             MenuRow(icon = DesignR.drawable.ph_trash, title = "Delete chat", testTag = "chatMenuDelete") {
                                 menuOpen = false
                                 chat.deleteCurrentSession(onDeleted)
@@ -142,5 +149,8 @@ internal fun ChatPage(
             },
             modifier = Modifier.weight(1f),
         )
+    }
+    if (shareOpen) {
+        ThreadShareSheet(backend = backend, sessionId = chat.currentSessionId, title = title, messages = chat.messages, onDismiss = { shareOpen = false })
     }
 }

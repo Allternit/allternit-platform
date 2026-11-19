@@ -50,6 +50,9 @@ class ChatBackend(
         OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
     }
 
+    /** allternit-cloud-api's origin (thread shares, the runtime relay). */
+    internal val cloudBaseUrl: HttpUrl get() = config.cloudBaseUrl
+
     /** The bearer-carrying client, for `GET uploads/:id` (run_code files). */
     internal val authedHttp: OkHttpClient get() = okHttp
 
