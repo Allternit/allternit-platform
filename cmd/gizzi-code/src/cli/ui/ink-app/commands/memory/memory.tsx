@@ -14,6 +14,7 @@ import { editFileInEditor } from '../../utils/promptEditor';
 import { getSessionId } from '../../bootstrap/state.js';
 import { isAutoMemPath, isAutoMemoryEnabled, isMemoryDriveActive } from '../../memdir/paths.js';
 import { MemoryDrive } from '../../../../../runtime/memory/drive/drive.js';
+import { sleepApi, sleepStatusLine } from '../../../../../runtime/memory/sleep/client.js';
 import { formatFileView, formatHistory, formatOverview, syncLine } from '../../../../../runtime/memory/drive/report.js';
 
 type OnDone = (result?: string, options?: { display?: CommandResultDisplay }) => void;
@@ -23,6 +24,7 @@ const USAGE = [
   '       /memory view <path>     show one drive file (e.g. /memory view preferences.md)',
   '       /memory log             recent drive history',
   '       /memory sync            commit edits in the checkout and sync now',
+  '       /memory sleep [on|off]  show Sleep, or switch it on or off',
 ].join('\n');
 
 function MemoryCommand({ onDone, driveSummary }: { onDone: OnDone; driveSummary?: string }): React.ReactNode {
@@ -102,11 +104,30 @@ function MemoryCommand({ onDone, driveSummary }: { onDone: OnDone; driveSummary?
   );
 }
 
+/** Sleep rows for the /memory view: status line, conflicts, the switch. */
+async function sleepSummary(): Promise<string | undefined> {
+  const out = await sleepApi.status();
+  if (out.kind !== 'ok') return out.kind === 'no_sleep' ? undefined : out.message;
+  const s = out.body;
+  const lines = [sleepStatusLine(s)];
+  if (s.open_disputes > 0) lines.push(`${s.open_disputes} memory conflicts need you. Run \`gizzi memory disputes\` in a terminal.`);
+  lines.push(s.enabled ? '/memory sleep off turns Sleep off' : '/memory sleep on turns Sleep on');
+  return lines.join('\n');
+}
+
 /** Text-only subcommands: view / log / sync. Returns undefined for the dialog. */
 export async function memoryDriveSubcommand(args: string): Promise<string | undefined> {
   const [sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
   if (!sub) return undefined;
   if (sub === 'help') return USAGE;
+  if (sub === 'sleep') {
+    const arg = rest[0];
+    if (arg === 'on' || arg === 'off') {
+      const out = await sleepApi.setEnabled(arg === 'on');
+      return out.kind === 'ok' ? `Sleep is ${arg}.` : out.message;
+    }
+    return (await sleepSummary()) ?? 'This runtime has no Sleep yet. Update Allternit.';
+  }
   if (!isMemoryDriveActive()) {
     return 'The Memory Drive is off for this session (GIZZI_MEMORY_DRIVE=0 or a custom autoMemoryDirectory is set).';
   }
@@ -150,6 +171,8 @@ export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
       driveSummary = `Memory Drive unavailable: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
+  const sleepText = await sleepSummary().catch(() => undefined);
+  if (sleepText) driveSummary = driveSummary ? `${driveSummary}\n\n${sleepText}` : sleepText;
   clearMemoryFileCaches();
   await getMemoryFiles();
   return <MemoryCommand onDone={onDone} driveSummary={driveSummary} />;
