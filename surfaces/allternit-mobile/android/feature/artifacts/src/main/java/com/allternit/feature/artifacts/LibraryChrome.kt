@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -176,10 +177,7 @@ fun <T> PillRow(options: List<T>, selected: T, label: (T) -> String, tag: (T) ->
 
 @Composable
 private fun Modifier.horizontalScrollable(): Modifier =
-    this.then(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()))
-
-private fun Modifier.horizontalScroll(state: androidx.compose.foundation.ScrollState): Modifier =
-    androidx.compose.foundation.horizontalScroll(this, state)
+    this.horizontalScroll(androidx.compose.foundation.rememberScrollState())
 
 /** The rounded search field at the top of a library (iOS .searchable look). */
 @Composable

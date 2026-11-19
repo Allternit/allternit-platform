@@ -89,6 +89,12 @@ internal fun openExternal(context: Context, url: String) {
     }
 }
 
+/** Public form for :feature:projects (pad links and quick actions open outside, iOS "Opens in Safari"). */
+fun openUrlExternally(context: Context, url: String) {
+    val scheme = Uri.parse(url).scheme?.lowercase()
+    if (scheme in externalSchemes) openExternal(context, url)
+}
+
 private val externalSchemes = setOf("http", "https", "mailto", "tel")
 
 @SuppressLint("SetJavaScriptEnabled")
