@@ -411,7 +411,7 @@ class ChatViewModel(
                 ChatErrors.isComputeGate(t.status, t.code, t.message) -> throw GateException(ComputeGateReason.NoComputer)
                 t.status == 409 && t.code == "no_brain" -> throw NoBrainException()
                 t.status == null -> throw IOException(t.message ?: "Could not connect to the server. Check your connection and try again.")
-                else -> throw SendException(t.message ?: ChatErrors.statusSentence(t.status) ?: "Something went wrong. Try again.")
+                else -> throw SendException(t.message ?: t.status?.let { ChatErrors.statusSentence(it) } ?: "Something went wrong. Try again.")
             }
         }
     }

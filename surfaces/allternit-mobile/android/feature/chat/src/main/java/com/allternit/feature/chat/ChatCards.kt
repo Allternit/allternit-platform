@@ -834,7 +834,7 @@ internal fun splitAnswer(text: String, streaming: Boolean): List<AnswerPiece> {
         }
         val json = rest.substring(bodyStart, end)
         val card = runCatching { com.allternit.core.api.ApiJson.default.parseToJsonElement(json) as? JsonObject }.getOrNull()
-        out += if (card?.str("template") != null) AnswerPiece.Card(card) else AnswerPiece.Text(rest.substring(start, end + 3))
+        out += if (card != null && card.str("template") != null) AnswerPiece.Card(card) else AnswerPiece.Text(rest.substring(start, end + 3))
         rest = rest.substring(end + 3)
     }
     return out
