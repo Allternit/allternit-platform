@@ -81,6 +81,21 @@ jobs:
       - name: Run release preflight checks
         run: node scripts/release-preflight.mjs
 
+      # The app version comes from surfaces/allternit-desktop/package.json. A build whose
+      # version is already published on Allternit/desktop can never reach users (the
+      # updater sees no newer version), so stop here, not after the ~70 min builds
+      # (train 20261118-1646 built 1.1.15 again because nobody bumped it, 2026-11-19).
+      - name: Version not already published
+        shell: bash
+        run: |
+          v=$(node -p "require('./surfaces/allternit-desktop/package.json').version")
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://api.github.com/repos/Allternit/desktop/releases/tags/v$v")
+          if [ "$code" = 200 ]; then
+            echo "::error::Allternit Desktop v$v is already published. Bump \"version\" in surfaces/allternit-desktop/package.json first."
+            exit 1
+          fi
+          echo "ok: v$v is not published yet (GitHub answered $code)"
+
   # Build macOS .dmg (arm64 + x64, universal)
   build-macos:
     if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'macos'
