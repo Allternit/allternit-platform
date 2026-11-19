@@ -7,7 +7,7 @@ description: 'Work in a separate git worktree and keep or remove it when done'
 
 `worktree_enter` creates a separate git worktree and branch and moves the session into it. `worktree_exit` leaves it, keeping or removing it.
 
-This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
+The assistant enters a worktree only when you ask, or when the project's instructions say to. The session that creates a worktree is recorded, and only that session can remove it. Exit keeps any tree with uncommitted or unpushed work, and a session never removes a tree it did not create.
 
 ## Parameters
 
@@ -34,4 +34,4 @@ Both change files on disk, so they follow the session's permission mode and ask 
 
 ## Surfaces
 
-Desktop, the web app and phone layout, the PWA and iOS show a worktree chip and an exit dialog. The Gizzi Code terminal uses the same core. Android follows the PWA. Delivered by the code-session PR (PR1). Family: `code-review`.
+Session info carries `worktree {path, branch}`. The ai and iOS Code headers show a branch chip from it. On ai, Leave offers Keep or Remove. The Gizzi Code terminal uses the same core. Android follows the PWA. Delivered by the code-session PR (PR1). Family: `code-review`.

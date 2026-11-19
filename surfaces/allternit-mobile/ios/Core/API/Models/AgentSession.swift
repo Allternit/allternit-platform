@@ -87,6 +87,10 @@ struct AgentSession: Decodable, Sendable, Identifiable {
     /// `metadata.completed` — the session was marked finished (web
     /// code-session-state.ts; the Code sessions view's Done, C6). Missing = false.
     let completed: Bool
+    /// `metadata.worktree.branch` / `.path` — the session runs in a git
+    /// worktree (agent_session_routes.rs). nil when not in one.
+    let worktreeBranch: String?
+    let worktreePath: String?
     // The rest of `metadata` (directory, version, permission, …) stays
     // skipped — not rendered anywhere on iOS.
 
@@ -120,12 +124,14 @@ struct AgentSession: Decodable, Sendable, Identifiable {
         case readyForReview
         case readyForReviewAt
         case completed
+        case worktree
     }
 
     private struct ArtifactSessionTag: Decodable { let kind: String? }
     private struct SourceRefTag: Decodable { let harness: String? }
     private struct MissionTag: Decodable { let label: String? }
     private struct GlanceTag: Decodable { let text: String? }
+    private struct WorktreeTag: Decodable { let path: String?; let branch: String? }
 
     private static func clean(_ text: String?) -> String? {
         let t = text?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -158,6 +164,9 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             isTerminal = ((try? metadata.decodeIfPresent(SourceRefTag.self, forKey: .sourceRef)) ?? nil)?.harness == "gizzi-tui"
             missionLabel = Self.clean(((try? metadata.decodeIfPresent(MissionTag.self, forKey: .mission)) ?? nil)?.label)
             glanceText = Self.clean(((try? metadata.decodeIfPresent(GlanceTag.self, forKey: .glance)) ?? nil)?.text)
+            let worktree = ((try? metadata.decodeIfPresent(WorktreeTag.self, forKey: .worktree)) ?? nil)
+            worktreeBranch = Self.clean(worktree?.branch)
+            worktreePath = Self.clean(worktree?.path)
             needsInput = ((try? metadata.decodeIfPresent(Bool.self, forKey: .needsInput)) ?? nil) ?? false
             needsInputKind = needsInput ? Self.clean((try? metadata.decodeIfPresent(String.self, forKey: .needsInputKind)) ?? nil) : nil
             needsInputAt = needsInput ? ((try? metadata.decodeIfPresent(String.self, forKey: .needsInputAt)) ?? nil) : nil
@@ -187,6 +196,8 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             readyForReview = false
             readyForReviewAt = nil
             completed = false
+            worktreeBranch = nil
+            worktreePath = nil
             ephemeral = false
         }
     }

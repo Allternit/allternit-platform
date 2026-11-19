@@ -30,6 +30,7 @@ import { Global } from "@/runtime/context/global"
 import type { LanguageModelV2Usage } from "@ai-sdk/provider"
 import { iife } from "@/shared/util/iife"
 import { SecretRedactor } from "@/runtime/session/environment/redactor"
+import { SessionWorktree } from "@/runtime/primitives/worktree"
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -104,6 +105,7 @@ export namespace Session {
           }
         : undefined,
       sourceExport: row.source_export ?? undefined,
+      worktree: SessionWorktree.infoFor(row.id),
       time: {
         created: row.time_created,
         updated: row.time_updated,
@@ -372,6 +374,8 @@ export namespace Session {
           at: z.number(),
         })
         .optional(),
+      /** The git worktree the session works in (worktree_enter); kept in the worktree registry, not a column. */
+      worktree: z.object({ path: z.string(), branch: z.string().optional() }).optional(),
     })
     
   export type Info = z.output<typeof Info>
@@ -735,6 +739,17 @@ export namespace Session {
       })
     },
   )
+
+  /** Publishes the session again after worktree_enter / worktree_exit changed its `worktree` field. */
+  export const worktreeChanged = fn(Identifier.schema("session"), async (sessionID) => {
+    return Database.use((db) => {
+      const row = db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get()
+      if (!row) throw new NotFoundError({ message: `Session not found: ${sessionID}` })
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { info }))
+      return info
+    })
+  })
 
   export const setArchived = fn(
     z.object({

@@ -25,6 +25,7 @@ import { ContextNotice } from "@/runtime/primitives/context-notice"
 import { SteerSignal } from "@/runtime/primitives/steer-signal"
 import { SessionCompaction } from "@/runtime/session/compaction"
 import { Instance } from "@/runtime/context/project/instance"
+import { SessionWorktree } from "@/runtime/primitives/worktree"
 import { Bus } from "@/shared/bus"
 import { ProviderTransform } from "@/runtime/providers/adapters/transform"
 import { SystemPrompt } from "@/runtime/session/system"
@@ -722,8 +723,10 @@ const message = await createUserMessage(input)
   }
 
   export const loop = fn(LoopInput, async (input) => {
-    const dir = workdirs.get(input.sessionID)
-    return dir ? Instance.withWorkdir(dir, () => runLoop(input)) : runLoop(input)
+    // A worktree the session entered wins over the folder the client sends each turn.
+    // Always provide the folder, so worktree_enter / worktree_exit can move the running turn.
+    const dir = (await SessionWorktree.active(input.sessionID))?.path ?? workdirs.get(input.sessionID) ?? Instance.workdir
+    return Instance.withWorkdir(dir, () => runLoop(input))
   })
 
   async function runLoop(input: z.infer<typeof LoopInput>) {

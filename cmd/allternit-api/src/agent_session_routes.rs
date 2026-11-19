@@ -370,6 +370,10 @@ struct GizziSessionInfo {
     /// `{ id, goal, milestone, total, status, label: "Mission · M2/5", at }`.
     #[serde(default)]
     mission: Option<serde_json::Value>,
+    /// The git worktree the session entered (`worktree_enter` tool):
+    /// `{ path, branch }`. Passed through unchanged; absent outside a worktree.
+    #[serde(default)]
+    worktree: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -549,6 +553,7 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
     metadata.insert("environment".to_string(), json!(info.environment));
     metadata.insert("glance".to_string(), json!(info.glance));
     metadata.insert("mission".to_string(), json!(info.mission));
+    metadata.insert("worktree".to_string(), json!(info.worktree));
     for (key, value) in stored_metadata {
         metadata.insert(key, value);
     }
@@ -2549,6 +2554,7 @@ async fn transform_bus_event(
                         "environment": info.environment,
                         "glance": info.glance,
                         "mission": info.mission,
+                        "worktree": info.worktree,
                     },
                     "environment": info.environment,
                 })

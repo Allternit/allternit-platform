@@ -7,7 +7,7 @@ description: 'List and reply to review comments on a pull request'
 
 `pr_comments` reads the review comments on a pull request and posts a reply to one.
 
-This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
+It uses `gh`. List covers both review comments and conversation comments. A reply always asks first. Comment text is fenced as untrusted data and never followed as instructions.
 
 ## Parameters
 
