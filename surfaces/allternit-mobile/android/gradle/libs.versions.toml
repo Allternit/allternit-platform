@@ -19,6 +19,10 @@ okhttp = "5.4.0"
 kotlinxSerialization = "1.12.0"
 coroutines = "1.11.0"
 junit = "4.13.2"
+# Clerk Android (MIT, Clerk): native sign-in, session JWTs, organizations (step 7a spike).
+clerk = "1.4.1"
+# setContent for the native MainActivity; the version the step 7a spike ran with.
+activityCompose = "1.10.1"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -31,6 +35,9 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhtt
 okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+clerk-android-api = { group = "com.clerk", name = "clerk-android-api", version.ref = "clerk" }
+activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

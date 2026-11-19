@@ -49,12 +49,30 @@ android {
             // this build is not installed from Google Play).
             manifestPlaceholders["launcherActivity"] =
                 "com.google.androidbrowserhelper.trusted.LauncherActivity"
+            manifestPlaceholders["twaLauncherCategory"] = "android.intent.category.LAUNCHER"
         }
         create("play") {
             dimension = "dist"
             // Subclass of LauncherActivity that may show the Play in-app review
             // sheet before opening the TWA (src/play/java/.../ReviewLauncherActivity.kt).
             manifestPlaceholders["launcherActivity"] = "com.allternit.app.ReviewLauncherActivity"
+            manifestPlaceholders["twaLauncherCategory"] = "android.intent.category.LAUNCHER"
+        }
+        // The native Kotlin + Compose app (handoffs/android-native-2026-11-18, step 7b).
+        // Same app ID and signing key. NOT uploaded to Play before the cutover: it is tested by
+        // sideload (adb install) on a phone/emulator, then replaces the TWA on Play production
+        // with a staged rollout when it reaches parity (PLAN.md section 3): versionCode 1000+ so it always sorts above the TWA builds,
+        // which keep 17-999 for hotfixes. Launcher = com.allternit.feature.shell.MainActivity
+        // (src/nativeapp/AndroidManifest.xml). The stock TWA LauncherActivity stays in the
+        // build without the launcher category, as the "Use web version" target. No Play
+        // Billing, no :ondevice, no Phone Link yet (steps 16 and 18).
+        create("nativeapp") {
+            dimension = "dist"
+            versionCode = 1000
+            versionNameSuffix = "-native"
+            manifestPlaceholders["launcherActivity"] =
+                "com.google.androidbrowserhelper.trusted.LauncherActivity"
+            manifestPlaceholders["twaLauncherCategory"] = "android.intent.category.DEFAULT"
         }
     }
 
@@ -170,6 +188,9 @@ dependencies {
     // build only. See ondevice/README.md. ReviewLauncherActivity extends its
     // BridgedLauncherActivity.
     "playImplementation"(project(":ondevice"))
+    // The native app (step 7b): MainActivity, sign-in (Clerk) and the screens behind them.
+    // nativeapp flavor only, so play and phonelink compile none of it.
+    "nativeappImplementation"(project(":feature:shell"))
     // Files key crypto (files/FilesKeyCrypto.kt): X25519, HKDF-SHA256 and
     // ChaCha20-Poly1305 from BouncyCastle (MIT), the same version :ondevice uses.
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
