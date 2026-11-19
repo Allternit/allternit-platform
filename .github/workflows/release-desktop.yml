@@ -1093,6 +1093,30 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Check Linux update feed
+        # The Linux in-app updater (src/main/linux-updater.ts, electron-updater
+        # DebUpdater) reads latest-linux.yml from the Allternit/desktop release
+        # and needs resources/package-type=deb + app-update.yml in the package.
+        # electron-builder writes all three for the deb target because
+        # build.publish is set (same mechanism as latest.yml / latest-mac.yml).
+        shell: bash
+        working-directory: surfaces/allternit-desktop
+        run: |
+          set -euo pipefail
+          res=release/linux-unpacked/resources
+          [ "$(tr -d '[:space:]' < "$res/package-type")" = deb ] || { echo "::error::$res/package-type is not 'deb'"; exit 1; }
+          grep -q 'repo: desktop' "$res/app-update.yml" || { echo "::error::$res/app-update.yml does not point at Allternit/desktop"; cat "$res/app-update.yml"; exit 1; }
+          grep -Eq 'url: Allternit-Desktop-.*-amd64\.deb' release/latest-linux.yml || { echo "::error::release/latest-linux.yml does not list the .deb"; cat release/latest-linux.yml; exit 1; }
+          cat release/latest-linux.yml
+
+      - name: Upload Linux update feed
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: allternit-desktop-linux-feed
+          path: surfaces/allternit-desktop/release/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 14
+
   # Publish GitHub Release
   release:
     name: Create GitHub Release
@@ -1154,6 +1178,7 @@ jobs:
             artifacts/*.blockmap
             artifacts/latest-mac.yml
             artifacts/latest.yml
+            artifacts/latest-linux.yml
           draft: ${{ github.event.inputs.draft == 'true' }}
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
         env:

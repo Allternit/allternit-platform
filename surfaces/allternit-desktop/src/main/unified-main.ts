@@ -22,6 +22,7 @@ import { createMotionRender } from './motion-render.js';
 import Store from 'electron-store';
 import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
+import { startLinuxUpdater } from './linux-updater.js';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
 import type { SystemTab } from './system-summary.js';
@@ -351,6 +352,17 @@ autoUpdater.on('error', (error) => {
 });
 
 let appUpdateDownloaded = false;
+
+// Linux: Electron's autoUpdater above has no Linux support, so the .deb
+// install updates through electron-updater (linux-updater.ts), feeding the
+// same status broadcasts and restart prompt. null on macOS and Windows.
+const linuxUpdater = process.platform === 'linux'
+  ? startLinuxUpdater({
+    logger: log,
+    broadcast: (status) => broadcastUpdateStatus(status),
+    onDownloaded: () => { appUpdateDownloaded = true; },
+  })
+  : null;
 let runtimeUpdateTimer: NodeJS.Timeout | null = null;
 
 /**
@@ -2402,7 +2414,8 @@ function installAppMenu(): void {
     checkForUpdates: () => {
       if (!app.isPackaged) return;
       try {
-        autoUpdater.checkForUpdates();
+        if (linuxUpdater) linuxUpdater.check(true);
+        else autoUpdater.checkForUpdates();
       } catch (error) {
         log.warn('[Menu] Update check failed:', error);
       }
@@ -3521,7 +3534,8 @@ ipcMain.handle('app:check-for-updates', async () => {
     return { ok: false, reason: 'dev-build' } as const;
   }
   try {
-    autoUpdater.checkForUpdates();
+    if (linuxUpdater) linuxUpdater.check(true);
+    else autoUpdater.checkForUpdates();
     // The runtime (API, gizzi, screens) updates separately: check it too.
     void checkRuntimeNow();
     return { ok: true } as const;
@@ -3531,6 +3545,11 @@ ipcMain.handle('app:check-for-updates', async () => {
   }
 });
 handleGuarded('app:install-update', async () => {
+  if (linuxUpdater && appUpdateDownloaded) {
+    // Linux installs BEFORE cleanup: a cancelled password prompt or a failed
+    // dpkg leaves the app running, and a notification opens the release page.
+    if (!(await linuxUpdater.install())) return;
+  }
   // Clean up first so before-quit does not cancel the updater's own quit.
   await runQuitCleanup();
   if (!appUpdateDownloaded && runtimePackages().hasPendingUpdate()) {
@@ -3543,7 +3562,9 @@ handleGuarded('app:install-update', async () => {
   // that hide on close (HUD, Quick Chat) must already see a quit or they
   // cancel the close and the install never happens.
   (app as unknown as { isQuitting?: boolean }).isQuitting = true;
-  autoUpdater.quitAndInstall();
+  // Linux: the .deb is already installed and the relaunch scheduled.
+  if (linuxUpdater) app.quit();
+  else autoUpdater.quitAndInstall();
 });
 // Preload uses sendSync at module load; handle() only answers invoke().
 ipcMain.on('app:get-platform-url', (event) => {
