@@ -54,6 +54,8 @@ dependencies {
     implementation(project(":feature:office"))
     // Wave G1: Settings part 1 replaces the Settings stub.
     implementation(project(":feature:settings"))
+    // Wave H1: Google Play Billing starts at launch and posts open purchases (PlayPurchases.start).
+    implementation(project(":feature:billing"))
     // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
     implementation(project(":core:api"))
     // Wave B: DataStore for the first-run "setup done" flag (iOS OnboardingStore, UserDefaults).

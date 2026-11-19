@@ -43,5 +43,7 @@ dependencies {
     implementation(project(":core:auth"))
     // rememberLauncherForActivityResult (save a run_code file where the person picks).
     implementation(libs.activity.compose)
+    // Wave H1: Cloud credits and the store sheet (Google Play Billing) for the credits and compute gates.
+    implementation(project(":feature:billing"))
     testImplementation(libs.junit)
 }

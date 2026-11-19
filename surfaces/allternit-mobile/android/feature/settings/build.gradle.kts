@@ -39,6 +39,8 @@ dependencies {
     // LibraryNet (the /api/v1 routes) and the JSON helpers.
     implementation(project(":feature:artifacts"))
     implementation(project(":core:auth"))
+    // Wave H1: Billing (Google Play Billing, the store pieces, the account plan state).
+    implementation(project(":feature:billing"))
     // In-app Custom Tab for links (iOS SafariView).
     implementation(libs.androidx.browser)
     testImplementation(libs.junit)

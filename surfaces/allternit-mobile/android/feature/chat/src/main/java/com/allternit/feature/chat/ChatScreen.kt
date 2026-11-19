@@ -27,6 +27,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -135,6 +137,13 @@ fun ChatScreen(
 
     // Follow the reply: new rows and streamed text keep the end in view (iOS onChange(messages.last)).
     val last = messages.lastOrNull()
+    // iOS ChatView: a reply refused for Cloud credits (402 credits_required / credits_exhausted) opens Cloud credits,
+    // once per reply. Packs and plans are bought there through Google Play when the server has Google on.
+    val creditsReason = last?.error?.let { e -> com.allternit.feature.billing.CloudCreditsCopy.reason(listOfNotNull(e.name, e.message, e.raw).joinToString(" ")) }
+    var creditsShownFor by remember { mutableStateOf<Any?>(null) }
+    if (creditsReason != null && last != null && creditsShownFor != last.id) {
+        com.allternit.feature.billing.CloudCreditsSheet(com.allternit.feature.billing.CloudCreditsRequest(creditsReason)) { creditsShownFor = last.id }
+    }
     LaunchedEffect(messages.size, last?.content?.length, last?.toolCalls?.size, viewModel.computeGate) {
         val count = list.layoutInfo.totalItemsCount
         if (count > 0) {
