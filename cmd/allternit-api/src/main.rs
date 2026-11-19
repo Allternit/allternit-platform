@@ -1049,6 +1049,8 @@ async fn main() {
         // ALLTERNIT_FILES_DRIVE=1; nothing is created on disk until first use.
         .merge(allternit_api::files_v2::router(&state.data_dir, state.db.clone()))
         .merge(memory_router())
+        // Allternit Sleep (`/memory/sleep/*`, `/memory/disputes*`); every stage off by default.
+        .merge(allternit_api::sleep::routes::sleep_router())
         .merge(me_router())
         .merge(setup_router())
         .merge(local_brain_router())
