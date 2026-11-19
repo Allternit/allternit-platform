@@ -487,6 +487,7 @@ export function createStartupWindow(options: StartupWindowOptions): BrowserWindo
     // package name ("@allternit/desktop"); the app name itself can't change
     // because it names the userData folder.
     title: 'Allternit',
+    autoHideMenuBar: true,
     backgroundColor: '#faf9f7',
     show: false,
     webPreferences: {
@@ -503,6 +504,7 @@ export function createStartupWindow(options: StartupWindowOptions): BrowserWindo
   // The startup page and the auth renderer loaded into it later have no
   // product <title>; keep the window's own title.
   window.on('page-title-updated', (event) => event.preventDefault());
+  if (process.platform !== 'darwin') window.setMenuBarVisibility(false);
 
   window.webContents.on('console-message', (event) => {
     log.info(`[Startup] ${event.message} (${event.sourceId}:${event.lineNumber})`);
