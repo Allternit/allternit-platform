@@ -142,7 +142,7 @@ The native app is built to match the iPhone app screen for screen, in ten waves.
 | F2. Automation | Automation Tasks from the drawer (both modes): goals, routines, loops and agent heartbeats as a list, a graph and a Day, Week and Month calendar; the task detail with run now, pause, change time and delete; the create wizard; the computer's own routines and loops; the Tasks board | Built, in testing |
 | F3. Computer (ACI) | ACI mode from the mode fan: the agent landing with the search bar, the Computer Agent toggle, shortcuts and the computer picker; the in-app browser with Extension Chat; a live agent run with screenshots, the action highlight, the trace log, Approve, Deny and Stop; Computers (add a computer, view any computer's screen, paired computers, phones, backups, workflows); the native VNC viewer for a computer's screen and a bot's desktop. MCP Apps (installed, discover, build, add by URL), ACI Extensions, Teach (skills, editor, run, import a recording), Mini Apps, and a computer's Files (folders and Inbox requests) | Built, in testing |
 | F4a. Cowork, Connect, Models, Phones | Cowork (sessions, tasks with Tasks and Agent Tasks, task detail and status, new task, Fabric Transport approvals); the Phones sheet from the drawer's Phones button, Give a bot a phone (Email flow), Connect a subscription, Phone control, Android phone screen share, the live view of a linked phone, and read-only phone task cards; Models (Freeweights catalog in list, grid and deck, search, filters, a model's page, Send to my computer, Benchmark) | Built, in testing. Phone number, Telegram and OAuth connect flows, and the on-phone model engine, are not in the native app yet |
-| F. Modes (rest) | Office | Not started |
+| F4b. Office | The Office floor (Bots options, Office): the 3D facility fed with your bots, with the panel chat; Allternit Office documents from the Artifacts library; Open in Office for imported records with the interactive editor; Sign PDF on a PDF artifact and in the documents list; documents opened from other apps | Built, in testing. The floor does not list your computers yet |
 | G. Settings | Settings and all sub-screens, Customize, Connectors, Skills, Plugins, Brain | Not started |
 | H. Money and voice | Google Play purchases, credits, voice mode, calls | Not started |
 | I. Phone system | Push (FCM), widgets, Quick Settings tiles, share target, shortcuts, Files, screen share | Not started |
@@ -318,6 +318,12 @@ With no computer, the computer-side parts (heartbeats, On this computer, Board) 
 #### Cowork
 
 Open **Cowork tasks** from the **+** sheet for the task list: **Tasks** and **Agent Tasks**, **+** for a new task (title, description, Human or Agent), tap a task to change its status, see who has it or delete it. The Cowork launchpad starts a session or opens a recent one, and the antenna button opens **Fabric Transport**: approvals you can **Grant** or **Deny** and recent runs with their events. With no computer, each screen says so instead of showing an error.
+
+#### Office
+
+In **Bots**, open **Bots options** and tap **Office** for the bots' floor: the same 3D office as the web, with a character for each bot and its status. Tap a bot or its question to open its chat; a message typed in the floor's panel goes to the bot's main chat and the reply shows in the panel. If the floor is slow to load you see "The office didn't load" and **Try again**.
+
+In the **Artifacts** library, **Allternit Office** lists your Docs, Sheets, Slides and PDFs, newest first (pull to refresh). A row opens the artifact. On a PDF artifact, **...** then **Sign PDF** opens the signing screen: draw your signature, tap **Sign & Share**, pick where to save the signed copy, then **Save to library** if you want it in Artifacts. **Sign PDF** in the documents list signs a blank page. On a record imported from the older Office store, **...** then **Open in Office** shows its sections and an **Interactive** button for the full editor. A PDF, text, Word or Excel file shared to Allternit from another app opens in a viewer; Word and Excel hand off to your phone's viewer. With no computer, Office screens say so instead of showing an error.
 
 #### Phones and Connect
 

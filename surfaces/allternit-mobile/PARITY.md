@@ -65,12 +65,12 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | ArtifactDetailsView | ios/Features/Artifacts/Views/ArtifactDetailsView.swift | — | feature/artifacts/ArtifactSheets.kt (ArtifactDetailsScreen) | built (#2629: Preview / Code, Share, Open in browser, Copy; art_ ids open the V2 viewer) | — |
 | ArtifactLiveWebView | ios/Features/Artifacts/Views/ArtifactLiveWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (ArtifactLiveWebView) | built (#2629: app pages only; Clerk, editor and download bridges answer only the web origin's main frame via androidx.webkit; Android WebView keeps one storage per app) | — |
 | ArtifactPageWebView | ios/Features/Artifacts/Views/ArtifactPageWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (ArtifactPageWebView) | built (#2629: tapped links open outside; later main-frame navigations refused) | — |
-| ArtifactsLibraryView | ios/Features/Artifacts/Views/ArtifactsLibraryView.swift | — | feature/artifacts/ArtifactsLibrary.kt | built (#2629: List / Grid / Deck, filters, studio tiles, card previews for every kind (paper, sheet, slide, code, dashboard, HTML / mermaid / poster snapshots, image, PDF page, video frame), New artifact sheet with Upload PDF / Image / Video, archive / delete; Allternit Office entry waits on wave F) | — |
+| ArtifactsLibraryView | ios/Features/Artifacts/Views/ArtifactsLibraryView.swift | — | feature/artifacts/ArtifactsLibrary.kt | built (#2629: List / Grid / Deck, filters, studio tiles, card previews for every kind (paper, sheet, slide, code, dashboard, HTML / mermaid / poster snapshots, image, PDF page, video frame), New artifact sheet with Upload PDF / Image / Video, archive / delete; Allternit Office entry built in F4b (#PRNUM)) | — |
 | ArtifactStudioView | ios/Features/Artifacts/Views/ArtifactStudioView.swift | — | feature/artifacts/ArtifactStudio.kt | built (#2629: Chat / Edit panes; the mode contract, artifact-session note and own-tools note go out as agent-chat systemPrompt on every turn) | — |
 | PDFTemplateSheet | ios/Features/Artifacts/Views/PDFTemplateSheet.swift | — | feature/artifacts/ArtifactSheets.kt (PDFTemplateSheet) + assets/pdf-templates.js | built (#2629: same layout JS in an offscreen WebView; Android print dialog saves the PDF) | — |
 | SandboxedArtifactWebView | ios/Features/Artifacts/Views/SandboxedArtifactWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (SandboxedArtifactWebView) | built (#2629: deny-all CSP + base-uri / form-action, every navigation and sub-request refused, no DOM storage) | — |
 | V2ArtifactEditorView | ios/Features/Artifacts/Views/V2ArtifactEditorView.swift | — | feature/artifacts/V2ArtifactEditor.kt | built (#2629: markdown, doc blocks incl. table cells and image descriptions, tabbed docs with docAddTab / rename / delete, workbook sheets (formulas, Add row / column), simple and block decks) | — |
-| V2ArtifactView | ios/Features/Artifacts/Views/V2ArtifactView.swift | — | feature/artifacts/V2Artifact.kt | built (#2629: render by kind, comments, share link, export; Sign this PDF is wave F (Office, PDFSignView); PDF and video open in the web viewer) | — |
+| V2ArtifactView | ios/Features/Artifacts/Views/V2ArtifactView.swift | — | feature/artifacts/V2Artifact.kt | built (#2629: render by kind, comments, share link, export; Sign PDF and the sectioned Office record built in F4b (#PRNUM); PDF and video open in the web viewer) | — |
 
 ## Automation
 
@@ -108,7 +108,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | BotLiveStageView | ios/Features/Bots/BotLiveStageView.swift | — | feature/bots/BotChat.kt (BotLiveStageScreen) | built (wave E PR) | — |
 | BotPageView | ios/Features/Bots/BotPageView.swift | — | feature/bots/BotPage.kt (BotPageView) | built (wave E PR) | — |
 | BotProjectPage | ios/Features/Bots/BotProjectPage.swift | — | feature/bots/BotsMore.kt (BotProjectPage) | built (wave E PR): Delegate / Factory panes and the canvas open the Projects detail | — |
-| BotsModeRootView | ios/Features/Bots/BotsModeRootView.swift | — | feature/bots/BotsRoot.kt (BotsModeRoot) | built (wave E PR): group chats (GroupChat.kt: list, new, room stage, member turns + vendor members, add members, swipe delete); Office floor is wave F | — |
+| BotsModeRootView | ios/Features/Bots/BotsModeRootView.swift | — | feature/bots/BotsRoot.kt (BotsModeRoot) | built (wave E PR): group chats (GroupChat.kt: list, new, room stage, member turns + vendor members, add members, swipe delete); Office floor built in F4b (#PRNUM): Bots options, Office | — |
 | GroupChatViews / VendorGroupTurn | ios/Features/Bots/GroupChatViews.swift, VendorGroupTurn.swift | — | feature/bots/GroupChat.kt | built (wave E PR): room background picker not ported (same as the bot chat Background picker) | — |
 | BotZipImport | ios/Features/Connect/BotZipImport.swift | — | feature/bots/BotZip.kt + ImportBotSheet | built (wave E PR) | — |
 | ImpactMapView | ios/Features/Shared/ImpactMapView.swift | — | feature/bots/ImpactMap.kt | built (wave E PR): focus graph, Open, Forget, Turn off skill | — |
@@ -238,12 +238,12 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| OfficeFloorView | ios/Features/Office/Floor/OfficeFloorView.swift | — | — | todo | — |
-| LocalDocumentView | ios/Features/Office/LocalDocumentView.swift | — | — | todo | — |
-| OfficeDocumentsView | ios/Features/Office/OfficeDocumentsView.swift | — | — | todo | — |
-| OfficeDocumentView | ios/Features/Office/OfficeDocumentView.swift | — | — | todo | — |
-| OfficeEditorWebView | ios/Features/Office/OfficeEditorWebView.swift | — | — | todo | — |
-| PDFSignView | ios/Features/Office/PDFSignView.swift | — | — | todo | — |
+| OfficeFloorView | ios/Features/Office/Floor/OfficeFloorView.swift | — | feature/office/OfficeFloor.kt | built (#PRNUM: the same web facility iOS frames (3dfacility.allternit.com, ?embed=facility) in a WebView host page, fed with the roster, projects and statuses; select/answer/open push the bot chat, panel messages send into the main chat and stream back; visitor identity kept by the app. Not fed yet: computers (names for the Compute Row); the Bots options sheet and bot routes open it, the drawer rail has no Office button on Android) | — |
+| LocalDocumentView | ios/Features/Office/LocalDocumentView.swift | — | feature/office/LocalDocument.kt | built (#PRNUM: ACTION_VIEW on pdf/markdown/text/Word/Excel opens it; PDF pages via PdfRenderer, text selectable, Word/Excel hand off to the system viewer, Share) | — |
+| OfficeDocumentsView | ios/Features/Office/OfficeDocumentsView.swift | — | feature/office/OfficeScreens.kt (OfficeDocumentsScreen) | built (#PRNUM: Docs/Sheets/Slides/PDFs merged newest first, pull to refresh, empty/offline states, Sign PDF; opened from the library's Allternit Office button) | — |
+| OfficeDocumentView | ios/Features/Office/OfficeDocumentView.swift | — | feature/office/OfficeScreens.kt (OfficeDocumentScreen) | built (#PRNUM: sectioned docs, slides, sheet grid and PDF pages, Interactive editor, 428 no-computer and signed-out states; opened from a v2 artifact's Open in Office) | — |
+| OfficeEditorWebView | ios/Features/Office/OfficeEditorWebView.swift | — | feature/office/OfficeEditorWebView.kt | built (#PRNUM: same /docs|/sheets|/slides|/pdf/:id route, same fetch and XHR bearer bridge over a reply-capable message handler (allternitAuth), first navigation carries the Bearer) | — |
+| PDFSignView | ios/Features/Office/PDFSignView.swift | — | feature/office/PdfSign.kt | built (#PRNUM: signature pad, PdfRenderer first page, signature composed 200x80 pt bottom-right into a new one-page PDF, copy kept in app files, saved with the system picker and Save to library; opened from a PDF artifact's Sign PDF and the Office documents header) | — |
 
 ## Onboarding
 
