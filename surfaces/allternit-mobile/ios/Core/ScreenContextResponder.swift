@@ -137,7 +137,7 @@ final class ScreenContextResponder {
         var blocks: [String] = []
         var budget = Self.maxText
         for row in visible.reversed() {
-            var text = row.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            var text = FileCitation.plainText(row.text).trimmingCharacters(in: .whitespacesAndNewlines)
             if text.isEmpty { continue }
             if text.count > Self.maxRowText { text = String(text.prefix(Self.maxRowText)) + "…" }
             let block = "\(row.role == "user" ? "You" : "Assistant"): \(text)"

@@ -49,6 +49,12 @@ export namespace SessionProcessor {
     resetHeldText?: (messageID: string) => Promise<void>
   }) {
     const toolcalls: Record<string, MessageV2.ToolPart> = {}
+    const memoryRefs: NonNullable<MessageV2.Assistant["memory_refs"]> = []
+    const addMemoryRef = (ref: (typeof memoryRefs)[number]) => {
+      if (!ref.id || memoryRefs.length >= 10) return
+      if (memoryRefs.some((r) => r.id === ref.id && r.action === ref.action)) return
+      memoryRefs.push(ref)
+    }
     const toolCallOrder: Record<string, number> = {}
     let nextToolCallIndex = 0
     let snapshot: string | undefined
@@ -375,6 +381,24 @@ export namespace SessionProcessor {
                       },
                     })) as MessageV2.ToolPart
 
+                    // Memory chips come from the tool's own result, not from what the model says.
+                    try {
+                      const md: any = value.output.metadata ?? {}
+                      const inp: any = value.input ?? match.state.input ?? {}
+                      if (match.tool === "memory_recall") {
+                        const out = String(value.output.output ?? "")
+                        for (const id of (md.ids as string[] | undefined) ?? []) {
+                          const line = out.split("\n").find((l) => l.includes(`(id: ${id};`))
+                          const title = line?.replace(/^- \[[^\]]*\]\s*/, "").split(" (id: ")[0].slice(0, 80)
+                          addMemoryRef({ id, title: title || undefined, action: "recalled" })
+                        }
+                      } else if (match.tool === "memory_write" && !md.refused && md.id !== undefined) {
+                        const id = String(md.id || inp.id || "")
+                        const act = inp.action === "delete" ? "deleted" : inp.id ? "updated" : "saved"
+                        const title = typeof inp.text === "string" ? inp.text.slice(0, 80) : undefined
+                        addMemoryRef({ id, title, action: act })
+                      }
+                    } catch {}
                     Bus.publish(MessageV2.Event.PartUpdated, {
                       part,
                     })
@@ -469,6 +493,7 @@ export namespace SessionProcessor {
                     })
                   }
                   input.assistantMessage.finish = value.finishReason
+                  if (memoryRefs.length) input.assistantMessage.memory_refs = [...memoryRefs]
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
                   // Native Anthropic requests use ephemeral markers without a TTL override

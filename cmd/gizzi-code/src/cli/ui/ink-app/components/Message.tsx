@@ -15,7 +15,7 @@ import type { buildMessageLookups } from '../utils/messages';
 import { CompactSummary } from './CompactSummary';
 import { AdvisorMessage } from './messages/AdvisorMessage';
 import { AssistantRedactedThinkingMessage } from './messages/AssistantRedactedThinkingMessage';
-import { AssistantTextMessage } from './messages/AssistantTextMessage';
+import { AssistantTextMessage, MemoryRefsLine } from './messages/AssistantTextMessage';
 import { AssistantThinkingMessage } from './messages/AssistantThinkingMessage';
 import { AssistantToolUseMessage } from './messages/AssistantToolUseMessage';
 import { AttachmentMessage } from './messages/AttachmentMessage';
@@ -90,7 +90,7 @@ function MessageImpl({
 
         const t3 = (message.message.content as Array<MessageContent | ContentBlock>).map(t4);
 
-        const t4_2 = <Box flexDirection="column" width={t2}>{t3}</Box>;
+        const t4_2 = <Box flexDirection="column" width={t2}>{t3}<MemoryRefsLine count={((message as any).memory_refs ?? (message.message as any)?.memory_refs ?? []).length} /></Box>;
 
         return t4_2;
       }

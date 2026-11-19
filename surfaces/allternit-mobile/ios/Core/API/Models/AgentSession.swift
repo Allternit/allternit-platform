@@ -439,10 +439,21 @@ struct AgentSessionMessage: Decodable, Sendable, Identifiable {
         }
     }
 
-    /// `metadata: { agent, model, parts, error }` — only `parts` is decoded;
-    /// `agent`/`model`/`error` are `unknown`-typed in TS and skipped.
+    /// `metadata: { agent, model, parts, error, memoryRefs }` — `parts` and
+    /// `memoryRefs` are decoded; `agent`/`model`/`error` are `unknown`-typed
+    /// in TS and skipped. A bad `memoryRefs` entry is dropped, never the parts.
     struct Metadata: Decodable, Sendable {
         let parts: [Part]?
+        /// Memories the reply used or changed (≤ 10, from memory tool results).
+        let memoryRefs: [MemoryRef]?
+
+        private enum CodingKeys: String, CodingKey { case parts, memoryRefs }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            parts = try c.decodeIfPresent([Part].self, forKey: .parts)
+            memoryRefs = (try? c.decodeIfPresent(LossyArray<MemoryRef>.self, forKey: .memoryRefs))??.elements
+        }
     }
 
     let id: String
@@ -451,4 +462,32 @@ struct AgentSessionMessage: Decodable, Sendable, Identifiable {
     let thinking: String?
     let timestamp: String
     let metadata: Metadata?
+}
+
+/// One memory a reply used or changed: `metadata.memoryRefs[]` on a stored
+/// message (`info.memory_refs` on the runtime message).
+struct MemoryRef: Decodable, Equatable, Hashable, Sendable {
+    enum Action: String, Sendable { case recalled, saved, updated, deleted }
+
+    let id: String
+    let title: String?
+    /// The raw action; `kind` reads it, unknown values count as recalled.
+    let action: String
+
+    var kind: Action { Action(rawValue: action) ?? .recalled }
+
+    private enum CodingKeys: String, CodingKey { case id, title, action }
+
+    init(id: String, title: String? = nil, action: String) {
+        self.id = id
+        self.title = title
+        self.action = action
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? nil
+        action = (try? c.decodeIfPresent(String.self, forKey: .action)) ?? "recalled"
+    }
 }

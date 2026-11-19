@@ -201,6 +201,11 @@ struct MessageRow: View {
                     bubble
                 }
 
+                // Memories the reply used or changed (`metadata.memoryRefs`).
+                if message.role == "assistant", !message.memoryRefs.isEmpty {
+                    MemoryRefsChip(refs: message.memoryRefs)
+                }
+
                 if message.role == "user", !editedVersions.isEmpty {
                     Button { showsEditedVersions = true } label: {
                         Text("Edited")
@@ -420,7 +425,7 @@ struct MessageRow: View {
         }
 
         Button(action: {
-            UIPasteboard.general.string = message.content
+            UIPasteboard.general.string = FileCitation.plainText(message.content)
         }) {
             Label("Copy Text", systemImage: "doc.on.doc")
         }
@@ -852,15 +857,28 @@ struct AgentUserMessageCard: View {
         openingIndex = index
         problem = nil
         defer { openingIndex = nil }
+        if let url = await FilesDriveQuickLook.localCopy(itemId: id) {
+            previewURL = url
+            return
+        }
+        problem = "Couldn't open \(file.name) right now. It's in Agent Output in Files on your computer."
+    }
+}
+
+/// Downloads a Files drive item for Quick Look: finds it on this phone's
+/// Files computers (the id says nothing about which one). Agent file rows
+/// and `file:drive:` citation chips (FileCitationChip) both open through it.
+enum FilesDriveQuickLook {
+    @MainActor
+    static func localCopy(itemId id: String) async -> URL? {
+        let files = FilesDrive.shared
+        guard files.isEnabled else { return nil }
         for computer in files.computers {
             let model = FilesComputerModel(computerId: computer.id, name: computer.name)
             guard let item = try? await model.client.stat(id).item else { continue }
-            if let url = try? await model.localCopy(of: item) {
-                previewURL = url
-                return
-            }
+            if let url = try? await model.localCopy(of: item) { return url }
         }
-        problem = "Couldn't open \(file.name) right now. It's in Agent Output in Files on your computer."
+        return nil
     }
 }
 
@@ -1048,24 +1066,34 @@ private struct AssistantMarkdown: View {
     /// Settings → General → Chat font.
     @ObservedObject private var appearance = AppearanceStore.shared
 
+    /// The reply with `[[cite:…]]` tokens as chip links (never the raw token).
+    private var rendered: String { FileCitation.markdown(content, isStreaming: isStreaming) }
+
     var body: some View {
         Group {
             if let source {
                 StreamingMarkdownReader(source) { MarkdownView($0) }
             } else {
-                MarkdownView(content)
+                MarkdownView(rendered)
             }
         }
+        .markdownElementRenderer(.link(FileCitationLinkRenderer(), urlScheme: FileCitation.scheme))
+        .fileCitationHost()
         .modifier(ChatFontModifier(font: appearance.chatFont))
         .onAppear {
-            if isStreaming, source == nil { source = StreamingMarkdownSource(content) }
+            if isStreaming, source == nil { source = StreamingMarkdownSource(rendered) }
         }
-        .onChange(of: content) { _, text in
+        .onChange(of: content) { _, raw in
+            let text = FileCitation.markdown(raw, isStreaming: isStreaming)
             if isStreaming, source == nil { source = StreamingMarkdownSource(text) }
             source?.text = text
         }
         .onChange(of: isStreaming) { _, streaming in
-            if !streaming { source?.finishStreaming() }
+            guard !streaming, let source else { return }
+            // A held-back token tail is complete (or plain text) now.
+            let text = FileCitation.markdown(content, isStreaming: false)
+            if source.text != text { source.text = text }
+            source.finishStreaming()
         }
     }
 }

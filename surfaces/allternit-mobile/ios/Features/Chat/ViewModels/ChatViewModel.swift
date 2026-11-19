@@ -82,6 +82,9 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     /// When the message was written: the server's timestamp for history,
     /// creation time for messages made on this device (the Office panel's thread).
     var createdAt: Date = Date()
+    /// Memories the reply used or changed (`metadata.memoryRefs`), for the
+    /// "Used memory (n)" chip (MemoryRefsChip). Empty for user messages.
+    var memoryRefs: [MemoryRef] = []
 }
 
 /// Parameters for the NEXT session create, pushed from the view whenever
@@ -302,6 +305,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// attachments survive history loads and foreground reconciles.
     nonisolated private static func mapRecord(_ record: AgentSessionMessage) -> MessageRecord {
         let parts = record.metadata?.parts ?? []
+        // File parts by index, so a reply's `file:msg:<id>:<n>` citation
+        // finds its attachment (FileCitationChip).
+        CitationAttachments.record(messageId: record.id, parts: parts)
         let artifacts = parts
             .filter { $0.type == "file" }
             .map { ArtifactRecord(part: $0, messageId: record.id) }
@@ -312,7 +318,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             reasoning: record.thinking ?? "",
             toolCalls: ToolCallRecord.fromHistory(parts),
             artifacts: artifacts,
-            createdAt: parseTimestamp(record.timestamp) ?? Date()
+            createdAt: parseTimestamp(record.timestamp) ?? Date(),
+            memoryRefs: Array((record.metadata?.memoryRefs ?? []).prefix(10))
         )
     }
 
@@ -977,6 +984,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         case .finish(let payload):
             if let usage = payload.usage {
                 updateMessage(messageId) { $0.runUsage = usage }
+            }
+            if let refs = payload.metadata?.memoryRefs, !refs.isEmpty {
+                updateMessage(messageId) { $0.memoryRefs = Array(refs.prefix(10)) }
             }
             guard payload.status == "error" else { break }
             flushPendingDeltas()

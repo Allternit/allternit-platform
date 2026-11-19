@@ -418,6 +418,17 @@ export namespace MessageV2 {
     }),
     /** Token counts were estimated because the provider reported none. */
     tokensEstimated: z.boolean().optional(),
+    /** Memory entries this turn touched, collected from memory tool parts (never model self-report). */
+    memory_refs: z
+      .array(
+        z.object({
+          id: z.string(),
+          title: z.string().optional(),
+          action: z.enum(["recalled", "saved", "updated", "deleted"]),
+        }),
+      )
+      .max(10)
+      .optional(),
     answerPolicy: z.object({
       version: z.literal(1), selected: z.string().optional(), returned: z.string().optional(),
       status: z.enum(['accepted', 'repairing', 'rejected']), attempt: z.number().int(), problems: z.array(z.string()),
