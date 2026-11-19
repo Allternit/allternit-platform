@@ -32,7 +32,7 @@ route live.
 | `GET /memory/sleep/cycles/:id` | Live (empty until the orchestrator) | One cycle and its report. |
 | `POST /memory/sleep/cycles/:id/undo` | Refuses until the orchestrator | Undo a cycle. |
 | `POST /memory/sleep/run` | Refuses until the orchestrator | Start a cycle now. |
-| `POST /memory/sleep/signal` | Refuses until the orchestrator | Runtime trigger: idle, pre-compact, session end, resume. |
+| `POST /memory/sleep/signal` | Live with the orchestrator stage on; otherwise refuses | Runtime trigger: idle, pre-compact, session end, resume. |
 | `GET /memory/sleep/context` | Live (empty until the router) | What the runtime puts in front of the model at session start. |
 | `POST /memory/sleep/pages/load` | Refuses until the router | Load one topic page mid-session. |
 | `GET /memory/sleep/pages` | Live (empty until pages) | Page versions. |
@@ -146,6 +146,23 @@ Sent by the runtime, never by a person.
 | `resume` | You came back. Any running cycle stops cleanly. |
 
 `session_id` is required. `cache_ttl_s` is optional and must be above 0.
+
+With the `orchestrator` stage on, a signal writes units to the queue and answers:
+
+```json
+{ "accepted": true, "event": "idle", "queued": ["<unit id>"], "cancelled": [] }
+```
+
+| `event` | What it does |
+| --- | --- |
+| `idle` | Queues one `nap`. If you raise `nap_after_ttl_multiple` above 1.0 the first idle queues a `daydream` (a light pass) instead. |
+| `pre_compact` | Records a `capture` unit (scratch values and unsaved high-attention items must be captured), then queues a `nap`. It answers `200` fast and never blocks compaction; an internal error is logged and answers `queued: []`. |
+| `session_end` | Queues a `nap`. No immediate work. |
+| `resume` | Cancels this session's `queued` daydream and nap units (`cancelled` lists them). A unit already `leased` gets `stop_requested: true` in its payload, and its cycle stops cleanly. |
+
+There is at most one open (`queued` or `leased`) unit per session and kind, so a repeated
+signal never queues twice. With the stage off the signal is refused as shown above and
+nothing is written. `nap_after_ttl_multiple` (default 1.0) is in the thresholds list.
 
 ## Context and pages
 
@@ -292,6 +309,7 @@ Stage names are `labels_live`, `strengths`, `pages`, `router`, `orchestrator`,
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `idle_ttl_s` | 300 | Idle seconds before a nap. The runtime sends its real cache time. |
+| `nap_after_ttl_multiple` | 1.0 | An idle signal starts a nap once the session has been idle this many times the cache time; below that it starts a daydream. |
 | `unit_max_attempts` | 3 | Attempts before a unit of work moves to the next cycle. |
 | `unit_lease_s` | 900 | Lease length for a running unit. |
 | `page_budget_share` | 0.05 | Share of the model's context window for pages per message. |

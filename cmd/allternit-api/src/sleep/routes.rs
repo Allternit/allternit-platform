@@ -302,8 +302,14 @@ async fn signal(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(req
     if matches!(req.cache_ttl_s, Some(0)) {
         return err(StatusCode::BAD_REQUEST, "cache_ttl_s must be above 0");
     }
-    let (_conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
-    refused(&cfg, Stage::Orchestrator, StatusCode::OK)
+    let (conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
+    if !cfg.stage_on(Stage::Orchestrator) {
+        return refused(&cfg, Stage::Orchestrator, StatusCode::OK);
+    }
+    let out = super::trigger::handle(&conn, &cfg, &user, req.session_id.trim(), req.event);
+    (StatusCode::OK, Json(json!({
+        "accepted": true, "event": req.event, "queued": out.queued, "cancelled": out.cancelled,
+    })))
 }
 
 // ── Context and pages ───────────────────────────────────────────────────────
@@ -630,5 +636,63 @@ mod tests {
         let (s, v) = call(&app, "POST", "/api/v1/memory/sleep/run", "user-b", Some(json!({}))).await;
         assert_eq!((s, v["accepted"].clone(), v["reason"].clone()),
             (StatusCode::CONFLICT, json!(false), json!("sleep_disabled")));
+    }
+
+    #[tokio::test]
+    async fn signal_queues_units_only_with_the_orchestrator_on() {
+        let dir = std::env::temp_dir().join(format!("allternit-sleep-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let app: Router = Router::new().nest("/api/v1", sleep_router()).with_state(st.clone());
+        const SIGNAL: &str = "/api/v1/memory/sleep/signal";
+        let sig = |s: &str, e: &str| json!({ "session_id": s, "event": e, "cache_ttl_s": 300 });
+        let units = |user: &str| -> Vec<(String, String)> {
+            let conn = st.db.connect().unwrap();
+            let mut stmt = conn.prepare("SELECT stage, state FROM sleep_units WHERE user_id = ?1 ORDER BY created_at, rowid").unwrap();
+            stmt.query_map([user], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
+        };
+        let on = |who: &'static str| {
+            let app = app.clone();
+            async move {
+                let (s, _) = call(&app, "PUT", "/api/v1/memory/sleep/settings", who,
+                    Some(json!({ "enabled": true, "stages": { "orchestrator": true } }))).await;
+                assert_eq!(s, StatusCode::OK);
+            }
+        };
+
+        // Off: refused exactly as before, nothing written.
+        let (s, v) = call(&app, "POST", SIGNAL, "user-off", Some(sig("s1", "idle"))).await;
+        assert_eq!((s, v["accepted"].clone(), v["reason"].clone()), (StatusCode::OK, json!(false), json!("sleep_disabled")));
+        assert!(units("user-off").is_empty());
+
+        // An idle at the TTL queues a nap; a repeat does not double-queue; resume cancels it.
+        on("user-a").await;
+        let (s, v) = call(&app, "POST", SIGNAL, "user-a", Some(sig("s1", "idle"))).await;
+        assert_eq!((s, v["accepted"].clone(), v["queued"].as_array().unwrap().len()), (StatusCode::OK, json!(true), 1), "{v}");
+        let id = v["queued"][0].clone();
+        assert_eq!(units("user-a"), vec![("nap".to_string(), "queued".to_string())]);
+        let (_, v) = call(&app, "POST", SIGNAL, "user-a", Some(sig("s1", "idle"))).await;
+        assert_eq!(v["queued"], json!([]));
+        assert_eq!(units("user-a").len(), 1);
+        let (_, v) = call(&app, "POST", SIGNAL, "user-a", Some(sig("s1", "resume"))).await;
+        assert_eq!(v["cancelled"], json!([id]));
+        assert_eq!(units("user-a"), vec![("nap".to_string(), "cancelled".to_string())]);
+
+        // A leased unit gets the stop mark instead of being cancelled.
+        let (_, v) = call(&app, "POST", SIGNAL, "user-a", Some(sig("s1", "session_end"))).await;
+        let leased = v["queued"][0].as_str().unwrap().to_string();
+        st.db.connect().unwrap().execute("UPDATE sleep_units SET state = 'leased' WHERE id = ?1", [&leased]).unwrap();
+        let (_, v) = call(&app, "POST", SIGNAL, "user-a", Some(sig("s1", "resume"))).await;
+        assert_eq!(v["cancelled"], json!([]));
+        let p: String = st.db.connect().unwrap()
+            .query_row("SELECT payload_json FROM sleep_units WHERE id = ?1", [&leased], |r| r.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&p).unwrap()["stop_requested"], json!(true));
+
+        // pre_compact: 200, capture first, then nap.
+        on("user-b").await;
+        let (s, v) = call(&app, "POST", SIGNAL, "user-b", Some(sig("s9", "pre_compact"))).await;
+        assert_eq!((s, v["queued"].as_array().unwrap().len()), (StatusCode::OK, 2), "{v}");
+        assert_eq!(units("user-b"), vec![
+            ("capture".to_string(), "queued".to_string()), ("nap".to_string(), "queued".to_string())]);
     }
 }
