@@ -42,8 +42,8 @@ import kotlinx.coroutines.launch
  * The native app's only activity (PLAN.md section 2: single MainActivity). Launcher of the
  * `nativeapp` flavor; the play and phonelink builds keep the TWA launcher.
  *
- * Signed out → [SignInScreen]. Signed in → [HomePlaceholder] until step 7c brings the drawer,
- * mode dial, search and overview.
+ * Signed out → [SignInScreen]. Signed in → [WorkspaceShell]: home, drawer and mode fan (step 7c-1).
+ * Search, the session overview and the real chat screen arrive in later steps.
  *
  * Debug builds only: `adb shell am start -n com.allternit.app.ondevice/com.allternit.feature.shell.MainActivity
  * --es ticket <sign_in_token>` signs in with a Clerk sign-in token (Maestro, emulator checks).
@@ -88,9 +88,9 @@ class MainActivity : ComponentActivity() {
                     contentAlignment = Alignment.Center,
                 ) {
                     when (val s = state) {
-                        is AuthState.SignedIn -> HomePlaceholder(account = s.account, onOpenWeb = ::openWebVersion)
+                        is AuthState.SignedIn -> WorkspaceShell(account = s.account)
                         else -> if (skippedAuth) {
-                            HomePlaceholder(account = null, onOpenWeb = ::openWebVersion)
+                            WorkspaceShell(account = null)
                         } else {
                             when (s) {
                                 AuthState.Starting, AuthState.Finishing -> CircularProgressIndicator(
@@ -129,17 +129,6 @@ class MainActivity : ComponentActivity() {
         handleDebugTicket(intent)
     }
 
-    /**
-     * "Use web version" (PLAN.md section 3 rollback switch, first cut): the retained TWA
-     * launcher in the same package opens m.allternit.com.
-     */
-    private fun openWebVersion() {
-        // NEW_TASK is required: without it androidbrowserhelper's LauncherActivity restarts
-        // itself in a new task, the second copy sees the first still alive
-        // (sLauncherActivitiesAlive > 1) and finishes, so nothing opens (Moto, 2026-11-18).
-        startActivity(Intent().setClassName(packageName, TWA_LAUNCHER).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
-
     private fun handleDebugTicket(intent: Intent) {
         if (!BuildConfig.DEBUG) return
         val ticket = intent.getStringExtra(EXTRA_TICKET)?.takeIf { it.isNotBlank() } ?: return
@@ -158,6 +147,5 @@ class MainActivity : ComponentActivity() {
     private companion object {
         const val TAG = "AllternitMain"
         const val EXTRA_TICKET = "ticket"
-        const val TWA_LAUNCHER = "com.google.androidbrowserhelper.trusted.LauncherActivity"
     }
 }

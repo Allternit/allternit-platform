@@ -15,27 +15,27 @@ When a flow gains an `id:` selector, add its row here in the same change.
 | `loginContinueEmail` | 01 | `ios/App/AllternitApp.swift:432` | `android/feature/onboarding/.../SignInScreen.kt` |
 | `loginHeadline` | 01 | `ios/App/AllternitApp.swift:352` | `android/feature/onboarding/.../SignInScreen.kt` |
 | `loginSkipAuth` | 01 | `ios/App/AllternitApp.swift:456` | `android/feature/onboarding/.../SignInScreen.kt` |
-| `chatNewChat` | 02 | `ios/Features/Chat/Views/ChatView.swift:63` | Modifier.testTag (step 7+) |
-| `composerInput` | 02 | `ios/Features/Chat/Composer/ComposerView.swift:355` | Modifier.testTag (step 7+) |
-| `phoneMenuButton` | 02, 04, 05, 07, 08, 09, 19 | `ios/Features/Shell/PhoneHeader.swift:192` | Modifier.testTag (step 7+) |
-| `modeDial` | 03, 08, 09 | `ios/Features/Shell/ModeDialView.swift:433` | Modifier.testTag (step 7+) |
-| `modeFanCardbots` | 03 | `ios/Features/Shell/ModeDialView.swift:370` (built as "modeFanCard\(mode.rawValue)") | Modifier.testTag (step 7+) |
-| `drawerRowprojects` | 04 | `ios/Features/History/Views/HistorySidebarView.swift:408` (rail row id projects) | Modifier.testTag (step 7+) |
-| `drawerRowartifacts-library` | 05 | `ios/Features/History/Views/HistorySidebarView.swift:408` (rail row id artifacts-library) | Modifier.testTag (step 7+) |
+| `chatNewChat` | 02 | `ios/Features/Chat/Views/ChatView.swift:63` | `android/feature/shell/.../ShellScreens.kt` |
+| `composerInput` | 02 | `ios/Features/Chat/Composer/ComposerView.swift:355` | `android/feature/shell/.../Composer.kt` |
+| `phoneMenuButton` | 02, 04, 05, 07, 08, 09, 19 | `ios/Features/Shell/PhoneHeader.swift:192` | `android/feature/shell/.../ModeFan.kt` |
+| `modeDial` | 03, 08, 09 | `ios/Features/Shell/ModeDialView.swift:433` | `android/feature/shell/.../ShellDrawer.kt` |
+| `modeFanCardbots` | 03 | `ios/Features/Shell/ModeDialView.swift:370` (built as "modeFanCard\(mode.rawValue)") | `android/feature/shell/.../ModeFan.kt` |
+| `drawerRowprojects` | 04 | `ios/Features/History/Views/HistorySidebarView.swift:408` (rail row id projects) | `android/feature/shell/.../ShellDrawer.kt` |
+| `drawerRowartifacts-library` | 05 | `ios/Features/History/Views/HistorySidebarView.swift:408` (rail row id artifacts-library) | `android/feature/shell/.../ShellDrawer.kt` |
 | `automationTabloop` | 06, 18 | `ios/Features/Automation/Views/AutomationTasksPhoneView.swift:1248` (TaskTab.loop) | Modifier.testTag (step 7+) |
 | `automationTabroutine` | 06 | `ios/Features/Automation/Views/AutomationTasksPhoneView.swift:1248` (TaskTab.routine) | Modifier.testTag (step 7+) |
-| `drawerRowautomation-tasks` | 06, 18 | `ios/Features/History/Views/HistorySidebarView.swift:408` (rail row id automation-tasks) | Modifier.testTag (step 7+) |
+| `drawerRowautomation-tasks` | 06, 18 | `ios/Features/History/Views/HistorySidebarView.swift:408` (rail row id automation-tasks) | `android/feature/shell/.../ShellDrawer.kt` |
 | `modelsTitle` | 07 | `ios/Features/Models/ModelsTabView.swift:77` | Modifier.testTag (step 7+) |
-| `modeFanCardcode` | 08 | `ios/Features/Shell/ModeDialView.swift:370` (rawValue code) | Modifier.testTag (step 7+) |
-| `modeFanCardaci` | 09 | `ios/Features/Shell/ModeDialView.swift:370` (rawValue aci) | Modifier.testTag (step 7+) |
-| `drawerSettings` | 10 | `ios/Features/History/Views/HistorySidebarView.swift:839` | Modifier.testTag (step 7+) |
-| `plusSheetAddFiles` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:302` | Modifier.testTag (step 7+) |
-| `plusSheetCamera` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:300` | Modifier.testTag (step 7+) |
-| `plusSheetClose` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:259` | Modifier.testTag (step 7+) |
-| `plusSheetConnectors` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:356` | Modifier.testTag (step 7+) |
-| `plusSheetGithub` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:304` | Modifier.testTag (step 7+) |
-| `plusSheetPhotos` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:273` | Modifier.testTag (step 7+) |
-| `modelPickerSearch` | 12 | `ios/Features/Chat/Views/ModelPickerSheet.swift:101` | Modifier.testTag (step 7+) |
+| `modeFanCardcode` | 08 | `ios/Features/Shell/ModeDialView.swift:370` (rawValue code) | `android/feature/shell/.../ModeFan.kt` |
+| `modeFanCardaci` | 09 | `ios/Features/Shell/ModeDialView.swift:370` (rawValue aci) | `android/feature/shell/.../ModeFan.kt` |
+| `drawerSettings` | 10 | `ios/Features/History/Views/HistorySidebarView.swift:839` | `android/feature/shell/.../ShellDrawer.kt` |
+| `plusSheetAddFiles` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:302` | `android/feature/shell/.../PlusSheet.kt` |
+| `plusSheetCamera` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:300` | `android/feature/shell/.../PlusSheet.kt` |
+| `plusSheetClose` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:259` | `android/feature/shell/.../PlusSheet.kt` |
+| `plusSheetConnectors` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:356` | `android/feature/shell/.../PlusSheet.kt` |
+| `plusSheetGithub` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:304` | `android/feature/shell/.../PlusSheet.kt` |
+| `plusSheetPhotos` | 11 | `ios/Features/Chat/Views/ComposerPlusSheet.swift:273` | `android/feature/shell/.../PlusSheet.kt` |
+| `modelPickerSearch` | 12 | `ios/Features/Chat/Views/ModelPickerSheet.swift:101` | `android/feature/shell/.../ModelPicker.kt` |
 | `agentSheetDone` | 13 | `ios/Features/Chat/Views/AgentSelectionSheet.swift:70` | Modifier.testTag (step 7+) |
 | `agentSheetTitle` | 13 | `ios/Features/Chat/Views/AgentSelectionSheet.swift:27` | Modifier.testTag (step 7+) |
 | `newProjectClose` | 14 | `ios/Features/Projects/Views/NewProjectSheet.swift:42` | Modifier.testTag (step 7+) |
