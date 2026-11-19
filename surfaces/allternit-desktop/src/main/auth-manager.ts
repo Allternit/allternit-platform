@@ -38,6 +38,15 @@ import WebSocket from 'ws';
 import { URLS } from './config.js';
 import { dropRuntimeCredentialForGizzi, isGizziOwnedRelayPath, isGizziProviderListPath } from './relay-gizzi-credential.js';
 import { isDesktopAuthNavigation, pairingLookupFailureMessage, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
+import {
+  PairingFailure,
+  pairingErrorView,
+  pairingFailureKindForStatus,
+  platformLabel,
+  type PairingPhase,
+  type PairingState,
+} from './pairing-state.js';
+import { renderPairingCard, type PairingComputerInfo } from './startup-page.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
 import { cloudAccountMismatch, type CloudReconnectResult } from './cloud-account.js';
 import {
@@ -238,6 +247,8 @@ export class DesktopAuthManager {
   private signInRejecter: ((error: Error) => void) | null = null;
   private startupGateResolver: ((session: DesktopAuthSession) => void) | null = null;
   private splashWindow: BrowserWindow | null = null;
+  /** Where the pairing card is; a failure is reported against this step. */
+  private pairingPhase: PairingPhase = 'welcome';
   private clerkTokenResolver: ((payload: ClerkSessionPayload) => void) | null = null;
   private clerkTokenRejecter: ((error: Error) => void) | null = null;
   private authWindow: BrowserWindow | null = null;
@@ -258,6 +269,10 @@ export class DesktopAuthManager {
   constructor() {
     ipcMain.on('auth:start-login', () => {
       void this.handleLoginRequest();
+    });
+    // Pairing card "Cancel": stop this attempt and go back to Welcome.
+    ipcMain.on('auth:cancel-login', () => {
+      this.cancelLogin();
     });
     // Kept for older startup-window bundles. Human login method selection now
     // belongs entirely to Clerk inside the desktop app.
@@ -302,7 +317,7 @@ export class DesktopAuthManager {
 
     ipcMain.handle('auth:clerk-error', (_event, message: string) => {
       log.warn('[Auth] Clerk renderer error:', message);
-      this.clerkTokenRejecter?.(new Error(message));
+      this.clerkTokenRejecter?.(new PairingFailure('sign-in', `Clerk renderer error: ${message}`));
       this.clerkTokenResolver = null;
       this.clerkTokenRejecter = null;
     });
@@ -564,7 +579,7 @@ export class DesktopAuthManager {
     }
     const pairingId = url.searchParams.get('pairing_id');
     if (pairingId && this.pendingPairing?.pairing.pairingId === pairingId) {
-      this.notifySplash('auth:login-started', 'Approved — securely pairing this runtime…');
+      this.notifyPairing({ phase: 'approving' });
       void this.exchangePendingPairing(this.pendingPairing);
     }
     return true;
@@ -602,10 +617,11 @@ export class DesktopAuthManager {
     const visibleWindow = this.splashWindow
       || BrowserWindow.getAllWindows().find((candidate) => candidate.isVisible() && !candidate.isDestroyed());
     visibleWindow?.setAlwaysOnTop(false);
+    this.notifyPairing({ phase: clerkToken ? 'approving' : 'signing-in' });
 
     try {
       const session = await this.startPairing(undefined, clerkToken);
-      this.notifySplash('auth:login-success', 'Runtime paired — starting Allternit…');
+      this.notifyPairing({ phase: 'paired', email: session.userEmail });
       this.signInResolver?.(session);
       this.signInResolver = null;
       this.signInRejecter = null;
@@ -613,7 +629,10 @@ export class DesktopAuthManager {
       this.startupGateResolver = null;
     } catch (error) {
       const failure = error instanceof Error ? error : new Error('Runtime pairing failed');
-      this.notifySplash('auth:login-failed', failure.message);
+      // The raw reason goes to the log; the window shows a plain card.
+      log.warn(`[Auth] Pairing ended in phase ${this.pairingPhase}:`, failure.message);
+      const view = pairingErrorView(failure, this.pairingPhase === 'signing-in' ? 0 : 1);
+      this.notifyPairing(view ? { phase: 'error', error: view } : { phase: 'welcome' });
       this.signInRejecter?.(failure);
       this.signInResolver = null;
       this.signInRejecter = null;
@@ -647,7 +666,11 @@ export class DesktopAuthManager {
       body: JSON.stringify(bootstrap ? provisionedPairingBody(pairingBody, bootstrap) : pairingBody),
     });
     if (!response.ok) {
-      throw new Error(`Allternit pairing is unavailable (${response.status})`);
+      throw new PairingFailure(
+        pairingFailureKindForStatus(response.status),
+        `Allternit pairing is unavailable (${response.status})`,
+        response.status,
+      );
     }
     const pairing = await response.json() as PairingStartResponse;
 
@@ -658,7 +681,7 @@ export class DesktopAuthManager {
       rejectPairing = reject;
     });
     const timeout = setTimeout(() => {
-      this.clearPendingPairing(new Error('Pairing expired. Choose Get started to try again.'));
+      this.clearPendingPairing(new Error('Pairing expired before it finished.'));
     }, PAIRING_TIMEOUT_MS);
     const pending: PendingPairing = {
       pairing,
@@ -689,11 +712,14 @@ export class DesktopAuthManager {
           ? { token: clerkToken, userId: '', email: this.pendingClerkEmail ?? '' }
           : await this.requestClerkSession({ hidden: false });
         this.closeAuthWindow();
+        this.notifyPairing({ phase: 'approving' });
         this.pendingClerkEmail = preferredEmail(clerk.email, emailFromJwt(clerk.token));
         this.cacheClerkToken(clerk.token);
         await this.completePairingWithClerkToken(clerk.token, pending);
       } catch (error) {
         log.warn('[Auth] Pairing with Clerk token failed:', error);
+        // A cancelled attempt can fail late; never clear a newer attempt.
+        if (this.pendingPairing !== pending) return;
         this.closeAuthWindow();
         this.clearPendingPairing(error instanceof Error ? error : new Error('Clerk sign-in failed'));
       }
@@ -713,7 +739,7 @@ export class DesktopAuthManager {
     const authDir = join(__dirname, '../renderer/auth');
     const servingDomain = this.clerkAuthServingDomain();
     if (!servingDomain) {
-      throw new Error('Clerk auth serving domain is not configured. Rebuild with NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY set.');
+      throw new PairingFailure('sign-in', 'Clerk auth serving domain is not configured. Rebuild with NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY set.');
     }
     const authSession = this.prepareAuthSession(authDir, servingDomain);
     this.authWindowBaseUrl = `https://${servingDomain}${AUTH_WINDOW_PATH_PREFIX}/`;
@@ -839,7 +865,7 @@ export class DesktopAuthManager {
 
     window.loadURL(this.authWindowBaseUrl).catch((err) => {
       log.error('[Auth] Failed to load auth renderer:', err);
-      this.clerkTokenRejecter?.(err instanceof Error ? err : new Error('Auth renderer failed to load'));
+      this.clerkTokenRejecter?.(new PairingFailure('sign-in', `Auth renderer failed to load: ${err instanceof Error ? err.message : String(err)}`));
     });
 
     window.on('closed', () => {
@@ -1145,7 +1171,11 @@ export class DesktopAuthManager {
     if (!lookup.ok) {
       const body = await lookup.json().catch(() => ({})) as { code?: string; error?: unknown };
       log.warn('[Auth] Pairing lookup failed:', lookup.status, body.code ?? '');
-      throw new Error(pairingLookupFailureMessage(lookup.status, body.code));
+      throw new PairingFailure(
+        pairingFailureKindForStatus(lookup.status, body.code ?? ''),
+        pairingLookupFailureMessage(lookup.status, body.code),
+        lookup.status,
+      );
     }
 
     // Approve it with the Clerk-authenticated user.
@@ -1162,8 +1192,13 @@ export class DesktopAuthManager {
     );
     log.info('[Auth] Pairing approve status:', approve.status);
     if (!approve.ok) {
-      const payload = await approve.json().catch(() => ({})) as { message?: string; error?: string };
-      throw new Error(payload.message || payload.error || 'Allternit could not approve this runtime.');
+      const payload = await approve.json().catch(() => ({})) as { code?: string; message?: string; error?: string };
+      const serverText = [payload.code, payload.message, payload.error].filter(Boolean).join(' ');
+      throw new PairingFailure(
+        pairingFailureKindForStatus(approve.status, serverText),
+        `Pairing approve failed (${approve.status}): ${serverText || 'no detail'}`,
+        approve.status,
+      );
     }
 
     // Exchange for the device credential. The exchange may return 428 if the
@@ -1216,7 +1251,12 @@ export class DesktopAuthManager {
         const payload = await response.json().catch(() => null) as { error?: string; message?: string } | null;
         log.warn('[Auth] Pairing exchange failed:', response.status, payload);
         if (response.status >= 500) return false;
-        throw new Error(payload?.message || payload?.error || `Pairing failed (${response.status})`);
+        const serverText = [payload?.message, payload?.error].filter(Boolean).join(' ');
+        throw new PairingFailure(
+          pairingFailureKindForStatus(response.status, serverText),
+          `Pairing exchange failed (${response.status}): ${serverText || 'no detail'}`,
+          response.status,
+        );
       }
 
       const exchange = await response.json() as PairingExchangeResponse;
@@ -1251,7 +1291,7 @@ export class DesktopAuthManager {
         log.warn('[Auth] Pairing poll could not reach Allternit Cloud; retrying');
         return false;
       }
-      this.clearPendingPairing(error instanceof Error ? error : new Error('Pairing failed'));
+      if (this.pendingPairing === pending) this.clearPendingPairing(error instanceof Error ? error : new Error('Pairing failed'));
       return true;
     } finally {
       pending.exchangeInFlight = false;
@@ -1308,7 +1348,7 @@ export class DesktopAuthManager {
     if (response.status === 401 || response.status === 403) {
       this.clearSession();
       await this.clearCurrentAccountFlag();
-      this.notifySplash('auth:login-failed', 'This runtime was revoked. Pair it again to continue.');
+      this.notifyPairing({ phase: 'error', error: pairingErrorView(new PairingFailure('revoked', 'Runtime revoked'))! });
       return;
     }
     if (response.status === 429) {
@@ -2029,6 +2069,25 @@ export class DesktopAuthManager {
     }
   }
 
+  /** Stop the running pairing attempt (pairing card "Cancel"); back to Welcome. */
+  private cancelLogin(): void {
+    log.info('[Auth] Pairing cancelled from the pairing window');
+    this.clerkTokenRejecter?.(new Error('Sign-in window was closed.'));
+    this.clerkTokenResolver = null;
+    this.clerkTokenRejecter = null;
+    this.closeAuthWindow();
+    if (this.pendingPairing) this.clearPendingPairing(new Error('Sign-in window was closed.'));
+    else this.notifyPairing({ phase: 'welcome' });
+  }
+
+  /** Re-render the startup window's pairing card for `state`. */
+  private notifyPairing(state: PairingState): void {
+    this.pairingPhase = state.phase;
+    const window = this.splashWindow;
+    if (!window || window.isDestroyed()) return;
+    window.webContents.send('pairing:render', renderPairingCard(state, pairingComputerInfo()));
+  }
+
   private notifySplash(channel: string, message: string): void {
     const window = this.splashWindow
       || BrowserWindow.getAllWindows().find((candidate) => candidate.isVisible() && !candidate.isDestroyed());
@@ -2037,6 +2096,13 @@ export class DesktopAuthManager {
 }
 
 export const authManager = new DesktopAuthManager();
+
+/** This computer's name and OS for the pairing card (the name pairing sends). */
+let cachedComputerInfo: PairingComputerInfo | null = null;
+export function pairingComputerInfo(): PairingComputerInfo {
+  cachedComputerInfo ??= { computerName: machineHostname(), platformLabel: platformLabel(process.platform) };
+  return cachedComputerInfo;
+}
 
 /**
  * This machine's name for runtime pairing. On macOS `os.hostname()` follows

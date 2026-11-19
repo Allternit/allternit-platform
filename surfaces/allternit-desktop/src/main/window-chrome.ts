@@ -31,3 +31,30 @@ export function uvInstallCommand(platform: NodeJS.Platform): string {
 export function uvInstallHint(platform: NodeJS.Platform): string {
   return `Laya needs uv. Install it with '${uvInstallCommand(platform)}', then choose Repair.`;
 }
+
+/**
+ * Where tray > Connection Settings goes. With the workspace loaded it opens
+ * Settings › Computers in the app (the connect kit every surface uses); the
+ * bundled Connect page is only for when the workspace can't load.
+ */
+export function connectionSettingsTarget(state: {
+  platformUiResolved: boolean;
+  workspaceLoadFailed: boolean;
+  currentUrl: string;
+}): 'computers-settings' | 'connect-page' {
+  if (!state.platformUiResolved || state.workspaceLoadFailed || isPrePairingPage(state.currentUrl)) return 'connect-page';
+  return 'computers-settings';
+}
+
+/** Opens Settings › Computers through the workspace's own open-settings event. */
+export const OPEN_COMPUTERS_SETTINGS_SCRIPT =
+  "window.dispatchEvent(new CustomEvent('allternit:open-settings', { detail: { section: 'computers' } }))";
+
+/**
+ * A failed main-window load that means the workspace can't open: the main
+ * frame, not an aborted navigation (-3, a redirect or a newer load), and not
+ * the Connect page itself.
+ */
+export function isWorkspaceLoadFailure(errorCode: number, isMainFrame: boolean, url: string): boolean {
+  return isMainFrame && errorCode !== -3 && !isPrePairingPage(url);
+}

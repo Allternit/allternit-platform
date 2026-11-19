@@ -88,6 +88,7 @@ import { OfficeAddinManager, type OfficeProductId } from './office-addin-manager
 import { tunnelManager } from './tunnel-manager.js';
 import { authManager, FULL_CLERK_REFRESH_WAIT_MS } from './auth-manager.js';
 import { APP_WINDOW_TITLE, hidesMenuBarBeforePairing, isPrePairingPage, mayOpenHud } from './window-chrome.js';
+import { connectionSettingsTarget, isWorkspaceLoadFailure, OPEN_COMPUTERS_SETTINGS_SCRIPT } from './window-chrome.js';
 // Side-effect import: constructing the manager registers the device-pairing:*
 // IPC handlers. A named import that is never read gets elided by tsc, which
 // left Settings → Devices failing with "No handler registered".
@@ -531,6 +532,8 @@ let activePlatformUrl: string = isDev ? URLS.DEV_UI : URLS.PRODUCTION_UI;
 // is only its default (the hosted ai.allternit.com), which the desktop shell
 // must never load: its CSP blocks the local API and its chunks go stale on deploy.
 let platformUiResolved = false;
+/** The main window's last workspace load failed (the Connect page is showing). */
+let workspaceLoadFailed = false;
 
 /** Bundled Connect screen (choose local or VPS backend). */
 const CONNECT_PAGE_PATH = join(__dirname, '../../static/connect.html');
@@ -1903,6 +1906,7 @@ async function initializeBundledMode(): Promise<void> {
       log.info('[Main] Window started loading');
     });
     mainWindow.webContents.on('did-finish-load', () => {
+      if (mainWindow && !isPrePairingPage(mainWindow.webContents.getURL())) workspaceLoadFailed = false;
       prewarmHudWindowSoon();
       mainWindowLoaded = true;
       log.info('[Main] Window finished loading');
@@ -1911,8 +1915,13 @@ async function initializeBundledMode(): Promise<void> {
       sessionLinkReady = true;
       flushSessionLink();
     });
-    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       log.error(`[Main] Window failed to load: ${errorDescription} (${errorCode}) at ${validatedURL}`);
+      // The workspace can't open: show "Where Allternit runs" instead of a blank window.
+      if (isWorkspaceLoadFailure(errorCode, isMainFrame, validatedURL) && mainWindow && !mainWindow.isDestroyed()) {
+        workspaceLoadFailed = true;
+        void mainWindow.loadFile(CONNECT_PAGE_PATH, { query: { reason: 'load-failed' } });
+      }
     });
     mainWindow.webContents.on('did-navigate', (_event, url) => {
       log.info(`[Main] Window did-navigate: ${url}`);
@@ -2409,7 +2418,23 @@ function toggleMiniWindow(): void {
 // ============================================================================
 
 function showConnectionSettings(): void {
-  if (!mainWindow) {
+  const currentUrl = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.getURL() : '';
+  if (connectionSettingsTarget({ platformUiResolved, workspaceLoadFailed, currentUrl }) === 'computers-settings') {
+    // Settings › Computers in the app: the one connect kit every surface uses.
+    showOrReopenMainWindow();
+    const win = mainWindow;
+    if (!win || win.isDestroyed()) return;
+    const open = () => {
+      win.webContents.executeJavaScript(OPEN_COMPUTERS_SETTINGS_SCRIPT).catch((error) => {
+        log.warn('[Tray] Could not open Settings › Computers:', error);
+      });
+    };
+    // A window that is still loading mounts the shell after did-finish-load.
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', () => setTimeout(open, 1500));
+    else open();
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createMainWindow();
   }
   mainWindow.show();
@@ -3436,6 +3461,16 @@ fabricWorkerManager.onStateChange((state: FabricWorkerState) => {
 });
 
 // Folder-grant wizard bridges (startup window preload → main).
+// Paired pairing card "Open Allternit": bring the workspace forward now; the
+// startup window would otherwise close by itself once the workspace loads.
+ipcMain.on('startup:open-app', () => {
+  if (!mainWindow || mainWindow.isDestroyed() || folderGrantsPending) return;
+  mainWindow.show();
+  mainWindow.focus();
+  if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+  splashWindow = null;
+});
+
 ipcMain.handle('startup:pick-folder', async () => {
   if (!splashWindow || splashWindow.isDestroyed()) return null;
   const result = await dialog.showOpenDialog(splashWindow, {
@@ -4988,15 +5023,33 @@ handleGuarded('sidecar:restart', async () => {
 // IPC: Connection settings
 // ============================================================================
 
-ipcMain.handle('connection:test', async () => {
+ipcMain.handle('connection:test', async (event, target?: { remoteUrl?: string }) => {
   const backend = store.get('backend');
+  let url = activeBackendUrl;
+  let mode: string = backend.mode;
+  // The Connect page checks a typed server address before it is saved.
+  if (target?.remoteUrl) {
+    assertTrustedSender(event, 'connection:test');
+    let parsed: URL;
+    try {
+      parsed = new URL(target.remoteUrl);
+    } catch {
+      return { mode: 'remote', url: target.remoteUrl, status: 'invalid' };
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return { mode: 'remote', url: target.remoteUrl, status: 'invalid' };
+    }
+    url = parsed.origin;
+    mode = 'remote';
+  }
+  const started = Date.now();
   try {
-    const res = await fetch(`${activeBackendUrl}/health`, {
+    const res = await fetch(`${url}/health`, {
       signal: AbortSignal.timeout(3000),
     });
-    return { mode: backend.mode, url: activeBackendUrl, status: res.ok ? 'connected' : 'error' };
+    return { mode, url, status: res.ok ? 'connected' : 'error', latencyMs: Date.now() - started };
   } catch {
-    return { mode: backend.mode, url: activeBackendUrl, status: 'disconnected' };
+    return { mode, url, status: 'disconnected' };
   }
 });
 
@@ -5005,7 +5058,8 @@ ipcMain.handle('connection:get-backend', () => {
   return { mode: backend.mode, url: activeBackendUrl };
 });
 
-handleGuarded('connection:set-backend', async (_event, config: { mode: 'bundled' | 'remote' | 'development'; remoteUrl?: string }) => {
+handleGuarded('connection:set-backend', async (_event, input: { mode: 'bundled' | 'remote' | 'development'; remoteUrl?: string; restart?: boolean }) => {
+  const { restart, ...config } = input;
   const nextBackend = { ...store.get('backend'), ...config };
   store.set('backend', nextBackend);
   void authManager.updateBackendProfile({
@@ -5024,6 +5078,13 @@ handleGuarded('connection:set-backend', async (_event, config: { mode: 'bundled'
   }
 
   broadcastToMainWindows('connection:state', { mode: nextBackend.mode, url: activeBackendUrl });
+  // Connect page "Save and restart": the engine choice applies on the next launch.
+  if (restart) {
+    setTimeout(() => {
+      app.relaunch();
+      app.quit();
+    }, 300);
+  }
 });
 
 // ============================================================================

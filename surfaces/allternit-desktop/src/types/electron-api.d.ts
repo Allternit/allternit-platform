@@ -20,16 +20,21 @@ export interface ConnectionState {
   mode: 'bundled' | 'remote' | 'development';
   url: string;
   status?: string;
+  /** Round trip of the /health check, when it answered. */
+  latencyMs?: number;
   lastError?: string;
 }
 
 export interface BackendConfig {
   mode: 'bundled' | 'remote';
   remoteUrl?: string;
+  /** Relaunch the app after saving. */
+  restart?: boolean;
 }
 
 export interface ConnectionAPI {
-  test(): Promise<ConnectionState>;
+  /** Checks the active engine, or `target.remoteUrl` before it is saved. */
+  test(target?: { remoteUrl?: string }): Promise<ConnectionState>;
   getBackend(): Promise<{ mode: 'bundled' | 'remote' | 'development'; url: string }>;
   setBackend(config: BackendConfig): Promise<void>;
   onStateChange(callback: (state: unknown) => void): () => void;
