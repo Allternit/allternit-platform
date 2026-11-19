@@ -252,9 +252,10 @@ pub fn fingerprint(app: &str, activity: Option<&str>, nodes: &[UiNode]) -> Fp {
             keys.insert(n.class.trim().to_string());
         }
     }
+    // A text field's label can be text the run typed: never a title (typed text stays out of maps).
     let title = kept
         .iter()
-        .filter(|n| !n.label.trim().is_empty())
+        .filter(|n| !n.editable && !n.label.trim().is_empty())
         .min_by_key(|n| (n.bounds[1], n.bounds[0]))
         .map(|n| n.label.trim().chars().take(80).collect::<String>());
     let keys: Vec<String> = keys.into_iter().collect();
@@ -941,6 +942,133 @@ pub fn route(map: &AppMap, from: &str, to: &str) -> Option<Vec<Edge>> {
     None
 }
 
+// ─── In runs: the task loop and skill replay (contract sections 5, 6) ──────
+
+/// `vision: auto` sends no screenshot while the tree is rich: at least this
+/// many nodes carry a label or a resource id (contract section 5), and at
+/// least one of those is clickable. A list screen in a native app has 8 to 30
+/// such nodes; a WebView, game, canvas or Flutter screen exposes 0 to 3, and a
+/// screen whose labels are all static text (an OCR read, an iPhone) can only
+/// be tapped by pixel, so the model needs the picture there.
+pub const RICH_MIN_LABELLED: usize = 5;
+
+/// `phone.read_ui` arguments for a map-aware read: `with_activity` always
+/// (contract section 1: without it fingerprints fall back to package only),
+/// `with_version` on the first read of a run.
+pub fn read_args(max_elements: u64, with_version: bool) -> Map<String, Value> {
+    let mut a = Map::new();
+    a.insert("max_elements".into(), json!(max_elements));
+    a.insert("with_activity".into(), json!(true));
+    if with_version {
+        a.insert("with_version".into(), json!(true));
+    }
+    a
+}
+
+/// Whether a read carries enough tree to act on with no screenshot (see
+/// [`RICH_MIN_LABELLED`]). `None` (an old Desktop: no `nodes`) is poor, so
+/// those runs keep today's screenshot on every step.
+pub fn tree_is_rich(read: Option<&UiRead>) -> bool {
+    let Some(r) = read else { return false };
+    let labelled: Vec<&UiNode> = r.nodes.iter().filter(|n| !n.label.trim().is_empty() || !n.resource_id.trim().is_empty()).collect();
+    labelled.len() >= RICH_MIN_LABELLED && labelled.iter().any(|n| n.clickable)
+}
+
+/// The map platform of a phone. The rule, in order:
+/// 1. Desktop's `phone.devices` lists the serial with `platform` `android` or
+///    `ios`: that. With no serial (Desktop picks the only phone), the one
+///    listed device's platform.
+/// 2. Else the serial's lane prefix: `usb:` is a USB Agent iPhone (iOS).
+///    `link:` (Phone Link: either platform) and `app:` (the App Store app:
+///    either platform) are unknown without a device entry.
+/// 3. Any other serial is an adb serial (Android).
+///
+/// `None` = unknown: maps are off for the run (never a guess into the wrong
+/// platform's file).
+pub fn platform_for(serial: Option<&str>, devices: Option<&Value>) -> Option<Platform> {
+    let listed: Vec<&Value> = devices.and_then(|d| d.get("devices")).and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default();
+    let of = |d: &Value| d.get("platform").and_then(Value::as_str).and_then(Platform::parse);
+    let serial = serial.map(str::trim).filter(|s| !s.is_empty() && *s != "-" && *s != "default");
+    match serial {
+        Some(s) => {
+            if let Some(p) = listed.iter().copied().find(|d| d.get("serial").and_then(Value::as_str) == Some(s)).and_then(|d| of(d)) {
+                return Some(p);
+            }
+            if s.starts_with("usb:") {
+                Some(Platform::Ios)
+            } else if s.starts_with("link:") || s.starts_with("app:") {
+                None
+            } else {
+                Some(Platform::Android)
+            }
+        }
+        None if listed.len() == 1 => of(listed[0]),
+        None => None,
+    }
+}
+
+/// [`platform_for`] with Desktop's device list (one `phone.devices` call per run).
+pub async fn detect_platform(serial: Option<&str>) -> Option<Platform> {
+    let devices = crate::phone_replay::call_tool("phone.devices", json!({})).await.ok().filter(|v| v.get("ok").and_then(Value::as_bool) != Some(false));
+    platform_for(serial, devices.as_ref())
+}
+
+/// The locator an observed tap stores: the replay locator of the tapped
+/// element, with no label when the element is a text field (its label can be
+/// text the run typed; typed text never reaches a map).
+pub fn edge_locator(el: &crate::phone_replay::UiEl, screen: (f64, f64), nodes: &[UiNode]) -> Locator {
+    let mut l = crate::phone_replay::locator_of(el, screen);
+    let r = el.rect;
+    let field = el.class.to_lowercase().contains("edittext")
+        || el.class.to_lowercase().contains("textfield")
+        || nodes.iter().any(|n| (n.editable || n.password) && n.bounds == [r[0] as i64, r[1] as i64, (r[0] + r[2]) as i64, (r[1] + r[3]) as i64]);
+    if field {
+        l.label.clear();
+    }
+    l
+}
+
+/// [`observe`] for a run: errors are logged and never fail the run.
+pub fn observe_logged(data_dir: &FsPath, o: &Observation<'_>) -> Option<Observed> {
+    match observe(data_dir, o) {
+        Ok(r) => Some(r),
+        Err(e) => {
+            tracing::warn!("app map for {} not updated: {e}", o.prev.app);
+            None
+        }
+    }
+}
+
+/// At most 20 known screens for the prompt (contract section 5): `here`
+/// first, then screens reachable by routable edges by fewest hops, then the
+/// rest by most recently seen. `(id, name)` pairs; names only.
+pub fn known_screens(map: &AppMap, here: &str) -> Vec<(String, String)> {
+    const SHOWN: usize = 20;
+    let mut order: Vec<&str> = Vec::new();
+    if map.screens.contains_key(here) {
+        order.push(here);
+        let mut queue = VecDeque::from([here]);
+        while let Some(at) = queue.pop_front() {
+            for e in map.edges.iter().filter(|e| e.from == at && e.routable && !e.sensitive) {
+                if map.screens.contains_key(&e.to) && !order.contains(&e.to.as_str()) {
+                    order.push(e.to.as_str());
+                    queue.push_back(e.to.as_str());
+                }
+            }
+        }
+    }
+    let mut rest: Vec<&Screen> = map.screens.values().filter(|s| !order.contains(&s.id.as_str())).collect();
+    rest.sort_by(|a, b| b.last_seen.cmp(&a.last_seen).then(a.id.cmp(&b.id)));
+    order.extend(rest.iter().map(|s| s.id.as_str()));
+    order.into_iter().take(SHOWN).filter_map(|id| map.screens.get(id)).map(|s| (s.id.clone(), s.name.clone())).collect()
+}
+
+/// A screen by id, else by exact name (case ignored).
+pub fn find_screen<'a>(map: &'a AppMap, want: &str) -> Option<&'a Screen> {
+    let want = want.trim();
+    map.screens.get(want).or_else(|| map.screens.values().find(|s| s.name.eq_ignore_ascii_case(want)))
+}
+
 // ─── Routes (contract section 4) ───────────────────────────────────────────
 
 fn err(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
@@ -1124,6 +1252,14 @@ mod tests {
         let weak = |title: &str| fingerprint("com.y", Some("Main"), &[node("android.view.View", "", title, [0, 0, 100, 50]), node("android.view.View", "", "x", [0, 60, 100, 90])]);
         assert_eq!(weak("Inbox").confidence, Confidence::Low);
         assert_ne!(weak("Inbox").fingerprint, weak("Sent").fingerprint);
+        // A search field typed into is never the title: typed text stays out of the hash and the name.
+        let field = |typed: &str| {
+            let mut box_ = node("android.widget.EditText", "", typed, [0, 0, 100, 40]);
+            box_.editable = true;
+            fingerprint("com.y", Some("Main"), &[box_, node("android.view.View", "", "Results", [0, 60, 100, 90])])
+        };
+        assert_eq!(field("my secret query").title.as_deref(), Some("Results"));
+        assert_eq!(field("my secret query").fingerprint, field("another").fingerprint);
         // Dynamic ids are not keys.
         assert!(dynamic_id("com.x:id/item_12") && dynamic_id("com.x:id/1234") && dynamic_id("com.x:id/row_deadbeef99"));
         assert!(!dynamic_id("android:id/button1") && !dynamic_id("com.x:id/title"));
@@ -1351,5 +1487,86 @@ mod tests {
         assert!(!m.screens.contains_key("s0"), "the oldest went first");
         let (id, _) = m.ensure_screen(&Fp { fingerprint: "v1:fresh".into(), app: "com.x".into(), activity: String::new(), keys: vec![], confidence: Confidence::Low, title: None }, "z");
         assert_eq!(id, format!("s{}", MAX_SCREENS + 5));
+    }
+
+    #[test]
+    fn the_platform_rule_prefers_the_device_list_then_the_serial_prefix() {
+        let devices = json!({ "ok": true, "devices": [
+            { "serial": "link:ab", "platform": "ios" },
+            { "serial": "link:cd", "platform": "android" },
+            { "serial": "app:ef", "platform": "android" },
+        ] });
+        assert_eq!(platform_for(Some("link:ab"), Some(&devices)), Some(Platform::Ios));
+        assert_eq!(platform_for(Some("link:cd"), Some(&devices)), Some(Platform::Android));
+        assert_eq!(platform_for(Some("app:ef"), Some(&devices)), Some(Platform::Android));
+        // No device entry: the lane prefix.
+        assert_eq!(platform_for(Some("usb:00008110"), None), Some(Platform::Ios));
+        assert_eq!(platform_for(Some("emulator-5554"), None), Some(Platform::Android));
+        assert_eq!(platform_for(Some("ZY22H4"), Some(&json!({ "ok": true, "devices": [] }))), Some(Platform::Android));
+        // Phone Link and the App Store app carry either platform: unknown, so maps stay off.
+        assert_eq!(platform_for(Some("link:zz"), None), None);
+        assert_eq!(platform_for(Some("app:zz"), Some(&devices)), None);
+        // No serial: the only listed phone, else unknown.
+        let one = json!({ "devices": [{ "serial": "usb:1", "platform": "ios" }] });
+        assert_eq!(platform_for(None, Some(&one)), Some(Platform::Ios));
+        assert_eq!(platform_for(Some("-"), Some(&devices)), None);
+    }
+
+    #[test]
+    fn a_rich_tree_needs_five_labelled_nodes_and_a_clickable_one() {
+        let rich = list_screen(SETTINGS, "Settings", &["Wi-Fi", "Bluetooth"], 200);
+        assert!(tree_is_rich(Some(&rich)));
+        assert!(!tree_is_rich(None), "an old Desktop sends no nodes: poor");
+        // Labels but nothing clickable (an OCR read): poor.
+        let ocr = UiRead { nodes: rich.nodes.iter().map(|n| UiNode { clickable: false, ..n.clone() }).collect(), ..rich.clone() };
+        assert!(!tree_is_rich(Some(&ocr)));
+        // A canvas with two labelled buttons: poor.
+        let canvas = UiRead { nodes: rich.nodes[..3].to_vec(), ..rich.clone() };
+        assert!(!tree_is_rich(Some(&canvas)));
+        let args = read_args(400, true);
+        assert_eq!((args["with_activity"].clone(), args["with_version"].clone(), args["max_elements"].clone()), (json!(true), json!(true), json!(400)));
+        assert!(read_args(400, false).get("with_version").is_none());
+    }
+
+    #[test]
+    fn known_screens_list_here_then_by_hops_then_recent() {
+        let mut m = AppMap::new(Platform::Android, SETTINGS);
+        let fp = |n: u32| Fp { fingerprint: format!("v1:{n:016}"), app: SETTINGS.into(), activity: String::new(), keys: vec![], confidence: Confidence::Low, title: Some(format!("Screen {n}")) };
+        let ids: Vec<String> = (0..5).map(|n| m.ensure_screen(&fp(n), &format!("2026-11-19T00:00:0{n}Z")).0).collect();
+        let edge = |from: &str, to: &str, routable: bool| Edge {
+            from: from.into(),
+            to: to.into(),
+            action: EdgeAction::Back,
+            locator: None,
+            ok: 1,
+            fail: 0,
+            consecutive_fail: 0,
+            app_version: String::new(),
+            last_ok: None,
+            last_fail: None,
+            routable,
+            sensitive: false,
+        };
+        // 0 -> 2 -> 1 is routable; 0 -> 3 is not.
+        m.edges = vec![edge(&ids[0], &ids[2], true), edge(&ids[2], &ids[1], true), edge(&ids[0], &ids[3], false)];
+        let order: Vec<String> = known_screens(&m, &ids[0]).into_iter().map(|(id, _)| id).collect();
+        // Here, then by hops (2, then 1), then the rest newest first (4, 3).
+        assert_eq!(order, vec![ids[0].clone(), ids[2].clone(), ids[1].clone(), ids[4].clone(), ids[3].clone()]);
+        assert_eq!(find_screen(&m, &ids[2]).map(|s| s.id.clone()), Some(ids[2].clone()));
+        let name = m.screens[&ids[4]].name.clone();
+        assert_eq!(find_screen(&m, &name.to_uppercase()).map(|s| s.id.clone()), Some(ids[4].clone()));
+        assert!(find_screen(&m, "nowhere").is_none());
+    }
+
+    #[test]
+    fn an_observed_tap_on_a_text_field_stores_no_label() {
+        let field = crate::phone_replay::UiEl { class: "android.widget.EditText".into(), label: "what I typed".into(), id: "com.x:id/q".into(), rect: [0.0, 0.0, 500.0, 100.0] };
+        let l = edge_locator(&field, (1000.0, 2000.0), &[]);
+        assert!(l.label.is_empty() && l.resource_id == "com.x:id/q" && l.crop.is_none());
+        let button = crate::phone_replay::UiEl { class: "android.widget.Button".into(), label: "Wi-Fi".into(), ..field.clone() };
+        assert_eq!(edge_locator(&button, (1000.0, 2000.0), &[]).label, "Wi-Fi");
+        // An editable node with a plain class (Compose) is found by its bounds.
+        let compose = UiNode { class: "android.view.View".into(), editable: true, bounds: [0, 0, 500, 100], ..Default::default() };
+        assert!(edge_locator(&crate::phone_replay::UiEl { class: "android.view.View".into(), ..field }, (1000.0, 2000.0), &[compose]).label.is_empty());
     }
 }
