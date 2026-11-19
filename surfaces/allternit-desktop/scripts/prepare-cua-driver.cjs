@@ -7,9 +7,10 @@ const { spawnSync } = require('node:child_process');
 
 const VERSION = '0.34.0';
 // Linux is built from source at this commit of tag cua-driver-rs-v${VERSION}
-// (scripts/build-linux-sidecars.sh cua-driver, cargo-zigbuild at glibc 2.17): the
-// upstream Linux prebuilt needs glibc 2.30, above the Linux Desktop floor (2.27,
-// Ubuntu 18.04). macOS and Windows still use the upstream release assets below.
+// (scripts/build-linux-sidecars.sh cua-driver, cargo-zigbuild at glibc 2.27, the floor,
+// since it calls memfd_create): the upstream Linux prebuilt needs glibc 2.30, above the
+// Linux Desktop floor (2.27, Ubuntu 18.04). macOS and Windows still use the upstream
+// release assets below.
 const LINUX_SOURCE_COMMIT = 'b0968e1b12834e485dda68789541a3cc57664a9f';
 const RELEASE = `https://github.com/trycua/cua/releases/download/cua-driver-rs-v${VERSION}`;
 const outputRoot = path.resolve(__dirname, '..', 'resources', 'computer-use');
