@@ -34,6 +34,12 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.coroutines.suspendCancellableCoroutine
+import com.allternit.feature.artifacts.obj
+import com.allternit.feature.artifacts.str
+import kotlin.coroutines.resume
 import java.io.IOException
 
 /**
@@ -58,6 +64,86 @@ internal object FilesKeyNet {
     fun ring(context: Context) = FilesKeyRing(context, android.os.Build.MODEL ?: "Android phone", ::call)
 }
 
+/**
+ * Files v2 calls to one computer over the owner's relay (`POST /api/v1/runtime-devices/:id/proxy`, the same
+ * envelope :feature:computer's AciRelay sends), for "Give key" (iOS FilesKeysView.give / deliverUnlocking:
+ * `GET /replicas/key`, then `PUT /replicas/key` with the sealed envelope). The envelope is sealed to the computer's
+ * own X25519 key by [FilesKeyRing]; the relay only carries it. Blocking: the ring runs on Dispatchers.IO.
+ */
+internal object FilesKeyRelay {
+    /** The computer holds a different key, so the runtime wants a fresh signed unlock token. */
+    class Locked : IOException("This computer holds a different Files key.")
+
+    fun call(cid: String, deviceId: String, unlock: String?, method: String, path: String, body: String?): String = runBlocking {
+        val envelope = buildJsonObject {
+            put("method", method)
+            put("path", "/api/v1/files/v2$path")
+            put("headers", buildJsonObject {
+                put("accept", "application/json")
+                put("x-allternit-device-id", deviceId)
+                put("x-allternit-device-platform", "android")
+                if (body != null) put("content-type", "application/json")
+                if (unlock != null) put("x-allternit-unlock", unlock)
+            })
+            put("body", body ?: "")
+            put("bodyEncoding", "utf8")
+        }
+        when (val r = Net.cloud("POST", "api/v1/runtime-devices/${FilesCloud.seg(cid)}/proxy", envelope)) {
+            is ApiResult.Ok -> r.value.toString()
+            is ApiResult.HttpError -> when {
+                r.code == "protected_root_locked" -> throw Locked()
+                r.status == 428 || r.code == "compute_required" -> throw IOException("This computer isn't connected. Turn it on, then try again.")
+                r.status == 503 -> throw IOException("This computer isn't reachable right now. Wake it, then try again.")
+                else -> throw FilesKeyRing.HttpException(r.status, r.message?.takeIf { it.isNotBlank() } ?: r.friendly("give this computer the Files key"))
+            }
+            is ApiResult.Network -> throw IOException("You're offline. Check your connection and try again.")
+            else -> throw IOException("Allternit sent a reply this app couldn't read.")
+        }
+    }
+
+    /** A signed unlock token (at most 5 minutes) from `POST /computer-files/:id/unlock`, after the owner check. Never logged or stored. */
+    fun unlockToken(cid: String, deviceId: String): String = runBlocking {
+        when (val r = Net.cloud("POST", "api/v1/computer-files/${FilesCloud.seg(cid)}/unlock", buildJsonObject { put("device_id", deviceId) })) {
+            is ApiResult.Ok -> r.value.obj.str("token") ?: throw IOException("Allternit sent a reply this app couldn't read.")
+            is ApiResult.HttpError -> throw FilesKeyRing.HttpException(r.status, r.message?.takeIf { it.isNotBlank() } ?: r.friendly("unlock this computer"))
+            else -> throw IOException("You're offline. Check your connection and try again.")
+        }
+    }
+}
+
+/**
+ * The owner check before an unlock token (iOS: Face ID / Touch ID or the passcode through LocalAuthentication):
+ * the platform BiometricPrompt with the screen lock allowed. False when the user cancels.
+ */
+internal object FilesOwnerCheck {
+    suspend fun confirm(context: Context, reason: String): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+            throw IOException("Replacing the Files key on a computer needs Android 10 or later on this phone.")
+        }
+        return suspendCancellableCoroutine { cont ->
+            val cancel = android.os.CancellationSignal()
+            cont.invokeOnCancellation { cancel.cancel() }
+            val builder = android.hardware.biometrics.BiometricPrompt.Builder(context).setTitle("Confirm it's you").setSubtitle(reason)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                builder.setAllowedAuthenticators(
+                    android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL,
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                builder.setDeviceCredentialAllowed(true)
+            }
+            builder.build().authenticate(cancel, context.mainExecutor, object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: android.hardware.biometrics.BiometricPrompt.AuthenticationResult?) {
+                    if (cont.isActive) cont.resume(true)
+                }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                    if (cont.isActive) cont.resume(false)
+                }
+            })
+        }
+    }
+}
+
 private fun keyMessage(e: Throwable): String = when (e) {
     is FilesKeyRing.HttpException -> if (e.status == 401 || e.status == 403) "Sign in to Allternit again, then try once more." else e.message ?: "Something went wrong."
     else -> e.message ?: "Something went wrong."
@@ -77,6 +163,22 @@ internal fun FilesKeysPage(back: () -> Unit) {
     var confirming by remember { mutableStateOf<FilesKeyRing.Approval?>(null) }
     var removing by remember { mutableStateOf<FilesKeyRing.Device?>(null) }
     var nonce by remember { mutableStateOf(0) }
+    var computers by remember { mutableStateOf<List<FilesCloud.Computer>>(emptyList()) }
+    LaunchedEffect(Unit) { computers = runCatching { FilesCloud.computers() }.getOrDefault(emptyList()) }
+
+    /**
+     * Runs [action] against the computer; when it holds a different key the runtime wants a fresh unlock (the owner
+     * check, then a signed token), so ask for it once and try again (iOS deliverUnlocking).
+     */
+    suspend fun deliverUnlocking(computer: FilesCloud.Computer, action: ((String, String, String?) -> String) -> Unit) {
+        try {
+            withContext(Dispatchers.IO) { action { m, p, b -> FilesKeyRelay.call(computer.id, ring.deviceId, null, m, p, b) } }
+        } catch (e: FilesKeyRelay.Locked) {
+            if (!FilesOwnerCheck.confirm(context, "Replace the Files key on ${computer.name}")) throw IOException("Cancelled. ${computer.name} keeps its old key.")
+            val token = withContext(Dispatchers.IO) { FilesKeyRelay.unlockToken(computer.id, ring.deviceId) }
+            withContext(Dispatchers.IO) { action { m, p, b -> FilesKeyRelay.call(computer.id, ring.deviceId, token, m, p, b) } }
+        }
+    }
 
     suspend fun refresh() {
         val result = withContext(Dispatchers.IO) { runCatching { ring.info().let { it to ring.state(it) } } }
@@ -93,6 +195,19 @@ internal fun FilesKeysPage(back: () -> Unit) {
             val kept = r.exceptionOrNull()?.let(::keyMessage)
             refresh()
             if (kept != null) error = kept
+            busy = null
+        }
+    }
+
+    /** Like [run], for actions that may ask for the owner check; the returned text becomes the notice. */
+    fun act(tag: String, action: suspend () -> String?) {
+        if (busy != null) return
+        busy = tag
+        notice = null
+        scope.launch {
+            val r = runCatching { action() }
+            refresh()
+            r.onSuccess { notice = it }.onFailure { error = keyMessage(it) }
             busy = null
         }
     }
@@ -169,10 +284,47 @@ internal fun FilesKeysPage(back: () -> Unit) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("A device was removed. Make a new Files key so it can't open copies made from now on. Your other devices get the new key automatically.", color = c.textSecondary, fontSize = 14.sp)
                     SButton(if (busy == "rotate") "Making…" else "Make a new key", tag = "filesKeys_rotate", enabled = busy == null) {
-                        run("rotate") { ring.rotate(i) }
+                        // New key for every listed device, then the computers among them get their new envelope over
+                        // the relay (an asleep one gets it next time; iOS rotate).
+                        act("rotate") {
+                            withContext(Dispatchers.IO) { ring.rotate(i) }
+                            val missed = computers.filter { c -> i.devices.any { it.deviceId == c.id } }.filter { c ->
+                                runCatching { deliverUnlocking(c) { relay -> ring.deliver(relay, c.id) } }.isFailure
+                            }.map { it.name }
+                            if (missed.isEmpty()) null else "New key made. Give it to ${missed.joinToString(", ")} when they're on."
+                        }
                     }
                 }
             }
+        }
+
+        // iOS FilesKeysView "Computers": Give key hands a computer the key over the relay so it keeps sealed copies
+        // for your other devices; Send again re-delivers the current envelope.
+        if (isReady && i != null && computers.isNotEmpty()) {
+            SLabel("Computers")
+            SCard {
+                computers.forEachIndexed { n, comp ->
+                    if (n > 0) SDivider()
+                    val has = i.deviceIds.contains(comp.id)
+                    val tag = "give.${comp.id}"
+                    SRow(
+                        comp.name, "filesKeys_computer_$n",
+                        detail = if (has) "Has the key" else "No key yet",
+                        chevron = false,
+                        trailing = ({
+                            TextButton(onClick = {
+                                act(tag) {
+                                    deliverUnlocking(comp) { relay -> if (has) ring.deliver(relay, comp.id) else ring.giveComputer(relay) }
+                                    "${comp.name} has the Files key."
+                                }
+                            }, enabled = busy == null, modifier = Modifier.testTag("filesKeys_give_$n")) {
+                                Text(if (busy == tag) "Sending…" else if (has) "Send again" else "Give key")
+                            }
+                        }),
+                    )
+                }
+            }
+            SNote("A computer needs the key to keep sealed copies for your other computers.")
         }
 
         if (i != null && i.keyId != null && i.devices.isNotEmpty()) {

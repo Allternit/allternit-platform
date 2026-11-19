@@ -147,20 +147,25 @@ internal fun AciComputerFilesScreen(device: AciDevice, onClose: () -> Unit) {
     var pending by remember { mutableStateOf<List<FilesTask>>(emptyList()) }
     BackHandler { if (stack.size > 1) stack.removeAt(stack.lastIndex) else onClose() }
     LaunchedEffect(device.id) { (api.pendingTasks() as? FilesApi.Out.Ok)?.let { pending = it.value } }
-    when (val top = stack.last()) {
-        FilesNav.Roots -> AciFilesRoots(device, api, pending.size,
-            onBack = onClose,
-            onRoot = { stack += FilesNav.Folder(it, it.rootItemId, it.name) },
-            onInbox = { stack += FilesNav.Inbox })
-        is FilesNav.Folder -> AciFilesFolder(api, top, onBack = { stack.removeAt(stack.lastIndex) },
-            onFolder = { stack += FilesNav.Folder(top.root, it.id, it.name) })
-        FilesNav.Inbox -> AciInboxRequests(api, onBack = { stack.removeAt(stack.lastIndex) }, onChanged = { pending = it })
+    // Open, save, upload, scan, Share with… and the wake sheet (iOS FilesComputerModel + FilesSheets).
+    val actions = rememberAciFileActions(device)
+    Box(Modifier.fillMaxSize()) {
+        when (val top = stack.last()) {
+            FilesNav.Roots -> AciFilesRoots(device, api, actions, pending.size,
+                onBack = onClose,
+                onRoot = { stack += FilesNav.Folder(it, it.rootItemId, it.name) },
+                onInbox = { stack += FilesNav.Inbox })
+            is FilesNav.Folder -> AciFilesFolder(api, actions, top, onBack = { stack.removeAt(stack.lastIndex) },
+                onFolder = { stack += FilesNav.Folder(top.root, it.id, it.name) })
+            FilesNav.Inbox -> AciInboxRequests(api, onBack = { stack.removeAt(stack.lastIndex) }, onChanged = { pending = it })
+        }
+        Box(Modifier.align(Alignment.BottomCenter)) { AciFileSheets(actions) }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AciFilesRoots(device: AciDevice, api: FilesApi, pendingCount: Int, onBack: () -> Unit, onRoot: (FilesRoot) -> Unit, onInbox: () -> Unit) {
+private fun AciFilesRoots(device: AciDevice, api: FilesApi, actions: AciFileActions, pendingCount: Int, onBack: () -> Unit, onRoot: (FilesRoot) -> Unit, onInbox: () -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var roots by remember { mutableStateOf<List<FilesRoot>?>(null) }
@@ -169,7 +174,11 @@ private fun AciFilesRoots(device: AciDevice, api: FilesApi, pendingCount: Int, o
     var refreshing by remember { mutableStateOf(false) }
     suspend fun load() {
         when (val r = api.roots()) {
-            is FilesApi.Out.Ok -> { roots = r.value.first; fresh = r.value.second; error = null }
+            is FilesApi.Out.Ok -> {
+                roots = r.value.first; fresh = r.value.second; error = null
+                actions.roots = r.value.first
+                actions.asleep = r.value.second?.asleep == true
+            }
             is FilesApi.Out.Failed -> error = r
         }
     }
@@ -189,6 +198,8 @@ private fun AciFilesRoots(device: AciDevice, api: FilesApi, pendingCount: Int, o
                         else -> {
                             AciListRow("Inbox requests", "Files dropped in Inbox that wait for you", if (pendingCount > 0) "$pendingCount" else null, "filesInboxRequestsRow", onInbox)
                             list.forEach { r -> AciListRow(r.name, r.kind.replaceFirstChar { it.uppercase() }, null, "filesRoot-${r.id}") { onRoot(r) } }
+                            // iOS FilesDrive.Launch.scan: a scan lands in Scans (or Inbox when there is no Scans root).
+                            AciListRow("Scan a document", "Saved as a PDF in Scans", null, "filesScanRow") { actions.scan(null, null) }
                         }
                     }
                 }
@@ -199,7 +210,7 @@ private fun AciFilesRoots(device: AciDevice, api: FilesApi, pendingCount: Int, o
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AciFilesFolder(api: FilesApi, nav: FilesNav.Folder, onBack: () -> Unit, onFolder: (FilesItem) -> Unit) {
+private fun AciFilesFolder(api: FilesApi, actions: AciFileActions, nav: FilesNav.Folder, onBack: () -> Unit, onFolder: (FilesItem) -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<FilesItem>?>(null) }
@@ -208,14 +219,21 @@ private fun AciFilesFolder(api: FilesApi, nav: FilesNav.Folder, onBack: () -> Un
     var refreshing by remember { mutableStateOf(false) }
     suspend fun load() {
         when (val r = api.list(nav.root.id, nav.parentId)) {
-            is FilesApi.Out.Ok -> { items = r.value.first; fresh = r.value.second; error = null }
+            is FilesApi.Out.Ok -> { items = r.value.first; fresh = r.value.second; error = null; actions.asleep = r.value.second?.asleep == true }
             is FilesApi.Out.Failed -> error = r.message
         }
     }
-    LaunchedEffect(nav.parentId) { load() }
+    LaunchedEffect(nav.parentId, actions.revision) { load() }
     AciFullPage {
         Column(Modifier.fillMaxSize()) {
-            AciTopBar(nav.title, "Files", onBack)
+            AciTopBar(nav.title, "Files", onBack, trailing = {
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Share", color = c.textPrimary, fontSize = 15.sp, modifier = Modifier.clickable {
+                        actions.shareSheet = FilesShareTarget(nav.root.id, nav.parentId, nav.title, isFolder = true)
+                    }.testTag("filesFolderShare"))
+                    Text("+", color = c.textPrimary, fontSize = 24.sp, modifier = Modifier.clickable { actions.addSheet = nav.root to nav.parentId }.testTag("filesFolderAdd"))
+                }
+            })
             PullToRefreshBox(isRefreshing = refreshing, onRefresh = { scope.launch { refreshing = true; load(); refreshing = false } }, modifier = Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp).testTag("aciFilesFolder")) {
                     fresh?.takeIf { it.asleep }?.let { Text(it.line, color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp)) }
@@ -223,12 +241,12 @@ private fun AciFilesFolder(api: FilesApi, nav: FilesNav.Folder, onBack: () -> Un
                     when {
                         error != null && list == null -> AciStateCard("Couldn’t open this folder", error.orEmpty(), "Retry", { scope.launch { load() } })
                         list == null -> AciStateCard("Loading…", "Reading this folder.")
-                        list.isEmpty() -> AciStateCard("This folder is empty", "Files you add on the computer show up here.")
+                        list.isEmpty() -> AciStateCard("This folder is empty", "Tap + to add a file or a scan.")
                         else -> list.forEach { item ->
                             AciListRow(
                                 (if (item.isFolder) "▸ " else "") + item.name,
                                 listOfNotNull(if (item.isFolder) null else formatBytes(item.size), formatWhen(item.modifiedAt).takeIf { it.isNotEmpty() }).joinToString(" · "),
-                                null, "filesItem-${item.id}", if (item.isFolder) ({ onFolder(item) }) else null,
+                                null, "filesItem-${item.id}", if (item.isFolder) ({ onFolder(item) }) else ({ actions.itemSheet = nav.root to item }),
                             )
                         }
                     }
@@ -315,7 +333,7 @@ internal fun AciComputerDetail(device: AciDevice, onOpenDesktop: () -> Unit, onB
                 Text(if (device.isOnline) "Online" else "Offline", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(bottom = 4.dp))
                 Text(lastSeen(device.lastSeenAt), color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))
                 AciListRow("Desktop", "See and use this computer’s screen", null, "aciDetailDesktop", onOpenDesktop)
-                AciListRow("Files", "Browse folders and Inbox requests", null, "aciDetailFiles") { filesOpen = true }
+                AciListRow("Files", "Browse, open, save, upload and scan files", null, "aciDetailFiles") { filesOpen = true }
             }
         }
     }

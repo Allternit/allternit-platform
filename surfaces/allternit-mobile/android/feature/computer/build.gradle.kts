@@ -46,5 +46,7 @@ dependencies {
     // BackHandler (the browser and a run go back like the system Back on iOS swipe).
     implementation(libs.activity.compose)
     implementation(libs.kotlinx.serialization.json)
+    // Scan to PDF on a computer's Files screens (iOS FilesDocumentScanner uses VisionKit).
+    implementation(libs.mlkit.document.scanner)
     testImplementation(libs.junit)
 }

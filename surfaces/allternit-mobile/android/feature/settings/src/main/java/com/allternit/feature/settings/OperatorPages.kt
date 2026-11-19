@@ -316,23 +316,7 @@ internal fun TwinPage(back: () -> Unit) {
     }
 }
 
-/** iOS FilesDashboardView and FilesKeysView: Files state and the key devices. */
-@Composable
-internal fun FilesPage(back: () -> Unit, push: (String) -> Unit) {
-    val context = LocalContext.current
-    var enabled by remember { mutableStateOf(SettingsPrefs.flag(context, "files.enabled", false)) }
-    SPage("Files", tag = "settingsFiles", onBack = back) {
-        SNote("Files keeps your files in sync between your devices and computers, encrypted with a key only your devices hold.")
-        SCard {
-            SToggleRow("Files on this phone", "files_enabled", enabled, onChange = { enabled = it; SettingsPrefs.setFlag(context, "files.enabled", it) })
-            SDivider()
-            SRow("This phone", "files_device", value = android.os.Build.MODEL ?: "Android", chevron = false)
-        }
-        if (!enabled) SNote("Files is off. Turn it on to see your key, shares and guests.") else {
-            SCard(Modifier.padding(top = 18.dp)) { SRow("Files key", "files_keysRow", detail = "The key that opens your files on each device.", onClick = { push("files-keys") }) }
-        }
-    }
-}
+// Settings > Files (iOS FilesDashboardView) lives in FilesDashboardPage.kt.
 
 /** The self-hosted server this phone talks to (iOS SelfHostedServerStore). The key stays in this app's private storage. */
 internal object SelfHosted {
