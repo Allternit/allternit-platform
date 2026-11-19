@@ -216,16 +216,24 @@ internal fun PhoneMenuButton(
             tint = c.textPrimary,
             modifier = Modifier.size(22.dp),
         )
-        // MenuModeBadge: a small dot in the mode's accent, bottom-right of ☰.
+        // MenuModeBadge (iOS): the current mode's icon knocked out of a 15dp ink dot, ☰'s corner.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .offset(x = (-7).dp, y = (-8).dp)
-                .size(8.dp)
+                .offset(x = (-4).dp, y = (-4).dp)
+                .size(15.dp)
                 .clip(CircleShape)
-                .background(mode.accent)
-                .border(1.5.dp, c.bgPrimary, CircleShape),
-        )
+                .background(c.textPrimary)
+                .testTag("phoneMenuModeBadge${mode.raw}"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(mode.icon),
+                contentDescription = null,
+                tint = c.bgPrimary,
+                modifier = Modifier.size(9.dp),
+            )
+        }
     }
 }
 

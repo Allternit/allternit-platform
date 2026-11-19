@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,9 +54,11 @@ internal enum class DrawerValue { Closed, Open }
 /** What fills the page under the drawer. Chat, sections and settings are stubs until later steps. */
 private sealed interface ShellPage {
     data object Home : ShellPage
-    data class Chat(val session: AgentSession?, val draft: String) : ShellPage
+    data class Chat(val session: AgentSession?, val draft: ComposerDraft) : ShellPage
     data class Section(val row: RailRow) : ShellPage
     data object Settings : ShellPage
+    data object AllChats : ShellPage
+    data object Search : ShellPage
 }
 
 /**
@@ -66,7 +70,7 @@ private sealed interface ShellPage {
  * [account] is null for the debug "Continue without signing in" path: no API calls then.
  */
 @Composable
-internal fun WorkspaceShell(account: Account?, onOpenWeb: () -> Unit) {
+internal fun WorkspaceShell(account: Account?) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val view = LocalView.current
@@ -76,6 +80,7 @@ internal fun WorkspaceShell(account: Account?, onOpenWeb: () -> Unit) {
     var mode by remember { mutableStateOf(ShellModePrefs.load(context)) }
     var page by remember { mutableStateOf<ShellPage>(ShellPage.Home) }
     val store = remember { ShellSessionsStore() }
+    val models = remember { ModelStore(context) }
     val hold = remember { MenuHoldState() }
     val drawer = remember { AnchoredDraggableState(DrawerValue.Closed) }
 
@@ -122,6 +127,8 @@ internal fun WorkspaceShell(account: Account?, onOpenWeb: () -> Unit) {
         }
     }
 
+    // Every Text in the shell uses the bundled sans (iOS SF Pro sizes); the headline sets Serif itself.
+    CompositionLocalProvider(LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = ShellSans)) {
     BoxWithConstraints(Modifier.fillMaxSize().background(c.bgPrimary)) {
         val widthDp = drawerWidth(maxWidth)
         val widthPx = with(density) { widthDp.toPx() }
@@ -169,8 +176,8 @@ internal fun WorkspaceShell(account: Account?, onOpenWeb: () -> Unit) {
                     when (val current = page) {
                         ShellPage.Home -> ShellHome(
                             mode = mode,
-                            account = account,
                             store = store,
+                            models = models,
                             menuButton = {
                                 PhoneMenuButton(
                                     mode = mode,
@@ -181,19 +188,23 @@ internal fun WorkspaceShell(account: Account?, onOpenWeb: () -> Unit) {
                                 )
                             },
                             onNewChat = { draft -> page = ShellPage.Chat(session = null, draft = draft) },
-                            onOpenSession = { page = ShellPage.Chat(session = it, draft = "") },
-                            onOpenDrawer = { setDrawer(true) },
-                            onRetry = ::reload,
-                            onOpenWeb = onOpenWeb,
+                            onNew = { page = ShellPage.Home },
+                            onOpenSection = { row -> page = ShellPage.Section(row) },
                         )
                         is ShellPage.Chat -> ChatStub(
                             session = current.session,
                             draft = current.draft,
                             onBack = { page = ShellPage.Home },
-                            onOpenWeb = onOpenWeb,
+                            onNewChat = { page = ShellPage.Home },
                         )
-                        is ShellPage.Section -> SectionStub(current.row, onBack = { page = ShellPage.Home }, onOpenWeb = onOpenWeb)
-                        ShellPage.Settings -> SettingsScreen(account, onBack = { page = ShellPage.Home }, onOpenWeb = onOpenWeb)
+                        is ShellPage.Section -> SectionStub(current.row, onBack = { page = ShellPage.Home })
+                        ShellPage.Settings -> SettingsScreen(account, onBack = { page = ShellPage.Home })
+                        ShellPage.AllChats -> AllChatsScreen(mode, store, onBack = { page = ShellPage.Home }) {
+                            page = ShellPage.Chat(session = it, draft = ComposerDraft())
+                        }
+                        ShellPage.Search -> ShellSearchScreen(store, onBack = { page = ShellPage.Home }) {
+                            page = ShellPage.Chat(session = it, draft = ComposerDraft())
+                        }
                     }
                 }
                 if (p > 0f) {
@@ -258,22 +269,19 @@ internal fun WorkspaceShell(account: Account?, onOpenWeb: () -> Unit) {
                             hold.openFan()
                         }
                     },
-                    onRow = { row ->
-                        if (row.id == WebVersionRow.id) {
-                            setDrawer(false)
-                            onOpenWeb()
-                        } else {
-                            openPage(ShellPage.Section(row))
-                        }
-                    },
-                    onOpenSession = { openPage(ShellPage.Chat(session = it, draft = "")) },
-                    onNew = { openPage(ShellPage.Chat(session = null, draft = "")) },
+                    onRow = { row -> openPage(ShellPage.Section(row)) },
+                    onOpenSession = { openPage(ShellPage.Chat(session = it, draft = ComposerDraft())) },
+                    // New chat: the home with an empty composer (iOS newItem on Home).
+                    onNew = { openPage(ShellPage.Home) },
                     onSettings = { openPage(ShellPage.Settings) },
                     onRetry = ::reload,
+                    onSearch = { openPage(ShellPage.Search) },
+                    onViewAll = { openPage(ShellPage.AllChats) },
                 )
             }
         }
 
         ModeFanOverlay(hold = hold, current = mode, onPick = ::pickMode)
+    }
     }
 }

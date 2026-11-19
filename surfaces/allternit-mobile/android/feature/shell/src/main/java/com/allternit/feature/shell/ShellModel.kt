@@ -32,13 +32,12 @@ internal enum class ShellMode(val raw: String, val label: String, @DrawableRes v
     Code("code", "Code", DesignR.drawable.ph_terminal, ModeAccents.Code.accent),
     Aci("aci", "ACI", DesignR.drawable.ph_globe, ModeAccents.Browser.accent);
 
-    /** PhoneDrawer WORDMARK_SUFFIX beside A://TERNIT (iOS draws GIZZI CODE for Code). */
-    val wordmark: String
+    /** PhoneDrawer WORDMARK_SUFFIX beside the pixel A://TERNIT (iOS ShellWordmark); Code draws GIZZI CODE. */
+    val wordmarkSuffix: String
         get() = when (this) {
-            Home -> "A://TERNIT"
-            Bots -> "A://TERNIT BOTS"
-            Code -> "GIZZI CODE"
-            Aci -> "A://TERNIT ACI"
+            Home, Code -> ""
+            Bots -> "BOTS"
+            Aci -> "ACI"
         }
 
     /** The drawer's New pill (HistorySidebarView NewOption title). */
@@ -116,8 +115,29 @@ internal fun railRows(mode: ShellMode): List<RailRow> {
     }
 }
 
-/** The extra drawer row that opens m.allternit.com in the retained TWA. */
-internal val WebVersionRow = RailRow("web", "Use web version", DesignR.drawable.ph_arrow_square_out)
+/** Drawer rail rows the person hid from More › Show in rail (iOS RailTabsStore), per mode. */
+internal object RailTabPrefs {
+    private const val FILE = "allternit_shell"
+
+    private fun key(mode: ShellMode) = "rail-hidden-${mode.raw}"
+
+    fun hidden(context: Context, mode: ShellMode): Set<String> =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getStringSet(key(mode), emptySet()).orEmpty().toSet()
+
+    fun toggle(context: Context, mode: ShellMode, id: String): Set<String> {
+        val next = hidden(context, mode).let { if (id in it) it - id else it + id }
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putStringSet(key(mode), next).apply()
+        return next
+    }
+}
+
+/** Recents status filter (iOS RecentsStatusFilter, PhoneDrawer STATUS_OPTIONS). */
+internal enum class RecentsStatusFilter(val label: String) { All("All"), Active("Active"), Completed("Completed"), Archived("Archived") }
+
+/** Recents last-activity filter (iOS RecentsDateFilter, PhoneDrawer DATE_OPTIONS). */
+internal enum class RecentsDateFilter(val label: String, val days: Long?) {
+    All("Any time", null), Today("Today", 1), Week("Last 7 days", 7), Month("Last 30 days", 30)
+}
 
 // MARK: - Session metadata (iOS AgentSession.swift decoding of `metadata`)
 
@@ -169,9 +189,8 @@ internal fun relativeTime(millis: Long, now: Long = System.currentTimeMillis()):
 
 /** One API client for the native shell (one OkHttp client per process). */
 internal object ShellApi {
-    val api: AllternitApi by lazy {
-        AllternitApi(ApiClients.okHttp(bearer = AllternitAuth.tokenProvider), ApiConfig())
-    }
+    val okHttp: okhttp3.OkHttpClient by lazy { ApiClients.okHttp(bearer = AllternitAuth.tokenProvider) }
+    val api: AllternitApi by lazy { AllternitApi(okHttp, ApiConfig()) }
 }
 
 /**
@@ -187,6 +206,9 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
         private set
     var loadError by mutableStateOf<String?>(null)
         private set
+    /** The last load was refused by the compute gate: this account has no computer yet. */
+    var noComputer by mutableStateOf(false)
+        private set
 
     suspend fun load() {
         if (isLoading) return
@@ -198,16 +220,24 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
                         .filter { !it.ephemeral }
                         .sortedByDescending { it.timestampMillis }
                     loadError = null
+                    noComputer = false
                     hasLoaded = true
                 }
-                is ApiResult.HttpError -> loadError = when (r.status) {
-                    401, 403 -> "Your sign-in expired. Sign out and sign in again."
-                    else -> FriendlyErrorMessage.from(r.message ?: "", "load your chats")
+                is ApiResult.HttpError -> if (isNoComputer(r)) {
+                    // No computer is not an error (iOS ShellSessionsStore.isNoComputer): the list is
+                    // just empty, and the composer's computer chip says why.
+                    sessions = emptyList()
+                    noComputer = true
+                    loadError = null
+                    hasLoaded = true
+                } else {
+                    loadError = statusSentence(r.status)
+                        ?: FriendlyErrorMessage.from(r.message ?: "", "load conversations")
                 }
                 is ApiResult.Network ->
-                    loadError = "You're offline or the server can't be reached. Check your connection and try again."
+                    loadError = "Could not connect to the server. Check your connection and try again."
                 is ApiResult.Decode ->
-                    loadError = "Couldn't read your chats. Update the app, or use the web version for now."
+                    loadError = "Something went wrong. Check your connection and try again."
             }
         } finally {
             isLoading = false
@@ -216,4 +246,33 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
 
     /** Open (not archived) sessions of [mode], newest first. */
     fun of(mode: ShellMode): List<AgentSession> = sessions.filter { !it.archived && it.belongs(mode) }
+}
+
+/**
+ * The compute gate's account-state refusals (iOS APIError.isComputeGateRefusal): cloud-api's 428
+ * ("No data-plane node", pair a device), and 409/410 `compute_required` / `free_computers_retired`.
+ */
+internal fun isNoComputer(r: ApiResult.HttpError): Boolean {
+    if (r.status == 428) return true
+    if (r.status != 409 && r.status != 410) return false
+    val text = "${r.code.orEmpty()} ${r.message.orEmpty()}"
+    return Regex("""\b(compute_required|free_computers_retired)\b""", RegexOption.IGNORE_CASE).containsMatchIn(text) ||
+        text.contains("data-plane node", ignoreCase = true)
+}
+
+/** The sentence for a status with no usable message (iOS statusSentence, web statusSentence). */
+internal fun statusSentence(status: Int): String? = when (status) {
+    401 -> "Sign in again to continue."
+    403 -> "You don't have access to that."
+    404 -> "That isn't there anymore."
+    408, 504 -> "That took too long. Try again."
+    429 -> "Too many requests. Wait a moment and try again."
+    in 500..599 -> "Something went wrong on our side. Try again."
+    else -> null
+}
+
+/** iOS CalmCopy: the no-computer chip and empty states. */
+internal object NoComputerCopy {
+    const val TITLE = "No computer connected"
+    const val DETAIL = "Connect a computer or start Allternit Cloud to use this."
 }

@@ -88,9 +88,9 @@ class MainActivity : ComponentActivity() {
                     contentAlignment = Alignment.Center,
                 ) {
                     when (val s = state) {
-                        is AuthState.SignedIn -> WorkspaceShell(account = s.account, onOpenWeb = ::openWebVersion)
+                        is AuthState.SignedIn -> WorkspaceShell(account = s.account)
                         else -> if (skippedAuth) {
-                            WorkspaceShell(account = null, onOpenWeb = ::openWebVersion)
+                            WorkspaceShell(account = null)
                         } else {
                             when (s) {
                                 AuthState.Starting, AuthState.Finishing -> CircularProgressIndicator(
@@ -129,17 +129,6 @@ class MainActivity : ComponentActivity() {
         handleDebugTicket(intent)
     }
 
-    /**
-     * "Use web version" (PLAN.md section 3 rollback switch, first cut): the retained TWA
-     * launcher in the same package opens m.allternit.com.
-     */
-    private fun openWebVersion() {
-        // NEW_TASK is required: without it androidbrowserhelper's LauncherActivity restarts
-        // itself in a new task, the second copy sees the first still alive
-        // (sLauncherActivitiesAlive > 1) and finishes, so nothing opens (Moto, 2026-11-18).
-        startActivity(Intent().setClassName(packageName, TWA_LAUNCHER).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
-
     private fun handleDebugTicket(intent: Intent) {
         if (!BuildConfig.DEBUG) return
         val ticket = intent.getStringExtra(EXTRA_TICKET)?.takeIf { it.isNotBlank() } ?: return
@@ -158,6 +147,5 @@ class MainActivity : ComponentActivity() {
     private companion object {
         const val TAG = "AllternitMain"
         const val EXTRA_TICKET = "ticket"
-        const val TWA_LAUNCHER = "com.google.androidbrowserhelper.trusted.LauncherActivity"
     }
 }
