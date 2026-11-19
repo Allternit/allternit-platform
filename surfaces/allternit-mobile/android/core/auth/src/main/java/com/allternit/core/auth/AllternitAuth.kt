@@ -18,6 +18,7 @@ import com.clerk.api.signup.sendCode
 import com.clerk.api.signup.verifyCode
 import com.clerk.api.sso.OAuthProvider
 import com.clerk.api.user.User
+import com.clerk.api.user.delete
 import com.clerk.api.user.getOrganizationMemberships
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -270,6 +271,22 @@ object AllternitAuth {
             if (active is ClerkResult.Failure) Log.w(TAG, "Activating the organization failed: ${active.message()}")
         } finally {
             finishingOrg.set(false)
+        }
+    }
+
+    /**
+     * Deletes the signed-in person's Clerk account (iOS AuthManager.deleteAccount: `user.delete()`).
+     * Only the Delete account screen calls this, after the person typed DELETE. The caller signs out
+     * afterwards (iOS finishAccountDeletion).
+     */
+    suspend fun deleteAccount(): StepResult {
+        val user = Clerk.user ?: return StepResult("You're not signed in.")
+        return when (val r = user.delete()) {
+            is ClerkResult.Success -> {
+                tokenProvider.clear()
+                StepResult.OK
+            }
+            is ClerkResult.Failure -> StepResult(r.message())
         }
     }
 

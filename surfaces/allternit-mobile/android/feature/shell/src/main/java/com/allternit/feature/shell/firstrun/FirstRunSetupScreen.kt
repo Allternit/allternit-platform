@@ -448,7 +448,7 @@ private fun SetupKitAIStep(
  * line, and one action. A row that can't be used yet shows its reason and its fallback button.
  */
 @Composable
-private fun ConnectionRow(
+internal fun ConnectionRow(
     entry: ConnEntry,
     store: ConnectionsStore,
     tag: String?,

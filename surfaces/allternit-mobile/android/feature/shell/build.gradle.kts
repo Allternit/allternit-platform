@@ -52,6 +52,8 @@ dependencies {
     implementation(project(":feature:models"))
     implementation(project(":feature:phones"))
     implementation(project(":feature:office"))
+    // Wave G1: Settings part 1 replaces the Settings stub.
+    implementation(project(":feature:settings"))
     // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
     implementation(project(":core:api"))
     // Wave B: DataStore for the first-run "setup done" flag (iOS OnboardingStore, UserDefaults).
