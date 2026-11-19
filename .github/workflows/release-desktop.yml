@@ -517,12 +517,13 @@ jobs:
     # windows-latest ships only VS2026 (major 18), which node-gyp 11.x cannot
     # detect; windows-2019 is no longer provisioned. Install the VS2022 C++
     # build tools so native modules (better-sqlite3) can compile.
-    # Pinned to windows-2025 (VS2022 image), not windows-latest
+    # Pinned to windows-2022 (VS2022). The windows-2025 label now also serves
+    # windows-2025-vs2026 (seen 2026-11-19, run 44624391952), not windows-latest
     # (windows-2025-vs2026): image 20261116 moved VS2026 to MSVC 14.52, whose STL
     # demands Clang 22+, and zig 0.15.2's clang (vendored libghostty-vt in
     # factory/pane) fails with STL1000 (release run 44548029889). Image 20261103
     # still built it. Unpin once the vendored zig ships Clang 22+.
-    runs-on: windows-2025
+    runs-on: windows-2022
     permissions:
       contents: read
 

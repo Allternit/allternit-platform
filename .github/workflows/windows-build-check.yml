@@ -24,7 +24,7 @@ jobs:
   windows:
     name: Windows build check
     # Same image as release-desktop.yml build-windows (see the pin comment there).
-    runs-on: windows-2025
+    runs-on: windows-2022
     timeout-minutes: 75
     env:
       CARGO_INCREMENTAL: "0"
