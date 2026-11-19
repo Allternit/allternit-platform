@@ -481,7 +481,9 @@ async fn maps_relay_to_the_runtime_and_offline_matches_sibling_routes() {
 #[tokio::test]
 async fn phone_task_vision_is_validated_and_passed_through() {
     let c = ctx().await;
-    let (_p, key) = project(&c, "dev_ph_vision").await;
+    let (p, key) = project(&c, "dev_ph_vision").await;
+    // Two tasks start below; the sandbox plan runs one at a time.
+    sqlx::query("UPDATE platform_projects SET phone_run_cap_override = 5 WHERE id = $1").bind(&p.id).execute(&c.state.db).await.unwrap();
     let (s, e) = call(&c.app, "POST", "/v1/phones/R5C/task", &key, Some(json!({ "goal": "x", "vision": "sometimes" }))).await;
     assert_eq!((s, e["error"]["param"].as_str()), (StatusCode::BAD_REQUEST, Some("vision")), "{e}");
     let (s, e) = call(&c.app, "POST", "/v1/phones/R5C/task", &key, Some(json!({ "goal": "x", "vision": "always" }))).await;
