@@ -190,6 +190,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
     var modelPickerOpen by remember { mutableStateOf(false) }
     var vendorOpen by remember { mutableStateOf(false) }
     var importOpen by remember { mutableStateOf(false) }
+    val look = remember { BotLookModel() }
 
     suspend fun loadBot() {
         val id = editBotId ?: return
@@ -211,6 +212,8 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
                 tools.clear()
                 val allowed = (b.raw["allowed_tools"] as? JsonArray ?: b.raw["tools"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty()
                 tools.addAll(allowed)
+                // The Look editor opens on what the bot has saved (iOS formFromBot).
+                look.configure(b.config["avatar"], accent, displayName, VendorGroupTurn.binding(id)?.takeIf { it.isVendor }?.vendor)
             }
             is BotsResult.Failed -> loadError = r.message
         }
@@ -218,6 +221,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
     }
     LaunchedEffect(editBotId) {
         if (editing) loadBot() else {
+            look.configure(null, accent, "", null)
             // The wizard's load: knowledge brains and the desktop quota (failures leave them empty).
             (LibraryNet.get("brains") as? ApiResult.Ok)?.value?.let { j ->
                 knowledgeBrains = j.listUnder("brains").mapNotNull { o ->
@@ -237,7 +241,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
     val nameValid = displayName.trim().length >= 2
     val brainMissing = brainMode == "allternit_cloud" && modelId.isEmpty() && !editing
     val uhpMissing = brainMode == "uhp_harness" && uhpHarnessId.isBlank()
-    val canSave = host?.signedIn != false && nameValid && !saving && (editing || (!brainMissing && !uhpMissing))
+    val canSave = host?.signedIn != false && nameValid && !saving && !look.busy && !look.blocked && (editing || (!brainMissing && !uhpMissing))
 
     fun createBody(makeMain: Boolean): JsonObject {
         val name = displayName.trim()
@@ -260,7 +264,8 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
             if (desktopEnabled) { put("cpu", preset.cpu); put("memory", preset.memory); put("disk", preset.disk); put("persistent", true) }
         }
         val config = buildJsonObject {
-            put("avatar", buildJsonObject { put("type", "mascot"); put("mascotTemplate", "gizzi") })
+            // The Look editor's avatar; the wizard's Gizzi default when the looks couldn't load.
+            put("avatar", look.avatar ?: buildJsonObject { put("type", "mascot"); put("mascotTemplate", "gizzi") })
             put("isBot", true); put("botProfile", profile); put("botBrain", botBrain); put("vmOperator", vm)
             if (knowledgeBrainId.isNotEmpty()) put("brainId", knowledgeBrainId)
         }
@@ -298,7 +303,9 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
                 ))
                 val body = buildJsonObject {
                     put("system_prompt", systemPrompt); put("allowed_tools", JsonArray(tools.map { JsonPrimitive(it) }))
-                    put("bot_profile", profile); put("config", JsonObject(storedConfig + ("botProfile" to profile)))
+                    // An untouched look stays as saved.
+                    val lookAvatar = look.avatar?.takeIf { look.dirty }
+                    put("bot_profile", profile); put("config", JsonObject(storedConfig + ("botProfile" to profile) + (if (lookAvatar != null) mapOf("avatar" to lookAvatar) else emptyMap())))
                     (tagline.trim().ifEmpty { description.trim() }).takeIf { it.isNotEmpty() }?.let { put("description", it) }
                 }
                 when (val r = BotsApi.updateAgent(editBotId, body)) {
@@ -308,7 +315,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
             } else {
                 val makeMain = BotFormData.needsMain()
                 when (val r = BotsApi.createAgent(createBody(makeMain))) {
-                    is BotsResult.Ok -> onDone(listOf(r.value))
+                    is BotsResult.Ok -> { look.syncAsset(r.value); onDone(listOf(r.value)) }
                     is BotsResult.Failed -> error = "Couldn’t create the bot: ${r.message}"
                 }
             }
@@ -323,14 +330,16 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
     ) {
         Column(Modifier.fillMaxWidth().heightIn(max = 680.dp).verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             if (host?.signedIn == false) Text(if (editing) "Sign in to edit this bot." else "Sign in to make a bot.", color = c.textSecondary, fontSize = 14.sp)
-            error?.let { ErrorLine(it, Modifier.padding(horizontal = 0.dp)) }
+            (error ?: look.error)?.let { ErrorLine(it, Modifier.padding(horizontal = 0.dp)) }
             when {
                 loading -> LibrarySpinner("Loading the bot")
                 loadError != null -> ListState(false, loadError, true, "Couldn't load this bot", "") { scope.launch { loadBot() } }
                 else -> {
-                    LibraryField("", displayName, "Name your bot", "botFormName") { displayName = it }
+                    LibraryField("", displayName, "Name your bot", "botFormName") { displayName = it; look.push(displayName = it) }
                     if (editing && handle.isNotEmpty()) Text("Handle: @$handle", color = c.textTertiary, fontSize = 12.sp)
-                    AccentRow(if (editing) BotFormData.editAccents else BotFormData.createAccents, accent) { accent = it }
+                    AccentRow(if (editing) BotFormData.editAccents else BotFormData.createAccents, accent) { accent = it; look.push(accent = it) }
+                    Label("Look")
+                    BotLookEditor(look)
                     if (editing) {
                         LibraryField("Tagline", tagline, "What it does, in a line", "botFormTagline") { tagline = it }
                         LibraryField("Welcome message", welcome, "Shown at the top of a fresh chat", "botFormWelcome", singleLine = false, minHeight = 64) { welcome = it }
@@ -415,7 +424,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
         vendorOpen = false
         onDone(listOfNotNull(main ?: first))
     }
-    if (importOpen) ImportBotSheet(onDismiss = { importOpen = false }) { ids -> importOpen = false; onDone(ids) }
+    if (importOpen) ImportBotSheet(onDismiss = { importOpen = false }, backend = host?.backend) { ids -> importOpen = false; onDone(ids) }
 }
 
 @Composable private fun Label(t: String) = Text(t, color = AllternitTheme.colors.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -738,51 +747,77 @@ private fun parseTeam(text: String): Pair<String, List<ImportedBot>> {
 }
 
 /**
- * Import a bot (iOS ImportBotSheet): an Allternit team file (.json) from a file or a link; each bot
- * is created like a plain bot, the first one becomes the main bot when the account has none.
- * Bot packages (.zip with memory and files) say to import them from Desktop or the web.
+ * Import a bot (iOS ImportBotSheet): an Allternit team file (.json) or a bot package (.zip), from a
+ * file or a link. Team bots are created like plain bots; a package's memory, skills, tasks and docs
+ * are copied to the computer (BotZip). The first bot becomes the main bot when the account has none.
  */
 @Composable
-fun ImportBotSheet(onDismiss: () -> Unit, onImported: (List<String>) -> Unit) {
+fun ImportBotSheet(onDismiss: () -> Unit, backend: com.allternit.feature.chat.ChatBackend? = null, onImported: (List<String>) -> Unit) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var source by remember { mutableStateOf("file") }
     var link by remember { mutableStateOf("") }
     var team by remember { mutableStateOf<Pair<String, List<ImportedBot>>?>(null) }
+    var pkg by remember { mutableStateOf<BotZip.Package?>(null) }
+    var pkgWarnings by remember { mutableStateOf<List<String>>(emptyList()) }
     var reading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val made = remember { mutableStateListOf<String>() }
     val failures = remember { mutableStateListOf<String>() }
 
-    fun read(text: String?, name: String) {
-        if (name.endsWith(".zip", ignoreCase = true)) { error = "Bot packages (.zip) import from Allternit Desktop or ai.allternit.com. Team files (.json) import here."; return }
-        try { team = parseTeam(text ?: throw IllegalArgumentException("Couldn't read the file.")); error = null } catch (e: IllegalArgumentException) { error = e.message }
+    fun read(bytes: ByteArray?, name: String) {
+        team = null; pkg = null; pkgWarnings = emptyList()
+        if (bytes == null) { error = "Couldn't read the file."; return }
+        if (BotZip.looksLikeZip(bytes) || name.endsWith(".zip", ignoreCase = true)) {
+            try { pkg = BotZip.load(bytes); error = null } catch (e: BotZipException) { error = e.message }
+            return
+        }
+        try { team = parseTeam(bytes.decodeToString()); error = null } catch (e: IllegalArgumentException) { error = e.message }
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         reading = true
-        val text = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } }.getOrNull()
-        read(text, uri.lastPathSegment.orEmpty())
-        reading = false
+        scope.launch {
+            val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+            }
+            read(bytes, uri.lastPathSegment.orEmpty())
+            reading = false
+        }
     }
     fun fetchLink() {
         val url = link.trim()
         reading = true
         scope.launch {
-            val text = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching { okhttp3.OkHttpClient().newCall(okhttp3.Request.Builder().url(url).build()).execute().use { if (it.isSuccessful) it.body?.string() else null } }.getOrNull()
+            val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { okhttp3.OkHttpClient().newCall(okhttp3.Request.Builder().url(url).build()).execute().use { if (it.isSuccessful) it.body?.bytes() else null } }.getOrNull()
             }
-            if (text == null) error = "Couldn't download that file. Check the link and try again." else read(text, url)
+            if (bytes == null) error = "Couldn't download that file. Check the link and try again." else read(bytes, url.substringBefore('?'))
             reading = false
         }
     }
     fun runImport() {
-        val t = team ?: return
         busy = true
         error = null
         failures.clear()
+        val p = pkg
+        if (p != null) {
+            scope.launch {
+                try {
+                    val (id, warnings) = BotZip.importPackage(p, backend, BotFormData.needsMain())
+                    pkgWarnings = warnings
+                    busy = false
+                    if (warnings.isEmpty()) onImported(listOf(id)) else { made.add(id) }
+                } catch (e: BotZipException) {
+                    error = e.message
+                    busy = false
+                }
+            }
+            return
+        }
+        val t = team ?: run { busy = false; return }
         scope.launch {
             val ids = mutableListOf<String>()
             var needsMain = BotFormData.needsMain()
@@ -797,10 +832,15 @@ fun ImportBotSheet(onDismiss: () -> Unit, onImported: (List<String>) -> Unit) {
             if (ids.isNotEmpty()) onImported(ids) else if (failures.isEmpty()) onDismiss()
         }
     }
+    val pkgDone = pkg != null && made.isNotEmpty()
     LibrarySheet(
         title = "Import a bot", testTag = "importBotSheet", onDismiss = onDismiss,
         leading = LibrarySheetAction("Cancel", enabled = !busy, onClick = onDismiss),
-        trailing = if (team != null) LibrarySheetAction(if (busy) "Importing…" else if (failures.isEmpty()) "Import" else "Retry", enabled = !busy, bold = true, testTag = "importBotRun", onClick = ::runImport) else null,
+        trailing = when {
+            pkgDone -> LibrarySheetAction("Done", bold = true, testTag = "importBotDone") { onImported(made.toList()) }
+            team != null || pkg != null -> LibrarySheetAction(if (busy) "Importing…" else if (failures.isEmpty()) "Import" else "Retry", enabled = !busy, bold = true, testTag = "importBotRun", onClick = ::runImport)
+            else -> null
+        },
     ) {
         Column(Modifier.fillMaxWidth().heightIn(max = 620.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             PillRow(listOf("file" to "From a file", "url" to "From a link"), if (source == "file") "file" to "From a file" else "url" to "From a link", { it.second }, { "importSource${it.first}" }) { source = it.first }
@@ -824,6 +864,18 @@ fun ImportBotSheet(onDismiss: () -> Unit, onImported: (List<String>) -> Unit) {
                     }
                 }
             }
+            pkg?.let { p ->
+                val pv = p.preview
+                Column(Modifier.fillMaxWidth().testTag("importPackagePreview"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Label(pv.name.ifEmpty { "Bot package" } + (pv.category?.let { " · $it" } ?: ""))
+                    if (pv.description.isNotEmpty()) Text(pv.description, color = c.textSecondary, fontSize = 13.sp, maxLines = 4)
+                    if (pv.contents.isNotEmpty()) Note(pv.contents.joinToString(" · "))
+                    Note("${pv.fileCount} file${if (pv.fileCount == 1) "" else "s"} go to your computer")
+                    pv.warnings.forEach { Note(it) }
+                    if (pkgDone) Text("✓ Imported", color = com.allternit.core.design.AllternitStatic.StatusSuccess, fontWeight = FontWeight.Bold)
+                }
+            }
+            if (pkgWarnings.isNotEmpty()) { Label("Imported with problems"); pkgWarnings.forEach { ErrorLine(it, Modifier.padding(0.dp)) } }
             if (failures.isNotEmpty()) { Label("Not imported"); failures.forEach { ErrorLine(it, Modifier.padding(0.dp)) } }
             error?.let { ErrorLine(it, Modifier.padding(0.dp)) }
         }

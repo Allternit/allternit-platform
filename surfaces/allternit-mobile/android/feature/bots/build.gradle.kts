@@ -39,6 +39,8 @@ dependencies {
     api(project(":core:api"))
     // The bot chat reuses the chat screen, its view model and backend (relay calls).
     api(project(":feature:chat"))
+    implementation(project(":core:stream"))
+    implementation(libs.androidx.webkit)
     // LibraryNet (the /api/v1 routes), the JSON helpers and the library chrome.
     implementation(project(":feature:artifacts"))
     implementation(project(":core:auth"))

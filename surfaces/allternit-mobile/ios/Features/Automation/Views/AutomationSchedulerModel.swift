@@ -411,10 +411,13 @@ enum AutomationScheduleLogic {
         return taskRule(e)?.label ?? e
     }
 
-    /// A routine name without its `[bot:<name>] ` owner prefix, for display.
+    /// A routine name without its `[bot:<name>] ` owner tag, for display. The tag
+    /// is stripped anywhere in the string: Inbox failure text quotes the routine
+    /// title (`"[bot:Client Reporter] Draft the weekly report" failed`).
     static func displayName(_ name: String) -> String {
-        guard name.hasPrefix("[bot:"), let close = name.firstIndex(of: "]") else { return name }
-        return String(name[name.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+        guard name.contains("[bot:") else { return name }
+        return name.replacingOccurrences(of: #"\[bot:[^\]]*\]\s*"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
     }
 
     /// cronFrequency (AutomationTasksView.tsx): the word on a list card.

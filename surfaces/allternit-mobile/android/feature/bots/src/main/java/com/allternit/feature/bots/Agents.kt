@@ -712,7 +712,7 @@ private fun NewWorkspaceFileSheet(agentId: String, existing: Set<String>, onDism
  * the hash it loaded at; a newer version from another device opens Reload / Keep mine.
  */
 @Composable
-internal fun WorkspaceFileEditorScreen(bot: BotRecord, file: WorkspaceFileInfo, nav: BotNavigator) {
+internal fun WorkspaceFileEditorScreen(bot: BotRecord, file: WorkspaceFileInfo, backend: com.allternit.feature.chat.ChatBackend, nav: BotNavigator) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var content by remember { mutableStateOf("") }
@@ -756,8 +756,11 @@ internal fun WorkspaceFileEditorScreen(bot: BotRecord, file: WorkspaceFileInfo, 
             when {
                 loading -> LibrarySpinner("Loading the file")
                 loadError != null -> ListState(false, loadError, true, "Couldn't load the file", "") { scope.launch { load() } }
-                else -> Box(Modifier.weight(1f).fillMaxWidth().padding(16.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(12.dp)) {
-                    BasicTextField(content, { content = it; saved = false }, textStyle = TextStyle(color = c.textPrimary, fontSize = 14.sp, fontFamily = FontFamily.Monospace, lineHeight = 20.sp), cursorBrush = SolidColor(c.textPrimary), modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("workspaceFileText"))
+                else -> {
+                    Box(Modifier.weight(1f).fillMaxWidth().padding(16.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(12.dp)) {
+                        BasicTextField(content, { content = it; saved = false }, textStyle = TextStyle(color = c.textPrimary, fontSize = 14.sp, fontFamily = FontFamily.Monospace, lineHeight = 20.sp), cursorBrush = SolidColor(c.textPrimary), modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("workspaceFileText"))
+                    }
+                    EditWithChatPanel(bot, file, backend, content) { proposal -> content = proposal; saved = false }
                 }
             }
         }

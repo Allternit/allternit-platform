@@ -124,6 +124,8 @@ sealed interface BotRoute {
     data class Settings(val botId: String) : BotRoute
     data class BotHome(val botId: String, val tab: BotHomeTab) : BotRoute
     data class Group(val groupId: String) : BotRoute
+    /** Group chats (iOS GroupsListView). */
+    data object Groups : BotRoute
     data class ProjectThread(val thread: BotThread) : BotRoute
     data object Hub : BotRoute
     data object Marketplace : BotRoute
@@ -235,6 +237,7 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
         onHub = { optionsOpen = false; nav.open(BotRoute.Hub) },
         onDecisions = { optionsOpen = false; nav.open(BotRoute.Decisions) },
         onActivity = { optionsOpen = false; nav.open(BotRoute.Activity) },
+        onGroups = { optionsOpen = false; nav.open(BotRoute.Groups) },
         onTogglePause = { scope.launch { pause.toggle() } },
         onConnections = { optionsOpen = false; host.openConnections() },
     )
@@ -257,7 +260,7 @@ private fun PausedBanner() {
 @Composable
 private fun BotsOptionsSheet(
     waiting: Int, paused: Boolean, onDismiss: () -> Unit, onThreads: () -> Unit, onHub: () -> Unit, onDecisions: () -> Unit,
-    onActivity: () -> Unit, onTogglePause: () -> Unit, onConnections: () -> Unit,
+    onActivity: () -> Unit, onGroups: () -> Unit, onTogglePause: () -> Unit, onConnections: () -> Unit,
 ) {
     val context = LocalContext.current
     var layout by remember { mutableStateOf(rosterLayout(context)) }
@@ -271,6 +274,7 @@ private fun BotsOptionsSheet(
             NavRow("Agent hub", R.drawable.bots_grid, null, "botsOptionsHub", last = false, onClick = onHub)
             NavRow("Decisions", R.drawable.bots_question, null, "botsOptionsDecisions", last = false, onClick = onDecisions)
             NavRow("Agent activity", R.drawable.bots_chat, null, "botsOptionsActivity", last = false, onClick = onActivity)
+            NavRow("Group chats", R.drawable.bots_chat, null, "botsOptionsGroups", last = false, onClick = onGroups)
             NavRow(if (paused) "Resume all bots" else "Pause all bots", if (paused) DesignR.drawable.ph_play_fill else R.drawable.bots_stop, null, "botsOptionsPause", last = false, onClick = onTogglePause)
             NavRow("Connections", DesignR.drawable.ph_plugs_connected, null, "botsOptionsConnections", onClick = onConnections)
         }
@@ -659,7 +663,7 @@ private fun BotRouteDestination(route: BotRoute, host: BotsHost, store: BotModeS
     }
     when (route) {
         is BotRoute.Chat -> withBot(route.botId) { BotChatSessionScreen(it, route.sessionId, host, store, nav) }
-        is BotRoute.Page -> withBot(route.botId) { b -> BotScreen(b.displayName, nav, testTag = "botPageScreen") { BotPageView(b, store, nav) } }
+        is BotRoute.Page -> withBot(route.botId) { b -> BotScreen(b.displayName, nav, testTag = "botPageScreen") { BotPageView(b, store, nav, backend = host.backend) } }
         is BotRoute.Threads -> BotScreen(route.botId?.let { store.bot(it)?.displayName } ?: "Threads", nav, testTag = "botThreadsScreen") {
             BotThreadsOverview(store, route.botId) { nav.openThread(it) }
         }
@@ -672,11 +676,12 @@ private fun BotRouteDestination(route: BotRoute, host: BotsHost, store: BotModeS
         is BotRoute.Home -> withBot(route.botId) { BotHomeScreen(it, host, store, nav) }
         is BotRoute.Settings -> withBot(route.botId) { b -> BotScreen(b.name, nav, testTag = "agentDetailScreen") { AgentDetailView(b, store, nav) } }
         is BotRoute.BotHome -> withBot(route.botId) { BotHomeTabsScreen(it, route.tab, host, store, nav) }
-        is BotRoute.Group -> GroupRoomScreen(route.groupId, store, nav)
+        is BotRoute.Group -> GroupRoomScreen(route.groupId, host, store, nav)
+        BotRoute.Groups -> GroupsListScreen(store, nav)
         BotRoute.Hub -> AgentHubScreen(host, store, nav)
         BotRoute.Marketplace -> MarketplaceScreen(nav)
         is BotRoute.Listing -> MarketplaceListingScreen(route.id, store, nav)
-        is BotRoute.FileEditor -> withBot(route.botId) { WorkspaceFileEditorScreen(it, route.file, nav) }
+        is BotRoute.FileEditor -> withBot(route.botId) { WorkspaceFileEditorScreen(it, route.file, host.backend, nav) }
         BotRoute.Activity -> AgentActivityListScreen(host.backend, nav)
         is BotRoute.ActivityDetail -> AgentActivityDetailScreen(route.thread, host.backend, nav)
         BotRoute.Decisions -> DecisionsScreen(host, store, nav)

@@ -268,7 +268,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                         composer { req -> deck = DeckTab.Thread; vm.send(req) }
                     }
                     DeckTab.Bot -> Column(Modifier.fillMaxSize()) {
-                        Box(Modifier.weight(1f)) { BotPageView(bot, store, nav, onOpenThreads = { deck = DeckTab.Threads }, onOpenTasks = { deck = DeckTab.Tasks }) }
+                        Box(Modifier.weight(1f)) { BotPageView(bot, store, nav, onOpenThreads = { deck = DeckTab.Threads }, onOpenTasks = { deck = DeckTab.Tasks }, backend = host.backend) }
                         deckRow()
                     }
                 }

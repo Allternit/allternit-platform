@@ -242,7 +242,7 @@ private struct InboxRow: View {
                     .font(.system(size: 11))
                     .foregroundColor(Color("TextSecondary"))
             }
-            Text(item.summary)
+            Text(AutomationScheduleLogic.displayName(item.summary))
                 .font(.subheadline)
                 .foregroundColor(Color("TextPrimary"))
             if item.isPeerHeld, let text = item.text, !text.isEmpty {

@@ -162,10 +162,13 @@ internal val AgentSession.title: String get() = displayName(name)?.takeIf { it.i
 /** iOS AutomationScheduleLogic.displayName: drop a routine run's `[bot:<name>] ` owner tag. */
 internal fun displayName(raw: String?): String? {
     val n = raw?.trim() ?: return null
-    if (!n.startsWith("[bot:")) return n
-    val close = n.indexOf(']')
-    return if (close < 0) n else n.substring(close + 1).trim()
+    if (!n.contains("[bot:")) return n
+    // Anywhere in the string: Inbox failure text quotes the routine title
+    // ("\"[bot:Client Reporter] Draft the weekly report\" failed").
+    return BOT_TAG.replace(n, "").trim()
 }
+
+private val BOT_TAG = Regex("""\[bot:[^\]]*]\s*""")
 
 /** ShellSessionsStore.belongs: which mode's list a session sits in. */
 internal fun AgentSession.belongs(mode: ShellMode): Boolean {

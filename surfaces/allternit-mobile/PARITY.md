@@ -55,7 +55,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | BotWorkspaceFilesSheet | ios/Features/Agents/BotWorkspaceFilesSheet.swift | — | feature/bots/Agents.kt (BotWorkspaceFilesSheet) | built (wave E PR) | — |
 | BotDesktopView | ios/Features/Agents/Desktop/BotDesktopView.swift | src/fabric-session/phone/screens/PhoneDesktopOverlay.tsx | — | moved to wave F: the RFB client ships with ACI Computer, which needs the same port | — |
 | MarketplaceView | ios/Features/Agents/MarketplaceView.swift | — | feature/bots/Agents.kt (MarketplaceScreen, MarketplaceListingScreen) | built (wave E PR) | — |
-| WorkspaceFileEditorView | ios/Features/Agents/WorkspaceFileEditorView.swift | — | feature/bots/Agents.kt (WorkspaceFileEditorScreen) | built (wave E PR): "Edit with chat" assist not ported | — |
+| WorkspaceFileEditorView | ios/Features/Agents/WorkspaceFileEditorView.swift | — | feature/bots/Agents.kt (WorkspaceFileEditorScreen) | built (wave E PR): "Edit with chat" assist (EditWithChat.kt: instruction → streamed revision in a bot session, line diff, Apply / Discard) | — |
 
 ## Artifacts
 
@@ -108,9 +108,12 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | BotLiveStageView | ios/Features/Bots/BotLiveStageView.swift | — | feature/bots/BotChat.kt (BotLiveStageScreen) | built (wave E PR) | — |
 | BotPageView | ios/Features/Bots/BotPageView.swift | — | feature/bots/BotPage.kt (BotPageView) | built (wave E PR) | — |
 | BotProjectPage | ios/Features/Bots/BotProjectPage.swift | — | feature/bots/BotsMore.kt (BotProjectPage) | built (wave E PR): Delegate / Factory panes and the canvas open the Projects detail | — |
-| BotsModeRootView | ios/Features/Bots/BotsModeRootView.swift | — | feature/bots/BotsRoot.kt (BotsModeRoot) | built (wave E PR): Office floor and group chat rooms are wave F | — |
+| BotsModeRootView | ios/Features/Bots/BotsModeRootView.swift | — | feature/bots/BotsRoot.kt (BotsModeRoot) | built (wave E PR): group chats (GroupChat.kt: list, new, room stage, member turns + vendor members, add members, swipe delete); Office floor is wave F | — |
+| GroupChatViews / VendorGroupTurn | ios/Features/Bots/GroupChatViews.swift, VendorGroupTurn.swift | — | feature/bots/GroupChat.kt | built (wave E PR): room background picker not ported (same as the bot chat Background picker) | — |
+| BotZipImport | ios/Features/Connect/BotZipImport.swift | — | feature/bots/BotZip.kt + ImportBotSheet | built (wave E PR) | — |
+| ImpactMapView | ios/Features/Shared/ImpactMapView.swift | — | feature/bots/ImpactMap.kt | built (wave E PR): focus graph, Open, Forget, Turn off skill | — |
 | BotThreadsView | ios/Features/Bots/BotThreadsView.swift | — | feature/bots/BotThreads.kt (BotThreadsOverview, BotThreadsPanel, BotThreadTasks) | built (wave E PR) | — |
-| BotFormSheet | ios/Features/Bots/CreateBot/BotFormSheet.swift | — | feature/bots/BotForm.kt (NewBotSheet, EditBotSheet) | built (wave E PR): look editor (avatar), voice, starter prompts and "Draft instructions" not ported | — |
+| BotFormSheet | ios/Features/Bots/CreateBot/BotFormSheet.swift | — | feature/bots/BotForm.kt (NewBotSheet, EditBotSheet) | built (wave E PR): Look editor (BotLook.kt, the web /editor/bot-look page signed in, avatar saved on create/edit, asset sync); voice, starter prompts and "Draft instructions" not ported | — |
 
 ## Brain
 

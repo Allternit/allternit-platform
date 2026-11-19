@@ -180,7 +180,7 @@ data class BotProjectSummary(
 }
 
 /** A group chat room (iOS BotGroupChat, `bot-groups` rows). */
-data class BotGroupChat(val id: String, val name: String, val memberIds: List<String>, val memberNames: List<String>, val lastLine: String?, val updatedAt: String)
+data class BotGroupChat(val id: String, val name: String, val memberIds: List<String>, val memberNames: List<String>, val lastLine: String?, val updatedAt: String, val room: GroupRoom? = null)
 
 /** A messaging channel a bot can answer on (iOS BotChannel). */
 data class BotChannel(val accountId: String, val provider: String, val displayName: String?, val handle: String?, val state: String, val enabled: Boolean, val isDefault: Boolean) {
@@ -380,20 +380,18 @@ object BotsApi {
 
     // Groups
     suspend fun listGroups(): BotsResult<List<BotGroupChat>> = get("bot-groups", "load group chats") { j ->
-        j.listUnder("groups").mapNotNull { o ->
-            val id = o.str("id") ?: return@mapNotNull null
-            val members = runCatching { com.allternit.core.api.ApiJson.default.parseToJsonElement(o.str("members_json") ?: "[]") as? JsonArray }.getOrNull()
-                ?.mapNotNull { it as? JsonObject }.orEmpty()
-            val log = runCatching { com.allternit.core.api.ApiJson.default.parseToJsonElement(o.str("log_json") ?: "[]") as? JsonArray }.getOrNull()
-                ?.mapNotNull { it as? JsonObject }.orEmpty()
-            val last = log.lastOrNull()
-            val who = last?.let { if (it.str("from") == "user") "You" else it.str("displayName") ?: "Bot" }
-            BotGroupChat(
-                id, o.str("name") ?: "Group", members.mapNotNull { it.str("botId") }, members.mapNotNull { it.str("displayName") },
-                last?.let { "$who: ${it.str("text").orEmpty()}" }, o.str("updated_at").orEmpty(),
-            )
-        }
+        j.listUnder("groups").mapNotNull { o -> GroupRoom.fromRecord(o)?.summary() }
     }
+
+    /** iOS BotModeClient.saveGroup: `PUT bot-groups` with the members and the last 80 lines as JSON text. */
+    suspend fun saveGroup(room: GroupRoom): BotsResult<JsonElement> = send("PUT", "bot-groups", room.record(), "save the group chat")
+
+    suspend fun deleteGroup(id: String): BotsResult<JsonElement> = send("DELETE", "bot-groups/${esc(id)}", null, "delete the group chat")
+
+    /** A plain cloud-api call for the group runner, the zip import and the impact map. */
+    suspend fun call(method: String, path: String, body: JsonElement?, doing: String): BotsResult<JsonElement> = send(method, path, body, doing)
+
+    suspend fun fetch(path: String, doing: String): BotsResult<JsonElement> = get(path, doing) { it }
 
     // Memory and channels
     suspend fun listMemories(botId: String): BotsResult<List<BotMemoryItem>> = get("cowork/memory?bot=${esc(botId)}&limit=200", "load memory") { j ->
@@ -608,6 +606,40 @@ class BotModeStore(private val context: Context) {
     }
 
     suspend fun refreshGroups() { BotsApi.listGroups().orNull()?.let { groups = it.sortedByDescending { g -> g.updatedAt } } }
+
+    // Groups (iOS BotModeStore createGroup / saveGroup / deleteGroup)
+    fun group(id: String): GroupRoom? = groups.firstOrNull { it.id == id }?.room
+
+    private fun putGroup(room: GroupRoom) {
+        val row = room.summary()
+        groups = if (groups.any { it.id == room.id }) groups.map { if (it.id == room.id) row else it } else listOf(row) + groups
+    }
+
+    /** Shows the room at once, then saves it (a failed save keeps the local copy, like iOS). */
+    suspend fun saveGroup(room: GroupRoom) {
+        putGroup(room)
+        BotsApi.saveGroup(room)
+    }
+
+    suspend fun createGroup(name: String, members: List<BotRecord>, vendorIds: Set<String>): BotsResult<GroupRoom> {
+        val base = slugify(name).ifEmpty { "group" }
+        var id = base
+        var n = 2
+        while (groups.any { it.id == id }) { id = "$base-$n"; n++ }
+        val now = GroupRoom.now()
+        val room = GroupRoom(
+            id, name, null,
+            members.map { GroupMember(it.id, it.displayName, slugify(it.displayName), if (it.id in vendorIds) "vendor" else "native", null) },
+            emptyList(), now, now,
+        )
+        return when (val r = BotsApi.saveGroup(room)) {
+            is BotsResult.Ok -> { putGroup(room); BotsResult.Ok(room) }
+            is BotsResult.Failed -> r
+        }
+    }
+
+    suspend fun deleteGroup(id: String): BotsResult<JsonElement> =
+        BotsApi.deleteGroup(id).also { if (it is BotsResult.Ok) groups = groups.filter { g -> g.id != id } }
     suspend fun refreshProjects() { projects = BotsApi.listBotProjects().orNull()?.filter { !it.archived }.orEmpty() }
 
     suspend fun act(thread: BotThread, action: String): BotsResult<JsonElement> = BotsApi.threadAction(thread.id, action).also { refreshThreads() }

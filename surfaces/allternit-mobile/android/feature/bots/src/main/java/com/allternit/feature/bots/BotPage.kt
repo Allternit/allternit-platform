@@ -63,7 +63,7 @@ enum class BotHomeTab(val label: String) { Threads("Chat"), Artifacts("Artifacts
  * Channels.
  */
 @Composable
-internal fun BotPageView(bot: BotRecord, store: BotModeStore, nav: BotNavigator, onOpenThreads: (() -> Unit)? = null, onOpenTasks: (() -> Unit)? = null) {
+internal fun BotPageView(bot: BotRecord, store: BotModeStore, nav: BotNavigator, onOpenThreads: (() -> Unit)? = null, onOpenTasks: (() -> Unit)? = null, backend: com.allternit.feature.chat.ChatBackend? = null) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var routinesOn by remember { mutableStateOf<Int?>(null) }
@@ -305,7 +305,7 @@ internal fun BotMemoryView(bot: BotRecord, nav: BotNavigator) {
     val filtered = if (q.isEmpty()) memories else memories.filter { it.content.contains(q, ignoreCase = true) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp).testTag("botMemory")) {
         LibrarySearchField(search, "Search memory", "botMemorySearch", Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { search = it }
-        ImpactMapView(bot.id, onChanged = { scope.launch { load() } })
+        ImpactMapView(bot.id, backend = backend, openAction = { item -> impactOpen(bot, nav, item) }, onChanged = { scope.launch { load() } })
         SectionHeader("Teach ${bot.displayName}")
         RowGroup {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -425,33 +425,6 @@ internal fun BotComputerScreen(bot: BotRecord, nav: BotNavigator) {
                         if (i < rows.lastIndex) Hairline()
                     }
                 }
-            }
-        }
-    }
-}
-
-/** A group chat room from the roster: its members and the latest line (iOS GroupChatView's header). */
-@Composable
-internal fun GroupRoomScreen(groupId: String, store: BotModeStore, nav: BotNavigator) {
-    val c = AllternitTheme.colors
-    val g = store.groups.firstOrNull { it.id == groupId }
-    BotScreen(g?.name ?: "Group", nav, testTag = "botGroupScreen") {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
-            if (g == null) { Text("This group was removed.", color = c.textSecondary, modifier = Modifier.padding(20.dp)); return@Column }
-            SectionHeader("${g.memberIds.size} bots")
-            RowGroup {
-                g.memberIds.forEachIndexed { i, id ->
-                    val b = store.bot(id)
-                    Row(Modifier.fillMaxWidth().clickable(enabled = b != null) { nav.open(BotRoute.Chat(id, null)) }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (b != null) BotAvatar(b, 28.dp) else Spacer(Modifier.size(28.dp))
-                        Text(b?.displayName ?: g.memberNames.getOrNull(i) ?: "Bot", color = c.textPrimary, fontSize = 15.sp)
-                    }
-                    if (i < g.memberIds.lastIndex) Hairline()
-                }
-            }
-            g.lastLine?.let {
-                SectionHeader("Latest")
-                Text(it, color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 20.dp))
             }
         }
     }

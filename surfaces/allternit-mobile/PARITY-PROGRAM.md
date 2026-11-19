@@ -128,17 +128,20 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | BotWebhooksSheet | Agents | ios/Features/Agents/BotWebhooksSheet.swift | — | feature/bots/Agents.kt (BotWebhooksSheet) | built (wave E PR) | — |
 | BotWorkspaceFilesSheet | Agents | ios/Features/Agents/BotWorkspaceFilesSheet.swift | — | feature/bots/Agents.kt (BotWorkspaceFilesSheet) | built (wave E PR) | — |
 | MarketplaceView | Agents | ios/Features/Agents/MarketplaceView.swift | — | feature/bots/Agents.kt (MarketplaceScreen, MarketplaceListingScreen) | built (wave E PR) | — |
-| WorkspaceFileEditorView | Agents | ios/Features/Agents/WorkspaceFileEditorView.swift | — | feature/bots/Agents.kt (WorkspaceFileEditorScreen) | built (wave E PR): "Edit with chat" assist not ported | — |
+| WorkspaceFileEditorView | Agents | ios/Features/Agents/WorkspaceFileEditorView.swift | — | feature/bots/Agents.kt (WorkspaceFileEditorScreen) | built (wave E PR): "Edit with chat" assist (EditWithChat.kt: instruction → streamed revision in a bot session, line diff, Apply / Discard) | — |
 | BotAvatarView | Bots | ios/Features/Bots/BotAvatarView.swift | — | feature/bots/BotVisuals.kt (BotAvatar, BotStatusAvatar) | built (wave E PR): sprite still frame, no sprite animation | — |
 | BotChatSessionView | Bots | ios/Features/Bots/BotChatSessionView.swift | — | feature/bots/BotChat.kt (BotChatSessionScreen) | built (wave E PR): call button and Background picker not ported | — |
-| BotFormSheet | Bots | ios/Features/Bots/CreateBot/BotFormSheet.swift | — | feature/bots/BotForm.kt (NewBotSheet, EditBotSheet) | built (wave E PR): look editor (avatar), voice, starter prompts and "Draft instructions" not ported | — |
+| BotFormSheet | Bots | ios/Features/Bots/CreateBot/BotFormSheet.swift | — | feature/bots/BotForm.kt (NewBotSheet, EditBotSheet) | built (wave E PR): Look editor (BotLook.kt, the web /editor/bot-look page signed in, avatar saved on create/edit, asset sync); voice, starter prompts and "Draft instructions" not ported | — |
 | BotHomeTabsView | Bots | ios/Features/Bots/BotHomeTabsView.swift | — | feature/bots/BotPage.kt (BotHomeTabsScreen) | built (wave E PR) | — |
 | BotLaunchpadView | Bots | ios/Features/Bots/BotLaunchpadView.swift | — | feature/bots/BotsRoot.kt (BotLaunchpad) | built (wave E PR): To: picker is a sheet | — |
 | BotLiveStageView | Bots | ios/Features/Bots/BotLiveStageView.swift | — | feature/bots/BotChat.kt (BotLiveStageScreen) | built (wave E PR) | — |
 | BotPageView | Bots | ios/Features/Bots/BotPageView.swift | — | feature/bots/BotPage.kt (BotPageView) | built (wave E PR) | — |
 | BotProjectPage | Bots | ios/Features/Bots/BotProjectPage.swift | — | feature/bots/BotsMore.kt (BotProjectPage) | built (wave E PR): Delegate / Factory panes and the canvas open the Projects detail | — |
 | BotThreadsView | Bots | ios/Features/Bots/BotThreadsView.swift | — | feature/bots/BotThreads.kt (BotThreadsOverview, BotThreadsPanel, BotThreadTasks) | built (wave E PR) | — |
-| BotsModeRootView | Bots | ios/Features/Bots/BotsModeRootView.swift | — | feature/bots/BotsRoot.kt (BotsModeRoot) | built (wave E PR): Office floor and group chat rooms are wave F | — |
+| BotsModeRootView | Bots | ios/Features/Bots/BotsModeRootView.swift | — | feature/bots/BotsRoot.kt (BotsModeRoot) | built (wave E PR): group chats (GroupChat.kt: list, new, room stage, member turns + vendor members, add members, swipe delete); Office floor is wave F | — |
+| GroupChatViews / VendorGroupTurn | Bots | ios/Features/Bots/GroupChatViews.swift, VendorGroupTurn.swift | — | feature/bots/GroupChat.kt | built (wave E PR): room background picker not ported (same as the bot chat Background picker) | — |
+| BotZipImport | Bots | ios/Features/Connect/BotZipImport.swift | — | feature/bots/BotZip.kt + ImportBotSheet | built (wave E PR) | — |
+| ImpactMapView | Shared | ios/Features/Shared/ImpactMapView.swift | — | feature/bots/ImpactMap.kt | built (wave E PR): focus graph, Open, Forget, Turn off skill | — |
 | BotsScreen | Bots | — | src/fabric-session/phone/screens/BotsScreen.tsx | feature/bots/BotsRoot.kt (BotsModeRoot) | built (wave E PR) | — |
 | section: bots | Bots | — | src/fabric-session/phone/phone-nav.ts (PhoneSection bots) | feature/shell/WorkspaceShell.kt (Section "bots") | built (wave E PR) | — |
 | DecisionsDeckView | Decisions | ios/Features/Decisions/Views/DecisionsDeckView.swift | — | feature/bots/BotsMore.kt (DecisionsScreen) | built (wave E PR) | — |
