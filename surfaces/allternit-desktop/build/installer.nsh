@@ -20,7 +20,7 @@
 
 ; ── Welcome page ──────────────────────────────────────────────────────────────
 !define MUI_WELCOMEPAGE_TITLE          "Welcome to Allternit  |  A://"
-!define MUI_WELCOMEPAGE_TEXT           "This wizard will guide you through the installation of Allternit Desktop.$\r$\n$\r$\nAllternit is a fully offline AI platform that runs entirely on your machine — no subscription, no cloud.$\r$\n$\r$\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TEXT           "This wizard will guide you through the installation of Allternit Desktop.$\r$\n$\r$\nAllternit Desktop runs your bots, chats, projects and code on this computer, paired with your Allternit account.$\r$\n$\r$\nClick Next to continue."
 
 ; ── Directory page ────────────────────────────────────────────────────────────
 !define MUI_DIRECTORYPAGE_TEXT_TOP     "Choose where to install Allternit Desktop."
