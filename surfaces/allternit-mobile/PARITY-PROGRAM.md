@@ -207,30 +207,30 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | SessionDiffListView | Code | ios/Features/Code/DiffViewer/SessionDiffListView.swift | — | feature/code/CodeDiffs.kt (SessionDiffScreen) | built (#2640) | — |
 | TerminalSessionView | Code | ios/Features/Code/TerminalSessionView.swift | — | feature/code/CodeTerminal.kt (TerminalScreen: native VT screen like SwiftTerm, no WebView) | built (#2640) | — |
 | section: code | Code | — | src/fabric-session/phone/phone-nav.ts (PhoneSection code) | feature/shell/WorkspaceShell.kt (mode code: CodeHome under the composer) | built (#2640) | — |
-| ConnectWizardView | Connect | ios/Features/Connect/ConnectWizardView.swift | — | feature/phones/Connect.kt (GiveBotPhoneSheet + ConnectWizardSheet, Email flow; phone number, Telegram and OAuth flows left) | built (#PRNUM) | — |
-| VendorConnectView | Connect | ios/Features/Connect/VendorConnectView.swift | — | feature/phones/Connect.kt (VendorConnectScreen, VendorProductScreen) | built (#PRNUM) | — |
-| CoworkSessionWorkspaceView | Cowork | ios/Features/Cowork/Views/CoworkSessionWorkspaceView.swift | — | feature/cowork/CoworkScreens.kt (CoworkSessionScreen) | built (#PRNUM) | — |
-| CoworkTaskDetailView | Cowork | ios/Features/Cowork/Views/CoworkTaskDetailView.swift | — | feature/cowork/CoworkScreens.kt (CoworkTaskDetail) | built (#PRNUM) | — |
-| CoworkTasksListView | Cowork | ios/Features/Cowork/Views/CoworkTasksListView.swift | — | feature/cowork/CoworkScreens.kt (CoworkTasksScreen) | built (#PRNUM) | — |
-| CoworkWorkspaceView | Cowork | ios/Features/Cowork/Views/CoworkWorkspaceView.swift | — | feature/cowork/CoworkScreens.kt (CoworkLaunchpad) | built (#PRNUM) | — |
-| CreateCoworkTaskSheet | Cowork | ios/Features/Cowork/Views/CreateCoworkTaskSheet.swift | — | feature/cowork/CoworkScreens.kt (CreateCoworkTaskSheet) | built (#PRNUM) | — |
-| FabricApprovalsView | Cowork | ios/Features/Cowork/Views/FabricApprovalsView.swift | — | feature/cowork/CoworkScreens.kt (FabricApprovalsScreen) | built (#PRNUM) | — |
-| BenchmarkView | Models | ios/Features/Models/BenchmarkView.swift | — | feature/models/ModelsScreens.kt (BenchmarkScreen) | built (#PRNUM) | — |
-| FreeweightsBrowseView | Models | ios/Features/Models/FreeweightsBrowseView.swift | — | feature/models/ModelsScreens.kt (catalog, faces, ModelDetailSheet) + ModelsData.kt | built (#PRNUM) | — |
-| ModelsTabView | Models | ios/Features/Models/ModelsTabView.swift | — | feature/models/ModelsScreens.kt (ModelsRoot) | built (#PRNUM) | — |
-| section: model-lab | Models | — | src/fabric-session/phone/phone-nav.ts (PhoneSection model-lab) | feature/models/ModelsScreens.kt (ModelsRoot, the Models section) | built (#PRNUM) | — |
+| ConnectWizardView | Connect | ios/Features/Connect/ConnectWizardView.swift | — | feature/phones/Connect.kt (GiveBotPhoneSheet + ConnectWizardSheet, Email flow; phone number, Telegram and OAuth flows left) | built (#2648) | — |
+| VendorConnectView | Connect | ios/Features/Connect/VendorConnectView.swift | — | feature/phones/Connect.kt (VendorConnectScreen, VendorProductScreen) | built (#2648) | — |
+| CoworkSessionWorkspaceView | Cowork | ios/Features/Cowork/Views/CoworkSessionWorkspaceView.swift | — | feature/cowork/CoworkScreens.kt (CoworkSessionScreen) | built (#2648) | — |
+| CoworkTaskDetailView | Cowork | ios/Features/Cowork/Views/CoworkTaskDetailView.swift | — | feature/cowork/CoworkScreens.kt (CoworkTaskDetail) | built (#2648) | — |
+| CoworkTasksListView | Cowork | ios/Features/Cowork/Views/CoworkTasksListView.swift | — | feature/cowork/CoworkScreens.kt (CoworkTasksScreen) | built (#2648) | — |
+| CoworkWorkspaceView | Cowork | ios/Features/Cowork/Views/CoworkWorkspaceView.swift | — | feature/cowork/CoworkScreens.kt (CoworkLaunchpad) | built (#2648) | — |
+| CreateCoworkTaskSheet | Cowork | ios/Features/Cowork/Views/CreateCoworkTaskSheet.swift | — | feature/cowork/CoworkScreens.kt (CreateCoworkTaskSheet) | built (#2648) | — |
+| FabricApprovalsView | Cowork | ios/Features/Cowork/Views/FabricApprovalsView.swift | — | feature/cowork/CoworkScreens.kt (FabricApprovalsScreen) | built (#2648) | — |
+| BenchmarkView | Models | ios/Features/Models/BenchmarkView.swift | — | feature/models/ModelsScreens.kt (BenchmarkScreen) | built (#2648) | — |
+| FreeweightsBrowseView | Models | ios/Features/Models/FreeweightsBrowseView.swift | — | feature/models/ModelsScreens.kt (catalog, faces, ModelDetailSheet) + ModelsData.kt | built (#2648) | — |
+| ModelsTabView | Models | ios/Features/Models/ModelsTabView.swift | — | feature/models/ModelsScreens.kt (ModelsRoot) | built (#2648) | — |
+| section: model-lab | Models | — | src/fabric-session/phone/phone-nav.ts (PhoneSection model-lab) | feature/models/ModelsScreens.kt (ModelsRoot, the Models section) | built (#2648) | — |
 | LocalDocumentView | Office | ios/Features/Office/LocalDocumentView.swift | — | — | todo | — |
 | OfficeDocumentView | Office | ios/Features/Office/OfficeDocumentView.swift | — | — | todo | — |
 | OfficeDocumentsView | Office | ios/Features/Office/OfficeDocumentsView.swift | — | — | todo | — |
 | OfficeEditorWebView | Office | ios/Features/Office/OfficeEditorWebView.swift | — | — | todo | — |
 | OfficeFloorView | Office | ios/Features/Office/Floor/OfficeFloorView.swift | — | — | todo | — |
 | PDFSignView | Office | ios/Features/Office/PDFSignView.swift | — | — | todo | — |
-| AndroidScreenPairingView | Phones | ios/Features/Phones/AndroidScreenPairingView.swift | — | feature/phones/PhonesScreens.kt (AndroidScreenPairingScreen) | built (#PRNUM) | — |
-| AppPhonesSettingsView | Phones | ios/Features/Phones/AppPhonesSettingsView.swift | — | feature/phones/PhonesScreens.kt (AppPhonesSettingsScreen; the pairing handshake stays in :app AppPhoneLink) | built (#PRNUM) | — |
-| LinkedPhonesSection | Phones | — | src/fabric-session/phone/screens/LinkedPhonesSection.tsx | feature/computer/AciComputers.kt (AciLinkedPhonesSection, F3; now opens PhoneLiveView) | built (#PRNUM) | — |
-| PhoneLiveView | Phones | ios/Features/Phones/PhoneLiveView.swift | src/fabric-session/phone/screens/LinkedPhoneOverlay.tsx | feature/phones/PhoneLive.kt | built (#PRNUM) | — |
-| PhoneTaskCardView | Phones | ios/Features/Phones/PhoneTaskCardView.swift | — | feature/phones/PhonesScreens.kt (PhoneTaskCard, read only) | built (#PRNUM) | — |
-| PhonesSheet | Shell | ios/Features/Shell/PhonesSheet.swift | — | feature/phones/PhonesScreens.kt (PhonesSheet; the drawer Phones button opens it) | built (#PRNUM) | — |
+| AndroidScreenPairingView | Phones | ios/Features/Phones/AndroidScreenPairingView.swift | — | feature/phones/PhonesScreens.kt (AndroidScreenPairingScreen) | built (#2648) | — |
+| AppPhonesSettingsView | Phones | ios/Features/Phones/AppPhonesSettingsView.swift | — | feature/phones/PhonesScreens.kt (AppPhonesSettingsScreen; the pairing handshake stays in :app AppPhoneLink) | built (#2648) | — |
+| LinkedPhonesSection | Phones | — | src/fabric-session/phone/screens/LinkedPhonesSection.tsx | feature/computer/AciComputers.kt (AciLinkedPhonesSection, F3; now opens PhoneLiveView) | built (#2648) | — |
+| PhoneLiveView | Phones | ios/Features/Phones/PhoneLiveView.swift | src/fabric-session/phone/screens/LinkedPhoneOverlay.tsx | feature/phones/PhoneLive.kt | built (#2648) | — |
+| PhoneTaskCardView | Phones | ios/Features/Phones/PhoneTaskCardView.swift | — | feature/phones/PhonesScreens.kt (PhoneTaskCard, read only) | built (#2648) | — |
+| PhonesSheet | Shell | ios/Features/Shell/PhonesSheet.swift | — | feature/phones/PhonesScreens.kt (PhonesSheet; the drawer Phones button opens it) | built (#2648) | — |
 | mode: aci | Shell | — | src/fabric-session/phone/phone-nav.ts (PhoneMode aci) | feature/shell/WorkspaceShell.kt (ShellMode.Aci → AciRoot) | built (#2644) | — |
 | mode: code | Shell | — | src/fabric-session/phone/phone-nav.ts (PhoneMode code) | feature/code/ (CodeModeRoot, wave F1) | built (#2640) | — |
 
