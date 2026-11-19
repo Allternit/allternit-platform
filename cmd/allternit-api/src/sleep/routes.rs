@@ -6,9 +6,9 @@
 //! Writes that need a later stage validate their input, then refuse with
 //! `{"accepted": false, "reason": ...}`: `sleep_disabled` when Sleep or the
 //! stage's flag is off, `stage_not_built` when the flags are on but that stage
-//! has not landed yet. User actions (`run`, `undo`, `resolve`, `pages/load`)
-//! refuse with 409 (`run` queues a manual nap or daydream with 202 once the
-//! `orchestrator` stage is on, step 5.1); `signal` answers 200, because the runtime sends it on every
+//! has not landed yet. User actions (`resolve`, `pages/load`) refuse with 409
+//! (`run` queues a manual nap or daydream with 202 once the `orchestrator`
+//! stage is on, step 5.1; `cycles/:id/undo` is real since step 5.5); `signal` answers 200, because the runtime sends it on every
 //! idle, compaction and session end whether Sleep is on or not.
 //! `PUT settings` and `PUT config` really write `sleep_config` rows (owner).
 
@@ -95,23 +95,27 @@ fn refused(cfg: &Resolved, stage: Stage, status: StatusCode) -> Reply {
     (status, Json(json!({ "accepted": false, "reason": reason, "stage": stage.as_str(), "error": msg })))
 }
 
+/// `report_json` is the last column: it feeds the one-line `summary`.
 const CYCLE_COLS: &str = "id, trigger, kind, state, stage, session_id, spend_usd, manifest_before,
-     manifest_after, started_at, finished_at, undone_at";
+     manifest_after, started_at, finished_at, undone_at, report_json";
 
 fn cycle_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<CycleSummary> {
+    let (kind, state, spend_usd, undone_at): (String, String, f64, Option<String>) = (r.get(2)?, r.get(3)?, r.get(6)?, r.get(11)?);
+    let report: Option<String> = r.get(12)?;
     Ok(CycleSummary {
         id: r.get(0)?,
         trigger: r.get(1)?,
-        kind: r.get(2)?,
-        state: r.get(3)?,
+        summary: super::report::summary(&kind, &state, spend_usd, undone_at.is_some(), report.as_deref()),
+        kind,
+        state,
         stage: r.get(4)?,
         session_id: r.get(5)?,
-        spend_usd: r.get(6)?,
+        spend_usd,
         manifest_before: r.get(7)?,
         manifest_after: r.get(8)?,
         started_at: r.get(9)?,
         finished_at: r.get(10)?,
-        undone_at: r.get(11)?,
+        undone_at,
     })
 }
 
@@ -248,7 +252,7 @@ async fn list_cycles(
 
 fn find_cycle(conn: &Connection, user: &str, id: &str) -> rusqlite::Result<Option<(CycleSummary, Option<String>)>> {
     conn.query_row(
-        &format!("SELECT {CYCLE_COLS}, report_json FROM sleep_cycles WHERE user_id = ?1 AND id = ?2"),
+        &format!("SELECT {CYCLE_COLS} FROM sleep_cycles WHERE user_id = ?1 AND id = ?2"),
         params![user, id],
         |r| Ok((cycle_row(r)?, r.get::<_, Option<String>>(12)?)),
     )
@@ -259,21 +263,39 @@ async fn get_cycle(State(state): State<Arc<AppState>>, headers: HeaderMap, Path(
     let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
     let conn = match state.db.connect() { Ok(c) => c, Err(e) => return db_err(e) };
     match find_cycle(&conn, &user, &id) {
-        Ok(Some((cycle, report))) => {
-            let report = report.and_then(|r| serde_json::from_str::<Value>(&r).ok());
-            (StatusCode::OK, Json(json!({ "cycle": cycle, "report": report })))
-        }
+        Ok(Some((mut cycle, report))) => match super::report::build(&conn, &user, &mut cycle, report.as_deref()) {
+            Ok(report) => (StatusCode::OK, Json(json!({ "cycle": cycle, "report": report }))),
+            Err(e) => db_err(e),
+        },
         Ok(None) => err(StatusCode::NOT_FOUND, "Cycle not found"),
         Err(e) => db_err(e),
     }
 }
 
+/// Undoes a finished or stopped cycle: the Dream part through Dream's own undo
+/// (later edits are kept), the manifest rollback when the cycle wrote one.
+/// Needs no stage flag: a cycle only exists because Sleep ran, and the user
+/// can always take its changes back.
 async fn undo_cycle(State(state): State<Arc<AppState>>, headers: HeaderMap, Path(id): Path<String>) -> Reply {
+    use super::report::UndoError;
     let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
-    let (conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
-    match find_cycle(&conn, &user, &id) {
-        Ok(Some(_)) => refused(&cfg, Stage::Orchestrator, StatusCode::CONFLICT),
-        Ok(None) => err(StatusCode::NOT_FOUND, "Cycle not found"),
+    let (db, uid, cid) = (state.db.clone(), user.clone(), id.clone());
+    let out = tokio::task::spawn_blocking(move || super::report::undo(&db, &uid, &cid)).await;
+    match out {
+        Ok(Ok(r)) => {
+            let cycle = state.db.connect().ok().and_then(|c| find_cycle(&c, &user, &id).ok().flatten()).map(|(c, _)| c);
+            (StatusCode::OK, Json(json!({
+                "undone": true, "cycle": cycle, "undone_at": r.undone_at, "parts": r.parts, "cannot_undo": r.cannot_undo,
+            })))
+        }
+        Ok(Err(UndoError::NotFound)) => err(StatusCode::NOT_FOUND, "Cycle not found"),
+        Ok(Err(UndoError::AlreadyUndone)) => (StatusCode::CONFLICT, Json(json!({ "undone": false, "error": "already undone" }))),
+        Ok(Err(UndoError::NotUndoable(why))) => (StatusCode::CONFLICT, Json(json!({ "undone": false, "error": why }))),
+        Ok(Err(UndoError::Conflict(paths))) => (StatusCode::CONFLICT, Json(json!({
+            "undone": false, "conflicts": paths,
+            "error": "You edited lines the Dream changed after it ran, so this cycle was not undone. Nothing was changed.",
+        }))),
+        Ok(Err(UndoError::Failed(e))) => db_err(e),
         Err(e) => db_err(e),
     }
 }
@@ -716,5 +738,33 @@ mod tests {
         assert_eq!(units("user-b").len(), 3);
         let (s, v) = call(&app, "POST", "/api/v1/memory/sleep/run", "user-b", Some(json!({ "kind": "rem" }))).await;
         assert_eq!((s, v["reason"].clone()), (StatusCode::CONFLICT, json!("stage_not_built")));
+    }
+
+    #[tokio::test]
+    async fn the_cycle_report_and_undo_routes_answer_for_the_owner_only() {
+        let dir = std::env::temp_dir().join(format!("allternit-sleep-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        st.db.connect().unwrap().execute(
+            "INSERT INTO sleep_cycles (id, user_id, trigger, kind, state, finished_at, report_json)
+             VALUES ('cyc_1', 'user-a', 'idle', 'daydream', 'finished', '2026-11-19 12:00:09',
+                     '{\"state\":\"finished\",\"steps\":[{\"step\":\"consolidation\",\"status\":\"done\",\"spend_usd\":0.0,\"detail\":{\"merged\":2,\"decayed\":0}}]}')",
+            [],
+        ).unwrap();
+        let app: Router = Router::new().nest("/api/v1", sleep_router()).with_state(st);
+
+        let (s, v) = call(&app, "GET", "/api/v1/memory/sleep/cycles", "user-a", None).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert!(v["cycles"][0]["summary"].as_str().unwrap().contains("consolidation merged 2"), "{v}");
+        let (_, v) = call(&app, "GET", "/api/v1/memory/sleep/status", "user-a", None).await;
+        assert!(v["last_cycle"]["summary"].as_str().is_some(), "{v}");
+        let (_, v) = call(&app, "GET", "/api/v1/memory/sleep/cycles/cyc_1", "user-a", None).await;
+        assert_eq!(v["report"]["stages"].as_array().unwrap().len(), 2, "a daydream lists its two stages: {v}");
+
+        assert_eq!(call(&app, "POST", "/api/v1/memory/sleep/cycles/cyc_1/undo", "user-b", None).await.0, StatusCode::NOT_FOUND);
+        let (s, v) = call(&app, "POST", "/api/v1/memory/sleep/cycles/cyc_1/undo", "user-a", None).await;
+        assert_eq!((s, v["undone"].clone()), (StatusCode::OK, json!(true)), "{v}");
+        let (s, v) = call(&app, "POST", "/api/v1/memory/sleep/cycles/cyc_1/undo", "user-a", None).await;
+        assert_eq!((s, v["error"].clone()), (StatusCode::CONFLICT, json!("already undone")));
     }
 }
