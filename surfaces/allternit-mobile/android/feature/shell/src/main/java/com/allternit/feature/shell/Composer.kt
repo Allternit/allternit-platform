@@ -98,7 +98,11 @@ internal data class ComposerDraft(
     val attachments: List<ComposerAttachment> = emptyList(),
     val modelId: String? = null,
     val modelLabel: String? = null,
+    /** The model's effort level when it takes one (iOS ModelStore.effortForSend). */
+    val effort: String? = null,
     val agentMode: String? = null,
+    /** The armed deck mode's id, sent as `metadata.agentModeId`. */
+    val agentModeId: String? = null,
     val onPhone: Boolean = false,
     val webSearch: Boolean = false,
     val research: Boolean = false,
@@ -172,6 +176,16 @@ internal fun Composer(
     onClearPhone: () -> Unit,
     onSend: (ComposerDraft) -> Unit,
     onOpenSection: (RailRow) -> Unit,
+    /** A reply is streaming: Stop replaces Send (iOS ComposerView sendButton). */
+    isStreaming: Boolean = false,
+    /** The first send's session create is in flight: no double send. */
+    sendDisabled: Boolean = false,
+    onStop: () -> Unit = {},
+    /** Text to load into the field (a failed send's draft, or Edit on the last message). */
+    prefill: String? = null,
+    onPrefillConsumed: () -> Unit = {},
+    /** Bumped by the chat to open the model picker (a `no_brain` send, "Choose a model"). */
+    pickerRequest: Int = 0,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -223,6 +237,13 @@ internal fun Composer(
     }
 
     LaunchedEffect(Unit) { models.load() }
+    LaunchedEffect(prefill) {
+        if (prefill != null) {
+            text = prefill
+            onPrefillConsumed()
+        }
+    }
+    LaunchedEffect(pickerRequest) { if (pickerRequest > 0) pickerOpen = true }
 
     // Dictation: the system speech screen (no microphone permission needed by the app).
     val dictationAvailable = remember { SpeechRecognizer.isRecognitionAvailable(context) }
@@ -232,14 +253,22 @@ internal fun Composer(
     }
 
     fun send() {
-        if (!hasDraft) return
+        // A turn needs words (iOS sendMessage guards on the trimmed text); files ride along.
+        if (text.isBlank() || sendDisabled || isStreaming) return
+        // No brain picked: the picker opens instead of sending (iOS requiresModelPick).
+        if (models.selectedId.isNullOrEmpty()) {
+            pickerOpen = true
+            return
+        }
         Haptics.perform(view, Haptics.Kind.Tap)
         val draft = ComposerDraft(
             text = text.trim(),
             attachments = attachments.toList(),
             modelId = models.selectedId,
             modelLabel = models.selectedId?.let { models.chipLabel },
+            effort = models.selected?.let { models.level(it) },
             agentMode = armedMode?.label,
+            agentModeId = armedMode?.id,
             onPhone = phoneArmed,
             webSearch = webSearch,
             research = research,
@@ -360,12 +389,30 @@ internal fun Composer(
                 }
                 Spacer(Modifier.weight(1f))
                 ModelChip(models = models, open = pickerOpen) { pickerOpen = true }
-                if (hasDraft) {
+                if (isStreaming) {
+                    // Stop while a reply runs (iOS: square.fill on the neutral circle, label "Stop").
                     Box(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(CircleShape)
-                            .background(c.accentPrimary)
+                            .background(c.fillNeutral)
+                            .border(1.dp, c.borderSubtle, CircleShape)
+                            .testTag("composerStop")
+                            .clickable(role = Role.Button, onClickLabel = "Stop") {
+                                Haptics.perform(view, Haptics.Kind.Tap)
+                                onStop()
+                            }
+                            .semantics { contentDescription = "Stop" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(Modifier.size(12.dp).clip(RoundedCornerShape(2.dp)).background(c.textPrimary))
+                    }
+                } else if (hasDraft) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(if (sendDisabled || text.isBlank()) c.accentPrimary.copy(alpha = 0.4f) else c.accentPrimary)
                             .testTag("composerSend")
                             .clickable(role = Role.Button, onClickLabel = "Send message") { send() }
                             .semantics { contentDescription = "Send message" },

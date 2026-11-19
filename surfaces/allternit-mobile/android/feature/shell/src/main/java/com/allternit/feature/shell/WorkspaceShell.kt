@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,9 @@ import com.allternit.core.auth.Account
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.Haptics
 import com.allternit.core.design.Motion
+import com.allternit.feature.chat.ChatBackends
+import com.allternit.feature.chat.ChatViewModel
+import com.allternit.feature.chat.SessionContext
 import kotlinx.coroutines.launch
 
 internal enum class DrawerValue { Closed, Open }
@@ -81,11 +85,30 @@ internal fun WorkspaceShell(account: Account?) {
     var page by remember { mutableStateOf<ShellPage>(ShellPage.Home) }
     val store = remember { ShellSessionsStore() }
     val models = remember { ModelStore(context) }
+    // One chat for the shell (iOS keeps one ChatViewModel): a running reply survives a trip
+    // to the home and back. It shares the shell's OkHttp client and API.
+    val chatBackend = remember { ChatBackends.create(context, ShellApi.okHttp, ShellApi.api) }
+    val chat = remember { ChatViewModel(chatBackend, context.contentResolver) }
+    DisposableEffect(chat) { onDispose { chat.dispose() } }
     val hold = remember { MenuHoldState() }
     val drawer = remember { AnchoredDraggableState(DrawerValue.Closed) }
 
     fun reload() {
         if (account != null) scope.launch { store.load() }
+    }
+    // A new or deleted session shows in Recents right away.
+    chat.onSessionsChanged = ::reload
+    chat.sessionContext = SessionContext(
+        originSurface = when (mode) {
+            ShellMode.Code -> "code"
+            ShellMode.Aci -> "browser"
+            else -> "chat"
+        },
+    )
+
+    fun openSession(session: AgentSession?) {
+        if (session == null) chat.startNewSession() else chat.loadSession(session.id)
+        page = ShellPage.Chat(session = session, draft = ComposerDraft())
     }
     LaunchedEffect(account?.userId) { if (account != null) store.load() }
 
@@ -187,24 +210,42 @@ internal fun WorkspaceShell(account: Account?) {
                                     onPick = ::pickMode,
                                 )
                             },
-                            onNewChat = { draft -> page = ShellPage.Chat(session = null, draft = draft) },
+                            onNewChat = { draft ->
+                                // The home composer's send starts a new chat and streams it.
+                                chat.startNewSession()
+                                chat.send(draft.toChatRequest())
+                                page = ShellPage.Chat(session = null, draft = draft)
+                            },
                             onNew = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
                         )
-                        is ShellPage.Chat -> ChatStub(
-                            session = current.session,
-                            draft = current.draft,
-                            onBack = { page = ShellPage.Home },
-                            onNewChat = { page = ShellPage.Home },
+                        is ShellPage.Chat -> ChatPage(
+                            chat = chat,
+                            backend = chatBackend,
+                            store = store,
+                            models = models,
+                            menuButton = {
+                                PhoneMenuButton(
+                                    mode = mode,
+                                    hold = hold,
+                                    holdEnabled = !drawerOpen,
+                                    onOpen = { setDrawer(true) },
+                                    onPick = ::pickMode,
+                                )
+                            },
+                            // New chat: the home with an empty composer (iOS startNewChat).
+                            onNewChat = {
+                                chat.startNewSession()
+                                page = ShellPage.Home
+                            },
+                            onDeleted = { page = ShellPage.Home },
+                            onOpenSection = { row -> page = ShellPage.Section(row) },
+                            onOpenSettings = { page = ShellPage.Settings },
                         )
                         is ShellPage.Section -> SectionStub(current.row, onBack = { page = ShellPage.Home })
                         ShellPage.Settings -> SettingsScreen(account, onBack = { page = ShellPage.Home })
-                        ShellPage.AllChats -> AllChatsScreen(mode, store, onBack = { page = ShellPage.Home }) {
-                            page = ShellPage.Chat(session = it, draft = ComposerDraft())
-                        }
-                        ShellPage.Search -> ShellSearchScreen(store, onBack = { page = ShellPage.Home }) {
-                            page = ShellPage.Chat(session = it, draft = ComposerDraft())
-                        }
+                        ShellPage.AllChats -> AllChatsScreen(mode, store, onBack = { page = ShellPage.Home }) { openSession(it) }
+                        ShellPage.Search -> ShellSearchScreen(store, onBack = { page = ShellPage.Home }) { openSession(it) }
                     }
                 }
                 if (p > 0f) {
@@ -270,9 +311,15 @@ internal fun WorkspaceShell(account: Account?) {
                         }
                     },
                     onRow = { row -> openPage(ShellPage.Section(row)) },
-                    onOpenSession = { openPage(ShellPage.Chat(session = it, draft = ComposerDraft())) },
+                    onOpenSession = {
+                        openSession(it)
+                        setDrawer(false)
+                    },
                     // New chat: the home with an empty composer (iOS newItem on Home).
-                    onNew = { openPage(ShellPage.Home) },
+                    onNew = {
+                        chat.startNewSession()
+                        openPage(ShellPage.Home)
+                    },
                     onSettings = { openPage(ShellPage.Settings) },
                     onRetry = ::reload,
                     onSearch = { openPage(ShellPage.Search) },
