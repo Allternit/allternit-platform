@@ -58,6 +58,8 @@ dependencies {
     implementation(project(":feature:billing"))
     // Wave H2: Meetings (the drawer entry and the Meetings screens).
     implementation(project(":feature:meetings"))
+    // Wave I1: push notifications (FCM token registration, channels, taps).
+    implementation(project(":feature:push"))
     // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
     implementation(project(":core:api"))
     // Wave B: DataStore for the first-run "setup done" flag (iOS OnboardingStore, UserDefaults).

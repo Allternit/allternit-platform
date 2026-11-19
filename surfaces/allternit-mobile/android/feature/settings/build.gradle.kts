@@ -41,6 +41,8 @@ dependencies {
     implementation(project(":core:auth"))
     // Wave H1: Billing (Google Play Billing, the store pieces, the account plan state).
     implementation(project(":feature:billing"))
+    // Wave I1: Settings > Notifications registers this phone for push after the permission.
+    implementation(project(":feature:push"))
     // In-app Custom Tab for links (iOS SafariView).
     implementation(libs.androidx.browser)
     testImplementation(libs.junit)

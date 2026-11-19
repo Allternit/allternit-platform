@@ -14,6 +14,38 @@ val releaseSigningEnv: Map<String, String>? = listOf(
 ).associateWith { providers.environmentVariable(it).orNull.orEmpty() }
     .takeIf { env -> env.values.all { it.isNotBlank() } }
 
+// Wave I1 (push): the Firebase client options as the string resources FirebaseInitProvider reads (google_app_id,
+// google_api_key, gcm_defaultSenderId, project_id), for the nativeapp flavor only. No google-services plugin and
+// nothing Firebase-specific in git. Read from the ALLTERNIT_FIREBASE_APP_ID / _API_KEY / _SENDER_ID / _PROJECT_ID
+// gradle properties or env vars, else from the local client config file (ALLTERNIT_FIREBASE_CONFIG, default
+// ~/.config/allternit/firebase/google-services.json, client com.allternit.app). Without either, the app builds and
+// runs with push off (FirebaseInitProvider logs that it found no options; AllternitPush.isConfigured is false).
+val firebaseResValues: Map<String, String> = run {
+    fun setting(name: String): String? =
+        (providers.gradleProperty(name).orNull ?: providers.environmentVariable(name).orNull)?.takeIf { it.isNotBlank() }
+    val explicit = mapOf(
+        "google_app_id" to setting("ALLTERNIT_FIREBASE_APP_ID"),
+        "google_api_key" to setting("ALLTERNIT_FIREBASE_API_KEY"),
+        "gcm_defaultSenderId" to setting("ALLTERNIT_FIREBASE_SENDER_ID"),
+        "project_id" to setting("ALLTERNIT_FIREBASE_PROJECT_ID"),
+    )
+    if (explicit.values.all { it != null }) return@run explicit.mapValues { it.value.orEmpty() }
+    val file = java.io.File(setting("ALLTERNIT_FIREBASE_CONFIG") ?: "${System.getProperty("user.home")}/.config/allternit/firebase/google-services.json")
+    if (!file.isFile) return@run emptyMap()
+    val root = groovy.json.JsonSlurper().parse(file) as? Map<*, *> ?: return@run emptyMap()
+    val project = root["project_info"] as? Map<*, *> ?: return@run emptyMap()
+    val client = (root["client"] as? List<*>).orEmpty().filterIsInstance<Map<*, *>>().firstOrNull { c ->
+        ((c["client_info"] as? Map<*, *>)?.get("android_client_info") as? Map<*, *>)?.get("package_name") == "com.allternit.app"
+    } ?: return@run emptyMap()
+    val values = mapOf(
+        "google_app_id" to ((client["client_info"] as? Map<*, *>)?.get("mobilesdk_app_id") as? String),
+        "google_api_key" to (((client["api_key"] as? List<*>)?.firstOrNull() as? Map<*, *>)?.get("current_key") as? String),
+        "gcm_defaultSenderId" to project["project_number"]?.toString(),
+        "project_id" to (project["project_id"] as? String),
+    )
+    if (values.values.any { it.isNullOrBlank() }) emptyMap() else values.mapValues { it.value.orEmpty() }
+}
+
 android {
     namespace = "com.allternit.app"
     compileSdk = 36
@@ -70,6 +102,8 @@ android {
             dimension = "dist"
             versionCode = 1000
             versionNameSuffix = "-native"
+            // Wave I1: Firebase options for push (see firebaseResValues above); none → push off.
+            firebaseResValues.forEach { (name, value) -> resValue("string", name, value) }
             manifestPlaceholders["launcherActivity"] =
                 "com.google.androidbrowserhelper.trusted.LauncherActivity"
             manifestPlaceholders["twaLauncherCategory"] = "android.intent.category.DEFAULT"

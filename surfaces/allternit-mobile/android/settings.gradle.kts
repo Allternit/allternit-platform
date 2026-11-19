@@ -62,3 +62,5 @@ include(":feature:settings")
 include(":feature:billing")
 // Wave H2: Meetings (the agenda, live meeting, recap). :feature:shell depends on it (nativeapp flavor only).
 include(":feature:meetings")
+// Wave I1: push notifications (FCM), channels and notification buttons.
+include(":feature:push")

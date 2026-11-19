@@ -127,6 +127,13 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     var inboxOpen by remember { mutableStateOf(launch.sheet == "inbox") }
     var quickTaskOpen by remember { mutableStateOf(launch.sheet == "quick-task") }
     var cliPickerSurface by remember { mutableStateOf(if (launch.sheet == "continue-cli") (if (mode == ShellMode.Code) "code" else "chat") else null) }
+    // A notification tap while the workspace is up (iOS DeepLinkRouter): open what it points at.
+    LaunchedEffect(launch.nonce) {
+        if (launch.nonce == 0L) return@LaunchedEffect
+        launch.mode?.let { mode = it }
+        if (launch.tab == "settings") page = ShellPage.Settings
+        if (launch.sheet == "inbox") inboxOpen = true
+    }
 
     fun reload() {
         if (account != null) scope.launch { store.load() }
@@ -794,6 +801,8 @@ internal data class ShellLaunch(
     val sheet: String? = null,
     /** The inbox item a link asked for (iOS `allternit://inbox/<id>`). */
     val inboxItem: String? = null,
+    /** Non-zero for a notification tap (wave I1): a new value re-applies the launch to a workspace already up. */
+    val nonce: Long = 0L,
 )
 
 /** iOS ModeBarItem raw values and the web rail ids → the drawer row they open. */

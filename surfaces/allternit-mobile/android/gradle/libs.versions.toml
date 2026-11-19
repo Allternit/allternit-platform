@@ -30,6 +30,10 @@ webkit = "1.12.1"
 # D15). 8.3.0 is the version the play flavor already ships through androidbrowserhelper billing:1.2.0; new apps and
 # updates need PBL 8+. Only :feature:billing uses it, so only the nativeapp flavor carries it.
 playBilling = "8.3.0"
+# Firebase Cloud Messaging (Apache-2.0) for native push (wave I1). Only :feature:push uses it, so only the nativeapp
+# flavor carries it. No google-services plugin: the Firebase options come from string resources :app generates from
+# the local client config (app/build.gradle.kts, firebaseResValues), so nothing Firebase-specific is in git.
+firebaseMessaging = "24.1.0"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -48,6 +52,7 @@ activity-compose = { group = "androidx.activity", name = "activity-compose", ver
 androidx-browser = { group = "androidx.browser", name = "browser", version = "1.8.0" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "playBilling" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging", version.ref = "firebaseMessaging" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

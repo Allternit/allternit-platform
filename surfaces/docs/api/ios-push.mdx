@@ -9,6 +9,10 @@ It is off until the APNs key below is set. With it unset, the token routes answe
 
 ## Turn it on
 
+<Note>
+Android uses the same routes with `platform: "android"` and an FCM registration token. See [Android (FCM)](#android-fcm) below.
+</Note>
+
 Create a key in Apple Developer → Certificates, IDs & Profiles → Keys, with **Apple Push Notifications service (APNs)** enabled. Download the `.p8` file once (Apple doesn't let you download it again). Then set these on `allternit-cloud-api`:
 
 | Variable | Value |
@@ -59,6 +63,22 @@ returns `201 {"ok": true, "id": "apat_…"}`. `kind` is `la_start` (the push-to-
 Registering a device token while signed in as someone else removes the previous person's activity tokens for that device.
 
 APNs answering `410`, `BadDeviceToken`, `Unregistered` or `DeviceTokenNotForTopic` deletes the token. Other failures are counted, and a token is removed after 8 in a row. `403 ExpiredProviderToken` makes cloud-api sign a new provider token.
+
+## Android (FCM)
+
+The native Android app (`surfaces/allternit-mobile/android/feature/push`) registers its Firebase Cloud Messaging token on the same route:
+
+```json
+{ "token": "dGhp…:APA91b…", "platform": "android", "deviceId": "6f1c…", "osVersion": "16", "appBuild": "1000", "capabilities": ["actions"] }
+```
+
+The token keeps its case (iOS tokens are lowercased) and must be 32–4096 characters of `A–Z a–z 0–9 _ - :`. `environment` is ignored. Android and iOS share the 10-device cap and the `apns_device_tokens` table (column `platform`, migration `152_device_token_platform.sql`); APNs never sends to an Android row and FCM never sends to an iOS row. Without FCM configured the route answers `503 fcm_not_configured`.
+
+**Turn it on.** Set `FCM_SERVICE_ACCOUNT_JSON` on `allternit-cloud-api` to the Firebase service account key for project `allternit-6b8e1` (the JSON itself, or a path to the file). cloud-api signs an RS256 JWT with it, trades it for an OAuth2 access token (`firebase.messaging` scope, cached until five minutes before it expires) and posts to `https://fcm.googleapis.com/v1/projects/<project>/messages:send`. With the variable unset, Android sends are skipped with one warning in the log; nothing fails.
+
+**Payload.** Every sender that reaches APNs reaches FCM too (`src/routes/fcm.rs`). The message is data-only, so the app builds the notification: string keys `type`, `title`, `body`, `url`, `tag`, `event`, `category`, `level`, `botId`, `inboxId`, `sessionId`, `runtimeId`, `contentHash`, `private`, and `data` (the whole `data` object as JSON). `android.priority` is `HIGH` for calls and needs-you alerts, else `NORMAL`; `collapse_key` is the tag. A gone token (`404`, `UNREGISTERED`, `SENDER_ID_MISMATCH`) is deleted; eight failures in a row drop it. A revoke is `{ "event": "notification.revoke", "tags": "approval-ap1,…" }` and removes those notifications.
+
+**Client config.** The app has no google-services plugin and no Firebase file in git. The nativeapp build turns the local client config (`~/.config/allternit/firebase/google-services.json`, or `ALLTERNIT_FIREBASE_CONFIG`, or the `ALLTERNIT_FIREBASE_APP_ID` / `_API_KEY` / `_SENDER_ID` / `_PROJECT_ID` gradle properties) into the string resources Firebase reads at start. A build without it runs with push off.
 
 ## Device read routes
 

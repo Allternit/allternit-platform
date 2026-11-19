@@ -10,12 +10,16 @@ info:
     absolute on it (`x-base: cloud`). Handler: `src/routes/apns.rs`.
 
     Auth: a Clerk session JWT or an `allternit_*` API token with the `compute`
-    scope. Errors are `{ "error": "<code>" }`: `apns_not_configured` (503),
-    `unsupported_platform`, `bad_token` (400), `too_many_devices` (429),
-    `internal` (500).
+    scope. Errors are `{ "error": "<code>" }`: `apns_not_configured` (503, iOS),
+    `fcm_not_configured` (503, Android), `unsupported_platform`, `bad_token`
+    (400), `too_many_devices` (429), `internal` (500).
 
-    Today only `platform: "ios"` is accepted (an APNs hex token, 32–200 hex
-    characters). Android FCM tokens land with native plan step 11.
+    `platform` is `"ios"` (the default: an APNs hex token, 32–200 hex
+    characters, stored lowercased) or `"android"` (an FCM registration token,
+    32–4096 characters of `[A-Za-z0-9_:-]`, case kept; `environment` is
+    ignored). Android pushes go out through FCM HTTP v1 (`src/routes/fcm.rs`)
+    once `FCM_SERVICE_ACCOUNT_JSON` is set on cloud-api. Both share the
+    10-device cap per person (migration `152_device_token_platform.sql`).
 servers:
   - url: https://api.allternit.com
 security:
@@ -78,8 +82,8 @@ components:
       required: [token]
       properties:
         token: { type: string }
-        platform: { type: string }
-        environment: { type: string, description: '"sandbox" or "production".' }
+        platform: { type: string, description: '"ios" (default) or "android".' }
+        environment: { type: string, description: '"sandbox" or "production" (iOS only).' }
         deviceId: { type: string }
         osVersion: { type: string }
         appBuild: { type: string }
