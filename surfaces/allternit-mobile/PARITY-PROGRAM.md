@@ -297,11 +297,11 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | VoiceSettingsSheet | Chat | ios/Features/Chat/Views/Voice/VoiceSettingsSheet.swift | — | — | todo | — |
 | VoiceSpeakerView | Chat | ios/Features/Chat/Views/Voice/VoiceSpeakerView.swift | — | — | todo | — |
 | VoiceSummaryCardView | Chat | ios/Features/Chat/Views/Voice/VoiceSummaryCardView.swift | — | — | todo | — |
-| BudgetDashboardView | Settings | ios/Features/Settings/BudgetDashboardView.swift | — | android/feature/settings/.../ProductsPages.kt (BudgetDashboard, in RuntimeOpsPage) | built (#H1PR) | — |
-| ComputeBillingView | Settings | ios/Features/Settings/ComputeBillingView.swift | — | android/feature/settings/.../BillingPages.kt | built (#H1PR) | — |
-| ProductsSettingsView | Settings | ios/Features/Settings/ProductsSettingsView.swift | — | android/feature/settings/.../ProductsPages.kt (ProductsPage) | built (#H1PR) | — |
+| BudgetDashboardView | Settings | ios/Features/Settings/BudgetDashboardView.swift | — | android/feature/settings/.../ProductsPages.kt (BudgetDashboard, in RuntimeOpsPage) | built (#2657) | — |
+| ComputeBillingView | Settings | ios/Features/Settings/ComputeBillingView.swift | — | android/feature/settings/.../BillingPages.kt | built (#2657) | — |
+| ProductsSettingsView | Settings | ios/Features/Settings/ProductsSettingsView.swift | — | android/feature/settings/.../ProductsPages.kt (ProductsPage) | built (#2657) | — |
 | VoiceKeyScannerView | Settings | ios/Features/Settings/VoiceKeyScannerView.swift | — | — | todo | — |
-| CloudCreditsSheet | Shared | ios/Features/Shared/CloudCreditsSheet.swift | — | android/feature/billing/.../CloudCreditsSheet.kt | built (#H1PR) | — |
+| CloudCreditsSheet | Shared | ios/Features/Shared/CloudCreditsSheet.swift | — | android/feature/billing/.../CloudCreditsSheet.kt | built (#2657) | — |
 
 ## Wave I. System
 

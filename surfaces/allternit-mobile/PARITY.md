@@ -298,7 +298,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | SettingsScreen | — | src/fabric-session/phone/screens/SettingsScreen.tsx | feature/settings/SettingsRoot.kt | built (#2653) | part 2 replaces the placeholders |
 | AccountProfileView | ios/Features/Settings/AccountProfileView.swift | — | feature/settings/AccountPages.kt (ProfilePage) | built (#2653) | org switching not built |
 | BrainSpikeView | ios/Features/Settings/BrainSpike/BrainSpikeView.swift | — | feature/settings/OperatorPages.kt (BrainPage) | built (#2655) | The git proof run is not on Android; shows the capture queue |
-| BudgetDashboardView | ios/Features/Settings/BudgetDashboardView.swift | — | android/feature/settings/.../ProductsPages.kt (BudgetDashboard, in RuntimeOpsPage) | built (#H1PR) | — |
+| BudgetDashboardView | ios/Features/Settings/BudgetDashboardView.swift | — | android/feature/settings/.../ProductsPages.kt (BudgetDashboard, in RuntimeOpsPage) | built (#2657) | — |
 | CapabilitiesSettingsView | ios/Features/Settings/CapabilitiesSettingsView.swift | — | feature/settings/CustomizePages.kt (CapabilitiesPage) | built (#2655) | — |
 | CloudComputerBackupsView | ios/Features/Settings/CloudComputerBackupsView.swift | — | feature/settings/ResourcePages.kt (CloudBackupsPage) | built (#2655) | Computer export (zip) not built |
 | CloudDeployManagerView | ios/Features/Settings/CloudDeployManagerView.swift | — | feature/settings/ResourcePages.kt (CLOUD_DEPLOY) | built (#2655) | Live status polling after create is a manual Refresh |
@@ -343,7 +343,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| CloudCreditsSheet | ios/Features/Shared/CloudCreditsSheet.swift | — | android/feature/billing/.../CloudCreditsSheet.kt | built (#H1PR) | — |
+| CloudCreditsSheet | ios/Features/Shared/CloudCreditsSheet.swift | — | android/feature/billing/.../CloudCreditsSheet.kt | built (#2657) | — |
 | ComputeGateView | ios/Features/Shared/ComputeGateView.swift | — | feature/chat/ComputeGate.kt (ComputeGateCard) | built (#2614) | — |
 | ConnectComputerView | ios/Features/Shared/ConnectComputerView.swift | — | feature/chat/ComputeGate.kt (ConnectComputerSheet) | built (#2614) | — |
 | ImpactMapView | ios/Features/Shared/ImpactMapView.swift | — | feature/bots/BotsMore.kt (ImpactMapView) | built (wave E PR): list view, not the node graph | — |
