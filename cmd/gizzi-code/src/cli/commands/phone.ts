@@ -574,14 +574,17 @@ const MAP_ERRORS: Record<string, string> = {
   invalid_args: "Those options aren't valid (minutes 1-30, max screens 1-300).",
 }
 
+export const OLD_RUNTIME = "This Allternit runtime doesn't have app maps yet. Update Allternit, then try again."
+
 /** Plain-words message for an API error code, falling back to the server's message. */
 export function mapErrorMessage(r: { status: number; body?: any }): string {
   const code = r.body?.error
+  if (!code && (r.status === 404 || r.status === 405)) return OLD_RUNTIME
   if (code && MAP_ERRORS[code]) return MAP_ERRORS[code]!
   return r.body?.message || code || `HTTP ${r.status}`
 }
 
-export const EXPLORE_RULES = "Explore taps only safe controls: no purchases, sends, deletes or sign-outs, and nothing typed."
+export const EXPLORE_RULES = "Explore never taps switches, text fields, or anything that pays, sends, deletes or signs out. Money apps are refused."
 
 const MapsCommand = cmd({
   command: "maps [app]",

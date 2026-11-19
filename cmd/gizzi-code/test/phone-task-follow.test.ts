@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { followTask, formatStep, resolveHold, describeOutcome, choosePhone, formatPhones, formatMaps, formatMapScreens, mapErrorMessage, confirmForget, outcomeStats, PhoneCommand, type HoldIO, type Hold, type RunRow } from "@/cli/commands/phone"
+import { followTask, formatStep, resolveHold, describeOutcome, choosePhone, formatPhones, formatMaps, formatMapScreens, mapErrorMessage, OLD_RUNTIME, confirmForget, outcomeStats, PhoneCommand, type HoldIO, type Hold, type RunRow } from "@/cli/commands/phone"
 
 const hold: Hold = {
   approvalId: "a1",
@@ -181,6 +181,12 @@ describe("explore errors and forget-map", () => {
     expect(mapErrorMessage({ status: 400, body: { error: "explore_android_only" } })).toContain("Android")
     expect(mapErrorMessage({ status: 500, body: { message: "boom" } })).toBe("boom")
     expect(mapErrorMessage({ status: 500 })).toBe("HTTP 500")
+  })
+  test("an older runtime (404/405, no code) gets the update message; coded 404 stays", () => {
+    expect(mapErrorMessage({ status: 404 })).toBe(OLD_RUNTIME)
+    expect(mapErrorMessage({ status: 405, body: {} })).toBe(OLD_RUNTIME)
+    expect(OLD_RUNTIME).toBe("This Allternit runtime doesn't have app maps yet. Update Allternit, then try again.")
+    expect(mapErrorMessage({ status: 404, body: { error: "map_not_found" } })).toBe("No map for that app yet.")
   })
   test("forget-map asks unless --yes", async () => {
     let asked = 0
