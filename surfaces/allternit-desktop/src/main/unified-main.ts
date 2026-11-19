@@ -10,7 +10,7 @@
 import { setLinuxAutostart, isLinuxAutostartEnabled } from './linux-autostart.js';
 import { noteShortcutResult } from './shortcut-notice.js';
 import { warnIfNoKeyring } from './keyring-notice.js';
-import { app, shell, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
+import { app, shell, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openPrivacySettings as openPrivacySettingsHelper, messagesAccessHint as messagesAccessHintHelper } from './messages-permissions.js';
 import { dirname, join, resolve, basename } from 'node:path';
@@ -24,8 +24,7 @@ import { execFile } from 'node:child_process';
 import { createMotionRender } from './motion-render.js';
 import Store from 'electron-store';
 import log from 'electron-log';
-import { updateElectronApp } from 'update-electron-app';
-import { startLinuxUpdater } from './linux-updater.js';
+import { startAppUpdater } from './app-updater.js';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
 import type { SystemTab } from './system-summary.js';
@@ -318,56 +317,18 @@ app.on('render-process-gone', (_event, webContents, details) => {
   }
 });
 
-// Auto-updater
-// Defaults read package.json repository, but we make the feed explicit so
-// local/self-hosted builds never accidentally phone home to the wrong repo.
-updateElectronApp({
-  repo: 'Allternit/desktop',
-  updateInterval: '1 hour',
-  logger: log,
-  notifyUser: false, // renderer will observe app:update-status and prompt
-});
-
-// Forward updater events to any renderer window so the platform UI can show
-// status and a restart prompt. These are Electron's built-in autoUpdater
-// events (the same channel used by update-electron-app); they carry less
-// detail than electron-updater's events, but they are sufficient for status
-// UI.
-autoUpdater.on('checking-for-update', () => {
-  broadcastUpdateStatus({ state: 'checking' });
-});
-autoUpdater.on('update-available', () => {
-  broadcastUpdateStatus({ state: 'available' });
-});
-autoUpdater.on('update-not-available', () => {
-  broadcastUpdateStatus({ state: 'up-to-date' });
-});
-autoUpdater.on('update-downloaded', (_event, releaseNotes, releaseName, _releaseDate, updateURL) => {
-  appUpdateDownloaded = true;
-  broadcastUpdateStatus({
-    state: 'downloaded',
-    version: releaseName,
-    releaseNotes: typeof releaseNotes === 'string' ? releaseNotes : undefined,
-    updateURL,
-  });
-});
-autoUpdater.on('error', (error) => {
-  log.error('[autoUpdater]', error);
-  broadcastUpdateStatus({ state: 'error', message: error?.message ?? String(error) });
-});
-
 let appUpdateDownloaded = false;
 
-// Linux: Electron's autoUpdater above has no Linux support, so the .deb
-// install updates through electron-updater (linux-updater.ts), feeding the
-// same status broadcasts and restart prompt. null on macOS and Windows.
-const linuxUpdater = process.platform === 'linux'
-  ? startLinuxUpdater({
-    logger: log,
-    broadcast: (status) => broadcastUpdateStatus(status),
-    onDownloaded: () => { appUpdateDownloaded = true; },
-  })
-  : null;
+// App updates: electron-updater on macOS, Windows and Linux (.deb), reading
+// the Allternit/desktop GitHub releases (app-updater.ts). It checks at start
+// and hourly, downloads in the background and reports on app:update-status,
+// which the renderer turns into the restart prompt. null in dev builds and on
+// Linux installs that cannot update themselves.
+const appUpdater = startAppUpdater({
+  logger: log,
+  broadcast: (status) => broadcastUpdateStatus(status),
+  onDownloaded: () => { appUpdateDownloaded = true; },
+});
 let runtimeUpdateTimer: NodeJS.Timeout | null = null;
 
 /**
@@ -2460,12 +2421,7 @@ function installAppMenu(): void {
     toggleHud: () => toggleHudWindow(),
     checkForUpdates: () => {
       if (!app.isPackaged) return;
-      try {
-        if (linuxUpdater) linuxUpdater.check(true);
-        else autoUpdater.checkForUpdates();
-      } catch (error) {
-        log.warn('[Menu] Update check failed:', error);
-      }
+      appUpdater?.check(true);
       void checkRuntimeNow();
     },
     openUrl: (url) => openExternalAllowlisted(url),
@@ -3591,30 +3547,32 @@ ipcMain.handle('app:get-info', () => ({
 // Auto-update control plane (renderer observes status via app:update-status)
 ipcMain.handle('app:check-for-updates', async () => {
   if (!app.isPackaged) {
-    log.info('[autoUpdater] Skipping update check in unpackaged dev build');
+    log.info('[appUpdater] Skipping update check in unpackaged dev build');
     return { ok: false, reason: 'dev-build' } as const;
   }
   try {
-    if (linuxUpdater) linuxUpdater.check(true);
-    else autoUpdater.checkForUpdates();
+    appUpdater?.check(true);
     // The runtime (API, gizzi, screens) updates separately: check it too.
     void checkRuntimeNow();
     return { ok: true } as const;
   } catch (error) {
-    log.error('[autoUpdater] Manual check failed:', error);
+    log.error('[appUpdater] Manual check failed:', error);
     return { ok: false, reason: 'check-failed', message: String(error) } as const;
   }
 });
 handleGuarded('app:install-update', async () => {
-  if (linuxUpdater && appUpdateDownloaded) {
-    // Linux installs BEFORE cleanup: a cancelled password prompt or a failed
-    // dpkg leaves the app running, and a notification opens the release page.
-    if (!(await linuxUpdater.install())) return;
+  const updater = appUpdateDownloaded ? appUpdater : null;
+  if (updater) {
+    // Install BEFORE cleanup: a refused macOS bundle swap, a cancelled Linux
+    // password prompt or a missing Windows installer leaves the app running,
+    // and a notification opens the release page.
+    if (!(await updater.install())) return;
   }
   // Clean up first so before-quit does not cancel the updater's own quit.
   await runQuitCleanup();
-  if (!appUpdateDownloaded && runtimePackages().hasPendingUpdate()) {
-    // Only the runtime changed: a restart promotes the staged package.
+  if (!updater) {
+    // Only the runtime changed (or nothing did): a restart promotes any
+    // staged runtime package.
     app.relaunch();
     app.exit(0);
     return;
@@ -3623,9 +3581,9 @@ handleGuarded('app:install-update', async () => {
   // that hide on close (HUD, Quick Chat) must already see a quit or they
   // cancel the close and the install never happens.
   (app as unknown as { isQuitting?: boolean }).isQuitting = true;
-  // Linux: the .deb is already installed and the relaunch scheduled.
-  if (linuxUpdater) app.quit();
-  else autoUpdater.quitAndInstall();
+  // macOS: bundle swapped; Linux: .deb installed (relaunch scheduled by both).
+  // Windows: runs the downloaded installer silently, then relaunches.
+  updater.finish();
 });
 // Preload uses sendSync at module load; handle() only answers invoke().
 ipcMain.on('app:get-platform-url', (event) => {
