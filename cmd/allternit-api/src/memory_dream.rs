@@ -12,6 +12,11 @@
 //! from what was applied. Undo writes a new commit that reverses only the
 //! Dream's own lines and refuses (listing files) when later edits touched them.
 //! No transcript text is ever written to the drive.
+//!
+//! With the Sleep `disputes` stage on (D10, step 6.1), a contradiction the
+//! Dream finds is not fixed silently: nothing is removed, and a dispute is
+//! opened between the entry it wanted to drop (side a) and the one it kept
+//! (side b), which the Sleep arbiter decides or hands to the user.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -277,6 +282,20 @@ pub struct Checked {
     pub proposals: Vec<Proposal>,
     pub summary: Summary,
     pub report: Vec<String>,
+    /// The contradictions that passed the checks (their deletes are in `ops`).
+    pub contradictions: Vec<CheckedContradiction>,
+}
+
+/// One accepted contradiction, kept so the Sleep `disputes` stage can turn
+/// it into disputes instead of deletes.
+#[derive(Debug, Clone)]
+pub struct CheckedContradiction {
+    pub keep: String,
+    pub keep_text: String,
+    pub drops: Vec<(String, String)>,
+    pub evidence: Vec<String>,
+    /// Index of its line in `report`.
+    pub report_line: usize,
 }
 
 fn clean(text: &str) -> Option<String> {
@@ -343,6 +362,13 @@ pub fn check(plan: &Plan, shown: &[Shown], evidence: &[Evidence], today: chrono:
             drops.iter().map(|d| format!("“{}”", by_id[d.as_str()].entry.text)).collect::<Vec<_>>().join(", "),
             c.evidence.join(", ")
         ));
+        out.contradictions.push(CheckedContradiction {
+            keep: c.keep.clone(),
+            keep_text: keep.entry.text.clone(),
+            drops: drops.iter().map(|d| ((*d).clone(), by_id[d.as_str()].entry.text.clone())).collect(),
+            evidence: c.evidence.clone(),
+            report_line: out.report.len() - 1,
+        });
         out.summary.resolved += 1;
     }
 
@@ -569,7 +595,10 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
     let date_s = date.format("%Y-%m-%d").to_string();
     let conn = db.connect()?;
     let session_ok = |s: &str| service::session_is_owned(&conn, owner, s).unwrap_or(false);
-    let checked = check(plan, shown, turns, date, &session_ok);
+    let mut checked = check(plan, shown, turns, date, &session_ok);
+    if crate::sleep::disputes::stage_on(&conn, owner) {
+        dispute_contradictions(&conn, owner, drive, &mut checked);
+    }
     let report = report_markdown(&date_s, &checked);
     let sm = &checked.summary;
     step(
@@ -655,6 +684,45 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
     finish(&conn, id, "failed", None, None, &checked.summary, Some("Memory kept changing during the Dream; it will retry."))?;
     done("failed", "Memory kept changing during the Dream; it will retry".into());
     Ok(())
+}
+
+/// Sleep `disputes` stage: replace each accepted contradiction's deletes with
+/// disputes (both sides kept). A side that is not in the index is still not
+/// deleted; its report line says so.
+pub fn dispute_contradictions(conn: &Connection, owner: &str, drive: &DriveRecord, checked: &mut Checked) {
+    let fact_of = |entry: &str| -> Option<String> {
+        conn.query_row(
+            "SELECT fact_id FROM memory_drive_entries WHERE drive_id = ?1 AND entry_id = ?2",
+            params![drive.id, entry],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .flatten()
+    };
+    let mut kept: BTreeSet<String> = BTreeSet::new();
+    for c in std::mem::take(&mut checked.contradictions) {
+        let keep_fact = fact_of(&c.keep);
+        let mut opened = 0;
+        for (drop, _) in &c.drops {
+            kept.insert(drop.clone());
+            let (Some(a), Some(b)) = (fact_of(drop), keep_fact.as_deref()) else { continue };
+            match crate::sleep::disputes::open(conn, owner, &a, b) {
+                Ok(Some(_)) => opened += 1,
+                Ok(None) => {}
+                Err(e) => tracing::warn!("dream dispute not written: {e}"),
+            }
+        }
+        let drops = c.drops.iter().map(|(_, t)| format!("“{t}”")).collect::<Vec<_>>().join(", ");
+        checked.report[c.report_line] = if opened > 0 {
+            format!("- **Dispute** opened instead of a silent fix: “{}” vs {drops}; both kept (evidence: {})", c.keep_text, c.evidence.join(", "))
+        } else {
+            format!("- **Contradiction** noted, nothing removed: “{}” vs {drops} (evidence: {})", c.keep_text, c.evidence.join(", "))
+        };
+        checked.summary.resolved = checked.summary.resolved.saturating_sub(1);
+    }
+    checked.ops.retain(|op| !matches!(op, Operation::DeleteEntry { id } if kept.contains(id)));
 }
 
 // ─── Undo ───────────────────────────────────────────────────────────────────

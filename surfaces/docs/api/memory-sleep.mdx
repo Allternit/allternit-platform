@@ -17,7 +17,8 @@ normal signed-in session; a request with no user gets `401`.
 
 <Note>
 Every stage is off by default. The `orchestrator` stage (cycles from the unit queue)
-runs once you turn it on; the other stages are still contract only. Read routes return real empty states, never
+and the `disputes` stage (contradictions kept as disputes) run once you turn them on;
+the other stages are still contract only. Read routes return real empty states, never
 `501`. Write routes that need a later stage check their input, then refuse (see
 [Refused writes](#refused-writes)). The status column below says which stage makes each
 route live.
@@ -37,8 +38,8 @@ route live.
 | `POST /memory/sleep/pages/load` | Refuses until the router | Load one topic page mid-session. |
 | `GET /memory/sleep/pages` | Live (empty until pages) | Page versions. |
 | `GET /memory/sleep/pages/:topic` | Live (empty until pages) | One topic's versions and claims with their sources. |
-| `GET /memory/disputes` | Live (empty until disputes) | Contradicting memories. |
-| `POST /memory/disputes/:id/resolve` | Refuses until disputes | Pick a side. |
+| `GET /memory/disputes` | Live (empty until the disputes stage opens one) | Contradicting memories, with both sides' text. |
+| `POST /memory/disputes/:id/resolve` | Live with the disputes stage on; otherwise refuses | Pick a side. |
 | `GET /memory/sleep/settings`, `PUT /memory/sleep/settings` | Live | Master switch, stage flags and the daily spend cap. |
 | `GET /memory/sleep/config`, `PUT /memory/sleep/config` | Live | Thresholds, each with its source. |
 
@@ -55,7 +56,7 @@ route live.
 ### Refused writes
 
 `run` (with the orchestrator stage off, or for `deep` and `rem`),
-`pages/load` and `disputes/:id/resolve` answer `409`.
+`pages/load`, and `disputes/:id/resolve` (with the disputes stage off) answer `409`.
 `signal` answers `200`, because the runtime sends it on every idle, compaction and
 session end, whether Sleep is on or not.
 
@@ -349,16 +350,85 @@ A claim must point back to an observation or a fact. A claim without that pointe
 
 ## Disputes
 
+With the `disputes` stage on, two memories that contradict each other are both kept, and
+a dispute records them. Nothing is fixed silently, and a dispute never stops an answer.
+
+### When a dispute opens
+
+When the model that saves memories says a message changes an existing memory, Sleep
+checks what kind of change it is:
+
+| Kind | Example | What happens |
+| --- | --- | --- |
+| Refinement | "likes Python" becomes "likes Python and Rust" | The old memory is replaced, as before. No dispute. |
+| Correction | You say "I moved to Denver" | The old memory is replaced, as before, and a resolved dispute keeps the history (`pick: "b"`, `picked_by: "user_said_update"`). |
+| Contradiction | "lives in Austin" and later "lives in Denver", with no word that it changed | Both memories stay. A dispute opens and the arbiter decides it. |
+
+A refinement keeps every word of the old memory and adds no "not" or "no longer". A
+correction is a message from you with a change word in it, such as "moved", "now", "no
+longer", "switched", "changed", "used to", "instead" or "actually". Anything else is a
+contradiction. The nightly Dream follows the same rule: when it finds two memories that
+disagree, it removes nothing and opens a dispute between the memory it wanted to drop
+(side a) and the one it kept (side b). Side a is the older memory, side b the newer one.
+The same pair never gets a second dispute.
+
+### How the arbiter picks
+
+The arbiter decides with fixed rules and no model call, so the same dispute always gets
+the same answer.
+
+1. **Scope.** If both memories name a different situation ("at work" and "at home", "on
+   weekends") or belong to different agents, both can be true: the pick is `both_scoped`.
+2. **Support.** Each side gets `dispute_w_credence × credence + dispute_w_recency ×
+   recency`, plus `dispute_w_goal × goal fit` when your current goal is known (no goal is
+   stored yet, so this part is skipped today). Credence comes from where the memory came
+   from: something you said beats something the model inferred. Recency moves from 0.5
+   towards 1 for the newer side and towards 0 for the older one, in full at a gap of
+   `dispute_recency_days`. The side with more support is picked. `margin` is the gap
+   between the two, divided by the weights used, so it is between 0 and 1. A tie picks
+   side b.
+3. **Stakes.** Money, health and legal words give high stakes (0.8 to 0.9); deadlines
+   0.6; anything else 0.2. Stakes never change the pick. They decide whether to ask you.
+
+When `margin` is under `dispute_ask_margin` and `stakes` is at or above
+`dispute_ask_stakes`, the dispute is `needs_user` and no pick is applied. Otherwise it is
+`resolved` with `picked_by: "arbiter"`, and the other memory is not deleted: it stays,
+with the dispute pointing at it. `reason` is one short sentence, for example "It is the
+more recent of the two." or "It comes from what you said, the other from the assistant's
+guess."
+
+### At recall
+
+When a recalled memory is a side of a dispute that is not resolved, or was resolved with
+both sides still kept, its result carries an extra `dispute` field: both sides with their
+text, which side this memory is, the pick and the reason. Results are never removed or
+reordered because of a dispute, and results with no dispute have no `dispute` field, so
+older clients see the same shape.
+
+```json
+{ "id": "f_9", "item_type": "fact", "content": "User lives in Denver.", "score": 0.61,
+  "metadata": { "confidence": 0.85 }, "timestamp": "2026-11-20 03:11:02",
+  "dispute": { "id": "dsp_3", "state": "resolved", "this_side": "b",
+    "side_a": { "kind": "fact", "id": "f_1", "text": "User lives in Austin.", "current": true },
+    "side_b": { "kind": "fact", "id": "f_9", "text": "User lives in Denver.", "current": true },
+    "pick": "b", "reason": "It is the more recent of the two.", "scope": null,
+    "picked_by": "arbiter", "needs_user": false } }
+```
+
 ### `GET /memory/disputes?state=&limit=`
 
-`state` is `open`, `needs_user` or `resolved`. Leave it out to get all of them.
+`state` is `open`, `needs_user` or `resolved`. Leave it out to get all of them. Each side
+carries its memory's `text` and `current` (false once it was replaced).
 
 ```json
 { "disputes": [
-  { "id": "dsp_3", "topic_id": "top_42",
-    "side_a": { "kind": "fact", "id": "f_1" }, "side_b": { "kind": "fact", "id": "f_9" },
-    "scope": "work", "stakes": 0.8, "margin": 0.05, "pick": null, "reason": null,
-    "state": "needs_user", "created_at": "2026-11-20 03:11:02" }
+  { "id": "dsp_3", "topic_id": null,
+    "side_a": { "kind": "fact", "id": "f_1", "text": "User is allergic to penicillin.", "current": true },
+    "side_b": { "kind": "fact", "id": "f_9", "text": "User is not allergic to penicillin.", "current": true },
+    "scope": null, "stakes": 0.9, "margin": 0.0, "pick": null,
+    "reason": "These are too close to call and they touch health, so you decide.",
+    "picked_by": null, "state": "needs_user",
+    "created_at": "2026-11-20 03:11:02", "resolved_at": null }
 ], "count": 1 }
 ```
 
@@ -372,7 +442,17 @@ you instead of picking.
 ```
 
 `choice` is `a`, `b`, `both_scoped` (both are true in different scopes) or `neither`.
-Returns `404` for an unknown dispute.
+Your pick wins: the dispute becomes `resolved` with `picked_by: "user"`.
+
+| `choice` | Effect |
+| --- | --- |
+| `a` or `b` | The other side is replaced (kept in history). The side you picked gets a small credence boost (+0.1). |
+| `both_scoped` | Both stay. `scope` keeps the arbiter's scope, else your `reason`. |
+| `neither` | Both are replaced. |
+
+Returns `200` with `{ "accepted": true, "dispute": { ... } }`, `404` for an unknown
+dispute, `409` with `reason: "sleep_disabled"` when the disputes stage is off, and `409`
+with `reason: "already_settled"` when you, or your own correction, already settled it.
 
 ## Settings and thresholds
 
@@ -437,6 +517,10 @@ Stage names are `labels_live`, `strengths`, `pages`, `router`, `orchestrator`,
 | `pull_cost_multiple_max` | 2 | Most a mid-session page load may cost, as a multiple of a preload. |
 | `dispute_ask_margin` | 0.15 | Margin under which a high-stakes dispute asks you. |
 | `dispute_ask_stakes` | 0.7 | Stakes at or above which a close dispute asks you. |
+| `dispute_w_credence` | 0.5 | Arbiter weight of credence: what you said beats what was inferred. |
+| `dispute_w_recency` | 0.3 | Arbiter weight of recency: the newer side. |
+| `dispute_w_goal` | 0.2 | Arbiter weight of fit with your current goal, when one is known. |
+| `dispute_recency_days` | 30 | Age gap in days at which recency counts in full. |
 | `rem_min_keep_rate` | 0.25 | REM turns itself off under this keep rate. |
 | `fit_min_labeled_events` | 200 | Labelled events needed before fitted values replace defaults. |
 | `check_router_sample` | 200 | Fixed router sample size in the bounded check. |
@@ -504,8 +588,9 @@ keeps its default. Nothing runs this fit on a schedule yet.
 
 ## Events
 
-These events go on the memory activity stream. They are declared now and emitted once
-the orchestrator and disputes land.
+These events go on the memory activity stream. They are declared, but not emitted yet:
+the activity stream only takes its own fixed kinds, so the orchestrator and disputes
+stages record their work in the cycle report and the disputes table instead.
 
 | Event | When |
 | --- | --- |
