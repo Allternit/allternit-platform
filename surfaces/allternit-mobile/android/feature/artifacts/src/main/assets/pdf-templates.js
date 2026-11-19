@@ -5,7 +5,7 @@ Galveston, TX`,customer:"Jordan Reyes",items:[{name:"Flat white",qty:2,unitPrice
 @page{size:${j}pt ${R}pt;margin:0}
 *{box-sizing:border-box}
 html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{margin:0;background:#fff;color:${J.ink};font:10.5pt/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+body{margin:0;background:#fff;color:${J.ink};font:10.5pt/1.5 "Allternit Sans",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .page{width:${j}pt;min-height:${R}pt;padding:48pt;margin:0 auto}
 h1{font-size:24pt;line-height:1.15;margin:0;letter-spacing:-.01em}
 h2{font-size:12.5pt;margin:20pt 0 6pt;break-after:avoid}
