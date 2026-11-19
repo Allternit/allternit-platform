@@ -15,6 +15,7 @@ The server fix goes live with the next cloud-api deploy; the Desktop fixes arriv
 - **Linux and Windows:** the sign-in window's title bar reads "Allternit" instead of "@allternit/desktop".
 - **Linux app updates:** the Linux `.deb` now updates itself: it downloads the new version, shows the restart prompt, and asks for your password to install it. If it can't ask, a notification opens the download page. Users on 1.1.15 or older install the next `.deb` by hand once. See [Updates on Linux](/surfaces/desktop#updates-on-linux).
 - **More Linux distros:** Desktop now ships as an `.rpm` for Fedora, RHEL/Alma/Rocky and openSUSE (`sudo dnf install ./Allternit-Desktop-<version>-x86_64.rpm`) and as an AppImage for every other distro (`chmod +x`, then run it), next to the `.deb`. Both update themselves. Where an AppImage cannot use Chromium's sandbox, Desktop offers to fix it (Ubuntu's AppArmor rule) or tells you once that it runs without it. See [Linux .rpm and AppImage](/surfaces/desktop#linux-rpm-and-appimage).
+- **Linux on arm64:** every Linux package now also comes in an arm64 build (`-arm64.deb`, `-aarch64.rpm`, `-arm64.AppImage`) for Raspberry Pi 4 and 5 on a 64-bit OS, ARM laptops and Linux VMs on Apple Silicon Macs. It needs the same glibc 2.27 or newer, passes the same install-and-start checks, and updates itself from its own arm64 files. See [Linux on arm64](/surfaces/desktop#linux-on-arm64).
 
 ## Next — Phone feedback 1.0.4
 

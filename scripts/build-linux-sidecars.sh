@@ -92,8 +92,10 @@ ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 
 # ── inside the ubuntu:18.04 container: `voice-docker` ─────────────────────────────
 if [ "${COMPONENTS[*]}" = voice-docker ]; then
-  ldd --version | head -1
-  [ "$(ldd --version | head -1 | grep -o '[0-9]*\.[0-9]*$')" = "$GLIBC_FLOOR" ] || { echo "container glibc is not $GLIBC_FLOOR" >&2; exit 1; }
+  # sed, not head: head exits after one line and ldd's later writes then die of
+  # SIGPIPE, which pipefail turns into exit 141 (seen under qemu, a race anywhere).
+  ldd --version | sed -n 1p
+  [ "$(ldd --version | sed -n 1p | grep -o '[0-9]*\.[0-9]*$')" = "$GLIBC_FLOOR" ] || { echo "container glibc is not $GLIBC_FLOOR" >&2; exit 1; }
   # The container is the target arch (native or qemu), so it builds natively for it.
   [ "$HOST_MACHINE" = "${TARGET%%-*}" ] || { echo "container is $HOST_MACHINE, target is $TARGET (docker --platform $DOCKER_PLATFORM)" >&2; exit 1; }
   case "$HOST_MACHINE" in x86_64) PROTOC_ARCH=x86_64 ;; aarch64) PROTOC_ARCH=aarch_64 ;; esac
@@ -115,7 +117,7 @@ if [ "${COMPONENTS[*]}" = voice-docker ]; then
   apt-get update -qq
   GXX=; for v in 12 11; do if apt-get install -y -qq "g++-$v" >/dev/null 2>&1; then GXX=$v; break; fi; done
   [ -n "$GXX" ] || { echo "no g++-12 or g++-11 in ppa:ubuntu-toolchain-r/test for $(. /etc/os-release; echo "$VERSION_CODENAME")" >&2; exit 1; }
-  echo "using gcc-$GXX: $(g++-$GXX --version | head -1)"
+  echo "using gcc-$GXX: $(g++-$GXX --version | sed -n 1p)"
   export CC="gcc-$GXX" CXX="g++-$GXX" "CARGO_TARGET_${TARGET_ENV}_LINKER=gcc-$GXX"
   mkdir -p /opt/stdcxx && cp "$(g++-$GXX -print-file-name=libstdc++.a)" /opt/stdcxx/
   export RUSTFLAGS="${RUSTFLAGS:-} -L native=/opt/stdcxx"

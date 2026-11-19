@@ -24,7 +24,7 @@ Without those variables the script downloads and verifies every file, then print
 
 Cloud computers get new app versions from this mirror: an hourly job on each Incus host (`infrastructure/computer-app-update/`) installs the `linux_deb_x64` package on every cloud computer whose app is older, when Gizzi runs no session, after a snapshot, and rolls back if the app doesn't come back healthy. A release that isn't mirrored never reaches cloud computers.
 
-`latest.json` looks like `{"version": "1.2.0", "assets": {"linux_deb_x64": "<url>", "linux_rpm_x64": "<url>", "linux_x64": "<AppImage url>"}}`. The installer script (`install.allternit.com`) reads it first and falls back to the GitHub API and GitHub release URLs.
+`latest.json` looks like `{"version": "1.2.0", "assets": {"linux_deb_x64": "<url>", "linux_rpm_x64": "<url>", "linux_x64": "<AppImage url>", "linux_deb_arm64": "<url>", "linux_rpm_arm64": "<url>", "linux_arm64": "<AppImage url>"}}`; the `_arm64` slots hold the arm64 packages. The installer script (`install.allternit.com`) reads it first and falls back to the GitHub API and GitHub release URLs.
 
 ### Release runbook step
 
