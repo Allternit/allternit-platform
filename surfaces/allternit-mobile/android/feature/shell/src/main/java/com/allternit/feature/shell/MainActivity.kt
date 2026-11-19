@@ -42,8 +42,8 @@ import kotlinx.coroutines.launch
  * The native app's only activity (PLAN.md section 2: single MainActivity). Launcher of the
  * `nativeapp` flavor; the play and phonelink builds keep the TWA launcher.
  *
- * Signed out → [SignInScreen]. Signed in → [HomePlaceholder] until step 7c brings the drawer,
- * mode dial, search and overview.
+ * Signed out → [SignInScreen]. Signed in → [WorkspaceShell]: home, drawer and mode fan (step 7c-1).
+ * Search, the session overview and the real chat screen arrive in later steps.
  *
  * Debug builds only: `adb shell am start -n com.allternit.app.ondevice/com.allternit.feature.shell.MainActivity
  * --es ticket <sign_in_token>` signs in with a Clerk sign-in token (Maestro, emulator checks).
@@ -88,9 +88,9 @@ class MainActivity : ComponentActivity() {
                     contentAlignment = Alignment.Center,
                 ) {
                     when (val s = state) {
-                        is AuthState.SignedIn -> HomePlaceholder(account = s.account, onOpenWeb = ::openWebVersion)
+                        is AuthState.SignedIn -> WorkspaceShell(account = s.account, onOpenWeb = ::openWebVersion)
                         else -> if (skippedAuth) {
-                            HomePlaceholder(account = null, onOpenWeb = ::openWebVersion)
+                            WorkspaceShell(account = null, onOpenWeb = ::openWebVersion)
                         } else {
                             when (s) {
                                 AuthState.Starting, AuthState.Finishing -> CircularProgressIndicator(
