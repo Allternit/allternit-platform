@@ -573,6 +573,8 @@ private fun DrawerFooter(
         }
         val meetingsContext = androidx.compose.ui.platform.LocalContext.current
         androidx.compose.runtime.LaunchedEffect(account) { com.allternit.feature.meetings.MeetingsStore.refreshFlag(meetingsContext, signedIn = account != null) }
+        // iOS keeps the agenda watched app-wide: banners post with the Meetings screen closed.
+        androidx.compose.runtime.LaunchedEffect(account) { com.allternit.feature.meetings.MeetingsStore.watch(meetingsContext, signedIn = account != null) }
         if (com.allternit.feature.meetings.MeetingsStore.isEnabled) {
             val inCall = com.allternit.feature.meetings.MeetingsStore.live.isNotEmpty()
             Box(

@@ -250,6 +250,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                     id = sn.id,
                     title = sn.title,
                     updatedMillis = sn.timestampMillis,
+                    model = sn.agentName,
+                    messages = (sn.messageCount ?: 0L).toInt(),
                     status = when {
                         sn.archived -> com.allternit.feature.code.CodeSessionStatus.Archived
                         sn.needsInput -> com.allternit.feature.code.CodeSessionStatus.NeedsInput
@@ -260,7 +262,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                     },
                 )
             } + store.archivedOf(ShellMode.Code).map { sn ->
-                com.allternit.feature.code.CodeSessionRow(sn.id, sn.title, sn.timestampMillis, com.allternit.feature.code.CodeSessionStatus.Archived)
+                com.allternit.feature.code.CodeSessionRow(sn.id, sn.title, sn.timestampMillis, com.allternit.feature.code.CodeSessionStatus.Archived, sn.agentName, (sn.messageCount ?: 0L).toInt())
             }
         },
         reloadSessions = { if (account != null) store.load() },

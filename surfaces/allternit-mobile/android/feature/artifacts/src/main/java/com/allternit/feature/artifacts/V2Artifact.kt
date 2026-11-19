@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -259,7 +260,35 @@ fun V2ArtifactScreen(
                 is V2State.Failed -> FriendlyState(FriendlyStyle.Error, "Couldn't open this artifact", s.message, actionTitle = "Retry", onAction = { reload += 1 }, modifier = Modifier.testTag("v2ArtifactError")) {
                     Icon(painterResource(DesignR.drawable.ph_warning), null, tint = c.textSecondary)
                 }
-                is V2State.Ready -> ArtifactBody(s.artifact, dark)
+                is V2State.Ready -> {
+                    val art = s.artifact
+                    val canLegacy = art.summary.origin?.legacySource == "sectioned" && art.summary.origin?.legacyId != null &&
+                        art.kind in setOf("doc", "sheet", "slides", "pdf") && ArtifactOfficeHooks.legacyDocument != null
+                    val canSign = art.kind == "pdf" && ArtifactOfficeHooks.signPdf != null
+                    Column(Modifier.fillMaxSize()) {
+                        // iOS legacyEditorBanner: a visible bar above an imported Office record.
+                        if (canLegacy) Row(
+                            Modifier.fillMaxWidth().background(c.fillNeutral).testTag("v2ArtifactLegacyEditor")
+                                .clickable(role = androidx.compose.ui.semantics.Role.Button) { legacyOpen = true }.padding(horizontal = 16.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text("Open in editor", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text("›", color = c.textSecondary, fontSize = 14.sp)
+                        }
+                        Box(Modifier.weight(1f).fillMaxWidth()) { ArtifactBody(art, dark) }
+                        // iOS "Sign this PDF": a visible bar under the PDF.
+                        if (canSign) Box(
+                            Modifier.fillMaxWidth().background(c.fillNeutral).testTag("v2ArtifactSignPdf")
+                                .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                                    scope.launch {
+                                        val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pdfBytes(art) }
+                                        if (bytes == null) actionError = "The PDF couldn't be read. Try again." else signBytes = bytes
+                                    }
+                                }.padding(vertical = 14.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { Text("Sign this PDF", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+                    }
+                }
             }
         }
     }
@@ -277,20 +306,6 @@ fun V2ArtifactScreen(
                 LibraryRowButton("View comments", DesignR.drawable.ph_identification_card, "v2ArtifactViewComments") { moreOpen = false; commentsOpen = true }
                 if (ready.canEdit && ArtifactKinds.editable(ready.kind)) {
                     LibraryRowButton("Edit", DesignR.drawable.ph_sliders_horizontal, "v2ArtifactEdit") { moreOpen = false; editing = true }
-                }
-                if (ready.kind == "pdf" && ArtifactOfficeHooks.signPdf != null) {
-                    LibraryRowButton("Sign PDF", DesignR.drawable.ph_identification_card, "v2ArtifactSignPdf") {
-                        moreOpen = false
-                        scope.launch {
-                            val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pdfBytes(ready) }
-                            if (bytes == null) actionError = "The PDF couldn't be read. Try again." else signBytes = bytes
-                        }
-                    }
-                }
-                if (ready.summary.origin?.legacySource == "sectioned" && ready.summary.origin?.legacyId != null &&
-                    ready.kind in setOf("doc", "sheet", "slides", "pdf") && ArtifactOfficeHooks.legacyDocument != null
-                ) {
-                    LibraryRowButton("Open in Office", DesignR.drawable.ph_arrow_right, "v2ArtifactLegacyEditor") { moreOpen = false; legacyOpen = true }
                 }
                 LibraryRowButton("Export", DesignR.drawable.ph_arrow_down, "v2ArtifactExport") { moreOpen = false; exportOpen = true }
                 LibraryRowButton("Archive", DesignR.drawable.ph_floppy_disk, "v2ArtifactArchive") {

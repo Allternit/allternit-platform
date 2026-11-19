@@ -154,6 +154,11 @@ private suspend fun AutomationApi.updateAgentJob(id: String, name: String?, desc
         prompt?.let { p -> putJsonObject("config") { put("prompt", p) } }
     }, "save the task")
 
+private suspend fun AutomationApi.adoptJob(id: String, agentId: String) =
+    backend.relay("PUT", "v1/cron/jobs/${esc(id)}", buildJsonObject {
+        putJsonObject("config") { put("agentId", agentId) }
+    }, "give the task an agent")
+
 private fun AResult<*>.problem(): String? = when (this) {
     is AResult.Ok -> null
     AResult.NoComputer -> "Connect a computer or Allternit Cloud to manage heartbeats."
@@ -179,6 +184,17 @@ private fun HeartbeatAgentPicker(store: AutomationStore, onPick: (BotLite) -> Un
             color = c.textSecondary, fontSize = 13.sp,
         )
         if (store.bots.isEmpty()) Text("No agents yet.", color = c.textTertiary, fontSize = 13.sp)
+        val orphans = store.tasks.filter { it.type == TaskType.Heartbeat && it.agentId.isNullOrEmpty() }
+        if (orphans.isNotEmpty()) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(14.dp).testTag("heartbeatOrphans"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Not run by any agent", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text("These scheduler heartbeats have no agent. Open an agent and Sync a task with the same name and schedule to give it one.", color = c.textSecondary, fontSize = 12.sp)
+            orphans.forEach { j ->
+                Row(Modifier.fillMaxWidth().heightIn(min = 36.dp).testTag("heartbeatOrphan-${j.id}"), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text(j.name.removePrefix(HeartbeatDocument.JOB_PREFIX), color = c.textPrimary, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                    Text(CronWords.describe("cron", j.scheduleExpression), color = c.textSecondary, fontSize = 12.sp, maxLines = 1)
+                }
+            }
+        }
         store.bots.forEach { b ->
             val n = store.tasks.count { it.type == TaskType.Heartbeat && it.agentId == b.id }
             Row(
@@ -296,7 +312,10 @@ private fun HeartbeatScheduler(store: AutomationStore, agent: BotLite, onClose: 
                             Pill("Run now", "heartbeatRun-${row.id}", enabled = busy == null) { act(row.id, "Couldn't run ${row.name}.", afterRefresh = false) { store.api.runNow(job) } }
                         } else {
                             Pill("Sync", "heartbeatSync-${row.id}", enabled = busy == null) {
-                                act(row.id, "Couldn't sync ${row.name}.") { store.api.createAgentJob(row.name, HeartbeatDocument.prompt(row.name, row.description), HeartbeatDocument.cron(row.schedule), row.description, agent.id, paused = false) }
+                                val cronExpr = HeartbeatDocument.cron(row.schedule)
+                                val orphan = store.tasks.firstOrNull { t -> t.type == TaskType.Heartbeat && t.agentId.isNullOrEmpty() && t.name.removePrefix(HeartbeatDocument.JOB_PREFIX) == row.name && t.scheduleExpression == cronExpr }
+                                if (orphan != null) act(row.id, "Couldn't sync ${row.name}.") { store.api.adoptJob(orphan.id, agent.id) }
+                                else act(row.id, "Couldn't sync ${row.name}.") { store.api.createAgentJob(row.name, HeartbeatDocument.prompt(row.name, row.description), HeartbeatDocument.cron(row.schedule), row.description, agent.id, paused = false) }
                             }
                         }
                         Pill("Remove", "heartbeatRemove-${row.id}", enabled = busy == null) { pendingDelete = row }

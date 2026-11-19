@@ -318,3 +318,10 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | iMessage extension | System surfaces | ios/AllternitMessages | — | — | N/A: no Android equivalent (Eoj 2026-11-18) | — |
 | LazyScreen | Unmatched web | — | src/fabric-session/phone/screens/LazyScreen.tsx | — | N/A: web lazy-load wrapper, no screen | — |
 | PhoneFilesOverlay | Unmatched web | — | src/fabric-session/phone/screens/PhoneFilesOverlay.tsx | feature/settings (Files drive screens, #2646 / #2655) | built (#2665): covered by the native Files rows (drive browser, share and Inbox): android/feature/settings Files pages (#2646 / #2655) and app/files/FilesUi.kt | — |
+
+## Gap run E (final): heartbeats list, Code usage, Sign PDF placement, connected accounts, meeting banners
+- Agent Heartbeats: the picker lists scheduler heartbeats no agent runs; Sync adopts a matching agentless job instead of adding a second (AutomationHeartbeat.kt). built.
+- Code Usage: Models tab, Messages / Est. tokens / Favorite model tiles; model read from `metadata.agentName` like iOS (CodeExtras.kt, ShellModel.kt). built.
+- Sign PDF and Open in Office: iOS shows visible controls (a "Sign this PDF" bar under the PDF, an "Open in editor" banner), so both left the more menu (V2Artifact.kt). built.
+- Billing Usage: Connected accounts section, Cloud card plus one card per provider quota (BillingPages.kt). built.
+- Meeting banners: MeetingsStore.watch runs from the shell, so banners post with Meetings closed (MeetingsData.kt, ShellDrawer.kt). built.
