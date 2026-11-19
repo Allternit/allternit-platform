@@ -4139,6 +4139,10 @@ function ensureHudWindow({ show }: { show: boolean }): BrowserWindow {
 }
 
 function openHudWindow({ place = true }: { place?: boolean } = {}): void {
+  if (!mayOpenHud(authManager.hasSession())) {
+    log.info('[HUD] Not opening before pairing');
+    return;
+  }
   if (isHudAlive()) {
     showHudWindow({ place });
     return;
