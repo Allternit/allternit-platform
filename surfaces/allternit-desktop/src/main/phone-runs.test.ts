@@ -40,6 +40,19 @@ describe('phone run history', () => {
     expect(posted[2].step.target).toBeUndefined();
     expect(posted[3].step).toMatchObject({ run_id: 'skill-1', source: 'skill' });
   });
+
+  it('keeps the map marker from a go_to replay and no other underscored arg', async () => {
+    const { rec, posted } = recorder(() => 1_000_000);
+    rec.record({ serial: 's', tool: 'phone.tap', args: { x: 1, y: 2, _via: 'map', _map_screen: 'Wi-Fi', _pass: 'pass_1', _hold: 'h' }, result: { ok: true }, durationMs: 1 });
+    rec.record({ serial: 's', tool: 'phone.tap', args: { x: 1, y: 2, _via: 'model', _map_screen: 'Wi-Fi' }, result: { ok: true }, durationMs: 1 });
+    rec.record({ serial: 's', tool: 'phone.tap', args: { x: 1, y: 2 }, result: { ok: true }, durationMs: 1 });
+    await flush();
+    expect(posted[0].step).toMatchObject({ via: 'map', map_screen: 'Wi-Fi', args: { x: 1, y: 2 } });
+    expect(JSON.stringify(posted[0].step.args)).not.toMatch(/_pass|_via|_hold|_map_screen/);
+    expect(posted[1].step.via).toBeUndefined();
+    expect(posted[1].step.map_screen).toBeUndefined();
+    expect(posted[2].step.via).toBeUndefined();
+  });
 });
 
 describe('app maps client', () => {

@@ -33,6 +33,9 @@ export interface PhoneStepIn {
   ui?: string;
   target?: { id: string; label: string; class: string; rect: [number, number, number, number]; screen: [number, number] };
   source?: string;
+  /** `map` when an App Map replay made the call (allternit-api's `go_to`), with the screen it went to. */
+  via?: 'map';
+  map_screen?: string;
   image_base64?: string;
   at: string;
 }
@@ -163,6 +166,11 @@ export class PhoneRunRecorder {
       source: typeof args._source === 'string' ? args._source.slice(0, 20) : 'bot',
       at: new Date(this.now()).toISOString(),
     };
+    // Only the map marker is kept from the underscored args; `_via` and `_map_screen` never reach the phone (the runner drops every `_` arg).
+    if (args._via === 'map') {
+      step.via = 'map';
+      if (typeof args._map_screen === 'string' && args._map_screen.trim()) step.map_screen = args._map_screen.trim().slice(0, 80);
+    }
     if (!ok && typeof result.message === 'string') step.error = result.message.slice(0, 400);
     if (tool === 'phone.read_ui' && ok && typeof result.text === 'string') {
       // A filtered read is partial: keep it for this step, not as the screen.
