@@ -17,6 +17,7 @@ use crate::conflict::Badge;
 
 /// Sets (or clears, with an empty list) the badges on one item.
 pub fn set(path: &Path, dir: bool, badges: &[Badge], icons_dir: &Path) -> Result<()> {
+    crate::init_winrt();
     let p = HSTRING::from(path.as_os_str());
     let item: IStorageItem = if dir {
         StorageFolder::GetFolderFromPathAsync(&p)?.get()?.cast()?

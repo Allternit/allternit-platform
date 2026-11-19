@@ -41,6 +41,17 @@ pub mod watcher;
 /// Printed in logs and set as the sync root version.
 pub const HELPER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Joins the process multithreaded apartment before any WinRT call
+/// (StorageFolder, StorageProviderSyncRootManager). Without it the WinRT
+/// objects live in no apartment and the first call can crash the helper.
+/// Safe to call from any thread, any number of times.
+#[cfg(windows)]
+pub fn init_winrt() {
+    use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
+    // S_FALSE (already joined) and RPC_E_CHANGED_MODE (thread is STA) are fine.
+    let _ = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
+}
+
 /// One JSON line on stdout per event, so Allternit Desktop can follow the helper.
 pub fn emit(event: &serde_json::Value) {
     use std::io::Write;

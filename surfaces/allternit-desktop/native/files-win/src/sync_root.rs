@@ -90,7 +90,9 @@ pub fn user_sid() -> Result<String> {
 }
 
 fn register_storage_provider(spec: &Spec, id: &str) -> Result<()> {
+    eprintln!("[files-win] register: storage provider");
     let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(spec.path.as_os_str()))?.get()?;
+    eprintln!("[files-win] register: got folder");
     let info = StorageProviderSyncRootInfo::new()?;
     info.SetId(&HSTRING::from(id))?;
     // windows 0.58 has no StorageFolder -> IStorageFolder conversion for Param; cast it.
@@ -115,6 +117,7 @@ fn register_storage_provider(spec: &Spec, id: &str) -> Result<()> {
         d.SetDisplayNameResource(&HSTRING::from(b.label()))?;
         defs.Append(&d)?;
     }
+    eprintln!("[files-win] register: calling Register");
     StorageProviderSyncRootManager::Register(&info)
 }
 
@@ -178,6 +181,7 @@ fn remove_nav_pane(clsid: &str) {
 
 /// Registers the sync root for one computer (creating its folder) and records it.
 pub fn register(spec: &Spec, state_dir: &Path) -> Result<Registration> {
+    crate::init_winrt();
     std::fs::create_dir_all(spec.path).map_err(|e| windows::core::Error::new(windows::core::HRESULT(0x80004005u32 as i32), e.to_string()))?;
     let registration = match user_sid().and_then(|sid| {
         let id = paths::sync_root_id(&sid, spec.computer_id);
@@ -187,6 +191,7 @@ pub fn register(spec: &Spec, state_dir: &Path) -> Result<Registration> {
         Err(e) => {
             crate::emit(&serde_json::json!({"type": "log", "level": "warn",
                 "message": format!("StorageProviderSyncRootManager refused ({e}); using CfRegisterSyncRoot")}));
+            eprintln!("[files-win] register: cfapi fallback ({e})");
             register_cfapi(spec)?;
             let clsid = paths::nav_pane_clsid(spec.computer_id);
             add_nav_pane(&clsid, &format!("Allternit · {}", spec.display_name), spec.path, spec.icon);
@@ -229,6 +234,7 @@ fn unregister_one(r: &Recorded) -> Result<()> {
 /// Unregisters one computer's root. Placeholders that were never opened are
 /// dropped by Windows; files that were opened stay on disk as normal files.
 pub fn unregister(path: &Path, state_dir: &Path) -> Result<()> {
+    crate::init_winrt();
     let mut list = recorded(state_dir);
     let mut result = Ok(());
     if let Some(r) = list.iter().find(|r| r.path == path) {
@@ -243,6 +249,7 @@ pub fn unregister(path: &Path, state_dir: &Path) -> Result<()> {
 
 /// Uninstall: every Allternit sync root of this user, recorded or not.
 pub fn unregister_all(state_dir: &Path) -> Vec<String> {
+    crate::init_winrt();
     let mut done = Vec::new();
     for r in recorded(state_dir) {
         match unregister_one(&r) {

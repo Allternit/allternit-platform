@@ -22,6 +22,7 @@ fn main() {
 
 #[cfg(windows)]
 fn main() {
+    allternit_files_win::init_winrt();
     std::process::exit(win::run(std::env::args().skip(1).collect()));
 }
 

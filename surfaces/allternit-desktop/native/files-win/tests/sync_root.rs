@@ -58,6 +58,7 @@ fn sync_root_end_to_end() {
 
     // (1) register
     let spec = Spec { path: &root, computer_id: COMPUTER, display_name: "Test Computer", icon: None };
+    log("STEP0 fake runtime up, registering");
     let registration = sync_root::register(&spec, &state_dir).expect("register sync root");
     log(&format!("STEP1 registered via {registration:?}"));
     assert!(sync_root::is_registered(&root), "cfapi knows the sync root");
