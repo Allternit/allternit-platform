@@ -195,7 +195,8 @@ fun ChatScreen(
                     }
                 }
             }
-            AnimatedVisibility(
+            // Inside a Box nested in a Column: the plain overload, not ColumnScope's.
+            androidx.compose.animation.AnimatedVisibility(
                 visible = far && messages.isNotEmpty(),
                 enter = fadeIn() + scaleIn(initialScale = 0.85f),
                 exit = fadeOut() + scaleOut(targetScale = 0.85f),

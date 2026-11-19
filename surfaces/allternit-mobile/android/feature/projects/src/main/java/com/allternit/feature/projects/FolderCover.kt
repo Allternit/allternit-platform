@@ -191,7 +191,7 @@ private fun DrawScope.drawLabel(text: String, cx: Float, baseline: Float, sizePx
         if (line.isNotEmpty()) out += line
         out.take(3)
     }
-    lines.forEachIndexed { i, l -> drawContext.canvas.nativeCanvas.drawLabel(l, cx, baseline + i * sizePx * 1.15f, paint) }
+    lines.forEachIndexed { i, l -> drawContext.canvas.nativeCanvas.drawText(l, cx, baseline + i * sizePx * 1.15f, paint) }
 }
 
 private fun DrawScope.drawPattern(pattern: String, ink: Color, k: Float) {
@@ -222,6 +222,9 @@ private val presets = listOf(
     Preset("circuit", "Circuit", "#2FA7A0", "title", "mono", "center", "circuit", "dotted", "ink"),
     Preset("badge", "Badge", "#9B6BD6", "symbol", "sans", "center", "dots", "none", "shadow"),
 )
+
+/** A custom look: no preset pill is selected. */
+private val NoPreset = Preset("", "", null, "", "", "", "", "", "")
 
 /**
  * iOS FolderLookSheet: preview, presets, colours, cover art (title / symbol / text / image /
