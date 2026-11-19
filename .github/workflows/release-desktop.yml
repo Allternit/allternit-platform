@@ -692,13 +692,16 @@ jobs:
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-factory.exe
 
       # ── Files drive helper (plan step 24): cfapi sync roots in Explorer ────
-      # Its own cargo workspace (native/files-win/Cargo.toml). The sync-root test
-      # registers a real sync root on this runner (unpackaged), so it runs here,
-      # before packaging, as the step's done check. Gate G-W (code signing) is
-      # separate: the exe ships unsigned until Eoj provides the certificate.
-      - name: Test Files drive helper (Windows sync root)
+      # Its own cargo workspace (native/files-win/Cargo.toml). The release runs the
+      # unit tests only. The end-to-end sync-root test (tests/sync_root.rs) runs in
+      # files-win-helper.yml and must pass there before the files_drive flag is
+      # turned on: Desktop starts the helper only while that flag is on, so a
+      # failing end-to-end test no longer blocks every Windows release (2026-11-19).
+      # Gate G-W (code signing) is separate: the exe ships unsigned until Eoj
+      # provides the certificate.
+      - name: Test Files drive helper (unit)
         shell: bash
-        run: cargo test --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml -- --nocapture --test-threads=1
+        run: cargo test --manifest-path surfaces/allternit-desktop/native/files-win/Cargo.toml --lib --bins
 
       - name: Build Files drive helper (Windows)
         shell: bash

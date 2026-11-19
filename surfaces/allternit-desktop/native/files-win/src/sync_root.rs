@@ -16,10 +16,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
-use windows::core::{Result, GUID, HSTRING, PCWSTR, PWSTR};
+use windows::core::{Interface, Result, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Foundation::Collections::IVector;
 use windows::Storage::Provider::*;
-use windows::Storage::StorageFolder;
+use windows::Security::Cryptography::CryptographicBuffer;
+use windows::Storage::{IStorageFolder, StorageFolder};
 use windows::Win32::Foundation::{HANDLE, HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
@@ -93,11 +94,19 @@ fn register_storage_provider(spec: &Spec, id: &str) -> Result<()> {
     let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(spec.path.as_os_str()))?.get()?;
     let info = StorageProviderSyncRootInfo::new()?;
     info.SetId(&HSTRING::from(id))?;
-    info.SetPath(&folder)?;
+    // windows 0.58 has no StorageFolder -> IStorageFolder conversion for Param; cast it.
+    info.SetPath(&folder.cast::<IStorageFolder>()?)?;
     info.SetDisplayNameResource(&HSTRING::from(format!("Allternit · {}", spec.display_name)))?;
-    if let Some(icon) = spec.icon {
-        info.SetIconResource(&HSTRING::from(icon.as_os_str()))?;
+    // Register needs an icon (it crashed with none, 2026-11-19 CI). Without
+    // allternit.ico next to the helper, fall back to the system cloud-folder icon.
+    match spec.icon {
+        Some(icon) => info.SetIconResource(&HSTRING::from(icon.as_os_str()))?,
+        None => info.SetIconResource(&HSTRING::from(r"%SystemRoot%\system32\imageres.dll,-1043"))?,
     }
+    // Register also expects a context buffer (Microsoft's CloudMirror sample sets
+    // one); ours is the root identity, the same bytes cfapi registration uses.
+    let ctx = RootIdentity { v: 1, computer_id: spec.computer_id.to_string() }.encode();
+    info.SetContext(&CryptographicBuffer::CreateFromByteArray(&ctx)?)?;
     info.SetHydrationPolicy(StorageProviderHydrationPolicy::Full)?;
     info.SetHydrationPolicyModifier(StorageProviderHydrationPolicyModifier::None)?;
     info.SetPopulationPolicy(StorageProviderPopulationPolicy::Full)?;
@@ -177,6 +186,7 @@ fn remove_nav_pane(clsid: &str) {
 
 /// Registers the sync root for one computer (creating its folder) and records it.
 pub fn register(spec: &Spec, state_dir: &Path) -> Result<Registration> {
+    crate::init_winrt();
     std::fs::create_dir_all(spec.path).map_err(|e| windows::core::Error::new(windows::core::HRESULT(0x80004005u32 as i32), e.to_string()))?;
     let registration = match user_sid().and_then(|sid| {
         let id = paths::sync_root_id(&sid, spec.computer_id);
@@ -228,6 +238,7 @@ fn unregister_one(r: &Recorded) -> Result<()> {
 /// Unregisters one computer's root. Placeholders that were never opened are
 /// dropped by Windows; files that were opened stay on disk as normal files.
 pub fn unregister(path: &Path, state_dir: &Path) -> Result<()> {
+    crate::init_winrt();
     let mut list = recorded(state_dir);
     let mut result = Ok(());
     if let Some(r) = list.iter().find(|r| r.path == path) {
@@ -242,6 +253,7 @@ pub fn unregister(path: &Path, state_dir: &Path) -> Result<()> {
 
 /// Uninstall: every Allternit sync root of this user, recorded or not.
 pub fn unregister_all(state_dir: &Path) -> Vec<String> {
+    crate::init_winrt();
     let mut done = Vec::new();
     for r in recorded(state_dir) {
         match unregister_one(&r) {
