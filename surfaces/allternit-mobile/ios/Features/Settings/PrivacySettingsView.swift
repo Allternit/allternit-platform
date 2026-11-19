@@ -63,6 +63,17 @@ struct PrivacySettingsView: View {
             }
 
             Section {
+                NavigationLink {
+                    ConnectedAppsView()
+                } label: {
+                    SettingsRowLabel(title: "Connected apps", systemImage: "app.connected.to.app.below.fill")
+                }
+                .accessibilityIdentifier("privacyConnectedApps")
+            } footer: {
+                Text("Outside apps you approved to use your Allternit credits.")
+            }
+
+            Section {
                 Button(action: { isArchiveConfirmPresented = true }) {
                     SettingsRowLabel(title: "Archive all chats", systemImage: "archivebox")
                 }

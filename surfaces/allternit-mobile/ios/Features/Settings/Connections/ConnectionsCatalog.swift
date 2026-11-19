@@ -87,6 +87,9 @@ enum ConnectionsCatalog {
         // sign-in and the chat stay on this iPhone.
         ConnEntry(id: "chatgpt", group: .brains, name: "ChatGPT", logo: .asset("SetupLogoChatGPT"), blurb: "Plus or Pro plan", ways: [.oauth], runsOn: .device),
         ConnEntry(id: "claude", group: .brains, name: "Claude", logo: .asset("SetupLogoClaude"), blurb: "Pro or Max plan", ways: [.code], runsOn: .runner),
+        // Bills the person's own Claude organization (CONTRACT-oauth-linked-billing Part B;
+        // connections contract §10). Hidden until cloud-api sends an available row.
+        ConnEntry(id: "claude-org", group: .brains, name: "Claude organization", logo: .asset("SetupLogoClaude"), blurb: "Bill your own Claude organization", ways: [.oauth], isNew: true),
         ConnEntry(id: "gemini", group: .brains, name: "Gemini", logo: .asset("applogo-googlegemini"), blurb: "Free Google AI Studio key", ways: [.paste], isNew: true,
                   keyPage: "https://aistudio.google.com/apikey"),
         ConnEntry(id: "copilot", group: .brains, name: "GitHub Copilot", logo: .asset("LogoGitHub"), blurb: "Copilot Pro or Business", ways: [.oauth], isNew: true),
@@ -185,6 +188,8 @@ enum ConnectionsCatalog {
         case "kimi":
             return ConnectionWire(id: id, reasonCode: "not_available_yet", available: false,
                                   unavailableReason: "Not available yet. Use a key for now.", fallbacks: ["kimi-key"])
+        case "claude-org":
+            return ConnectionWire(id: id, reasonCode: "not_available_yet", available: false, unavailableReason: "Not available yet.")
         case "copilot":
             return ConnectionWire(id: id, available: false, unavailableReason: "Coming soon.", fallbacks: ["github"])
         case "chatgpt":
@@ -207,6 +212,10 @@ enum ConnectionsCatalog {
         case "vendor_limited": return "\(name) plan not active or limit used up"
         case "no_computer": return "Needs your own computer for now"
         case "not_available_yet": return "Not available yet"
+        case "org_not_eligible": return "Your Claude organization can't be billed. It must pay Anthropic directly."
+        case "spend_limit_reached": return "Your Claude organization's spend limit is reached"
+        case "disconnected": return "Your Claude organization is disconnected"
+        case "relink_needed": return "Link your Claude organization again"
         case "computer_offline": return "Your computer is offline"
         case "could_not_start": return "Could not start. Try again"
         case "update_app": return "Update the app to connect this plan."
@@ -215,6 +224,12 @@ enum ConnectionsCatalog {
         default: return nil
         }
     }
+
+    /// Where a person raises their organization's spend limit at Anthropic.
+    static let claudeLinkedPlatformsURL = URL(string: "https://platform.claude.com/linked-platforms")!
+
+    /// The one-line note under the unlinked Claude organization row.
+    static let claudeOrgNote = "Needs the Admin or Billing role. Your org must pay Anthropic directly."
 
     /// The button text for a fallback id.
     static func fallbackLabel(_ id: String) -> String {

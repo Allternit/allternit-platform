@@ -6,6 +6,8 @@ import Foundation
 /// - `plan/<vendor>/<model>`: the person's Claude, ChatGPT, Grok or Kimi plan
 ///   on an Allternit runner, sent to cloud-api `/v1/chat/completions`.
 /// - `copilot/<model>`: GitHub Copilot, same route.
+/// - `linked/claude/<model>`: the person's own Claude organization pays
+///   (cloud-api row `claude-org`, `billed_to: "claude_org"`), same route.
 /// - `chatgpt/<model>`: ChatGPT signed in on this iPhone, sent from the
 ///   phone straight to OpenAI.
 ///
@@ -15,7 +17,7 @@ import Foundation
 ///
 /// None of them may be picked for a bot, routine, schedule, mission or agent.
 enum PersonModels {
-    static let prefixes = ["plan/", "copilot/", "chatgpt/", OnDeviceModelId.prefix, OtherDeviceModelId.prefix]
+    static let prefixes = ["plan/", "copilot/", "linked/", "chatgpt/", OnDeviceModelId.prefix, OtherDeviceModelId.prefix]
 
     static func isPersonOnly(_ id: String?) -> Bool {
         guard let id else { return false }
@@ -29,6 +31,7 @@ enum PersonModels {
     static func vendorName(for id: String) -> String {
         if id.hasPrefix(ModelStore.cloudPrefix) { return "Allternit Cloud" }
         if id.hasPrefix("copilot/") { return "GitHub Copilot" }
+        if id.hasPrefix("linked/") { return "Claude organization" }
         if id.hasPrefix("chatgpt/") { return "ChatGPT" }
         if OnDeviceModelId.isOnDevice(id) { return "This iPhone" }
         if OtherDeviceModelId.isOtherDevice(id) { return "Your other device" }
@@ -46,6 +49,8 @@ enum PersonModels {
     /// The picker's group id for a person model.
     static func provider(for id: String) -> String {
         if id.hasPrefix("copilot/") { return "copilot" }
+        // `linked/claude/<m>` is the Claude organization, not a plan: no "plan-" split.
+        if id.hasPrefix("linked/") { return "claude-org" }
         if id.hasPrefix("chatgpt/") { return "chatgpt-phone" }
         let parts = id.split(separator: "/")
         return parts.count >= 2 ? "plan-\(parts[1])" : "plan"
@@ -57,6 +62,7 @@ enum PersonModels {
         "plan-grok": "Your Grok plan",
         "plan-kimi": "Your Kimi plan",
         "copilot": "GitHub Copilot",
+        "claude-org": "Claude organization",
         "chatgpt-phone": "ChatGPT · this iPhone",
     ]
 
@@ -72,12 +78,14 @@ enum PersonModels {
     static func build(rows: [ConnectionWire], chatgpt: [ChatGPTModel]) -> [RuntimeModel] {
         var out: [RuntimeModel] = []
         var seen = Set<String>()
-        let order = ["claude", "chatgpt", "grok", "kimi", "copilot"]
+        let order = ["claude", "claude-org", "chatgpt", "grok", "kimi", "copilot"]
         let sorted = rows.sorted { (order.firstIndex(of: $0.id) ?? 99) < (order.firstIndex(of: $1.id) ?? 99) }
         for row in sorted where row.state == .on && row.runtimeId == nil {
-            for id in row.models where (id.hasPrefix("plan/") || id.hasPrefix("copilot/")) && seen.insert(id).inserted {
+            for id in row.models where (id.hasPrefix("plan/") || id.hasPrefix("copilot/") || id.hasPrefix("linked/")) && seen.insert(id).inserted {
                 out.append(RuntimeModel(id: id, name: displayName(id), provider: provider(for: id),
-                                        description: "Answers only messages you send in chat"))
+                                        description: id.hasPrefix("linked/")
+                                            ? "Billed to your Claude organization · answers only messages you send in chat"
+                                            : "Answers only messages you send in chat"))
             }
         }
         for model in chatgpt where seen.insert(model.id).inserted {

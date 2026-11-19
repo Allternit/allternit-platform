@@ -652,7 +652,7 @@ enum ModelProviderNames {
     /// The letter on a provider's tile: the vendor's, not "Your …".
     static func mark(_ pid: String) -> String {
         switch pid {
-        case "plan-claude": return "C"
+        case "plan-claude", "claude-org": return "C"
         case "plan-chatgpt", "chatgpt-phone": return "G"
         case "plan-grok": return "X"
         case "plan-kimi": return "K"
