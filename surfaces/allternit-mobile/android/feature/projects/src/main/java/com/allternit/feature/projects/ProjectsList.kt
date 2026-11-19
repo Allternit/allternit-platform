@@ -87,6 +87,8 @@ class ProjectsNav(
     val openSession: (sessionId: String, mode: String) -> Unit,
     /** The StageBackdrop the shell draws behind project screens (iOS project variant). */
     val backdrop: @Composable (scope: String) -> Unit,
+    /** A GET on the user's computer through the runtime relay (the folder picker's `v1/path`, `v1/file/tree`). */
+    val runtimeGet: RuntimeGet = { Result.failure(IllegalStateException("No computer")) },
 )
 
 private enum class ProjectSort(val label: String) { Recent("Recent"), Name("Name"), Created("Created") }

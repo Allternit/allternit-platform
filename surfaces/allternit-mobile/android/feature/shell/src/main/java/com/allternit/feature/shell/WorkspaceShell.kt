@@ -220,6 +220,14 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 openSessionId(id)
             },
             backdrop = { scopeId -> ProjectBackdrop(scopeId) },
+            runtimeGet = { path ->
+                when (val r = chatBackend.runtimeJson("GET", path)) {
+                    is com.allternit.feature.chat.RuntimeCall.Ok -> Result.success(r.body)
+                    com.allternit.feature.chat.RuntimeCall.NoComputer -> Result.failure(IllegalStateException("No computer is connected."))
+                    is com.allternit.feature.chat.RuntimeCall.Http -> Result.failure(IllegalStateException(r.message ?: "HTTP ${r.status}"))
+                    is com.allternit.feature.chat.RuntimeCall.Failed -> Result.failure(IllegalStateException(r.message))
+                }
+            },
         )
     }
     // The studio's Chat pane: the shell's one chat, on the studio's session (iOS ArtifactStudioView).
