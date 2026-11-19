@@ -422,4 +422,8 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+// Exit 78 (EX_CONFIG) when a program the server needs is missing: the
+// desktop supervisor does not respawn on it, since a restart cannot help.
+const exitCodeFor = (err) => (err && err.code === 'ENOENT' ? 78 : 1);
+process.on('uncaughtException', (err) => { console.error('[server] uncaught:', err); process.exit(exitCodeFor(err)); });
+main().catch((err) => { console.error(err); process.exit(exitCodeFor(err)); });

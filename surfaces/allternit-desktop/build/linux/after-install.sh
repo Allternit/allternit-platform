@@ -21,7 +21,7 @@ case "${1:-}" in
     *) PACKAGE_TYPE=deb ;;
 esac
 
-# resources/package-type tells the in-app updater (src/main/linux-updater.ts)
+# resources/package-type tells the in-app updater (src/main/app-updater.ts)
 # which electron-updater class to use. electron-builder writes it into the
 # shared linux-unpacked dir while it packs the deb and the rpm at the same
 # time, so the packaged copy can carry the other target's name. Correct it here.
