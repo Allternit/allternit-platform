@@ -184,6 +184,145 @@ paths:
             text/event-stream:
               schema: { type: string }
         default: { $ref: "#/components/responses/Error" }
+  /memory/sleep/status:
+    get:
+      operationId: getSleepStatus
+      summary: Allternit Sleep status for the signed-in user (stub until each stage lands; all stages off by default)
+      x-base: api
+      x-handler: cmd/allternit-api/src/sleep/routes.rs status
+      tags: [Memory]
+      responses:
+        "200":
+          description: Status. `available` is true wherever the runtime has the sleep module.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SleepStatus" }
+        default: { $ref: "#/components/responses/Error" }
+  /memory/sleep/cycles:
+    get:
+      operationId: listSleepCycles
+      summary: Recent Sleep cycles (the report list), newest first
+      x-base: api
+      x-handler: cmd/allternit-api/src/sleep/routes.rs list_cycles
+      tags: [Memory]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer } }
+        - { name: state, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Cycles and their count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cycles, count]
+                properties:
+                  cycles: { type: array, items: { $ref: "#/components/schemas/SleepCycle" } }
+                  count: { type: integer }
+        default: { $ref: "#/components/responses/Error" }
+  /memory/sleep/cycles/{id}/undo:
+    post:
+      operationId: undoSleepCycle
+      summary: Undo one cycle (restores the previous page manifest). 409 with `accepted:false` while the stage is off or not built
+      x-base: api
+      x-handler: cmd/allternit-api/src/sleep/routes.rs undo_cycle
+      tags: [Memory]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Undone. }
+        "409":
+          description: Refused; `reason` is `sleep_disabled` or `stage_not_built`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SleepNotAccepted" }
+        default: { $ref: "#/components/responses/Error" }
+  /memory/disputes:
+    get:
+      operationId: listMemoryDisputes
+      summary: Memory disputes (two claims that disagree), newest first
+      x-base: api
+      x-handler: cmd/allternit-api/src/sleep/routes.rs list_disputes
+      tags: [Memory]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer } }
+        - { name: state, in: query, required: false, schema: { type: string, enum: [open, needs_user, resolved] } }
+      responses:
+        "200":
+          description: Disputes and their count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [disputes, count]
+                properties:
+                  disputes: { type: array, items: { $ref: "#/components/schemas/MemoryDispute" } }
+                  count: { type: integer }
+        default: { $ref: "#/components/responses/Error" }
+  /memory/disputes/{id}/resolve:
+    post:
+      operationId: resolveMemoryDispute
+      summary: The user picks a side. 409 with `accepted:false` while the disputes stage is off or not built
+      x-base: api
+      x-handler: cmd/allternit-api/src/sleep/routes.rs resolve_dispute
+      tags: [Memory]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [choice]
+              properties:
+                choice: { type: string, enum: [a, b, both_scoped, neither] }
+                reason: { type: string }
+      responses:
+        "200": { description: Resolved. }
+        "409":
+          description: Refused.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SleepNotAccepted" }
+        default: { $ref: "#/components/responses/Error" }
+  /memory/sleep/settings:
+    get:
+      operationId: getSleepSettings
+      summary: The user's Sleep switches and daily spend cap
+      x-base: api
+      x-handler: cmd/allternit-api/src/sleep/routes.rs get_settings
+      tags: [Memory]
+      responses:
+        "200":
+          description: Settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SleepSettings" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      operationId: putSleepSettings
+      summary: Change switches (written as owner rows, all-or-nothing; an unknown stage is 400)
+      x-base: api
+      x-handler: cmd/allternit-api/src/sleep/routes.rs put_settings
+      tags: [Memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: boolean }
+                stages: { type: object, additionalProperties: { type: boolean } }
+                daily_spend_cap_usd: { type: number }
+      responses:
+        "200":
+          description: The settings after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SleepSettings" }
+        default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -399,3 +538,78 @@ components:
           items: { $ref: "#/components/schemas/AttachmentRef" }
         metadata: { $ref: "#/components/schemas/AgentChatMetadata" }
         workdir: { type: string, description: The session's working folder; "" clears it. }
+    SleepStatus:
+      type: object
+      description: sleep/types.rs `SleepStatus`.
+      required: [available, enabled, stages, debt, spend_today_usd, daily_spend_cap_usd, open_disputes, tracks]
+      properties:
+        available: { type: boolean }
+        enabled: { type: boolean }
+        stages: { type: object, additionalProperties: { type: boolean } }
+        debt: { type: number }
+        last_cycle: { oneOf: [{ $ref: "#/components/schemas/SleepCycle" }, { type: "null" }] }
+        spend_today_usd: { type: number }
+        daily_spend_cap_usd: { type: number }
+        manifest_id: { type: [string, "null"] }
+        open_disputes: { type: integer }
+        tracks:
+          type: object
+          required: [track1, track2]
+          properties:
+            track1: { type: string }
+            track2: { type: string }
+    SleepCycle:
+      type: object
+      description: sleep/types.rs `CycleSummary`.
+      required: [id, trigger, kind, state, spend_usd, started_at]
+      properties:
+        id: { type: string }
+        trigger: { type: string }
+        kind: { type: string }
+        state: { type: string }
+        stage: { type: [string, "null"] }
+        session_id: { type: [string, "null"] }
+        spend_usd: { type: number }
+        manifest_before: { type: [string, "null"] }
+        manifest_after: { type: [string, "null"] }
+        started_at: { type: string }
+        finished_at: { type: [string, "null"] }
+        undone_at: { type: [string, "null"] }
+    MemoryDispute:
+      type: object
+      description: sleep/types.rs `DisputeView`.
+      required: [id, side_a, side_b, state, created_at]
+      properties:
+        id: { type: string }
+        topic_id: { type: [string, "null"] }
+        side_a: { $ref: "#/components/schemas/MemoryDisputeSide" }
+        side_b: { $ref: "#/components/schemas/MemoryDisputeSide" }
+        scope: { type: [string, "null"] }
+        stakes: { type: [number, "null"] }
+        margin: { type: [number, "null"] }
+        pick: { type: [string, "null"] }
+        reason: { type: [string, "null"] }
+        state: { type: string, enum: [open, needs_user, resolved] }
+        created_at: { type: string }
+    MemoryDisputeSide:
+      type: object
+      required: [kind, id]
+      properties:
+        kind: { type: string }
+        id: { type: string }
+    SleepSettings:
+      type: object
+      required: [enabled, stages, daily_spend_cap_usd]
+      properties:
+        enabled: { type: boolean }
+        stages: { type: object, additionalProperties: { type: boolean } }
+        daily_spend_cap_usd: { type: number }
+        entries: { type: object }
+    SleepNotAccepted:
+      type: object
+      required: [accepted, reason]
+      properties:
+        accepted: { type: boolean, const: false }
+        reason: { type: string, enum: [sleep_disabled, stage_not_built] }
+        stage: { type: string }
+        error: { type: string }
