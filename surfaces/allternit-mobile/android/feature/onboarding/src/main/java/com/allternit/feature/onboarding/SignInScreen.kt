@@ -102,6 +102,7 @@ fun SignInScreen(
         scope.launch {
             val result = action()
             busy = null
+            if (result.cancelled) return@launch
             if (result.ok) {
                 Haptics.perform(view, Haptics.Kind.Success)
                 onOk()
