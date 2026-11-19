@@ -183,7 +183,7 @@ Two rules keep the seal valid:
 
 **Keychain prompt after each update.** macOS ties a Keychain item's **Always Allow** to the app's exact code, and every ad-hoc build has new code. So after an app update, the first launch can ask for the Mac password to use the Keychain item `@allternit/desktop Safe Storage` (account `@allternit/desktop Key`). On Mac, Desktop now reads that key off the main thread with a small native addon (`native/keychain`), so the app keeps working while the prompt is open. The startup window says "macOS is asking for permission. Click Always Allow." The prompt can open behind other windows. **Allow** works for that launch. **Always Allow** stops the prompt on later launches of the same build. **Deny** shows **Try again** and **Quit** ("Allternit needs access to the macOS Keychain") when there is a saved sign-in or key to protect, and leaves them untouched. On a first launch with nothing saved yet, Desktop starts without OS encryption instead. Desktop no longer discards them when the Keychain is slow or denied. Windows and Linux are unchanged. A stable signing identity would end the prompt after each update.
 
-**No in-app app updates.** `update-electron-app` (update.electronjs.org) cannot update these builds. On macOS, Squirrel.Mac needs the new app's signature to match the old one, which ad-hoc signing never does. On Windows, the service serves Squirrel.Windows packages, and Desktop ships an NSIS installer. New app versions come from Homebrew (`brew upgrade --cask allternit`) or a fresh download. Runtime packages (below) still update the parts inside the app.
+**No in-app app updates.** `update-electron-app` (update.electronjs.org) cannot update these builds. On macOS, Squirrel.Mac needs the new app's signature to match the old one, which ad-hoc signing never does. On Windows, the service serves Squirrel.Windows packages, and Desktop ships an NSIS installer. New app versions come from Homebrew (`brew upgrade --cask allternit`) or a fresh download. Linux is different: the `.deb` updates itself (see [Updates on Linux](#updates-on-linux)). Runtime packages (below) still update the parts inside the app.
 
 Check a build with `codesign --verify --deep --strict "Allternit Desktop.app"`. Proper notarization needs a Developer ID certificate and the `APPLE_ID`, `APPLE_ID_PASSWORD` and `APPLE_TEAM_ID` secrets (`scripts/notarize.cjs`).
 
@@ -345,6 +345,16 @@ The "Messages on your Mac" tool lets a bot search your Messages history and prep
 2. **Automation** (to send through Messages). Choose the Automation row, turn on Messages under Allternit Desktop, or approve the prompt the first time a text is sent.
 
 Both rows show a check mark once macOS has granted access. This is macOS only.
+
+## Updates on Linux
+
+The Linux app (the `.deb`) updates itself, starting with the first version after 1.1.15. Desktop checks when it starts and every hour, downloads the new `.deb` in the background, and shows the same restart prompt as on Mac and Windows. When you click **Restart**, your desktop asks for your password (the polkit prompt GNOME and KDE show), installs the package and reopens Desktop.
+
+- **On 1.1.15 or older?** Those versions have no Linux updater. Install the next version by hand once: download `Allternit-Desktop-<version>-amd64.deb` from the [releases page](https://github.com/Allternit/desktop/releases/latest) and run `sudo apt install ./Allternit-Desktop-<version>-amd64.deb`. Every version after that updates itself.
+- **No password prompt on this computer** (no `pkexec`, for example a minimal or headless install), or you cancel it: Desktop keeps running and shows a notification. Click it to open the release page, then install the `.deb` with `apt` as above.
+- Only the `.deb` install updates itself. An AppImage or an unpacked build does not.
+
+For developers: `src/main/linux-updater.ts` runs electron-updater's `DebUpdater` on Linux only (macOS and Windows keep `update-electron-app`). It reads `latest-linux.yml` from the latest [Allternit/desktop](https://github.com/Allternit/desktop/releases) release, which `release-desktop.yml` builds and attaches next to `latest.yml` and `latest-mac.yml`. The install runs `pkexec /bin/bash -c 'dpkg -i <deb>'` (then `apt-get install -f -y` if dependencies are missing), so it needs a polkit agent. The pure decisions (mode, elevation, feed, fallback text) are in `linux-updater-logic.ts`. For a lab test, `ALLTERNIT_LINUX_UPDATE_FEED=http://host:port/` points a build at a generic feed that serves `latest-linux.yml` and the `.deb`. Logs are tagged `[linuxUpdater]` in `main.log`.
 
 ## Runtime updates
 
