@@ -3,9 +3,11 @@
  * imports, so the unit tests run without an app.
  *
  * Electron's built-in autoUpdater has no Linux support, so Linux uses
- * electron-updater's DebUpdater instead. Desktop 1.1.15 and older shipped
- * without it: those users install the next .deb by hand once, and every
- * version after that updates itself.
+ * electron-updater per package type: DebUpdater (.deb), RpmUpdater (.rpm) and
+ * AppImageUpdater (AppImage, no root needed). All three read the same
+ * latest-linux.yml, which lists every Linux file; each picks its own by
+ * extension. Desktop 1.1.15 and older shipped without it: those users install
+ * the next package by hand once, and every version after that updates itself.
  */
 
 /** The GitHub repo that holds the Desktop releases (same as build.publish). */
@@ -29,19 +31,38 @@ export const GRAPHICAL_ELEVATION_COMMANDS = ['gksudo', 'kdesudo', 'pkexec', 'bee
 export type LinuxUpdateMode =
   /** Not Linux, or an unpackaged dev build: the Linux updater does not start. */
   | 'off'
-  /** Installed from the .deb: DebUpdater downloads and installs updates. */
+  /** Installed from the .deb: DebUpdater installs with `pkexec dpkg -i`. */
   | 'deb'
-  /** Linux, but not a .deb install (AppImage, unpacked dir): no self-update. */
+  /** Installed from the .rpm: RpmUpdater installs with pkexec zypper/dnf/yum/rpm. */
+  | 'rpm'
+  /** Running as an AppImage: AppImageUpdater swaps the file in place, no root. */
+  | 'appimage'
+  /** Linux, but none of those (unpacked dir, unknown package type): no self-update. */
   | 'unsupported';
+
+/** The package types that install through the system package manager (need root). */
+export type LinuxSystemPackage = 'deb' | 'rpm';
 
 export function chooseLinuxUpdateMode(input: {
   platform: string;
   isPackaged: boolean;
-  /** Contents of resources/package-type (written by electron-builder), or null. */
+  /** Contents of resources/package-type (written by electron-builder, corrected by the postinst), or null. */
   packageType: string | null;
+  /** process.env.APPIMAGE, set by the AppImage runtime. */
+  appImagePath?: string | null;
 }): LinuxUpdateMode {
   if (input.platform !== 'linux' || !input.isPackaged) return 'off';
-  return input.packageType?.trim() === 'deb' ? 'deb' : 'unsupported';
+  // APPIMAGE wins: the AppImage packs the same resources dir as the deb and
+  // rpm, so its package-type file can say either of them.
+  if (input.appImagePath?.trim()) return 'appimage';
+  const type = input.packageType?.trim();
+  if (type === 'deb' || type === 'rpm') return type;
+  return 'unsupported';
+}
+
+/** Whether installing an update for this mode needs root (and so a password prompt). */
+export function needsElevation(mode: LinuxUpdateMode): boolean {
+  return mode === 'deb' || mode === 'rpm';
 }
 
 export type LinuxElevation =
@@ -99,8 +120,20 @@ export function releasePageUrl(version?: string | null): string {
 
 export type LinuxFallbackReason = 'no-elevation' | 'install-failed';
 
+/** How to install the downloaded file by hand, per package type. */
+export function manualInstallHint(mode: LinuxUpdateMode): string {
+  switch (mode) {
+    case 'rpm':
+      return 'Click to download the .rpm, then run: sudo dnf install ./<file>.rpm (openSUSE: sudo zypper install ./<file>.rpm)';
+    case 'appimage':
+      return 'Click to download the new AppImage, make it executable (chmod +x <file>.AppImage) and run it in place of this one.';
+    default:
+      return 'Click to download the .deb, then run: sudo apt install ./<file>.deb';
+  }
+}
+
 /** The notification shown when the update cannot install itself. */
-export function fallbackNotice(reason: LinuxFallbackReason, version?: string | null): {
+export function fallbackNotice(reason: LinuxFallbackReason, version?: string | null, mode: LinuxUpdateMode = 'deb'): {
   title: string;
   body: string;
   url: string;
@@ -108,16 +141,24 @@ export function fallbackNotice(reason: LinuxFallbackReason, version?: string | n
   const v = version?.trim().replace(/^v/, '');
   const name = v ? `Allternit Desktop ${v}` : 'A new Allternit Desktop';
   const url = releasePageUrl(v);
+  const hint = manualInstallHint(mode);
   if (reason === 'no-elevation') {
     return {
       title: `${name} is available`,
-      body: 'This computer has no password prompt for installing updates (pkexec). Click to download the .deb, then run: sudo apt install ./<file>.deb',
+      body: `This computer has no password prompt for installing updates (pkexec). ${hint}`,
+      url,
+    };
+  }
+  if (mode === 'appimage') {
+    return {
+      title: `${name} could not be installed`,
+      body: `The AppImage could not be replaced (is its folder read-only?). ${hint}`,
       url,
     };
   }
   return {
     title: `${name} could not be installed`,
-    body: 'The update needs your password to install. Click to download the .deb, then run: sudo apt install ./<file>.deb',
+    body: `The update needs your password to install. ${hint}`,
     url,
   };
 }

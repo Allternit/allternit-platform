@@ -1,5 +1,6 @@
 #!/bin/bash
-# Allternit Desktop .deb afterInstall (postinst) script.
+# Allternit Desktop afterInstall script, shared by the .deb (postinst) and the
+# .rpm (%post). package.json points deb.afterInstall and rpm.afterInstall here.
 #
 # Based on electron-builder's stock after-install.tpl, with one change: the
 # user-namespace test runs as an UNPRIVILEGED user. The stock template runs
@@ -12,6 +13,21 @@
 
 APP_DIR='/opt/Allternit Desktop'
 SANDBOX="$APP_DIR/chrome-sandbox"
+
+# Which package manager ran us: dpkg passes a word ("configure"), rpm passes
+# the number of installed copies (1 = install, 2 = upgrade).
+case "${1:-}" in
+    [0-9]*) PACKAGE_TYPE=rpm ;;
+    *) PACKAGE_TYPE=deb ;;
+esac
+
+# resources/package-type tells the in-app updater (src/main/linux-updater.ts)
+# which electron-updater class to use. electron-builder writes it into the
+# shared linux-unpacked dir while it packs the deb and the rpm at the same
+# time, so the packaged copy can carry the other target's name. Correct it here.
+if [ -d "$APP_DIR/resources" ]; then
+    printf '%s' "$PACKAGE_TYPE" > "$APP_DIR/resources/package-type" || true
+fi
 
 if type update-alternatives >/dev/null 2>&1; then
     # Remove previous link if it doesn't use update-alternatives

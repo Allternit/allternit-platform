@@ -3,7 +3,7 @@
 #   allternit-runtime/desktop/v<version>/<assets>   (served at runtime.allternit.com)
 #   allternit-runtime/desktop/latest.json           {version, assets:{...}: url}
 # and delete every other desktop/v* (keeps only the current version).
-# Linux only: the .deb (and an AppImage if a release has one). The only R2 consumers are
+# Linux only: the .deb, the .rpm and the AppImage. The only R2 consumers are
 # cloud computers' updater (reads linux_deb_x64) and install.allternit.com/install.sh (HEAD-checks
 # the mirror, falls back to GitHub). Mac/Windows installers, zips and blockmaps are NOT mirrored:
 # the website download buttons and the Homebrew cask use GitHub releases. Keeps the bucket small.
@@ -37,7 +37,7 @@ r2() { # r2 <curl args...> ; signs the request
 
 echo "== download $REPO $tag assets"
 gh release download "$tag" -R "$REPO" -D "$work" \
-  -p '*.AppImage' -p '*.deb'
+  -p '*.AppImage' -p '*.deb' -p '*.rpm'
 shopt -s nullglob
 files=("$work"/*)
 if [[ ${#files[@]} -eq 0 ]]; then echo "no assets found for $tag" >&2; exit 1; fi
@@ -52,7 +52,7 @@ for f in "${files[@]}"; do
   fi
 done
 
-# latest.json: Linux slots only (linux_deb_x64 today), value is the public URL.
+# latest.json: Linux slots only (linux_deb_x64, linux_rpm_x64, linux_x64 = AppImage), value is the public URL.
 python3 - "$work" "$version" "$PUBLIC" >"$work/latest.json.out" <<'PY'
 import json, os, sys
 d, version, public = sys.argv[1:4]
@@ -64,6 +64,8 @@ for n in sorted(os.listdir(d)):
         slots["linux_arm64" if ("arm64" in low or "aarch64" in low) else "linux_x64"] = url
     elif low.endswith(".deb"):
         slots["linux_deb_arm64" if ("arm64" in low or "aarch64" in low) else "linux_deb_x64"] = url
+    elif low.endswith(".rpm"):
+        slots["linux_rpm_arm64" if ("arm64" in low or "aarch64" in low) else "linux_rpm_x64"] = url
 print(json.dumps({"version": version, "assets": slots}, indent=2))
 PY
 echo "== latest.json"; cat "$work/latest.json.out"
