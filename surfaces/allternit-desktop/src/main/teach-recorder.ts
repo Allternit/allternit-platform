@@ -6,6 +6,7 @@
  * Privacy: snapshots live only in memory (ring of MAX_FRAMES) and are served
  * to the local renderer on request. Nothing here sends frames anywhere.
  */
+import { noteShortcutResult } from './shortcut-notice.js';
 import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, screen, session, systemPreferences, webContents, type WebContents } from 'electron';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -976,7 +977,9 @@ export function abortTeach(): void {
 
 export function registerTeachHotkey(): void {
   try {
-    if (globalShortcut.register(TEACH_HOTKEY, () => { void toggleTeachFromHotkey(); })) {
+    const teachOk = globalShortcut.register(TEACH_HOTKEY, () => { void toggleTeachFromHotkey(); });
+    noteShortcutResult(TEACH_HOTKEY, teachOk);
+    if (teachOk) {
       log.info(`[Main] Registered global Teach hotkey: ${TEACH_HOTKEY}`);
     } else {
       log.warn(`[Main] Failed to register global hotkey: ${TEACH_HOTKEY}`);
