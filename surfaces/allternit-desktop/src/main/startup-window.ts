@@ -483,6 +483,10 @@ export function createStartupWindow(options: StartupWindowOptions): BrowserWindo
     resizable: false,
     alwaysOnTop: true,
     titleBarStyle: 'hiddenInset',
+    // Linux and Windows draw a real title bar. Without a title it shows the
+    // package name ("@allternit/desktop"); the app name itself can't change
+    // because it names the userData folder.
+    title: 'Allternit',
     backgroundColor: '#faf9f7',
     show: false,
     webPreferences: {
@@ -496,6 +500,9 @@ export function createStartupWindow(options: StartupWindowOptions): BrowserWindo
   window.once('ready-to-show', () => {
     window.show();
   });
+  // The startup page and the auth renderer loaded into it later have no
+  // product <title>; keep the window's own title.
+  window.on('page-title-updated', (event) => event.preventDefault());
 
   window.webContents.on('console-message', (event) => {
     log.info(`[Startup] ${event.message} (${event.sourceId}:${event.lineNumber})`);

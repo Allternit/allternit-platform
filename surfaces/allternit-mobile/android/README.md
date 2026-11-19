@@ -81,23 +81,25 @@ export ANDROID_HOME=$HOME/Library/Android/sdk     # or write sdk.dir in local.pr
 # -> app/build/outputs/bundle/playRelease/app-play-release.aab
 ```
 
-Toolchain: AGP 8.9.1, Kotlin 2.0.21, Gradle 8.11.1, minSdk 26, target/compileSdk 36. App version: versionCode 16, versionName 0.7.0 (one versionCode for both flavors). Versions for new modules live in `gradle/libs.versions.toml`.
+Toolchain: AGP 8.9.1, Kotlin 2.3.21 (since step 7b: Clerk Android needs it), Gradle 8.11.1, minSdk 26, target/compileSdk 36. App version: versionCode 18, versionName 0.7.2 (one versionCode for both TWA flavors). Versions for new modules live in `gradle/libs.versions.toml`.
 
 ## Native app modules
 
-The native Kotlin + Jetpack Compose app that will replace the TWA launcher is built up in library modules first (plan: `handoffs/android-native-2026-11-18/PLAN.md` in the workspace). `:app` does not depend on them yet, so the Play and sideload builds are unchanged until the cutover step.
+The native Kotlin + Jetpack Compose app that will replace the TWA launcher is built up in library modules (plan: `handoffs/android-native-2026-11-18/PLAN.md` in the workspace). Only `:app`'s `nativeapp` flavor depends on them (since step 7b), so the Play and sideload builds are unchanged until the cutover step.
 
 | Module | Namespace | What it holds today |
 |---|---|---|
 | `:core:design` | `com.allternit.core.design` | `AllternitTheme(themeMode = ThemeMode.Light)` (Light default; `System` follows the phone only when the user's setting says so), generated `AllternitColors.Light/Dark` (all 17 iOS colorsets), `AllternitRadii`, `AllternitGlass`, `ModeAccents`, `FriendlyState`, `ThinkingOrb`, `Motion.standardSpring()` (damping 0.86, stiffness 322 = iOS `spring(0.35, 0.86)`), `Haptics` (tap, success, warning → `HapticFeedbackConstants`, with pre-API-30 fallbacks), `ph_*` icons |
 | `:core:api` | `com.allternit.core.api` | `ApiConfig` (`https://api.allternit.com/api/v1`; `/api/aci` and `/api/factory` derived the same way as iOS `AppConfig.swift`; `/api/agent-chat` on the connected instance), `cloudBaseUrl` (`https://api.allternit.com`, device tokens), `ApiClients.okHttp(bearer)` with a `BearerProvider` interceptor, and the generated client `gen/AllternitApi` + `gen/Models.gen.kt` (from `contracts/mobile-api`; every call returns `ApiResult`: `Ok` / `HttpError(status, code, message)` / `Network` / `Decode`) |
-| `:core:auth` | `com.allternit.core.auth` | `TokenProvider` interface only (Clerk Android or the Files-style Custom Tab sign-in is picked in step 7) |
+| `:core:auth` | `com.allternit.core.auth` | `AllternitAuth` on Clerk Android 1.4.1: `start(context)`, `state: StateFlow<AuthState>`, email code (sign-in or sign-up), Google/GitHub OAuth, debug ticket sign-in, org auto-create (iOS `finishOrganizationTaskIfNeeded`), `signOut()`; `tokenProvider` (`ClerkTokenProvider`, a `TokenProvider` for `ApiClients.okHttp`) |
+| `:feature:onboarding` | `com.allternit.feature.onboarding` | `SignInScreen`, the twin of iOS `LoginGateView` (test ids `loginHeadline`, `loginContinueEmail`, `loginSkipAuth`) |
+| `:feature:shell` | `com.allternit.feature.shell` | `MainActivity` (the `nativeapp` launcher): sign-in gate, then a placeholder home with **Use web version** and **Sign out**; debug-only `--es ticket <sign_in_token>`. Drawer, mode dial, search and overview: step 7c |
 | `:core:stream` | `com.allternit.core.stream` | `SseEvent` + `SseParser`, a byte-level port of iOS `SSEParser.swift`, with its test vectors in `SseParserTest`; `AgentChatStream` (okhttp-sse → `Flow<ChatStreamEvent>`, the iOS `AgentChatEvent` frame types) |
 | `:core:data` | `com.allternit.core.data` | `Prefs`, a typed wrapper over Preferences DataStore (the stand-in for UserDefaults) |
 
-**API client.** Never hand-write a REST client: add the route to the OpenAPI spec, list its `operationId` in `contracts/mobile-api/operations.json`, then run `node contracts/mobile-api/generate.mjs` (`--check` runs in `scripts/android-check.sh`). See `contracts/mobile-api/README.md`. Only SSE and WebSocket streams are hand-written (`:core:stream`). kotlinx-serialization 1.7.3, kotlinx-coroutines 1.9.0, okhttp-sse 4.12.0.
+**API client.** Never hand-write a REST client: add the route to the OpenAPI spec, list its `operationId` in `contracts/mobile-api/operations.json`, then run `node contracts/mobile-api/generate.mjs` (`--check` runs in `scripts/android-check.sh`). See `contracts/mobile-api/README.md`. Only SSE and WebSocket streams are hand-written (`:core:stream`). kotlinx-serialization 1.12.0, kotlinx-coroutines 1.11.0, OkHttp + okhttp-sse 5.4.0.
 
-Compose comes from the Compose BOM 2025.05.01 (UI 1.8.2, material3 1.3.2) with the Kotlin 2.0.21 Compose compiler plugin (`org.jetbrains.kotlin.plugin.compose`). DataStore is 1.1.7.
+Compose comes from the Compose BOM 2026.06.01 (the BOM Clerk Android resolves) with the Kotlin 2.3.21 Compose compiler plugin (`org.jetbrains.kotlin.plugin.compose`). DataStore is 1.1.7.
 
 **Release signing.** `app/build.gradle.kts` signs release builds only when all four of `ALLTERNIT_ANDROID_KEYSTORE` (keystore path), `ALLTERNIT_ANDROID_KEYSTORE_PASSWORD`, `ALLTERNIT_ANDROID_KEY_ALIAS` and `ALLTERNIT_ANDROID_KEY_PASSWORD` are set. Otherwise the release build is unsigned, as before. Never put a keystore path or password in the repo.
 
@@ -264,6 +266,7 @@ What had to adapt:
 
 - `phonelink` (the default) is the sideloaded APK Allternit Desktop installs. It is `src/main` plus `src/phonelink`: all Phone Link code, `Mesh.aar`, the accessibility service, services, receivers, permissions and the **Phone Link** shortcut. Tests live in `src/testPhonelink`.
 - `play` is the Google Play bundle. It is `src/main` plus `src/play`: the Trusted Web Activity, the screen-share lane (`src/phoneshare`), the on-device engine (`:ondevice`), the rating prompt and Google Play Billing (see below). Nothing from the adb side of Phone Link is packaged.
+- `nativeapp` (step 7b) is the native Kotlin + Compose app tested by sideload (`adb install`) until the cutover, then shipped to Play production with a staged rollout. It is never uploaded to Play before it reaches parity: `versionCode` 1000+ (TWA builds keep 17-999), version name suffix `-native`, launcher `com.allternit.feature.shell.MainActivity`. It is `src/main` plus `src/nativeapp` plus `:feature:shell`; the TWA `LauncherActivity` stays without the launcher category (manifest placeholder `twaLauncherCategory`) as the **Use web version** target. No Play Billing, `:ondevice` or Phone Link yet.
 - The module namespace is `com.allternit.app`, so the generated `R` class carries no Phone Link name. Phone Link classes keep the `com.allternit.phonelink` package, and `src/phonelink/AndroidManifest.xml` names them in full.
 
 ## The Allternit app (Trusted Web Activity, 0.5.0+)

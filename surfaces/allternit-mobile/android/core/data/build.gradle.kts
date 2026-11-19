@@ -16,12 +16,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 }
 
 dependencies {
     // Jetpack DataStore (Apache-2.0): the Android stand-in for iOS UserDefaults.
     api(libs.datastore.preferences)
+}
+
+// Kotlin 2.2+ rejects android { kotlinOptions { } } (deprecation raised to error);
+// compilerOptions is the replacement and also works on older Kotlin.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }

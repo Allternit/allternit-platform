@@ -1,5 +1,6 @@
 package com.allternit.app.files
 
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -31,7 +32,7 @@ class WireJsonFixturesTest {
                 assertEquals("${f.name}: type tag", want.getString("type"), cls.getMethod("getWireTag").invoke(decoded))
                 want.remove("type")
             }
-            assertTrue("${f.name}: re-encoded JSON differs\n want $want\n got  $encoded", want.similar(encoded))
+            assertTrue("${f.name}: re-encoded JSON differs\n want $want\n got  $encoded", jsonSame(want, encoded))
             assertEquals("${f.name}: decode(encode(x)) == x", decoded, WireJson.decodeObject(encoded, cls))
             checked += 1
         }
@@ -51,4 +52,18 @@ class WireJsonFixturesTest {
         }
         assertTrue("decoding without computer_id must throw", failed)
     }
+}
+
+/**
+ * Structural JSON equality (keys in any order, numbers by value). Not JSONObject.similar:
+ * under Kotlin 2.3 the unit tests compile against android.jar's org.json stubs, which lack it.
+ */
+private fun jsonSame(a: Any?, b: Any?): Boolean = when {
+    a === JSONObject.NULL || a == null -> b === JSONObject.NULL || b == null
+    a is JSONObject && b is JSONObject ->
+        a.length() == b.length() && a.keys().asSequence().all { b.has(it) && jsonSame(a.get(it), b.get(it)) }
+    a is JSONArray && b is JSONArray ->
+        a.length() == b.length() && (0 until a.length()).all { jsonSame(a.get(it), b.get(it)) }
+    a is Number && b is Number -> a.toString().toBigDecimal().compareTo(b.toString().toBigDecimal()) == 0
+    else -> a == b
 }

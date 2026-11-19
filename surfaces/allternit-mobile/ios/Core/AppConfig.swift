@@ -117,6 +117,11 @@ enum AppConfig {
     /// empty key as "Clerk not configured" instead of crashing.
     static let clerkPublishableKey: String = infoPlistValue("CLERK_PUBLISHABLE_KEY") ?? ""
 
+    /// Clerk Frontend API proxy shared with ai.allternit.com and the native
+    /// Android app (worker allternit-clerk-proxy). Google sign-in only works
+    /// through it: Google allows just its /v1/oauth_callback.
+    static let clerkProxyURL = "https://allternit.com/__clerk"
+
     /// Allternit Cloud API host — the runtime-device registry and the relay
     /// entry point. Default mirrors the web's `cloudApiBaseUrl()` fallback
     /// (surfaces/ai.allternit.com/src/lib/fetch-interceptor.ts:85-87);
