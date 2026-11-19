@@ -22,7 +22,8 @@
 // (linux-unpacked), its top-level `allternit` ELF is the shell; --shell <path>
 // (relative to --dir, or absolute) names it explicitly and fails if it is missing.
 //
-// Flags: --dir <path> [--shell <path>] [--floor 2.27] [--json] [--allowlist <file>] [--glibcxx-floor 3.4.28]
+// Flags: --dir <path> | --files <list> [--shell <path>] [--floor 2.27] [--json] [--allowlist <file>] [--glibcxx-floor 3.4.28]
+//        --files <list>  check exactly these files (one absolute path per line) instead of walking --dir
 //        --print-floor   print the floor from build-linux-sidecars.sh and exit
 // Allowlist (default scripts/elf-floor-allowlist.json): [{"path":"suffix/of/file","reason":"why"}]
 import fs from 'node:fs';
@@ -42,13 +43,15 @@ const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : d; };
 if (args.includes('--print-floor')) { console.log(readFloorConst()); process.exit(0); }
 const dir = opt('--dir');
-if (!dir) { console.error('usage: check-elf-floor.mjs --dir <path> [--shell <path>] [--floor 2.27] [--json] [--allowlist f] [--glibcxx-floor 3.4.28]'); process.exit(2); }
+const filesList = opt('--files');
+if (!dir && !filesList) { console.error('usage: check-elf-floor.mjs (--dir <path> | --files <list>) [--shell <path>] [--floor 2.27] [--json] [--allowlist f] [--glibcxx-floor 3.4.28]'); process.exit(2); }
 const floor = opt('--floor', readFloorConst());
 const cxxFloor = opt('--glibcxx-floor', null);
 const asJson = args.includes('--json');
 const allowFile = opt('--allowlist', path.join(here, 'elf-floor-allowlist.json'));
 const shellOpt = opt('--shell', null);
-const shellPath = shellOpt ? path.resolve(dir, shellOpt) : path.join(dir, 'allternit');
+// With --files and no --dir there is no app root, so only an explicit --shell is a shell.
+const shellPath = shellOpt ? path.resolve(dir || '.', shellOpt) : dir ? path.join(dir, 'allternit') : null;
 
 let allow = [];
 if (fs.existsSync(allowFile)) {
@@ -112,14 +115,16 @@ if (shellOpt && !(fs.existsSync(shellPath) && isElf(shellPath))) {
   console.error(`--shell ${shellOpt}: no ELF at ${shellPath}`);
   process.exit(1);
 }
-const files = [...walk(dir)];
+const files = filesList
+  ? fs.readFileSync(filesList, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean)
+  : [...walk(dir)];
 if (shellOpt && !files.some((f) => path.resolve(f) === shellPath)) files.push(shellPath); // shell outside --dir
 const rows = [];
 let shellRow = null;
 for (const p of files) {
   if (!isElf(p)) continue;
-  const rel = path.relative(dir, p);
-  const isShell = path.resolve(p) === path.resolve(shellPath);
+  const rel = dir ? path.relative(dir, p) : p;
+  const isShell = shellPath !== null && path.resolve(p) === path.resolve(shellPath);
   const buf = fs.readFileSync(p);
   let method = 'verneed', ents = null;
   try { ents = verneed(buf); } catch { ents = null; }
@@ -147,7 +152,7 @@ if (asJson) {
   console.log(JSON.stringify({ floor, dir, shell: shellRow ? shellRow.file : null, checked: rows.length, failed: fails.length, rows }, null, 2));
 } else {
   const w = Math.min(70, Math.max(10, ...rows.map((r) => r.file.length)));
-  console.log(`ELF floor check: GLIBC <= ${floor}${cxxFloor ? `, GLIBCXX <= ${cxxFloor}` : ''}  (${rows.length} ELF files in ${dir})`);
+  console.log(`ELF floor check: GLIBC <= ${floor}${cxxFloor ? `, GLIBCXX <= ${cxxFloor}` : ''}  (${rows.length} ELF files in ${dir || filesList})`);
   console.log(`${'FILE'.padEnd(w)}  GLIBC   GLIBCXX   METHOD   STATUS`);
   for (const r of rows) console.log(`${r.file.slice(-w).padEnd(w)}  ${(r.glibc || '-').padEnd(6)}  ${(r.glibcxx || '-').padEnd(8)}  ${r.method.padEnd(7)}  ${r.status}${r.reason ? ' (' + r.reason + ')' : ''}`);
   console.log(shellRow ? `Electron shell: ${shellRow.file} needs GLIBC ${shellRow.glibc || '-'} (${shellRow.status})` : 'Electron shell: not in --dir (pass --dir <linux-unpacked> or --shell <path> to check it)');
