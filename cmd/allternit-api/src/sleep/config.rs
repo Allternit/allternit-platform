@@ -327,3 +327,40 @@ pub fn set_owner(
     tx.commit()?;
     Ok(())
 }
+
+/// Writes fitted values for one user (step 3.4). Keys must exist and be
+/// numeric; values are clamped to the key's range. A row the user set
+/// (`source = 'owner'`) is never replaced. Returns the keys actually written.
+pub fn set_fitted(
+    conn: &Connection,
+    user_id: &str,
+    values: &[(&str, f64)],
+) -> Result<Vec<String>, ConfigError> {
+    let mut checked = Vec::with_capacity(values.len());
+    for (key, value) in values {
+        let d = def(key).ok_or_else(|| ConfigError::UnknownKey((*key).to_string()))?;
+        if !matches!(d.default, DefaultValue::Num(_)) || !value.is_finite() {
+            return Err(ConfigError::BadValue { key: d.key.to_string(), why: "fitted values are finite numbers".into() });
+        }
+        checked.push((d.key, validate(d, &serde_json::json!(value.clamp(d.min, d.max)))?));
+    }
+    let tx = conn.unchecked_transaction()?;
+    let mut written = Vec::new();
+    for (key, value) in checked {
+        let n = tx.execute(
+            "INSERT INTO sleep_config (user_id, key, value_json, source, updated_at)
+             VALUES (?1, ?2, ?3, 'fitted', CURRENT_TIMESTAMP)
+             ON CONFLICT(user_id, key) DO UPDATE SET
+                 value_json = excluded.value_json,
+                 source = 'fitted',
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE sleep_config.source <> 'owner'",
+            params![user_id, key, value.to_string()],
+        )?;
+        if n > 0 {
+            written.push(key.to_string());
+        }
+    }
+    tx.commit()?;
+    Ok(written)
+}
