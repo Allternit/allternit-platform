@@ -8,6 +8,7 @@
 //! - [`types`]: route payloads, `SourceType`, `Stage`, `DisputeChoice`,
 //!   `SignalEvent`, and the `sleep.*` event names.
 //! - [`config`]: code defaults overlaid with `sleep_config` rows.
+//! - [`strength`]: two strengths per memory behind the `strengths` stage (3.2).
 //! - [`routes`]: `/api/v1/memory/sleep/...` and `/api/v1/memory/disputes...`.
 //!
 //! The module stays self-contained (D1) so it can become its own crate when
@@ -16,4 +17,5 @@
 
 pub mod config;
 pub mod routes;
+pub mod strength;
 pub mod types;

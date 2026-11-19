@@ -109,6 +109,11 @@ pub const DEFS: &[Def] = &[
     int("fit_min_labeled_events", 200, 1.0, 1_000_000.0, "Labelled events needed before fitted values replace defaults."),
     int("check_router_sample", 200, 0.0, 100_000.0, "Fixed router sample size in the bounded check."),
     int("check_neighbours", 5, 0.0, 100.0, "Neighbours checked per changed memory."),
+    num("strength_half_life_days", 30.0, 1.0, 3650.0, "Days for retrieval strength to halve at storage strength 0; well-learned memories fade slower."),
+    num("strength_spacing_credit", 0.2, 0.0, 5.0, "Storage strength a fully spaced recall earns."),
+    num("strength_difficulty_weight", 1.0, 0.0, 10.0, "Extra credit for a recall made while retrieval strength was low."),
+    num("strength_min_spacing_days", 1.0, 0.01, 365.0, "Days since the last recall that earn full spacing credit."),
+    num("strength_instant_credit_cap", 0.02, 0.0, 1.0, "Most a recall under the minimum spacing can earn."),
 ];
 
 pub fn def(key: &str) -> Option<&'static Def> {

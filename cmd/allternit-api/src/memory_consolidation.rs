@@ -204,6 +204,18 @@ pub fn apply_merge(conn: &Connection, user_id: &str, pair: &Pair, origin: &str, 
     Ok(true)
 }
 
+/// Ids today's decay rule would mark (same filter and limit as [`decay`]).
+pub fn decay_candidates(conn: &Connection, user_id: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id FROM memory_facts
+         WHERE user_id = ?1 AND valid_until IS NULL AND decayed_at IS NULL AND retrieval_count = 0
+           AND confidence < ?2 AND valid_from < datetime('now', '-{DECAY_AGE_DAYS} days')
+         LIMIT {MAX_DECAYS}"
+    ))?;
+    let rows = stmt.query_map(params![user_id, DECAY_MAX_CONFIDENCE], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
 /// Mark stale, never-retrieved, low-confidence facts as decayed (soft).
 pub fn decay(conn: &Connection, user_id: &str) -> rusqlite::Result<usize> {
     conn.execute(
@@ -247,6 +259,8 @@ pub struct RunReport {
     pub shadow_decisions: usize,
     pub outcomes_reported: usize,
     pub decayed: usize,
+    /// Sleep `strengths` on: facts today's 90-day rule would have decayed (logged, not applied).
+    pub shadow_old_decay: usize,
     pub live_bank: &'static str,
 }
 
@@ -318,7 +332,17 @@ pub async fn run_for_user(db: &DbHandle, client: &S1Client, user_id: &str, s1_li
     }
 
     let conn = db.connect().map_err(sql_err)?;
-    report.decayed = decay(&conn, user_id).map_err(sql_err)?;
+    let strengths_on = crate::sleep::config::load(&conn, user_id)
+        .map(|c| c.stage_on(crate::sleep::types::Stage::Strengths))
+        .unwrap_or(false);
+    if strengths_on {
+        // Retrieval strength replaces the age rule: log what it would have done, change nothing.
+        let ids = decay_candidates(&conn, user_id).map_err(sql_err)?;
+        report.shadow_old_decay = ids.len();
+        tracing::info!(user = %user_id, shadow_old_decay = ids.len(), ids = ?ids, "sleep strengths: old decay rule would have decayed these facts");
+    } else {
+        report.decayed = decay(&conn, user_id).map_err(sql_err)?;
+    }
     conn.execute(
         "UPDATE memory_consolidation_runs SET finished_at = CURRENT_TIMESTAMP, scanned = ?2, merged = ?3,
                 shadow_decisions = ?4, decayed = ?5 WHERE id = ?1",
