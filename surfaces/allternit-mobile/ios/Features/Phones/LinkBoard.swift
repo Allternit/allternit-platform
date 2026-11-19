@@ -177,3 +177,100 @@ final class LinkBoardsClient: @unchecked Sendable {
         return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 }
+
+// MARK: - App Maps (read only)
+
+/// One app's map summary: `GET /api/v1/phones/maps` → `{ maps: [...] }` (contract phone-app-map §4;
+/// cloud route `GET /v1/phones/maps`). Read only here: Explore and Forget run in Allternit on the
+/// person's computer, and there is no cloud route for them.
+struct AppMapSummary: Equatable, Identifiable, Sendable {
+    let app: String
+    let platform: String
+    let name: String?
+    let screens: Int
+    let staleEdges: Int
+    var id: String { "\(platform):\(app)" }
+
+    /// The label shown for the app: the map's own name, else the short package name.
+    var title: String { name ?? AppMapCopy.appName(fromPackage: app) ?? app }
+
+    init(app: String, platform: String = "android", name: String? = nil, screens: Int, staleEdges: Int = 0) {
+        self.app = app; self.platform = platform; self.name = name; self.screens = screens; self.staleEdges = staleEdges
+    }
+
+    /// Rows without an app id are dropped; counts default to 0.
+    static func list(_ data: Data) -> [AppMapSummary] {
+        let rows = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["maps"] as? [[String: Any]] ?? []
+        return rows.compactMap { o in
+            guard let app = o["app"] as? String, !app.isEmpty else { return nil }
+            let name = (o["name"] as? String).flatMap { $0.isEmpty || $0 == app ? nil : $0 }
+            return AppMapSummary(app: app, platform: (o["platform"] as? String) ?? "android", name: name,
+                                 screens: (o["screens"] as? NSNumber)?.intValue ?? 0,
+                                 staleEdges: (o["stale_edges"] as? NSNumber)?.intValue ?? 0)
+        }
+    }
+}
+
+extension AppMapCopy {
+    /// The line under an app's name (web `mapStateLine`, plus the money and iPhone cases of the apps sheet).
+    static func stateLine(_ summary: AppMapSummary?, money: Bool = false) -> String {
+        if money { return "Explore won’t touch money apps" }
+        guard let s = summary else { return "Learns as your bot uses it" }
+        if s.platform == "ios" { return "Learns as your bot uses it" }
+        if s.staleEdges > 0 { return "\(s.staleEdges) route\(s.staleEdges == 1 ? "" : "s") need\(s.staleEdges == 1 ? "s" : "") a check" }
+        return "\(s.screens) screen\(s.screens == 1 ? "" : "s") known"
+    }
+
+    /// The Desktop button this state would show: Explore / Explore again / Check. Nil for money apps and
+    /// iPhone maps, which never get Explore. iOS shows it as text only (Explore starts on the computer).
+    static func exploreAction(_ summary: AppMapSummary?, money: Bool) -> String? {
+        if money || summary?.platform == "ios" { return nil }
+        guard let s = summary else { return "Explore" }
+        return s.staleEdges > 0 ? "Check" : "Explore again"
+    }
+
+    private static let moneyWords: Set<String> = [
+        "bank", "banking", "wallet", "paypal", "venmo", "zelle", "chase", "citi", "citibank", "amex", "robinhood", "coinbase", "fidelity", "schwab",
+        "vanguard", "etrade", "webull", "ibkr", "binance", "kraken", "revolut", "monzo", "chime", "sofi", "usaa", "klarna", "affirm", "afterpay",
+        "passbook", "wise", "cash",
+    ]
+    private static let moneyCompact = [
+        "bankofamerica", "wellsfargo", "capitalone", "americanexpress", "navyfederal", "interactivebrokers", "walletnfcrel", "transferwise",
+        "samsungpay", "googlepay", "applepay", "cryptocom", "squareupcash",
+    ]
+
+    /// A bank, wallet or broker app by package or name (web `isMoneyApp`). A hint only.
+    static func isMoneyApp(_ app: String) -> Bool {
+        let words = app.lowercased().split(whereSeparator: { !($0.isLetter || $0.isNumber) }).map(String.init)
+        let compact = words.joined()
+        return words.contains { moneyWords.contains($0) || $0.hasSuffix("bank") || $0.contains("wallet") }
+            || moneyCompact.contains { compact.contains($0) }
+    }
+}
+
+enum AppMapsOutcome: Equatable, Sendable {
+    case maps([AppMapSummary])
+    /// An older runtime answered 404: hide the section.
+    case unsupported
+    /// The computer is not running, or the runtime did not answer.
+    case unreachable
+}
+
+/// Reads the maps through the runtime this phone is paired with, the way `LinkBoardsClient` reads boards.
+final class AppMapsClient: @unchecked Sendable {
+    static let shared = AppMapsClient()
+    private let api: APIClient
+    init(api: APIClient = .shared) { self.api = api }
+
+    func maps() async -> AppMapsOutcome {
+        guard var request = try? await api.authorizedRequest(path: "phones/maps", method: "GET") else { return .unreachable }
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 20
+        guard let (data, response) = try? await InstanceConnection.runtimeAPIData(for: request, session: api.session) else { return .unreachable }
+        switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+        case 404: return .unsupported
+        case 200..<300: return .maps(AppMapSummary.list(data))
+        default: return .unreachable
+        }
+    }
+}

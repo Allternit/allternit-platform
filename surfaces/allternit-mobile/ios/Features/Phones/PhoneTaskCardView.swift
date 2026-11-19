@@ -43,6 +43,10 @@ struct PhoneTaskCardModel: Identifiable, Equatable, Sendable {
     var startedAt: Date? = nil
     /// False for runs started from the composer: their pill stays on the card (decision 5).
     var hostable: Bool = true
+    /// App Maps (report fields `map_steps`, `model_calls`; the map's app label or package). Nil on older runtimes.
+    var mapSteps: Int? = nil
+    var modelCalls: Int? = nil
+    var mapApp: String? = nil
     var id: String { runId }
 }
 
@@ -76,6 +80,9 @@ extension PhoneTaskCardModel {
     /// the run ended (the runtime drops its live entry): done, or failed when a step failed.
     mutating func apply(_ run: PhoneTaskClient.RunSummary) {
         if serial.isEmpty { serial = run.serial }
+        if let m = run.mapSteps { mapSteps = m }
+        if let m = run.modelCalls { modelCalls = m }
+        if let a = run.mapApp { mapApp = a }
         if goal.isEmpty { goal = run.goal }
         if !run.status.isEmpty {
             status = .init(raw: run.status)
@@ -278,13 +285,21 @@ final class PhoneRunStore: ObservableObject {
         if case .number(let n)? = payload["step"], n.isFinite { step = max(0, Int(n)) }
         let serial = str("serial") ?? ""
         let computer = type == "computer_task"
-        return PhoneTaskCardModel(runId: runId, serial: serial, goal: str("goal") ?? "",
+        func count(_ keys: String...) -> Int? {
+            for k in keys { if case .number(let n)? = payload[k], n.isFinite, n >= 0 { return Int(n) } }
+            return nil
+        }
+        var model = PhoneTaskCardModel(runId: runId, serial: serial, goal: str("goal") ?? "",
                                   status: .init(raw: str("status") ?? "running"), step: step,
                                   inboxId: str("inboxId"),
                                   phoneName: names[serial] ?? (computer ? "your computer" : "your phone"),
                                   kind: computer ? .computer : .phone,
                                   stepLabel: str("stepLabel"), summary: str("summary"),
                                   steps: RunStep.list(payload["trail"]), startedAt: at)
+        model.mapSteps = count("mapSteps", "map_steps")
+        model.modelCalls = count("modelCalls", "model_calls")
+        model.mapApp = str("appName") ?? str("app_label") ?? str("appLabel") ?? str("app")
+        return model
     }
 
     private static func date(_ raw: String) -> Date? {
@@ -305,6 +320,9 @@ final class PhoneRunStore: ObservableObject {
             if merged.steps.isEmpty { merged.steps = old.steps }
             if let a = old.startedAt, a < (merged.startedAt ?? .distantFuture) { merged.startedAt = a }
             if merged.goal.isEmpty { merged.goal = old.goal }
+            if merged.mapSteps == nil { merged.mapSteps = old.mapSteps }
+            if merged.modelCalls == nil { merged.modelCalls = old.modelCalls }
+            if merged.mapApp == nil { merged.mapApp = old.mapApp }
             guard merged != old else { return }
             list[i] = merged
         } else {
@@ -397,6 +415,13 @@ struct PhoneTaskCardView: View {
                     .font(.system(size: 12))
                     .foregroundColor(Color("TextSecondary"))
                     .fixedSize(horizontal: false, vertical: true)
+                if let line = AppMapCopy.cardLine(mapSteps: card.mapSteps, modelCalls: card.modelCalls, app: card.mapApp) {
+                    Label { Text(line) } icon: { Image(systemName: "map") }
+                        .font(.system(size: 12))
+                        .foregroundColor(Color("TextSecondary"))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityElement(children: .combine)
+                }
                 if !hosted {
                     RunThoughtStream(steps: card.steps, active: card.status.isActive)
                 }
