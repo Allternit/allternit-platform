@@ -498,17 +498,6 @@
           ]
         },
         {
-          "from": "resources/lima/linux/",
-          "to": "lima/",
-          "filter": [
-            "limactl"
-          ]
-        },
-        {
-          "from": "resources/lima/README.md",
-          "to": "lima/README.md"
-        },
-        {
           "from": "resources/computer-use/driver/",
           "to": "computer-use/driver/"
         },
