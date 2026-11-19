@@ -398,6 +398,7 @@ export const PHONE_TOOLS = [
         bot_id: { type: 'string', maxLength: 200, description: 'Your bot id: the task runs on your brain.' },
         brain: { type: 'string', maxLength: 200, description: 'A brain as provider/model, when bot_id is not known.' },
         model: { enum: ['Flash', 'Pro'], description: 'Only for the ARTEMIS fallback (Android over adb with GEMINI_API_KEY).' },
+        vision: { enum: ['auto', 'always'], description: 'Screenshot policy. auto (default) skips the screenshot when the screen tree is rich; always sends one every step.' },
       },
       required: ['task'],
       additionalProperties: false,
@@ -653,6 +654,32 @@ export const PHONE_TOOLS = [
       type: 'object',
       properties: { serial: iphoneSerialProp, route: routeProp, id: { type: 'string', minLength: 1, maxLength: 200 } },
       required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.maps',
+    description:
+      'Read the app maps Explore has learned (screens, and the taps that lead between them). Without app: a summary per mapped app. With app (package name): that app\'s full map. Read only; never touches the phone.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: { type: 'string', maxLength: 128 }, app: { type: 'string', maxLength: 200 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.explore_app',
+    description:
+      'Start an Explore run that maps one app: it opens the app and walks its screens depth first, recording where each tap leads, then returns run_id at once. Android only. It never taps switches, text fields, or anything that pays, sends or deletes, and money apps are refused (money_app). One Explore per phone, and it needs a phone with no task or skill running (explore_running, phone_busy). Stop it with the run\'s stop (POST /api/aci/stop/<run_id>). Read the result with phone.maps.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: { type: 'string', maxLength: 128 },
+        app: { type: 'string', maxLength: 200 },
+        minutes: { type: 'integer', minimum: 1, maximum: 30, default: 10 },
+        max_screens: { type: 'integer', minimum: 1, maximum: 300, default: 60 },
+      },
+      required: ['app'],
       additionalProperties: false,
     },
   },
@@ -984,7 +1011,7 @@ export class PhoneToolRunner {
     this.raws.set(a, raw);
     const result = await this.dispatch(name, a);
     const recorder = this.deps.recorder;
-    if (recorder && name !== 'phone.devices' && name !== 'phone.skills' && name !== 'phone.save_skill') {
+    if (recorder && name !== 'phone.devices' && name !== 'phone.skills' && name !== 'phone.save_skill' && name !== 'phone.maps') {
       const serial = typeof a.serial === 'string' ? a.serial : this.onlyOnline();
       if (serial) recorder.record({ serial, tool: name, args: raw, result: result as Record<string, unknown>, durationMs: this.now() - started });
     }
@@ -1042,9 +1069,12 @@ export class PhoneToolRunner {
     if (!known) return fail('unknown_tool', `No phone tool named ${name}.`);
 
     if (name === 'phone.skills' || name === 'phone.save_skill') return this.skillCall(name, a);
+    if (name === 'phone.maps') return this.mapsRead(a);
 
     const serial = this.resolveSerial(a.serial, usb, links, apps);
     if (typeof serial !== 'string') return serial;
+    // Explore runs in allternit-api and the runtime guard checks every tap it makes (source "explore"), like phone.task.
+    if (name === 'phone.explore_app') return this.explore(serial, a);
     // Every acting call crosses here (task loop, replay, a bot's direct call, the gateway, MCP): the runtime decides, Desktop enforces.
     if (GUARDED_TOOLS.has(name) && !(name.startsWith('phone.web.') && !apps?.has(serial))) {
       const stop = await this.guardCheck(name, serial, a, { usb, links, apps });
@@ -1365,6 +1395,7 @@ export class PhoneToolRunner {
     if (typeof a.task !== 'string' || !a.task.trim() || a.task.length > 2000) {
       return fail('invalid_args', 'task must be 1–2000 characters.');
     }
+    if (a.vision !== undefined && a.vision !== 'auto' && a.vision !== 'always') return fail('invalid_args', 'vision must be "auto" or "always".');
     const model = a.model === undefined ? 'Flash' : a.model;
     if (model !== 'Flash' && model !== 'Pro') return fail('invalid_args', 'model must be Flash or Pro.');
     if (a.max_steps !== undefined && (!isInt(a.max_steps, 40) || a.max_steps === 0)) return fail('invalid_args', 'max_steps must be 1–40.');
@@ -1377,6 +1408,7 @@ export class PhoneToolRunner {
           max_steps: a.max_steps as number | undefined,
           bot_id: typeof a.bot_id === 'string' ? a.bot_id : undefined,
           brain: typeof a.brain === 'string' ? a.brain : undefined,
+          vision: a.vision as 'auto' | 'always' | undefined,
         });
         if (out.ok === false && typeof out.error === 'string' && typeof out.message === 'string' && !('status' in out)) {
           return fail(out.error === 'not_found' ? 'not_found' : 'invalid_args', out.message);
@@ -1395,6 +1427,36 @@ export class PhoneToolRunner {
     }
     const result = await artemis.runTask(serial, a.task.trim(), model);
     return { ok: true, result, via: 'artemis' };
+  }
+
+  /** phone.maps: GET /phones/maps[/:app]. Read only. */
+  private async mapsRead(a: Record<string, unknown>): Promise<ToolResult> {
+    if (a.app !== undefined && (typeof a.app !== 'string' || !a.app.trim() || a.app.length > 200)) return fail('invalid_args', 'app must be a package name of 1–200 characters.');
+    const api = this.deps.api?.() ?? null;
+    if (!api) return fail('unsupported', 'App maps live in Allternit Desktop\'s local API, which isn\'t running.');
+    try {
+      const out = typeof a.app === 'string' ? await api.map(a.app.trim()) : await api.maps();
+      return out.ok === false ? (out as ToolResult) : { ...out, ok: true };
+    } catch (error) {
+      if (error instanceof PhoneApiUnavailable) return fail('unsupported', `App maps need Allternit Desktop's local API (${error.message}).`);
+      throw error;
+    }
+  }
+
+  /** phone.explore_app: POST /phones/maps/:app/explore. Contract error codes pass through unchanged. */
+  private async explore(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
+    if (typeof a.app !== 'string' || !a.app.trim() || a.app.length > 200) return fail('invalid_args', 'app must be a package name of 1–200 characters.');
+    if (a.minutes !== undefined && (!isInt(a.minutes, 30) || a.minutes === 0)) return fail('invalid_args', 'minutes must be 1–30.');
+    if (a.max_screens !== undefined && (!isInt(a.max_screens, 300) || a.max_screens === 0)) return fail('invalid_args', 'max_screens must be 1–300.');
+    const api = this.deps.api?.() ?? null;
+    if (!api) return fail('unsupported', 'Explore runs in Allternit Desktop\'s local API, which isn\'t running.');
+    try {
+      const out = await api.explore(a.app.trim(), { serial, minutes: a.minutes as number | undefined, max_screens: a.max_screens as number | undefined });
+      return out.ok === false ? (out as ToolResult) : { ...out, ok: true };
+    } catch (error) {
+      if (error instanceof PhoneApiUnavailable) return fail('unsupported', `Explore needs Allternit Desktop's local API (${error.message}).`);
+      throw error;
+    }
   }
 
   /** phone.skills / phone.save_skill / phone.run_skill → allternit-api. */
@@ -1776,7 +1838,8 @@ export class PhoneToolRunner {
  * any lane runs them. phone.sms.send, phone.call.dial and phone.sms.read are
  * checked inside smsSend / callDial / smsRead, after validation and the rate
  * limit. Not checked (the guard has no rule for them): screenshot, read_ui,
- * screen_text, swipe, home, back, task (its loop checks every step), web.open,
+ * screen_text, swipe, home, back, task and explore_app (their loops check every
+ * step), maps (read only), web.open,
  * web.snapshot, web.scroll, web.back, web.wait, calendar/reminders/contacts,
  * skills. The Phone Use tools (shortcuts.run, actions.run, home.set,
  * home.scene) are checked in phoneUseApproval by their contract §8 class,

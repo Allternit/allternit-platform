@@ -737,3 +737,58 @@ describe('Phone Use tools (contract §3)', () => {
     expect(await android.r.call('phone.shortcuts.run', { name: 'x' })).toMatchObject({ ok: false, error: 'not_supported' });
   });
 });
+
+describe('phone.maps, phone.explore_app, phone.task vision', () => {
+  const tool = (name: string) => PHONE_TOOLS.find((t) => t.name === name) as unknown as { description: string; inputSchema: { properties: Record<string, any>; required?: string[]; additionalProperties: boolean } };
+
+  it('lists both tools with the contract schemas', () => {
+    expect(tool('phone.maps').inputSchema).toMatchObject({ additionalProperties: false });
+    expect(Object.keys(tool('phone.maps').inputSchema.properties).sort()).toEqual(['app', 'serial']);
+    expect(tool('phone.maps').inputSchema.required).toBeUndefined();
+    expect(tool('phone.explore_app').inputSchema.required).toEqual(['app']);
+    expect(tool('phone.explore_app').inputSchema.additionalProperties).toBe(false);
+    expect(tool('phone.explore_app').inputSchema.properties.minutes).toMatchObject({ minimum: 1, maximum: 30, default: 10 });
+    expect(tool('phone.explore_app').inputSchema.properties.max_screens).toMatchObject({ minimum: 1, maximum: 300, default: 60 });
+    expect(tool('phone.explore_app').description).toMatch(/Android only/);
+    expect(tool('phone.explore_app').description).toMatch(/money apps are refused/);
+    expect(tool('phone.task').inputSchema.properties.vision.enum).toEqual(['auto', 'always']);
+  });
+
+  it('phone.maps reads the list or one map and never needs a phone', async () => {
+    const maps = vi.fn(async () => ({ ok: true, maps: [{ app: 'com.x' }] }));
+    const map = vi.fn(async () => ({ ok: true, map: { app: 'com.x' } }));
+    const { r } = runner({ api: { maps, map } as unknown as PhoneApi, online: [] });
+    expect(await r.call('phone.maps', {})).toMatchObject({ ok: true, maps: [{ app: 'com.x' }] });
+    expect(await r.call('phone.maps', { app: 'com.x' })).toMatchObject({ ok: true, map: { app: 'com.x' } });
+    expect(map).toHaveBeenCalledWith('com.x');
+    const missing = { map: async () => ({ ok: false, error: 'map_not_found', message: 'none', status: 404 }) } as unknown as PhoneApi;
+    expect(await runner({ api: missing }).r.call('phone.maps', { app: 'com.y' })).toMatchObject({ ok: false, error: 'map_not_found' });
+    expect(await runner().r.call('phone.maps', {})).toMatchObject({ ok: false, error: 'unsupported' });
+  });
+
+  it('phone.explore_app passes the body through and returns run_id', async () => {
+    const explore = vi.fn(async () => ({ ok: true, status: 'running', run_id: 'explore-1' }));
+    const { r } = runner({ api: { explore } as unknown as PhoneApi });
+    expect(await r.call('phone.explore_app', { app: 'com.android.settings', minutes: 5, max_screens: 20 })).toMatchObject({ ok: true, run_id: 'explore-1', status: 'running' });
+    expect(explore).toHaveBeenCalledWith('com.android.settings', { serial: '192.168.1.20:41234', minutes: 5, max_screens: 20 });
+  });
+
+  it('phone.explore_app validates arguments and passes 403 money_app and 409 phone_busy through', async () => {
+    const { r } = runner({ api: { explore: async () => ({ ok: false, error: 'money_app', message: 'no', status: 403 }) } as unknown as PhoneApi });
+    expect(await r.call('phone.explore_app', { app: '' })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.explore_app', { app: 'com.x', minutes: 31 })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.explore_app', { app: 'com.x', max_screens: 0 })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.explore_app', { app: 'com.bank' })).toMatchObject({ ok: false, error: 'money_app', status: 403 });
+    const busy = runner({ api: { explore: async () => ({ ok: false, error: 'phone_busy', message: 'busy', status: 409 }) } as unknown as PhoneApi }).r;
+    expect(await busy.call('phone.explore_app', { app: 'com.x' })).toMatchObject({ ok: false, error: 'phone_busy', status: 409 });
+  });
+
+  it('phone.task passes vision through and rejects other values', async () => {
+    const task = vi.fn(async () => ({ ok: true, status: 'done' }));
+    const { r } = runner({ api: { task } as unknown as PhoneApi });
+    await r.call('phone.task', { task: 'x', vision: 'always' });
+    expect(task).toHaveBeenCalledWith('192.168.1.20:41234', expect.objectContaining({ goal: 'x', vision: 'always' }));
+    expect(await r.call('phone.task', { task: 'x', vision: 'never' })).toMatchObject({ error: 'invalid_args' });
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+});

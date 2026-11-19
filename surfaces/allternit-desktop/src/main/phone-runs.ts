@@ -21,7 +21,7 @@ export const RUN_IDLE_MS = 5 * 60_000;
 const MAX_UI_CHARS = 24_000;
 const REDACT_KEYS = new Set(['text', 'to', 'number', 'body', 'message']);
 /** Reads that don't change the screen (no target to attach). */
-const READ_TOOLS = new Set(['phone.devices', 'phone.screenshot', 'phone.read_ui', 'phone.screen_text', 'phone.skills']);
+const READ_TOOLS = new Set(['phone.devices', 'phone.screenshot', 'phone.read_ui', 'phone.screen_text', 'phone.skills', 'phone.maps']);
 
 export interface PhoneStepIn {
   run_id: string;
@@ -42,6 +42,14 @@ export interface PhoneTaskRequest {
   max_steps?: number;
   bot_id?: string;
   brain?: string;
+  /** Screenshot policy: "auto" skips it when the accessibility tree is rich; "always" sends it every step. */
+  vision?: 'auto' | 'always';
+}
+
+export interface PhoneExploreRequest {
+  serial: string;
+  minutes?: number;
+  max_screens?: number;
 }
 
 /** The allternit-api phone endpoints. Each throws PhoneApiUnavailable when the API can't be reached. */
@@ -51,6 +59,13 @@ export interface PhoneApi {
   skills(): Promise<Record<string, unknown>>;
   saveSkill(body: Record<string, unknown>): Promise<Record<string, unknown>>;
   runSkill(name: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
+  /** App maps (contract phone-app-map §4). Errors come back as { ok:false, error:<contract code>, message, status }. */
+  maps(platform?: string): Promise<Record<string, unknown>>;
+  map(app: string, platform?: string): Promise<Record<string, unknown>>;
+  forgetMap(app: string, platform?: string): Promise<Record<string, unknown>>;
+  explore(app: string, body: PhoneExploreRequest): Promise<Record<string, unknown>>;
+  /** POST /api/aci/stop/:id: stops a task, skill or Explore run. */
+  stopRun(runId: string): Promise<Record<string, unknown>>;
 }
 
 export class PhoneApiUnavailable extends Error {}
@@ -177,10 +192,11 @@ export class PhoneRunRecorder {
 
 /** HTTP client for the local allternit-api. */
 export function httpPhoneApi(base: () => string, headers: () => Record<string, string>, fetchImpl: typeof fetch = fetch): PhoneApi {
-  const req = async (method: string, path: string, body?: unknown, timeoutMs = 30_000): Promise<Record<string, unknown>> => {
+  const req = async (method: string, path: string, body?: unknown, timeoutMs = 30_000, prefix = '/api/v1'): Promise<Record<string, unknown>> => {
+    const isMaps = path.startsWith('/phones/maps');
     let res: Response;
     try {
-      res = await fetchImpl(`${base().replace(/\/$/, '')}/api/v1${path}`, {
+      res = await fetchImpl(`${base().replace(/\/$/, '')}${prefix}${path}`, {
         method,
         headers: { ...headers(), 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -190,6 +206,13 @@ export function httpPhoneApi(base: () => string, headers: () => Record<string, s
       throw new PhoneApiUnavailable(error instanceof Error ? error.message : String(error));
     }
     // An older API without these routes, or one without the phone gateway file.
+    // Maps routes answer with contract error codes (map_not_found, phone_busy, money_app…): a 404 or 502 with a code is an answer, not a missing route.
+    if (isMaps && !res.ok) {
+      const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (typeof j.error === 'string') return { ok: false, error: j.error, message: typeof j.message === 'string' ? j.message : `allternit-api answered ${res.status}`, status: res.status };
+      if (res.status === 404) throw new PhoneApiUnavailable(`allternit-api has no ${path}`);
+      throw new PhoneApiUnavailable(`allternit-api answered ${res.status}`);
+    }
     if (res.status === 404 && !path.includes('/skills/')) throw new PhoneApiUnavailable(`allternit-api has no ${path}`);
     if (res.status === 503 || res.status === 502 || res.status === 401) throw new PhoneApiUnavailable(`allternit-api answered ${res.status}`);
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -205,5 +228,49 @@ export function httpPhoneApi(base: () => string, headers: () => Record<string, s
     skills: () => req('GET', '/phones/skills'),
     saveSkill: (body) => req('POST', '/phones/skills', body),
     runSkill: (name, body) => req('POST', `/phones/skills/${enc(name)}/run`, body, 10 * 60_000),
+    maps: (platform) => req('GET', `/phones/maps${platform ? `?platform=${enc(platform)}` : ''}`),
+    map: (app, platform) => req('GET', `/phones/maps/${enc(app)}${platform ? `?platform=${enc(platform)}` : ''}`),
+    forgetMap: (app, platform) => req('DELETE', `/phones/maps/${enc(app)}${platform ? `?platform=${enc(platform)}` : ''}`),
+    explore: (app, body) => req('POST', `/phones/maps/${enc(app)}/explore`, body, 30_000),
+    stopRun: (runId) => req('POST', `/aci/stop/${enc(runId)}`, {}, 15_000, '/api'),
   };
+}
+
+export type PhoneMapsOp = 'list' | 'get' | 'forget' | 'explore' | 'stop';
+
+/**
+ * The renderer's app-map calls (IPC phone:maps-list|get|forget|explore|stop).
+ * Validates, calls allternit-api, and returns { ok:true, … } or { ok:false, error, message }:
+ * contract codes (money_app, phone_busy…) pass through; an old or stopped API is `unsupported`.
+ */
+export async function phoneMapsCall(api: PhoneApi | null, op: PhoneMapsOp, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const bad = (message: string) => ({ ok: false, error: 'invalid_args', message });
+  const text = (v: unknown, max = 200) => (typeof v === 'string' && v.trim() && v.length <= max ? v.trim() : null);
+  const platform = args.platform === 'android' || args.platform === 'ios' ? args.platform : undefined;
+  if (args.platform !== undefined && !platform) return bad('platform must be android or ios.');
+  const app = text(args.app);
+  const runId = text(args.run_id, 120);
+  if ((op === 'get' || op === 'forget' || op === 'explore') && !app) return bad('app is required.');
+  if (op === 'stop' && !runId) return bad('run_id is required.');
+  if (op === 'explore') {
+    const serial = text(args.serial, 128);
+    if (!serial) return bad('serial is required.');
+    for (const [k, max] of [['minutes', 30], ['max_screens', 300]] as const) {
+      const v = args[k];
+      if (v !== undefined && !(Number.isInteger(v) && (v as number) >= 1 && (v as number) <= max)) return bad(`${k} must be 1–${max}.`);
+    }
+  }
+  if (!api) return { ok: false, error: 'unsupported', message: "App maps live in Allternit Desktop's local API, which isn't running." };
+  try {
+    let out: Record<string, unknown>;
+    if (op === 'list') out = await api.maps(platform);
+    else if (op === 'get') out = await api.map(app!, platform);
+    else if (op === 'forget') out = await api.forgetMap(app!, platform);
+    else if (op === 'stop') out = await api.stopRun(runId!);
+    else out = await api.explore(app!, { serial: String(args.serial).trim(), minutes: args.minutes as number | undefined, max_screens: args.max_screens as number | undefined });
+    return out.ok === false ? out : { ...out, ok: true };
+  } catch (error) {
+    if (error instanceof PhoneApiUnavailable) return { ok: false, error: 'unsupported', message: `App maps need an up-to-date Allternit Desktop local API (${error.message}).` };
+    throw error;
+  }
 }

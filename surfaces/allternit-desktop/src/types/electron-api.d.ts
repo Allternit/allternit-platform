@@ -633,6 +633,12 @@ export interface PhonesAPI {
   forget(id: string): Promise<void>;
   startScrcpy(serial: string): Promise<{ ok: boolean; error?: string }>;
   stopScrcpy(serial: string): Promise<void>;
+  /** App maps and Explore. Results are { ok:true, … } or { ok:false, error, message } with the contract's codes. */
+  mapsList(args?: { platform?: 'android' | 'ios' }): Promise<Record<string, unknown>>;
+  mapsGet(args: { app: string; platform?: 'android' | 'ios' }): Promise<Record<string, unknown>>;
+  mapsForget(args: { app: string; platform?: 'android' | 'ios' }): Promise<Record<string, unknown>>;
+  mapsExplore(args: { app: string; serial: string; minutes?: number; max_screens?: number }): Promise<Record<string, unknown>>;
+  mapsStop(args: { run_id: string }): Promise<Record<string, unknown>>;
   /** iPhones connected with the Allternit app (serial "app:…", route "iphone-app-store"). */
   appPhones(): Promise<Array<{ serial: string; platform: 'ios'; via: 'allternit-app'; route: 'iphone-app-store'; name: string; screen: boolean; note: string }>>;
   /** Approve or deny an Allternit app pairing request (phone_app.pair_request). */

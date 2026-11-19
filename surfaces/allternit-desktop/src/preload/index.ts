@@ -832,6 +832,14 @@ const phonesAPI = {
   forget: (id: string): Promise<void> => ipcRenderer.invoke('phone:forget', id),
   startScrcpy: (serial: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('phone:scrcpy-start', serial),
   stopScrcpy: (serial: string): Promise<void> => ipcRenderer.invoke('phone:scrcpy-stop', serial),
+  /** App maps: { platform? } → { ok, maps: Summary[] }. Errors: { ok:false, error, message } (unsupported = old or stopped local API). */
+  mapsList: (args?: { platform?: 'android' | 'ios' }): Promise<Record<string, unknown>> => ipcRenderer.invoke('phone:maps-list', args ?? {}),
+  mapsGet: (args: { app: string; platform?: 'android' | 'ios' }): Promise<Record<string, unknown>> => ipcRenderer.invoke('phone:maps-get', args),
+  mapsForget: (args: { app: string; platform?: 'android' | 'ios' }): Promise<Record<string, unknown>> => ipcRenderer.invoke('phone:maps-forget', args),
+  /** Starts Explore (Android only): { app, serial, minutes?, max_screens? } → { ok, run_id, status } or an error code (money_app, phone_busy, explore_running…). */
+  mapsExplore: (args: { app: string; serial: string; minutes?: number; max_screens?: number }): Promise<Record<string, unknown>> => ipcRenderer.invoke('phone:maps-explore', args),
+  /** Stops a task, skill or Explore run by run_id. */
+  mapsStop: (args: { run_id: string }): Promise<Record<string, unknown>> => ipcRenderer.invoke('phone:maps-stop', args),
   /** iPhones connected with the Allternit app (serial "app:…"): [{ serial, name, screen, route: 'iphone-app-store', … }]. */
   appPhones: (): Promise<unknown> => ipcRenderer.invoke('phone:app-phones'),
   /** Answer an Allternit app pairing request shown on this Desktop. */

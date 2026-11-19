@@ -283,6 +283,12 @@ export function registerPhoneIpc(handle: Guarded): void {
   // In-app live view (scrcpy-server video + input). A stream starts only on
   // explicit renderer request, never by itself.
   // iPhones with the Allternit App Store app (`app:…`): listed and paired through the node.
+  // App maps + Explore (contract phone-app-map §4). Args are one object; results are { ok, … } with contract error codes.
+  handle('phone:maps-list', (_e, args: unknown) => phoneService.mapsCall('list', args));
+  handle('phone:maps-get', (_e, args: unknown) => phoneService.mapsCall('get', args));
+  handle('phone:maps-forget', (_e, args: unknown) => phoneService.mapsCall('forget', args));
+  handle('phone:maps-explore', (_e, args: unknown) => phoneService.mapsCall('explore', args));
+  handle('phone:maps-stop', (_e, args: unknown) => phoneService.mapsCall('stop', args));
   handle('phone:app-phones', () => phoneService.appPhones());
   handle('phone:app-pair-decision', (_e, phoneId: unknown, approve: unknown) => phoneService.appPairDecision(String(phoneId ?? ''), approve === true));
   handle('phone:stream-start', (_e, serial: unknown, opts: unknown) => phoneService.startStream(String(serial ?? ''), sanitizeStreamOpts(opts)));
