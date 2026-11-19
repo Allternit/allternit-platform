@@ -90,27 +90,27 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 
 | Screen | Area | iOS path | Web path | Android | Status | Proof |
 |---|---|---|---|---|---|---|
-| ArtifactDetailsView | Artifacts | ios/Features/Artifacts/Views/ArtifactDetailsView.swift | — | — | todo | — |
-| ArtifactLiveWebView | Artifacts | ios/Features/Artifacts/Views/ArtifactLiveWebView.swift | — | — | todo | — |
-| ArtifactPageWebView | Artifacts | ios/Features/Artifacts/Views/ArtifactPageWebView.swift | — | — | todo | — |
-| ArtifactStudioView | Artifacts | ios/Features/Artifacts/Views/ArtifactStudioView.swift | — | — | todo | — |
-| ArtifactsLibraryView | Artifacts | ios/Features/Artifacts/Views/ArtifactsLibraryView.swift | — | — | todo | — |
-| PDFTemplateSheet | Artifacts | ios/Features/Artifacts/Views/PDFTemplateSheet.swift | — | — | todo | — |
-| SandboxedArtifactWebView | Artifacts | ios/Features/Artifacts/Views/SandboxedArtifactWebView.swift | — | — | todo | — |
-| V2ArtifactEditorView | Artifacts | ios/Features/Artifacts/Views/V2ArtifactEditorView.swift | — | — | todo | — |
-| V2ArtifactView | Artifacts | ios/Features/Artifacts/Views/V2ArtifactView.swift | — | — | todo | — |
-| section: artifacts | Artifacts | — | src/fabric-session/phone/phone-nav.ts (PhoneSection artifacts) | — | todo | — |
-| CodeProjectDetailView | Projects | ios/Features/Projects/Views/CodeProjectDetailView.swift | — | — | todo | — |
-| DesignProjectCanvasView | Projects | ios/Features/Projects/Views/DesignProjectCanvasView.swift | — | — | todo | — |
-| FolderCoverView | Projects | ios/Features/Projects/Views/FolderCoverView.swift | — | — | todo | — |
-| FolderLookSheet | Projects | ios/Features/Projects/Views/FolderLookSheet.swift | — | — | todo | — |
-| NewProjectSheet | Projects | ios/Features/Projects/Views/NewProjectSheet.swift | — | — | todo | — |
-| PadEditSheet | Projects | ios/Features/Projects/Views/PadEditSheet.swift | — | — | todo | — |
-| ProjectDetailView | Projects | ios/Features/Projects/Views/ProjectDetailView.swift | — | — | todo | — |
-| ProjectPadView | Projects | ios/Features/Projects/Views/ProjectPadView.swift | — | — | todo | — |
-| ProjectsListView | Projects | ios/Features/Projects/Views/ProjectsListView.swift | — | — | todo | — |
-| ProjectsScreen | Projects | — | src/fabric-session/phone/screens/ProjectsScreen.tsx | — | todo | — |
-| section: projects | Projects | — | src/fabric-session/phone/phone-nav.ts (PhoneSection projects) | — | todo | — |
+| ArtifactDetailsView | Artifacts | ios/Features/Artifacts/Views/ArtifactDetailsView.swift | — | feature/artifacts/ArtifactSheets.kt (ArtifactDetailsScreen) | built (#2629: Preview / Code, Share, Open in browser, Copy; art_ ids open the V2 viewer) | — |
+| ArtifactLiveWebView | Artifacts | ios/Features/Artifacts/Views/ArtifactLiveWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (ArtifactLiveWebView) | built (#2629: app pages only, Clerk + editor + download bridge answer only the web origin's main frame via androidx.webkit; one storage per app on Android) | — |
+| ArtifactPageWebView | Artifacts | ios/Features/Artifacts/Views/ArtifactPageWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (ArtifactPageWebView) | built (#2629: tapped links open outside; later main-frame navigations refused) | — |
+| ArtifactStudioView | Artifacts | ios/Features/Artifacts/Views/ArtifactStudioView.swift | — | feature/artifacts/ArtifactStudio.kt | built (#2629: Chat / Edit panes; standing instructions are kept but not yet sent per turn: Android chat has no systemPrompt field) | — |
+| ArtifactsLibraryView | Artifacts | ios/Features/Artifacts/Views/ArtifactsLibraryView.swift | — | feature/artifacts/ArtifactsLibrary.kt | built (#2629: List / Grid / Deck, filters, studio tiles, archive / delete; cards preview text kinds only, no image / PDF / poster thumbnails; no Upload menu) | — |
+| PDFTemplateSheet | Artifacts | ios/Features/Artifacts/Views/PDFTemplateSheet.swift | — | feature/artifacts/ArtifactSheets.kt (PDFTemplateSheet) + assets/pdf-templates.js | built (#2629: same layout JS in an offscreen WebView; Android print dialog saves the PDF) | — |
+| SandboxedArtifactWebView | Artifacts | ios/Features/Artifacts/Views/SandboxedArtifactWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (SandboxedArtifactWebView) | built (#2629: deny-all CSP + base-uri/form-action, every navigation and sub-request refused, no DOM storage) | — |
+| V2ArtifactEditorView | Artifacts | ios/Features/Artifacts/Views/V2ArtifactEditorView.swift | — | feature/artifacts/V2ArtifactEditor.kt | built (#2629: markdown, doc blocks, sheet rows, simple slides; tabbed docs, table cells and block decks read-only) | — |
+| V2ArtifactView | Artifacts | ios/Features/Artifacts/Views/V2ArtifactView.swift | — | feature/artifacts/V2Artifact.kt | built (#2629: render by kind, comments, share link, export; PDF and video use the web viewer, no Sign this PDF, no share panel invites) | — |
+| section: artifacts | Artifacts | — | src/fabric-session/phone/phone-nav.ts (PhoneSection artifacts) | feature/shell/WorkspaceShell.kt (Section artifacts-library) | built (#2629) | — |
+| CodeProjectDetailView | Projects | ios/Features/Projects/Views/CodeProjectDetailView.swift | — | feature/projects/ProjectDetail.kt (CodeProjectDetailScreen) | built (#2629: folder is typed, no computer folder browser) | — |
+| DesignProjectCanvasView | Projects | ios/Features/Projects/Views/DesignProjectCanvasView.swift | — | feature/projects/ProjectDetail.kt (DesignProjectCanvasScreen) | built (#2629: Close does not flush a pending canvas save first) | — |
+| FolderCoverView | Projects | ios/Features/Projects/Views/FolderCoverView.swift | — | feature/projects/FolderCover.kt (FolderCover) | built (#2629: symbols drawn as glyphs, not SF Symbols) | — |
+| FolderLookSheet | Projects | ios/Features/Projects/Views/FolderLookSheet.swift | — | feature/projects/FolderCover.kt (FolderLookSheet) | built (#2629: colour swatches instead of the system colour picker) | — |
+| NewProjectSheet | Projects | ios/Features/Projects/Views/NewProjectSheet.swift | — | feature/projects/ProjectsList.kt (NewProjectSheet) | built (#2629: bot projects save to the account; NewBotSheet comes with wave E) | — |
+| PadEditSheet | Projects | ios/Features/Projects/Views/PadEditSheet.swift | — | feature/projects/ProjectPad.kt (PadEditSheet) | built (#2629: move up / down buttons for reorder; no saved account templates yet) | — |
+| ProjectDetailView | Projects | ios/Features/Projects/Views/ProjectDetailView.swift | — | feature/projects/ProjectDetail.kt (ProjectDetailScreen) | built (#2629: Overview / Board / Details; no Delegate coordinator chat, memory or Add files yet) | — |
+| ProjectPadView | Projects | ios/Features/Projects/Views/ProjectPadView.swift | — | feature/projects/ProjectPad.kt (ProjectPadCard) | built (#2629: Style tiles show a plain summary, not the full ProjectDashboard) | — |
+| ProjectsListView | Projects | ios/Features/Projects/Views/ProjectsListView.swift | — | feature/projects/ProjectsList.kt (ProjectsListScreen) | built (#2629: bot projects open the project detail until wave E's bot project page) | — |
+| ProjectsScreen | Projects | — | src/fabric-session/phone/screens/ProjectsScreen.tsx | feature/projects/ProjectsList.kt (ProjectsListScreen) | built (#2629) | — |
+| section: projects | Projects | — | src/fabric-session/phone/phone-nav.ts (PhoneSection projects) | feature/shell/WorkspaceShell.kt (Section projects) | built (#2629) | — |
 
 ## Wave E. Bots
 

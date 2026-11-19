@@ -30,3 +30,7 @@ include(":feature:onboarding")
 include(":feature:shell")
 // Wave A: the chat screen. :feature:shell depends on it (nativeapp flavor only, like the shell).
 include(":feature:chat")
+// Wave D: projects and artifacts. :feature:shell depends on both (nativeapp flavor only); :feature:projects
+// uses :feature:artifacts for the library chrome and to open a project's artifacts.
+include(":feature:artifacts")
+include(":feature:projects")
