@@ -183,7 +183,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| ConnectWizardView | ios/Features/Connect/ConnectWizardView.swift | — | feature/phones/Connect.kt (GiveBotPhoneSheet + ConnectWizardSheet, Email flow; phone number, Telegram and OAuth flows left) | built (#2648) | — |
+| ConnectWizardView | ios/Features/Connect/ConnectWizardView.swift | — | feature/phones/Connect.kt (GiveBotPhoneSheet + ConnectWizardSheet, Email flow) + ConnectFlows.kt (phone number buy/port/registration, Telegram, Slack/Discord/Teams/WhatsApp OAuth) | built (#2648, #2681) | — |
 | VendorConnectView | ios/Features/Connect/VendorConnectView.swift | — | feature/phones/Connect.kt (VendorConnectScreen, VendorProductScreen) | built (#2648) | — |
 
 ## Connectors
