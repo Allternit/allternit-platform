@@ -1,0 +1,62 @@
+---
+title: Desktop on Linux
+description: Install Allternit Desktop on Debian, Ubuntu and Mint, pair it, keep it updated and fix common problems
+---
+
+Allternit Desktop runs on Linux as a `.deb` package. This page covers install, pairing, updates and the problems people hit most. For everything else the app does, see [Desktop](/surfaces/desktop).
+
+## Supported systems
+
+- Debian 11+, Ubuntu 20.04+, Linux Mint 20+, and other distros with glibc 2.31 or newer.
+- amd64 only. arm64 is not supported yet.
+
+Check your glibc version:
+
+```bash
+ldd --version
+```
+
+<Note>
+Desktop 1.1.15 and older need glibc 2.38 or newer. From the next release, Desktop runs on glibc 2.31 and newer.
+</Note>
+
+## Install
+
+1. Download the `.deb` from [github.com/Allternit/desktop/releases/latest](https://github.com/Allternit/desktop/releases/latest).
+2. Install it. `apt` also pulls in `bubblewrap` and `lsof`.
+
+```bash
+sudo apt install ./Allternit-Desktop-VERSION-amd64.deb
+```
+
+Replace `VERSION` with the number in the file name you downloaded.
+
+## Pair
+
+Open Allternit, click **Sign in to pair**, and sign in. The computer pairs with your account. There is no code to type.
+
+## Updates
+
+From the next release, the app updates itself. It asks for your password to install the update.
+
+On 1.1.15 and older, install the next `.deb` by hand once. After that, updates arrive on their own.
+
+## Troubleshooting
+
+**"GLIBC_2.38 not found" or "Initialization Error".** Your system is older than 1.1.15 supports. Install the next release.
+
+**"This pairing request is invalid or expired".** Sign in again from **Sign in to pair**. A server fix on 2026-11-19 resolved the pairing failures that caused this message.
+
+**Crash with `credentials.cc` or a sandbox message.** Reinstall the `.deb`. The installer sets up the sandbox. If it still crashes, check that unprivileged user namespaces are on:
+
+```bash
+sysctl kernel.unprivileged_userns_clone
+```
+
+**Keyring warning, or sign-in is not remembered.** Install `gnome-keyring` or KWallet so Desktop has a place to keep your sign-in.
+
+**Shortcuts do not work on Wayland.** Wayland blocks global shortcuts from apps. Set them in your desktop's keyboard settings instead.
+
+**Start at login.** Desktop adds `~/.config/autostart/allternit.desktop`. Delete that file to stop it.
+
+**Logs.** Look in `~/.config/@allternit/desktop/main.log`.

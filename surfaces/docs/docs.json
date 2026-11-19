@@ -637,6 +637,7 @@
             "group": "Surfaces",
             "pages": [
               "surfaces/desktop",
+              "surfaces/desktop-linux",
               "surfaces/context-window",
               "surfaces/sign-in",
               "surfaces/public-embed",
