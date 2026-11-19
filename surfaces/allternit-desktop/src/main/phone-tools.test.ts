@@ -383,7 +383,11 @@ describe('screen reading over adb (uiautomator dump)', () => {
     });
     const res = (await r.call('phone.read_ui', { with_activity: true, with_version: true })) as unknown as Record<string, unknown>;
     expect(res).toMatchObject({ ok: true, app: 'com.openai.chat', activity: 'com.openai.chat.MainActivity', app_version: '1.2.3' });
-    expect(calls).toHaveLength(3);
+    // The dump goes through adb.binary; the two opt-ins add exactly one adb call each.
+    expect(calls.map((c) => c.join(' '))).toEqual([
+      expect.stringContaining('topResumedActivity'),
+      expect.stringContaining('com.openai.chat'),
+    ]);
   });
 
   it('parses activity and version lines', () => {
