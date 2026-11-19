@@ -3,7 +3,6 @@ package com.allternit.core.files
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.security.keystore.StrongBoxUnavailableException
 import org.json.JSONObject
 import java.math.BigInteger
 import java.security.KeyFactory
@@ -120,10 +119,8 @@ object VoiceHandoffCrypto {
                     }
                     val pair = try {
                         gen(strongBox = true)
-                    } catch (e: StrongBoxUnavailableException) {
-                        null
                     } catch (e: java.security.ProviderException) {
-                        // Some StrongBox chips refuse AGREE_KEY: the TEE key.
+                        // No StrongBox (StrongBoxUnavailableException), or a chip that refuses AGREE_KEY: the TEE key.
                         null
                     } ?: runCatching { gen(strongBox = false) }.getOrNull()
                     if (pair != null) return Ephemeral(pair, ALIAS)

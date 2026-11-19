@@ -3,7 +3,6 @@ package com.allternit.core.files
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import android.security.keystore.StrongBoxUnavailableException
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -39,8 +38,8 @@ class KeystoreBox(private val alias: String, aad: String) {
             try {
                 gen.init(spec(strongBox = true))
                 return gen.generateKey()
-            } catch (e: StrongBoxUnavailableException) {
-                // No StrongBox on this phone: the TEE key below.
+            } catch (e: java.security.ProviderException) {
+                // No StrongBox on this phone (StrongBoxUnavailableException is a ProviderException, API 28): the TEE key below.
             }
         }
         gen.init(spec(strongBox = false))
