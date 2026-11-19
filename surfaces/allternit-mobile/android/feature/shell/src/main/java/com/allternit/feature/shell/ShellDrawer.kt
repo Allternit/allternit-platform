@@ -371,6 +371,6 @@ internal fun AccountAvatar(account: Account?, size: Int) {
     }
 }
 
-/** Width helper so the shell and the drawer agree: min(92% of the screen, 440dp). */
+/** Width helper so the shell and the drawer agree: min(80% of the screen, 360dp), iOS WorkspaceShell `sidebarWidth`. */
 internal fun drawerWidth(screenWidth: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp =
-    minOf(screenWidth * 0.92f, 440.dp)
+    minOf(screenWidth * 0.80f, 360.dp)

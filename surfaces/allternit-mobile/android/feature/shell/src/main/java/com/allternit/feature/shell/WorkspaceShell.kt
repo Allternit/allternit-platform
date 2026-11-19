@@ -59,7 +59,7 @@ private sealed interface ShellPage {
 
 /**
  * The signed-in shell (iOS MainWorkspaceView, PWA PhoneShell): one page fills the screen, no
- * bottom bar. The drawer is min(92%, 440dp) wide, springs in from the left (☰ tap or a pan from
+ * bottom bar. The drawer is min(80%, 360dp) wide (iOS sidebarWidth), springs in from the left (☰ tap or a pan from
  * the left edge), and the page pushes right with it, scaled to 0.94 with rounded corners. Holding
  * ☰ fans the modes out over everything; the fan and the drawer are never open together.
  *
