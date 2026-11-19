@@ -23,7 +23,7 @@ const VENDOR_NAME: Record<string, string> = { claude: "Claude", chatgpt: "ChatGP
 
 /** `claude-sonnet-5-5` → "Claude Sonnet 5.5 (your organization)". Unknown shapes fall back to the id. */
 export function linkedModelDisplayName(id: string): string {
-  const m = /^claude-([a-z]+)-(\d+(?:-\d+)*)(?:-\d{8})?$/.exec(id)
+  const m = /^claude-([a-z]+)-(\d{1,2}(?:-\d{1,2})*)(?:-\d{8})?$/.exec(id)
   if (!m) return `${id} (your organization)`
   const family = m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1)
   return `Claude ${family} ${m[2]!.replace(/-/g, ".")} (your organization)`
