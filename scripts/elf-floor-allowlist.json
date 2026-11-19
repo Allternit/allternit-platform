@@ -1,0 +1,6 @@
+[
+  {
+    "path": "lima/limactl",
+    "reason": "Third-party Lima binary downloaded by npm run download:lima (needs GLIBC 2.34); the Lima VM feature is not used on Linux Desktop, so it never runs there."
+  }
+]

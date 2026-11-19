@@ -844,7 +844,7 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          key: allternit-api-linux-u2404
+          key: allternit-api-linux-glibc231
 
       # ── Step 2: Build gizzi-code for Linux ─────────────────────────────────
       - name: Setup Bun
@@ -895,8 +895,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-u2404-${{ github.sha }}-${{ github.run_id }}
-          restore-keys: prebuilt-rust-linux-u2404-
+          key: prebuilt-rust-linux-glibc231-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: prebuilt-rust-linux-glibc231-
 
       - name: Reuse prebuilt Rust binaries if unchanged
         id: prebuilt
@@ -905,7 +905,9 @@ jobs:
 
       - name: Build allternit-api (Linux)
         if: steps.prebuilt.outputs.hit != 'true'
-        run: cargo build --release --target x86_64-unknown-linux-gnu --manifest-path cmd/allternit-api/Cargo.toml
+        # glibc floor pinned by cargo-zigbuild (scripts/build-linux-sidecars.sh,
+        # GLIBC_FLOOR): Debian 12 / Ubuntu 22.04 hosts run this binary.
+        run: scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/bin api
 
       - name: Copy allternit-api binary
         run: |
@@ -924,7 +926,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-u2404-${{ github.sha }}-${{ github.run_id }}
+          key: prebuilt-rust-linux-glibc231-${{ github.sha }}-${{ github.run_id }}
 
       - name: Build voice service sidecar (Linux)
         # Same as macOS/Windows: allternit-voice-service (STT + API, no GPL)
@@ -932,12 +934,7 @@ jobs:
         # linked statically, models download on first use. Without this step
         # the Linux build shipped with no voice sidecar at all.
         run: |
-          cargo build --release -p voice-service -p allternit-tts --target x86_64-unknown-linux-gnu
-          mkdir -p surfaces/allternit-desktop/resources/bin
-          cp target/x86_64-unknown-linux-gnu/release/voice-service \
-             surfaces/allternit-desktop/resources/bin/allternit-voice-service
-          cp target/x86_64-unknown-linux-gnu/release/allternit-tts \
-             surfaces/allternit-desktop/resources/bin/allternit-tts
+          scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/bin voice
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
           # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
@@ -948,10 +945,7 @@ jobs:
         # fusermount3; pure-Rust fuser, no libfuse link) and Files uploads over
         # 4 MiB. Lands in resources/bin next to gizzi-code.
         run: |
-          cargo build --release -p allternit-files-mount --target x86_64-unknown-linux-gnu
-          mkdir -p surfaces/allternit-desktop/resources/bin
-          cp target/x86_64-unknown-linux-gnu/release/allternit-files-mount \
-             surfaces/allternit-desktop/resources/bin/allternit-files-mount
+          scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/bin files-mount
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-files-mount
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-files-mount
 
@@ -1034,6 +1028,13 @@ jobs:
         working-directory: surfaces/allternit-desktop
         env:
           ALLTERNIT_BUILD_SUFFIX: ""
+
+      - name: Check glibc floor of every packaged ELF
+        # Fails the job if any shipped binary needs a newer glibc than
+        # GLIBC_FLOOR (scripts/build-linux-sidecars.sh). 1.1.15 shipped
+        # allternit-api at 2.39 and voice at 2.39, so Debian 12 / Ubuntu 22.04
+        # could not start the engine.
+        run: node scripts/check-elf-floor.mjs --dir surfaces/allternit-desktop/release/linux-unpacked/resources --floor "$(node scripts/check-elf-floor.mjs --print-floor)"
 
       - name: Check meeting bot in the package
         # Each artifact must carry its own OS/arch rtc-node binding
