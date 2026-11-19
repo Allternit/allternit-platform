@@ -202,6 +202,7 @@ pub mod phone_replay;
 pub mod phone_task;
 pub mod phone_task_notify;
 pub mod phone_guard;
+pub mod phone_map;
 pub mod computer_transfer;
 pub mod computer_parallel;
 pub mod computer_subtask;
