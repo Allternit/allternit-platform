@@ -378,7 +378,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | --- | --- | --- | --- | --- | --- |
 | File Provider -> existing DocumentsProvider | ios/AllternitFileProvider | — | — | todo | — |
 | iMessage extension | ios/AllternitMessages | — | — | N/A: no Android equivalent (Eoj 2026-11-18) | — |
-| Push notifications | ios/AllternitNotifications | android/feature/push/AllternitPush.kt (+ PushNotifications, AllternitMessagingService, NotificationActionReceiver) | I1 | built (#PR) | FCM; no notification extension (private bodies arrive in full, like an iOS app without `nse`) |
+| Push notifications | ios/AllternitNotifications | android/feature/push/AllternitPush.kt (+ PushNotifications, AllternitMessagingService, NotificationActionReceiver) | I1 | built (#2664) | FCM; no notification extension (private bodies arrive in full, like an iOS app without `nse`) |
 | Screen share (broadcast) | ios/AllternitScreen | — | — | todo | — |
 | Share extension -> Android share target | ios/AllternitShare | — | — | todo | — |
 | Widgets -> Glance app widgets | ios/AllternitWidgets | — | — | todo | — |
