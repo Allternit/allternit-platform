@@ -1,0 +1,30 @@
+---
+title: 'feedback_note'
+description: 'A diagnostic note kept on your device'
+---
+
+## Overview
+
+`feedback_note` lets the assistant write down a problem it ran into: a bug, a confusing step or a missing feature. The note stays on your device.
+
+This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
+
+## Parameters
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `kind` | `bug`, `confusion`, `missing` or `other` | What sort of problem this is |
+| `summary` | string | One line, up to 300 characters |
+| `details` | string, optional | Steps, errors and context, up to 4,000 characters, with no secrets |
+
+## Result
+
+A local note id and the kind. Nothing leaves the device until you send the note with a tap through the existing report flow. There is no cloud route for notes.
+
+## Permission
+
+It writes only a local note, so it is allowed in every mode. It never sends anything.
+
+## Surfaces
+
+Desktop, web, phone layout, PWA and iOS keep the note on the device. The terminal has `/feedback`. Android follows the PWA. Delivered by the progress PR (PR11c). Family: `session`.

@@ -125,6 +125,14 @@
 		20C5C86EEFF9CC220A028DD5 /* CodeWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF5A433FAC2C691A9F790AD /* CodeWorkspace.swift */; };
 		20C7054DEC625347DE9E978D /* BotProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F0CADD76BDEA330E8EBD079 /* BotProfile.swift */; };
 		20E80A1F2D2626B38DB8EEB4 /* MessageRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AC5DA69A46A6B20CD3FB8BF /* MessageRow.swift */; };
+		5C1C960051C42C11282A2D10 /* SecondOpinionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE39EE1FAA60A3D20590994A /* SecondOpinionCard.swift */; };
+		23AE92CBB808BDE5BD625974 /* PrCommentsCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4288DEB751C102817D70CD26 /* PrCommentsCard.swift */; };
+		A5A699DA61503969F672A2E4 /* StatusUpdateRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CE53714FDB7E70E231C35FC /* StatusUpdateRow.swift */; };
+		8FC172489DA760EB6689148D /* FeedbackNoteCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8C36F8F4BECD3B7EADDD8F2 /* FeedbackNoteCard.swift */; };
+		A5848E7D0A7F1CA2249A8D76 /* UserLocationCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F470EAD86BD0C6C7299C1E45 /* UserLocationCard.swift */; };
+		DCD6C29EB1F92B53000BA67F /* VoiceControlRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C59C9A54E23468E2FFA7FBB /* VoiceControlRow.swift */; };
+		06DCD355C174211B836A499A /* EndConversationRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E1614FE4BE6D9FB4D0E25D7 /* EndConversationRow.swift */; };
+		2D229C7F238AACF2AAED3159 /* WorktreeCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5BFCB86E4A6FBE5925C2884 /* WorktreeCard.swift */; };
 		21862F9024BF5AD59C5B8DA6 /* AutomationOverviewRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2986FD6F4CA0BC7C4AA32F0D /* AutomationOverviewRoot.swift */; };
 		21CBF60759C7C51441514BBC /* GroupChatViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E5FAEBCB7DE380608EE0AAA /* GroupChatViews.swift */; };
 		22587EBF84FC873F64DD20B8 /* FormSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88BF1E2601384E006590B918 /* FormSchema.swift */; };
@@ -1517,6 +1525,14 @@
 		9A76F7DDB4CCEAE71BB5D3CB /* LoopLiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopLiveActivityManager.swift; sourceTree = "<group>"; };
 		9A7E49E72A3891CF21E908A8 /* AllternitNotifications.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AllternitNotifications.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		9AC5DA69A46A6B20CD3FB8BF /* MessageRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRow.swift; sourceTree = "<group>"; };
+		BE39EE1FAA60A3D20590994A /* SecondOpinionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecondOpinionCard.swift; sourceTree = "<group>"; };
+		4288DEB751C102817D70CD26 /* PrCommentsCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrCommentsCard.swift; sourceTree = "<group>"; };
+		4CE53714FDB7E70E231C35FC /* StatusUpdateRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusUpdateRow.swift; sourceTree = "<group>"; };
+		D8C36F8F4BECD3B7EADDD8F2 /* FeedbackNoteCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackNoteCard.swift; sourceTree = "<group>"; };
+		F470EAD86BD0C6C7299C1E45 /* UserLocationCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserLocationCard.swift; sourceTree = "<group>"; };
+		5C59C9A54E23468E2FFA7FBB /* VoiceControlRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceControlRow.swift; sourceTree = "<group>"; };
+		9E1614FE4BE6D9FB4D0E25D7 /* EndConversationRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndConversationRow.swift; sourceTree = "<group>"; };
+		B5BFCB86E4A6FBE5925C2884 /* WorktreeCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeCard.swift; sourceTree = "<group>"; };
 		9B3E58874D9684D848731F76 /* BotColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotColor.swift; sourceTree = "<group>"; };
 		9B84D61B4D8E7BE4574844B1 /* Messages.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Messages.framework; path = System/Library/Frameworks/Messages.framework; sourceTree = SDKROOT; };
 		9C637C387DDA155982E1068D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -2347,6 +2363,21 @@
 				2623BD9227ECB3EAC3323959 /* NotificationService.swift */,
 			);
 			path = AllternitNotifications;
+			sourceTree = "<group>";
+		};
+		C482A8A359CFBC231259BDA4 /* GapCards */ = {
+			isa = PBXGroup;
+			children = (
+				BE39EE1FAA60A3D20590994A /* SecondOpinionCard.swift */,
+				4288DEB751C102817D70CD26 /* PrCommentsCard.swift */,
+				4CE53714FDB7E70E231C35FC /* StatusUpdateRow.swift */,
+				D8C36F8F4BECD3B7EADDD8F2 /* FeedbackNoteCard.swift */,
+				F470EAD86BD0C6C7299C1E45 /* UserLocationCard.swift */,
+				5C59C9A54E23468E2FFA7FBB /* VoiceControlRow.swift */,
+				9E1614FE4BE6D9FB4D0E25D7 /* EndConversationRow.swift */,
+				B5BFCB86E4A6FBE5925C2884 /* WorktreeCard.swift */,
+			);
+			path = GapCards;
 			sourceTree = "<group>";
 		};
 		41BF0115EBBA701001691CB0 /* AnswerCards */ = {
@@ -3401,6 +3432,7 @@
 				928652EEB4E5F6F29C2706F6 /* ThreadShareSheet.swift */,
 				6EF648AD74000037845D08B2 /* UploadFileCard.swift */,
 				41BF0115EBBA701001691CB0 /* AnswerCards */,
+				C482A8A359CFBC231259BDA4 /* GapCards */,
 				D959806CFDF9C47AE9C5A123 /* Voice */,
 			);
 			path = Views;
@@ -4665,6 +4697,14 @@
 				B343308424F651930113D58E /* MessageComposer.swift in Sources */,
 				6DEC182602B42868496881C6 /* MessageDraftCard.swift in Sources */,
 				20E80A1F2D2626B38DB8EEB4 /* MessageRow.swift in Sources */,
+				5C1C960051C42C11282A2D10 /* SecondOpinionCard.swift in Sources */,
+				23AE92CBB808BDE5BD625974 /* PrCommentsCard.swift in Sources */,
+				A5A699DA61503969F672A2E4 /* StatusUpdateRow.swift in Sources */,
+				8FC172489DA760EB6689148D /* FeedbackNoteCard.swift in Sources */,
+				A5848E7D0A7F1CA2249A8D76 /* UserLocationCard.swift in Sources */,
+				DCD6C29EB1F92B53000BA67F /* VoiceControlRow.swift in Sources */,
+				06DCD355C174211B836A499A /* EndConversationRow.swift in Sources */,
+				2D229C7F238AACF2AAED3159 /* WorktreeCard.swift in Sources */,
 				B4453E297C37E2FE874CAAC7 /* MiniApp.swift in Sources */,
 				1CA10FA52947ECFA94C78B73 /* MiniAppCatalogStore.swift in Sources */,
 				F5AE3243CDCD3417161D9BDF /* MiniAppRuntimeView.swift in Sources */,

@@ -186,6 +186,33 @@ export namespace Agent {
       connector_search: "allow",
       connector_suggest: "allow",
       settings: "allow",
+      // Prompt-gap tools (G3 contract; each is registered only once its module
+      // sets `available`). worktree_exit and pr_comments: the action is the
+      // pattern. Removing a worktree and posting a PR reply ask; keep and list
+      // are free. user_location: the precision is the pattern; approximate is
+      // free, precise asks (its lane makes precise ask every time).
+      worktree_enter: "ask",
+      worktree_exit: {
+        "*": "ask",
+        keep: "allow",
+      },
+      // Read-only and advisory: a review on a deeper tier, like `task`.
+      second_opinion: "allow",
+      pr_comments: {
+        "*": "ask",
+        list: "allow",
+      },
+      status_update: "allow",
+      // Stays on the device until the person sends it.
+      feedback_note: "allow",
+      user_location: {
+        "*": "ask",
+        approximate: "allow",
+      },
+      voice_control: "allow",
+      // Asking the person who is being abusive defeats the purpose; the tool
+      // itself requires an earlier warning and refuses outside Gizzi's own chats.
+      end_conversation: "allow",
       doom_loop: "ask",
       external_directory: {
         "*": "ask",
@@ -236,6 +263,9 @@ export namespace Agent {
             plan_exit: "allow",
             // Plan mode changes nothing: settings reads work, writes are refused.
             settings: { write: "deny" },
+            // No new worktree and no PR replies while planning.
+            worktree_enter: "deny",
+            pr_comments: { reply: "deny" },
             external_directory: {
               [path.join(Global.Path.data, "plans", "*")]: "allow",
             },
@@ -258,6 +288,9 @@ export namespace Agent {
           PermissionNext.fromConfig({
             todoread: "deny",
             todowrite: "deny",
+            // The parent's chat and call belong to the parent: a subagent never ends them.
+            end_conversation: "deny",
+            voice_control: "deny",
           }),
           user,
         ),

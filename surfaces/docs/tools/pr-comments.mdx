@@ -1,0 +1,32 @@
+---
+title: 'pr_comments'
+description: 'List and reply to review comments on a pull request'
+---
+
+## Overview
+
+`pr_comments` reads the review comments on a pull request and posts a reply to one.
+
+This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
+
+## Parameters
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `action` | `list` or `reply` | List the comments, or reply to one |
+| `pr` | number or string, optional | PR number or URL. The current branch's PR when left out |
+| `comment_id` | string, optional | The comment to reply to (reply) |
+| `body` | string, optional | The reply text, up to 10,000 characters (reply) |
+| `unresolved_only` | boolean, optional | Only threads not yet resolved (list) |
+
+## Result
+
+List returns each comment with id, author, body, file path, line, resolved state and link. Reply returns the id of the posted reply.
+
+## Permission
+
+List is read-only. Reply posts text in a place other people see, so it always asks first, even in Auto. Auto never posts anything you did not ask for. See [Autonomy modes](/guides/autonomy-modes). Comment bodies are fenced as data; see [Untrusted content](/tools/untrusted-content).
+
+## Surfaces
+
+Desktop, web, phone layout, PWA and iOS draw a PR-comment card. The terminal and the GitHub action use it for the comment loop. Android follows the PWA. Delivered by the review PR (PR6). Family: `code-review`.

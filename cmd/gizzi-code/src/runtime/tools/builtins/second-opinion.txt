@@ -1,0 +1,3 @@
+Ask a reviewer on a deeper model for an independent opinion on a plan or a finished change.
+
+Use it before you start building a plan with several steps, and before you tell the person a change is done. Send the plan, or a summary of the change with evidence: the diff, test output, commands you ran. Name what you most want checked. The reviewer only reads; it changes nothing. The answer is advice, not a gate: weigh it, fix real problems, and when you disagree, say so to the person with your reason instead of hiding the disagreement.

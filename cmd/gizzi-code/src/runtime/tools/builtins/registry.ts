@@ -98,6 +98,16 @@ import { GrantTaskPermissionTool } from "@/runtime/tools/builtins/grant-task-per
 import { ThreadCloseTool, ThreadSearchTool, ThreadUpdateTool } from "@/runtime/tools/builtins/thread-tools"
 import { MdxGraphTool } from "@/runtime/tools/builtins/mdx-graph"
 import { subscriptionCapabilityTools } from "@/runtime/tools/builtins/subscription"
+// Prompt-gap tools (G3 contract): gated stubs, listed only while their module says `available`.
+import * as WorktreeEnter from "@/runtime/tools/builtins/worktree-enter"
+import * as WorktreeExit from "@/runtime/tools/builtins/worktree-exit"
+import * as SecondOpinion from "@/runtime/tools/builtins/second-opinion"
+import * as PrComments from "@/runtime/tools/builtins/pr-comments"
+import * as StatusUpdate from "@/runtime/tools/builtins/status-update"
+import * as FeedbackNote from "@/runtime/tools/builtins/feedback-note"
+import * as UserLocation from "@/runtime/tools/builtins/user-location"
+import * as VoiceControl from "@/runtime/tools/builtins/voice-control"
+import * as EndConversation from "@/runtime/tools/builtins/end-conversation"
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
@@ -108,6 +118,32 @@ export namespace ToolRegistry {
    * (thread_read, thread_recent, thread_wait) are not here: every session gets them.
    */
   export const BOT_THREAD_TOOL_IDS = [ThreadUpdateTool.id, ThreadCloseTool.id] as const
+
+  /**
+   * Prompt-gap tools (G3 contract, ids in primitives/gap-types.ts). Each stub
+   * module exports `available`; a tool reaches the list only while it is true,
+   * so the lane that builds a tool flips one line in its own module.
+   * `appOnly`: needs an app client (a terminal has no location service).
+   * end_conversation's "Gizzi's own chats" gate and voice_control's "voice
+   * turns only" gate need the session, so they live in resolveTools / the
+   * tool itself, not here.
+   */
+  export const GAP_TOOLS: readonly { module: { readonly available: boolean }; tool: Tool.Info; appOnly?: boolean }[] = [
+    { module: WorktreeEnter, tool: WorktreeEnter.WorktreeEnterTool },
+    { module: WorktreeExit, tool: WorktreeExit.WorktreeExitTool },
+    { module: SecondOpinion, tool: SecondOpinion.SecondOpinionTool },
+    { module: PrComments, tool: PrComments.PrCommentsTool },
+    { module: StatusUpdate, tool: StatusUpdate.StatusUpdateTool },
+    { module: FeedbackNote, tool: FeedbackNote.FeedbackNoteTool },
+    { module: UserLocation, tool: UserLocation.UserLocationTool, appOnly: true },
+    { module: VoiceControl, tool: VoiceControl.VoiceControlTool },
+    { module: EndConversation, tool: EndConversation.EndConversationTool },
+  ]
+
+  /** The gap tools that are live for this client. */
+  export function gapTools(appClient: boolean): Tool.Info[] {
+    return GAP_TOOLS.filter((g) => g.module.available && (!g.appOnly || appClient)).map((g) => g.tool)
+  }
 
   export const state = Instance.state(async () => {
     const custom = [] as Tool.Info[]
@@ -316,6 +352,8 @@ export namespace ToolRegistry {
       // Send work to another project: gated to a bot's main chat; every send asks the person.
       ProjectListTool,
       ProjectSendTool,
+      // Prompt-gap tools (G3): none until a lane sets `available` in its module.
+      ...gapTools(appClient),
       ...(Flag.GIZZI_ENABLE_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...(Flag.GIZZI_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),

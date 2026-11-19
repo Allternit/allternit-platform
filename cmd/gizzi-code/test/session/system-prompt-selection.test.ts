@@ -12,6 +12,7 @@ import BOT from "@/runtime/session/prompt/bot.txt"
 import VOICE from "@/runtime/session/prompt/voice.txt"
 import PHONE from "@/runtime/session/prompt/phone.txt"
 import PLAN_MODE from "@/runtime/session/prompt/plan-mode.txt"
+import BUILD_MODE from "@/runtime/session/prompt/build-mode.txt"
 import ADDENDUM_GPT from "@/runtime/session/prompt/addendum-gpt.txt"
 import ADDENDUM_GEMINI from "@/runtime/session/prompt/addendum-gemini.txt"
 import ADDENDUM_OPEN from "@/runtime/session/prompt/addendum-open.txt"
@@ -21,6 +22,13 @@ import PROJECT_THREAD from "@/runtime/session/prompt/project-thread.txt"
 import COMPUTER_USE from "@/runtime/session/prompt/computer-use.txt"
 import UNATTENDED from "@/runtime/session/prompt/unattended.txt"
 import MEMORY_USE from "@/runtime/session/prompt/memory-use.txt"
+import MODE_AUTO from "@/runtime/session/prompt/mode-auto.txt"
+import MODE_ASK from "@/runtime/session/prompt/mode-ask.txt"
+import BACKGROUND_CODE from "@/runtime/session/prompt/background-code.txt"
+import ADDENDUM_ONDEVICE from "@/runtime/session/prompt/addendum-ondevice.txt"
+import VOICE_TAGS from "@/runtime/session/prompt/voice-tags.txt"
+import { ALLTERNIT_DEVICES_PROVIDER_ID } from "@/runtime/providers/discovery/allternit-devices"
+import { PermissionNext } from "@/runtime/tools/guard/permission/next"
 import { Automation } from "@/runtime/primitives/automation"
 
 const model = (id: string) => ({ api: { id } })
@@ -73,7 +81,7 @@ describe("2026-11-16 audit: no vendor names or Allternit Shell in prompts", () =
   test("finds the prompt files", () => {
     expect(files.length).toBeGreaterThan(10)
     const names = files.map((file) => path.basename(file))
-    for (const name of ["duet.txt", "delegation.txt", "project-thread.txt", "computer-use.txt", "care.txt", "bash.txt", "unattended.txt", "memory-use.txt"]) {
+    for (const name of ["duet.txt", "delegation.txt", "project-thread.txt", "computer-use.txt", "care.txt", "bash.txt", "unattended.txt", "memory-use.txt", "mode-auto.txt", "mode-ask.txt", "background-code.txt", "addendum-ondevice.txt", "voice-tags.txt"]) {
       expect(names).toContain(name)
     }
   })
@@ -215,6 +223,113 @@ describe("unattended block from automation_run metadata", () => {
   })
 })
 
+describe("autonomy blocks from the session permission mode (PR2)", () => {
+  const AUTO_MODES = ["auto", "acceptEdits", "dontAsk", "yolo", "bypassPermissions"] as const
+  const ASK_MODES = ["default", "manual"] as const
+
+  test("every permission mode is mapped: auto, ask, or none for plan", () => {
+    for (const mode of PermissionNext.Mode.options) {
+      const expected = (AUTO_MODES as readonly string[]).includes(mode)
+        ? "auto"
+        : (ASK_MODES as readonly string[]).includes(mode)
+          ? "ask"
+          : undefined
+      expect(SystemPrompt.autonomy(mode)).toBe(expected)
+    }
+    expect(SystemPrompt.autonomy("plan")).toBeUndefined()
+    expect(SystemPrompt.autonomy(undefined)).toBeUndefined()
+  })
+
+  test("auto modes load mode-auto after the mode reminder; ask modes load mode-ask", () => {
+    for (const permissionMode of AUTO_MODES) {
+      const ctx = SystemPrompt.context("code", {}, { permissionMode })
+      expect(ctx.permissionMode).toBe(permissionMode)
+      expect(SystemPrompt.provider(claude, "build", ctx)).toEqual([BASE_CODE, SAFETY, BUILD_MODE, MODE_AUTO])
+    }
+    for (const permissionMode of ASK_MODES) {
+      const ctx = SystemPrompt.context("chat", { reply_mode: "voice" }, { permissionMode })
+      expect(SystemPrompt.provider(claude, undefined, ctx)).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, CARE, MODE_ASK, VOICE])
+    }
+  })
+
+  test("no mode block in plan, without a mode, or on a run nobody watches", () => {
+    const blocks = (parts: string[]) => parts.filter((p) => p === MODE_AUTO || p === MODE_ASK)
+    expect(blocks(SystemPrompt.provider(claude, "plan", SystemPrompt.context("code", {}, { permissionMode: "auto" })))).toEqual([])
+    expect(blocks(SystemPrompt.provider(claude, undefined, SystemPrompt.context("code", {}, { permissionMode: "plan" })))).toEqual([])
+    expect(blocks(SystemPrompt.provider(claude, undefined, SystemPrompt.context("code", {})))).toEqual([])
+    for (const metadata of [{ [Automation.RUN_METADATA_KEY]: { id: "job-1" } }, { run_kind: "background_code" }]) {
+      expect(blocks(SystemPrompt.provider(claude, undefined, SystemPrompt.context("code", metadata, { permissionMode: "default" })))).toEqual([])
+    }
+  })
+
+  test("bot turns keep bot.txt's approval rule and get no mode block", () => {
+    const parts = SystemPrompt.bot(undefined, SystemPrompt.context("chat", {}, { permissionMode: "auto" }))
+    expect(parts).not.toContain(MODE_AUTO)
+    expect(parts).not.toContain(MODE_ASK)
+  })
+
+  test("the TUI loads the same blocks from its own permission mode", () => {
+    const src = fs.readFileSync(path.join(import.meta.dir, "../../src/cli/ui/ink-app/constants/prompts.ts"), "utf8")
+    expect(src).toContain("@/runtime/session/prompt/mode-auto.txt")
+    expect(src).toContain("@/runtime/session/prompt/mode-ask.txt")
+    expect(src).toContain("getPermissionModeSection(permissionMode)")
+  })
+})
+
+describe("background-code block from the run_kind hint (PR7)", () => {
+  test("run_kind background_code loads background-code after unattended, before voice", () => {
+    const ctx = SystemPrompt.context("code", { run_kind: SystemPrompt.BACKGROUND_CODE_RUN_KIND })
+    expect(ctx.backgroundCode).toBe(true)
+    expect(SystemPrompt.provider(claude, undefined, ctx)).toEqual([BASE_CODE, SAFETY, BACKGROUND_CODE])
+    const both = SystemPrompt.context("code", { run_kind: "background_code", [Automation.RUN_METADATA_KEY]: { id: "j" }, reply_mode: "voice" })
+    expect(SystemPrompt.provider(claude, undefined, both).slice(-3)).toEqual([UNATTENDED, BACKGROUND_CODE, VOICE])
+    expect(SystemPrompt.bot(undefined, ctx)).toContain(BACKGROUND_CODE)
+  })
+
+  test("other values, or none, add no background-code block", () => {
+    for (const metadata of [undefined, {}, { run_kind: "interactive" }, { run_kind: true }]) {
+      const ctx = SystemPrompt.context("code", metadata as Record<string, unknown> | undefined)
+      expect(ctx.backgroundCode).toBeUndefined()
+      expect(SystemPrompt.provider(claude, undefined, ctx)).not.toContain(BACKGROUND_CODE)
+    }
+  })
+})
+
+describe("on-device addendum (PR11f)", () => {
+  const device = (id: string) => ({ api: { id }, providerID: ALLTERNIT_DEVICES_PROVIDER_ID })
+
+  test("the provider id matches discovery", () => {
+    expect(SystemPrompt.ON_DEVICE_PROVIDER_ID).toBe(ALLTERNIT_DEVICES_PROVIDER_ID)
+  })
+
+  test("a device model gets addendum-ondevice instead of addendum-open", () => {
+    for (const id of ["qwen3-4b", "llama-3.2-3b", "local-model"]) {
+      expect(SystemPrompt.family(device(id))).toBe("ondevice")
+      const parts = SystemPrompt.provider(device(id), undefined, { surface: "chat" })
+      expect(parts).toContain(ADDENDUM_ONDEVICE)
+      expect(parts).not.toContain(ADDENDUM_OPEN)
+    }
+    expect(SystemPrompt.family({ api: { id: "qwen3-4b" }, providerID: "ollama" })).toBe("open")
+  })
+})
+
+describe("voice-tags block from the voice_tags hint (PR9)", () => {
+  test("voice_tags on loads voice-tags right after the voice block", () => {
+    const ctx = SystemPrompt.context("chat", { reply_mode: "voice", voice_tags: "on", form_factor: "phone" })
+    expect(ctx.voiceTags).toBe(true)
+    expect(SystemPrompt.provider(claude, undefined, ctx).slice(-3)).toEqual([VOICE, VOICE_TAGS, PHONE])
+    expect(SystemPrompt.bot(undefined, ctx).slice(-3)).toEqual([VOICE, VOICE_TAGS, PHONE])
+  })
+
+  test("no tags without a spoken reply, without the hint, or with another value", () => {
+    for (const metadata of [{ voice_tags: "on" }, { reply_mode: "voice" }, { reply_mode: "voice", voice_tags: "off" }]) {
+      const ctx = SystemPrompt.context("chat", metadata)
+      expect(SystemPrompt.provider(claude, undefined, ctx)).not.toContain(VOICE_TAGS)
+    }
+    expect(SystemPrompt.VOICE_TAGS_KEY).toBe("voice_tags")
+  })
+})
+
 describe("memory-use block", () => {
   test("follows the memory tools block when memory is on", () => {
     const section = SystemPrompt.memorySection("# Memory\n\n- [Prefers tea](tea.md)")
@@ -314,6 +429,11 @@ describe("byte caps (PLAN.md token budgets)", () => {
     ["phone", PHONE, 700],
     ["unattended", UNATTENDED, 700],
     ["memory-use", MEMORY_USE, 1_300],
+    ["mode-auto", MODE_AUTO, 700],
+    ["mode-ask", MODE_ASK, 400],
+    ["background-code", BACKGROUND_CODE, 700],
+    ["addendum-ondevice", ADDENDUM_ONDEVICE, 400],
+    ["voice-tags", VOICE_TAGS, 300],
   ]
   for (const [name, text, cap] of caps) {
     test(`${name} ≤ ${cap} bytes`, () => {

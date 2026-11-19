@@ -1,0 +1,37 @@
+---
+title: 'worktree_enter and worktree_exit'
+description: 'Work in a separate git worktree and keep or remove it when done'
+---
+
+## Overview
+
+`worktree_enter` creates a separate git worktree and branch and moves the session into it. `worktree_exit` leaves it, keeping or removing it.
+
+This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
+
+## Parameters
+
+`worktree_enter`
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `name` | string, optional | Short name for the worktree and its branch. Generated when left out |
+| `base` | string, optional | Branch or commit to start from. The current HEAD when left out |
+
+`worktree_exit`
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `action` | `keep` or `remove` | Keep the worktree on disk, or remove it. Remove works only on one this session created and with no unpushed work |
+
+## Result
+
+Enter returns the path, branch, base and the session that created it. Exit returns the action and what happened: `kept`, `removed` or `refused`. A refusal gives a reason: `unpushed_work`, `uncommitted_changes`, `not_created_here` or `not_in_worktree`. A remove that would lose work is kept instead.
+
+## Permission
+
+Both change files on disk, so they follow the session's permission mode and ask in Ask before actions. They do not run in Read-only. See [Autonomy modes](/guides/autonomy-modes).
+
+## Surfaces
+
+Desktop, the web app and phone layout, the PWA and iOS show a worktree chip and an exit dialog. The Gizzi Code terminal uses the same core. Android follows the PWA. Delivered by the code-session PR (PR1). Family: `code-review`.

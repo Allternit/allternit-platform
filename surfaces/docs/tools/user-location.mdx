@@ -1,0 +1,29 @@
+---
+title: 'user_location'
+description: 'Ask the person where they are, approximately by default'
+---
+
+## Overview
+
+`user_location` asks your device for your location when the answer depends on where you are, such as nearby places or local time. It is a round trip to the app you are using.
+
+This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
+
+## Parameters
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `precision` | `approximate` or `precise`, optional | Approximate (city level) is the default. Precise asks you every time |
+| `reason` | string | Why the assistant needs it, up to 200 characters, shown to you |
+
+## Result
+
+A status of `granted`, `denied`, `unavailable` or `timeout`. A granted approximate answer has city, region, country and time zone. A precise answer adds latitude, longitude and accuracy in meters.
+
+## Permission
+
+The app asks you first. You can deny it. Precise location asks each time it matters, in every mode, including Auto.
+
+## Surfaces
+
+Web, phone layout, PWA and iOS (as a Location kind in Device Access). Desktop shows the same prompt. Android follows the PWA. The terminal does not have it: a terminal has no location service, and the time zone comes from the clock. See [Device access](/guides/device-access). Delivered by the phone PR (PR4). Family: `location`.

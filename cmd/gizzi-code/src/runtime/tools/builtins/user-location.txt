@@ -1,0 +1,3 @@
+Get the person's location from their device.
+
+Ask only when the answer depends on where they are and they have not said: nearby places, local weather, travel time. Approximate (city level) is the default and is enough for most questions. Precise location asks the person every time; request it only when distance matters. Give a short reason, which the person sees. If they decline, ask them for a place instead. Never save a location to memory.

@@ -33,6 +33,18 @@ import { HistoryRecallTool } from './tools/HistoryRecallTool/HistoryRecallTool.j
 import { SleepTool } from './tools/SleepTool/SleepTool.js'
 // One subagent per CSV row with an output schema (sample first, resumable).
 import { AgentBatchTool } from './tools/AgentBatchTool/AgentBatchTool.js'
+// Prompt-gap tools (G3 contract): each adapter's isEnabled reads its runtime
+// module's `available`, so getTools() drops it until that lane flips the flag.
+// Lanes build out their own folder and never edit this list. user_location has
+// no adapter: a terminal has no location service.
+import { WorktreeEnterTool } from './tools/WorktreeEnterTool/WorktreeEnterTool.js'
+import { WorktreeExitTool } from './tools/WorktreeExitTool/WorktreeExitTool.js'
+import { SecondOpinionTool } from './tools/SecondOpinionTool/SecondOpinionTool.js'
+import { PrCommentsTool } from './tools/PrCommentsTool/PrCommentsTool.js'
+import { StatusUpdateTool } from './tools/StatusUpdateTool/StatusUpdateTool.js'
+import { FeedbackNoteTool } from './tools/FeedbackNoteTool/FeedbackNoteTool.js'
+import { VoiceControlTool } from './tools/VoiceControlTool/VoiceControlTool.js'
+import { EndConversationTool } from './tools/EndConversationTool/EndConversationTool.js'
 // Dead code elimination: conditional import for ant-only tools
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 function safeRequire(path: string) {
@@ -223,6 +235,15 @@ export function getAllBaseTools(): Tools {
     ConnectorSearchTool,
     ConnectorSuggestTool,
     SettingsTool,
+    // Prompt-gap tools (G3): disabled until their runtime module sets `available`.
+    WorktreeEnterTool,
+    WorktreeExitTool,
+    SecondOpinionTool,
+    PrCommentsTool,
+    StatusUpdateTool,
+    FeedbackNoteTool,
+    VoiceControlTool,
+    EndConversationTool,
     ...(process.env.USER_TYPE === 'ant' ? [TungstenTool] : []),
     ...(SuggestBackgroundPRTool ? [SuggestBackgroundPRTool] : []),
     ...(WebBrowserTool ? [WebBrowserTool] : []),

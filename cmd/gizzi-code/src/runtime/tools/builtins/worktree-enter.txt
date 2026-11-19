@@ -1,0 +1,3 @@
+Create a git worktree with its own branch and move this session into it, so the work stays apart from the main checkout.
+
+Enter one only when the person asks for a worktree, or when the project's instructions say to use one. Do not create one just to try something. Give a short name, or leave it out to get one. The session works inside the new tree until you call worktree_exit. The result gives the path, the branch and the base it started from.

@@ -1007,12 +1007,14 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// on the computer toolset for that turn only; the lease and confirm gates in
 /// computer_toolset.rs / computer_safety.rs still decide every call.
 ///
-/// Five prompt hints also pass. Four only with their one allowed value
-/// ([`VALUED_TURN_HINTS`]): `form_factor: "phone"` and `reply_mode: "voice"`,
+/// Seven prompt hints also pass. Six only with their one allowed value
+/// ([`VALUED_TURN_HINTS`]): `run_kind: "background_code"` (a code run nobody
+/// watches) and `voice_tags: "on"` (spoken-tag style), plus
+/// `form_factor: "phone"` and `reply_mode: "voice"`,
 /// which the runtime reads to add its small-screen and spoken-reply prompt
 /// blocks; `answer_cards: "widgets"` (sent by iOS and the Ink REPL), which adds
 /// the short `writing` card manual; and `screen_context: "available"`, sent by
-/// a client that answers `capture_screen_context` requests. The fifth is
+/// a client that answers `capture_screen_context` requests. The seventh is
 /// `time_zone`, the client's IANA zone (see `turn_time_zone`), which the
 /// runtime uses for the date in its environment section and the
 /// `current_time` tool. Anything else is dropped.
@@ -1036,11 +1038,13 @@ fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
 /// Turn hints that pass only with their one allowed value (the fifth hint,
 /// `time_zone`, is checked by [`turn_time_zone`]). Shared by this route and
 /// agent_session_routes' message send.
-pub(crate) const VALUED_TURN_HINTS: [(&str, &str); 4] = [
+pub(crate) const VALUED_TURN_HINTS: [(&str, &str); 6] = [
     ("form_factor", "phone"),
     ("reply_mode", "voice"),
     ("answer_cards", "widgets"),
     ("screen_context", "available"),
+    ("run_kind", "background_code"),
+    ("voice_tags", "on"),
 ];
 
 /// The turn hint `metadata.time_zone`: the client's IANA zone name, at most
@@ -1216,7 +1220,7 @@ enum ToolFrameState {
 /// (send_user_message: text + files + push; automation: the saved automation;
 /// lookup: the validated answer card the client draws in place of a
 /// model-written one).
-const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "lookup", "agent_batch", "sleep", "connector_suggest", "settings"];
+const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "lookup", "agent_batch", "sleep", "connector_suggest", "settings", "second_opinion", "pr_comments", "status_update", "feedback_note", "user_location", "voice_control", "end_conversation", "worktree_enter", "worktree_exit"];
 
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`

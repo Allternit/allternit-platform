@@ -1,0 +1,31 @@
+---
+title: 'status_update'
+description: 'Short progress notes during long work'
+---
+
+## Overview
+
+`status_update` publishes the current phase of long work, so you can see where the assistant is without opening every step. It is always loaded, with no search needed.
+
+This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
+
+## Parameters
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `phase` | string | The current phase in a few words, up to 40 characters, such as "Running tests" |
+| `note` | string, optional | One short sentence of progress, up to 200 characters |
+
+Long-running tools also take an optional `label` of 3 to 8 words, up to 60 characters, for the activity row.
+
+## Result
+
+The phase, the note and the time it was published. The runtime publishes it as the session status.
+
+## Permission
+
+Read-only and allowed in every mode.
+
+## Surfaces
+
+A label on the activity row, the status line and the Diagnostics list on Desktop, web, phone layout, PWA and iOS. The terminal shows it on the tool header and the status line. Android follows the PWA. Delivered by the progress PR (PR8).

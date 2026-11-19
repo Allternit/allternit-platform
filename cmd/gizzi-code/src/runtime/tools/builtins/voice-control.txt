@@ -1,0 +1,3 @@
+Change how this voice session sounds or end the call.
+
+Set the spoken language when the person switches language or asks for another one. Set the speed when they ask you to talk faster or slower. Set the reply mode when they want answers as voice, text or both. End the call only after the person says goodbye or asks to hang up. Confirm a change in a few words, out loud.
