@@ -250,6 +250,9 @@ fn runtime_error(status: u16, body: &Value) -> PlatformError {
             body.get("reason").and_then(Value::as_str).map(str::to_string),
             Some("refused".into()),
         ),
+        // App Maps: the runtime's own codes reach the caller as themselves.
+        403 if code == "money_app" => PlatformError::permission("money_app", message),
+        404 if code == "map_not_found" => PlatformError::not_found("map_not_found", message),
         401 | 403 => PlatformError::permission("phone_forbidden", message),
         404 => PlatformError::not_found("phone_not_found", message),
         409 => PlatformError::conflict("phone_conflict", message),

@@ -48,7 +48,11 @@ impl PhoneHost for FakeDesktop {
             }
         }
         if path.contains("/phones/maps") {
-            return Ok(if path.contains("offline.app") {
+            return Ok(if path.contains("nomap.app") {
+                (404, json!({ "ok": false, "error": "map_not_found", "message": "No map for that app yet." }))
+            } else if path.contains("money.app") {
+                (403, json!({ "ok": false, "error": "money_app", "message": "App Maps are off for money apps." }))
+            } else if path.contains("offline.app") {
                 (503, json!({ "error": "runtime_offline" }))
             } else if path.contains("com.android.settings") {
                 (200, json!({ "ok": true, "map": { "app": "com.android.settings", "platform": "android", "app_version": "14", "truncated": null,
@@ -464,6 +468,10 @@ async fn maps_relay_to_the_runtime_and_offline_matches_sibling_routes() {
     assert_eq!((s, v["map"]["app"].as_str()), (StatusCode::OK, Some("com.android.settings")), "{v}");
     let (s, e) = call(&c.app, "GET", "/v1/phones/maps?platform=windows", &key, None).await;
     assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_phone_request")), "{e}");
+    let (s, e) = call(&c.app, "GET", "/v1/phones/maps/nomap.app", &key, None).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::NOT_FOUND, Some("map_not_found")), "{e}");
+    let (s, e) = call(&c.app, "GET", "/v1/phones/maps/money.app", &key, None).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::FORBIDDEN, Some("money_app")), "{e}");
     // Runtime offline: the same error the other /v1/phones routes return.
     let (s, e) = call(&c.app, "GET", "/v1/phones/maps/offline.app", &key, None).await;
     assert_eq!(e["error"]["code"].as_str(), Some("phone_desktop_offline"), "{e}");
