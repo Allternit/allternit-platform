@@ -188,6 +188,8 @@ internal fun Composer(
     pickerRequest: Int = 0,
     /** Wave E: a fixed placeholder (iOS ComposerView placeholderOverride), e.g. "Message Ada…" in a bot chat. */
     placeholderOverride: String? = null,
+    /** Wave H2: starts voice mode for this chat (iOS ComposerView onVoiceMode); null leaves the button disabled. */
+    onVoiceMode: (() -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -248,14 +250,46 @@ internal fun Composer(
     }
     LaunchedEffect(pickerRequest) { if (pickerRequest > 0) pickerOpen = true }
 
-    // Dictation: the system speech screen (no microphone permission needed by the app).
+    // Dictation availability: the phone has a speech recognition service.
     val dictationAvailable = remember { SpeechRecognizer.isRecognitionAvailable(context) }
-    val dictate = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-        if (!spoken.isNullOrBlank()) text = if (text.isBlank()) spoken else "${text.trimEnd()} $spoken"
+    // Wave H2: in-field dictation (iOS DictationController on Android SpeechRecognizer), the first-use
+    // onboarding sheet, then the RECORD_AUDIO system dialog.
+    val dictation = remember { com.allternit.feature.chat.voice.Dictation(context) }
+    var dictationBase by remember { mutableStateOf("") }
+    var dictationOnboarding by remember { mutableStateOf(false) }
+    androidx.compose.runtime.DisposableEffect(dictation) { onDispose { dictation.stop() } }
+    LaunchedEffect(dictation) {
+        androidx.compose.runtime.snapshotFlow { dictation.transcript }.collect { t -> if (t.isNotEmpty()) text = dictationBase + t }
     }
+    LaunchedEffect(dictation) {
+        androidx.compose.runtime.snapshotFlow { dictation.errorMessage }.collect { m ->
+            if (m != null) android.widget.Toast.makeText(context, m, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+    fun startDictation() {
+        com.allternit.feature.chat.voice.VoicePrefs.load(context)
+        dictationBase = if (text.isEmpty() || text.endsWith(" ")) text else "$text "
+        dictation.start()
+    }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startDictation() else dictation.errorMessage = "Microphone access is off. Enable it in Settings to dictate messages."
+    }
+    fun dictateWithPermission() {
+        if (com.allternit.feature.chat.voice.hasMicPermission(context)) startDictation() else micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
+    fun toggleDictation() {
+        Haptics.perform(view, Haptics.Kind.Tap)
+        when {
+            dictation.isRecording -> dictation.stop()
+            !com.allternit.feature.chat.voice.dictationOnboardingShown(context) -> dictationOnboarding = true
+            else -> dictateWithPermission()
+        }
+    }
+    // Voice mode: the microphone priming sheet first when the system dialog is still pending (iOS voiceModeTapped).
+    val startVoice = com.allternit.feature.chat.voice.rememberPrimedPermission(com.allternit.feature.chat.voice.AppPermission.Microphone) { onVoiceMode?.invoke() }
 
     fun send() {
+        dictation.stop()
         // A turn needs words (iOS sendMessage guards on the trimmed text); files ride along.
         if (text.isBlank() || sendDisabled || isStreaming) return
         // No brain picked: the picker opens instead of sending (iOS requiresModelPick).
@@ -426,15 +460,13 @@ internal fun Composer(
                 } else {
                     Row {
                         if (dictationAvailable) {
-                            ControlGlyph(R.drawable.shell_mic, "Dictate", "composerMic") {
-                                dictate.launch(
-                                    Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                                        .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM),
-                                )
-                            }
+                            ControlGlyph(R.drawable.shell_mic, if (dictation.isRecording) "Stop dictation" else "Dictate", "composerMic") { toggleDictation() }
                         }
-                        // Voice mode is not on this app yet: iOS draws the button at 0.4, disabled.
-                        ControlGlyph(R.drawable.shell_waveform, "Start voice mode", "composerVoice", enabled = false) {}
+                        // iOS draws the voice button at 0.4, disabled, where voice mode has no chat to talk to.
+                        ControlGlyph(R.drawable.shell_waveform, "Start voice mode", "composerVoice", enabled = onVoiceMode != null) {
+                            Haptics.perform(view, Haptics.Kind.Tap)
+                            startVoice()
+                        }
                     }
                 }
             }
@@ -450,6 +482,13 @@ internal fun Composer(
                 onPlugins = { onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece)) },
                 onArtifacts = { onOpenSection(RailRow("artifacts-library", "Artifacts", R.drawable.shell_file_text)) },
             )
+        }
+    }
+
+    if (dictationOnboarding) {
+        com.allternit.feature.chat.voice.DictationOnboardingSheet(onDismiss = { dictationOnboarding = false }) {
+            dictationOnboarding = false
+            dictateWithPermission()
         }
     }
 

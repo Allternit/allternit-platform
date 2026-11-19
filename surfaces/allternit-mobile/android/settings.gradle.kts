@@ -60,3 +60,5 @@ include(":feature:settings")
 // Wave H1: purchases and billing (Google Play Billing, the store sheet, Cloud credits). :feature:settings, :feature:chat
 // and :feature:shell depend on it (nativeapp flavor only), so Play Billing ships in the native app and nowhere else.
 include(":feature:billing")
+// Wave H2: Meetings (the agenda, live meeting, recap). :feature:shell depends on it (nativeapp flavor only).
+include(":feature:meetings")

@@ -4,6 +4,19 @@
      ${twaLauncherCategory} in app/build.gradle.kts). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Wave H2: dictation and voice mode (Android SpeechRecognizer), asked after the priming sheet. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Android 11+ package visibility: the speech recognizer and the text-to-speech engine. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application>
         <activity
             android:name="com.allternit.feature.shell.MainActivity"

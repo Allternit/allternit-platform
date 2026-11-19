@@ -90,6 +90,12 @@ internal fun ChatPage(
     }
 
     val title = store.sessions.firstOrNull { it.id == chat.currentSessionId }?.title ?: "Allternit"
+    // Wave H2: voice mode (iOS ChatView voiceHost): full screen or the bar over the composer.
+    val voiceContext = androidx.compose.ui.platform.LocalContext.current
+    val voiceHost = remember(chat) { com.allternit.feature.chat.voice.VoiceHost(voiceContext) }
+    com.allternit.feature.chat.voice.VoiceHostWiring(voiceHost, chat)
+    val endVoice: (Int) -> Unit = { seconds -> chat.appendVoiceSummary(seconds) }
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().statusBarsPadding().testTag("chatScreen")) {
         PhoneHeader(
             title = title,
@@ -127,6 +133,10 @@ internal fun ChatPage(
             },
             greeting = { LaunchGreeting() },
             composer = {
+                val voiceVm = voiceHost.viewModel
+                if (voiceHost.presentation == com.allternit.feature.chat.voice.VoiceHost.Presentation.Bar && voiceVm != null) {
+                    com.allternit.feature.chat.voice.VoiceQuickBar(voiceHost, voiceVm, onEnd = endVoice)
+                }
                 Composer(
                     models = models,
                     noComputer = store.noComputer,
@@ -148,10 +158,19 @@ internal fun ChatPage(
                     prefill = prefill,
                     onPrefillConsumed = { prefill = null },
                     pickerRequest = pickerRequest,
+                    onVoiceMode = {
+                        voiceHost.start(chat, models.selectedId, models.selected?.let { models.level(it) })
+                    },
                 )
             },
             modifier = Modifier.weight(1f),
         )
+    }
+    val fullVoice = voiceHost.viewModel
+    if (voiceHost.presentation == com.allternit.feature.chat.voice.VoiceHost.Presentation.Full && fullVoice != null) {
+        androidx.activity.compose.BackHandler { voiceHost.presentation = com.allternit.feature.chat.voice.VoiceHost.Presentation.Bar }
+        com.allternit.feature.chat.voice.VoiceModeView(voiceHost, fullVoice, onEnd = endVoice)
+    }
     }
     if (shareOpen) {
         ThreadShareSheet(backend = backend, sessionId = chat.currentSessionId, title = title, messages = chat.messages, onDismiss = { shareOpen = false })

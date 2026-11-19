@@ -582,6 +582,15 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                     else -> com.allternit.feature.phones.VendorConnectScreen(phonesHost, onBack = { page = ShellPage.Home }, onReady = { })
                                 }
                             }
+                            // Wave H2: Meetings (iOS MeetingsView, opened from the drawer's Meetings button).
+                            "meetings" -> com.allternit.feature.meetings.MeetingsScreen(
+                                com.allternit.feature.meetings.MeetingsHost(
+                                    signedIn = account != null,
+                                    onClose = { page = ShellPage.Home },
+                                    openComputers = { page = ShellPage.Section(RailRow("computers", "Computers", DesignR.drawable.ph_desktop)) },
+                                    openMeetingsSettings = { page = ShellPage.Settings },
+                                ),
+                            )
                             else -> SectionStub(current.row, onBack = { page = ShellPage.Home })
                         }
                         is ShellPage.Project -> ProjectsListScreen(
