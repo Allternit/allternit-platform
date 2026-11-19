@@ -102,9 +102,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     // Files drive (both flavors): the contract types are generated into
     // contracts/files-drive/gen by `node contracts/files-drive/generate.mjs` and compiled
@@ -143,8 +140,9 @@ android {
 dependencies {
     // The HTTP server, the envelope crypto and X25519 are in-tree (see README
     // "Dependencies"). The screen-share lane dials out over HTTPS/WebSockets
-    // with OkHttp (Apache-2.0, Square), both builds.
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // with OkHttp (Apache-2.0, Square), both builds. OkHttp 5 from the version catalog
+    // (step 7b): the same version :core:api and Clerk Android resolve.
+    implementation(libs.okhttp)
     // The mesh node is the gomobile-bound tsnet wrapper from
     // infrastructure/mesh/tsnet-ios — build it first:
     //   infrastructure/mesh/tsnet-ios/build-android.sh   (output: Mesh.aar,
@@ -179,4 +177,12 @@ dependencies {
     // Real org.json for JVM tests (android.jar only ships stubs). Public domain
     // since 20231013.
     testImplementation("org.json:json:20240303")
+}
+
+// Kotlin 2.2+ rejects android { kotlinOptions { } } (deprecation raised to error);
+// compilerOptions is the replacement and also works on older Kotlin.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }

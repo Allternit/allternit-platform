@@ -81,7 +81,7 @@ export ANDROID_HOME=$HOME/Library/Android/sdk     # or write sdk.dir in local.pr
 # -> app/build/outputs/bundle/playRelease/app-play-release.aab
 ```
 
-Toolchain: AGP 8.9.1, Kotlin 2.0.21, Gradle 8.11.1, minSdk 26, target/compileSdk 36. App version: versionCode 16, versionName 0.7.0 (one versionCode for both flavors). Versions for new modules live in `gradle/libs.versions.toml`.
+Toolchain: AGP 8.9.1, Kotlin 2.3.21 (since step 7b: Clerk Android needs it), Gradle 8.11.1, minSdk 26, target/compileSdk 36. App version: versionCode 18, versionName 0.7.2 (one versionCode for both TWA flavors). Versions for new modules live in `gradle/libs.versions.toml`.
 
 ## Native app modules
 
@@ -95,9 +95,9 @@ The native Kotlin + Jetpack Compose app that will replace the TWA launcher is bu
 | `:core:stream` | `com.allternit.core.stream` | `SseEvent` + `SseParser`, a byte-level port of iOS `SSEParser.swift`, with its test vectors in `SseParserTest`; `AgentChatStream` (okhttp-sse → `Flow<ChatStreamEvent>`, the iOS `AgentChatEvent` frame types) |
 | `:core:data` | `com.allternit.core.data` | `Prefs`, a typed wrapper over Preferences DataStore (the stand-in for UserDefaults) |
 
-**API client.** Never hand-write a REST client: add the route to the OpenAPI spec, list its `operationId` in `contracts/mobile-api/operations.json`, then run `node contracts/mobile-api/generate.mjs` (`--check` runs in `scripts/android-check.sh`). See `contracts/mobile-api/README.md`. Only SSE and WebSocket streams are hand-written (`:core:stream`). kotlinx-serialization 1.7.3, kotlinx-coroutines 1.9.0, okhttp-sse 4.12.0.
+**API client.** Never hand-write a REST client: add the route to the OpenAPI spec, list its `operationId` in `contracts/mobile-api/operations.json`, then run `node contracts/mobile-api/generate.mjs` (`--check` runs in `scripts/android-check.sh`). See `contracts/mobile-api/README.md`. Only SSE and WebSocket streams are hand-written (`:core:stream`). kotlinx-serialization 1.12.0, kotlinx-coroutines 1.11.0, OkHttp + okhttp-sse 5.4.0.
 
-Compose comes from the Compose BOM 2025.05.01 (UI 1.8.2, material3 1.3.2) with the Kotlin 2.0.21 Compose compiler plugin (`org.jetbrains.kotlin.plugin.compose`). DataStore is 1.1.7.
+Compose comes from the Compose BOM 2026.06.01 (the BOM Clerk Android resolves) with the Kotlin 2.3.21 Compose compiler plugin (`org.jetbrains.kotlin.plugin.compose`). DataStore is 1.1.7.
 
 **Release signing.** `app/build.gradle.kts` signs release builds only when all four of `ALLTERNIT_ANDROID_KEYSTORE` (keystore path), `ALLTERNIT_ANDROID_KEYSTORE_PASSWORD`, `ALLTERNIT_ANDROID_KEY_ALIAS` and `ALLTERNIT_ANDROID_KEY_PASSWORD` are set. Otherwise the release build is unsigned, as before. Never put a keystore path or password in the repo.
 
