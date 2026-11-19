@@ -385,3 +385,12 @@ From step 5 (PR #2611):
 - The fingerprint title skips editable nodes, so typed text never enters a hash or a screen name (Android). iPhone OCR bands can still show typed text: known risk.
 - Platform rule (`phone_map::platform_for`): Desktop `phone.devices` entry first (one call per run); else serial prefix `usb:` = iOS, `link:` / `app:` = unknown (maps off), anything else = Android.
 - `vision` exists on the allternit-api task request only (`TaskIn.vision`, bad value = 400 `invalid_args`). Step 7 adds it to MCP `phone_task` / `TaskBody`; step 8 to Desktop `phone.task`.
+
+From step 6 (PR #2612):
+- Explore walks depth first. The screen cap counts screens visited in this run, not the whole map; the map can hold one screen past the cap.
+- `POST /phones/maps/:app/explore` body `{serial (required), minutes? 1..30 default 10, max_screens? 1..300 default 60}`. Success: 202 `{ok:true, status:"running", run_id:"explore-<hex>", serial, app}`. `recheck` is ignored: a second Explore re-walks and bumps `ok`, `last_ok`, `app_version` on every edge it sees again.
+- Errors: 400 `invalid_args`; 400 `explore_android_only` (iPhone, or `link:` / `app:` with no device entry); 403 `money_app` (before any phone call); 404 `phone_not_found`; 409 `explore_running` / `phone_busy`; 502 `phone_unreachable`.
+- Stop: `POST /api/aci/stop/:run_id` stops tasks, skills and Explore (new active-run table `phone_runs::RunReg`). Tasks check at each step and before each `go_to` edge; skills before each step. Only Explore refuses a busy phone; tasks and skills register but are never refused.
+- Completion: `phone.run.completed` with `source:"explore"`; `status` is `done`, `stopped` or `failed`; `skipped` gains `refused`; `steps` holds taps only (cap 300).
+- Back and open_app during Explore also pass the guard with source `explore`.
+- Candidate filter also skips "Navigate up" / "Back" labels and scroll containers themselves.
