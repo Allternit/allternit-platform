@@ -106,6 +106,10 @@ impl Vision {
 #[derive(Clone, Debug, Default)]
 pub struct TaskOpts {
     pub vision: Vision,
+    /// The run's stop flag, checked before each step and between `go_to` edges.
+    /// `POST /api/aci/stop/:id` sets the same flag through `phone_runs`; callers
+    /// that pass none get one registered under the run id.
+    pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 fn schema() -> Value {
@@ -130,7 +134,7 @@ fn schema() -> Value {
     })
 }
 
-fn parse_json(text: &str) -> Option<Value> {
+pub(crate) fn parse_json(text: &str) -> Option<Value> {
     let t = text.trim();
     serde_json::from_str::<Value>(t).ok().filter(Value::is_object).or_else(|| {
         let (a, b) = (t.find('{')?, t.rfind('}')?);
@@ -299,7 +303,7 @@ tokio::task_local! {
 }
 
 /// One model decision (always through gizzi; a test fake when one is set).
-async fn decide(prompt: &str, images: &[String], system: Option<&str>, model: Option<&(String, String)>, schema: &Value) -> Result<(String, crate::gizzi_completion::Usage), String> {
+pub(crate) async fn decide(prompt: &str, images: &[String], system: Option<&str>, model: Option<&(String, String)>, schema: &Value) -> Result<(String, crate::gizzi_completion::Usage), String> {
     #[cfg(test)]
     if let Ok(r) = FAKE_MODEL.try_with(|f| f(prompt, images)) {
         return r;
@@ -377,6 +381,8 @@ struct RunAt<'a> {
     serial: Option<&'a str>,
     goal: &'a str,
     platform: Platform,
+    /// The run's stop flag, checked before each replayed edge.
+    cancel: &'a std::sync::atomic::AtomicBool,
 }
 
 /// Reads after a replayed edge before it counts as not landed, and the wait before each.
@@ -425,6 +431,10 @@ async fn go_to(at: &RunAt<'_>, step: u32, here: Here, els: Vec<UiEl>, want: &str
     let (serial, rid) = (at.serial, at.run_id);
     for (n, edge) in path.iter().take(phone_map::MAX_ROUTE_EDGES).enumerate() {
         let done = n as u32;
+        if at.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            end = Some(GoTo::Ended { edges: done, status: "cancelled", why: "stopped".into() });
+            break;
+        }
         // `route` never returns these; a replay never acts through one either way.
         if edge.sensitive || !edge.routable {
             end = Some(GoTo::FellBack { edges: done, why: "the way there has a step that is never replayed".into() });
@@ -841,6 +851,8 @@ async fn run_task_loop(
     let mut tally = RunTally::default();
     // The map app the run last stood in: the package and its label when the map has one.
     let mut map_app: Option<(String, String)> = None;
+    // Registered for the stop route and the busy check until the loop returns.
+    let reg = crate::phone_runs::RunReg::enter(&run_id, serial, "phone_task", opts.cancel.clone());
     // App Maps: on when there is a data dir and the phone's platform is known. A read
     // with no `nodes` (an old Desktop) leaves them off for that step.
     let platform = match data_dir {
@@ -851,6 +863,11 @@ async fn run_task_loop(
     let mut want_shot = false;
     let mut pending: Option<Pending> = None;
     for step in 1..=max {
+        if reg.stopped() {
+            status = "cancelled";
+            result = Some("stopped".into());
+            break;
+        }
         if started.elapsed().saturating_sub(held) > BUDGET {
             status = "timeout";
             break;
@@ -939,7 +956,7 @@ async fn run_task_loop(
                 let label = format!("go to {name}");
                 let slabel = step_label("phone.go_to", &label, &reason, false, None);
                 begin_step(db, ctx, &run_id, serial.unwrap_or_default(), goal, step, &slabel, &steps);
-                let at = RunAt { db, data_dir: dir, ctx, run_id: &run_id, serial, goal, platform };
+                let at = RunAt { db, data_dir: dir, ctx, run_id: &run_id, serial, goal, platform, cancel: &**reg.flag() };
                 match go_to(&at, step, here, els, want, &mut holds, &mut held, &mut last_el).await {
                     GoTo::Arrived { edges } => {
                         tally.map_steps += u64::from(edges);
@@ -1461,7 +1478,7 @@ async fn post_task(
     let serial = Some(serial).filter(|s| s != "-" && s != "default");
     let max_steps = body.max_steps.unwrap_or(DEFAULT_MAX_STEPS);
     let opts = match Vision::parse(body.vision.as_deref()) {
-        Ok(vision) => TaskOpts { vision },
+        Ok(vision) => TaskOpts { vision, ..Default::default() },
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "ok": false, "error": "invalid_args", "message": e }))).into_response(),
     };
     let some = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
@@ -2195,10 +2212,56 @@ mod tests {
         // `vision: always` is today's behaviour: a picture with every call.
         let (phone, _) = fake_phone(settings_screens(), 0, true);
         let (model, prompts) = fake_model(vec![json!({ "action": "done", "reason": "ok" })]);
-        let report = run_loop(&st, "task-always", phone, model, TaskOpts { vision: Vision::Always }).await;
+        let report = run_loop(&st, "task-always", phone, model, TaskOpts { vision: Vision::Always, ..Default::default() }).await;
         assert_eq!((report["screenshots_sent"].as_u64(), prompts.lock().unwrap()[0].1), (Some(1), 1));
         assert_eq!(Vision::parse(None), Ok(Vision::Auto));
         assert_eq!(Vision::parse(Some(" Always ")), Ok(Vision::Always));
         assert!(Vision::parse(Some("sometimes")).is_err());
+    }
+    /// The fake phone, raising `flag` when the first tap lands (a stop request mid-run).
+    fn stop_after_first_tap(inner: FakeTool, flag: Arc<std::sync::atomic::AtomicBool>) -> FakeTool {
+        Arc::new(move |name: &str, args: &Value| {
+            let r = inner(name, args);
+            if name == "phone.tap" {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            r
+        })
+    }
+
+    #[tokio::test]
+    async fn a_stop_request_ends_a_phone_task_between_steps() {
+        let st = state("cancel-step").await;
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (phone, calls) = fake_phone(settings_screens(), 0, true);
+        let phone = stop_after_first_tap(phone, flag.clone());
+        let (model, _) = fake_model(vec![
+            json!({ "action": "tap", "element": 4, "reason": "network" }),
+            json!({ "action": "tap", "element": 4, "reason": "again" }),
+            json!({ "action": "done", "reason": "ok" }),
+        ]);
+        let report = run_loop(&st, "task-cancel", phone, model, TaskOpts { cancel: Some(flag), ..Default::default() }).await;
+        assert_eq!(report["status"], "cancelled", "{report}");
+        assert_eq!(tool_calls(&calls, "phone.tap").len(), 1);
+        assert_eq!(report["model_calls"].as_u64(), Some(1));
+        // The registered run is gone once the loop returns: a later stop finds nothing.
+        assert!(!crate::phone_runs::request_stop("task-cancel"));
+    }
+
+    #[tokio::test]
+    async fn a_stop_request_ends_go_to_between_edges() {
+        let st = state("cancel-goto").await;
+        let screens = settings_screens();
+        let ids = seed(&st.data_dir, &screens, &[(0, "Network & internet", 1), (1, "Wi-Fi", 2)]);
+        let wifi = ids[2].clone().unwrap();
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (phone, calls) = fake_phone(screens, 0, true);
+        let phone = stop_after_first_tap(phone, flag.clone());
+        let (model, _) = fake_model(vec![json!({ "action": "go_to", "screen": wifi, "reason": "the map knows the way" })]);
+        let report = run_loop(&st, "task-cancel-goto", phone, model, TaskOpts { cancel: Some(flag), ..Default::default() }).await;
+        assert_eq!(report["status"], "cancelled", "{report}");
+        assert_eq!(tool_calls(&calls, "phone.tap").len(), 1);
+        assert_eq!(report["map_steps"].as_u64(), Some(1));
+        assert_eq!(report["model_calls"].as_u64(), Some(1));
     }
 }

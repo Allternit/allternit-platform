@@ -902,6 +902,8 @@ pub async fn run_skill(
         return Err(format!("this skill needs inputs: {}", missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
     }
     let run_id = run_id.unwrap_or_else(new_skill_run_id);
+    // Registered for the stop route and the busy check until the replay returns.
+    let _reg = crate::phone_runs::RunReg::enter(&run_id, serial, "skill", None);
     let started = Instant::now();
     let mut report = Vec::new();
     let mut model_calls = 0u32;
@@ -919,6 +921,11 @@ pub async fn run_skill(
     let mut last_read: Option<UiRead> = None;
 
     for index in 0..skill.steps.len() {
+        if _reg.stopped() {
+            status = "cancelled";
+            error = Some(format!("stopped before step {}", index + 1));
+            break;
+        }
         let step = skill.steps[index].clone();
         let t = Instant::now();
         let mut args: Map<String, Value> = substitute_json(&step.args, inputs).as_object().cloned().unwrap_or_default();
