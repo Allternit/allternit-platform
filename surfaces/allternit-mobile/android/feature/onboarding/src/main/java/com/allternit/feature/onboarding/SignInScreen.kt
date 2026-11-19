@@ -29,6 +29,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.res.painterResource
@@ -49,6 +53,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -183,6 +188,7 @@ fun SignInScreen(
                         onValueChange = { email = it },
                         placeholder = "you@company.com",
                         keyboardType = KeyboardType.Email,
+                        contentType = ContentType.EmailAddress,
                         onDone = { run("email", { AllternitAuth.sendEmailCode(email) }) { code = ""; step = Step.Code } },
                     )
                     InkButton("Continue", busy == "email", enabled = busy == null && email.isNotBlank()) {
@@ -207,7 +213,10 @@ fun SignInScreen(
                         value = code,
                         onValueChange = { code = it.filter(Char::isDigit).take(6) },
                         placeholder = "123456",
-                        keyboardType = KeyboardType.NumberPassword,
+                        // Number, not NumberPassword: a password field makes Google Password
+                        // Manager offer to save the code as the account's password (Moto run).
+                        keyboardType = KeyboardType.Number,
+                        contentType = ContentType.SmsOtpCode,
                         onDone = { run("code", { AllternitAuth.verifyEmailCode(code) }) },
                     )
                     InkButton("Continue", busy == "code", enabled = busy == null && code.length == 6) {
@@ -331,9 +340,13 @@ private fun AuthField(
     onValueChange: (String) -> Unit,
     placeholder: String,
     keyboardType: KeyboardType,
+    contentType: ContentType,
     onDone: () -> Unit,
 ) {
     val c = AllternitTheme.colors
+    // iOS focuses the field as soon as the step opens, so the keyboard is up at once.
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -351,7 +364,10 @@ private fun AuthField(
             unfocusedBorderColor = c.borderStrong,
             cursorColor = c.textPrimary,
         ),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(focus)
+            .semantics { this.contentType = contentType },
     )
 }
 
