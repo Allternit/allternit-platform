@@ -72,7 +72,15 @@ final class AuthManager: ObservableObject {
             #endif
             return
         }
-        Clerk.configure(publishableKey: publishableKey)
+        // Through the same Frontend API proxy as ai.allternit.com (worker
+        // allternit-clerk-proxy). Google's OAuth client only allows
+        // https://allternit.com/__clerk/v1/oauth_callback; calling
+        // clerk.allternit.com directly makes Google answer
+        // redirect_uri_mismatch on "Continue with Google" (found 2026-11-18).
+        Clerk.configure(
+            publishableKey: publishableKey,
+            options: .init(proxyUrl: AppConfig.clerkProxyURL)
+        )
         isClerkConfigured = true
         refreshAuthState()
     }
