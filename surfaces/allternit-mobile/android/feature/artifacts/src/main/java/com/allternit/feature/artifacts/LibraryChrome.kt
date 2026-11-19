@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalView
@@ -63,12 +64,15 @@ fun LibraryHeader(
     onBack: (() -> Unit)?,
     backTag: String = "shellBack",
     leading: (@Composable () -> Unit)? = null,
+    /** iOS glass chrome: the menu in a round glass button, the trailing actions in one glass capsule. */
+    glass: Boolean = false,
     trailing: @Composable () -> Unit = {},
 ) {
     val c = AllternitTheme.colors
     Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.width(96.dp), contentAlignment = Alignment.CenterStart) {
             when {
+                leading != null && glass -> Box(Modifier.glassSurface(CircleShape), contentAlignment = Alignment.Center) { leading() }
                 leading != null -> leading()
                 onBack != null -> LibraryIconButton(DesignR.drawable.ph_caret_left, "Back", backTag, onClick = onBack)
             }
@@ -80,7 +84,38 @@ fun LibraryHeader(
             )
             if (!subtitle.isNullOrEmpty()) Text(subtitle, color = c.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Row(Modifier.width(96.dp), horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.End)) { trailing() }
+        if (glass) Box(Modifier.width(96.dp), contentAlignment = Alignment.CenterEnd) {
+            Row(Modifier.glassSurface(CircleShape).padding(horizontal = 2.dp)) { trailing() }
+        } else Row(Modifier.width(96.dp), horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.End)) { trailing() }
+    }
+}
+
+/** The iOS glass surface the Projects and Artifacts bars share: a soft white fill with a hairline border and a light shadow. */
+@Composable
+fun Modifier.glassSurface(shape: androidx.compose.ui.graphics.Shape): Modifier {
+    val c = AllternitTheme.colors
+    return this.shadow(4.dp, shape, ambientColor = Color.Black.copy(alpha = 0.08f), spotColor = Color.Black.copy(alpha = 0.08f))
+        .clip(shape).background(c.bgPanel.copy(alpha = 0.92f)).border(BorderStroke(0.5.dp, c.borderSubtle), shape)
+}
+
+/** iOS ProjectsNewButton / "New artifact": the floating white capsule with a "+", a hairline border and a soft shadow. */
+@Composable
+fun LibraryNewButton(label: String, testTag: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    val view = LocalView.current
+    val shape = RoundedCornerShape(25.dp)
+    Row(
+        modifier.height(50.dp)
+            .shadow(8.dp, shape, ambientColor = Color.Black.copy(alpha = 0.10f), spotColor = Color.Black.copy(alpha = 0.10f))
+            .clip(shape).background(Color.White).border(BorderStroke(0.5.dp, c.borderStrong), shape)
+            .testTag(testTag)
+            .clickable(role = Role.Button) { Haptics.perform(view, Haptics.Kind.Tap); onClick() }
+            .padding(horizontal = 22.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(painterResource(DesignR.drawable.ph_plus), null, tint = Color(0xFF141413), modifier = Modifier.size(16.dp))
+        Text(label, color = Color(0xFF141413), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

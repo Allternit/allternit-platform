@@ -89,10 +89,10 @@ class ProjectsLibraryStore(private val context: Context) {
         val rCowork = cowork.await(); val rBots = bots.await(); val rWs = workspaces.await(); val rSessions = linked.await()
         val errors = mutableListOf<String>()
         fun note(r: ApiResult<*>, what: String) {
-            if (r !is ApiResult.Ok && !(r is ApiResult.HttpError && r.status == 404)) errors += "Couldn't load $what. ${r.friendly("load $what")}"
+            if (r !is ApiResult.Ok && !(r is ApiResult.HttpError && r.status == 404)) errors += "Couldn't load $what. " + (if (r is ApiResult.HttpError && (r.status == 401 || r.status == 403)) r.friendly("load $what") else "Check the connection and try again.")
         }
         note(rCowork, "projects"); note(rBots, "bot projects"); note(rWs, "code and design projects")
-        noComputer = listOf(rCowork, rWs).any { it is ApiResult.HttpError && (it.status == 503 || it.code == "no_brain" || it.code == "no_computer") }
+        noComputer = listOf(rCowork, rWs).any { it is ApiResult.HttpError && (it.status == 503 || it.status == 428 || it.code == "compute_required" || it.code == "no_brain" || it.code == "no_computer") }
 
         val sessionRows = (rSessions as? ApiResult.Ok)?.value.listUnder("sessions").mapNotNull { o ->
             val id = o.str("id") ?: return@mapNotNull null

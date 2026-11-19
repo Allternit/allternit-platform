@@ -57,6 +57,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiResult
@@ -277,6 +282,7 @@ fun ArtifactsLibraryScreen(
             title = "",
             onBack = null,
             leading = leading,
+            glass = true,
             trailing = {
                 LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search artifacts", "artifactsSearch") { searching = !searching }
                 LibraryIconButton(DesignR.drawable.ph_sliders_horizontal, "Filter and layout", "artifactsFilter") { filterOpen = true }
@@ -305,8 +311,8 @@ fun ArtifactsLibraryScreen(
             item(key = "make", span = full) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Make something new", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                        Text("${tiles.size} types", color = c.textTertiary, fontSize = 13.sp)
+                        Text("Make something new", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        Text("${tiles.size} types", color = c.textTertiary, fontSize = 12.sp)
                     }
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(tiles, key = { it.raw }) { k ->
@@ -316,20 +322,21 @@ fun ArtifactsLibraryScreen(
                 }
             }
             item(key = "tools", span = full) {
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral).padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Or start from your connected tools", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                    Text(
-                        "Connect your tools", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.clip(CircleShape).testTag("artifactsConnectTools").clickable(role = Role.Button, onClick = onConnectors).padding(horizontal = 10.dp, vertical = 8.dp),
-                    )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Or start from your connected tools", color = c.textTertiary, fontSize = 12.sp)
+                    Row(
+                        Modifier.clip(CircleShape).border(BorderStroke(1.dp, c.borderStrong), CircleShape).testTag("artifactsConnectTools")
+                            .clickable(role = Role.Button, onClick = onConnectors).padding(horizontal = 14.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(painterResource(DesignR.drawable.ph_plugs_connected), null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
+                        Text("Connect your tools", color = c.textPrimary, fontSize = 13.sp)
+                    }
                 }
             }
             item(key = "yours", span = full) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Your artifacts", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                    Text("Your artifacts", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
                     store.notice?.let { n ->
                         Row(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.bgPanel).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(12.dp)).padding(start = 12.dp),
@@ -349,9 +356,7 @@ fun ArtifactsLibraryScreen(
             }
             when {
                 !signedIn -> item(key = "signedout", span = full) {
-                    FriendlyState(FriendlyStyle.Empty, "Sign in to see your artifacts", "Artifacts are saved to your Allternit account, so they follow you to every device.", actionTitle = "Sign in", onAction = onSignIn) {
-                        Icon(painterResource(DesignR.drawable.deck_artifact), null, tint = c.textSecondary)
-                    }
+                    DashedEmpty("Sign in to see your artifacts", "Artifacts are saved to your Allternit account, so they follow you to every device.", actionTitle = "Sign in", onAction = onSignIn)
                 }
                 store.loading && store.items.isEmpty() -> {
                     val (count, h) = when (layout) { LibraryLayout.Grid -> 6 to 190; LibraryLayout.Deck -> 2 to 260; LibraryLayout.List -> 5 to 90 }
@@ -391,9 +396,7 @@ fun ArtifactsLibraryScreen(
                                 Icon(painterResource(DesignR.drawable.ph_magnifying_glass), null, tint = c.textSecondary)
                             }
                         else ->
-                            FriendlyState(FriendlyStyle.Empty, "No artifacts yet", "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.", modifier = Modifier.testTag("artifactsEmpty")) {
-                                Icon(painterResource(DesignR.drawable.deck_artifact), null, tint = c.textSecondary)
-                            }
+                            DashedEmpty("No artifacts yet", "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.", Modifier.testTag("artifactsEmpty"))
                     }
                 }
                 layout == LibraryLayout.Deck -> item(key = "deck", span = full) {
@@ -424,12 +427,7 @@ fun ArtifactsLibraryScreen(
     }
 
     // iOS: the floating "New artifact" capsule (its menu is a sheet here, reached by tap).
-    Text(
-        "New artifact", color = c.bgPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp)
-            .height(50.dp).clip(RoundedCornerShape(25.dp)).background(c.textPrimary).testTag("artifactsNew")
-            .clickable(role = Role.Button) { newOpen = true }.padding(horizontal = 24.dp, vertical = 14.dp),
-    )
+    LibraryNewButton("New artifact", "artifactsNew", Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp)) { newOpen = true }
     }
 
     if (newOpen) {
@@ -513,11 +511,11 @@ private fun StudioTile(k: StudioKind, selected: Boolean, busy: Boolean, onTap: (
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
-            Modifier.fillMaxWidth().height(95.dp).clip(RoundedCornerShape(14.dp)).background(c.fillNeutral)
+            Modifier.fillMaxWidth().height(95.dp).clip(RoundedCornerShape(14.dp)).background(c.bgPanel)
                 .border(BorderStroke(if (selected) 2.dp else 1.dp, if (selected) c.textPrimary else c.borderSubtle), RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(painterResource(k.deck), null, tint = c.textPrimary, modifier = Modifier.size(34.dp))
+            ArtifactTileArt(k, Modifier.fillMaxSize().padding(3.dp).clip(RoundedCornerShape(9.dp)))
             if (k.isBeta) Text("Beta", color = c.textSecondary, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
             if (busy) Text("Starting…", color = c.textSecondary, fontSize = 11.sp, modifier = Modifier.align(Alignment.BottomCenter).padding(6.dp))
         }
@@ -584,6 +582,26 @@ private fun ArtifactCard(a: ArtifactSummary, layout: LibraryLayout, modifier: Mo
                 Spacer(Modifier.weight(1f))
                 LibraryIconButton(DesignR.drawable.ph_dots_three_vertical, "More for ${a.title}", "artifactMore${a.id}", iconSize = 18, onClick = onMore)
             }
+        }
+    }
+}
+
+/** iOS empty state: a dashed rounded box with centred text (and an optional action). */
+@Composable
+private fun DashedEmpty(title: String, message: String, modifier: Modifier = Modifier, actionTitle: String? = null, onAction: (() -> Unit)? = null) {
+    val c = AllternitTheme.colors
+    val stroke = c.borderStrong
+    Column(
+        modifier.fillMaxWidth()
+            .drawBehind { drawRoundRect(stroke, style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))), cornerRadius = CornerRadius(12.dp.toPx())) }
+            .padding(horizontal = 16.dp, vertical = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(title, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+        Text(message, color = c.textSecondary, fontSize = 12.sp, textAlign = TextAlign.Center)
+        if (actionTitle != null && onAction != null) {
+            Text(actionTitle, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(top = 4.dp).clip(CircleShape).background(c.fillNeutral).clickable(role = Role.Button, onClick = onAction).padding(horizontal = 14.dp, vertical = 8.dp))
         }
     }
 }
