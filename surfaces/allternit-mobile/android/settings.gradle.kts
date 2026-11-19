@@ -24,6 +24,9 @@ include(":core:api")
 include(":core:auth")
 include(":core:stream")
 include(":core:data")
+// Gap run GS-B: the shared Files key crypto, Keystore boxes and the voice hand-off crypto. :app depends on it in every
+// flavor (it has no Compose or Clerk); :feature:settings, :feature:computer and :feature:push use it too.
+include(":core:files")
 // Native app screens (step 7b). Only the "nativeapp" flavor of :app depends on them, so the
 // play and phonelink (TWA) builds do not compile or ship any of this.
 include(":feature:onboarding")

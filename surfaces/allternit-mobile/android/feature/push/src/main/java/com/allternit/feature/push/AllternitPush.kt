@@ -123,7 +123,11 @@ object AllternitPush {
             capabilities = CAPABILITIES,
         )
         when (val result = api.registerDeviceToken(body)) {
-            is ApiResult.Ok -> prefs(context).edit().putBoolean(KEY_REGISTERED, true).remove(KEY_ERROR).apply()
+            is ApiResult.Ok -> {
+                prefs(context).edit().putBoolean(KEY_REGISTERED, true).remove(KEY_ERROR).apply()
+                // Gap run GS-B: the read token for private notification bodies, Keystore-sealed (never prefs or logs).
+                PrivateBodies.storeReadToken(context, result.value.readToken)
+            }
             is ApiResult.HttpError -> prefs(context).edit().putString(KEY_ERROR, result.code ?: "HTTP ${result.status}").apply()
             else -> prefs(context).edit().putString(KEY_ERROR, "Couldn't reach Allternit").apply()
         }
@@ -135,6 +139,7 @@ object AllternitPush {
         context.getSystemService(NotificationManager::class.java)?.cancelAll()
         // Wave I2: the widget, tiles and shortcuts drop the leaving account's snapshot.
         com.allternit.feature.system.StatusSync.clear(context)
+        PrivateBodies.storeReadToken(context, null)
         val p = prefs(context)
         val token = p.getString(KEY_TOKEN, null)
         if (!p.getBoolean(KEY_REGISTERED, false) || token.isNullOrBlank()) return

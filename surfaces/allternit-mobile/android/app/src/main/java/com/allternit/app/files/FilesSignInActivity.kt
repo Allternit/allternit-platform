@@ -100,15 +100,28 @@ class FilesSignInActivity : Activity() {
                 startActivity(Intent(this, FilesKeyActivity::class.java))
             }))
             actions.addView(FilesUi.gap(this, 12))
-            actions.addView(FilesUi.matchWidth(FilesUi.button(this, "Sign out", false) {
-                drive.signOut()
-                render(null)
-            }))
+            // The native app signs Files in with its own session: signing out happens in the app's Settings.
+            if (!drive.auth.usesAppSession()) {
+                actions.addView(FilesUi.matchWidth(FilesUi.button(this, "Sign out", false) {
+                    drive.signOut()
+                    render(null)
+                }))
+            }
             if (all.isEmpty() && error == null) refreshInBackground()
         } else {
             status.text = (if (error != null) "$error\n\n" else "") +
                 "Sign in to see your computers in the Files app and save to them from any app. Browsing a sleeping computer never wakes it."
-            actions.addView(FilesUi.matchWidth(FilesUi.button(this, "Sign in", true) { startSignIn() }))
+            if (drive.auth.usesAppSession()) {
+                // Native app (gap run GS-B): no Custom Tab. Files uses the app's own sign-in, so open the app.
+                status.text = (if (error != null) "$error\n\n" else "") +
+                    "Sign in to Allternit, then come back. Files uses the same sign-in, so your computers show up in the Files app and Share > Save to computer works from any app."
+                actions.addView(FilesUi.matchWidth(FilesUi.button(this, "Open Allternit", true) {
+                    packageManager.getLaunchIntentForPackage(packageName)?.let { startActivity(it) }
+                    finish()
+                }))
+            } else {
+                actions.addView(FilesUi.matchWidth(FilesUi.button(this, "Sign in", true) { startSignIn() }))
+            }
             actions.addView(FilesUi.gap(this, 12))
             actions.addView(FilesUi.body(this, "By continuing you confirm you are 18 or older and agree to the Terms (allternit.com/terms) and Privacy Policy (allternit.com/privacy)."))
         }

@@ -205,6 +205,7 @@ fun SettingsRoot(host: SettingsHost) {
             "twin" -> TwinPage(back)
             "files" -> FilesPage(back, push)
             "files-keys" -> FilesKeysPage(back)
+            "voice" -> VoicePage(back)
             "self-hosted" -> SelfHostedPage(back, push)
             "self-hosted-session" -> SelfHostedSessionPage(back)
             "brain" -> BrainPage(back, push)

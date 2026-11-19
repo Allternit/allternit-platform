@@ -1,5 +1,9 @@
 package com.allternit.app.files
 
+import com.allternit.core.files.Blake3
+import com.allternit.core.files.FilesKeyCrypto
+import com.allternit.core.files.FilesKeyRing
+
 import android.content.Context
 import android.os.Build
 import android.util.Base64
@@ -24,7 +28,7 @@ import java.util.TimeZone
  * on another of the user's computers instead of waking it.
  *
  * - This phone's long-lived X25519 secret lives only as ciphertext: AES-256-GCM under the
- *   non-exportable, app-private Android Keystore key `files_key_device_v1` (KeystoreSealer),
+ *   non-exportable, app-private Android Keystore key `files_key_device_v1` (:core:files FilesKeyRing + KeystoreBox),
  *   stored in the app's private SharedPreferences `files_keys` (key `device_secret`,
  *   `<device id>|<base64 sealed blob>`). App backup is off (`allowBackup="false"`), and a
  *   blob that no longer opens (Keystore key gone) is replaced by a new key pair. The
@@ -37,8 +41,7 @@ import java.util.TimeZone
  * Every call does network I/O: call off the main thread.
  */
 internal class FilesKeys(private val drive: FilesDrive) {
-    private val prefs = drive.context.getSharedPreferences("files_keys", Context.MODE_PRIVATE)
-    private val sealer by lazy { KeystoreSealer("files_key_device_v1") }
+    private val ring by lazy { FilesKeyRing(drive.context, deviceName) { m, p, b -> drive.api().filesKeys(m, p, b) } }
 
     sealed class State {
         data class Ready(val keyId: String) : State()
@@ -64,36 +67,15 @@ internal class FilesKeys(private val drive: FilesDrive) {
 
     // ---- this phone's key ring
 
-    @Synchronized
-    private fun deviceSecret(): ByteArray {
-        prefs.getString("device_secret", null)?.let { stored ->
-            try {
-                val (owner, blob) = stored.split('|', limit = 2)
-                if (owner == deviceId) return sealer.open(Base64.decode(blob, Base64.NO_WRAP))
-            } catch (e: Exception) {
-                // Keystore key gone (restore to a new phone, or the user cleared it): make a new one.
-            }
-        }
-        val secret = FilesKeyCrypto.x25519Secret()
-        prefs.edit()
-            .putString("device_secret", deviceId + "|" + Base64.encodeToString(sealer.seal(secret), Base64.NO_WRAP))
-            .remove("envelopes")
-            .apply()
-        return secret
-    }
+    // The key ring itself (device secret, envelopes) lives in :core:files FilesKeyRing, shared with the native
+    // Settings > Files key page, so both read the same Keystore-sealed secret and envelopes.
+    private fun deviceSecret(): ByteArray = ring.deviceSecret()
 
-    private fun devicePub(): ByteArray = FilesKeyCrypto.x25519Public(deviceSecret())
+    private fun devicePub(): ByteArray = ring.devicePub()
 
-    private fun envelopes(): List<FilesKeyCrypto.Envelope> {
-        val arr = try { JSONArray(prefs.getString("envelopes", "[]")) } catch (e: Exception) { JSONArray() }
-        return List(arr.length()) { FilesKeyCrypto.Envelope.fromJson(arr.getJSONObject(it)) }.filter { it.deviceId == deviceId }
-    }
+    private fun envelopes(): List<FilesKeyCrypto.Envelope> = ring.envelopes()
 
-    @Synchronized
-    private fun keep(env: FilesKeyCrypto.Envelope) {
-        val all = listOf(env) + envelopes().filter { it.keyId != env.keyId }
-        prefs.edit().putString("envelopes", JSONArray(all.take(8).map { it.toJson() }).toString()).apply()
-    }
+    private fun keep(env: FilesKeyCrypto.Envelope) = ring.keep(env)
 
     /** This phone holds some Files key (the replica fallback can try). */
     fun hasKey(): Boolean = drive.auth.signedIn() && envelopes().isNotEmpty()
@@ -177,7 +159,7 @@ internal class FilesKeys(private val drive: FilesDrive) {
 
     fun removeDevice(device: String) {
         call("DELETE", "/api/v1/files-keys/devices/${CloudApi.seg(device)}")
-        if (device == deviceId) prefs.edit().remove("envelopes").apply()
+        if (device == deviceId) ring.forgetEnvelopes()
     }
 
     /** A new key sealed to every listed device (this one included), after a removal. */

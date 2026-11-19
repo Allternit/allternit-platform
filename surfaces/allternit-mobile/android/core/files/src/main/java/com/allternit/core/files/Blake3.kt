@@ -1,4 +1,4 @@
-package com.allternit.app.files
+package com.allternit.core.files
 
 /**
  * BLAKE3-256, hash and keyed-hash modes, a direct port of the BLAKE3 reference
@@ -7,7 +7,7 @@ package com.allternit.app.files
  * section 5); replica locators are the keyed mode (SPEC section 13). Incremental:
  * [update] any number of times, then [finalizeHex].
  */
-internal class Blake3 private constructor(private val key: IntArray, private val mode: Int) {
+class Blake3 private constructor(private val key: IntArray, private val mode: Int) {
     constructor() : this(IV, 0)
 
     private var chunk = ChunkState(key, 0, mode)

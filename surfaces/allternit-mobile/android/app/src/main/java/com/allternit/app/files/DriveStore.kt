@@ -1,5 +1,7 @@
 package com.allternit.app.files
 
+import com.allternit.core.files.Blake3
+
 import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject

@@ -7,6 +7,10 @@
 
     <!-- Wave H2: dictation and voice mode (Android SpeechRecognizer), asked after the priming sheet. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Gap run GS-B: Settings > Voice > Scan from my computer reads the voice key QR (CameraX + ML Kit, on-device). Asked
+         only when the scan sheet opens. Not required: a phone without a camera pastes the key instead. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <!-- Android 11+ package visibility: the speech recognizer and the text-to-speech engine. -->
     <queries>

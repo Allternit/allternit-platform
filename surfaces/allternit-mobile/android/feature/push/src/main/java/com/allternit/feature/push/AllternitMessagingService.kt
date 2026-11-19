@@ -33,6 +33,20 @@ class AllternitMessagingService : FirebaseMessagingService() {
             return
         }
         if (data["title"].isNullOrBlank() && data["body"].isNullOrBlank()) return
+        // Gap run GS-B (iOS AllternitNotifications): a private push carries a generic body; fetch the real text by event
+        // id with the device read token. Any failure shows the generic content (never dropped).
+        val eventId = PrivateBodies.privateEventId(data)
+        if (eventId != null) {
+            val content = runCatching { PrivateBodies.fetch(applicationContext, eventId) }.getOrNull()
+            if (content != null) {
+                val next = data.toMutableMap()
+                content.title?.let { next["title"] = it }
+                content.body?.let { next["body"] = it }
+                val sender = if (content.communication && content.senderName != null) PushNotifications.Sender(content.senderName, content.avatar) else null
+                PushNotifications.show(applicationContext, next, sender, content.avatar)
+                return
+            }
+        }
         PushNotifications.show(applicationContext, data)
     }
 }

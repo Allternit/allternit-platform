@@ -37,6 +37,11 @@ firebaseMessaging = "24.1.0"
 # Jetpack Glance (Apache-2.0) for the home-screen status widget (wave I2, iOS AllternitWidgets StatusWidget). Only
 # :feature:system uses it, so only the nativeapp flavor carries it.
 glance = "1.1.1"
+# CameraX (Apache-2.0) + ML Kit barcode scanning, bundled model (Google ML Kit terms, free, on-device) for the voice key
+# QR scan in Settings > Voice (gap run GS-B, iOS VoiceKeyScannerView). Only :feature:settings uses them, so only the
+# nativeapp flavor carries them.
+camerax = "1.4.2"
+mlkitBarcode = "17.3.0"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -57,6 +62,10 @@ androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "w
 play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "playBilling" }
 firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging", version.ref = "firebaseMessaging" }
 glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
+camerax-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+camerax-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
+mlkit-barcode = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcode" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

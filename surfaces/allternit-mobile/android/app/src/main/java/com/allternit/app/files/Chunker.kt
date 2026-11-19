@@ -1,5 +1,7 @@
 package com.allternit.app.files
 
+import com.allternit.core.files.Blake3
+
 import com.allternit.files.contract.ChunkRef
 import com.allternit.files.contract.ChunkerParams
 import java.io.InputStream

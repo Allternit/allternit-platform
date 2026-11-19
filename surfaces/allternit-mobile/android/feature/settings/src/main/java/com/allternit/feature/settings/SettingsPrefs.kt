@@ -43,6 +43,8 @@ object SettingsPrefs {
     /** A plain on-device switch (Memory: generate memory from chat history). */
     fun flag(context: Context, key: String, default: Boolean): Boolean = prefs(context).getBoolean("allternit.$key", default)
     fun setFlag(context: Context, key: String, on: Boolean) = prefs(context).edit().putBoolean("allternit.$key", on).apply()
+    fun string(context: Context, key: String): String? = prefs(context).getString("allternit.$key", null)?.takeIf { it.isNotEmpty() }
+    fun setString(context: Context, key: String, value: String) = prefs(context).edit().putString("allternit.$key", value).apply()
 
     fun appearance(context: Context): ThemeMode = when (prefs(context).getString("allternit.appearance", "light")) {
         "dark" -> ThemeMode.Dark
