@@ -108,6 +108,10 @@ internal val ALL_PAGES: List<SPageInfo> = listOf(
     SPageInfo("device-access", "Device Access", DesignR.drawable.ph_check_circle_fill, "bots", 10),
     SPageInfo("remote-control", "Allternit Mobile", DesignR.drawable.ph_desktop, "computers", 4),
     SPageInfo("self-hosted", "Self-hosted server", DesignR.drawable.ph_desktop, "computers", 7),
+    SPageInfo("files", "Files", DesignR.drawable.ph_floppy_disk, "computers", 8),
+    SPageInfo("meetings", "Meetings", DesignR.drawable.ph_play_fill, "assistant", 6),
+    SPageInfo("platform", "Platform", DesignR.drawable.ph_sliders_horizontal, "developer", 4),
+    SPageInfo("brain", "Brain", DesignR.drawable.ph_books, "developer", 5),
 )
 
 private fun page(id: String): SPageInfo = ALL_PAGES.first { it.id == id }
@@ -149,7 +153,7 @@ private const val STATUS_URL = "https://status.allternit.com"
 /**
  * Settings (iOS SettingsView, phone calm I13): the root with the Accounts card, Account, Assistant, Bots and
  * computers, App, Appearance, one Advanced row and Log out; Advanced lists every other page. Each row pushes its
- * page with a ‹ back. Pages for part 2 of the wave show a placeholder that names the screen.
+ * page with a ‹ back. Pages not built yet (Billing, Usage, the provider pages) show a placeholder that names the screen.
  */
 @Composable
 fun SettingsRoot(host: SettingsHost) {
@@ -180,6 +184,29 @@ fun SettingsRoot(host: SettingsHost) {
             "mcp" -> McpPage(host, back)
             "webhooks" -> WebhooksPage(host, back)
             "about" -> AboutPage(host, back)
+            "customize" -> CustomizeRoot(host, back)
+            "connectors" -> ConnectorsRoot(back)
+            "skills" -> CapabilitiesPage(host, plugins = false, back = back)
+            "plugins" -> CapabilitiesPage(host, plugins = true, back = back)
+            "infrastructure" -> InfrastructurePage(back, push)
+            "platform" -> PlatformPage(back)
+            "cloud-instances" -> ResourcePage(CLOUD_INSTANCES, back)
+            "cloud-deploy" -> ResourcePage(CLOUD_DEPLOY, back)
+            "vps-servers" -> ResourcePage(VPS_SERVERS, back)
+            "nodes" -> ResourcePage(NODES, back)
+            "cloud-backups" -> CloudBackupsPage(back)
+            "byoc" -> ResourcePage(BYOC, back)
+            "runtime-ops" -> RuntimeOpsPage(back, push)
+            "prewarm" -> PrewarmPage(back)
+            "replay" -> ResourcePage(REPLAY, back)
+            "meetings" -> MeetingsPage(back)
+            "twin" -> TwinPage(back)
+            "files" -> FilesPage(back, push)
+            "files-keys" -> FilesKeysPage(back)
+            "self-hosted" -> SelfHostedPage(back, push)
+            "self-hosted-session" -> SelfHostedSessionPage(back)
+            "brain" -> BrainPage(back, push)
+            "brain-capture" -> BrainCapturePage(back)
             else -> SPlaceholder(pageLabel(top), back)
         }
     }
