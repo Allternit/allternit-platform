@@ -236,6 +236,33 @@ function signingKey() {
   return crypto.createPrivateKey(fs.readFileSync(file));
 }
 
+/**
+ * Linux only: the highest GLIBC any packaged ELF needs, read with scripts/check-elf-floor.mjs.
+ * Desktop refuses a package whose stamp is above the machine's glibc, so a package built
+ * above GLIBC_FLOOR (build-linux-sidecars.sh) is not published unless
+ * ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1. Other platforms: undefined (no stamp).
+ */
+function linuxMinGlibc() {
+  if (TARGET_OS !== 'linux') return undefined;
+  const script = path.join(REPO_ROOT, 'scripts', 'check-elf-floor.mjs');
+  const floor = execFileSync('node', [script, '--print-floor'], { encoding: 'utf8' }).trim();
+  // --floor 99.0 so the checker never fails the run; the comparison is done here.
+  const res = spawnSync('node', [script, '--dir', RESOURCES, '--floor', '99.0', '--json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (res.status !== 0) die(`check-elf-floor failed: ${res.stderr || res.stdout}`);
+  const rows = JSON.parse(res.stdout).rows;
+  const cmp = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; } return 0; };
+  let max = null;
+  for (const r of rows) if (r.glibc && (max === null || cmp(r.glibc, max) > 0)) max = r.glibc;
+  max = max || floor;
+  if (cmp(max, floor) > 0) {
+    const over = rows.filter((r) => r.glibc && cmp(r.glibc, floor) > 0).map((r) => `${r.file} (GLIBC_${r.glibc})`);
+    const msg = `linux runtime needs GLIBC_${max}, above the floor GLIBC_${floor}:\n  ${over.join('\n  ')}`;
+    if (process.env.ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR === '1') console.warn(`! ${msg}\n  publishing anyway (ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1); the stamp keeps older machines on the bundled runtime`);
+    else die(`${msg}\n  Rebuild with scripts/build-linux-sidecars.sh, or set ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1 to publish on purpose.`);
+  }
+  return max;
+}
+
 function pack() {
   signMacBinaries();
   const info = fs.existsSync(STAMP) ? JSON.parse(fs.readFileSync(STAMP, 'utf8')) : stamp();
@@ -245,6 +272,7 @@ function pack() {
   if (!files[BOT_RUNNER]) die(`${BOT_RUNNER} or meeting-bot-native/${PLATFORM} missing — run node scripts/prepare-meeting-bot.cjs (ALLTERNIT_RUNTIME_PLATFORM / ALLTERNIT_RUNTIME_RESOURCES pick the target)`);
   // Studio installs Allternit Tune from the runtime's model-training/ (allternit-api engines.rs).
   if (!files[TUNE_REQUIREMENTS]) die(`${TUNE_REQUIREMENTS} missing — services/model-training is not in this checkout`);
+  const minGlibc = linuxMinGlibc();
   const key = signingKey();
   const objectsDir = path.join(FEED, 'objects');
   const platformDir = path.join(FEED, 'stable', PLATFORM);
@@ -260,6 +288,7 @@ function pack() {
   }
   const manifest = Buffer.from(JSON.stringify({
     version: info.version, build: info.build, platform: PLATFORM, shellApi: info.shellApi,
+    ...(minGlibc ? { minGlibc } : {}),
     platformSha: info.platformSha, platformDirty: info.platformDirty, aiSha: info.aiSha, files,
   }, null, 2));
   const manifestRel = `manifests/${info.version}.json`;
@@ -267,6 +296,7 @@ function pack() {
   fs.writeFileSync(path.join(platformDir, `${manifestRel}.sig`), crypto.sign(null, manifest, key).toString('base64'));
   const latest = Buffer.from(JSON.stringify({
     format: 2, version: info.version, build: info.build, shellApi: info.shellApi,
+    ...(minGlibc ? { minGlibc } : {}),
     manifest: manifestRel, manifestSha256: sha256(manifest),
   }, null, 2));
   fs.writeFileSync(path.join(platformDir, 'latest.json'), latest);

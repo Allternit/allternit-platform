@@ -47,6 +47,8 @@ export interface RuntimeManifest {
   build: number;
   platform: string;
   shellApi: number;
+  /** Highest GLIBC the package's ELF files need (linux only), e.g. "2.31". */
+  minGlibc?: string;
   files: Record<string, { sha256: string; size: number }>;
 }
 
@@ -56,6 +58,8 @@ export interface FeedEntry {
   version: string;
   build: number;
   shellApi: number;
+  /** Highest GLIBC the package's ELF files need (linux only), e.g. "2.31". */
+  minGlibc?: string;
   /** format 1: the tarball. */
   url?: string;
   sha256?: string;
@@ -174,6 +178,55 @@ function sha256File(file: string): Promise<string> {
   });
 }
 
+/**
+ * Linux packages published before the stamp existed were built natively on
+ * Ubuntu 24.04 and need GLIBC_2.39, so an unstamped linux package counts as 2.39.
+ */
+export const LEGACY_LINUX_MIN_GLIBC = '2.39';
+
+function glibcCmp(a: string, b: string): number {
+  const x = a.split('.').map(Number);
+  const y = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] || 0) - (y[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+let hostGlibcCache: string | null | undefined;
+/** The glibc this process runs on (null on musl or when node reports none), cached. */
+export function hostGlibcVersion(): string | null {
+  if (hostGlibcCache !== undefined) return hostGlibcCache;
+  try {
+    const report = process.report?.getReport() as unknown as { header?: { glibcVersionRuntime?: string } } | undefined;
+    hostGlibcCache = report?.header?.glibcVersionRuntime || null;
+  } catch {
+    hostGlibcCache = null;
+  }
+  return hostGlibcCache;
+}
+
+/**
+ * May this host run a runtime package stamped `minGlibc`? Non-linux always;
+ * linux needs the host glibc at or above the stamp (no stamp = 2.39); an
+ * unknown host glibc (musl, no report) is refused.
+ */
+export function runtimeGlibcAllows(
+  platform: string,
+  minGlibc: string | undefined,
+  hostGlibc: string | null | undefined,
+  log?: { warn: (...a: unknown[]) => void },
+): boolean {
+  if (!platform.startsWith('linux')) return true;
+  const need = minGlibc || LEGACY_LINUX_MIN_GLIBC;
+  if (!hostGlibc) {
+    log?.warn('[Runtime] host glibc is unknown (musl or no report): refusing a runtime package that needs GLIBC', need);
+    return false;
+  }
+  return glibcCmp(hostGlibc, need) >= 0;
+}
+
 export interface RuntimePackagesOptions {
   /** <userData>/runtime */
   root: string;
@@ -182,6 +235,8 @@ export interface RuntimePackagesOptions {
   publicKey?: string;
   shellApi?: number;
   platform?: string;
+  /** Host glibc override for tests; undefined reads it from the running process. */
+  hostGlibc?: string | null;
   /** Abort a download after this long with no bytes (default STALL_MS). */
   stallMs?: number;
   /** Wait before reading latest.json and its .sig again after a mismatch (default 5 s). */
@@ -190,11 +245,17 @@ export interface RuntimePackagesOptions {
 }
 
 export class RuntimePackages {
-  private readonly opts: Required<Omit<RuntimePackagesOptions, 'log'>> & Pick<RuntimePackagesOptions, 'log'>;
+  private readonly opts: Required<Omit<RuntimePackagesOptions, 'log' | 'hostGlibc'>> & Pick<RuntimePackagesOptions, 'log'>;
+  private readonly hostGlibcOpt: string | null | undefined;
   private activeRoot: string | null | undefined;
   private checking: Promise<string | null> | null = null;
 
+  private glibcOk(minGlibc: string | undefined): boolean {
+    return runtimeGlibcAllows(this.opts.platform, minGlibc, this.hostGlibcOpt === undefined ? hostGlibcVersion() : this.hostGlibcOpt, this.opts.log);
+  }
+
   constructor(options: RuntimePackagesOptions) {
+    this.hostGlibcOpt = options.hostGlibc;
     this.opts = {
       publicKey: RUNTIME_PUBLIC_KEY,
       shellApi: SHELL_API,
@@ -242,6 +303,7 @@ export class RuntimePackages {
       if (!verifySignature(raw, sig, this.opts.publicKey)) return null;
       const m = JSON.parse(raw.toString('utf8')) as RuntimeManifest;
       if (m.version !== version || m.platform !== this.opts.platform || m.shellApi > this.opts.shellApi) return null;
+      if (!this.glibcOk(m.minGlibc)) return null;
       for (const [rel, f] of Object.entries(m.files)) {
         const abs = path.join(dir, rel);
         if (!abs.startsWith(dir + path.sep)) return null;
@@ -389,6 +451,10 @@ export class RuntimePackages {
     }
     if (entry.shellApi > this.opts.shellApi) {
       this.opts.log?.warn('[Runtime] feed has', entry.version, `but it needs shell API ${entry.shellApi} and this app has ${this.opts.shellApi}: an app update is needed to take it`);
+      return null;
+    }
+    if (!this.glibcOk(entry.minGlibc)) {
+      this.opts.log?.warn('[Runtime] feed has', entry.version, `but it needs GLIBC ${entry.minGlibc || LEGACY_LINUX_MIN_GLIBC} and this machine has ${this.hostGlibcOpt === undefined ? hostGlibcVersion() : this.hostGlibcOpt || 'unknown'}: keeping the bundled runtime`);
       return null;
     }
     if (state.bad.includes(entry.version)) {

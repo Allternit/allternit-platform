@@ -5,7 +5,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RuntimePackages, timerLateMs, type RuntimeManifest } from './runtime-package.js';
+import { RuntimePackages, runtimeGlibcAllows, timerLateMs, type RuntimeManifest } from './runtime-package.js';
 
 const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
 const PUB = publicKey.export({ type: 'spki', format: 'pem' }).toString();
@@ -304,5 +304,48 @@ describe('every check outcome is logged (a silent check looks like one that neve
   it('measures how late a timer fired', () => {
     expect(timerLateMs(1_000, 900)).toBe(0);
     expect(timerLateMs(1_000, 411_000)).toBe(410_000);
+  });
+});
+
+describe('runtime glibc stamp', () => {
+  it('treats an unstamped linux package as 2.39', () => {
+    expect(runtimeGlibcAllows('linux-x64', undefined, '2.36')).toBe(false);
+    expect(runtimeGlibcAllows('linux-x64', undefined, '2.39')).toBe(true);
+  });
+  it('allows a 2.31 package on 2.36 and a 2.39 package on 2.39', () => {
+    expect(runtimeGlibcAllows('linux-x64', '2.31', '2.36')).toBe(true);
+    expect(runtimeGlibcAllows('linux-x64', '2.39', '2.39')).toBe(true);
+    expect(runtimeGlibcAllows('linux-x64', '2.39', '2.35')).toBe(false);
+  });
+  it('refuses linux when the host glibc is unknown', () => {
+    expect(runtimeGlibcAllows('linux-x64', '2.31', null)).toBe(false);
+  });
+  it('always allows darwin and win32', () => {
+    expect(runtimeGlibcAllows('darwin-arm64', undefined, null)).toBe(true);
+    expect(runtimeGlibcAllows('win32-x64', '2.39', '2.0')).toBe(true);
+  });
+
+  function linuxStore(host: string | null) {
+    const version = '9.9.9';
+    const dir = path.join(root, 'versions', version);
+    fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'bin', 'allternit-api'), 'x');
+    return { version, dir, rt: new RuntimePackages({ root, resourcesPath: resources, publicKey: PUB, platform: 'linux-x64', shellApi: 1, hostGlibc: host }) };
+  }
+  function writeManifest(dir: string, version: string, minGlibc?: string) {
+    const m: RuntimeManifest = { version, build: 200, platform: 'linux-x64', shellApi: 1, ...(minGlibc ? { minGlibc } : {}), files: { 'bin/allternit-api': { sha256: sha('x'), size: 1 } } };
+    const raw = JSON.stringify(m);
+    fs.writeFileSync(path.join(dir, 'manifest.json'), raw);
+    fs.writeFileSync(path.join(dir, 'manifest.sig'), sign(raw));
+  }
+
+  it('readVerified returns null for an over-floor manifest and the manifest when it fits', async () => {
+    const { version, dir, rt } = linuxStore('2.36');
+    writeManifest(dir, version, '2.39');
+    expect(await rt.readVerified(version)).toBeNull();
+    writeManifest(dir, version);
+    expect(await rt.readVerified(version)).toBeNull();
+    writeManifest(dir, version, '2.31');
+    expect((await rt.readVerified(version))?.version).toBe(version);
   });
 });
