@@ -13,6 +13,7 @@ The server fix goes live with the next cloud-api deploy; the Desktop fixes arriv
 - **Clearer pairing errors:** the sign-in window now says when the problem is on Allternit's side or when you need to sign in again. It says "invalid or expired" only when the code really is.
 - **Connect screen (tray → Connection settings):** **Test** and **Save** work again. On every system they failed with "Untrusted IPC sender".
 - **Linux and Windows:** the sign-in window's title bar reads "Allternit" instead of "@allternit/desktop".
+- **Cloud computers and signed-out Desktops stop calling Allternit for nothing:** with no account session in the window, Desktop no longer asks for call rings, phone numbers, computer presence or the computer list every minute (each was refused). Other refused account requests wait 1 minute, then longer, up to 30 minutes. Signing in resumes them at once.
 
 ## Next — Phone feedback 1.0.4
 
