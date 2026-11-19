@@ -6,7 +6,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import com.allternit.core.api.ApiCall
 import com.allternit.core.api.ApiClients
+import com.allternit.core.api.ApiJson
 import com.allternit.core.api.ApiConfig
 import com.allternit.core.api.ApiResult
 import com.allternit.core.api.gen.AgentSession
@@ -244,6 +246,55 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
         }
     }
 
+    // MARK: Overview actions (iOS ShellSessionsStore rename / archive, OverviewBulkActions)
+
+    private fun sessionUrl(id: String) =
+        ApiConfig().apiBaseUrl.newBuilder().addPathSegment("agent-sessions").addPathSegment(id).build()
+
+    private suspend fun patch(id: String, body: String): String? = describe(
+        ApiCall.executeUnit(ShellApi.okHttp, ApiJson.default, ApiCall.request("PATCH", sessionUrl(id), body)),
+    )
+
+    private fun describe(r: ApiResult<*>): String? = when (r) {
+        is ApiResult.Ok -> null
+        is ApiResult.HttpError -> statusSentence(r.status) ?: FriendlyErrorMessage.from(r.message ?: "", "update the chat")
+        is ApiResult.Network -> "Could not connect to the server. Check your connection and try again."
+        is ApiResult.Decode -> null
+    }
+
+    /** `PATCH agent-sessions/:id { name }`. Optimistic; restored on failure. Returns the error. */
+    suspend fun rename(id: String, name: String): String? {
+        val before = sessions
+        sessions = sessions.map { if (it.id == id) it.copy(name = name) else it }
+        val body = kotlinx.serialization.json.buildJsonObject { put("name", JsonPrimitive(name)) }.toString()
+        return patch(id, body)?.also { sessions = before }
+    }
+
+    /**
+     * Close a card (X, swipe up, ⋯ → Archive): `metadata.archived` plus `active: false`, as iOS
+     * archive(). Optimistic: the card leaves at once and comes back if the write fails.
+     */
+    suspend fun setArchived(id: String, archived: Boolean): String? {
+        val before = sessions
+        if (archived) sessions = sessions.filterNot { it.id == id }
+        val body = """{"active":${!archived},"metadata":{"archived":$archived}}"""
+        val error = patch(id, body)
+        if (error != null) sessions = before else load()
+        return error
+    }
+
+    /** `DELETE agent-sessions/:id` for good. Optimistic; the list comes back if it fails. */
+    suspend fun delete(id: String): String? {
+        val before = sessions
+        sessions = sessions.filterNot { it.id == id }
+        val error = describe(ApiCall.executeUnit(ShellApi.okHttp, ApiJson.default, ApiCall.request("DELETE", sessionUrl(id), null)))
+        if (error != null) sessions = before
+        return error
+    }
+
+    /** Archived sessions of [mode] (the overview's Archived view). */
+    fun archivedOf(mode: ShellMode): List<AgentSession> = sessions.filter { it.archived && it.belongs(mode) }
+
     /** Open (not archived) sessions of [mode], newest first. */
     fun of(mode: ShellMode): List<AgentSession> = sessions.filter { !it.archived && it.belongs(mode) }
 }
@@ -275,4 +326,17 @@ internal fun statusSentence(status: Int): String? = when (status) {
 internal object NoComputerCopy {
     const val TITLE = "No computer connected"
     const val DETAIL = "Connect a computer or start Allternit Cloud to use this."
+}
+
+/** Pinned recents, local to this phone (iOS RailPinsStore, key `allternit:rail:pinned`, ids only). */
+internal object RailPinPrefs {
+    private const val FILE = "allternit_shell"
+    private const val KEY = "allternit:rail:pinned"
+
+    fun pinned(context: Context): Set<String> =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getStringSet(KEY, emptySet()).orEmpty().toSet()
+
+    fun set(context: Context, ids: Set<String>) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putStringSet(KEY, ids).apply()
+    }
 }
