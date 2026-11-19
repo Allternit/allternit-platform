@@ -59,8 +59,9 @@ android {
             manifestPlaceholders["twaLauncherCategory"] = "android.intent.category.LAUNCHER"
         }
         // The native Kotlin + Compose app (handoffs/android-native-2026-11-18, step 7b).
-        // Same app ID and signing key; Play INTERNAL TESTING track only until the cutover
-        // (PLAN.md section 3): versionCode 1000+ so it always sorts above the TWA builds,
+        // Same app ID and signing key. NOT uploaded to Play before the cutover: it is tested by
+        // sideload (adb install) on a phone/emulator, then replaces the TWA on Play production
+        // with a staged rollout when it reaches parity (PLAN.md section 3): versionCode 1000+ so it always sorts above the TWA builds,
         // which keep 17-999 for hotfixes. Launcher = com.allternit.feature.shell.MainActivity
         // (src/nativeapp/AndroidManifest.xml). The stock TWA LauncherActivity stays in the
         // build without the launcher category, as the "Use web version" target. No Play

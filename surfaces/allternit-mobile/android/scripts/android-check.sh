@@ -32,7 +32,7 @@ run node ../../../contracts/mobile-api/generate.mjs --check
 # 1. Google Play build (the TWA app as shipped) + its unit tests + lint.
 run ./gradlew :app:assemblePlayDebug :app:testPlayDebugUnitTest :app:lintPlayDebug
 
-# 1b. Native app (step 7b): the nativeapp flavor (versionCode 1000+, Play internal track only).
+# 1b. Native app (step 7b): the nativeapp flavor (versionCode 1000+; sideload only until the cutover, then Play production).
 run ./gradlew :app:assembleNativeappDebug :app:assembleNativeappRelease :app:lintNativeappDebug
 
 # 2. Native foundation modules: unit tests (:core:api, :core:stream and :core:design have tests today;
