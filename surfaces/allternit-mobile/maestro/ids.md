@@ -12,9 +12,9 @@ When a flow gains an `id:` selector, add its row here in the same change.
 
 | id | flow(s) | iOS file that sets it | Android |
 | --- | --- | --- | --- |
-| `loginContinueEmail` | 01 | `ios/App/AllternitApp.swift:432` | Modifier.testTag (step 7+) |
-| `loginHeadline` | 01 | `ios/App/AllternitApp.swift:352` | Modifier.testTag (step 7+) |
-| `loginSkipAuth` | 01 | `ios/App/AllternitApp.swift:456` | Modifier.testTag (step 7+) |
+| `loginContinueEmail` | 01 | `ios/App/AllternitApp.swift:432` | `android/feature/onboarding/.../SignInScreen.kt` |
+| `loginHeadline` | 01 | `ios/App/AllternitApp.swift:352` | `android/feature/onboarding/.../SignInScreen.kt` |
+| `loginSkipAuth` | 01 | `ios/App/AllternitApp.swift:456` | `android/feature/onboarding/.../SignInScreen.kt` |
 | `chatNewChat` | 02 | `ios/Features/Chat/Views/ChatView.swift:63` | Modifier.testTag (step 7+) |
 | `composerInput` | 02 | `ios/Features/Chat/Composer/ComposerView.swift:355` | Modifier.testTag (step 7+) |
 | `phoneMenuButton` | 02, 04, 05, 07, 08, 09, 19 | `ios/Features/Shell/PhoneHeader.swift:192` | Modifier.testTag (step 7+) |

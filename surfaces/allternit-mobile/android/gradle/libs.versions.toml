@@ -1,19 +1,28 @@
 # Version catalog (native app step 4, 2026-11-18). New modules take their versions
 # from here. Older literals in app/ and ondevice/ move in only when a step touches them.
+#
+# Toolchain bump (step 7b, 2026-11-18): Clerk Android (com.clerk:clerk-android-api 1.4.1,
+# the native sign-in SDK) is compiled with Kotlin metadata 2.4 and pulls kotlin-stdlib 2.4.21,
+# OkHttp 5.4.0, kotlinx-serialization 1.12.0, coroutines 1.11.0 and Compose BOM 2026.06.01.
+# Kotlin 2.0.21 cannot read that metadata; Kotlin 2.3.21 builds it (step 7a spike, AGP 8.9.1,
+# Gradle 8.11.1, JDK 17). The versions below match what Gradle resolves anyway, on purpose.
 [versions]
 agp = "8.9.1"
-kotlin = "2.0.21"
-# Compose UI/runtime/foundation 1.8.2, material3 1.3.2. Needs compileSdk 35+ and
-# kotlin-stdlib 1.9.24+, so it fits compileSdk 36 / Kotlin 2.0.21 / AGP 8.9.1.
-composeBom = "2025.05.01"
+# The kotlin-android, Compose compiler and serialization plugins all follow this version
+# (root build.gradle.kts), including for :app and :ondevice.
+kotlin = "2.3.21"
+# Compose BOM 2026.06.01 (UI 1.11.x), the BOM Clerk Android resolves. Needs compileSdk 36.
+composeBom = "2026.06.01"
 datastore = "1.1.7"
-okhttp = "4.12.0"
-# kotlinx-serialization 1.7.3 is built against Kotlin 2.0.20, so it runs on Kotlin 2.0.21
-# (the serialization compiler plugin is the Kotlin plugin, same version as kotlin).
-kotlinxSerialization = "1.7.3"
-# kotlinx-coroutines 1.9.0 needs Kotlin 2.0.0+.
-coroutines = "1.9.0"
+# OkHttp 5 (okhttp + okhttp-sse move together). Clerk resolves 5.4.0 for every module.
+okhttp = "5.4.0"
+kotlinxSerialization = "1.12.0"
+coroutines = "1.11.0"
 junit = "4.13.2"
+# Clerk Android (MIT, Clerk): native sign-in, session JWTs, organizations (step 7a spike).
+clerk = "1.4.1"
+# setContent for the native MainActivity; the version the step 7a spike ran with.
+activityCompose = "1.10.1"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -26,6 +35,9 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhtt
 okhttp-sse = { group = "com.squareup.okhttp3", name = "okhttp-sse", version.ref = "okhttp" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+clerk-android-api = { group = "com.clerk", name = "clerk-android-api", version.ref = "clerk" }
+activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

@@ -49,12 +49,30 @@ android {
             // this build is not installed from Google Play).
             manifestPlaceholders["launcherActivity"] =
                 "com.google.androidbrowserhelper.trusted.LauncherActivity"
+            manifestPlaceholders["twaLauncherCategory"] = "android.intent.category.LAUNCHER"
         }
         create("play") {
             dimension = "dist"
             // Subclass of LauncherActivity that may show the Play in-app review
             // sheet before opening the TWA (src/play/java/.../ReviewLauncherActivity.kt).
             manifestPlaceholders["launcherActivity"] = "com.allternit.app.ReviewLauncherActivity"
+            manifestPlaceholders["twaLauncherCategory"] = "android.intent.category.LAUNCHER"
+        }
+        // The native Kotlin + Compose app (handoffs/android-native-2026-11-18, step 7b).
+        // Same app ID and signing key. NOT uploaded to Play before the cutover: it is tested by
+        // sideload (adb install) on a phone/emulator, then replaces the TWA on Play production
+        // with a staged rollout when it reaches parity (PLAN.md section 3): versionCode 1000+ so it always sorts above the TWA builds,
+        // which keep 17-999 for hotfixes. Launcher = com.allternit.feature.shell.MainActivity
+        // (src/nativeapp/AndroidManifest.xml). The stock TWA LauncherActivity stays in the
+        // build without the launcher category, as the "Use web version" target. No Play
+        // Billing, no :ondevice, no Phone Link yet (steps 16 and 18).
+        create("nativeapp") {
+            dimension = "dist"
+            versionCode = 1000
+            versionNameSuffix = "-native"
+            manifestPlaceholders["launcherActivity"] =
+                "com.google.androidbrowserhelper.trusted.LauncherActivity"
+            manifestPlaceholders["twaLauncherCategory"] = "android.intent.category.DEFAULT"
         }
     }
 
@@ -102,9 +120,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     // Files drive (both flavors): the contract types are generated into
     // contracts/files-drive/gen by `node contracts/files-drive/generate.mjs` and compiled
@@ -143,8 +158,9 @@ android {
 dependencies {
     // The HTTP server, the envelope crypto and X25519 are in-tree (see README
     // "Dependencies"). The screen-share lane dials out over HTTPS/WebSockets
-    // with OkHttp (Apache-2.0, Square), both builds.
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // with OkHttp (Apache-2.0, Square), both builds. OkHttp 5 from the version catalog
+    // (step 7b): the same version :core:api and Clerk Android resolve.
+    implementation(libs.okhttp)
     // The mesh node is the gomobile-bound tsnet wrapper from
     // infrastructure/mesh/tsnet-ios — build it first:
     //   infrastructure/mesh/tsnet-ios/build-android.sh   (output: Mesh.aar,
@@ -172,6 +188,9 @@ dependencies {
     // build only. See ondevice/README.md. ReviewLauncherActivity extends its
     // BridgedLauncherActivity.
     "playImplementation"(project(":ondevice"))
+    // The native app (step 7b): MainActivity, sign-in (Clerk) and the screens behind them.
+    // nativeapp flavor only, so play and phonelink compile none of it.
+    "nativeappImplementation"(project(":feature:shell"))
     // Files key crypto (files/FilesKeyCrypto.kt): X25519, HKDF-SHA256 and
     // ChaCha20-Poly1305 from BouncyCastle (MIT), the same version :ondevice uses.
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
@@ -179,4 +198,12 @@ dependencies {
     // Real org.json for JVM tests (android.jar only ships stubs). Public domain
     // since 20231013.
     testImplementation("org.json:json:20240303")
+}
+
+// Kotlin 2.2+ rejects android { kotlinOptions { } } (deprecation raised to error);
+// compilerOptions is the replacement and also works on older Kotlin.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
