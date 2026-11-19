@@ -822,16 +822,48 @@ jobs:
 
   # Build the Linux packages: .deb (Debian/Ubuntu/Mint), .rpm (Fedora, RHEL
   # family, openSUSE) and AppImage (every other distro), all from one
-  # linux-unpacked dir, plus latest-linux.yml that lists all three.
+  # linux-unpacked dir, plus the update feed that lists all three. One leg per
+  # CPU: x64 and arm64 (Raspberry Pi 4/5 on a 64-bit OS, ARM laptops, Linux VMs
+  # on Apple Silicon). Each leg builds natively on its own runner, so every
+  # prepare script stages its own arch (driver Python, ACU wheels, meeting-bot
+  # binding, system-one, mesh-node) and voice builds in an ubuntu:18.04
+  # container of that arch with no emulation. ubuntu-24.04-arm is a standard
+  # GitHub-hosted runner, free for public repos like this one.
+  # electron-builder writes latest-linux.yml for x64 and latest-linux-arm64.yml
+  # for arm64; electron-updater on Linux reads latest-linux-<arch>.yml for any
+  # arch other than x64, so each install updates from its own arch's files.
   build-linux:
     if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'linux'
-    name: Build Linux
+    name: Build Linux (${{ matrix.arch }})
     needs: [unit-tests, release-preflight]
-    # Pinned, not ubuntu-latest: the Rust sidecars link against the runner's
-    # glibc. ubuntu-latest moved to 26.04 (glibc 2.43) and the 1.1.14 .deb's
-    # allternit-api then refused to start on Ubuntu 24.04 (glibc 2.39), the
-    # cloud computer base. Build on the oldest Ubuntu we support.
-    runs-on: ubuntu-24.04
+    # Pinned, not ubuntu-latest: the floor comes from scripts/build-linux-sidecars.sh
+    # (zigbuild + ubuntu:18.04 voice), and the runner image stays fixed so a
+    # runner move cannot change the toolchain under us.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # suffix '' keeps the x64 artifact and cache names the cloud computer
+          # image and the smoke workflow already use.
+          - arch: x64
+            runner: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+            suffix: ''
+            unpacked: linux-unpacked
+            rg: x64-linux
+            rtc: linux-x64-gnu
+            feed: latest-linux.yml
+            files: 'Allternit-Desktop-.*-amd64\.deb Allternit-Desktop-.*-x86_64\.rpm Allternit-Desktop-.*-x86_64\.AppImage'
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+            suffix: '-arm64'
+            unpacked: linux-arm64-unpacked
+            rg: arm64-linux
+            rtc: linux-arm64-gnu
+            feed: latest-linux-arm64.yml
+            files: 'Allternit-Desktop-.*-arm64\.deb Allternit-Desktop-.*-(aarch64|arm64)\.rpm Allternit-Desktop-.*-(arm64|aarch64)\.AppImage'
     permissions:
       contents: read
 
@@ -850,12 +882,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.94.1
         with:
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ matrix.triple }}
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          key: allternit-api-linux-glibc217
+          key: allternit-api-linux-glibc217${{ matrix.suffix }}
 
       # ── Step 2: Build gizzi-code for Linux ─────────────────────────────────
       - name: Setup Bun
@@ -876,18 +908,18 @@ jobs:
           pnpm --filter "@allternit/gizzi-code^..." run build
           pnpm --filter "@allternit/gizzi-sdk" run build
 
-      - name: Build gizzi-code (Linux x64)
-        run: bun run script/build-production.js --target=linux-x64
+      - name: Build gizzi-code (Linux ${{ matrix.arch }})
+        run: bun run script/build-production.js --target=linux-${{ matrix.arch }}
         working-directory: cmd/gizzi-code
 
       - name: Copy gizzi-code binary
         run: |
           mkdir -p surfaces/allternit-desktop/resources/bin
-          cp cmd/gizzi-code/dist/gizzi-code-linux-x64 surfaces/allternit-desktop/resources/bin/gizzi-code
+          cp cmd/gizzi-code/dist/gizzi-code-linux-${{ matrix.arch }} surfaces/allternit-desktop/resources/bin/gizzi-code
           chmod +x surfaces/allternit-desktop/resources/bin/gizzi-code
-          mkdir -p surfaces/allternit-desktop/resources/bin/vendor/ripgrep/x64-linux
-          cp cmd/gizzi-code/vendor/ripgrep/x64-linux/rg surfaces/allternit-desktop/resources/bin/vendor/ripgrep/x64-linux/rg
-          chmod +x surfaces/allternit-desktop/resources/bin/vendor/ripgrep/x64-linux/rg
+          mkdir -p surfaces/allternit-desktop/resources/bin/vendor/ripgrep/${{ matrix.rg }}
+          cp cmd/gizzi-code/vendor/ripgrep/${{ matrix.rg }}/rg surfaces/allternit-desktop/resources/bin/vendor/ripgrep/${{ matrix.rg }}/rg
+          chmod +x surfaces/allternit-desktop/resources/bin/vendor/ripgrep/${{ matrix.rg }}/rg
 
       - name: Build workspace UI (ai.allternit.com)
         uses: ./.github/actions/build-hosted-ui
@@ -906,39 +938,39 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-glibc217-${{ github.sha }}-${{ github.run_id }}
-          restore-keys: prebuilt-rust-linux-glibc217-
+          key: prebuilt-rust-linux-glibc217${{ matrix.suffix }}-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: prebuilt-rust-linux-glibc217${{ matrix.suffix }}-
 
       - name: Reuse prebuilt Rust binaries if unchanged
         id: prebuilt
         shell: bash
         run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-linux
 
-      - name: Build allternit-api (Linux)
+      - name: Build allternit-api (Linux ${{ matrix.arch }})
         if: steps.prebuilt.outputs.hit != 'true'
         # glibc floor pinned by cargo-zigbuild (scripts/build-linux-sidecars.sh,
         # ZIG_GLIBC 2.17, under GLIBC_FLOOR 2.27 = Ubuntu 18.04, the oldest glibc
         # the Electron shell starts on).
-        run: scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/bin api
+        run: scripts/build-linux-sidecars.sh --arch ${{ matrix.arch }} surfaces/allternit-desktop/resources/bin api
 
       - name: Copy allternit-api binary
         run: |
           mkdir -p surfaces/allternit-desktop/resources/bin
-          cp target/x86_64-unknown-linux-gnu/release/allternit-api \
+          cp target/${{ matrix.triple }}/release/allternit-api \
              surfaces/allternit-desktop/resources/bin/allternit-api
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-api
 
       - name: Record Rust binaries for reuse
         if: steps.prebuilt.outputs.hit != 'true'
         shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-linux --bin target/x86_64-unknown-linux-gnu/release/allternit-api
+        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-linux --bin target/${{ matrix.triple }}/release/allternit-api
 
       - name: Save prebuilt Rust binaries
         if: steps.prebuilt.outputs.hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-glibc217-${{ github.sha }}-${{ github.run_id }}
+          key: prebuilt-rust-linux-glibc217${{ matrix.suffix }}-${{ github.sha }}-${{ github.run_id }}
 
       - name: Build voice service sidecar (Linux)
         # Same as macOS/Windows: allternit-voice-service (STT + API, no GPL)
@@ -946,7 +978,7 @@ jobs:
         # linked statically, models download on first use. Without this step
         # the Linux build shipped with no voice sidecar at all.
         run: |
-          scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/bin voice
+          scripts/build-linux-sidecars.sh --arch ${{ matrix.arch }} surfaces/allternit-desktop/resources/bin voice
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
           # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
@@ -957,14 +989,14 @@ jobs:
         # fusermount3; pure-Rust fuser, no libfuse link) and Files uploads over
         # 4 MiB. Lands in resources/bin next to gizzi-code.
         run: |
-          scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/bin files-mount
+          scripts/build-linux-sidecars.sh --arch ${{ matrix.arch }} surfaces/allternit-desktop/resources/bin files-mount
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-files-mount
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-files-mount
 
       - name: Setup Go
         # Needed to build the mesh-node sidecar from source (the vendor tree
         # is gitignored, so prepare-mesh-node.cjs runs an equivalent go build
-        # for linux-x64, mirroring release-gizzi-code.yml).
+        # for linux-x64 / linux-arm64, mirroring release-gizzi-code.yml).
         uses: actions/setup-go@v5
         with:
           go-version-file: infrastructure/mesh/tsnet-ios/go.mod
@@ -1009,8 +1041,8 @@ jobs:
         working-directory: surfaces/allternit-desktop
 
       - name: Stage meeting bot
-        # services/meeting-bot (pnpm deploy --prod, flattened) + the linux-x64
-        # rtc-node binding. This job calls electron-builder directly, so no
+        # services/meeting-bot (pnpm deploy --prod, flattened) + this runner's
+        # linux-<arch> rtc-node binding. This job calls electron-builder directly, so no
         # prepare chain stages it (macOS/Windows get it from build:electron / dist).
         run: npm run prepare:meeting-bot
         working-directory: surfaces/allternit-desktop
@@ -1022,7 +1054,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libx11-dev libxi-dev libxtst-dev libxkbcommon-dev
-          scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/computer-use/linux cua-driver
+          scripts/build-linux-sidecars.sh --arch ${{ matrix.arch }} surfaces/allternit-desktop/resources/computer-use/linux cua-driver
 
       - name: Stage Cua Driver
         run: npm run prepare:cua-driver
@@ -1046,12 +1078,14 @@ jobs:
         run: sudo apt-get install -y -qq rpm rpm2cpio cpio
 
       - name: Package with electron-builder
-        # Targets and arches come from build.linux.target in package.json
-        # (deb + rpm + AppImage, x64; add "arm64" there). The .deb is also what
+        # build.linux.target in package.json lists deb + rpm + AppImage for x64
+        # and arm64; naming the targets and ONE arch here builds only this leg's
+        # arch (the sidecars staged above are this runner's arch; the ELF check
+        # below fails any ELF of the other arch). The x64 .deb is also what
         # cloud computer images install (build-cloud-computer-image.sh
         # DESKTOP_DEB). --publish never: publishing happens ONLY in the release
-        # job, which attaches all three packages and latest-linux.yml.
-        run: npx electron-builder --linux --publish never
+        # job, which attaches every package and both feeds.
+        run: npx electron-builder --linux deb rpm AppImage --${{ matrix.arch }} --publish never
         working-directory: surfaces/allternit-desktop
         env:
           ALLTERNIT_BUILD_SUFFIX: ""
@@ -1062,7 +1096,8 @@ jobs:
         # scripts/build-linux-sidecars.sh). 1.1.15 shipped allternit-api and voice at
         # 2.39, so Debian 12 / Ubuntu 22.04 could not start the engine; checking the
         # shell too means an Electron upgrade cannot raise the floor silently.
-        run: node scripts/check-elf-floor.mjs --dir surfaces/allternit-desktop/release/linux-unpacked --shell allternit
+        # --arch also fails any ELF built for the other CPU.
+        run: node scripts/check-elf-floor.mjs --dir surfaces/allternit-desktop/release/${{ matrix.unpacked }} --shell allternit --arch ${{ matrix.arch }}
 
       - name: Check glibc floor inside the .rpm and the AppImage
         # Both pack linux-unpacked, so this should match the step above. It runs
@@ -1075,10 +1110,10 @@ jobs:
           rpm=$(ls "$rel"/*.rpm); appimage=$(ls "$rel"/*.AppImage)
           rm -rf /tmp/rpmx /tmp/appx && mkdir -p /tmp/rpmx /tmp/appx
           (cd /tmp/rpmx && rpm2cpio "$OLDPWD/$rpm" | cpio -idm --quiet)
-          node scripts/check-elf-floor.mjs --dir "/tmp/rpmx/opt/Allternit Desktop" --shell allternit
+          node scripts/check-elf-floor.mjs --dir "/tmp/rpmx/opt/Allternit Desktop" --shell allternit --arch ${{ matrix.arch }}
           chmod +x "$appimage"
           (cd /tmp/appx && "$OLDPWD/$appimage" --appimage-extract >/dev/null)
-          node scripts/check-elf-floor.mjs --dir /tmp/appx/squashfs-root --shell allternit
+          node scripts/check-elf-floor.mjs --dir /tmp/appx/squashfs-root --shell allternit --arch ${{ matrix.arch }}
           rpm -qp --requires "$rpm" | sed 's/^/rpm requires: /'
 
       - name: Check meeting bot in the package
@@ -1089,7 +1124,7 @@ jobs:
         run: |
           set -euo pipefail
           for pair in \
-            "release/linux-unpacked/resources|linux-x64-gnu" \
+            "release/${{ matrix.unpacked }}/resources|${{ matrix.rtc }}" \
             ; do
             res="${pair%%|*}"; triple="${pair##*|}"
             for f in "$res/meeting-bot/dist/runner.js" "$res/meeting-bot/node_modules/@livekit/rtc-node/package.json" \
@@ -1104,15 +1139,15 @@ jobs:
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
-          name: allternit-desktop-linux
+          name: allternit-desktop-linux${{ matrix.suffix }}
           path: |
-            surfaces/allternit-desktop/release/linux-unpacked
+            surfaces/allternit-desktop/release/${{ matrix.unpacked }}
           retention-days: 14
 
       - name: Upload Linux .deb (cloud computer image input)
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
-          name: allternit-desktop-linux-deb
+          name: allternit-desktop-linux-deb${{ matrix.suffix }}
           path: surfaces/allternit-desktop/release/*.deb
           if-no-files-found: error
           retention-days: 30
@@ -1122,7 +1157,7 @@ jobs:
       - name: Upload Linux .rpm
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
-          name: allternit-desktop-linux-rpm
+          name: allternit-desktop-linux-rpm${{ matrix.suffix }}
           path: surfaces/allternit-desktop/release/*.rpm
           if-no-files-found: error
           retention-days: 30
@@ -1130,7 +1165,7 @@ jobs:
       - name: Upload Linux AppImage
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
-          name: allternit-desktop-linux-appimage
+          name: allternit-desktop-linux-appimage${{ matrix.suffix }}
           path: surfaces/allternit-desktop/release/*.AppImage
           if-no-files-found: error
           retention-days: 30
@@ -1138,7 +1173,8 @@ jobs:
 >>>>>>> aa5a1d9cbfdfe7ffa469018263e7c4fcf37b3d96
       - name: Check Linux update feed
         # The Linux in-app updater (src/main/linux-updater.ts) reads
-        # latest-linux.yml from the Allternit/desktop release with
+        # latest-linux.yml (x64) / latest-linux-arm64.yml (arm64) from the
+        # Allternit/desktop release with
         # electron-updater's DebUpdater, RpmUpdater or AppImageUpdater; each
         # picks its own file from that one feed by extension. The packages need
         # app-update.yml, and the deb/rpm need resources/package-type.
@@ -1149,20 +1185,26 @@ jobs:
         working-directory: surfaces/allternit-desktop
         run: |
           set -euo pipefail
-          res=release/linux-unpacked/resources
+          res=release/${{ matrix.unpacked }}/resources
+          feed=release/${{ matrix.feed }}
           case "$(tr -d '[:space:]' < "$res/package-type")" in deb|rpm) ;; *) echo "::error::$res/package-type is not deb or rpm"; exit 1;; esac
           grep -q 'PACKAGE_TYPE=rpm' build/linux/after-install.sh || { echo "::error::after-install.sh no longer corrects package-type"; exit 1; }
           grep -q 'repo: desktop' "$res/app-update.yml" || { echo "::error::$res/app-update.yml does not point at Allternit/desktop"; cat "$res/app-update.yml"; exit 1; }
-          for pat in 'Allternit-Desktop-.*-amd64\.deb' 'Allternit-Desktop-.*-x86_64\.rpm' 'Allternit-Desktop-.*-x86_64\.AppImage'; do
-            grep -Eq "url: $pat" release/latest-linux.yml || { echo "::error::release/latest-linux.yml does not list $pat"; cat release/latest-linux.yml; exit 1; }
+          set -f  # the patterns are regexes, not globs
+          for pat in ${{ matrix.files }}; do
+            grep -Eq "url: $pat" "$feed" || { echo "::error::$feed does not list $pat"; cat "$feed"; exit 1; }
           done
-          cat release/latest-linux.yml
+          # One leg = one arch: the feed must not point at the other arch's files.
+          if grep -Eq 'url: .*-(amd64|x86_64)\.' "$feed" && grep -Eq 'url: .*-(arm64|aarch64)\.' "$feed"; then
+            echo "::error::$feed lists both x64 and arm64 files"; cat "$feed"; exit 1
+          fi
+          cat "$feed"
 
       - name: Upload Linux update feed
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
-          name: allternit-desktop-linux-feed
-          path: surfaces/allternit-desktop/release/latest-linux.yml
+          name: allternit-desktop-linux-feed${{ matrix.suffix }}
+          path: surfaces/allternit-desktop/release/${{ matrix.feed }}
           if-no-files-found: error
           retention-days: 14
 <<<<<<< HEAD
@@ -1170,8 +1212,12 @@ jobs:
 =======
 
   # Gate: the .deb must install and start on Ubuntu 18.04/22.04/24.04 and Debian 10/12/13,
+<<<<<<< HEAD
   # the .rpm on Fedora, and the AppImage on Ubuntu 24.04.
 >>>>>>> aa5a1d9cbfdfe7ffa469018263e7c4fcf37b3d96
+=======
+  # the .rpm on Fedora, and the AppImage on Ubuntu 24.04, for x64 and for arm64.
+>>>>>>> ae0260acb561e5c79e5446885c8cda05a8ce091a
   linux-desktop-smoke:
     needs: build-linux
     permissions:
@@ -1185,10 +1231,22 @@ jobs:
       appimage_artifact: allternit-desktop-linux-appimage
 >>>>>>> aa5a1d9cbfdfe7ffa469018263e7c4fcf37b3d96
 
+  # Same gate for the arm64 packages, on the free ubuntu-24.04-arm runner.
+  linux-desktop-smoke-arm64:
+    needs: build-linux
+    permissions:
+      contents: read
+    uses: ./.github/workflows/linux-desktop-smoke.yml
+    with:
+      deb_artifact: allternit-desktop-linux-deb-arm64
+      rpm_artifact: allternit-desktop-linux-rpm-arm64
+      appimage_artifact: allternit-desktop-linux-appimage-arm64
+      arch: arm64
+
   # Publish GitHub Release
   release:
     name: Create GitHub Release
-    needs: [release-preflight, build-macos, build-windows, build-linux, linux-desktop-smoke]
+    needs: [release-preflight, build-macos, build-windows, build-linux, linux-desktop-smoke, linux-desktop-smoke-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1236,8 +1294,11 @@ jobs:
             | macOS (arm64 + x64) | `Allternit-*.dmg` |
             | Windows | `Allternit Setup *.exe` |
             | Linux: Ubuntu, Debian, Mint (x64) | `*-amd64.deb` |
+            | Linux: Ubuntu, Debian, Raspberry Pi OS 64-bit (arm64) | `*-arm64.deb` |
             | Linux: Fedora, RHEL/Alma/Rocky, openSUSE (x64) | `*-x86_64.rpm` |
+            | Linux: Fedora, RHEL/Alma/Rocky, openSUSE (arm64) | `*-aarch64.rpm` |
             | Linux: any other distro (x64) | `*-x86_64.AppImage` |
+            | Linux: any other distro (arm64) | `*-arm64.AppImage` |
 
             Auto-updates are enabled — the app will notify you when a new version is available.
           files: |
@@ -1251,6 +1312,7 @@ jobs:
             artifacts/latest-mac.yml
             artifacts/latest.yml
             artifacts/latest-linux.yml
+            artifacts/latest-linux-arm64.yml
           draft: ${{ github.event.inputs.draft == 'true' }}
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
         env:

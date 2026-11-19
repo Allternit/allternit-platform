@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Linux x64 sidecars so they run on every glibc >= GLIBC_FLOOR.
+# Build the Linux sidecars (x64 or arm64) so they run on every glibc >= GLIBC_FLOOR.
 # One recipe, used by CI (.github/workflows/release-desktop.yml, build-linux)
 # and by the standby runtime builder. Plain `cargo build` links against the
 # build host's glibc (Ubuntu 24.04 = 2.39), which broke Debian 12 / Ubuntu 22.04.
@@ -12,7 +12,16 @@
 # the Electron shell included, needs more, so an Electron upgrade cannot raise it
 # silently.
 #
-# usage: scripts/build-linux-sidecars.sh <out-dir> [component ...]
+# usage: scripts/build-linux-sidecars.sh [--arch x64|arm64] <out-dir> [component ...]
+#   --arch (or env ARCH): the CPU the binaries are for. Default x64.
+#     x64   -> x86_64-unknown-linux-gnu    arm64 -> aarch64-unknown-linux-gnu
+#     The build host may be either arch. zigbuild components cross-compile from any
+#     host. voice runs in an ubuntu:18.04 container of the target arch: native on a
+#     host of that arch (CI builds arm64 on GitHub's free ubuntu-24.04-arm runner;
+#     the repo is public), emulated through qemu binfmt otherwise (works, ~10x slower).
+#     cua-driver links libX11/libXi: on a host of another arch set CROSS_SYSROOT to a
+#     dir holding the target arch's libx11-dev/libxi-dev/libxtst-dev/libxkbcommon-dev
+#     (+ their runtime libs), e.g. `dpkg-deb -x` of the ports.ubuntu.com .debs.
 #   components: api voice files-mount factory cua-driver   (default: api voice files-mount)
 #   api -> allternit-api   voice -> allternit-voice-service + allternit-tts
 #   files-mount -> allternit-files-mount   factory -> allternit-factory
@@ -49,19 +58,30 @@ ZIG_GLIBC=2.17
 # calls memfd_create (Wayland shm buffers): `ld.lld: error: undefined symbol: ...`.
 
 ZIG_VERSION=0.15.2
-# Same version the macOS job in release-desktop.yml pins; linux-x86_64 tarball sha256
+# Same version the macOS job in release-desktop.yml pins; tarball sha256 per HOST arch
 # from https://ziglang.org/download/index.json.
-ZIG_SHA256=02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
+ZIG_SHA256_x86_64=02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
+ZIG_SHA256_aarch64=958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f
 CARGO_ZIGBUILD_VERSION=0.20.1
 RUST_VERSION=1.94.1            # same toolchain as the workflow's dtolnay/rust-toolchain pin
 PROTOC_VERSION=28.3
-PROTOC_SHA256=0ad949f04a6a174da83cdcbdb36dee0a4925272a5b6d83f79a6bf9852076d53f
+PROTOC_SHA256_x86_64=0ad949f04a6a174da83cdcbdb36dee0a4925272a5b6d83f79a6bf9852076d53f
+PROTOC_SHA256_aarch_64=1de522032a8b194002fe35cab86d747848238b5e4de4f99648372079f5b46f9a
 OPENSSL_VERSION=3.0.15
 OPENSSL_SHA256=23c666d0edf20f14249b3d8f0368acaee9ab585b09e1de82107c66e1f3ec9533
-TARGET=x86_64-unknown-linux-gnu
+
+if [ "${1:-}" = --arch ]; then ARCH="${2:-}"; shift 2; fi
+ARCH="${ARCH:-x64}"
+case "$ARCH" in
+  x64)   TARGET=x86_64-unknown-linux-gnu;  DOCKER_PLATFORM=linux/amd64 ;;
+  arm64) TARGET=aarch64-unknown-linux-gnu; DOCKER_PLATFORM=linux/arm64 ;;
+  *) echo "--arch must be x64 or arm64 (got: $ARCH)" >&2; exit 2 ;;
+esac
+TARGET_ENV="$(echo "$TARGET" | tr 'a-z-' 'A-Z_')"   # CARGO_TARGET_<TRIPLE>_LINKER etc.
+HOST_MACHINE="$(uname -m)"                          # x86_64 | aarch64
 
 REPO="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-[ $# -ge 1 ] || { sed -n '2,42p' "${BASH_SOURCE[0]}"; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,52p' "${BASH_SOURCE[0]}"; exit 2; }
 OUT="$1"; shift
 COMPONENTS=("$@"); [ ${#COMPONENTS[@]} -gt 0 ] || COMPONENTS=(api voice files-mount)
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
@@ -72,14 +92,20 @@ ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 
 # ── inside the ubuntu:18.04 container: `voice-docker` ─────────────────────────────
 if [ "${COMPONENTS[*]}" = voice-docker ]; then
-  ldd --version | head -1
-  [ "$(ldd --version | head -1 | grep -o '[0-9]*\.[0-9]*$')" = "$GLIBC_FLOOR" ] || { echo "container glibc is not $GLIBC_FLOOR" >&2; exit 1; }
+  # sed, not head: head exits after one line and ldd's later writes then die of
+  # SIGPIPE, which pipefail turns into exit 141 (seen under qemu, a race anywhere).
+  ldd --version | sed -n 1p
+  [ "$(ldd --version | sed -n 1p | grep -o '[0-9]*\.[0-9]*$')" = "$GLIBC_FLOOR" ] || { echo "container glibc is not $GLIBC_FLOOR" >&2; exit 1; }
+  # The container is the target arch (native or qemu), so it builds natively for it.
+  [ "$HOST_MACHINE" = "${TARGET%%-*}" ] || { echo "container is $HOST_MACHINE, target is $TARGET (docker --platform $DOCKER_PLATFORM)" >&2; exit 1; }
+  case "$HOST_MACHINE" in x86_64) PROTOC_ARCH=x86_64 ;; aarch64) PROTOC_ARCH=aarch_64 ;; esac
+  PROTOC_SHA_VAR="PROTOC_SHA256_$PROTOC_ARCH"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq build-essential curl ca-certificates cmake clang pkg-config perl make unzip software-properties-common >/dev/null
   # Pinned protoc (bionic's is 3.0; prost needs a current one).
-  curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/protoc-$PROTOC_VERSION-linux-x86_64.zip" -o /tmp/protoc.zip
-  echo "$PROTOC_SHA256  /tmp/protoc.zip" | sha256sum -c -
+  curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/protoc-$PROTOC_VERSION-linux-$PROTOC_ARCH.zip" -o /tmp/protoc.zip
+  echo "${!PROTOC_SHA_VAR}  /tmp/protoc.zip" | sha256sum -c -
   unzip -q -o /tmp/protoc.zip -d /opt/protoc; export PROTOC=/opt/protoc/bin/protoc PROTOC_INCLUDE=/opt/protoc/include
   "$PROTOC" --version
   # g++ from the toolchain PPA (built for bionic's glibc 2.27): the prebuilt sherpa-onnx
@@ -91,8 +117,8 @@ if [ "${COMPONENTS[*]}" = voice-docker ]; then
   apt-get update -qq
   GXX=; for v in 12 11; do if apt-get install -y -qq "g++-$v" >/dev/null 2>&1; then GXX=$v; break; fi; done
   [ -n "$GXX" ] || { echo "no g++-12 or g++-11 in ppa:ubuntu-toolchain-r/test for $(. /etc/os-release; echo "$VERSION_CODENAME")" >&2; exit 1; }
-  echo "using gcc-$GXX: $(g++-$GXX --version | head -1)"
-  export CC="gcc-$GXX" CXX="g++-$GXX" CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="gcc-$GXX"
+  echo "using gcc-$GXX: $(g++-$GXX --version | sed -n 1p)"
+  export CC="gcc-$GXX" CXX="g++-$GXX" "CARGO_TARGET_${TARGET_ENV}_LINKER=gcc-$GXX"
   mkdir -p /opt/stdcxx && cp "$(g++-$GXX -print-file-name=libstdc++.a)" /opt/stdcxx/
   export RUSTFLAGS="${RUSTFLAGS:-} -L native=/opt/stdcxx"
   curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_VERSION" >/dev/null
@@ -120,11 +146,12 @@ fi
 
 ensure_zig() {
   if [ -n "${ZIG:-}" ] && [ "$("$ZIG" version 2>/dev/null)" = "$ZIG_VERSION" ]; then return; fi
-  local dir="${ZIG_INSTALL_DIR:-${RUNNER_TEMP:-$HOME/.cache}/zig-$ZIG_VERSION}"
+  local dir="${ZIG_INSTALL_DIR:-${RUNNER_TEMP:-$HOME/.cache}/zig-$ZIG_VERSION-$HOST_MACHINE}"
   if [ "$("$dir/zig" version 2>/dev/null || true)" != "$ZIG_VERSION" ]; then
-    local tmp; tmp="$(mktemp -d)"
-    curl -fsSL "https://ziglang.org/download/$ZIG_VERSION/zig-x86_64-linux-$ZIG_VERSION.tar.xz" -o "$tmp/zig.tar.xz"
-    echo "$ZIG_SHA256  $tmp/zig.tar.xz" | sha256sum -c -
+    local tmp sha_var="ZIG_SHA256_$HOST_MACHINE"; tmp="$(mktemp -d)"
+    [ -n "${!sha_var:-}" ] || { echo "no pinned zig for host $HOST_MACHINE" >&2; exit 1; }
+    curl -fsSL "https://ziglang.org/download/$ZIG_VERSION/zig-$HOST_MACHINE-linux-$ZIG_VERSION.tar.xz" -o "$tmp/zig.tar.xz"
+    echo "${!sha_var}  $tmp/zig.tar.xz" | sha256sum -c -
     rm -rf "$dir"; mkdir -p "$dir"
     tar -xJf "$tmp/zig.tar.xz" -C "$dir" --strip-components=1
     rm -rf "$tmp"
@@ -157,12 +184,16 @@ for c in "${COMPONENTS[@]}"; do
     files-mount) zb -p allternit-files-mount; put allternit-files-mount allternit-files-mount ;;
     factory)     zb_floor -p allternit-factory; put allternit-factory allternit-factory ;;
     voice)
-      TD="${CARGO_TARGET_DIR:-$REPO/target}/docker"; mkdir -p "$TD"
-      docker run --rm -v "$REPO":/src -v "$OUT":/out -v "$TD":/target \
+      # One target dir per arch: the in-container host differs, so build scripts differ.
+      TD="${CARGO_TARGET_DIR:-$REPO/target}/docker"; [ "$ARCH" = x64 ] || TD="$TD-$ARCH"; mkdir -p "$TD"
+      if [ "$HOST_MACHINE" != "${TARGET%%-*}" ]; then
+        echo "voice: $TARGET on a $HOST_MACHINE host runs ubuntu:18.04 under qemu (needs binfmt: docker run --privileged --rm tonistiigi/binfmt --install ${ARCH})"
+      fi
+      docker run --rm --platform "$DOCKER_PLATFORM" -v "$REPO":/src -v "$OUT":/out -v "$TD":/target \
         -v "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")":/build-linux-sidecars.sh:ro \
         -e CARGO_TARGET_DIR=/target -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
         -w /src ubuntu:18.04 \
-        bash /build-linux-sidecars.sh /out voice-docker ;;
+        bash /build-linux-sidecars.sh --arch "$ARCH" /out voice-docker ;;
     cua-driver)
       # Version + commit pinned once, in prepare-cua-driver.cjs (which still downloads
       # the macOS and Windows prebuilts).
@@ -176,6 +207,13 @@ for c in "${COMPONENTS[@]}"; do
       [ "$(git -C "$CUA_SRC" rev-parse HEAD)" = "$CUA_COMMIT" ] || { echo "trycua/cua tag cua-driver-rs-v$CUA_VERSION is not commit $CUA_COMMIT" >&2; exit 1; }
       # The workspace pins its own toolchain (rust-toolchain.toml); rustup installs it.
       [ -n "$ZB_READY" ] || { setup_zigbuild; ZB_READY=1; }
+      if [ "$HOST_MACHINE" != "${TARGET%%-*}" ]; then
+        # Cross build: x11/xi link through pkg-config; point it at the target arch's libs.
+        [ -n "${CROSS_SYSROOT:-}" ] && [ -d "$CROSS_SYSROOT/usr/lib/${TARGET%%-unknown-*}-linux-gnu" ] || {
+          echo "cua-driver for $TARGET on a $HOST_MACHINE host needs CROSS_SYSROOT with usr/lib/${TARGET%%-unknown-*}-linux-gnu (see usage)" >&2; exit 1; }
+        export PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_SYSROOT_DIR="$CROSS_SYSROOT" \
+          PKG_CONFIG_LIBDIR="$CROSS_SYSROOT/usr/lib/${TARGET%%-unknown-*}-linux-gnu/pkgconfig:$CROSS_SYSROOT/usr/share/pkgconfig"
+      fi
       (cd "$CUA_SRC/libs/cua-driver/rust" && CARGO_TARGET_DIR="$TDC/target" "${ZB_FLOOR[@]}" --locked -p cua-driver)
       install -m 0755 "$TDC/target/$TARGET/release/cua-driver" "$OUT/cua-driver"; ls -lh "$OUT/cua-driver" ;;
     *) echo "unknown component: $c" >&2; exit 2 ;;
