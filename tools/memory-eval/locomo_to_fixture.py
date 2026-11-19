@@ -43,9 +43,10 @@ def convert(samples, keep_adversarial=False):
             if q.get("category") == 5 and not keep_adversarial:
                 continue
             ev = [e.strip() for e in q.get("evidence", []) if e.strip() in known]
-            if not ev:
+            if not ev and not (q.get("category") == 5 and keep_adversarial):
                 continue
-            qa.append({"question": q["question"], "evidence": ev, "answer": q.get("answer")})
+            qa.append({"question": q["question"], "evidence": ev, "answer": q.get("answer"),
+                       "category": q.get("category"), "abstention": q.get("category") == 5})
         convs.append({"id": str(s.get("sample_id", len(convs))), "turns": turns, "qa": qa})
     return {"name": "locomo10", "conversations": convs}
 
