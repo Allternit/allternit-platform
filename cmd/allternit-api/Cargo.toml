@@ -155,6 +155,8 @@ printpdf = "0.6"
 # Token counting
 tiktoken-rs = "0.12.0"
 instant-distance = "0.6"
+# PDF text for the Files drive index (files_v2::intel). Pure Rust, every target.
+lopdf = { version = "0.31", default-features = false, features = ["pom_parser"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 allternit-apple-vf-driver = { path = "../../drivers/apple-vf" }
@@ -165,7 +167,6 @@ allternit-apple-vf-driver = { path = "../../drivers/apple-vf" }
 # PR_SET_PDEATHSIG for the cloud computer's mesh-node (cloud_computer_peer);
 # openat/O_NOFOLLOW/O_NONBLOCK for run_code output ingest (gizzi_chat_stream).
 libc = "0.2"
-lopdf = { version = "0.31", default-features = false, features = ["pom_parser"] }
 allternit-firecracker-driver = { path = "../../drivers/firecracker" }
 
 # Windows Credential Manager (computer_v2 use_credential source "keychain").
