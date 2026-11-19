@@ -7,8 +7,11 @@ Allternit Desktop runs on Linux as a `.deb` package. This page covers install, p
 
 ## Supported systems
 
-- Debian 11+, Ubuntu 20.04+, Linux Mint 20+, and other distros with glibc 2.31 or newer.
+- Ubuntu 18.04+, Debian 10+, Linux Mint 19+, and other distros with glibc 2.27+ (amd64).
 - amd64 only. arm64 is not supported yet.
+- On Ubuntu 18.04 (glibc 2.27) everything works except the Meeting bot, which needs glibc 2.28. Debian 10 and newer run the Meeting bot.
+
+Why 2.27: it is the oldest glibc on which the app's window (Electron) starts. Every program the app ships is built to run there, and each release is tested on Ubuntu 18.04 and Debian 10 before it goes out.
 
 Check your glibc version:
 
@@ -17,13 +20,13 @@ ldd --version
 ```
 
 <Note>
-Desktop 1.1.15 and older need glibc 2.38 or newer. From the next release, Desktop runs on glibc 2.31 and newer.
+Desktop 1.1.15 and older need glibc 2.38 or newer. From the next release, Desktop runs on glibc 2.27 and newer.
 </Note>
 
 ## Install
 
 1. Download the `.deb` from [github.com/Allternit/desktop/releases/latest](https://github.com/Allternit/desktop/releases/latest).
-2. Install it. `apt` also pulls in `bubblewrap` and `lsof`.
+2. Install it. `apt` also pulls in `bubblewrap`, `lsof`, `libgbm1` and `libasound2`.
 
 ```bash
 sudo apt install ./Allternit-Desktop-VERSION-amd64.deb
@@ -44,6 +47,10 @@ On 1.1.15 and older, install the next `.deb` by hand once. After that, updates a
 ## Troubleshooting
 
 **"GLIBC_2.38 not found" or "Initialization Error".** Your system is older than 1.1.15 supports. Install the next release.
+
+**"libgbm.so.1: cannot open shared object file".** The app needs `libgbm1`. Install the `.deb` with `apt` (not `dpkg -i`) so its dependencies come with it, or run `sudo apt install libgbm1`.
+
+**Meeting bot does not start on Ubuntu 18.04.** The Meeting bot needs glibc 2.28, one step newer than Ubuntu 18.04 has. The rest of the app works. Use Ubuntu 20.04 or newer, or Debian 10 or newer, for the Meeting bot.
 
 **"This pairing request is invalid or expired".** Sign in again from **Sign in to pair**. A server fix on 2026-11-19 resolved the pairing failures that caused this message.
 
