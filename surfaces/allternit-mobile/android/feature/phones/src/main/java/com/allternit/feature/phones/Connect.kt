@@ -76,7 +76,7 @@ import com.allternit.core.design.R as DesignR
  */
 
 /** iOS ChannelProvider. */
-private enum class ChannelProvider(val label: String, val blurb: String) {
+internal enum class ChannelProvider(val label: String, val blurb: String) {
     Sms("Phone number", "Call or text your bots on a real phone number. Calls work instantly; texting follows carrier approval."),
     Email("Email", "Anyone can email your bots. You approve replies, or automate them for known senders."),
     Telegram("Telegram", "Chat with your bots in Telegram. Allternit creates the bot, you tap Confirm once."),
@@ -86,7 +86,7 @@ private enum class ChannelProvider(val label: String, val blurb: String) {
     Whatsapp("WhatsApp", "Your bots answer on a WhatsApp Business number, connected through Meta."),
 }
 
-private suspend fun call(method: String, path: String, body: JsonElement? = null, doing: String): Pair<JsonElement?, String?> {
+internal suspend fun call(method: String, path: String, body: JsonElement? = null, doing: String): Pair<JsonElement?, String?> {
     val r = if (method == "GET") LibraryNet.get(path) else LibraryNet.send(method, path, body)
     return when (r) {
         is ApiResult.Ok -> r.value to null
@@ -140,12 +140,12 @@ fun GiveBotPhoneSheet(host: PhonesHost, botId: String?, onDismiss: () -> Unit) {
             }
         }
     }
-    flow?.let { p -> ConnectWizardSheet(p, picked, onClose = { flow = null }) }
+    flow?.let { p -> ConnectWizardSheet(p, picked, host, onClose = { flow = null }) }
 }
 
 /** iOS ConnectWizardView: one provider's flow in a sheet. */
 @Composable
-private fun ConnectWizardSheet(provider: ChannelProvider, botId: String?, onClose: () -> Unit) {
+private fun ConnectWizardSheet(provider: ChannelProvider, botId: String?, host: PhonesHost, onClose: () -> Unit) {
     val c = AllternitTheme.colors
     LibrarySheet(provider.label, "connectWizard${provider.name}", onClose, leading = LibrarySheetAction("Close", testTag = "connectWizardClose", onClick = onClose)) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -153,7 +153,9 @@ private fun ConnectWizardSheet(provider: ChannelProvider, botId: String?, onClos
             when {
                 botId == null -> Text("Pick a bot first.", color = c.textSecondary, fontSize = 14.sp)
                 provider == ChannelProvider.Email -> EmailFlow(botId, onClose)
-                else -> FriendlyState(FriendlyStyle.Empty, "Finish this one on your computer", "${provider.label} needs a sign-in or a number purchase, and those steps run in Allternit Desktop or ai.allternit.com for now. Everything you set up there shows here.", Modifier) { Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textSecondary) }
+                provider == ChannelProvider.Sms -> PhoneNumberFlow(host, botId, onClose)
+                provider == ChannelProvider.Telegram -> TelegramFlow(host, botId, onClose)
+                else -> OAuthChannelFlow(host, provider, onClose)
             }
         }
     }

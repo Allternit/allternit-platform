@@ -139,7 +139,7 @@ private fun shortDate(raw: String): String? = runCatching {
 
 /** iOS PlanUsageRows: the monthly Cloud allowance, cloud computer hours and the credit balance. */
 @Composable
-private fun PlanUsageRows() {
+private fun PlanUsageRows(showCredits: Boolean = true) {
     val c = AllternitTheme.colors
     val usage = AccountPlan.usage
     if (usage != null && usage.weeklyLimit > 0 && usage.weeklyUsed.isFinite()) {
@@ -151,19 +151,19 @@ private fun PlanUsageRows() {
         val next = LocalDate.now().withDayOfMonth(1).plusMonths(1).format(DateTimeFormatter.ofPattern("MMM d", Locale.US))
         UsageBar("Cloud computer · this month", detail, fraction.coerceIn(0.0, 1.0), "Resets $next")
     }
-    val credits = AccountPlan.credits
+    val credits = if (showCredits) AccountPlan.credits else null
     if (credits != null) {
         Row(Modifier.fillMaxWidth().testTag("billing_credits")) {
             Text("Credits", color = c.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
             Text(String.format(Locale.US, "$%.2f balance · $%.2f used this month", credits.balanceUsd, credits.monthToDateUsageUsd), color = c.textSecondary, fontSize = 12.sp)
         }
-    } else if (usage?.credits != null) {
+    } else if (showCredits && usage?.credits != null) {
         Row(Modifier.fillMaxWidth().testTag("billing_credits")) {
             Text("Credits", color = c.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
             Text(usage.credits.toString(), color = c.textSecondary, fontSize = 15.sp)
         }
     }
-    if ((usage == null || usage.weeklyLimit <= 0) && fraction == null && credits == null) {
+    if ((usage == null || usage.weeklyLimit <= 0) && fraction == null && (credits == null || !showCredits)) {
         if (AccountPlan.isLoading) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = c.textSecondary)
@@ -190,5 +190,41 @@ private fun UsageBar(label: String, detail: String, fraction: Double, footnote: 
             Box(Modifier.fillMaxWidth(fraction.toFloat()).height(6.dp).clip(RoundedCornerShape(3.dp)).background(if (fraction >= 0.9) Color(0xFFB7791F) else c.textPrimary))
         }
         footnote?.let { Text(it, color = c.textTertiary, fontSize = 11.sp) }
+    }
+}
+
+/**
+ * Settings → Usage (iOS UsagePageView): the Allternit Cloud allowance and cloud computer hours as bars, then the credit
+ * balance with Buy credits where Google Play sells packs. No web purchase link (a Play app may not link out).
+ */
+@Composable
+internal fun UsagePage(host: SettingsHost, back: () -> Unit) {
+    val c = AllternitTheme.colors
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        PlayPurchases.start(context)
+        if (host.account != null) AccountPlan.load()
+        PlayPurchases.loadCatalog()
+    }
+    SPage("Usage", tag = "settingsUsage", onBack = back) {
+        SLabel("Allternit Cloud")
+        if (host.account == null) SNote("Sign in to see your plan usage.")
+        else SCard { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { PlanUsageRows(showCredits = false) } }
+        if (host.account != null) {
+            SLabel("Credits")
+            SCard {
+                Column(Modifier.padding(16.dp).testTag("usage_credits"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val credits = AccountPlan.credits
+                    if (credits != null) {
+                        Text(String.format(Locale.US, "$%.2f", credits.balanceUsd), color = c.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                        Text(String.format(Locale.US, "$%.2f used this month", credits.monthToDateUsageUsd), color = c.textTertiary, fontSize = 12.sp)
+                    } else if (AccountPlan.usage?.credits != null) {
+                        Text(AccountPlan.usage?.credits.toString(), color = c.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                    } else Text(if (AccountPlan.isLoading) "Loading your credits…" else "No credit balance yet.", color = c.textSecondary, fontSize = 13.sp)
+                }
+            }
+            if (PlayPurchases.showsStoreButtons(StoreKind.Pack)) { SLabel("Buy credits"); StorePackGrid() }
+        }
+        SNote("Bars turn amber as you near a limit and red once it is reached.", Modifier.padding(top = 14.dp))
     }
 }

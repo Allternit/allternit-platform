@@ -75,7 +75,7 @@ object PushNotifications {
         category == APPROVAL_INLINE || category == APPROVAL_REVIEW -> CHANNEL_APPROVALS
         category == BOT_REPLY || category == AGENT_MESSAGE -> CHANNEL_MESSAGES
         category == RUN_DONE || category == NEEDS_FIX -> CHANNEL_RUNS
-        type == "call" || type == "missed_call" -> CHANNEL_CALLS
+        type == "call" || type == "missed_call" || type == "meeting.waiting_admit" -> CHANNEL_CALLS
         type == "message" || type == "channel_message" -> CHANNEL_MESSAGES
         else -> CHANNEL_GENERAL
     }

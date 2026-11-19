@@ -41,6 +41,7 @@ dependencies {
     implementation(project(":core:auth"))
     // The store sheet for the paid-plan card (Google Play Billing).
     implementation(project(":feature:billing"))
+    implementation(project(":feature:push"))
     // BackHandler.
     implementation(libs.activity.compose)
     // In-app Custom Tab for call links and meeting artifacts (iOS openURL).

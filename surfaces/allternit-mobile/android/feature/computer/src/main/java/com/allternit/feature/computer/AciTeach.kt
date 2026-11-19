@@ -68,6 +68,7 @@ internal class TeachClient(private val backend: ChatBackend) {
         else -> Out.Failed(r.failureText().orEmpty())
     }
     private fun esc(s: String) = LibraryNet.escape(s)
+    internal suspend fun rawCall(path: String, method: String = "GET", body: String? = null): Out<JsonElement> = call(path, method, body)
 
     suspend fun listSkills(): Out<List<TeachSkill>> = when (val r = call("teach/skills")) {
         is Out.Ok -> Out.Ok(r.v.obj.list("skills").map(::TeachSkill).sortedByDescending { it.updatedAt })
@@ -80,11 +81,11 @@ internal class TeachClient(private val backend: ChatBackend) {
     suspend fun delete(id: String): String? = (call("teach/skills/${esc(id)}", "DELETE") as? Out.Failed)?.message
 
     /** An imported .har → a contract (`POST /ingest`), then the model's draft (`POST /teach/distill`) saved as a new skill. */
-    suspend fun analyze(har: String, note: String): Out<TeachSkill> {
+    suspend fun analyze(har: String, note: String, events: List<JsonObject> = emptyList()): Out<TeachSkill> {
         val ing = when (val r = call("ingest", "POST", buildJsonObject { put("har", har); put("source", "upload") }.toString())) { is Out.Ok -> r.v.obj; is Out.Failed -> return r }
         val contract = ing.str("contract_id") ?: return Out.Failed("Couldn’t read that recording.")
         val body = buildJsonObject {
-            put("events", JsonArray(emptyList()))
+            put("events", JsonArray(events))
             put("contract_id", contract)
             if (note.isNotBlank()) put("note", note.trim())
         }.toString()
@@ -159,6 +160,10 @@ fun AciTeachScreen(host: AciHost, onRun: (String) -> Unit, onBack: () -> Unit) {
     var analyzing by remember { mutableStateOf(false) }
     var reviewError by remember { mutableStateOf<String?>(null) }
     var runFor by remember { mutableStateOf<TeachSkill?>(null) }
+    var scheduleFor by remember { mutableStateOf<TeachSkill?>(null) }
+    var profileOpen by remember { mutableStateOf(false) }
+    var events by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    val struck = remember { mutableStateListOf<Int>() }
     suspend fun load() {
         when (val r = client.listSkills()) {
             is TeachClient.Out.Ok -> { skills = r.v; failure = null }
@@ -173,12 +178,13 @@ fun AciTeachScreen(host: AciHost, onRun: (String) -> Unit, onBack: () -> Unit) {
         val text = runCatching { context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }.getOrNull()
         if (text == null) notice = "Couldn’t read that file."
         else if (!name.lowercase().let { it.endsWith(".har") || it.endsWith(".json") }) notice = "Pick a .har file."
-        else { review = name to text; note = ""; reviewError = null }
+        else { review = name to text; note = ""; reviewError = null; events = emptyList(); struck.clear() }
     }
 
     AciFullPage {
         Column(Modifier.fillMaxSize().testTag("aciTeach")) {
             AciTopBar("Teach", "ACI", { if (selected != null) selected = null else onBack() }) {
+                if (selected == null && review == null) Text("Profile", color = c.textPrimary, fontSize = 14.sp, modifier = Modifier.heightIn(min = 44.dp).clickable { profileOpen = true }.padding(8.dp).testTag("aciTeachProfile"))
                 if (selected == null && review == null) Text("Import", color = c.textPrimary, fontSize = 14.sp, modifier = Modifier.heightIn(min = 44.dp).clickable { picker.launch(arrayOf("*/*")) }.padding(8.dp).testTag("aciTeachImport"))
             }
             Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -192,14 +198,17 @@ fun AciTeachScreen(host: AciHost, onRun: (String) -> Unit, onBack: () -> Unit) {
                         Text("Review before Analyze", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                         Text("Check what will be sent, then Analyze turns it into a skill.", color = c.textSecondary, fontSize = 13.sp)
                         Text("What will be sent", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Network traffic from ${rev.first}. No actions or narration: those come from Allternit Desktop.", color = c.textSecondary, fontSize = 13.sp)
+                        Text("Network traffic from ${rev.first}. Actions and narration come from Allternit Desktop.", color = c.textSecondary, fontSize = 13.sp)
+                        Text("Actions", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        if (events.isNotEmpty()) Text("Use ✕ to leave an action out.", color = c.textTertiary, fontSize = 12.sp)
+                        TeachTimeline(TeachEvent.list(events), struck.toSet()) { i -> if (i in struck) struck.remove(i) else struck.add(i) }
                         Text("Your note", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                         AciSearchField(note, "What should the agent do with this?", { note = it }, "aciTeachNote")
                         reviewError?.let { Text(it, color = c.textSecondary, fontSize = 13.sp) }
                         AciPrimaryButton(if (analyzing) "Analyzing…" else "Analyze", "aciTeachAnalyze") {
                             if (!analyzing) scope.launch {
                                 analyzing = true; reviewError = null
-                                when (val r = client.analyze(rev.second, note)) {
+                                when (val r = client.analyze(rev.second, note, events.filterIndexed { i, _ -> i !in struck })) {
                                     is TeachClient.Out.Ok -> {
                                         val saved = (client.save(r.v) as? TeachClient.Out.Ok)?.v ?: r.v
                                         skills = listOf(saved) + skills.orEmpty(); selected = saved; review = null
@@ -215,6 +224,7 @@ fun AciTeachScreen(host: AciHost, onRun: (String) -> Unit, onBack: () -> Unit) {
                         onSaved = { s -> skills = skills.orEmpty().map { if (it.id == s.id) s else it }; selected = s; notice = "Saved." },
                         onError = { notice = it },
                         onRun = { runFor = sel },
+                        onSchedule = { scheduleFor = it },
                         onDeleted = { skills = skills.orEmpty().filterNot { it.id == sel.id }; selected = null })
                     failure != null && list == null -> {
                         val f = failure!!
@@ -234,6 +244,14 @@ fun AciTeachScreen(host: AciHost, onRun: (String) -> Unit, onBack: () -> Unit) {
             }
         }
     }
+    if (profileOpen) TeachProfileSheet(client, onDismiss = { profileOpen = false })
+    scheduleFor?.let { skill ->
+        TeachScheduleSheet(skill, onDismiss = { scheduleFor = null }) { _ ->
+            scheduleFor = null
+            notice = "“${skill.title}” is scheduled. It’s in Automation Tasks."
+            scope.launch { load() }
+        }
+    }
     runFor?.let { skill ->
         TeachRunSheet(skill, onDismiss = { runFor = null }) { values ->
             runFor = null
@@ -244,7 +262,7 @@ fun AciTeachScreen(host: AciHost, onRun: (String) -> Unit, onBack: () -> Unit) {
 }
 
 @Composable
-private fun TeachEditor(skill: TeachSkill, client: TeachClient, onSaved: (TeachSkill) -> Unit, onError: (String) -> Unit, onRun: () -> Unit, onDeleted: () -> Unit) {
+private fun TeachEditor(skill: TeachSkill, client: TeachClient, onSaved: (TeachSkill) -> Unit, onError: (String) -> Unit, onRun: () -> Unit, onSchedule: (TeachSkill) -> Unit, onDeleted: () -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var title by remember(skill.id) { mutableStateOf(skill.raw.str("title").orEmpty()) }
@@ -321,6 +339,17 @@ private fun TeachEditor(skill: TeachSkill, client: TeachClient, onSaved: (TeachS
             var n = inputs.size + 1
             while (inputs.any { it.name == "input_$n" }) n++
             inputs += DraftInput(JsonObject(emptyMap()), "input_$n", "", "", true)
+        }
+        // iOS saves pending edits first, then opens the schedule sheet for the saved skill.
+        AciPillButton(if (skill.raw.str("routine_id") == null) "Run on a schedule" else "Schedule again", "aciTeachSchedule") {
+            if (!saving) scope.launch {
+                saving = true
+                when (val r = client.save(draft())) {
+                    is TeachClient.Out.Ok -> { onSaved(r.v); onSchedule(r.v) }
+                    is TeachClient.Out.Failed -> onError("Couldn’t save the skill. ${r.message}")
+                }
+                saving = false
+            }
         }
         AciPrimaryButton(if (saving) "Saving…" else "Save changes", "aciTeachSave") {
             if (!saving) scope.launch {

@@ -172,7 +172,10 @@ fun ChatScreen(
                     if (viewModel.isLoadingHistory) {
                         CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = c.textSecondary)
                     } else {
-                        greeting()
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            greeting()
+                            NotificationsCard()
+                        }
                     }
                 }
             } else {

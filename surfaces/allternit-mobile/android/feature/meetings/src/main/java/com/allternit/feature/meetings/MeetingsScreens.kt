@@ -107,6 +107,18 @@ fun MeetingsScreen(host: MeetingsHost, focusMeetingId: String? = null) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     val store = MeetingsStore
+    val noticeContext = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        MeetingsStore.notifier = { key, m ->
+            val (title, body) = when (key) {
+                "joining" -> "Gizzi is joining" to "${m.displayTitle} · ${m.platformName}"
+                "waiting_admit" -> "Let Gizzi in" to "Gizzi (Allternit) is waiting in the lobby of ${m.displayTitle}."
+                "not_admitted" -> "Gizzi wasn't let in" to "Nobody admitted Gizzi to ${m.displayTitle}."
+                else -> "Recap ready" to "${m.displayTitle}: summary, decisions and action items."
+            }
+            com.allternit.feature.push.PushNotifications.show(noticeContext, mapOf("title" to title, "body" to body, "tag" to "meeting-${m.id}-$key", "type" to "meeting.$key", "url" to "/meetings/${m.id}"))
+        }
+    }
     var route by remember { mutableStateOf<MeetingRoute?>(null) }
     var pasteOpen by remember { mutableStateOf(false) }
     var sendTarget by remember { mutableStateOf<Meeting?>(null) }
