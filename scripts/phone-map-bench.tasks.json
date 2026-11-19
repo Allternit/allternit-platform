@@ -1,0 +1,15 @@
+{
+  "note": "Read-only phone tasks: no login, nothing toggled, sent, paid or deleted. 'apps' lists the package names whose App Map is forgotten before a map-off run.",
+  "tasks": [
+    { "id": "settings-android-version", "goal": "Open Settings and tell me the Android version.", "apps": ["com.android.settings"], "max_steps": 15 },
+    { "id": "settings-device-name", "goal": "Open Settings and tell me the device name shown under About phone. Do not change anything.", "apps": ["com.android.settings"], "max_steps": 15 },
+    { "id": "settings-battery-percent", "goal": "Open Settings, open the Battery page and tell me the battery percentage. Do not change anything.", "apps": ["com.android.settings"], "max_steps": 15 },
+    { "id": "settings-storage-used", "goal": "Open Settings, open the Storage page and tell me how much storage is used. Do not change anything.", "apps": ["com.android.settings"], "max_steps": 15 },
+    { "id": "clock-list-alarms", "goal": "Open Clock and list the alarms. Do not change any alarm.", "apps": ["com.google.android.deskclock", "com.android.deskclock"], "max_steps": 12 },
+    { "id": "clock-timer-tab", "goal": "Open Clock, go to the Timer tab and tell me the default timer value shown. Do not start it.", "apps": ["com.google.android.deskclock", "com.android.deskclock"], "max_steps": 12 },
+    { "id": "clock-world-clocks", "goal": "Open Clock, go to the Clock tab and list the cities shown. Do not add or remove any.", "apps": ["com.google.android.deskclock", "com.android.deskclock"], "max_steps": 12 },
+    { "id": "calculator-multiply", "goal": "Open Calculator, work out 12 times 34 and tell me the result.", "apps": ["com.google.android.calculator", "com.android.calculator2"], "max_steps": 15 },
+    { "id": "calculator-history", "goal": "Open Calculator and open its history view. Tell me whether the history is empty. Do not clear it.", "apps": ["com.google.android.calculator", "com.android.calculator2"], "max_steps": 12 },
+    { "id": "chrome-open-menu", "goal": "Open Chrome and open its three-dot menu. Tell me the first three menu entries, then close the menu. Do not open any page.", "apps": ["com.android.chrome"], "max_steps": 12 }
+  ]
+}
