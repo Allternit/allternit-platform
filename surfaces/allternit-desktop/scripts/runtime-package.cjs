@@ -242,12 +242,17 @@ function signingKey() {
  * above GLIBC_FLOOR (build-linux-sidecars.sh) is not published unless
  * ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1. Other platforms: undefined (no stamp).
  */
-function linuxMinGlibc() {
+function linuxMinGlibc(files) {
   if (TARGET_OS !== 'linux') return undefined;
   const script = path.join(REPO_ROOT, 'scripts', 'check-elf-floor.mjs');
   const floor = execFileSync('node', [script, '--print-floor'], { encoding: 'utf8' }).trim();
+  // Only the files this package ships: resources/ also holds app-only ELFs (lima/limactl
+  // needs GLIBC_2.34) that never reach a runtime package and must not raise its stamp.
+  const list = path.join(os.tmpdir(), `runtime-elf-files-${process.pid}.txt`);
+  fs.writeFileSync(list, Object.keys(files).map(sourceOf).join('\n'));
   // --floor 99.0 so the checker never fails the run; the comparison is done here.
-  const res = spawnSync('node', [script, '--dir', RESOURCES, '--floor', '99.0', '--json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const res = spawnSync('node', [script, '--files', list, '--floor', '99.0', '--allowlist', '/dev/null/none', '--json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  fs.rmSync(list, { force: true });
   if (res.status !== 0) die(`check-elf-floor failed: ${res.stderr || res.stdout}`);
   const rows = JSON.parse(res.stdout).rows;
   const cmp = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; } return 0; };
@@ -272,7 +277,7 @@ function pack() {
   if (!files[BOT_RUNNER]) die(`${BOT_RUNNER} or meeting-bot-native/${PLATFORM} missing — run node scripts/prepare-meeting-bot.cjs (ALLTERNIT_RUNTIME_PLATFORM / ALLTERNIT_RUNTIME_RESOURCES pick the target)`);
   // Studio installs Allternit Tune from the runtime's model-training/ (allternit-api engines.rs).
   if (!files[TUNE_REQUIREMENTS]) die(`${TUNE_REQUIREMENTS} missing — services/model-training is not in this checkout`);
-  const minGlibc = linuxMinGlibc();
+  const minGlibc = linuxMinGlibc(files);
   const key = signingKey();
   const objectsDir = path.join(FEED, 'objects');
   const platformDir = path.join(FEED, 'stable', PLATFORM);

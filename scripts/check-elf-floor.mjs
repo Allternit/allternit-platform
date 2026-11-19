@@ -13,7 +13,7 @@
 // The floor default is read from GLIBC_FLOOR in scripts/build-linux-sidecars.sh
 // (the single source of truth); --floor overrides it.
 //
-// Flags: --dir <path> [--floor 2.31] [--json] [--allowlist <file>] [--glibcxx-floor 3.4.28]
+// Flags: --dir <path> | --files <list> [--floor 2.31] [--json] [--allowlist <file>] [--glibcxx-floor 3.4.28]
 //        --print-floor   print the floor from build-linux-sidecars.sh and exit
 // Allowlist (default scripts/elf-floor-allowlist.json, empty): [{"path":"suffix/of/file","reason":"why"}]
 import fs from 'node:fs';
@@ -33,7 +33,9 @@ const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : d; };
 if (args.includes('--print-floor')) { console.log(readFloorConst()); process.exit(0); }
 const dir = opt('--dir');
-if (!dir) { console.error('usage: check-elf-floor.mjs --dir <path> [--floor 2.31] [--json] [--allowlist f] [--glibcxx-floor 3.4.28]'); process.exit(2); }
+// --files <list>: check exactly these files (one absolute path per line) instead of walking --dir.
+const filesList = opt('--files');
+if (!dir && !filesList) { console.error('usage: check-elf-floor.mjs (--dir <path> | --files <list>) [--floor 2.31] [--json] [--allowlist f] [--glibcxx-floor 3.4.28]'); process.exit(2); }
 const floor = opt('--floor', readFloorConst());
 const cxxFloor = opt('--glibcxx-floor', null);
 const asJson = args.includes('--json');
@@ -98,9 +100,12 @@ function scan(buf) {
 }
 
 const rows = [];
-for (const p of walk(dir)) {
+const targets = filesList
+  ? fs.readFileSync(filesList, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean)
+  : [...walk(dir)];
+for (const p of targets) {
   if (!isElf(p)) continue;
-  const rel = path.relative(dir, p);
+  const rel = dir ? path.relative(dir, p) : p;
   const buf = fs.readFileSync(p);
   let method = 'verneed', ents = null;
   try { ents = verneed(buf); } catch { ents = null; }
@@ -125,7 +130,7 @@ if (asJson) {
   console.log(JSON.stringify({ floor, dir, checked: rows.length, failed: fails.length, rows }, null, 2));
 } else {
   const w = Math.min(70, Math.max(10, ...rows.map((r) => r.file.length)));
-  console.log(`ELF floor check: GLIBC <= ${floor}${cxxFloor ? `, GLIBCXX <= ${cxxFloor}` : ''}  (${rows.length} ELF files in ${dir})`);
+  console.log(`ELF floor check: GLIBC <= ${floor}${cxxFloor ? `, GLIBCXX <= ${cxxFloor}` : ''}  (${rows.length} ELF files in ${dir || filesList})`);
   console.log(`${'FILE'.padEnd(w)}  GLIBC   GLIBCXX   METHOD   STATUS`);
   for (const r of rows) console.log(`${r.file.slice(-w).padEnd(w)}  ${(r.glibc || '-').padEnd(6)}  ${(r.glibcxx || '-').padEnd(8)}  ${r.method.padEnd(7)}  ${r.status}${r.reason ? ' (' + r.reason + ')' : ''}`);
   console.log(fails.length ? `\nFAIL: ${fails.length} ELF file(s) need GLIBC above ${floor}` : `\nPASS: every ELF needs GLIBC <= ${floor}`);
