@@ -307,7 +307,7 @@ private fun ModeArrives(mode: ShellMode) {
             text = when (mode) {
                 ShellMode.Bots -> "Your bots, their threads and their phones come to this app next."
                 ShellMode.Code -> "Code threads, terminals and reviews come to this app next."
-                ShellMode.Aci -> "Agent runs, computers and Teach come to this app next."
+                ShellMode.Aci -> "Open the mode again from the menu."
                 ShellMode.Home -> ""
             },
             color = c.textSecondary,

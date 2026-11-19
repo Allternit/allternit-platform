@@ -44,9 +44,12 @@ enum class AciTab { Agent, Apps, Computers, Extensions }
 /** Which ACI view shows, shared by the drawer rail and the ACI screen (iOS ACINavStore). */
 object AciNav {
     var tab: AciTab by mutableStateOf(AciTab.Agent)
+    /** Teach (iOS ACINavStore.isTeachOpen): a full screen over ACI, opened from the drawer's Teach row or the Teach nudge. */
+    var teachOpen: Boolean by mutableStateOf(false)
     fun open(tab: AciTab) {
         this.tab = tab
     }
+    fun openTeach() { teachOpen = true }
 }
 
 /** A suggestion shown until it's dismissed once (iOS ACIOnceNudge, the PWA's key names). */

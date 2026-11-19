@@ -478,6 +478,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             // Wave E: the drawer's "Your bots" and a bot from search open Bots mode's root.
                             "bots" -> com.allternit.feature.bots.BotsModeRoot(botsHost, botsStore, botsLaunch)
                             // Wave F3: the drawer's ACI rail opens that ACI view (iOS ACINavStore.open).
+                            // The drawer's Teach row opens Teach over ACI (iOS ACINavStore.openTeach).
+                            "site-apis" -> {
+                                LaunchedEffect(Unit) { com.allternit.feature.computer.AciNav.open(com.allternit.feature.computer.AciTab.Agent); com.allternit.feature.computer.AciNav.openTeach() }
+                                com.allternit.feature.computer.AciRoot(aciHost)
+                            }
                             "mcp-apps", "browser-extensions", "computers" -> {
                                 val aciTab = when (current.row.id) {
                                     "mcp-apps" -> com.allternit.feature.computer.AciTab.Apps
