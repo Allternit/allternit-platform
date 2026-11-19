@@ -78,6 +78,8 @@ pub mod managed_auth;
 pub mod edge_auth;
 /// "Sign in with Allternit": OAuth authorization endpoint, metadata and consent API (migration 150).
 pub mod oauth_server;
+/// Signed-in person's OAuth grants (list, cap, revoke) and the admin review of apps.
+pub mod oauth_grants;
 pub mod mcp_events;
 pub mod mcp_event_callbacks;
 pub mod allternit_events;

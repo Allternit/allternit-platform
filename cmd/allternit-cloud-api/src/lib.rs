@@ -427,6 +427,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Sign in with Allternit: RFC 8414 metadata, /oauth2/authorize (public; never
         // redirects to an unregistered URI) and the consent API (Clerk session only).
         .merge(routes::oauth_server::routes())
+        // The person's grants (Clerk session only) and the admin app review (admin session).
+        .merge(routes::oauth_grants::routes())
         // The event registry in plain words (signed-in users; Settings › Connected apps).
         .merge(routes::allternit_events::routes())
         // Runtimes forward their bot_events ledger into the event backbone (relay-signature auth in the handler).
