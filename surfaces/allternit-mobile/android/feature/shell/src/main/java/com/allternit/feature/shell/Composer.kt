@@ -79,8 +79,18 @@ import com.allternit.core.design.Haptics
 import com.allternit.core.design.R as DesignR
 import kotlinx.coroutines.delay
 
-/** Something staged on the composer (+ sheet: camera, photos, files, GitHub link). */
-internal data class ComposerAttachment(val name: String, val uri: String?, val kind: String)
+/**
+ * Something staged on the composer (+ sheet: camera, photos, files, GitHub link). Photos and
+ * files carry a content [uri]; the camera carries its JPEG [bytes]; a GitHub link carries the
+ * URL in [uri]. The chat reads and uploads them on send (iOS AttachmentStore → POST /uploads).
+ */
+internal data class ComposerAttachment(
+    val name: String,
+    val uri: String?,
+    val kind: String,
+    val bytes: ByteArray? = null,
+    val mediaType: String? = null,
+)
 
 /** What a send hands to the chat (step 8 sends it; the stub shows it). */
 internal data class ComposerDraft(

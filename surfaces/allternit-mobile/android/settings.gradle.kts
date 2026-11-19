@@ -28,3 +28,5 @@ include(":core:data")
 // play and phonelink (TWA) builds do not compile or ship any of this.
 include(":feature:onboarding")
 include(":feature:shell")
+// Wave A: the chat screen. :feature:shell depends on it (nativeapp flavor only, like the shell).
+include(":feature:chat")

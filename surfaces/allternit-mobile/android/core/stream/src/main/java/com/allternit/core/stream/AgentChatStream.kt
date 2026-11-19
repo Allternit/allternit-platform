@@ -16,6 +16,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
@@ -186,8 +187,16 @@ class AgentChatStream(
     private val api: AllternitApi,
     private val json: Json = ApiJson.default,
 ) {
-    fun send(instanceBaseUrl: HttpUrl, body: AgentChatRequest): Flow<ChatStreamEvent> = callbackFlow {
-        val request = api.agentChatRequest(instanceBaseUrl, body)
+    fun send(instanceBaseUrl: HttpUrl, body: AgentChatRequest): Flow<ChatStreamEvent> =
+        stream(api.agentChatRequest(instanceBaseUrl, body))
+
+    /**
+     * Streams any request whose response is the agent-chat event stream. The chat screen uses
+     * it for the cloud relay (iOS RuntimeRelayClient.stream): `POST {cloud}/api/v1/runtime-devices/:id/proxy`
+     * with the `{ method, path, headers, body, bodyEncoding }` envelope, whose response IS the
+     * computer's `/api/agent-chat` stream.
+     */
+    fun stream(request: Request): Flow<ChatStreamEvent> = callbackFlow {
         val listener = object : EventSourceListener() {
             override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
                 val event = AgentChatFrames.decode(SseEvent(id, type, data), json) ?: return

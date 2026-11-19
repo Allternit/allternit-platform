@@ -93,7 +93,13 @@ internal fun PlusSheet(
     }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
         if (bitmap != null) {
-            onAttach(ComposerAttachment("Photo", null, "camera"))
+            // The preview bitmap is the photo: JPEG it now so the send can upload it (iOS AttachmentStore
+            // stages camera shots as JPEG data).
+            val jpeg = java.io.ByteArrayOutputStream().use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                out.toByteArray()
+            }
+            onAttach(ComposerAttachment("Photo.jpg", null, "camera", bytes = jpeg, mediaType = "image/jpeg"))
             onDismiss()
         }
     }
