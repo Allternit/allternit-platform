@@ -27,7 +27,7 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | Wave | Item | Status |
 |---|---|---|
 | A | Chat test account with a computer or Allternit Cloud (allternitpbc gets 428 "No data-plane node") | asked Eoj 11-19 |
-| A | No-computer state in chat: clear message + path to connect (plan chats stay first-class) | built (#PRNUM, feature/chat/ComputeGate.kt) |
+| A | No-computer state in chat: clear message + path to connect (plan chats stay first-class) | built (#2614, feature/chat/ComputeGate.kt) |
 | C | -open-tab / sidebar / skip-auth debug extras for Maestro flows | todo |
 | C | TWA → native sign-in handoff (user already signed in on m.allternit.com) | todo |
 | C | Continue with Apple retest (needs return URL on Services ID com.allternit.signin — owner) | blocked on owner |
@@ -41,25 +41,25 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 
 | Screen | Area | iOS path | Web path | Android | Status | Proof |
 |---|---|---|---|---|---|---|
-| AgentSelectionSheet | Chat | ios/Features/Chat/Views/AgentSelectionSheet.swift | — | — | n/a (#PRNUM): iOS has no caller for this sheet (dead view); no Android-only screens | — |
-| AnswerCardView | Chat | ios/Features/Chat/Views/AnswerCards/AnswerCardView.swift | — | feature/chat/ChatCards.kt (AnswerCard, WritingDraftCard) | built (#PRNUM) | — |
-| ChatErrorCardView | Chat | ios/Features/Chat/Views/ChatErrorCardView.swift | — | feature/chat/ChatCards.kt (ChatErrorCard) | built (#PRNUM) | — |
-| ChatView | Chat | ios/Features/Chat/Views/ChatView.swift | — | feature/chat/ChatScreen.kt + feature/shell/ChatPage.kt | built (#PRNUM) | — |
-| ChatsScreen | Chat | — | src/fabric-session/phone/screens/ChatsScreen.tsx | feature/shell/ShellScreens.kt (AllChatsScreen) → ChatPage.kt | built (#PRNUM) | — |
-| ComposerPlusSheet | Chat | ios/Features/Chat/Views/ComposerPlusSheet.swift | — | feature/shell/PlusSheet.kt | built (#PRNUM: photos, camera, files, GitHub upload on send) | — |
-| ComposerView | Chat | ios/Features/Chat/Composer/ComposerView.swift | — | feature/shell/Composer.kt | built (#PRNUM: send, stop, edit, no-brain pick) | — |
-| ConnectSuggestCardView | Chat | ios/Features/Chat/Views/ConnectSuggestCardView.swift | — | feature/chat/ChatCards.kt (ConnectSuggestCard) | built (#PRNUM) | — |
-| FormSurfacesView | Chat | ios/Features/Chat/Views/FormSurfacesView.swift | — | — | n/a (#PRNUM): iOS has no caller for this sheet (dead view); no Android-only screens | — |
-| ModelPickerSheet | Chat | ios/Features/Chat/Views/ModelPickerSheet.swift | — | feature/shell/ModelPicker.kt | built (#PRNUM: the pick drives the send) | — |
-| PermissionPrimingSheet | Chat | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | — | n/a (#PRNUM): Android photo picker, camera intent and speech screen need no runtime permission, so there is nothing to prime | — |
-| RunCodeFilesView | Chat | ios/Features/Chat/Views/RunCodeFilesView.swift | — | feature/chat/ChatCards.kt (RunCodeFilesView, UploadFileCard) | built (#PRNUM) | — |
-| SettingsChangeCardView | Chat | ios/Features/Chat/Views/SettingsChangeCardView.swift | — | feature/chat/ChatCards.kt (SettingsChangeCard) | built (#PRNUM: status + Open Settings; Apply/Undo on this phone with wave G) | — |
+| AgentSelectionSheet | Chat | ios/Features/Chat/Views/AgentSelectionSheet.swift | — | — | n/a (#2614): iOS has no caller for this sheet (dead view); no Android-only screens | — |
+| AnswerCardView | Chat | ios/Features/Chat/Views/AnswerCards/AnswerCardView.swift | — | feature/chat/ChatCards.kt (AnswerCard, WritingDraftCard) | built (#2614) | — |
+| ChatErrorCardView | Chat | ios/Features/Chat/Views/ChatErrorCardView.swift | — | feature/chat/ChatCards.kt (ChatErrorCard) | built (#2614) | — |
+| ChatView | Chat | ios/Features/Chat/Views/ChatView.swift | — | feature/chat/ChatScreen.kt + feature/shell/ChatPage.kt | built (#2614) | — |
+| ChatsScreen | Chat | — | src/fabric-session/phone/screens/ChatsScreen.tsx | feature/shell/ShellScreens.kt (AllChatsScreen) → ChatPage.kt | built (#2614) | — |
+| ComposerPlusSheet | Chat | ios/Features/Chat/Views/ComposerPlusSheet.swift | — | feature/shell/PlusSheet.kt | built (#2614: photos, camera, files, GitHub upload on send) | — |
+| ComposerView | Chat | ios/Features/Chat/Composer/ComposerView.swift | — | feature/shell/Composer.kt | built (#2614: send, stop, edit, no-brain pick) | — |
+| ConnectSuggestCardView | Chat | ios/Features/Chat/Views/ConnectSuggestCardView.swift | — | feature/chat/ChatCards.kt (ConnectSuggestCard) | built (#2614) | — |
+| FormSurfacesView | Chat | ios/Features/Chat/Views/FormSurfacesView.swift | — | — | n/a (#2614): iOS has no caller for this sheet (dead view); no Android-only screens | — |
+| ModelPickerSheet | Chat | ios/Features/Chat/Views/ModelPickerSheet.swift | — | feature/shell/ModelPicker.kt | built (#2614: the pick drives the send) | — |
+| PermissionPrimingSheet | Chat | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | — | n/a (#2614): Android photo picker, camera intent and speech screen need no runtime permission, so there is nothing to prime | — |
+| RunCodeFilesView | Chat | ios/Features/Chat/Views/RunCodeFilesView.swift | — | feature/chat/ChatCards.kt (RunCodeFilesView, UploadFileCard) | built (#2614) | — |
+| SettingsChangeCardView | Chat | ios/Features/Chat/Views/SettingsChangeCardView.swift | — | feature/chat/ChatCards.kt (SettingsChangeCard) | built (#2614: status + Open Settings; Apply/Undo on this phone with wave G) | — |
 | SketchSheet | Chat | ios/Features/Chat/Views/SketchSheet.swift | — | — | todo | — |
 | ThreadShareSheet | Chat | ios/Features/Chat/Views/ThreadShareSheet.swift | — | — | todo | — |
-| section: chats | Chat | — | src/fabric-session/phone/phone-nav.ts (PhoneSection chats) | feature/shell/ShellScreens.kt (AllChatsScreen) | built (#PRNUM) | — |
-| HistorySidebarView | History | ios/Features/History/Views/HistorySidebarView.swift | — | feature/shell/ShellDrawer.kt | built (#PRNUM: Recents open the chat) | — |
-| ComputeGateView | Shared | ios/Features/Shared/ComputeGateView.swift | — | feature/chat/ComputeGate.kt (ComputeGateCard) | built (#PRNUM) | — |
-| ConnectComputerView | Shared | ios/Features/Shared/ConnectComputerView.swift | — | feature/chat/ComputeGate.kt (ConnectComputerSheet) | built (#PRNUM) | — |
+| section: chats | Chat | — | src/fabric-session/phone/phone-nav.ts (PhoneSection chats) | feature/shell/ShellScreens.kt (AllChatsScreen) | built (#2614) | — |
+| HistorySidebarView | History | ios/Features/History/Views/HistorySidebarView.swift | — | feature/shell/ShellDrawer.kt | built (#2614: Recents open the chat) | — |
+| ComputeGateView | Shared | ios/Features/Shared/ComputeGateView.swift | — | feature/chat/ComputeGate.kt (ComputeGateCard) | built (#2614) | — |
+| ConnectComputerView | Shared | ios/Features/Shared/ConnectComputerView.swift | — | feature/chat/ComputeGate.kt (ConnectComputerSheet) | built (#2614) | — |
 | mode: home | Shell | — | src/fabric-session/phone/phone-nav.ts (PhoneMode home) | feature/shell/WorkspaceShell.kt | built (#2600) | — |
 
 ## Wave B. First run
