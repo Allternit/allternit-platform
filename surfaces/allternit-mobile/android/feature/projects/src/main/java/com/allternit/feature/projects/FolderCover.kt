@@ -191,7 +191,7 @@ private fun DrawScope.drawLabel(text: String, cx: Float, baseline: Float, sizePx
         if (line.isNotEmpty()) out += line
         out.take(3)
     }
-    lines.forEachIndexed { i, l -> drawContext.canvas.nativeCanvas.drawLabel(l, cx, baseline + i * sizePx * 1.15f, paint) }
+    lines.forEachIndexed { i, l -> drawContext.canvas.nativeCanvas.drawText(l, cx, baseline + i * sizePx * 1.15f, paint) }
 }
 
 private fun DrawScope.drawPattern(pattern: String, ink: Color, k: Float) {

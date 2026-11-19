@@ -370,7 +370,7 @@ private fun SetupKitAIStep(
         when {
             id == "allternit" -> onPick(SetupKitBrain(id, "allternit", allternitModel, "Allternit Cloud"))
             // The computer's Codex sign-in; ChatGPT run for the person only is chat-only.
-            id == "chatgpt" && row.runtimeId != nil -> onPick(SetupKitBrain(id, "codex-cli", null, row.found ?: "ChatGPT"))
+            id == "chatgpt" && row.runtimeId != null -> onPick(SetupKitBrain(id, "codex-cli", null, row.found ?: "ChatGPT"))
             id.endsWith("-key") -> onPick(SetupKitBrain(id, SetupKit.provider(id), null, "${ConnectionsCatalog.keyProvider(id)?.name ?: id} key"))
             id == "gemini" -> onPick(SetupKitBrain("google-key", "google", null, "Gemini · AI Studio key"))
         }
@@ -413,9 +413,9 @@ private fun SetupKitAIStep(
                             store = store,
                             tag = if (isBrain) "Your brain" else null,
                             trailing = when {
-                                isBrain -> @Composable { Text("✓", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = c.ok, modifier = Modifier.semantics { contentDescription = "Your brain" }) }
-                                r.state == ConnState.On && !personOnly -> @Composable { SetupQuietButton("Use this") { use(e.id) } }
-                                r.state == ConnState.On -> @Composable { Text("Chat only", fontSize = 13.sp, color = c.sub) }
+                                isBrain -> ({ Text("✓", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = c.ok, modifier = Modifier.semantics { contentDescription = "Your brain" }) })
+                                r.state == ConnState.On && !personOnly -> ({ SetupQuietButton("Use this") { use(e.id) } })
+                                r.state == ConnState.On -> ({ Text("Chat only", fontSize = 13.sp, color = c.sub) })
                                 else -> null
                             },
                             onConnect = {
@@ -503,7 +503,7 @@ private fun SetupKitPhoneStep(store: ConnectionsStore, reload: suspend () -> Uni
                 .testTag("setup-add-computer"),
         ) {
             val entry = ConnectionsCatalog.entry("this-mac")!!.let { if (on) it.copy(name = "Your computer") else it.copy(name = "Add a computer") }
-            ConnectionRow(entry, store, null, if (on) @Composable { Spacer(Modifier.width(0.dp)) } else null, onConnect = { showPair = true }, onFallback = { showPair = true })
+            ConnectionRow(entry, store, null, if (on) ({ Spacer(Modifier.width(0.dp)) }) else null, onConnect = { showPair = true }, onFallback = { showPair = true })
             Text("Only when a task needs one: clicking apps, using a browser. Chat works without it.", fontSize = 12.5.sp, color = c.sub,
                 modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
         }

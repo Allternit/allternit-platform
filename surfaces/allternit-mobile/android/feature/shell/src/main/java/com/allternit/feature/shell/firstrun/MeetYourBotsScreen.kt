@@ -409,7 +409,7 @@ private fun MeetVisual(model: MeetYourBotsModel, step: MeetYourBotsModel.Step, n
         MeetYourBotsModel.Step.Start -> MeetNetworkView()
         MeetYourBotsModel.Step.Team -> {
             val n = model.members.size
-            MeetTeamGrid(model.members, model.catalog, if (hasLeader) @Composable { LeaderTile(model, 68.dp, live = true) } else null, model.leader,
+            MeetTeamGrid(model.members, model.catalog, if (hasLeader) ({ LeaderTile(model, 68.dp, live = true) }) else null, model.leader,
                 if (n > 0) "$n bot${if (n > 1) "s" else ""} · tap to take one off" else "Tap a card to add a bot", model.existingTemplateIds, model::toggle)
         }
         MeetYourBotsModel.Step.Main -> MeetMainStage(leaderField(model), "${model.leader} idle") { LeaderTile(model, 150.dp, live = true) }
@@ -426,7 +426,7 @@ private fun MeetVisual(model: MeetYourBotsModel, step: MeetYourBotsModel.Step, n
             val leader = model.leader.replaceFirstChar { it.uppercase() }
             MeetFirstJobVisual(
                 main = { LeaderTile(model, 56.dp, live = true) },
-                other = if (handoff) @Composable { KeyTile(model, job!!.key, 56.dp) } else null,
+                other = if (handoff) ({ KeyTile(model, job!!.key, 56.dp) }) else null,
                 caption = if (job == null) "Pick a first job" else if (handoff) "$leader hands it to ${job.name}" else "$leader does this one",
                 expect = job?.expect,
             )
