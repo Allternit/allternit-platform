@@ -1,13 +1,13 @@
 ---
 title: Desktop on Linux
-description: Install Allternit Desktop on Debian, Ubuntu and Mint, pair it, keep it updated and fix common problems
+description: Install Allternit Desktop on Ubuntu, Debian, Mint, Fedora, RHEL, openSUSE and other distros, pair it, keep it updated and fix common problems
 ---
 
-Allternit Desktop runs on Linux as a `.deb` package. This page covers install, pairing, updates and the problems people hit most. For everything else the app does, see [Desktop](/surfaces/desktop).
+Allternit Desktop runs on Linux as a `.deb` (Ubuntu, Debian, Mint), an `.rpm` (Fedora, RHEL/Alma/Rocky, openSUSE) or an AppImage (every other distro, for example Arch). This page covers install, pairing, updates and the problems people hit most. For everything else the app does, see [Desktop](/surfaces/desktop).
 
 ## Supported systems
 
-- Ubuntu 18.04+, Debian 10+, Linux Mint 19+, and other distros with glibc 2.27+ (amd64).
+- Ubuntu 18.04+, Debian 10+, Linux Mint 19+ (`.deb`); Fedora, RHEL/Alma/Rocky 8+, openSUSE Leap 15+ and Tumbleweed (`.rpm`); any other distro with glibc 2.27+ (AppImage). All amd64 (x86_64).
 - amd64 only. arm64 is not supported yet.
 - On Ubuntu 18.04 (glibc 2.27) everything works except the Meeting bot, which needs glibc 2.28. Debian 10 and newer run the Meeting bot.
 
@@ -25,14 +25,45 @@ Desktop 1.1.15 and older need glibc 2.38 or newer. From the next release, Deskto
 
 ## Install
 
-1. Download the `.deb` from [github.com/Allternit/desktop/releases/latest](https://github.com/Allternit/desktop/releases/latest).
-2. Install it. `apt` also pulls in `bubblewrap`, `lsof`, `libgbm1` and `libasound2`.
+Download the file for your system from [github.com/Allternit/desktop/releases/latest](https://github.com/Allternit/desktop/releases/latest). In the commands below, replace `VERSION` with the number in the file name you downloaded.
+
+**Ubuntu, Debian, Mint: the `.deb`.** `apt` also pulls in `bubblewrap`, `lsof`, `libgbm1` and `libasound2`.
 
 ```bash
 sudo apt install ./Allternit-Desktop-VERSION-amd64.deb
 ```
 
-Replace `VERSION` with the number in the file name you downloaded.
+**Fedora, RHEL, AlmaLinux, Rocky: the `.rpm`.** `dnf` pulls in what the app needs (`mesa-libgbm`, `nss`, `gtk3`, `bubblewrap`, `lsof` and the rest).
+
+```bash
+sudo dnf install ./Allternit-Desktop-VERSION-x86_64.rpm
+```
+
+**openSUSE: the same `.rpm`.**
+
+```bash
+sudo zypper install ./Allternit-Desktop-VERSION-x86_64.rpm
+```
+
+zypper warns that the package is not signed; answer `i` to install it anyway.
+
+**Any other distro (Arch, Manjaro, Void, NixOS, ...): the AppImage.** No install step: make it executable and run it. Keep it somewhere you own, such as `~/Applications`, so it can update itself.
+
+```bash
+chmod +x Allternit-Desktop-VERSION-x86_64.AppImage
+./Allternit-Desktop-VERSION-x86_64.AppImage
+```
+
+The AppImage needs FUSE 2 (`fuse2` on Arch, `libfuse2` on Ubuntu, `fuse-libs` on Fedora). Without it, run it with `--appimage-extract-and-run`.
+
+### The AppImage sandbox prompt
+
+An AppImage cannot set up Chromium's security sandbox the way the `.deb` and `.rpm` installers do. On Ubuntu 23.10 and later, AppArmor blocks it, and Desktop shows one dialog the first time: **Turn on the security sandbox?**
+
+- **Add rule and restart** asks for your password, adds an AppArmor rule for this AppImage file (`/etc/apparmor.d/allternit-appimage`), and restarts Desktop with the sandbox on. If you move the AppImage, it asks again.
+- **Run without sandbox** keeps Desktop running without the sandbox. It does not ask again for this file.
+
+On other systems where the sandbox can't run (for example a kernel with `unprivileged_userns_clone=0`), Desktop runs without it and shows one notification. For full security on those systems, use the `.deb` or `.rpm`.
 
 ## Pair
 
@@ -40,9 +71,9 @@ Open Allternit, click **Sign in to pair**, and sign in. The computer pairs with 
 
 ## Updates
 
-From the next release, the app updates itself. It asks for your password to install the update.
+From the next release, the app updates itself. The `.deb` and `.rpm` ask for your password to install the update. The AppImage replaces its own file, so it needs no password, but its folder must be one you can write to.
 
-On 1.1.15 and older, install the next `.deb` by hand once. After that, updates arrive on their own.
+On 1.1.15 and older (`.deb` only), install the next `.deb` by hand once. After that, updates arrive on their own.
 
 ## Troubleshooting
 
@@ -54,7 +85,7 @@ On 1.1.15 and older, install the next `.deb` by hand once. After that, updates a
 
 **"This pairing request is invalid or expired".** Sign in again from **Sign in to pair**. A server fix on 2026-11-19 resolved the pairing failures that caused this message.
 
-**Crash with `credentials.cc` or a sandbox message.** Reinstall the `.deb`. The installer sets up the sandbox. If it still crashes, check that unprivileged user namespaces are on:
+**Crash with `credentials.cc` or a sandbox message.** Reinstall the `.deb` or `.rpm`. The installer sets up the sandbox. The AppImage starts without the sandbox instead of crashing (see [The AppImage sandbox prompt](#the-appimage-sandbox-prompt)). If it still crashes, check that unprivileged user namespaces are on:
 
 ```bash
 sysctl kernel.unprivileged_userns_clone
@@ -65,5 +96,7 @@ sysctl kernel.unprivileged_userns_clone
 **Shortcuts do not work on Wayland.** Wayland blocks global shortcuts from apps. Set them in your desktop's keyboard settings instead.
 
 **Start at login.** Desktop adds `~/.config/autostart/allternit.desktop`. Delete that file to stop it.
+
+**AppImage does not start: "dlopen(): error loading libfuse.so.2".** Install FUSE 2 (see [Install](#install)), or run the AppImage with `--appimage-extract-and-run`.
 
 **Logs.** Look in `~/.config/@allternit/desktop/main.log`.
