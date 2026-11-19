@@ -517,7 +517,7 @@ private fun StudioTile(k: StudioKind, selected: Boolean, busy: Boolean, onTap: (
         ) {
             ArtifactTileArt(k, Modifier.fillMaxSize().padding(3.dp).clip(RoundedCornerShape(9.dp)))
             androidx.compose.foundation.Image(
-                painterResource(ArtifactKinds.icon(k.raw)), contentDescription = null,
+                painterResource(ArtifactKinds.icon(k.studioKind)), contentDescription = null,
                 modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(16.dp).clip(RoundedCornerShape(4.dp)),
             )
             if (k.isBeta) Text("Beta", color = c.textSecondary, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp))
