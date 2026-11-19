@@ -2,7 +2,10 @@
 //!
 //! Rate limits: one counter per key and one per project per 60 s window
 //! (`platform_rate_windows`), so limits hold across processes. The limit is the
-//! project's `rpm_override` or its plan default. Every response carries
+//! project's `rpm_override` or its plan default. A "Sign in with Allternit"
+//! access token is counted per OAuth grant instead (`grant:<id>`, [`GRANT_RPM`];
+//! 429 `rate_limited`, contract A9), so all of one person's tokens for one app
+//! share a window. Every response carries
 //! `x-ratelimit-limit`, `x-ratelimit-remaining` and `x-ratelimit-reset` (unix
 //! seconds when the window ends); a 429 adds `retry-after`.
 //!
@@ -51,16 +54,50 @@ impl RateInfo {
     }
 }
 
+/// Requests per minute one OAuth grant gets. The contract sets no number, so a
+/// grant gets what a project key gets by default (the sandbox plan's limit).
+pub const GRANT_RPM: u32 = 60;
+
 /// Count this request against the key and project windows. `Ok` carries the
 /// header values; `Err` is the 429 plus the same info for headers.
 pub async fn check_rate_limit(
     db: &PgPool,
     caller: &PlatformCaller,
 ) -> Result<RateInfo, (PlatformError, RateInfo)> {
+    let buckets = [format!("key:{}", caller.key_id), format!("project:{}", caller.project_id)];
+    count_window(db, &buckets, caller.rpm_limit(), "rate_limit_exceeded").await
+}
+
+/// Count an `alt_oat_` request against its grant's window ([`GRANT_RPM`]).
+pub async fn check_grant_rate_limit(
+    db: &PgPool,
+    grant_id: uuid::Uuid,
+) -> Result<RateInfo, (PlatformError, RateInfo)> {
+    count_window(db, &[format!("grant:{grant_id}")], GRANT_RPM, "rate_limited").await
+}
+
+/// The 429 for a [`check_rate_limit`] / [`check_grant_rate_limit`] refusal,
+/// with the rate headers and `retry-after`.
+pub fn rate_limited_response(error: PlatformError, info: RateInfo) -> Response {
+    let mut response = error.into_response();
+    info.apply(response.headers_mut());
+    if let Ok(v) = HeaderValue::from_str(&(info.reset_unix - chrono::Utc::now().timestamp()).max(1).to_string()) {
+        response.headers_mut().insert(header::RETRY_AFTER, v);
+    }
+    response
+}
+
+/// One fixed window over `buckets`: the request counts in each, and the
+/// fullest decides. `code` is the 429's error code.
+async fn count_window(
+    db: &PgPool,
+    buckets: &[String],
+    limit: u32,
+    code: &str,
+) -> Result<RateInfo, (PlatformError, RateInfo)> {
     let now = chrono::Utc::now().timestamp();
     let window_start = now - now.rem_euclid(WINDOW_SECS);
     let reset_unix = window_start + WINDOW_SECS;
-    let limit = caller.rpm_limit();
     let fail_open = |error: sqlx::Error| {
         // A counter outage must not take the API down; log it and let it through.
         tracing::error!(%error, "platform rate limiter unavailable; allowing request");
@@ -68,8 +105,8 @@ pub async fn check_rate_limit(
     };
 
     let mut used = 0i32;
-    for bucket in [format!("key:{}", caller.key_id), format!("project:{}", caller.project_id)] {
-        match incr(db, &bucket, window_start).await {
+    for bucket in buckets {
+        match incr(db, bucket, window_start).await {
             Ok(count) => used = used.max(count),
             Err(error) => return Ok(fail_open(error)),
         }
@@ -91,7 +128,7 @@ pub async fn check_rate_limit(
     if used as i64 > limit as i64 {
         return Err((
             PlatformError::rate_limit(
-                "rate_limit_exceeded",
+                code,
                 format!("Rate limit of {limit} requests per minute exceeded. Retry after the window resets."),
             ),
             info,

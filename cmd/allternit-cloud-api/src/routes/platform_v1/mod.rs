@@ -84,7 +84,7 @@ use serde::de::DeserializeOwned;
 
 use crate::ApiState;
 
-pub use caller::{PlatformCaller, ProjectEnv};
+pub use caller::{CallerBilling, OAuthCaller, PlatformCaller, ProjectEnv};
 pub use error::PlatformError;
 pub use page::{build_page, Page, PageParams};
 pub use slots::{acquire_slot, release_slot, SlotGuard};
@@ -317,7 +317,8 @@ async fn v1_middleware(
     next: Next,
 ) -> Response {
     // The Agency API owns `/v1/agents` and `/v1/decisions` for everything but project
-    // keys, whether or not the Platform API is switched on. Clerk and `allternit_*`
+    // keys (and OAuth access tokens, which get the Platform's 403 below), whether or
+    // not the Platform API is switched on. Clerk and `allternit_*`
     // callers of `/v1/decisions` (Desktop, computer use) keep reaching the agency node;
     // project keys and console sessions get the Platform Decisions resource
     // (`decisions.rs`), every method: `GET /v1/decisions` (the list) included.
@@ -326,13 +327,13 @@ async fn v1_middleware(
     request.extensions_mut().insert(ps.agency.clone());
     let console_project = console_project(&request);
     if matches!(request.uri().path(), "/v1/agents" | "/v1/decisions") {
-        let project_key = request
+        let platform_bearer = request
             .headers()
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .is_some_and(|t| caller::is_project_key_token(t.trim()));
-        if !project_key && console_project.is_none() {
+            .is_some_and(|t| caller::is_platform_bearer(t.trim()));
+        if !platform_bearer && console_project.is_none() {
             return crate::routes::agency_forward::forward(ps.api.clone(), ps.agency.clone(), request).await;
         }
     }
@@ -349,8 +350,9 @@ async fn v1_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim);
     let authenticated = match (&console_project, token) {
-        // A project key always wins; the console header only applies to a session.
-        (Some(project_id), Some(t)) if !caller::is_project_key_token(t) => {
+        // A project key (or OAuth token) always wins; the console header only
+        // applies to a session.
+        (Some(project_id), Some(t)) if !caller::is_platform_bearer(t) => {
             let (headers, test) = (request.headers().clone(), test_principal(&request));
             console_v1_caller(db, headers, test, project_id).await
         }
@@ -371,16 +373,7 @@ async fn v1_middleware(
 
     let rate = match limits::check_rate_limit(db, &caller).await {
         Ok(info) => info,
-        Err((error, info)) => {
-            let mut response = error.into_response();
-            info.apply(response.headers_mut());
-            if let Ok(v) = header::HeaderValue::from_str(
-                &(info.reset_unix - chrono::Utc::now().timestamp()).max(1).to_string(),
-            ) {
-                response.headers_mut().insert(header::RETRY_AFTER, v);
-            }
-            return response;
-        }
+        Err((error, info)) => return limits::rate_limited_response(error, info),
     };
 
     request.extensions_mut().insert(caller.clone());
@@ -459,3 +452,5 @@ mod tests_p6_computers;
 mod tests_p7_phones;
 #[cfg(test)]
 mod tests_p7_mail;
+#[cfg(test)]
+mod tests_oauth_caller;

@@ -65,6 +65,43 @@ pub fn cors_origin_allowed(origin: &str, path: &str, configured: &[String]) -> b
             && routes::freeweights::is_freeweights_cors_path(path))
 }
 
+/// Sign in with Allternit endpoints a browser-only public app (PKCE) calls
+/// from its own origin (contract A1, "CORS:"). They read no cookies.
+pub const OAUTH_PUBLIC_CORS_PATHS: [&str; 4] = [
+    "/oauth2/token",
+    "/oauth2/revoke",
+    "/oauth2/userinfo",
+    "/.well-known/oauth-authorization-server",
+];
+
+/// `Access-Control-Allow-Origin: *` without credentials for
+/// [`OAUTH_PUBLIC_CORS_PATHS`]; every other path passes through untouched to
+/// the global CORS layer. It wraps that layer because the global layer answers
+/// every OPTIONS request itself and sets `allow-credentials` on every
+/// response, so a layer on the route could neither see a preflight nor drop
+/// the credentials header.
+async fn oauth_public_cors(request: axum::extract::Request, next: axum_middleware::Next) -> axum::response::Response {
+    use axum::{http::HeaderValue, response::IntoResponse};
+    if !OAUTH_PUBLIC_CORS_PATHS.contains(&request.uri().path()) {
+        return next.run(request).await;
+    }
+    let preflight = request.method() == Method::OPTIONS;
+    let mut response = if preflight {
+        axum::http::StatusCode::NO_CONTENT.into_response()
+    } else {
+        next.run(request).await
+    };
+    let headers = response.headers_mut();
+    headers.remove(header::ACCESS_CONTROL_ALLOW_CREDENTIALS);
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    if preflight {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET, POST, OPTIONS"));
+        headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("authorization, content-type"));
+        headers.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("3600"));
+    }
+    response
+}
+
 /// API application state
 pub struct ApiState {
     pub db: sqlx::PgPool,
@@ -787,6 +824,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .fallback(routes::data_plane_fallback::fallback)
         .layer(DefaultBodyLimit::max(max_body_size))
         .layer(cors)
+        // Outside the global CORS layer: the OAuth token endpoints answer any origin.
+        .layer(axum_middleware::from_fn(oauth_public_cors))
         .layer(axum::middleware::from_fn_with_state(
             state.metrics_state.clone(),
             crate::middleware::metrics::metrics_middleware,
