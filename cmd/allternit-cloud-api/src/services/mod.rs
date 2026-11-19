@@ -30,6 +30,8 @@ pub mod meeting_launcher;
 pub mod node_resolution;
 /// Sign in with Allternit: OAuth apps (CONTRACT-oauth-linked-billing-2026-11, Part A).
 pub mod oauth_apps;
+/// Who pays for an `alt_oat_` inference call: reserve, then settle (A8).
+pub mod oauth_spend;
 pub mod oauth_tokens;
 pub mod ops_alert;
 pub mod provisioning;

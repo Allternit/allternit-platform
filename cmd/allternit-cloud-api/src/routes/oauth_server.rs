@@ -14,7 +14,9 @@
 //!   (`client_secret_post`, or `client_id` alone for a public app). Form
 //!   encoded per RFC 6749; a JSON object of strings is accepted too.
 //! - `GET  /oauth2/userinfo` (Bearer `alt_oat_` with `profile`) and
-//!   `GET  /api/v1/oauth/usage` (Bearer `alt_oat_` with `usage`).
+//!   `GET  /api/v1/oauth/usage` (Bearer `alt_oat_` with `usage`). Both count
+//!   against the grant's per-minute window (`limits::check_grant_rate_limit`,
+//!   shared with the chat route): 429 `rate_limited` with `retry-after`.
 //!
 //! Token issue, rotation, revocation and the bearer check live in
 //! `services::oauth_tokens`; read its top doc for formats and rotation.
@@ -97,6 +99,7 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 use crate::routes::managed_auth::coded;
+use crate::routes::platform_v1::limits;
 use crate::services::api_keys::{client_ip, hash_token};
 use crate::services::oauth_apps::{self, record_audit, AppState, AuditCtx, AuditEvent, OAuthApp, SCOPES};
 use crate::services::oauth_tokens::{self, AccessTokenError, IssuedTokens, TokenError};
@@ -970,6 +973,30 @@ async fn userinfo(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Res
         Ok(access) => access,
         Err(e) => return userinfo_access_error(e),
     };
+    // Per-grant window (A9 429 `rate_limited`), as on the chat route.
+    let rate = match limits::check_grant_rate_limit(&state.db, access.grant_id).await {
+        Ok(rate) => rate,
+        Err((_, info)) => {
+            let resp = bearer_error(StatusCode::TOO_MANY_REQUESTS, "rate_limited", "Too many requests for this grant. Retry after the window resets.", None);
+            return with_retry_after(resp, info);
+        }
+    };
+    let mut resp = userinfo_for(&state.db, &access).await;
+    rate.apply(resp.headers_mut());
+    resp
+}
+
+/// The 429 headers: the window's `x-ratelimit-*` values and `retry-after`.
+fn with_retry_after(mut resp: Response, info: limits::RateInfo) -> Response {
+    info.apply(resp.headers_mut());
+    let wait = (info.reset_unix - Utc::now().timestamp()).max(1);
+    if let Ok(value) = HeaderValue::from_str(&wait.to_string()) {
+        resp.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    resp
+}
+
+async fn userinfo_for(db: &PgPool, access: &oauth_tokens::OAuthAccess) -> Response {
     if !access.has_scope("profile") {
         return bearer_error(
             StatusCode::FORBIDDEN,
@@ -979,7 +1006,7 @@ async fn userinfo(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Res
         );
     }
     let Some(sub) = subject_for(access.app_id, &access.user_id) else { return oauth_not_configured() };
-    match userinfo_body(&state.db, &access, &sub).await {
+    match userinfo_body(db, access, &sub).await {
         Ok(body) => oauth_json(StatusCode::OK, body),
         Err(e) => {
             tracing::error!(error = %e, "oauth: userinfo failed");
@@ -1018,10 +1045,18 @@ async fn usage(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Respon
             return no_store(coded(e.status(), e.code(), e.message()));
         }
     };
-    if !access.has_scope("usage") {
-        return no_store(coded(StatusCode::FORBIDDEN, "insufficient_scope", "This token does not have the usage scope."));
-    }
-    reply(oauth_tokens::grant_usage(&state.db, &access, Utc::now()).await.map(|u| Json(u.to_json()).into_response()))
+    // Per-grant window (A9 429 `rate_limited`), as on the chat route.
+    let rate = match limits::check_grant_rate_limit(&state.db, access.grant_id).await {
+        Ok(rate) => rate,
+        Err((error, info)) => return no_store(limits::rate_limited_response(error, info)),
+    };
+    let mut resp = if !access.has_scope("usage") {
+        no_store(coded(StatusCode::FORBIDDEN, "insufficient_scope", "This token does not have the usage scope."))
+    } else {
+        reply(oauth_tokens::grant_usage(&state.db, &access, Utc::now()).await.map(|u| Json(u.to_json()).into_response()))
+    };
+    rate.apply(resp.headers_mut());
+    resp
 }
 
 #[cfg(test)]

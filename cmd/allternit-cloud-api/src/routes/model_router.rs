@@ -18,6 +18,7 @@ use crate::{
     auth::AuthContext,
     model_router::generic_openai::{GenericOpenAiConfig, GenericOpenAiProvider},
     model_router::{ChatCompletionRequest, RetailPrices, UpstreamProvider},
+    routes::platform_v1::{CallerBilling, OAuthCaller},
     services::{inference_keys, inference_pool, inference_settlement},
     ApiError, ApiState,
 };
@@ -172,17 +173,27 @@ async fn captured_request_body(
 /// the response from the upstream usage report (or a marked estimate).
 /// Every response, errors and streams included, carries `x-request-id`; the
 /// usage row records it with the key's project, the key and the client.
+/// A "Sign in with Allternit" token (`alt_oat_`, the `OAuthCaller` extension)
+/// takes its own path: [`oauth_chat_completions`].
 pub async fn chat_completions(
     State(state): State<Arc<ApiState>>,
     Extension(auth): Extension<AuthContext>,
+    oauth: Option<Extension<OAuthCaller>>,
     headers: HeaderMap,
     Json(request): Json<ChatCompletionRequest>,
 ) -> Result<Response, ApiError> {
+    let started_at = std::time::Instant::now();
     let request_id = format!("req_{}", uuid::Uuid::new_v4().simple());
-    let mut attribution = inference_attribution(&state.db, &auth.user, &headers, request_id.clone()).await;
-    attribution.capture_request =
-        captured_request_body(&state.db, attribution.project_id.as_deref(), &request).await;
-    let mut response = match chat_completions_attributed(&state, auth, request, attribution).await {
+    let result = match oauth {
+        Some(Extension(oauth)) => oauth_chat_completions(&state, &oauth, request, request_id.clone(), started_at).await,
+        None => {
+            let mut attribution = inference_attribution(&state.db, &auth.user, &headers, request_id.clone()).await;
+            attribution.capture_request =
+                captured_request_body(&state.db, attribution.project_id.as_deref(), &request).await;
+            chat_completions_attributed(&state, auth, request, attribution).await
+        }
+    };
+    let mut response = match result {
         Ok(response) => response,
         Err(error) => error.into_response(),
     };
@@ -399,6 +410,116 @@ async fn chat_completions_attributed(
     };
 
     Ok(response)
+}
+
+/// A "Sign in with Allternit" call (`alt_oat_`, CONTRACT-oauth-linked-billing
+/// A8): the consenting person's wallet pays, under the grant's monthly cap, on
+/// Allternit's own route only. None of the account paths apply: no
+/// `can_run_inference` key permissions, no API-key lookup, no project spend
+/// gate, no free tier, no BYOK (the person's own provider keys are not the
+/// app's to use), no funding reroute and no open-lane handoff. Reserve
+/// (`services::oauth_spend`, 402 before any upstream call), call the
+/// upstream, settle; an upstream error releases the hold with no charge.
+async fn oauth_chat_completions(
+    state: &Arc<ApiState>,
+    oauth: &OAuthCaller,
+    mut request: ChatCompletionRequest,
+    request_id: String,
+    started_at: std::time::Instant,
+) -> Result<Response, ApiError> {
+    use crate::services::oauth_spend;
+
+    let CallerBilling::UserWallet { grant_id, .. } = oauth.billing else {
+        return Err(ApiError::Forbidden("This access token does not bill a person's wallet.".to_string()));
+    };
+    // `allternit.*` request options never reach an upstream, and an app's call
+    // is never handed off.
+    let _ = crate::services::open_lane::take_request_options(&mut request);
+
+    // Plan and Copilot models answer only the person's own sends (contract 9.3).
+    if is_person_only_model(&request.model) {
+        return Ok(plan_person_only());
+    }
+    if !state.model_router.is_enabled() {
+        return Err(ApiError::ServiceUnavailable("Model router is not configured".to_string()));
+    }
+    let alias = request.model.clone();
+    let Some(provider_id) = state.model_router.provider_for_alias(&alias).map(str::to_string) else {
+        return Err(ApiError::BadRequest(format!("Unknown model alias: {alias}")));
+    };
+    // The open lane needs the person's own terms acceptance; an app does not
+    // get it on their behalf.
+    if state.model_router.is_open_lane_alias(&alias) {
+        return Ok(plan_refusal(
+            StatusCode::FORBIDDEN,
+            "insufficient_scope",
+            "Open-lane models are not available to apps that use Sign in with Allternit.",
+        ));
+    }
+    if let Some(line) = crate::services::hard_line::standard_check(&request.messages) {
+        crate::services::open_lane::record_block(&state.db, &oauth.user_id, line.category()).await;
+        return Ok(crate::services::open_lane::hard_line_response(line.category()));
+    }
+
+    // The shared pool's breaker still applies: it protects Allternit's upstream budget.
+    let pool = state.inference_pool_service.pool_for_provider(&provider_id).await?;
+    if let Some(pool) = pool.as_ref() {
+        state.inference_pool_service.check_pool_available(pool).await?;
+    }
+    let pool_id = pool.map(|pool| pool.id);
+    let prices = state.model_router.retail_prices(&alias).await?;
+
+    // The output bound is written into the request, so the hold bounds the cost.
+    let output_tokens = oauth_spend::bound_output(&mut request);
+    let input_tokens = oauth_spend::input_token_estimate(&request);
+    let estimate = oauth_spend::estimate(&prices, input_tokens, output_tokens);
+    let reservation = match oauth_spend::reserve(&state.db, grant_id, &oauth.user_id, estimate.cents).await {
+        Ok(reservation) => reservation,
+        Err(refusal) => return Ok(refusal.into_response()),
+    };
+    let call = oauth_spend::CallSettlement {
+        guard: oauth_spend::ReservationGuard::new(
+            state.db.clone(),
+            reservation,
+            oauth_spend::ledger_ref(grant_id, &request_id),
+        ),
+        db: state.db.clone(),
+        user_id: oauth.user_id.clone(),
+        model: alias,
+        pool_id,
+        prices,
+        input_tokens_estimate: input_tokens,
+        attribution: oauth_spend::attribution(&oauth.client_id, request_id.clone(), started_at),
+    };
+
+    let streaming = request.is_streaming();
+    let response = match state.model_router.chat_completions(request).await {
+        Ok(response) => response,
+        Err(error) => {
+            call.guard.release().await;
+            return Err(error.into());
+        }
+    };
+    tracing::info!(
+        user_id = %oauth.user_id,
+        app_id = %oauth.app_id,
+        grant_id = %grant_id,
+        request_id = %request_id,
+        status = %response.status(),
+        streaming = streaming,
+        estimate_cents = estimate.cents,
+        billed_to = oauth_spend::BILLED_TO,
+        "oauth app chat completion dispatched"
+    );
+    if !response.status().is_success() {
+        call.guard.release().await;
+        return Ok(response);
+    }
+    if streaming {
+        Ok(oauth_spend::meter_stream(response, call))
+    } else {
+        oauth_spend::settle_json_response(response, call).await
+    }
 }
 
 /// BYOK path: dispatch the completion through the user's own provider key.
