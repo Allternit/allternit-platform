@@ -28,8 +28,8 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 |---|---|---|
 | A | Chat test account with a computer or Allternit Cloud (allternitpbc gets 428 "No data-plane node") | asked Eoj 11-19 |
 | A | No-computer state in chat: clear message + path to connect (plan chats stay first-class) | built (#2614, feature/chat/ComputeGate.kt) |
-| C | -open-tab / sidebar / skip-auth debug extras for Maestro flows | todo |
-| C | TWA → native sign-in handoff (user already signed in on m.allternit.com) | todo |
+| C | -open-tab / sidebar / skip-auth debug extras for Maestro flows | built (#2626, feature/shell/MainActivity.kt readDebugLaunch) |
+| C | TWA → native sign-in handoff (user already signed in on m.allternit.com) | built (#2626, Android side: feature/shell/TwaHandoff.kt); server route + m.allternit.com page needed, see #2626 "Needs" |
 | C | Continue with Apple retest (needs return URL on Services ID com.allternit.signin — owner) | blocked on owner |
 | I | FCM device tokens: backend accepts platform android (step 6 finding c) | todo |
 | J | Web / Desktop / Gizzi links to the Play app | todo |
@@ -75,16 +75,16 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 
 | Screen | Area | iOS path | Web path | Android | Status | Proof |
 |---|---|---|---|---|---|---|
-| ThinkingSliderView | Chat | ios/Features/Chat/Views/ThinkingSliderView.swift | — | — | todo | — |
+| ThinkingSliderView | Chat | ios/Features/Chat/Views/ThinkingSliderView.swift | — | feature/shell/ThinkingSlider.kt | built (#2626) | — |
 | LoginArrivalView | Onboarding | ios/Features/Onboarding/SignInStage/LoginArrivalView.swift | — | feature/onboarding/LoginArrival.kt | built (#2596) | — |
 | SignInStageView | Onboarding | ios/Features/Onboarding/SignInStage/SignInStageView.swift | — | feature/onboarding/SignInScreen.kt | built (#2596) | — |
-| InboxSheet | Shell | ios/Features/Shell/InboxSheet.swift | — | — (opens "coming in the next update") | todo | — |
+| InboxSheet | Shell | ios/Features/Shell/InboxSheet.swift | — | feature/shell/Inbox.kt | built (#2626) | — |
 | ModeDialView | Shell | ios/Features/Shell/ModeDialView.swift | — | feature/shell/ModeFan.kt | built (#2600) | — |
-| NativeSessionPickerSheet | Shell | ios/Features/Shell/NativeSessionPickerSheet.swift | — | — | todo | — |
-| QuickTaskSheet | Shell | ios/Features/Shell/QuickTaskSheet.swift | — | — | todo | — |
-| SessionOverviewView | Shell | ios/Features/Shell/SessionOverviewView.swift | src/fabric-session/phone/screens/PhoneOverviewOverlay.tsx | — | todo | — |
-| ShellSearchView | Shell | ios/Features/Shell/ShellSearchView.swift | src/fabric-session/phone/screens/PhoneSearchOverlay.tsx | — | todo | — |
-| StageBackdropView | Shell | ios/Features/Shell/Backdrop/StageBackdropView.swift | — | — | todo | — |
+| NativeSessionPickerSheet | Shell | ios/Features/Shell/NativeSessionPickerSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |
+| QuickTaskSheet | Shell | ios/Features/Shell/QuickTaskSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |
+| SessionOverviewView | Shell | ios/Features/Shell/SessionOverviewView.swift | src/fabric-session/phone/screens/PhoneOverviewOverlay.tsx | feature/shell/SessionOverview.kt | built (#2626) | — |
+| ShellSearchView | Shell | ios/Features/Shell/ShellSearchView.swift | src/fabric-session/phone/screens/PhoneSearchOverlay.tsx | feature/shell/ShellSearch.kt | built (#2626) | — |
+| StageBackdropView | Shell | ios/Features/Shell/Backdrop/StageBackdropView.swift | — | feature/shell/backdrop/StageBackdrop.kt | built (#2626) | — |
 
 ## Wave D. Projects + artifacts
 
