@@ -80,9 +80,9 @@ import kotlinx.serialization.json.putJsonObject
 enum class PadSize(val label: String) { S("Small"), M("Medium"), L("Large"), W("Wide") }
 
 enum class PadTileId(val raw: String, val title: String, val style: Boolean, val defaultSize: PadSize) {
-    Decision("decision", "Needs a decision", true, PadSize.M), Countdown("countdown", "Countdown", true, PadSize.S),
-    Progress("progress", "Progress", true, PadSize.S), Team("team", "Crew", true, PadSize.M), Chart("chart", "Activity chart", true, PadSize.S),
-    Schedule("schedule", "Next events", true, PadSize.M), Files("files", "Files", true, PadSize.M), Activity("activity", "Live log", true, PadSize.L),
+    Decision("decision", "Your decision", true, PadSize.M), Countdown("countdown", "Countdown", true, PadSize.S),
+    Progress("progress", "Progress", true, PadSize.S), Team("team", "Team", true, PadSize.M), Chart("chart", "Activity", true, PadSize.S),
+    Schedule("schedule", "Schedule", true, PadSize.M), Files("files", "Files", true, PadSize.M), Activity("activity", "Latest changes", true, PadSize.L),
     Actions("actions", "Quick actions", false, PadSize.M), Links("links", "Links", false, PadSize.M), Notes("notes", "Notes", false, PadSize.M),
     Checklist("checklist", "Checklist", false, PadSize.L), Threads("threads", "Threads", false, PadSize.M);
 
@@ -245,7 +245,14 @@ class ProjectPadStore(private val context: Context, private val scope: String, p
 // MARK: - Pad card (iOS ProjectPadCard + ProjectTabCard + ProjectPadView)
 
 /** What the pad's live tiles read: the project's threads and files. */
-data class PadBoardData(val threads: List<ProjectSession>, val files: List<String>, val needsYou: Int = 0)
+data class PadBoardData(
+    val threads: List<ProjectSession>,
+    val files: List<String>,
+    val needsYou: Int = 0,
+    /** The board the Style tiles read (iOS ProjectBoardData). */
+    val board: ProjectBoardData = ProjectBoardData(null, emptyList(), files),
+    val onOpenStatus: () -> Unit = {},
+)
 
 @Composable
 fun ProjectPadCard(
@@ -333,6 +340,11 @@ private fun PadTileCard(tile: PadTile, pad: ProjectPad, store: ProjectPadStore, 
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     val readOnly = store.signedOut
+    if (tile.id.style) {
+        // iOS draws a Style tile with ProjectDashboardView (Bento) holding only that tile.
+        StyleTile(tile.id, data.board, pad.colors, modifier, onOpenStatus = data.onOpenStatus)
+        return
+    }
     Column(
         modifier.heightIn(min = if (tile.size == PadSize.L) 220.dp else 110.dp).clip(RoundedCornerShape(20.dp)).background(c.bgPanel)
             .border(1.dp, c.borderSubtle, RoundedCornerShape(20.dp)).padding(16.dp).testTag("padTile${tile.id.raw}"),
@@ -411,30 +423,7 @@ private fun PadTileCard(tile: PadTile, pad: ProjectPad, store: ProjectPadStore, 
                     }
                 }
             }
-            // Style tiles (iOS ProjectDashboard, drawn one at a time): a plain summary on Android.
-            PadTileId.Decision -> Text(if (data.needsYou > 0) "${data.needsYou} need you" else "You're clear.", color = c.textSecondary, fontSize = 14.sp)
-            PadTileId.Progress -> {
-                val total = pad.checklist.size
-                val pct = if (total == 0) 0 else pad.checklist.count { it.done } * 100 / total
-                Text("$pct%", color = c.textPrimary, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
-                Text("done", color = c.textTertiary, fontSize = 12.sp)
-            }
-            PadTileId.Countdown -> Text("Today", color = c.textSecondary, fontSize = 14.sp)
-            PadTileId.Team -> Text("CREW · You", color = c.textSecondary, fontSize = 13.sp)
-            PadTileId.Schedule -> Text("NEXT EVENTS · What happens next shows here.", color = c.textSecondary, fontSize = 13.sp)
-            PadTileId.Files -> if (data.files.isEmpty()) Text("No files yet", color = c.textSecondary, fontSize = 13.sp) else data.files.take(4).forEach { Text(it, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            PadTileId.Activity -> {
-                Text("LIVE LOG", color = c.textTertiary, fontSize = 11.sp)
-                data.threads.sortedByDescending { it.updatedAt }.take(5).forEach { Text("${relativeTime(it.updatedAt)} · ${it.name.ifEmpty { "Untitled" }}", color = c.textSecondary, fontSize = 13.sp, maxLines = 1) }
-            }
-            PadTileId.Chart -> {
-                val now = System.currentTimeMillis()
-                val days = (0 until 7).map { d -> data.threads.count { (now - it.updatedAt) / 86_400_000L == (6 - d).toLong() } }
-                val max = (days.maxOrNull() ?: 0).coerceAtLeast(1)
-                Row(Modifier.fillMaxWidth().height(48.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Bottom) {
-                    days.forEach { n -> Box(Modifier.weight(1f).fillMaxHeight(0.1f + 0.9f * n / max).clip(RoundedCornerShape(3.dp)).background(padAccent(pad.colors))) }
-                }
-            }
+            else -> Unit
         }
     }
 }
@@ -527,6 +516,11 @@ fun PadEditSheet(store: ProjectPadStore, onDismiss: () -> Unit) {
                     if (pad.colors == id) Icon(painterResource(DesignR.drawable.ph_check), "Selected", tint = c.textPrimary, modifier = Modifier.size(16.dp))
                 }
             }
+            // iOS "Your colors": `#main,#accent`.
+            val own = pad.colors.split(",").takeIf { it.size == 2 && it.all { h -> h.startsWith("#") } }
+            Text("Your colors", color = c.textPrimary, fontSize = 15.sp, modifier = Modifier.padding(start = 8.dp, top = 4.dp))
+            ColorWellRow("Main", own?.get(0) ?: "#C8451F", "padColorMain") { hex -> store.save(store.pad.copy(colors = "$hex,${own?.get(1) ?: "#2F54EB"}"), scope) }
+            ColorWellRow("Accent", own?.get(1) ?: "#2F54EB", "padColorAccent") { hex -> store.save(store.pad.copy(colors = "${own?.get(0) ?: "#C8451F"},$hex"), scope) }
             FilterLabel("Starter templates")
             builtInPadTemplates.forEach { tpl ->
                 Row(

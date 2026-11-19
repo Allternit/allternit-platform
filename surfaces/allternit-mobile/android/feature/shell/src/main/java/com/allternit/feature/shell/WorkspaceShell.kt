@@ -131,6 +131,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     fun reload() {
         if (account != null) scope.launch { store.load() }
     }
+    // A studio session's standing instructions ride on every turn (iOS ChatViewModel systemPrompt).
+    chat.systemPromptFor = { sid -> com.allternit.feature.artifacts.ArtifactStudioPrompts.systemPrompt(context, sid) }
     // A new or deleted session shows in Recents right away.
     chat.onSessionsChanged = ::reload
     quickTasks.onSessionsChanged = ::reload
