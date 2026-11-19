@@ -18,6 +18,8 @@ pub mod hosted_runtime_lifecycle;
 pub mod inference_keys;
 pub mod connections;
 pub mod copilot;
+/// Link your Claude organization: profile, PAR, code exchange, status, revoke (oauth-linked-billing B2).
+pub mod claude_link;
 pub mod voice_keys;
 pub mod inference_pool;
 pub mod inference_settlement;

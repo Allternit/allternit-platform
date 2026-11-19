@@ -78,6 +78,8 @@ pub mod managed_auth;
 pub mod edge_auth;
 /// Link your Claude organization: our issuer's JWKS and discovery (contract B1).
 pub mod anthropic_client_issuer;
+/// Link your Claude organization: start, callback, status, unlink (contract B2).
+pub mod claude_link;
 /// "Sign in with Allternit": OAuth authorization endpoint, metadata and consent API (migration 150).
 pub mod oauth_server;
 /// Signed-in person's OAuth grants (list, cap, revoke) and the admin review of apps.
