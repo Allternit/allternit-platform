@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -216,12 +217,15 @@ private fun LaunchGreeting() {
         Text(
             text = "What are we working on?",
             color = c.textPrimary,
-            fontSize = 32.sp,
             lineHeight = 38.sp,
             fontFamily = FontFamily.Serif,
             letterSpacing = (-0.64).sp,
             textAlign = TextAlign.Center,
-            modifier = Modifier.testTag("homeGreeting"),
+            // One line like iOS: 32sp, stepping down on narrower phones instead of wrapping.
+            maxLines = 1,
+            softWrap = false,
+            autoSize = TextAutoSize.StepBased(minFontSize = 22.sp, maxFontSize = 32.sp, stepSize = 1.sp),
+            modifier = Modifier.fillMaxWidth().testTag("homeGreeting"),
         )
     }
 }
