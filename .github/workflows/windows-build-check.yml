@@ -8,6 +8,9 @@ name: Windows build check
 # build ships, on the same runner image, in about 20-30 min. `train green` starts
 # it on the train branch and `train ship` refuses until it passes.
 on:
+  # `train green` pushes the train branch; that push starts this check.
+  push:
+    branches: ['train/**']
   workflow_dispatch:
 
 permissions:
