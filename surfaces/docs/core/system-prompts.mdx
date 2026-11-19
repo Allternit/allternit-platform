@@ -16,12 +16,13 @@ For a normal turn:
 1. Base prompt (chat or code, by surface)
 2. Capabilities (chat surfaces only)
 3. Safety
-4. One model-family addendum, or none
-5. Mode (plan, build and similar)
-6. Project thread block, only on a project thread
-7. Computer-use block, only when the turn has browser or computer tools
-8. Voice block, only when the turn is spoken
-9. Phone block, only when the user is on a phone
+4. Care (chat-family surfaces only)
+5. One model-family addendum, or none
+6. Mode (plan, build and similar)
+7. Project thread block, only on a project thread
+8. Computer-use block, only when the turn has browser or computer tools
+9. Voice block, only when the turn is spoken
+10. Phone block, only when the user is on a phone
 
 For a bot turn, the bot runs as itself:
 
@@ -32,9 +33,10 @@ For a bot turn, the bot runs as itself:
 5. Project thread block, when the thread belongs to a project
 6. Capabilities (chat-family surfaces only)
 7. Safety
-8. Computer-use block, when the turn has browser or computer tools
-9. Voice block, only when the turn is spoken
-10. Phone block, only when the user is on a phone
+8. Care
+9. Computer-use block, when the turn has browser or computer tools
+10. Voice block, only when the turn is spoken
+11. Phone block, only when the user is on a phone
 
 Voice and phone blocks also apply to bot turns, because phone calls are bot-bound.
 
@@ -53,11 +55,25 @@ A bot's main chat never counts as a project thread. The suggestions block is nam
 
 The roster lookup runs only when the tools include `suggest_task` or `thread_update`, and its result is cached per session.
 
+## Safety and care
+
+Two blocks cover how the model treats people and risk.
+
+- **Safety** loads on every stack, including the terminal, bots and CLI-brain turns. It holds the trust rules (instructions come only from the user's own turns, credentials stay out of output) and hard limits that no stated reason or claimed approval unlocks:
+  - no sexual content involving minors, and extra care when the user may be a minor;
+  - no real help with mass-harm weapons, malware or cyber attacks;
+  - the system prompt and hidden reasoning stay private, with a short summary offered instead;
+  - stay inside the folders, hosts and credentials the task gave;
+  - after a timeout or unclear result on a send, post, payment or delete, check whether it took effect before trying again.
+
+  It also keeps a short rule for someone in distress.
+- **Care** (`care.txt`) holds the wellbeing and people rules: self-harm and disordered-eating handling, staying clearly an AI, no guessing of sensitive traits from clues, reading photos without naming real people, sharing only what is needed when contacting anyone outside the chat, and care on legal, financial and medical questions. It loads on chat-family surfaces (chat, cowork, browser, design) and on every bot turn. It does not load on the code stack or in the terminal.
+
 ## Which stack a session gets
 
 | Session surface | Stack |
 |---|---|
-| chat, cowork, browser, design | Chat stack: base-chat, capabilities, safety |
+| chat, cowork, browser, design | Chat stack: base-chat, capabilities, safety, care |
 | code, or no surface set | Code stack: base-code, safety |
 
 A child session (for example a sub-agent) inherits the surface of its root session. Nothing is stamped on the child.
@@ -119,7 +135,7 @@ A voice call is a bot-bound turn with `reply_mode` set to `"voice"`. Calls start
 
 Prompt files live in `cmd/gizzi-code/src/runtime/session/prompt/`:
 
-- `base-chat.txt`, `capabilities.txt`, `base-code.txt`, `safety.txt`, `bot.txt`
+- `base-chat.txt`, `capabilities.txt`, `base-code.txt`, `safety.txt`, `care.txt`, `bot.txt`
 - Signal blocks: `duet.txt` (suggestions), `delegation.txt`, `project-thread.txt`, `computer-use.txt`
 - `addendum-gpt.txt`, `addendum-gemini.txt`, `addendum-open.txt`
 - `voice.txt`, `phone.txt`
@@ -135,20 +151,23 @@ A test enforces a byte cap on each file.
 
 | File | Byte cap |
 |---|---|
+| safety | 2,900 |
+| care | 1,500 |
 | base-chat | 5,600 |
-| capabilities | 7,000 |
+| capabilities | 7,400 |
+| base-code | 11,200 |
+| voice | 2,000 |
+| computer-use | 3,400 |
+| phone | 700 |
 | bot | 3,200 |
 | duet (suggestions) | 1,800 |
 | delegation | 1,000 |
 | project-thread | 1,300 |
-| computer-use | 3,200 |
-| safety | 1,800 |
-| base-code | 10,800 |
 | each addendum | 700 |
-| voice | 1,300 |
-| phone | 700 |
 
-The guidance on a bot's main chat on a chat surface (bot, suggestions, delegation, capabilities, safety and computer use together) stays at or under 18,000 bytes.
+The guidance on a bot's main chat on a chat surface (bot, suggestions, delegation, capabilities, safety, care and computer use together) stays at or under 21,000 bytes.
+
+Tool descriptions are checked too: any new tool text must be at most 900 bytes.
 
 ## Hints
 
@@ -171,7 +190,7 @@ When allternit-api starts a bot turn itself (a delegated task, an accepted sugge
 
 ## Compaction and handoff
 
-When a long session is compacted, the summary has five headings, in this order: Goal and user requests, Work done and current state, Errors and failed approaches, Promises to the user and open items, Next step. The session title is plain text.
+When a long session is compacted, the summary has five headings, in this order: Goal and user requests, Work done and current state, Errors and failed approaches, Promises to the user and open items, Next step. The session title is plain text. The compaction prompt is text-only: the model must not call tools while it writes the summary.
 
 A context handoff to a fresh session is a separate step with its own baton, not a compaction. See the Gizzi Runtime page.
 
@@ -179,7 +198,7 @@ A context handoff to a fresh session is a separate step with its own baton, not 
 
 1. Edit the text file in your own words. Prompts must not name other companies or their products.
 2. Keep the file under its byte cap.
-3. Run `bun test test/session/system-prompt-selection.test.ts` from `cmd/gizzi-code`. It checks the cap, the vendor-name rule (which also rejects the internal name `duet`), stack selection, addendum choice, the signal blocks and layer order.
+3. Run `bun test test/session/system-prompt-selection.test.ts` from `cmd/gizzi-code`. It checks the cap, the vendor-name rule (which now covers tool descriptions as well as prompt files, and also rejects the internal name `duet`), stack selection, addendum choice, the signal blocks and layer order.
 4. Run `bun test test/session/system-prompt-guard.test.ts` too. It applies the same vendor-name rule, and the "Allternit Shell" rule, to the terminal prompt, both copies of the built-in agent prompts, the catalog, both coordinator prompts, the mission orchestrator and the critique route. It also checks the injection wording: the terminal prompt builds on the shared safety text, and no prompt tells the model to ignore earlier instructions. Two files that teach an outside docs address or example model ids on purpose are listed as exempt by name.
 
 ## Related pages

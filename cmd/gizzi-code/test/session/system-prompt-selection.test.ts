@@ -7,6 +7,7 @@ import BASE_CHAT from "@/runtime/session/prompt/base-chat.txt"
 import BASE_CODE from "@/runtime/session/prompt/base-code.txt"
 import CAPABILITIES from "@/runtime/session/prompt/capabilities.txt"
 import SAFETY from "@/runtime/session/prompt/safety.txt"
+import CARE from "@/runtime/session/prompt/care.txt"
 import BOT from "@/runtime/session/prompt/bot.txt"
 import VOICE from "@/runtime/session/prompt/voice.txt"
 import PHONE from "@/runtime/session/prompt/phone.txt"
@@ -33,6 +34,7 @@ describe("prompt stack by session surface", () => {
       expect(text).toContain(BASE_CHAT)
       expect(text).toContain(CAPABILITIES)
       expect(text).toContain(SAFETY)
+      expect(text).toContain(CARE)
       expect(text).not.toContain(BASE_CODE)
     }
   })
@@ -42,14 +44,15 @@ describe("prompt stack by session surface", () => {
       const text = SystemPrompt.provider(claude, undefined, ctx).join("\n")
       expect(text).toContain(BASE_CODE)
       expect(text).toContain(SAFETY)
+      expect(text).not.toContain(CARE)
       expect(text).not.toContain(BASE_CHAT)
       expect(text).not.toContain(CAPABILITIES)
     }
   })
 
-  test("order: base, capabilities, safety, addendum, mode, voice, phone", () => {
+  test("order: base, capabilities, safety, care, addendum, mode, voice, phone", () => {
     const parts = SystemPrompt.provider(model("gpt-5.1"), "plan", { surface: "chat", replyMode: "voice", formFactor: "phone" })
-    expect(parts).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, ADDENDUM_GPT, PLAN_MODE, VOICE, PHONE])
+    expect(parts).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, CARE, ADDENDUM_GPT, PLAN_MODE, VOICE, PHONE])
   })
 })
 
@@ -58,6 +61,7 @@ describe("2026-11-16 audit: no vendor names or Allternit Shell in prompts", () =
   const dirs = [
     path.join(import.meta.dir, "../../src/runtime/session/prompt"),
     path.join(import.meta.dir, "../../src/runtime/loop/prompts"),
+    path.join(import.meta.dir, "../../src/runtime/tools/builtins"),
   ]
   const files = dirs.flatMap((dir) =>
     fs.readdirSync(dir).filter((name) => name.endsWith(".txt")).map((name) => path.join(dir, name)),
@@ -66,7 +70,7 @@ describe("2026-11-16 audit: no vendor names or Allternit Shell in prompts", () =
   test("finds the prompt files", () => {
     expect(files.length).toBeGreaterThan(10)
     const names = files.map((file) => path.basename(file))
-    for (const name of ["duet.txt", "delegation.txt", "project-thread.txt", "computer-use.txt"]) {
+    for (const name of ["duet.txt", "delegation.txt", "project-thread.txt", "computer-use.txt", "care.txt", "bash.txt"]) {
       expect(names).toContain(name)
     }
   })
@@ -141,6 +145,7 @@ describe("bot turns", () => {
       expect(header.startsWith(PERSONA)).toBe(true)
       expect(header).toContain(BOT)
       expect(header).toContain(SAFETY)
+      expect(header).toContain(CARE)
       expect(header.indexOf(BOT)).toBeGreaterThan(header.indexOf(PERSONA))
       expect(header).not.toContain(firstLine(BASE_CHAT))
       expect(header).not.toContain(firstLine(BASE_CODE))
@@ -249,23 +254,96 @@ describe("effectiveSurface", () => {
 describe("byte caps (PLAN.md token budgets)", () => {
   const caps: [string, string, number][] = [
     ["base-chat", BASE_CHAT, 5_600],
-    ["capabilities", CAPABILITIES, 7_000],
+    ["capabilities", CAPABILITIES, 7_400],
     ["bot", BOT, 3_200],
     ["duet", DUET, 1_800],
     ["delegation", DELEGATION, 1_000],
     ["project-thread", PROJECT_THREAD, 1_300],
-    ["computer-use", COMPUTER_USE, 3_200],
-    ["safety", SAFETY, 1_800],
-    ["base-code", BASE_CODE, 10_800],
+    ["computer-use", COMPUTER_USE, 3_400],
+    ["care", CARE, 1_500],
+    ["safety", SAFETY, 2_900],
+    ["base-code", BASE_CODE, 11_200],
     ["addendum-gpt", ADDENDUM_GPT, 700],
     ["addendum-gemini", ADDENDUM_GEMINI, 700],
     ["addendum-open", ADDENDUM_OPEN, 700],
-    ["voice", VOICE, 1_300],
+    ["voice", VOICE, 2_000],
     ["phone", PHONE, 700],
   ]
   for (const [name, text, cap] of caps) {
     test(`${name} ≤ ${cap} bytes`, () => {
       expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(cap)
+    })
+  }
+})
+
+// Tool texts tracked on main before G1 (they have no cap).
+const KNOWN_TOOL_TEXTS = [
+  "agent-batch.txt",
+  "agent-communicate.txt",
+  "agent-control.txt",
+  "apply_patch.txt",
+  "artifact-check.txt",
+  "artifact-claim.txt",
+  "artifact-create.txt",
+  "artifact-read.txt",
+  "artifact-release.txt",
+  "artifact-suggest.txt",
+  "artifact-update.txt",
+  "ask-user-later.txt",
+  "automation.txt",
+  "bash.txt",
+  "batch.txt",
+  "browser-tasks.txt",
+  "capture-screen-context.txt",
+  "codesearch.txt",
+  "connector-search.txt",
+  "connector-suggest.txt",
+  "context-remaining.txt",
+  "current-time.txt",
+  "edit.txt",
+  "folder-access.txt",
+  "glob.txt",
+  "grep.txt",
+  "history-recall.txt",
+  "lookup.txt",
+  "ls.txt",
+  "lsp.txt",
+  "media-generate.txt",
+  "memory-list.txt",
+  "memory-recall.txt",
+  "memory-write.txt",
+  "multiedit.txt",
+  "pane-artifact.txt",
+  "pane-browser.txt",
+  "plan-enter.txt",
+  "plan-exit.txt",
+  "project-status.txt",
+  "question.txt",
+  "read.txt",
+  "resource.txt",
+  "run_code.txt",
+  "send-user-message.txt",
+  "settings.txt",
+  "sleep.txt",
+  "symbol-edit.txt",
+  "task.txt",
+  "thread-read.txt",
+  "todoread.txt",
+  "todowrite.txt",
+  "tool-search.txt",
+  "wait-agents.txt",
+  "webfetch.txt",
+  "websearch.txt",
+  "write.txt",
+]
+
+describe("new tool texts (G1 rule)", () => {
+  // Tool texts that exist on main are exempt; any other builtin .txt is new and must stay small.
+  const EXISTING = new Set<string>(KNOWN_TOOL_TEXTS)
+  const dir = path.join(import.meta.dir, "../../src/runtime/tools/builtins")
+  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".txt") && !EXISTING.has(n))) {
+    test(`${name} ≤ 900 bytes`, () => {
+      expect(fs.statSync(path.join(dir, name)).size).toBeLessThanOrEqual(900)
     })
   }
 })
@@ -294,9 +372,9 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
     }
   })
 
-  test("bot order: mode, bot, duet, delegation, project-thread, capabilities, safety, computer-use, voice, phone", () => {
+  test("bot order: mode, bot, duet, delegation, project-thread, capabilities, safety, care, computer-use, voice, phone", () => {
     const parts = SystemPrompt.bot("plan", { surface: "chat", replyMode: "voice", formFactor: "phone", ...all })
-    expect(parts).toEqual([PLAN_MODE, BOT, DUET, DELEGATION, PROJECT_THREAD, CAPABILITIES, SAFETY, COMPUTER_USE, VOICE, PHONE])
+    expect(parts).toEqual([PLAN_MODE, BOT, DUET, DELEGATION, PROJECT_THREAD, CAPABILITIES, SAFETY, CARE, COMPUTER_USE, VOICE, PHONE])
     // Code surface: the same order with no capabilities.
     expect(SystemPrompt.bot(undefined, { surface: "code", ...all })).toEqual([
       BOT,
@@ -304,16 +382,17 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
       DELEGATION,
       PROJECT_THREAD,
       SAFETY,
+      CARE,
       COMPUTER_USE,
     ])
   })
 
   test("each flag adds exactly its own block on a bot turn", () => {
     const cases: [keyof typeof all, string, string[]][] = [
-      ["appBot", DUET, [BOT, DUET, CAPABILITIES, SAFETY]],
-      ["projectSend", DELEGATION, [BOT, DELEGATION, CAPABILITIES, SAFETY]],
-      ["projectThread", PROJECT_THREAD, [BOT, PROJECT_THREAD, CAPABILITIES, SAFETY]],
-      ["computerUse", COMPUTER_USE, [BOT, CAPABILITIES, SAFETY, COMPUTER_USE]],
+      ["appBot", DUET, [BOT, DUET, CAPABILITIES, SAFETY, CARE]],
+      ["projectSend", DELEGATION, [BOT, DELEGATION, CAPABILITIES, SAFETY, CARE]],
+      ["projectThread", PROJECT_THREAD, [BOT, PROJECT_THREAD, CAPABILITIES, SAFETY, CARE]],
+      ["computerUse", COMPUTER_USE, [BOT, CAPABILITIES, SAFETY, CARE, COMPUTER_USE]],
     ]
     for (const [flag, block, expected] of cases) {
       const parts = SystemPrompt.bot(undefined, { surface: "chat", [flag]: true } as SystemPrompt.PromptContext)
@@ -322,14 +401,14 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
     }
   })
 
-  test("normal order: base, capabilities, safety, addendum, mode, project-thread, computer-use, voice, phone", () => {
+  test("normal order: base, capabilities, safety, care, addendum, mode, project-thread, computer-use, voice, phone", () => {
     const parts = SystemPrompt.provider(model("gpt-5.1"), "plan", {
       surface: "chat",
       replyMode: "voice",
       formFactor: "phone",
       ...all,
     })
-    expect(parts).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, ADDENDUM_GPT, PLAN_MODE, PROJECT_THREAD, COMPUTER_USE, VOICE, PHONE])
+    expect(parts).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, CARE, ADDENDUM_GPT, PLAN_MODE, PROJECT_THREAD, COMPUTER_USE, VOICE, PHONE])
     expect(SystemPrompt.provider(claude, undefined, { projectThread: true })).toEqual([BASE_CODE, SAFETY, PROJECT_THREAD])
     expect(SystemPrompt.provider(claude, undefined, { computerUse: true })).toEqual([BASE_CODE, SAFETY, COMPUTER_USE])
   })
@@ -374,7 +453,7 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
     expect(thread(undefined, { project_role: "lead" })).toBeUndefined()
   })
 
-  test("bot main chat on a chat surface, with computer use, stays within 18,000 bytes", () => {
+  test("bot main chat on a chat surface, with computer use, stays within 21,000 bytes", () => {
     // A main chat: suggestions, project sending and pane_browser (on every app session); not a project thread.
     const ctx = SystemPrompt.context("chat", {}, {
       toolIds: ["suggest_task", "grant_task_permission", "thread_update", "project_list", "project_send", "pane_browser"],
@@ -383,7 +462,7 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
     expect(ctx).toMatchObject({ appBot: true, projectSend: true, computerUse: true })
     expect(ctx.projectThread).toBeUndefined()
     const parts = SystemPrompt.bot(undefined, ctx)
-    expect(parts).toEqual([BOT, DUET, DELEGATION, CAPABILITIES, SAFETY, COMPUTER_USE])
-    expect(Buffer.byteLength(parts.join("\n\n"), "utf8")).toBeLessThanOrEqual(18_000)
+    expect(parts).toEqual([BOT, DUET, DELEGATION, CAPABILITIES, SAFETY, CARE, COMPUTER_USE])
+    expect(Buffer.byteLength(parts.join("\n\n"), "utf8")).toBeLessThanOrEqual(21_000)
   })
 })

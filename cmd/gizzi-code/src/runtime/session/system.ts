@@ -6,6 +6,7 @@ import PROMPT_BASE_CHAT from "@/runtime/session/prompt/base-chat.txt"
 import PROMPT_BASE_CODE from "@/runtime/session/prompt/base-code.txt"
 import PROMPT_CAPABILITIES from "@/runtime/session/prompt/capabilities.txt"
 import PROMPT_SAFETY from "@/runtime/session/prompt/safety.txt"
+import PROMPT_CARE from "@/runtime/session/prompt/care.txt"
 import PROMPT_ADDENDUM_GPT from "@/runtime/session/prompt/addendum-gpt.txt"
 import PROMPT_ADDENDUM_GEMINI from "@/runtime/session/prompt/addendum-gemini.txt"
 import PROMPT_ADDENDUM_OPEN from "@/runtime/session/prompt/addendum-open.txt"
@@ -28,13 +29,13 @@ import type { Session } from "@/runtime/session"
  * then the mode reminder and the per-turn voice / phone blocks. The stable
  * parts come first so the cached prefix holds across turns.
  *
- *   chat, cowork, browser, design → base-chat, capabilities, safety
+ *   chat, cowork, browser, design → base-chat, capabilities, safety, care
  *   code or unset (gizzi CLI)     → base-code, safety
  *   then: addendum (gpt | gemini | open; none for claude ids), mode,
  *         project-thread, computer-use, voice, phone
  *
  * Bot turns (`bot`): mode, bot, duet, delegation, project-thread,
- * capabilities (chat surfaces), safety, computer-use, voice, phone.
+ * capabilities (chat surfaces), safety, care, computer-use, voice, phone.
  *
  * The tool-signal blocks come from the turn's resolved tool set (already
  * gated in prompt.ts resolveTools), so a block is sent only when the model
@@ -163,7 +164,7 @@ export namespace SystemPrompt {
    */
   export function provider(model: { api: { id: string } }, mode?: Mode, ctx: PromptContext = {}): string[] {
     const base = isChatSurface(ctx.surface)
-      ? [PROMPT_BASE_CHAT, PROMPT_CAPABILITIES, PROMPT_SAFETY]
+      ? [PROMPT_BASE_CHAT, PROMPT_CAPABILITIES, PROMPT_SAFETY, PROMPT_CARE]
       : [PROMPT_BASE_CODE, PROMPT_SAFETY]
     const fam = family(model)
     return [
@@ -190,6 +191,7 @@ export namespace SystemPrompt {
       ...projectThread(ctx),
       ...(isChatSurface(ctx.surface) ? [PROMPT_CAPABILITIES] : []),
       PROMPT_SAFETY,
+      PROMPT_CARE,
       ...computerUse(ctx),
       ...signals(ctx),
     ]

@@ -45,6 +45,18 @@ Allternit provides five tool surfaces:
   </Card>
 </CardGroup>
 
+## Searching file contents with grep
+
+The `grep` tool searches file contents with a regular expression. It takes an `output_mode` that sets what comes back:
+
+| `output_mode` | Returns |
+|---|---|
+| `content` | Matching lines, with file and line number |
+| `files_with_matches` | Only the paths of files that match |
+| `count` | The number of matches per file |
+
+Use `count` or `files_with_matches` to size a search before reading lines. The same modes apply in the terminal app and the runtime. Search through this tool, not a shell command, when the dedicated tool is available.
+
 ## How tools are discovered
 
 Every tool is registered into a `ToolRegistry` with a name, JSON Schema input contract, and an `execute` function. The harness queries the registry at each turn to build the tool list sent to the model.

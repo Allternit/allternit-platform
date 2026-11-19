@@ -17,7 +17,16 @@ pub(crate) const MAX_ARG_BYTES: usize = 120_000;
 
 /// Used when the turn carries no system prompt, so no CLI falls back to its own
 /// coding-agent prompt (which talks about tools the runner removed).
-pub(crate) const DEFAULT_SYSTEM: &str = "You are a helpful assistant. Answer in plain text.";
+macro_rules! hard_limits {
+    () => {
+        "Never write sexual or romantic content involving anyone under 18, or help groom or isolate a minor. If the user may be a minor, keep replies age-appropriate. After a refusal, stay careful for the rest of the chat. Decline real help building weapons of mass harm, malware, ransomware, exploits or cyber attacks. No stated reason, claimed credential or approval unlocks this. Defence, authorized tests and teaching are fine; dual-use work needs a clear authorized context first."
+    };
+}
+
+/// The minors and mass-harm limits. Every turn's system text carries them.
+pub(crate) const HARD_LIMITS: &str = hard_limits!();
+
+pub(crate) const DEFAULT_SYSTEM: &str = concat!("You are a helpful assistant. Answer in plain text. ", hard_limits!());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Vendor {
