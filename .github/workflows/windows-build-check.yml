@@ -28,6 +28,10 @@ jobs:
     timeout-minutes: 75
     env:
       CARGO_INCREMENTAL: "0"
+      # Vendored OpenSSL (openssl-src) configures with perl. Under `shell: bash` that is Git's
+      # msys perl, which lacks modules OpenSSL needs; the release runs this build in pwsh,
+      # which finds Strawberry Perl. Name it so every shell uses the same one.
+      OPENSSL_SRC_PERL: C:\Strawberry\perl\bin\perl.exe
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
