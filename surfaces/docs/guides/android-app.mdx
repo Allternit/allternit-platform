@@ -141,7 +141,8 @@ The native app is built to match the iPhone app screen for screen, in ten waves.
 | F1. Code | Code mode from the mode fan: the Code home (folder, tools, recent threads), threads in the chat screen, the pending-change review, Changes and file diffs, the file browser and editor, the terminal with Terminal bots, dev servers and preview, the thread overview with rename, archive and permission mode, the computer picker | Built, in testing |
 | F2. Automation | Automation Tasks from the drawer (both modes): goals, routines, loops and agent heartbeats as a list, a graph and a Day, Week and Month calendar; the task detail with run now, pause, change time and delete; the create wizard; the computer's own routines and loops; the Tasks board | Built, in testing |
 | F3. Computer (ACI) | ACI mode from the mode fan: the agent landing with the search bar, the Computer Agent toggle, shortcuts and the computer picker; the in-app browser with Extension Chat; a live agent run with screenshots, the action highlight, the trace log, Approve, Deny and Stop; Computers (add a computer, view any computer's screen, paired computers, phones, backups, workflows); the native VNC viewer for a computer's screen and a bot's desktop. MCP Apps (installed, discover, build, add by URL), ACI Extensions, Teach (skills, editor, run, import a recording), Mini Apps, and a computer's Files (folders and Inbox requests) | Built, in testing |
-| F. Modes (rest) | Cowork, Computer (remote desktop and the bot desktop, Teach, mini apps), Connect, Phones, Office, Models | Not started |
+| F4a. Cowork, Connect, Models, Phones | Cowork (sessions, tasks with Tasks and Agent Tasks, task detail and status, new task, Fabric Transport approvals); the Phones sheet from the drawer's Phones button, Give a bot a phone (Email flow), Connect a subscription, Phone control, Android phone screen share, the live view of a linked phone, and read-only phone task cards; Models (Freeweights catalog in list, grid and deck, search, filters, a model's page, Send to my computer, Benchmark) | Built, in testing. Phone number, Telegram and OAuth connect flows, and the on-phone model engine, are not in the native app yet |
+| F. Modes (rest) | Office | Not started |
 | G. Settings | Settings and all sub-screens, Customize, Connectors, Skills, Plugins, Brain | Not started |
 | H. Money and voice | Google Play purchases, credits, voice mode, calls | Not started |
 | I. Phone system | Push (FCM), widgets, Quick Settings tiles, share target, shortcuts, Files, screen share | Not started |
@@ -314,3 +315,16 @@ The drawer's **Automation Tasks** row opens the hub (in Home and Code). **Schedu
 
 With no computer, the computer-side parts (heartbeats, On this computer, Board) show "Connect a computer or Allternit Cloud". Goals, routines and loops come from your account. Not yet on Android: dragging a calendar run to a new time, and the heartbeat file editor.
 
+#### Cowork
+
+Open **Cowork tasks** from the **+** sheet for the task list: **Tasks** and **Agent Tasks**, **+** for a new task (title, description, Human or Agent), tap a task to change its status, see who has it or delete it. The Cowork launchpad starts a session or opens a recent one, and the antenna button opens **Fabric Transport**: approvals you can **Grant** or **Deny** and recent runs with their events. With no computer, each screen says so instead of showing an error.
+
+#### Phones and Connect
+
+The drawer's **Phones** button opens **Your bots' phones**: one row per bot that has a number, an email address or a channel, with its unread count. Tap a row to open that bot's phone in Bots mode. **Give a bot a phone** picks the bot, then how people reach it; **Email** is built (the bot's address and how it replies), the other ways finish in Allternit Desktop for now. **Connect a subscription** lists the subscriptions you can bring in and runs the one-step connect. **Phone control** shows this phone's pairing, your Allternit Link boards and **Unpair**. **Android phone screen share** makes a six-digit code or approves a request from another phone.
+
+In **Computers**, tap a linked phone that is live to watch its screen. The view is read-only until you tap **Allow taps**; then you can tap, swipe, type and press Back, Home and Apps. If the phone is not sharing, the screen says to tap Start on the phone. Nothing here starts a phone task: a phone task card only follows a run that already started, and **Needs your OK** opens the Inbox.
+
+#### Models
+
+The drawer's Models row (and the model picker's manage link) opens **Models**: the Freeweights catalog with search, **Fits this phone**, **Everything** and **Phone collection** filters, and list, grid or deck faces. Tap a model for its page: **Send to my computer** starts a download there and follows it, **Use in a chat** selects it and opens a new chat. The sliders button lists the models your account can use and opens **Benchmark**, which shows this phone and times one fixed prompt. **On this phone** is empty until the on-phone engine reaches the native app.

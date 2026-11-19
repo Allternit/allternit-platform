@@ -209,6 +209,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     // Wave E: Bots mode (iOS BotsModeRootView), with the shell's chat backend, composer and backdrop.
     val botsStore = remember { com.allternit.feature.bots.BotModeStore(context) }
     var botsLaunch by remember { mutableStateOf(com.allternit.feature.bots.BotsLaunch()) }
+    // Wave F4a: the live view of a linked phone (iOS ACIComputersPane fullScreenCover PhoneLiveView).
+    var phoneLive by remember { mutableStateOf<com.allternit.feature.computer.CloudPhone?>(null) }
 
     // Wave F1: Code mode (iOS CodeModeView). The thread is this shell's chat screen on a code session;
     // the Code home, the tools and the terminal come from :feature:code.
@@ -490,7 +492,14 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                     else -> com.allternit.feature.computer.AciTab.Computers
                                 }
                                 LaunchedEffect(aciTab) { com.allternit.feature.computer.AciNav.open(aciTab) }
-                                com.allternit.feature.computer.AciRoot(aciHost)
+                                androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                                    com.allternit.feature.computer.AciRoot(aciHost.copy(openPhoneLive = { phoneLive = it }))
+                                    phoneLive?.let { p ->
+                                        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary)) {
+                                            com.allternit.feature.phones.PhoneLiveView(p, chatBackend, onClose = { phoneLive = null })
+                                        }
+                                    }
+                                }
                             }
                             // Wave F2: Automation Tasks (both modes' rows) opens the hub: goals, routines, loops, heartbeats, the board.
                             "automation-tasks", "code-automations" -> com.allternit.feature.automation.AutomationRoot(
@@ -501,6 +510,62 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                     openSignIn = { page = ShellPage.Settings },
                                 ),
                             )
+                            // Wave F4a: Cowork (iOS CoworkWorkspaceView; the tasks sheet from the composer's plus), Models, Phones.
+                            "cowork", "cowork-tasks" -> com.allternit.feature.cowork.CoworkRoot(
+                                com.allternit.feature.cowork.CoworkHost(
+                                    signedIn = account != null,
+                                    backend = chatBackend,
+                                    menuButton = shellMenuButton,
+                                    openSignIn = { page = ShellPage.Settings },
+                                    openChat = ::openSessionId,
+                                ),
+                                initialTasks = current.row.id == "cowork-tasks",
+                            )
+                            "models" -> com.allternit.feature.models.ModelsRoot(
+                                com.allternit.feature.models.ModelsHost(
+                                    signedIn = account != null,
+                                    backend = chatBackend,
+                                    menuButton = shellMenuButton,
+                                    onRun = { id ->
+                                        models.select(id)
+                                        chat.startNewSession()
+                                        page = ShellPage.Home
+                                    },
+                                ),
+                            )
+                            "phones", "phone-control", "android-screen", "vendor-connect" -> {
+                                val phonesHost = com.allternit.feature.phones.PhonesHost(
+                                    signedIn = account != null,
+                                    backend = chatBackend,
+                                    openSignIn = { page = ShellPage.Settings },
+                                    openBotPhone = { botId ->
+                                        mode = ShellMode.Bots
+                                        ShellModePrefs.save(context, ShellMode.Bots)
+                                        botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = botId)
+                                        page = ShellPage.Home
+                                    },
+                                    openInbox = { inboxOpen = true },
+                                    openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
+                                    openAndroidScreen = { page = ShellPage.Section(RailRow("android-screen", "Android phone", DesignR.drawable.ph_cpu)) },
+                                    openVendorConnect = { page = ShellPage.Section(RailRow("vendor-connect", "Connect a subscription", DesignR.drawable.ph_plugs_connected)) },
+                                )
+                                when (current.row.id) {
+                                    "phones" -> {
+                                        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary))
+                                        com.allternit.feature.phones.PhonesSheet(phonesHost, onDismiss = { page = ShellPage.Home })
+                                    }
+                                    "phone-control" -> androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                                        com.allternit.feature.phones.AppPhonesSettingsScreen(phonesHost, onBack = { page = ShellPage.Home }, onOpenLive = { phoneLive = it })
+                                        phoneLive?.let { p ->
+                                            androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary)) {
+                                                com.allternit.feature.phones.PhoneLiveView(p, chatBackend, onClose = { phoneLive = null })
+                                            }
+                                        }
+                                    }
+                                    "android-screen" -> com.allternit.feature.phones.AndroidScreenPairingScreen(phonesHost, onBack = { page = ShellPage.Home })
+                                    else -> com.allternit.feature.phones.VendorConnectScreen(phonesHost, onBack = { page = ShellPage.Home }, onReady = { })
+                                }
+                            }
                             else -> SectionStub(current.row, onBack = { page = ShellPage.Home })
                         }
                         is ShellPage.Project -> ProjectsListScreen(

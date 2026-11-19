@@ -201,6 +201,10 @@ internal fun PlusSheet(
                     PlusRow(DesignR.drawable.ph_puzzle_piece, "Plugins", chevron = true) {
                         onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece))
                     }
+                    PlusDivider()
+                    PlusRow(DesignR.drawable.ph_check_circle_fill, "Cowork tasks", chevron = true, testTag = "plusSheetCoworkTasks") {
+                        onOpenSection(RailRow("cowork-tasks", "Cowork tasks", DesignR.drawable.ph_check_circle_fill))
+                    }
                 }
             }
         }
