@@ -43,3 +43,7 @@ include(":feature:code")
 // Wave F2: Automation Tasks. :feature:shell depends on it (nativeapp flavor only); it reuses :feature:bots
 // (the routine time editor and rule), :feature:chat (the relay) and :feature:artifacts (LibraryNet, chrome).
 include(":feature:automation")
+// Wave F3: ACI mode and the native RFB viewer. :core:rfb (the VNC client, the screen canvas, the computer
+// drive screen) is shared by :feature:computer (ACI Computers) and :feature:bots (a bot's desktop).
+include(":core:rfb")
+include(":feature:computer")

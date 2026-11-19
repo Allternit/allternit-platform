@@ -248,6 +248,13 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     val shellMenuButton: @Composable () -> Unit = {
         PhoneMenuButton(mode = mode, hold = hold, holdEnabled = !drawerOpenNow(drawer), onOpen = { setDrawer(true) }, onPick = ::pickMode)
     }
+    // Wave F3: ACI mode's host (iOS ACITabView): the relay for runs and workflows, ☰, sign-in.
+    val aciHost = com.allternit.feature.computer.AciHost(
+        signedIn = account != null,
+        backend = chatBackend,
+        menuButton = shellMenuButton,
+        openSignIn = { page = ShellPage.Settings },
+    )
     val projectsNav = remember {
         ProjectsNav(
             openSession = { id, sessionMode ->
@@ -399,6 +406,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                     when (val current = page) {
                         ShellPage.Home -> if (mode == ShellMode.Bots) {
                             com.allternit.feature.bots.BotsModeRoot(botsHost, botsStore, botsLaunch)
+                        } else if (mode == ShellMode.Aci) {
+                            // Wave F3: ACI mode (iOS ACITabView): the agent landing, browser, run, Computers.
+                            com.allternit.feature.computer.AciRoot(aciHost)
                         } else ShellHome(
                             mode = mode,
                             store = store,
@@ -467,6 +477,16 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             )
                             // Wave E: the drawer's "Your bots" and a bot from search open Bots mode's root.
                             "bots" -> com.allternit.feature.bots.BotsModeRoot(botsHost, botsStore, botsLaunch)
+                            // Wave F3: the drawer's ACI rail opens that ACI view (iOS ACINavStore.open).
+                            "mcp-apps", "browser-extensions", "computers" -> {
+                                val aciTab = when (current.row.id) {
+                                    "mcp-apps" -> com.allternit.feature.computer.AciTab.Apps
+                                    "browser-extensions" -> com.allternit.feature.computer.AciTab.Extensions
+                                    else -> com.allternit.feature.computer.AciTab.Computers
+                                }
+                                LaunchedEffect(aciTab) { com.allternit.feature.computer.AciNav.open(aciTab) }
+                                com.allternit.feature.computer.AciRoot(aciHost)
+                            }
                             // Wave F2: Automation Tasks (both modes' rows) opens the hub: goals, routines, loops, heartbeats, the board.
                             "automation-tasks", "code-automations" -> com.allternit.feature.automation.AutomationRoot(
                                 com.allternit.feature.automation.AutomationHost(

@@ -157,21 +157,21 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 
 | Screen | Area | iOS path | Web path | Android | Status | Proof |
 |---|---|---|---|---|---|---|
-| BotDesktopView | Agents | ios/Features/Agents/Desktop/BotDesktopView.swift | src/fabric-session/phone/screens/PhoneDesktopOverlay.tsx | — | moved to wave F: the RFB client ships with ACI Computer, which needs the same port | — |
-| ACIAgentRunView | ACI | ios/Features/ACI/Views/ACIAgentRunView.swift | — | — | todo | — |
-| ACIComputerDetailView | ACI | ios/Features/ACI/Views/ACIComputerDetailView.swift | src/fabric-session/phone/screens/PhoneComputerViewOverlay.tsx | — | todo | — |
-| ACIExtensionsView | ACI | ios/Features/ACI/Views/ACIExtensionsView.swift | — | — | todo | — |
-| ACIMcpAppsView | ACI | ios/Features/ACI/Views/ACIMcpAppsView.swift | — | — | todo | — |
-| ACITabView | ACI | ios/Features/ACI/Views/ACITabView.swift | — | — | todo | — |
-| ACIWebBrowserView | ACI | ios/Features/ACI/Views/ACIWebBrowserView.swift | — | — | todo | — |
-| AciScreen | ACI | — | src/fabric-session/phone/screens/AciScreen.tsx | — | todo | — |
-| AppScreenWebView | ACI | ios/Features/ACI/Views/AppScreenWebView.swift | — | — | todo | — |
-| BrowserChatView | ACI | ios/Features/ACI/Views/BrowserChatView.swift | — | — | todo | — |
-| FilesInboxRequestsView | ACI | ios/Features/ACI/Views/Files/FilesInboxRequestsView.swift | — | — | todo | — |
-| MiniAppRuntimeView | ACI | ios/Features/ACI/Views/MiniAppRuntimeView.swift | src/fabric-session/phone/screens/PhoneMiniAppOverlay.tsx | — | todo | — |
-| MiniAppsStoreView | ACI | ios/Features/ACI/Views/MiniAppsStoreView.swift | — | — | todo | — |
-| TeachView | ACI | ios/Features/ACI/Views/TeachView.swift | src/fabric-session/phone/screens/PhoneTeachOverlay.tsx | — | todo | — |
-| section: aci | ACI | — | src/fabric-session/phone/phone-nav.ts (PhoneSection aci) | — | todo | — |
+| BotDesktopView | Agents | ios/Features/Agents/Desktop/BotDesktopView.swift | src/fabric-session/phone/screens/PhoneDesktopOverlay.tsx | core/rfb/RemoteScreen.kt + feature/bots/BotDesktop.kt (BotDesktopView, BotComputerScreen) | built (#PRNUM) | — |
+| ACIAgentRunView | ACI | ios/Features/ACI/Views/ACIAgentRunView.swift | — | feature/computer/AciRun.kt (AciAgentRunView, AciRunModel) | built (#PRNUM) | — |
+| ACIComputerDetailView | ACI | ios/Features/ACI/Views/ACIComputerDetailView.swift | src/fabric-session/phone/screens/PhoneComputerViewOverlay.tsx | core/rfb/ComputerDrive.kt (ComputerDriveScreen) + feature/computer/AciComputers.kt | built (#PRNUM): Desktop path (live screen, take control, start); its Files and Inbox requests rows wait for the Android Files drive | — |
+| ACIExtensionsView | ACI | ios/Features/ACI/Views/ACIExtensionsView.swift | — | — | left (#PRNUM): the ACI tab shows a plain 'arrives in the next update' line; next ACI step | — |
+| ACIMcpAppsView | ACI | ios/Features/ACI/Views/ACIMcpAppsView.swift | — | — | left (#PRNUM): the ACI tab shows a plain 'arrives in the next update' line; next ACI step | — |
+| ACITabView | ACI | ios/Features/ACI/Views/ACITabView.swift | — | feature/computer/AciScreen.kt (AciRoot, landing, target picker, nudge) | built (#PRNUM) | — |
+| ACIWebBrowserView | ACI | ios/Features/ACI/Views/ACIWebBrowserView.swift | — | feature/computer/AciRun.kt (AciWebBrowser) | built (#PRNUM) | — |
+| AciScreen | ACI | — | src/fabric-session/phone/screens/AciScreen.tsx | feature/computer/AciScreen.kt (AciRoot) | built (#PRNUM) | — |
+| AppScreenWebView | ACI | ios/Features/ACI/Views/AppScreenWebView.swift | — | — | left (#PRNUM): next ACI step | — |
+| BrowserChatView | ACI | ios/Features/ACI/Views/BrowserChatView.swift | — | — | left (#PRNUM): a browser session from the drawer opens in the shared chat page; the 'Browser chat' header is next | — |
+| FilesInboxRequestsView | ACI | ios/Features/ACI/Views/Files/FilesInboxRequestsView.swift | — | — | left (#PRNUM): waits for the Android Files drive | — |
+| MiniAppRuntimeView | ACI | ios/Features/ACI/Views/MiniAppRuntimeView.swift | src/fabric-session/phone/screens/PhoneMiniAppOverlay.tsx | — | left (#PRNUM): next ACI step | — |
+| MiniAppsStoreView | ACI | ios/Features/ACI/Views/MiniAppsStoreView.swift | — | — | left (#PRNUM): next ACI step | — |
+| TeachView | ACI | ios/Features/ACI/Views/TeachView.swift | src/fabric-session/phone/screens/PhoneTeachOverlay.tsx | — | left (#PRNUM): the drawer's Teach row still opens the section stub; next ACI step | — |
+| section: aci | ACI | — | src/fabric-session/phone/phone-nav.ts (PhoneSection aci) | feature/shell/WorkspaceShell.kt (mcp-apps / browser-extensions / computers rows → AciRoot) | built (#PRNUM) | — |
 | AutomationHubView | Automation | ios/Features/Automation/Views/AutomationHubView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationHub.kt` | built (#2641) | — |
 | AutomationScheduleGraphView | Automation | ios/Features/Automation/Views/AutomationScheduleGraphView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationCalendar.kt` (AutomationGraph) | built (#2641) | — |
 | AutomationSchedulerView | Automation | ios/Features/Automation/Views/AutomationSchedulerView.swift | — | `android/feature/automation/src/main/java/com/allternit/feature/automation/AutomationCalendar.kt` | built (#2641) | — |
@@ -231,7 +231,7 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | PhoneLiveView | Phones | ios/Features/Phones/PhoneLiveView.swift | src/fabric-session/phone/screens/LinkedPhoneOverlay.tsx | — | todo | — |
 | PhoneTaskCardView | Phones | ios/Features/Phones/PhoneTaskCardView.swift | — | — | todo | — |
 | PhonesSheet | Shell | ios/Features/Shell/PhonesSheet.swift | — | — (opens "coming in the next update") | todo | — |
-| mode: aci | Shell | — | src/fabric-session/phone/phone-nav.ts (PhoneMode aci) | — | todo | — |
+| mode: aci | Shell | — | src/fabric-session/phone/phone-nav.ts (PhoneMode aci) | feature/shell/WorkspaceShell.kt (ShellMode.Aci → AciRoot) | built (#PRNUM) | — |
 | mode: code | Shell | — | src/fabric-session/phone/phone-nav.ts (PhoneMode code) | — | todo | — |
 
 ## Wave G. Settings

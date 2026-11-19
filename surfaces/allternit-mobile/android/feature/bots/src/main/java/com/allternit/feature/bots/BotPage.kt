@@ -390,45 +390,5 @@ internal fun BotChannelsView(bot: BotRecord) {
     }
 }
 
-/**
- * The bot's computers (the Computer row): each one with its status. The live desktop view (iOS
- * BotDesktopView, the RFB client) ships with ACI Computer in wave F.
- */
-@Composable
-internal fun BotComputerScreen(bot: BotRecord, nav: BotNavigator) {
-    val c = AllternitTheme.colors
-    val scope = rememberCoroutineScope()
-    var rows by remember { mutableStateOf<List<ComputerRow>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf<String?>(null) }
-    suspend fun load() {
-        loading = true
-        when (val r = BotsApi.listComputers(bot.id)) {
-            is BotsResult.Ok -> { rows = r.value; error = null }
-            is BotsResult.Failed -> error = r.message
-        }
-        loading = false
-    }
-    LaunchedEffect(bot.id) { load() }
-    BotScreen("Computer", nav, testTag = "botComputerScreen") {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
-            if (!ListState(loading, error, rows.isEmpty(), "Couldn't load computers", "${bot.displayName} has no computer yet. Turn on a persistent desktop in Edit bot.") { scope.launch { load() } }) {
-                RowGroup {
-                    rows.forEachIndexed { i, r ->
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Dot(if (r.isRunning) AllternitStatic.StatusSuccess else c.textTertiary)
-                            Column(Modifier.weight(1f)) {
-                                Text(r.name, color = c.textPrimary, fontSize = 15.sp)
-                                Text(r.status.replaceFirstChar { it.uppercase() }, color = c.textSecondary, fontSize = 12.5.sp)
-                            }
-                        }
-                        if (i < rows.lastIndex) Hairline()
-                    }
-                }
-            }
-        }
-    }
-}
-
 @Suppress("unused")
 private val transparent = Color.Transparent
