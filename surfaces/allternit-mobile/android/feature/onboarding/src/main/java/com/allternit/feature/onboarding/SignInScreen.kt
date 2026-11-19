@@ -63,7 +63,6 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.auth.AllternitAuth
 import com.allternit.core.auth.StepResult
 import com.allternit.core.design.AllternitRadii
-import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.Haptics
 import com.clerk.api.sso.OAuthProvider
 import kotlinx.coroutines.launch
@@ -71,7 +70,20 @@ import kotlinx.coroutines.launch
 /** Which part of the sign-in rail is open: the buttons with the email field, or the emailed code. */
 private enum class Step { Options, Code }
 
-private val SignInPage = Color(0xFF141413)
+/**
+ * The sign-in palette, the same values as iOS `SignInPalette(.dark)` (SignInStageView.swift) and
+ * the web stage: warm cream ink on #141413, not the app theme's neutral greys.
+ */
+private object SignInColors {
+    val Ink = Color(0xFFF0EEE6)
+    val Sub = Color(0xFFA1A1AA)
+    val Mut = Color(0xFF8A8A93)
+    val Line = Color(0xFF2E2E33)
+    val Raise = Color(0xFF1C1C1E)
+    val Page = Color(0xFF141413)
+}
+
+private val SignInPage = SignInColors.Page
 
 /**
  * Native sign-in, laid out like the phone sign-in on m.allternit.com (allternit-ai
@@ -79,7 +91,7 @@ private val SignInPage = Color(0xFF141413)
  * ([LoginArrival]), headline, the cream "Continue with Apple" button, GitHub and Google with
  * their logos (all through Clerk OAuth in a Custom Tab), an "or" line, the Email field with a
  * cream Continue that sends a 6-digit code, "Secured by clerk" and the 18+ / Terms / Privacy line.
- * Like iOS and the web it is always dark; the caller wraps it in `AllternitTheme(ThemeMode.Dark)`.
+ * Like iOS and the web it is always dark, with its own palette ([SignInColors]).
  *
  * Test ids (maestro/ids.md): `loginHeadline`, `loginContinueEmail`, `loginSkipAuth`.
  * [onSkipAuth] is non-null only in debug builds, as on iOS.
@@ -89,7 +101,6 @@ fun SignInScreen(
     modifier: Modifier = Modifier,
     onSkipAuth: (() -> Unit)? = null,
 ) {
-    val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     val view = LocalView.current
 
@@ -147,7 +158,7 @@ fun SignInScreen(
             LoginArrival(paused = step != Step.Options || busy != null)
             Text(
                 text = "Your bots.\nYour workspace.",
-                color = c.textPrimary,
+                color = SignInColors.Ink,
                 fontSize = 29.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = (-1).sp,
@@ -160,7 +171,7 @@ fun SignInScreen(
             )
             Text(
                 text = "Chat, build and work together.\nAll in one place.",
-                color = c.textSecondary,
+                color = SignInColors.Sub,
                 fontSize = 13.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
@@ -198,7 +209,7 @@ fun SignInScreen(
                 Step.Code -> {
                     Text(
                         text = "We sent a 6-digit code to ${email.trim()}.",
-                        color = c.textSecondary,
+                        color = SignInColors.Sub,
                         fontSize = 13.sp,
                     )
                     FieldLabel("Code")
@@ -236,7 +247,7 @@ fun SignInScreen(
                     append("clerk")
                     pop()
                 },
-                color = c.textSecondary,
+                color = SignInColors.Sub,
                 fontSize = 13.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
@@ -268,15 +279,14 @@ private fun SocialButton(
     filled: Boolean = false,
     onClick: () -> Unit,
 ) {
-    val c = AllternitTheme.colors
     // `filled` is the web's cream Apple button: ink background, page-colored label and logo.
-    val container = if (filled) c.textPrimary else c.bgTertiary
-    val content = if (filled) SignInPage else c.textPrimary
+    val container = if (filled) SignInColors.Ink else SignInColors.Raise
+    val content = if (filled) SignInPage else SignInColors.Ink
     Button(
         onClick = onClick,
         enabled = enabled,
         shape = RoundedCornerShape(AllternitRadii.MD),
-        border = BorderStroke(1.dp, if (filled) c.textPrimary else c.borderStrong),
+        border = BorderStroke(1.dp, if (filled) SignInColors.Ink else SignInColors.Line),
         colors = ButtonDefaults.buttonColors(
             containerColor = container,
             contentColor = content,
@@ -303,16 +313,15 @@ private fun SocialButton(
 
 @Composable
 private fun InkButton(title: String, busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    val c = AllternitTheme.colors
     Button(
         onClick = onClick,
         enabled = enabled,
         shape = RoundedCornerShape(AllternitRadii.MD),
         colors = ButtonDefaults.buttonColors(
-            containerColor = c.textPrimary,
-            contentColor = c.bgPrimary,
-            disabledContainerColor = c.textPrimary.copy(alpha = 0.4f),
-            disabledContentColor = c.bgPrimary,
+            containerColor = SignInColors.Ink,
+            contentColor = SignInColors.Page,
+            disabledContainerColor = SignInColors.Ink.copy(alpha = 0.4f),
+            disabledContentColor = SignInColors.Page,
         ),
         modifier = Modifier.fillMaxWidth().height(44.dp),
     ) {
@@ -323,35 +332,33 @@ private fun InkButton(title: String, busy: Boolean, enabled: Boolean, onClick: (
 /** "—— or ——" between the provider buttons and the Email field (web `.ast-or`). */
 @Composable
 private fun OrDivider() {
-    val c = AllternitTheme.colors
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
     ) {
-        Box(Modifier.weight(1f).height(1.dp).background(c.borderStrong))
-        Text("or", color = c.textTertiary, fontSize = 11.5.sp)
-        Box(Modifier.weight(1f).height(1.dp).background(c.borderStrong))
+        Box(Modifier.weight(1f).height(1.dp).background(SignInColors.Line))
+        Text("or", color = SignInColors.Mut, fontSize = 11.5.sp)
+        Box(Modifier.weight(1f).height(1.dp).background(SignInColors.Line))
     }
 }
 
 @Composable
 private fun QuietButton(title: String, tag: String? = null, onClick: () -> Unit) {
-    val c = AllternitTheme.colors
     TextButton(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().let { if (tag != null) it.testTag(tag) else it },
-    ) { Text(title, color = c.textSecondary, fontSize = 13.sp) }
+    ) { Text(title, color = SignInColors.Sub, fontSize = 13.sp) }
 }
 
 @Composable
 private fun Spinner() {
-    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = AllternitTheme.colors.textPrimary)
+    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = SignInColors.Ink)
 }
 
 @Composable
 private fun FieldLabel(text: String) {
-    Text(text, color = AllternitTheme.colors.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+    Text(text, color = SignInColors.Ink, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
 }
 
 @Composable
@@ -365,7 +372,6 @@ private fun AuthField(
     autoFocus: Boolean = false,
     onDone: () -> Unit,
 ) {
-    val c = AllternitTheme.colors
     // The code field takes focus when its step opens, so the keyboard is up at once.
     val focus = remember { FocusRequester() }
     if (autoFocus) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
@@ -373,18 +379,18 @@ private fun AuthField(
         value = value,
         onValueChange = onValueChange,
         singleLine = true,
-        placeholder = { Text(placeholder, color = c.textTertiary, fontSize = 14.sp) },
+        placeholder = { Text(placeholder, color = SignInColors.Mut, fontSize = 14.sp) },
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Done, autoCorrectEnabled = false),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
         shape = RoundedCornerShape(AllternitRadii.MD),
         colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = c.textPrimary,
-            unfocusedTextColor = c.textPrimary,
-            focusedContainerColor = c.bgTertiary,
-            unfocusedContainerColor = c.bgTertiary,
-            focusedBorderColor = c.textPrimary,
-            unfocusedBorderColor = c.borderStrong,
-            cursorColor = c.textPrimary,
+            focusedTextColor = SignInColors.Ink,
+            unfocusedTextColor = SignInColors.Ink,
+            focusedContainerColor = SignInColors.Raise,
+            unfocusedContainerColor = SignInColors.Raise,
+            focusedBorderColor = SignInColors.Ink,
+            unfocusedBorderColor = SignInColors.Line,
+            cursorColor = SignInColors.Ink,
         ),
         modifier = Modifier
             .fillMaxWidth()
@@ -408,8 +414,7 @@ private fun ErrorLine(error: String?) {
 
 @Composable
 private fun ConsentLine() {
-    val c = AllternitTheme.colors
-    val link = TextLinkStyles(SpanStyle(color = c.textPrimary))
+    val link = TextLinkStyles(SpanStyle(color = SignInColors.Ink))
     val text = buildAnnotatedString {
         append("By continuing you confirm you are 18 or older and agree to the ")
         withLink(LinkAnnotation.Url("https://allternit.com/terms", link)) { append("Terms") }
@@ -419,7 +424,7 @@ private fun ConsentLine() {
     }
     Text(
         text = text,
-        color = c.textTertiary,
+        color = SignInColors.Mut,
         fontSize = 11.5.sp,
         lineHeight = 16.sp,
         textAlign = TextAlign.Center,
