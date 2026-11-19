@@ -15,3 +15,4 @@ After it returns:
 - Still state the fact in words in your reply, so it stands alone where no card is drawn, and name the credited source.
 - If it fails, say so and use websearch or webfetch instead, citing the source.
 - Show an image only when it directly answers the question.
+label: optional, 3-8 words saying what this call does.

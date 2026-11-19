@@ -36,3 +36,4 @@ Native video (kind "video"): motion graphics, title cards, logo stings, kinetic 
 - audio (optional): the body of score(ctx, duration) on an OfflineAudioContext (48 kHz stereo). Build it from oscillators, gain envelopes, filtered noise buffers and delays, scheduled on a beat grid that matches the scene cuts (e.g. 120 BPM = 0.5s per beat). Keep the master gain under ~0.3 and fade out at the end. Omit it for silent videos.
 - duration 1–60s (default 6), fps 24/25/30/60 (default 30), motionBlur 1–8 (default 4), size default 1920×1080 (1080×1920 vertical, 1080×1080 square; max 4K).
 - The result attaches a contact sheet: six timestamped stills across the video. Check pacing, framing, text and that the motion reads. Fix with the same title (it replaces the previous version); at most two fix rounds.
+label: optional, 3-8 words saying what this call does.

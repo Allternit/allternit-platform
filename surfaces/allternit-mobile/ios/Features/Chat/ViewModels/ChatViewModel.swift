@@ -52,6 +52,9 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     var reasoning: String = ""
     var isStreaming: Bool = false
     var toolStatus: ToolStatus? = nil
+    /// The run's one-line status ("phase - note") from `session_status`
+    /// frames. Set while busy, cleared on idle and when the stream ends.
+    var busyLine: String? = nil
     /// Every tool call of the reply, for the tool calls rail and the agent
     /// run tree (Features/RunTree).
     var toolCalls: [ToolCallRecord] = []
@@ -918,7 +921,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             updateMessage(messageId) { message in
                 message.toolStatus = MessageRecord.ToolStatus(
                     toolName: payload.toolName,
-                    text: payload.toolName,
+                    text: payload.detail?.title ?? payload.toolName,
                     state: .running,
                     startedAt: Date()
                 )
@@ -927,7 +930,25 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
 
         case .toolResult(let payload):
             updateMessage(messageId) { message in
-                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .done, detail: payload.detail, runCode: payload.runCode)
+                var detail = payload.detail
+                // Rail title: metadata `label` (already in detail.title), else
+                // the call's input `label`; computer tools use input `step`.
+                if detail?.title == nil || detail?.title?.isEmpty == true {
+                    let input = detail?.input.isEmpty == false
+                        ? detail?.input
+                        : message.toolCalls.first(where: { $0.id == payload.toolCallId })?.input
+                    let computerTools: Set<String> = ["computer", "computer_v2", "browser"]
+                    let keys = computerTools.contains(payload.toolName) ? ["step", "label"] : ["label"]
+                    if let text = keys.compactMap({ input?[$0]?.trimmingCharacters(in: .whitespacesAndNewlines) }).first(where: { !$0.isEmpty }) {
+                        detail = detail ?? AgentChatEvent.ToolDetail()
+                        detail?.title = text
+                    }
+                }
+                if let title = detail?.title, !title.isEmpty { message.toolStatus?.text = title }
+                if GapToolMetadata.feedbackNote == payload.toolName, let gap = detail?.gap {
+                    SeenFeedbackNotes.shared.add(gap)
+                }
+                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .done, detail: detail, runCode: payload.runCode)
                 message.toolStatus?.state = .done
                 if let startedAt = message.toolStatus?.startedAt {
                     message.toolStatus?.elapsed = Date().timeIntervalSince(startedAt)
@@ -1004,6 +1025,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     message.permissions.append(ask)
                 }
             }
+
+        case .sessionStatus(let status):
+            updateMessage(messageId) { $0.busyLine = status.busy ? status.line : nil }
 
         case .messageStart, .done, .ignored:
             // messageStart carries only model labels (not rendered); done is
@@ -1138,6 +1162,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// Normal end of a stream: flush, clear streaming flags and bookkeeping.
     private func finishStreaming(messageId: String) {
         flushPendingDeltas()
+        updateMessage(messageId) { $0.busyLine = nil }
 
         // Perf stats need a request-start and a first-delta timestamp — both
         // absent for e.g. an error that failed before any text arrived, in

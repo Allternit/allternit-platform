@@ -1,4 +1,5 @@
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import { spawn } from "child_process"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import path from "path"
@@ -95,6 +96,7 @@ export const BashTool = Tool.define("bash", async () => {
       .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
       .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES)),
     parameters: z.object({
+      ...LabelField,
       command: z.string().describe("The command to execute"),
       timeout: z.number().describe("Optional timeout in milliseconds").optional(),
       workdir: z

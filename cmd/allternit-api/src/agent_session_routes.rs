@@ -2719,6 +2719,13 @@ async fn transform_bus_event(
                 .cloned()
                 .unwrap_or_else(|| json!([])),
         })),
+        // G4: runtime status (busy/idle/retry + status_update's `phase` and
+        // `note`). The status object passes whole, so new fields ride along.
+        "session.status" => Some(json!({
+            "type": "session_status",
+            "session_id": props.get("sessionID"),
+            "status": props.get("status"),
+        })),
         "message.part.updated" => Some(json!({
             "type": "part_updated",
             "session_id": props.get("sessionID"),

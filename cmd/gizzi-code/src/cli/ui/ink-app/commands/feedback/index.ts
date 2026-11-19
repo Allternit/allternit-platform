@@ -9,7 +9,7 @@ const feedback = {
   type: 'local-jsx',
   name: 'feedback',
   description: `Submit feedback about Gizzi Code`,
-  argumentHint: '[report]',
+  argumentHint: '[report | notes [delete <n>]]',
   isEnabled: () =>
     !(
       isEnvTruthy(process.env.GIZZI_CODE_USE_BEDROCK) ||

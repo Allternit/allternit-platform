@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Status card: a title row and one line of metadata. Stub: G4-G7 fill it in.
+/// Status row: the agent's phase and note, with the time it was posted.
 struct StatusUpdateRow: View {
     let gap: GapToolMetadata
 
@@ -17,11 +17,16 @@ struct StatusUpdateRow: View {
                     .foregroundColor(Color("TextSecondary"))
             }
             .font(.caption.weight(.semibold))
+            if let at = gap.at {
+                Text(Date(timeIntervalSince1970: at > 1e11 ? at / 1000 : at), style: .time)
+                    .font(.caption2)
+                    .foregroundColor(Color("TextTertiary"))
+            }
             if !line.isEmpty {
                 Text(line)
                     .font(.footnote)
                     .foregroundColor(Color("TextPrimary"))
-                    .lineLimit(2)
+                    .lineLimit(3)
             }
         }
         .padding(12)

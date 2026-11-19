@@ -8,18 +8,31 @@
  */
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { FEEDBACK_NOTE_TOOL_ID, FeedbackNoteInput, type FeedbackNoteMetadata } from "@/runtime/primitives/gap-types"
+import { FeedbackNotes } from "@/runtime/primitives/feedback-notes"
 import DESCRIPTION from "@/runtime/tools/builtins/feedback-note.txt"
 
-export const available: boolean = false
+export const available: boolean = true
 
 export const FeedbackNoteTool = Tool.define<typeof FeedbackNoteInput, FeedbackNoteMetadata>(FEEDBACK_NOTE_TOOL_ID, {
   description: DESCRIPTION,
   parameters: FeedbackNoteInput,
-  async execute(_params) {
+  async execute(params, ctx) {
+    const note = await FeedbackNotes.add({
+      kind: params.kind,
+      summary: params.summary.replace(/\s+/g, " ").trim(),
+      details: params.details,
+      session_id: ctx.sessionID,
+    })
     return {
-      title: "feedback_note is not available yet",
-      output: "This tool is not available in this version.",
-      metadata: { ok: false },
+      title: "Note saved on this device",
+      output: "Saved.",
+      metadata: {
+        ok: true,
+        note_id: note.id,
+        kind: note.kind,
+        summary: note.summary,
+        created_at: note.created_at,
+      } satisfies FeedbackNoteMetadata,
     }
   },
 })

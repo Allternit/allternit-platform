@@ -19,6 +19,7 @@
  */
 import fs from "fs/promises"
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import * as BotTurn from "@/runtime/bots/bot-turn"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { Agent } from "@/runtime/loop/agent"
@@ -56,6 +57,7 @@ import {
 import DESCRIPTION from "@/runtime/tools/builtins/agent-batch.txt"
 
 export const AGENT_BATCH_PARAMETERS = z.object({
+  ...LabelField,
   csv_path: z.string().min(1).describe("The input CSV (first row is the header)"),
   instruction: z
     .string()

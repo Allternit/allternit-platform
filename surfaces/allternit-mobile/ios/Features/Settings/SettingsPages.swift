@@ -915,10 +915,17 @@ private struct ElevenLabsVoicePicker: View {
 /// Settings → Developer (the web's diagnostics panel): telemetry and system.
 /// Local engines and Factory services run on Desktop.
 struct DeveloperSettingsPage: View {
+    @ObservedObject private var seenNotes = SeenFeedbackNotes.shared
+
     var body: some View {
         PhoneSettingsPage(title: "Developer") {
             SettingsSectionHeading(text: "Local engines")
             SettingsDescription(text: "Engine status is only available in Allternit Desktop.")
+            SettingsSectionHeading(text: "Feedback notes")
+            SettingsDescription(text: "Notes are saved on the computer that runs your chats. This phone can't read that list, so only notes shown in a chat this session appear here.")
+            ForEach(seenNotes.notes.indices, id: \.self) { index in
+                FeedbackNoteCard(gap: seenNotes.notes[index])
+            }
             SettingsSectionHeading(text: "Telemetry & system")
             VStack(spacing: 0) {
                 row("App Version", AboutSettingsPage.versionString)

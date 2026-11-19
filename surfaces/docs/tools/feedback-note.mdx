@@ -7,8 +7,6 @@ description: 'A diagnostic note kept on your device'
 
 `feedback_note` lets the assistant write down a problem it ran into: a bug, a confusing step or a missing feature. The note stays on your device.
 
-This tool turns on with its feature PR. Until then it is registered as a stub and does not show in any tool list, so the model never sees a tool that does nothing.
-
 ## Parameters
 
 | Parameter | Type | Meaning |
@@ -19,7 +17,7 @@ This tool turns on with its feature PR. Until then it is registered as a stub an
 
 ## Result
 
-A local note id and the kind. Nothing leaves the device until you send the note with a tap through the existing report flow. There is no cloud route for notes.
+A local note id and the kind. The note goes to `feedback-notes.json` in the data folder, at most 200 notes, with file mode 0600. Nothing leaves the device until you send the note with a tap through the report flow. There is no cloud route for notes.
 
 ## Permission
 
@@ -27,4 +25,10 @@ It writes only a local note, so it is allowed in every mode. It never sends anyt
 
 ## Surfaces
 
-Desktop, web, phone layout, PWA and iOS keep the note on the device. The terminal has `/feedback`. Android follows the PWA. Delivered by the progress PR (PR11c). Family: `session`.
+Desktop, web, phone layout, PWA and iOS keep the note on the device. Android follows the PWA. Family: `session`.
+
+## Reviewing notes
+
+- Settings, Diagnostics on web and Desktop lists the notes. Send passes a note to the report flow. Delete removes it.
+- The terminal lists them with `/feedback notes` and removes one with `/feedback notes delete` with a number or an id.
+- The local routes are `GET /memory/feedback-notes` and `DELETE /memory/feedback-notes/:id`.

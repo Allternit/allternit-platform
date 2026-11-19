@@ -19,11 +19,25 @@ import type { Provider } from "@/runtime/providers/provider"
 import type { MessageV2 } from "@/runtime/session/message-v2"
 import { SessionCompaction } from "@/runtime/session/compaction"
 import { Storage } from "@/runtime/session/storage/storage"
+import { BackgroundTask } from "@/runtime/session/background-task"
+import { Todo } from "@/runtime/session/todo"
 import { ContextRemaining } from "@/runtime/primitives/context-remaining"
 import { CONTEXT_REMAINING_TOOL_ID, HISTORY_RECALL_TOOL_ID, type ContextNoticeTrigger } from "@/runtime/primitives/wave-b-types"
 
 export namespace ContextNotice {
-  type Fired = { thresholds: ContextNoticeTrigger[]; compactions: string[] }
+  type Fired = {
+    thresholds: ContextNoticeTrigger[]
+    compactions: string[]
+    /** Background task id -> its last-output time when the quiet check-in fired (once per quiet period). */
+    quiet: Record<string, number>
+    /** Id of the newest assistant message when the todo nudge last fired (starts the next 10-turn window). */
+    todoAfter?: string
+  }
+
+  /** A background command with no output this long gets one check-in. */
+  export const QUIET_MS = 10 * 60 * 1000
+  /** Assistant turns with open todos and no todowrite before the nudge. */
+  export const TODO_NUDGE_TURNS = 10
 
   const key = (sessionID: string) => ["context_notice", sessionID]
   const cache = new Map<string, Fired>()
@@ -43,6 +57,8 @@ export namespace ContextNotice {
     const fired: Fired = {
       thresholds: Array.isArray(saved?.thresholds) ? saved.thresholds : [],
       compactions: Array.isArray(saved?.compactions) ? saved.compactions : [],
+      quiet: saved?.quiet && typeof saved.quiet === "object" ? { ...saved.quiet } : {},
+      todoAfter: typeof saved?.todoAfter === "string" ? saved.todoAfter : undefined,
     }
     cache.set(sessionID, fired)
     return fired
@@ -89,6 +105,53 @@ export namespace ContextNotice {
     return { summaryID, used, replyAfterSummary }
   }
 
+  /** One line per background shell command from this session that is running and has been silent for QUIET_MS. */
+  async function quietLines(sessionID: string, fired: Fired, next: Fired): Promise<string[]> {
+    const tasks = await BackgroundTask.list(sessionID, true)
+    const now = Date.now()
+    const live = new Set(tasks.map((t) => t.id))
+    for (const id of Object.keys(next.quiet)) if (!live.has(id)) delete next.quiet[id]
+    const lines: string[] = []
+    for (const task of tasks) {
+      if (task.kind !== "shell" || task.status !== "running") continue
+      // time.updated moves only when the command writes output (BackgroundTask.progress).
+      const last = task.time.updated
+      if (now - last < QUIET_MS) continue
+      if (fired.quiet[task.id] === last) continue
+      next.quiet[task.id] = last
+      const minutes = Math.floor((now - last) / 60_000)
+      lines.push(
+        `Background command "${task.description}" (${task.id}) has printed nothing for ${minutes} minutes and is still running. Check it with task_output, or stop it if it is stuck.`,
+      )
+    }
+    return lines
+  }
+
+  /** The todo nudge line, or undefined. Turns are assistant messages since the last todowrite or nudge. */
+  function todoLine(sessionID: string, messages: MessageV2.WithParts[], fired: Fired, next: Fired): string | undefined {
+    const open = Todo.get(sessionID).some((t) => t.status === "pending" || t.status === "in_progress")
+    if (!open) return undefined
+    let start = -1
+    if (fired.todoAfter) start = messages.findIndex((m) => m.info.id === fired.todoAfter)
+    for (let i = messages.length - 1; i > start; i--) {
+      const m = messages[i]
+      if (m.info.role === "assistant" && m.parts.some((p) => p.type === "tool" && p.tool === "todowrite")) {
+        start = i
+        break
+      }
+    }
+    let turns = 0
+    let newest: string | undefined
+    for (let i = start + 1; i < messages.length; i++) {
+      if (messages[i].info.role !== "assistant") continue
+      turns++
+      newest = messages[i].info.id
+    }
+    if (turns < TODO_NUDGE_TURNS || !newest) return undefined
+    next.todoAfter = newest
+    return `Your todo list has open items and has not been updated in ${turns} turns. Update it, or mark done what is finished.`
+  }
+
   function percent(n: number) {
     return `${Math.max(0, Math.round(n * 100))}%`
   }
@@ -127,7 +190,12 @@ export namespace ContextNotice {
       const { summaryID, used, replyAfterSummary } = scan(input.messages)
       const fired = await load(input.sessionID)
       const triggers: ContextNoticeTrigger[] = []
-      const next: Fired = { thresholds: [...fired.thresholds], compactions: [...fired.compactions] }
+      const next: Fired = {
+        thresholds: [...fired.thresholds],
+        compactions: [...fired.compactions],
+        quiet: { ...fired.quiet },
+        todoAfter: fired.todoAfter,
+      }
 
       // Right after a compaction: the first request that follows it.
       if (summaryID && !replyAfterSummary && !fired.compactions.includes(summaryID)) {
@@ -152,9 +220,25 @@ export namespace ContextNotice {
         }
       }
 
-      if (triggers.length === 0) return undefined
+      const extra: string[] = []
+      try {
+        extra.push(...(await quietLines(input.sessionID, fired, next)))
+      } catch {
+        // Background lookup is best effort; never block the other notices.
+      }
+      try {
+        const nudge = todoLine(input.sessionID, input.messages, fired, next)
+        if (nudge) extra.push(nudge)
+      } catch {
+        // Same: best effort.
+      }
+
+      if (triggers.length === 0 && extra.length === 0) return undefined
       await save(input.sessionID, next)
-      return text({ triggers, left, untilCompaction })
+      const parts: string[] = []
+      if (triggers.length > 0) parts.push(text({ triggers, left, untilCompaction }))
+      if (extra.length > 0) parts.push(["<system-reminder>", ...extra, "</system-reminder>"].join("\n"))
+      return parts.join("\n")
     } catch {
       return undefined
     }

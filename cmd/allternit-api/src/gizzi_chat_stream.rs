@@ -265,6 +265,14 @@ fn chat_event_stream(
                                     .unwrap_or("");
                                 if status_type == "busy" {
                                     was_busy = true;
+                                    // status_update: forward a phase/note so the client's status line can show it.
+                                    if let Some(status) = props.get("status").filter(|s| s.get("phase").is_some() || s.get("note").is_some()) {
+                                        yield Ok(Event::default().data(json!({
+                                            "type": "session_status",
+                                            "messageId": message_id,
+                                            "status": status,
+                                        }).to_string()));
+                                    }
                                 } else if status_type == "idle" && was_busy {
                                     let finish = cowork_turn_finish(saw_text, saw_tool, None);
                                     if finish.status == "error" {

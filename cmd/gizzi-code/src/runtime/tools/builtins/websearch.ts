@@ -1,4 +1,5 @@
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import DESCRIPTION from "@/runtime/tools/builtins/websearch.txt"
 import { abortAfterAny } from "@/shared/util/abort"
@@ -45,6 +46,7 @@ export const WebSearchTool = Tool.define("websearch", async () => {
       return DESCRIPTION.replace("{{year}}", new Date().getFullYear().toString())
     },
     parameters: z.object({
+      ...LabelField,
       query: z.string().describe("Websearch query"),
       numResults: z.number().optional().describe("Number of search results to return (default: 8)"),
       livecrawl: z

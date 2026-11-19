@@ -74,7 +74,12 @@ export namespace ToolDedupe {
     run: () => Promise<T>
   }): Promise<T> {
     const current = state(input.sessionID, input.messageID)
-    const key = `${input.tool}:${canonical(input.args)}`
+    // A tool-call label (3-8 words for the person watching) never changes what runs, so it stays out of the key.
+    const args =
+      input.args && typeof input.args === "object" && !Array.isArray(input.args) && "label" in input.args
+        ? Object.fromEntries(Object.entries(input.args as Record<string, unknown>).filter(([k]) => k !== "label"))
+        : input.args
+    const key = `${input.tool}:${canonical(args)}`
     const pending = current.pending.get(key)
     if (pending) {
       RuntimeTelemetry.track("tool_call_duplicate", { kind: "same_step" })
