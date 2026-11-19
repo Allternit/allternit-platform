@@ -19,8 +19,9 @@ const context = Context.create<Context>("instance")
 // the instance directory. Kept apart from the instance context on purpose:
 // instance state (bus, permissions, session status) is keyed by the instance
 // directory, so a session keeps its events where its clients listen while its
-// tools and CLI agents run in the folder.
-const workdirContext = Context.create<string>("instance.workdir")
+// tools and CLI agents run in the folder. A box, so worktree_enter / worktree_exit
+// can move the running turn (moveWorkdir) and the next tool call sees it.
+const workdirContext = Context.create<{ dir: string }>("instance.workdir")
 const cache = new Map<string, Promise<Context>>()
 
 const disposal = {
@@ -71,13 +72,22 @@ export const Instance = {
   /** Where this turn's tools resolve paths and run: the session's folder, else the instance directory. */
   get workdir() {
     try {
-      return workdirContext.use()
+      return workdirContext.use().dir
     } catch {
       return context.use().directory
     }
   },
   withWorkdir<R>(directory: string, fn: () => R): R {
-    return workdirContext.provide(directory, fn)
+    return workdirContext.provide({ dir: directory }, fn)
+  },
+  /** Moves the running turn to another folder. False outside withWorkdir (nothing to move). */
+  moveWorkdir(directory: string): boolean {
+    try {
+      workdirContext.use().dir = directory
+      return true
+    } catch {
+      return false
+    }
   },
   get project() {
     return context.use().project

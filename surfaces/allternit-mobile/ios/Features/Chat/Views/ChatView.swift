@@ -69,7 +69,8 @@ struct ChatView: View {
                 sessionId: selectedSessionId,
                 viewModel: viewModel,
                 launchStyle: true,
-                chatMenuHoldsExtras: true
+                chatMenuHoldsExtras: true,
+                onNewChat: startNewChat
             )
         }
         .background(Color("BgPrimary"))
@@ -266,6 +267,9 @@ struct ChatContentView: View {
     /// The host has a chat ⋯ menu (ChatView), so Run on my phone and Capture
     /// to brain leave the + sheet. Other hosts keep them in the sheet.
     var chatMenuHoldsExtras: Bool = false
+    /// "Start a new chat" on an ended chat. The host clears its selected session; nil starts one in place.
+    var onNewChat: (() -> Void)? = nil
+    @ObservedObject private var sessions = ShellSessionsStore.shared
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -703,7 +707,36 @@ struct ChatContentView: View {
         }
     }
 
+    /// The chat was ended: session `metadata.ended`, an end_conversation tool
+    /// part in the feed, or a send that failed with "This chat has ended".
+    private var chatEnded: Bool {
+        if let id = viewModel.currentSessionId,
+           sessions.sessions.first(where: { $0.id == id })?.ended != nil { return true }
+        return viewModel.messages.contains { message in
+            if let err = message.error, [err.title, err.detail, err.raw].contains(where: { $0.localizedCaseInsensitiveContains("This chat has ended") }) { return true }
+            return message.toolCalls.contains { $0.toolName == GapToolMetadata.endConversation && $0.gap?.ok != false && $0.gap != nil }
+        }
+    }
+
+    @ViewBuilder
     private func composer(deck: ComposerDeckVariant) -> some View {
+        if chatEnded {
+            VStack(spacing: 8) {
+                Text("This chat has ended")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(Color("TextSecondary"))
+                Button("Start a new chat") { if let onNewChat { onNewChat() } else { viewModel.startNewSession() } }
+                    .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(16)
+            .accessibilityElement(children: .contain)
+        } else {
+            liveComposer(deck: deck)
+        }
+    }
+
+    private func liveComposer(deck: ComposerDeckVariant) -> some View {
         ComposerView(
             inputText: $inputText,
             attachmentStore: attachmentStore,

@@ -10,3 +10,4 @@ Rules:
 - Every item has a stable id (one is assigned if you omit it). A blocked item names its blocker in blockedBy by id. Unknown ids and cycles are refused.
 - Status is pending, in_progress, completed, cancelled (dropped on purpose) or interrupted (stopped before it finished).
 - If a step fails or turns out wrong, keep it in_progress or add a new item; never mark it completed on partial work.
+- Keep the list current. Mark items done as you finish them and remove items that no longer apply. A stale list is worse than none.

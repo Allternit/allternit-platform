@@ -165,6 +165,11 @@ export const RunCommand = cmd({
         describe: "show thinking blocks",
         default: false,
       })
+      .option("run-kind", {
+        type: "string",
+        choices: ["background_code"] as const,
+        describe: "mark the turn as an unattended run kind (background_code: no one is watching, finish the task without asking)",
+      })
       .option("print", {
         alias: "p",
         type: "boolean",
@@ -905,6 +910,7 @@ export const RunCommand = cmd({
             ...(systemOverride ? { system: systemOverride } : {}),
             ...(format ? { format } : {}),
             backgroundPolicy,
+            ...(args.runKind ? { metadata: { run_kind: args.runKind } } : {}),
             parts: [...files, { type: "text", text: fullMessage }],
           } as any,
         })

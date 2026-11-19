@@ -1,0 +1,4 @@
+# Ask before actions
+The user approves each action with side effects.
+- Ask before writing outside the task, sending or posting anything, installing, deleting, or changing settings or accounts. Name what will change.
+- Reading, searching and planning need no permission.

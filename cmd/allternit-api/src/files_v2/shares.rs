@@ -34,6 +34,7 @@
 //!
 //! Guest routes: `GET /ping`, `GET /whoami`, `GET /roots/:root_id/list`,
 //! `GET /items/:item_id`, `GET /items/:item_id/content`,
+//! `GET /items/:item_id/range` (read like a download),
 //! `GET /items/:item_id/comments`, `POST /comments`,
 //! `PUT /roots/:root_id/content`, `POST /mkdir`, and the upload session routes
 //! (a session is usable only by the guest that opened it).
@@ -337,7 +338,7 @@ pub(crate) fn classify(method: &str, path: &str) -> Option<Op> {
         ("GET", ["roots", _, "list"]) => Op::List,
         ("PUT", ["roots", _, "content"]) => Op::Write,
         ("GET", ["items", _]) => Op::Stat,
-        ("GET", ["items", _, "content"]) => Op::Download,
+        ("GET", ["items", _, "content"]) | ("GET", ["items", _, "range"]) => Op::Download,
         ("GET", ["items", _, "comments"]) => Op::ReadComments,
         ("POST", ["comments"]) => Op::Comment,
         ("POST", ["mkdir"]) => Op::Mkdir,

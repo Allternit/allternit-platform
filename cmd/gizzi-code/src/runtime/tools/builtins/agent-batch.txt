@@ -23,3 +23,4 @@ How a run works:
 - An existing output file without its progress file is never overwritten.
 
 The batch runs on this computer's runtime, with the model the worker agent uses.
+label: optional, 3-8 words saying what this call does.

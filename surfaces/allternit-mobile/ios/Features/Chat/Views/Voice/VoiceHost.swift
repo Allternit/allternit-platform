@@ -27,6 +27,11 @@ final class VoiceHost: ObservableObject {
         if viewModel == nil {
             let model = VoiceModeViewModel(chatViewModel: chat, runtimeModelId: runtimeModelId, effort: effort)
             model.botVoice = bot?.kokoroVoiceId
+            chat.voiceModel = model
+            // end_call: the normal end flow, including the "Voice chat ended" card.
+            model.onEndCall = { [weak self, weak chat] in
+                if let seconds = self?.end() { chat?.appendVoiceSummary(durationSeconds: seconds) }
+            }
             viewModel = model
             model.begin(dictation: dictation, speaker: speaker)
         }

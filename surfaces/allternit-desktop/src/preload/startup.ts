@@ -17,10 +17,20 @@ function subscribe<T>(channel: string, callback: (payload: T) => void): () => vo
 }
 
 contextBridge.exposeInMainWorld('startup', {
-  /** Welcome step: the user clicked "Get started" — begin sign-in. */
+  /** Pairing card: "Sign in to pair" / "Try again" / "Sign in again" — begin sign-in. */
   startLogin: (): void => {
     ipcRenderer.send('auth:start-login');
   },
+  /** Pairing card "Cancel": stop the running sign-in/approval. */
+  cancelLogin: (): void => {
+    ipcRenderer.send('auth:cancel-login');
+  },
+  /** Paired card "Open Allternit": bring the workspace window forward. */
+  openApp: (): void => {
+    ipcRenderer.send('startup:open-app');
+  },
+  /** Main-process push: the re-rendered pairing card (HTML built in main). */
+  onPairing: (callback: (html: string) => void) => subscribe('pairing:render', callback),
   /** Main-process push: backend service states for the loading step. */
   onServices: (callback: (services: unknown) => void) => subscribe('services', callback),
   /** Main-process push: status line text. */

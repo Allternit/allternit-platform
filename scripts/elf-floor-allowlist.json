@@ -1,0 +1,10 @@
+[
+  {
+    "path": "@livekit/rtc-ffi-bindings-linux-x64-gnu/rtc-node.linux-x64-gnu.node",
+    "reason": "LiveKit prebuilt; Meeting bot needs glibc 2.28 (unavailable on Ubuntu 18.04 only)"
+  },
+  {
+    "path": "@livekit/rtc-ffi-bindings-linux-arm64-gnu/rtc-node.linux-arm64-gnu.node",
+    "reason": "LiveKit prebuilt (arm64); Meeting bot needs glibc 2.28 (unavailable on Ubuntu 18.04 only)"
+  }
+]

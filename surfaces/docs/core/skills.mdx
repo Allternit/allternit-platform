@@ -40,6 +40,14 @@ Activate a skill for a session with:
 gizzi --skill my-skill "do the thing"
 ```
 
+## What the assistant may call a skill
+
+Three rules keep the model honest about skills:
+
+- **Listed only.** The assistant uses only skill names that appear in the skills list for the turn. It does not invent a name.
+- **Built-ins aren't skills.** Slash commands such as `/help` are built-in commands, not skills, so the skill tool is not used for them.
+- **No reload.** If a skill's text is already loaded in the conversation, the assistant follows it and does not load it again.
+
 ## Built-in skills
 
 Allternit ships with skills such as `allternit/powerpoint` for presentation creation. See [Build a tool](/tools/build-a-tool) to add custom tools to a skill.

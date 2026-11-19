@@ -151,7 +151,7 @@ async function buildCacheSafeParams(context: ProcessUserInputContext): Promise<C
       forkContextMessages
     };
   }
-  const [rawSystemPrompt, userContext, systemContext] = await Promise.all([getSystemPrompt(context.options.tools, context.options.mainLoopModel, [], context.options.mcpClients), getUserContext(), getSystemContext()]);
+  const [rawSystemPrompt, userContext, systemContext] = await Promise.all([getSystemPrompt(context.options.tools, context.options.mainLoopModel, [], context.options.mcpClients, context.getAppState().toolPermissionContext.mode), getUserContext(), getSystemContext()]);
   return {
     systemPrompt: asSystemPrompt(rawSystemPrompt),
     userContext,

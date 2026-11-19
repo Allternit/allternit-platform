@@ -60,6 +60,10 @@ final class PhoneTaskClient: @unchecked Sendable {
         /// Recorded steps, and how many failed.
         var stepCount: Int = 0
         var failed: Int = 0
+        /// App Maps report fields (absent on older runtimes).
+        var mapSteps: Int? = nil
+        var modelCalls: Int? = nil
+        var mapApp: String? = nil
     }
 
     private let api: APIClient
@@ -198,6 +202,10 @@ final class PhoneTaskClient: @unchecked Sendable {
         run.approvalId = (row["approvalId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         run.stepCount = (row["steps"] as? NSNumber)?.intValue ?? 0
         run.failed = (row["failed"] as? NSNumber)?.intValue ?? 0
+        run.mapSteps = (row["map_steps"] as? NSNumber)?.intValue
+        run.modelCalls = (row["model_calls"] as? NSNumber)?.intValue
+        let app = s("app_label", "app")
+        run.mapApp = app.isEmpty ? nil : app
         return run
     }
 

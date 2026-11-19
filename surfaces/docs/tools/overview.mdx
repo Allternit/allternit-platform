@@ -7,6 +7,8 @@ description: 'The Allternit tool ecosystem — native belt, MCP, custom tools, s
 
 Tools are model-facing functions that an agent can call to interact with the outside world. They are the bridge between an agent's reasoning and real-world actions — reading files, searching the web, editing code, running shell commands, and automating a browser.
 
+Long-running tools take an optional `label` of 3 to 8 words. It shows as the step title in the app, the terminal and iOS, and is removed before the tool runs.
+
 Allternit provides five tool surfaces:
 
 <CardGroup cols={2}>
@@ -44,6 +46,18 @@ Allternit provides five tool surfaces:
     The session todo list with ids and blockers
   </Card>
 </CardGroup>
+
+## Searching file contents with grep
+
+The `grep` tool searches file contents with a regular expression. It takes an `output_mode` that sets what comes back:
+
+| `output_mode` | Returns |
+|---|---|
+| `content` | Matching lines, with file and line number |
+| `files_with_matches` | Only the paths of files that match |
+| `count` | The number of matches per file |
+
+Use `count` or `files_with_matches` to size a search before reading lines. The same modes apply in the terminal app and the runtime. Search through this tool, not a shell command, when the dedicated tool is available.
 
 ## How tools are discovered
 

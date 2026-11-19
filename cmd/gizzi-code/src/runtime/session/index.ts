@@ -30,6 +30,67 @@ import { Global } from "@/runtime/context/global"
 import type { LanguageModelV2Usage } from "@ai-sdk/provider"
 import { iife } from "@/shared/util/iife"
 import { SecretRedactor } from "@/runtime/session/environment/redactor"
+import { SessionWorktree } from "@/runtime/primitives/worktree"
+import { NamedError } from "@allternit/gizzi-util/error.js"
+import { readFileSync } from "fs"
+import fs from "fs/promises"
+
+/**
+ * Ended chats (end_conversation): `{ at, reason }` per session id, in a small
+ * JSON registry under Global.Path.data (no column, like the worktree
+ * registry). Read synchronously by Session.fromRow from the cached copy.
+ */
+export namespace SessionEnded {
+  export const Reason = z.enum(["sustained_abuse", "user_requested"])
+  export const Info = z.object({ at: z.number(), reason: Reason })
+  export type Info = z.infer<typeof Info>
+
+  let cache: Record<string, Info> | undefined
+  let writeQueue: Promise<void> = Promise.resolve()
+
+  function file() {
+    return path.join(Global.Path.data, "session-ended.json")
+  }
+
+  function load(): Record<string, Info> {
+    if (cache) return cache
+    const store: Record<string, Info> = {}
+    try {
+      const json = JSON.parse(readFileSync(file(), "utf8")) as Record<string, unknown>
+      for (const [id, value] of Object.entries(json ?? {})) {
+        const parsed = Info.safeParse(value)
+        if (parsed.success) store[id] = parsed.data
+      }
+    } catch {
+      // No file or a broken one: no chat counts as ended.
+    }
+    cache = store
+    return cache
+  }
+
+  export function infoFor(sessionID: string): Info | undefined {
+    return load()[sessionID]
+  }
+
+  /** Records the end (first one wins) and writes the registry. */
+  export async function mark(sessionID: string, reason: Info["reason"]): Promise<Info> {
+    const store = load()
+    const info = store[sessionID] ?? { at: Date.now(), reason }
+    store[sessionID] = info
+    const target = file()
+    const body = JSON.stringify(store, null, 2)
+    writeQueue = writeQueue
+      .catch(() => {})
+      .then(async () => {
+        await fs.mkdir(path.dirname(target), { recursive: true })
+        const tmp = `${target}.${process.pid}.tmp`
+        await fs.writeFile(tmp, body)
+        await fs.rename(tmp, target)
+      })
+    await writeQueue
+    return info
+  }
+}
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -104,6 +165,8 @@ export namespace Session {
           }
         : undefined,
       sourceExport: row.source_export ?? undefined,
+      worktree: SessionWorktree.infoFor(row.id),
+      ended: SessionEnded.infoFor(row.id),
       time: {
         created: row.time_created,
         updated: row.time_updated,
@@ -372,6 +435,10 @@ export namespace Session {
           at: z.number(),
         })
         .optional(),
+      /** The git worktree the session works in (worktree_enter); kept in the worktree registry, not a column. */
+      worktree: z.object({ path: z.string(), branch: z.string().optional() }).optional(),
+      /** Set once the chat ended (end_conversation); it then refuses new prompts. Kept in the ended registry, not a column. */
+      ended: SessionEnded.Info.optional(),
     })
     
   export type Info = z.output<typeof Info>
@@ -728,6 +795,41 @@ export namespace Session {
           .where(eq(SessionTable.id, input.sessionID))
           .returning()
           .get()
+        if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+        const info = fromRow(row)
+        Database.effect(() => Bus.publish(Event.Updated, { info }))
+        return info
+      })
+    },
+  )
+
+  /** Publishes the session again after worktree_enter / worktree_exit changed its `worktree` field. */
+  export const worktreeChanged = fn(Identifier.schema("session"), async (sessionID) => {
+    return Database.use((db) => {
+      const row = db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get()
+      if (!row) throw new NotFoundError({ message: `Session not found: ${sessionID}` })
+      const info = fromRow(row)
+      Database.effect(() => Bus.publish(Event.Updated, { info }))
+      return info
+    })
+  })
+
+  /** What clients show when a prompt reaches an ended chat. */
+  export const ENDED_MESSAGE = "This chat has ended. Start a new chat."
+
+  export const EndedError = NamedError.create(
+    "SessionEndedError",
+    z.object({ sessionID: z.string(), at: z.number(), reason: SessionEnded.Reason }),
+  )
+
+  /** Ends the chat (end_conversation): records `ended` and publishes the session. */
+  export const setEnded = fn(
+    z.object({ sessionID: Identifier.schema("session"), reason: SessionEnded.Reason }),
+    async (input) => {
+      await get(input.sessionID)
+      await SessionEnded.mark(input.sessionID, input.reason)
+      return Database.use((db) => {
+        const row = db.select().from(SessionTable).where(eq(SessionTable.id, input.sessionID)).get()
         if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
         const info = fromRow(row)
         Database.effect(() => Bus.publish(Event.Updated, { info }))

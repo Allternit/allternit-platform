@@ -35,3 +35,33 @@ dependencies {
     api(project(":core:design"))
     api(project(":core:auth"))
 }
+
+// The sign-in loop (LoginArrival.kt) plays the same offline page as iOS and the web:
+// shared/login-arrival/login-arrival.html, built by shared/login-arrival/build.py. It is copied
+// into this module's generated assets so there is one committed copy, never a second one here.
+abstract class SyncLoginArrival : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val html: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        html.get().asFile.copyTo(out.resolve("login-arrival.html"))
+    }
+}
+
+val syncLoginArrival = tasks.register<SyncLoginArrival>("syncLoginArrival") {
+    html.set(rootProject.layout.projectDirectory.file("../shared/login-arrival/login-arrival.html"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(syncLoginArrival, SyncLoginArrival::outputDir)
+    }
+}

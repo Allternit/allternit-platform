@@ -1221,6 +1221,10 @@ async fn main() {
         .merge(allternit_api::phone_task::router())
         // Phone approval holds: guard check, hold read, hold crop.
         .merge(allternit_api::phone_guard::router())
+        // App Maps: per-app screen graphs (list, read, forget).
+        .merge(allternit_api::phone_map::router())
+        // App Map Explore: a bounded Android walk that grows a map (never taps sensitive).
+        .merge(allternit_api::phone_map_explore::router())
         .merge(allternit_api::subscription_routes::router())
         .merge(allternit_api::computer_embed::api_router())
         .merge(allternit_api::bot_group_routes::router())

@@ -21,3 +21,4 @@ Rules:
 - Use only what is in the conversation. Never guess the output of a tool call that is not in the transcript; if a result is missing, say it is missing.
 - Do not answer questions from the conversation or start new work. Output only the summary.
 - No wrapper tags around the summary or its sections.
+- Respond with plain text only. Never call a tool while writing the summary.

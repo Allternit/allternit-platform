@@ -56,11 +56,14 @@ sealed interface AuthState {
 }
 
 /** The outcome of one sign-in step: null [error] means it worked. */
-data class StepResult(val error: String? = null) {
-    val ok: Boolean get() = error == null
+data class StepResult(val error: String? = null, val cancelled: Boolean = false) {
+    val ok: Boolean get() = error == null && !cancelled
 
     companion object {
         val OK = StepResult()
+
+        /** The user closed the sign-in tab: not an error, the screen just goes back to idle (as on iOS). */
+        val CANCELLED = StepResult(cancelled = true)
     }
 }
 
@@ -216,11 +219,14 @@ object AllternitAuth {
 
     // endregion
 
-    /** Google or GitHub through Clerk's native OAuth (signs up a new account too). */
+    /**
+     * Google, GitHub or Apple through Clerk OAuth in a Custom Tab (signs up a new account too).
+     * Closing the tab comes back as [StepResult.CANCELLED], never as a connection error.
+     */
     suspend fun signInWithOAuth(provider: OAuthProvider): StepResult =
         when (val r = Clerk.auth.signInWithOAuth(provider)) {
             is ClerkResult.Success -> StepResult.OK
-            is ClerkResult.Failure -> StepResult(r.message())
+            is ClerkResult.Failure -> if (r.isCancelled()) StepResult.CANCELLED else StepResult(r.message())
         }
 
     /**
@@ -279,6 +285,16 @@ object AllternitAuth {
 }
 
 private fun ClerkResult.Failure<ClerkErrorResponse>.errorCode(): String? = error?.errors?.firstOrNull()?.code
+
+/**
+ * Clerk ends the OAuth flow with `com.clerk.api.sso.SSOCancellationException` ("Authentication
+ * cancelled") when the user closes the Custom Tab or presses back. Matched by name, because the
+ * class isn't part of Clerk's documented API; a cancelled coroutine counts too.
+ */
+private fun ClerkResult.Failure<ClerkErrorResponse>.isCancelled(): Boolean =
+    generateSequence(throwable) { it.cause }.take(8).any {
+        it.javaClass.simpleName == "SSOCancellationException" || it is kotlin.coroutines.cancellation.CancellationException
+    }
 
 /** Clerk's own sentence when it has one (it is written for people), else a plain fallback. */
 private fun ClerkResult.Failure<ClerkErrorResponse>.message(): String {

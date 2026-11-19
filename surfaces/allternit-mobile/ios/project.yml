@@ -112,6 +112,7 @@ targets:
         INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: "Allternit lets your bots read your calendar and add events, only after you turn on Device Access. Each new event needs your approval."
         INFOPLIST_KEY_NSRemindersFullAccessUsageDescription: "Allternit lets your bots read your reminders and add new ones, only after you turn on Device Access. Each new reminder needs your approval."
         INFOPLIST_KEY_NSContactsUsageDescription: "Allternit lets your bots search your contacts by name (read only), only after you turn on Device Access."
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Allternit lets Gizzi see roughly where you are when you ask, only after you turn on Location in Device Access. Precise location asks each time."
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Allternit uses Bluetooth only when you start keyboard mode, so this device can be a Bluetooth keyboard and mouse for your other iPhone."
         INFOPLIST_KEY_NSHomeKitUsageDescription: "Allternit lets your bots see your Home accessories and scenes, switch lights and run scenes, only after you turn on Home in Device Access. Locks, garage doors and alarms need your approval each time."
         PRODUCT_BUNDLE_IDENTIFIER: com.allternit.mobile

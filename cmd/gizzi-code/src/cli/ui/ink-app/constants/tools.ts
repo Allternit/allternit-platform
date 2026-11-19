@@ -39,6 +39,18 @@ import { AGENT_CONTROL_TOOL_NAME } from '../tools/AgentControlTool/prompt.js'
 import { GET_CONTEXT_REMAINING_TOOL_NAME } from '../tools/GetContextRemainingTool/prompt.js'
 import { AGENT_BATCH_TOOL_NAME } from '../tools/AgentBatchTool/prompt.js'
 import { CONNECTOR_SEARCH_TOOL_NAME } from '../tools/ConnectorTool/prompt.js'
+// Prompt-gap tools (G3 contract): same ids as the runtime builtins and the Ink
+// adapters in tools/<Name>Tool (registered in tools.ts, enabled by `available`).
+import {
+  END_CONVERSATION_TOOL_ID,
+  FEEDBACK_NOTE_TOOL_ID,
+  SECOND_OPINION_TOOL_ID,
+  STATUS_UPDATE_TOOL_ID,
+  USER_LOCATION_TOOL_ID,
+  VOICE_CONTROL_TOOL_ID,
+  WORKTREE_ENTER_TOOL_ID,
+  WORKTREE_EXIT_TOOL_ID,
+} from '@/runtime/primitives/gap-types'
 
 export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   TASK_OUTPUT_TOOL_NAME,
@@ -54,6 +66,13 @@ export const ALL_AGENT_DISALLOWED_TOOLS = new Set([
   // A batch fans out one worker per row: only the main thread runs one, so a
   // subagent (or a batch worker) never starts another batch.
   AGENT_BATCH_TOOL_NAME,
+  // The main thread's chat, call, status line, location prompt and notes:
+  // a subagent never ends the chat, steers the call or speaks for the session.
+  END_CONVERSATION_TOOL_ID,
+  VOICE_CONTROL_TOOL_ID,
+  STATUS_UPDATE_TOOL_ID,
+  USER_LOCATION_TOOL_ID,
+  FEEDBACK_NOTE_TOOL_ID,
 ])
 
 export const CUSTOM_AGENT_DISALLOWED_TOOLS = new Set([
@@ -95,6 +114,11 @@ export const ASYNC_AGENT_ALLOWED_TOOLS = new Set([
   // Workers can find and load the user's connected apps. connector_suggest and
   // settings stay with the main thread: the user must see the card or change.
   CONNECTOR_SEARCH_TOOL_NAME,
+  // Workers can isolate their work in a worktree and ask for a second opinion
+  // (read-only). pr_comments stays main-thread: a reply asks the user first.
+  WORKTREE_ENTER_TOOL_ID,
+  WORKTREE_EXIT_TOOL_ID,
+  SECOND_OPINION_TOOL_ID,
 ])
 /**
  * Tools allowed only for in-process teammates (not general async agents).

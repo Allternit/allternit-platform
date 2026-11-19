@@ -7,10 +7,12 @@ import BASE_CHAT from "@/runtime/session/prompt/base-chat.txt"
 import BASE_CODE from "@/runtime/session/prompt/base-code.txt"
 import CAPABILITIES from "@/runtime/session/prompt/capabilities.txt"
 import SAFETY from "@/runtime/session/prompt/safety.txt"
+import CARE from "@/runtime/session/prompt/care.txt"
 import BOT from "@/runtime/session/prompt/bot.txt"
 import VOICE from "@/runtime/session/prompt/voice.txt"
 import PHONE from "@/runtime/session/prompt/phone.txt"
 import PLAN_MODE from "@/runtime/session/prompt/plan-mode.txt"
+import BUILD_MODE from "@/runtime/session/prompt/build-mode.txt"
 import ADDENDUM_GPT from "@/runtime/session/prompt/addendum-gpt.txt"
 import ADDENDUM_GEMINI from "@/runtime/session/prompt/addendum-gemini.txt"
 import ADDENDUM_OPEN from "@/runtime/session/prompt/addendum-open.txt"
@@ -18,6 +20,16 @@ import DUET from "@/runtime/session/prompt/duet.txt"
 import DELEGATION from "@/runtime/session/prompt/delegation.txt"
 import PROJECT_THREAD from "@/runtime/session/prompt/project-thread.txt"
 import COMPUTER_USE from "@/runtime/session/prompt/computer-use.txt"
+import UNATTENDED from "@/runtime/session/prompt/unattended.txt"
+import MEMORY_USE from "@/runtime/session/prompt/memory-use.txt"
+import MODE_AUTO from "@/runtime/session/prompt/mode-auto.txt"
+import MODE_ASK from "@/runtime/session/prompt/mode-ask.txt"
+import BACKGROUND_CODE from "@/runtime/session/prompt/background-code.txt"
+import ADDENDUM_ONDEVICE from "@/runtime/session/prompt/addendum-ondevice.txt"
+import VOICE_TAGS from "@/runtime/session/prompt/voice-tags.txt"
+import { ALLTERNIT_DEVICES_PROVIDER_ID } from "@/runtime/providers/discovery/allternit-devices"
+import { PermissionNext } from "@/runtime/tools/guard/permission/next"
+import { Automation } from "@/runtime/primitives/automation"
 
 const model = (id: string) => ({ api: { id } })
 const claude = model("claude-sonnet-4-5")
@@ -33,6 +45,7 @@ describe("prompt stack by session surface", () => {
       expect(text).toContain(BASE_CHAT)
       expect(text).toContain(CAPABILITIES)
       expect(text).toContain(SAFETY)
+      expect(text).toContain(CARE)
       expect(text).not.toContain(BASE_CODE)
     }
   })
@@ -42,14 +55,15 @@ describe("prompt stack by session surface", () => {
       const text = SystemPrompt.provider(claude, undefined, ctx).join("\n")
       expect(text).toContain(BASE_CODE)
       expect(text).toContain(SAFETY)
+      expect(text).not.toContain(CARE)
       expect(text).not.toContain(BASE_CHAT)
       expect(text).not.toContain(CAPABILITIES)
     }
   })
 
-  test("order: base, capabilities, safety, addendum, mode, voice, phone", () => {
+  test("order: base, capabilities, safety, care, addendum, mode, voice, phone", () => {
     const parts = SystemPrompt.provider(model("gpt-5.1"), "plan", { surface: "chat", replyMode: "voice", formFactor: "phone" })
-    expect(parts).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, ADDENDUM_GPT, PLAN_MODE, VOICE, PHONE])
+    expect(parts).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, CARE, ADDENDUM_GPT, PLAN_MODE, VOICE, PHONE])
   })
 })
 
@@ -58,6 +72,7 @@ describe("2026-11-16 audit: no vendor names or Allternit Shell in prompts", () =
   const dirs = [
     path.join(import.meta.dir, "../../src/runtime/session/prompt"),
     path.join(import.meta.dir, "../../src/runtime/loop/prompts"),
+    path.join(import.meta.dir, "../../src/runtime/tools/builtins"),
   ]
   const files = dirs.flatMap((dir) =>
     fs.readdirSync(dir).filter((name) => name.endsWith(".txt")).map((name) => path.join(dir, name)),
@@ -66,7 +81,7 @@ describe("2026-11-16 audit: no vendor names or Allternit Shell in prompts", () =
   test("finds the prompt files", () => {
     expect(files.length).toBeGreaterThan(10)
     const names = files.map((file) => path.basename(file))
-    for (const name of ["duet.txt", "delegation.txt", "project-thread.txt", "computer-use.txt"]) {
+    for (const name of ["duet.txt", "delegation.txt", "project-thread.txt", "computer-use.txt", "care.txt", "bash.txt", "unattended.txt", "memory-use.txt", "mode-auto.txt", "mode-ask.txt", "background-code.txt", "addendum-ondevice.txt", "voice-tags.txt"]) {
       expect(names).toContain(name)
     }
   })
@@ -141,6 +156,7 @@ describe("bot turns", () => {
       expect(header.startsWith(PERSONA)).toBe(true)
       expect(header).toContain(BOT)
       expect(header).toContain(SAFETY)
+      expect(header).toContain(CARE)
       expect(header.indexOf(BOT)).toBeGreaterThan(header.indexOf(PERSONA))
       expect(header).not.toContain(firstLine(BASE_CHAT))
       expect(header).not.toContain(firstLine(BASE_CODE))
@@ -178,6 +194,154 @@ describe("voice and phone blocks from turn metadata", () => {
       expect(text).not.toContain(VOICE)
       expect(text).not.toContain(PHONE)
     }
+  })
+})
+
+describe("unattended block from automation_run metadata", () => {
+  const run = { [Automation.RUN_METADATA_KEY]: { id: "job-1", runId: "run-1" } }
+
+  test("the key matches the scheduler's", () => {
+    expect(SystemPrompt.AUTOMATION_RUN_KEY).toBe(Automation.RUN_METADATA_KEY)
+  })
+
+  test("a scheduler's turn gets unattended.txt on bot and non-bot turns, before voice and phone", () => {
+    const ctx = SystemPrompt.context("chat", { ...run, reply_mode: "voice", form_factor: "phone" })
+    expect(ctx.automationRun).toBe(true)
+    const provider = SystemPrompt.provider(claude, undefined, ctx)
+    expect(provider.slice(-3)).toEqual([UNATTENDED, VOICE, PHONE])
+    expect(SystemPrompt.bot(undefined, ctx).slice(-3)).toEqual([UNATTENDED, VOICE, PHONE])
+    expect(SystemPrompt.provider(claude, undefined, SystemPrompt.context("code", run))).toEqual([BASE_CODE, SAFETY, UNATTENDED])
+  })
+
+  test("no flag, or an empty one, adds no unattended block", () => {
+    for (const metadata of [undefined, {}, { [Automation.RUN_METADATA_KEY]: null }, { reply_mode: "voice" }]) {
+      const ctx = SystemPrompt.context("chat", metadata)
+      expect(ctx.automationRun).toBeUndefined()
+      const text = [...SystemPrompt.provider(claude, undefined, ctx), ...SystemPrompt.bot(undefined, ctx)].join("\n")
+      expect(text).not.toContain(UNATTENDED)
+    }
+  })
+})
+
+describe("autonomy blocks from the session permission mode (PR2)", () => {
+  const AUTO_MODES = ["auto", "acceptEdits", "dontAsk", "yolo", "bypassPermissions"] as const
+  const ASK_MODES = ["default", "manual"] as const
+
+  test("every permission mode is mapped: auto, ask, or none for plan", () => {
+    for (const mode of PermissionNext.Mode.options) {
+      const expected = (AUTO_MODES as readonly string[]).includes(mode)
+        ? "auto"
+        : (ASK_MODES as readonly string[]).includes(mode)
+          ? "ask"
+          : undefined
+      expect(SystemPrompt.autonomy(mode)).toBe(expected)
+    }
+    expect(SystemPrompt.autonomy("plan")).toBeUndefined()
+    expect(SystemPrompt.autonomy(undefined)).toBeUndefined()
+  })
+
+  test("auto modes load mode-auto after the mode reminder; ask modes load mode-ask", () => {
+    for (const permissionMode of AUTO_MODES) {
+      const ctx = SystemPrompt.context("code", {}, { permissionMode })
+      expect(ctx.permissionMode).toBe(permissionMode)
+      expect(SystemPrompt.provider(claude, "build", ctx)).toEqual([BASE_CODE, SAFETY, BUILD_MODE, MODE_AUTO])
+    }
+    for (const permissionMode of ASK_MODES) {
+      const ctx = SystemPrompt.context("chat", { reply_mode: "voice" }, { permissionMode })
+      expect(SystemPrompt.provider(claude, undefined, ctx)).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, CARE, MODE_ASK, VOICE])
+    }
+  })
+
+  test("no mode block in plan, without a mode, or on a run nobody watches", () => {
+    const blocks = (parts: string[]) => parts.filter((p) => p === MODE_AUTO || p === MODE_ASK)
+    expect(blocks(SystemPrompt.provider(claude, "plan", SystemPrompt.context("code", {}, { permissionMode: "auto" })))).toEqual([])
+    expect(blocks(SystemPrompt.provider(claude, undefined, SystemPrompt.context("code", {}, { permissionMode: "plan" })))).toEqual([])
+    expect(blocks(SystemPrompt.provider(claude, undefined, SystemPrompt.context("code", {})))).toEqual([])
+    for (const metadata of [{ [Automation.RUN_METADATA_KEY]: { id: "job-1" } }, { run_kind: "background_code" }]) {
+      expect(blocks(SystemPrompt.provider(claude, undefined, SystemPrompt.context("code", metadata, { permissionMode: "default" })))).toEqual([])
+    }
+  })
+
+  test("bot turns keep bot.txt's approval rule and get no mode block", () => {
+    const parts = SystemPrompt.bot(undefined, SystemPrompt.context("chat", {}, { permissionMode: "auto" }))
+    expect(parts).not.toContain(MODE_AUTO)
+    expect(parts).not.toContain(MODE_ASK)
+  })
+
+  test("the TUI loads the same blocks from its own permission mode", () => {
+    const src = fs.readFileSync(path.join(import.meta.dir, "../../src/cli/ui/ink-app/constants/prompts.ts"), "utf8")
+    expect(src).toContain("@/runtime/session/prompt/mode-auto.txt")
+    expect(src).toContain("@/runtime/session/prompt/mode-ask.txt")
+    expect(src).toContain("getPermissionModeSection(permissionMode)")
+  })
+})
+
+describe("background-code block from the run_kind hint (PR7)", () => {
+  test("run_kind background_code loads background-code after unattended, before voice", () => {
+    const ctx = SystemPrompt.context("code", { run_kind: SystemPrompt.BACKGROUND_CODE_RUN_KIND })
+    expect(ctx.backgroundCode).toBe(true)
+    expect(SystemPrompt.provider(claude, undefined, ctx)).toEqual([BASE_CODE, SAFETY, BACKGROUND_CODE])
+    const both = SystemPrompt.context("code", { run_kind: "background_code", [Automation.RUN_METADATA_KEY]: { id: "j" }, reply_mode: "voice" })
+    expect(SystemPrompt.provider(claude, undefined, both).slice(-3)).toEqual([UNATTENDED, BACKGROUND_CODE, VOICE])
+    expect(SystemPrompt.bot(undefined, ctx)).toContain(BACKGROUND_CODE)
+  })
+
+  test("other values, or none, add no background-code block", () => {
+    for (const metadata of [undefined, {}, { run_kind: "interactive" }, { run_kind: true }]) {
+      const ctx = SystemPrompt.context("code", metadata as Record<string, unknown> | undefined)
+      expect(ctx.backgroundCode).toBeUndefined()
+      expect(SystemPrompt.provider(claude, undefined, ctx)).not.toContain(BACKGROUND_CODE)
+    }
+  })
+})
+
+describe("on-device addendum (PR11f)", () => {
+  const device = (id: string) => ({ api: { id }, providerID: ALLTERNIT_DEVICES_PROVIDER_ID })
+
+  test("the provider id matches discovery", () => {
+    expect(SystemPrompt.ON_DEVICE_PROVIDER_ID).toBe(ALLTERNIT_DEVICES_PROVIDER_ID)
+  })
+
+  test("a device model gets addendum-ondevice instead of addendum-open", () => {
+    for (const id of ["qwen3-4b", "llama-3.2-3b", "local-model"]) {
+      expect(SystemPrompt.family(device(id))).toBe("ondevice")
+      const parts = SystemPrompt.provider(device(id), undefined, { surface: "chat" })
+      expect(parts).toContain(ADDENDUM_ONDEVICE)
+      expect(parts).not.toContain(ADDENDUM_OPEN)
+    }
+    expect(SystemPrompt.family({ api: { id: "qwen3-4b" }, providerID: "ollama" })).toBe("open")
+  })
+})
+
+describe("voice-tags block from the voice_tags hint (PR9)", () => {
+  test("voice_tags on loads voice-tags right after the voice block", () => {
+    const ctx = SystemPrompt.context("chat", { reply_mode: "voice", voice_tags: "on", form_factor: "phone" })
+    expect(ctx.voiceTags).toBe(true)
+    expect(SystemPrompt.provider(claude, undefined, ctx).slice(-3)).toEqual([VOICE, VOICE_TAGS, PHONE])
+    expect(SystemPrompt.bot(undefined, ctx).slice(-3)).toEqual([VOICE, VOICE_TAGS, PHONE])
+  })
+
+  test("no tags without a spoken reply, without the hint, or with another value", () => {
+    for (const metadata of [{ voice_tags: "on" }, { reply_mode: "voice" }, { reply_mode: "voice", voice_tags: "off" }]) {
+      const ctx = SystemPrompt.context("chat", metadata)
+      expect(SystemPrompt.provider(claude, undefined, ctx)).not.toContain(VOICE_TAGS)
+    }
+    expect(SystemPrompt.VOICE_TAGS_KEY).toBe("voice_tags")
+  })
+})
+
+describe("memory-use block", () => {
+  test("follows the memory tools block when memory is on", () => {
+    const section = SystemPrompt.memorySection("# Memory\n\n- [Prefers tea](tea.md)")
+    expect(section).toContain(MEMORY_USE.trim())
+    expect(section.indexOf(MEMORY_USE.trim())).toBeGreaterThan(section.indexOf("## Memory tools"))
+    expect(section.endsWith(MEMORY_USE.trim())).toBe(true)
+  })
+
+  test("is left out when memory is off", () => {
+    const section = SystemPrompt.memorySection("")
+    expect(section).toContain("Persistent memory is turned off")
+    expect(section).not.toContain(MEMORY_USE.trim())
   })
 })
 
@@ -249,23 +413,103 @@ describe("effectiveSurface", () => {
 describe("byte caps (PLAN.md token budgets)", () => {
   const caps: [string, string, number][] = [
     ["base-chat", BASE_CHAT, 5_600],
-    ["capabilities", CAPABILITIES, 7_000],
+    ["capabilities", CAPABILITIES, 7_400],
     ["bot", BOT, 3_200],
     ["duet", DUET, 1_800],
     ["delegation", DELEGATION, 1_000],
     ["project-thread", PROJECT_THREAD, 1_300],
-    ["computer-use", COMPUTER_USE, 3_200],
-    ["safety", SAFETY, 1_800],
-    ["base-code", BASE_CODE, 10_800],
+    ["computer-use", COMPUTER_USE, 3_400],
+    ["care", CARE, 1_500],
+    ["safety", SAFETY, 2_900],
+    ["base-code", BASE_CODE, 11_200],
     ["addendum-gpt", ADDENDUM_GPT, 700],
     ["addendum-gemini", ADDENDUM_GEMINI, 700],
     ["addendum-open", ADDENDUM_OPEN, 700],
-    ["voice", VOICE, 1_300],
+    ["voice", VOICE, 2_000],
     ["phone", PHONE, 700],
+    ["unattended", UNATTENDED, 700],
+    ["memory-use", MEMORY_USE, 1_300],
+    ["mode-auto", MODE_AUTO, 700],
+    ["mode-ask", MODE_ASK, 400],
+    ["background-code", BACKGROUND_CODE, 700],
+    ["addendum-ondevice", ADDENDUM_ONDEVICE, 400],
+    ["voice-tags", VOICE_TAGS, 300],
   ]
   for (const [name, text, cap] of caps) {
     test(`${name} ≤ ${cap} bytes`, () => {
       expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(cap)
+    })
+  }
+})
+
+// Tool texts tracked on main before G1 (they have no cap).
+const KNOWN_TOOL_TEXTS = [
+  "agent-batch.txt",
+  "agent-communicate.txt",
+  "agent-control.txt",
+  "apply_patch.txt",
+  "artifact-check.txt",
+  "artifact-claim.txt",
+  "artifact-create.txt",
+  "artifact-read.txt",
+  "artifact-release.txt",
+  "artifact-suggest.txt",
+  "artifact-update.txt",
+  "ask-user-later.txt",
+  "automation.txt",
+  "bash.txt",
+  "batch.txt",
+  "browser-tasks.txt",
+  "capture-screen-context.txt",
+  "codesearch.txt",
+  "connector-search.txt",
+  "connector-suggest.txt",
+  "context-remaining.txt",
+  "current-time.txt",
+  "edit.txt",
+  "folder-access.txt",
+  "glob.txt",
+  "grep.txt",
+  "history-recall.txt",
+  "lookup.txt",
+  "ls.txt",
+  "lsp.txt",
+  "media-generate.txt",
+  "memory-list.txt",
+  "memory-recall.txt",
+  "memory-write.txt",
+  "multiedit.txt",
+  "pane-artifact.txt",
+  "pane-browser.txt",
+  "plan-enter.txt",
+  "plan-exit.txt",
+  "project-status.txt",
+  "question.txt",
+  "read.txt",
+  "resource.txt",
+  "run_code.txt",
+  "send-user-message.txt",
+  "settings.txt",
+  "sleep.txt",
+  "symbol-edit.txt",
+  "task.txt",
+  "thread-read.txt",
+  "todoread.txt",
+  "todowrite.txt",
+  "tool-search.txt",
+  "wait-agents.txt",
+  "webfetch.txt",
+  "websearch.txt",
+  "write.txt",
+]
+
+describe("new tool texts (G1 rule)", () => {
+  // Tool texts that exist on main are exempt; any other builtin .txt is new and must stay small.
+  const EXISTING = new Set<string>(KNOWN_TOOL_TEXTS)
+  const dir = path.join(import.meta.dir, "../../src/runtime/tools/builtins")
+  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".txt") && !EXISTING.has(n))) {
+    test(`${name} ≤ 900 bytes`, () => {
+      expect(fs.statSync(path.join(dir, name)).size).toBeLessThanOrEqual(900)
     })
   }
 })
@@ -294,9 +538,9 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
     }
   })
 
-  test("bot order: mode, bot, duet, delegation, project-thread, capabilities, safety, computer-use, voice, phone", () => {
+  test("bot order: mode, bot, duet, delegation, project-thread, capabilities, safety, care, computer-use, voice, phone", () => {
     const parts = SystemPrompt.bot("plan", { surface: "chat", replyMode: "voice", formFactor: "phone", ...all })
-    expect(parts).toEqual([PLAN_MODE, BOT, DUET, DELEGATION, PROJECT_THREAD, CAPABILITIES, SAFETY, COMPUTER_USE, VOICE, PHONE])
+    expect(parts).toEqual([PLAN_MODE, BOT, DUET, DELEGATION, PROJECT_THREAD, CAPABILITIES, SAFETY, CARE, COMPUTER_USE, VOICE, PHONE])
     // Code surface: the same order with no capabilities.
     expect(SystemPrompt.bot(undefined, { surface: "code", ...all })).toEqual([
       BOT,
@@ -304,16 +548,17 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
       DELEGATION,
       PROJECT_THREAD,
       SAFETY,
+      CARE,
       COMPUTER_USE,
     ])
   })
 
   test("each flag adds exactly its own block on a bot turn", () => {
     const cases: [keyof typeof all, string, string[]][] = [
-      ["appBot", DUET, [BOT, DUET, CAPABILITIES, SAFETY]],
-      ["projectSend", DELEGATION, [BOT, DELEGATION, CAPABILITIES, SAFETY]],
-      ["projectThread", PROJECT_THREAD, [BOT, PROJECT_THREAD, CAPABILITIES, SAFETY]],
-      ["computerUse", COMPUTER_USE, [BOT, CAPABILITIES, SAFETY, COMPUTER_USE]],
+      ["appBot", DUET, [BOT, DUET, CAPABILITIES, SAFETY, CARE]],
+      ["projectSend", DELEGATION, [BOT, DELEGATION, CAPABILITIES, SAFETY, CARE]],
+      ["projectThread", PROJECT_THREAD, [BOT, PROJECT_THREAD, CAPABILITIES, SAFETY, CARE]],
+      ["computerUse", COMPUTER_USE, [BOT, CAPABILITIES, SAFETY, CARE, COMPUTER_USE]],
     ]
     for (const [flag, block, expected] of cases) {
       const parts = SystemPrompt.bot(undefined, { surface: "chat", [flag]: true } as SystemPrompt.PromptContext)
@@ -322,14 +567,14 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
     }
   })
 
-  test("normal order: base, capabilities, safety, addendum, mode, project-thread, computer-use, voice, phone", () => {
+  test("normal order: base, capabilities, safety, care, addendum, mode, project-thread, computer-use, voice, phone", () => {
     const parts = SystemPrompt.provider(model("gpt-5.1"), "plan", {
       surface: "chat",
       replyMode: "voice",
       formFactor: "phone",
       ...all,
     })
-    expect(parts).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, ADDENDUM_GPT, PLAN_MODE, PROJECT_THREAD, COMPUTER_USE, VOICE, PHONE])
+    expect(parts).toEqual([BASE_CHAT, CAPABILITIES, SAFETY, CARE, ADDENDUM_GPT, PLAN_MODE, PROJECT_THREAD, COMPUTER_USE, VOICE, PHONE])
     expect(SystemPrompt.provider(claude, undefined, { projectThread: true })).toEqual([BASE_CODE, SAFETY, PROJECT_THREAD])
     expect(SystemPrompt.provider(claude, undefined, { computerUse: true })).toEqual([BASE_CODE, SAFETY, COMPUTER_USE])
   })
@@ -374,7 +619,7 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
     expect(thread(undefined, { project_role: "lead" })).toBeUndefined()
   })
 
-  test("bot main chat on a chat surface, with computer use, stays within 18,000 bytes", () => {
+  test("bot main chat on a chat surface, with computer use, stays within 21,000 bytes", () => {
     // A main chat: suggestions, project sending and pane_browser (on every app session); not a project thread.
     const ctx = SystemPrompt.context("chat", {}, {
       toolIds: ["suggest_task", "grant_task_permission", "thread_update", "project_list", "project_send", "pane_browser"],
@@ -383,7 +628,7 @@ describe("bot blocks by tool signal (PLAN-bots.md selection)", () => {
     expect(ctx).toMatchObject({ appBot: true, projectSend: true, computerUse: true })
     expect(ctx.projectThread).toBeUndefined()
     const parts = SystemPrompt.bot(undefined, ctx)
-    expect(parts).toEqual([BOT, DUET, DELEGATION, CAPABILITIES, SAFETY, COMPUTER_USE])
-    expect(Buffer.byteLength(parts.join("\n\n"), "utf8")).toBeLessThanOrEqual(18_000)
+    expect(parts).toEqual([BOT, DUET, DELEGATION, CAPABILITIES, SAFETY, CARE, COMPUTER_USE])
+    expect(Buffer.byteLength(parts.join("\n\n"), "utf8")).toBeLessThanOrEqual(21_000)
   })
 })

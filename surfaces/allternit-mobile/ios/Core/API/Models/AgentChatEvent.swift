@@ -59,6 +59,10 @@ enum AgentChatEvent: Decodable, Sendable {
     /// `error` comes from `metadata.error` (v1_routes.rs:267-309).
     case finish(Finish)
 
+    /// `{"type":"session_status","status":{"type":"busy","phase","note"}}`:
+    /// the run's one-line status. `busy == false` (idle) clears it.
+    case sessionStatus(SessionStatus)
+
     /// Non-terminal error (`{"type":"error"}` or `chunk_type:"error"`).
     /// Note: the web surfaces `chunk_type:"error"` chunks as plain message
     /// text via its blanket `onChunk` call; we map them here instead (see
@@ -80,8 +84,19 @@ enum AgentChatEvent: Decodable, Sendable {
     /// The tool calls rail draws Deny / Allow on the matching tool row.
     case permissionAsked(AgentPermissionAsk)
 
+    /// `{"type":"control",language?,speed?,reply_mode?,end_call?}`: a voice_control
+    /// tool part asked the voice session to change.
+    case control(VoiceControl)
+
     /// Known-but-unrendered or unknown frame — parser tolerance.
     case ignored
+
+    struct VoiceControl: Sendable, Equatable {
+        var language: String? = nil
+        var speed: Double? = nil
+        var replyMode: String? = nil
+        var endCall: Bool = false
+    }
 
     struct MessageStart: Decodable, Sendable {
         let messageId: String?
@@ -112,6 +127,10 @@ enum AgentChatEvent: Decodable, Sendable {
         var automation: AgentAutomationResult? = nil
         /// lookup: the answer card from the tool part's `metadata.card`.
         var lookupCard: AnswerCardEnvelope? = nil
+        /// worktree_enter/exit, second_opinion, pr_comments, status_update,
+        /// feedback_note, user_location, voice_control, end_conversation:
+        /// the tool part's `metadata` (gizzi runtime/primitives/gap-types.ts).
+        var gap: GapToolMetadata? = nil
         /// The tool part's `metadata` object as raw JSON text (connector_suggest
         /// and settings cards ride there; v1_routes.rs METADATA_CARD_TOOLS).
         var metadata: String? = nil
@@ -121,6 +140,17 @@ enum AgentChatEvent: Decodable, Sendable {
         let toolCallId: String
         let toolName: String
         var detail: ToolDetail? = nil
+    }
+
+    struct SessionStatus: Sendable, Equatable {
+        var busy: Bool
+        var phase: String? = nil
+        var note: String? = nil
+        /// "phase - note", or nil when neither is set.
+        var line: String? {
+            let text = [phase, note].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " \u{2014} ")
+            return text.isEmpty ? nil : text
+        }
     }
 
     struct ToolResult: Sendable {
@@ -151,6 +181,22 @@ enum AgentChatEvent: Decodable, Sendable {
             let status: String?
             let error: String?
             let errorDetails: ErrorDetails?
+            /// Memories the reply used or changed. The v1 stream does not send
+            /// this today (history does); decoded so a frame that carries it
+            /// shows the chip live. A bad entry is dropped, never the frame.
+            let memoryRefs: [MemoryRef]?
+
+            private enum CodingKeys: String, CodingKey {
+                case status, error, errorDetails, memoryRefs
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                status = try? c.decodeIfPresent(String.self, forKey: .status)
+                error = try? c.decodeIfPresent(String.self, forKey: .error)
+                errorDetails = try? c.decodeIfPresent(ErrorDetails.self, forKey: .errorDetails)
+                memoryRefs = (try? c.decodeIfPresent(LossyArray<MemoryRef>.self, forKey: .memoryRefs))??.elements
+            }
         }
 
         let messageId: String?
@@ -309,9 +355,21 @@ enum AgentChatEvent: Decodable, Sendable {
             let lookupCard = toolName == LookupToolMetadata.toolName
                 ? ((try? container.decodeIfPresent(LookupToolMetadata.self, forKey: .metadata)) ?? nil)?.card
                 : nil
+            // Gap tools: the `*Metadata` object (all fields optional).
+            let gap = GapToolMetadata.isGapTool(toolName)
+                ? ((try? container.decodeIfPresent(GapToolMetadata.self, forKey: .metadata)) ?? nil)
+                : nil
+            // `metadata.label`: the model's own short title for this call.
+            struct LabelMeta: Decodable { let label: String? }
+            let label = ((try? container.decodeIfPresent(LabelMeta.self, forKey: .metadata)) ?? nil)?.label?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             var detail: ToolDetail? = nil
-            if userMessage != nil || automation != nil || lookupCard != nil {
-                detail = ToolDetail(userMessage: userMessage, automation: automation, lookupCard: lookupCard)
+            if userMessage != nil || automation != nil || lookupCard != nil || gap != nil {
+                detail = ToolDetail(userMessage: userMessage, automation: automation, lookupCard: lookupCard, gap: gap)
+            }
+            if let label, !label.isEmpty {
+                detail = detail ?? ToolDetail()
+                detail?.title = label
             }
             if Self.resultCardTools.contains(toolName),
                let result = (try? container.decodeIfPresent(String.self, forKey: .result)) ?? nil {
@@ -343,6 +401,25 @@ enum AgentChatEvent: Decodable, Sendable {
                 toolName: try container.decodeIfPresent(String.self, forKey: .toolName),
                 error: try container.decodeIfPresent(String.self, forKey: .error) ?? "Tool execution failed"
             ))
+
+        case "session_status":
+            struct StatusBody: Decodable { let type: String?; let phase: String?; let note: String? }
+            let body = (try? container.decodeIfPresent(StatusBody.self, forKey: .status)) ?? nil
+            self = .sessionStatus(SessionStatus(
+                busy: body?.type == "busy",
+                phase: body?.phase,
+                note: body?.note
+            ))
+
+        case "control":
+            struct ControlBody: Decodable {
+                let language: String?; let speed: Double?
+                let replyMode: String?; let endCall: Bool?
+                enum CodingKeys: String, CodingKey { case language, speed, replyMode = "reply_mode", endCall = "end_call" }
+            }
+            let body = try ControlBody(from: decoder)
+            self = .control(VoiceControl(language: body.language, speed: body.speed,
+                                         replyMode: body.replyMode, endCall: body.endCall ?? false))
 
         case "finish":
             self = .finish(try Finish(from: decoder))
@@ -721,4 +798,149 @@ struct AgentSettingsResult: Equatable, Sendable {
         "account.password": "Password",
         "account.keys": "API keys",
     ]
+}
+
+// MARK: - Gap tools (worktree, second opinion, PR comments, status, feedback, location, voice, end chat)
+
+/// The result `metadata` of the nine prompt-gap tools, one union of the
+/// `*Metadata` schemas in gizzi runtime/primitives/gap-types.ts. Every field
+/// is optional, so a runtime that sends fewer fields still decodes. G4-G7
+/// fill in the cards that read it.
+struct PrCommentItem: Decodable, Equatable, Sendable {
+    var id: String? = nil
+    var author: String? = nil
+    var body: String? = nil
+    var path: String? = nil
+    var line: Int? = nil
+}
+
+struct GapToolMetadata: Decodable, Equatable, Sendable {
+    static let worktreeEnter = "worktree_enter"
+    static let worktreeExit = "worktree_exit"
+    static let secondOpinion = "second_opinion"
+    static let prComments = "pr_comments"
+    static let statusUpdate = "status_update"
+    static let feedbackNote = "feedback_note"
+    static let userLocation = "user_location"
+    static let voiceControl = "voice_control"
+    static let endConversation = "end_conversation"
+
+    static let toolNames: Set<String> = [
+        worktreeEnter, worktreeExit, secondOpinion, prComments, statusUpdate,
+        feedbackNote, userLocation, voiceControl, endConversation,
+    ]
+
+    static func isGapTool(_ name: String) -> Bool { toolNames.contains(name) }
+
+    /// Reads the raw metadata JSON text (the record keeps it for every tool).
+    static func decode(toolName: String, json: String?) -> GapToolMetadata? {
+        guard isGapTool(toolName), let data = json?.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(GapToolMetadata.self, from: data)
+    }
+
+    var ok: Bool? = nil
+    /// worktree_enter / worktree_exit / pr_comments / voice_control.
+    var action: String? = nil
+    var path: String? = nil
+    var branch: String? = nil
+    var base: String? = nil
+    var createdBy: String? = nil
+    /// worktree_exit: "kept", "removed" or "refused".
+    var result: String? = nil
+    /// worktree_exit / end_conversation: why.
+    var reason: String? = nil
+    /// second_opinion ("plan" | "diff") and feedback_note ("bug" | ...).
+    var kind: String? = nil
+    /// second_opinion: "agree", "concerns" or "disagree".
+    var verdict: String? = nil
+    var reasons: [String]? = nil
+    var tier: String? = nil
+    /// pr_comments.
+    var pr: Int? = nil
+    var url: String? = nil
+    var commentCount: Int? = nil
+    var comments: [PrCommentItem]? = nil
+    var replyId: String? = nil
+    /// status_update.
+    var phase: String? = nil
+    var note: String? = nil
+    var at: Double? = nil
+    /// feedback_note.
+    var noteId: String? = nil
+    /// feedback_note: the one-line summary and when it was saved (ms).
+    var summary: String? = nil
+    var createdAt: Double? = nil
+    /// user_location.
+    var precision: String? = nil
+    var status: String? = nil
+    var city: String? = nil
+    var region: String? = nil
+    var country: String? = nil
+    var timeZone: String? = nil
+    var latitude: Double? = nil
+    var longitude: Double? = nil
+    var accuracy: Double? = nil
+    /// voice_control.
+    var language: String? = nil
+    var speed: Double? = nil
+    var replyMode: String? = nil
+    /// end_conversation.
+    var ended: Bool? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case ok, action, path, branch, base, result, reason, kind, verdict, reasons, tier
+        case pr, url, comments, phase, note, at, precision, status, city, region, country
+        case latitude, longitude, accuracy, language, speed, ended, summary
+        case createdAt = "created_at"
+        case createdBy = "created_by"
+        case replyId = "reply_id"
+        case noteId = "note_id"
+        case timeZone = "time_zone"
+        case replyMode = "reply_mode"
+    }
+
+    private struct Ignored: Decodable {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func opt<T: Decodable>(_ type: T.Type, _ key: CodingKeys) -> T? {
+            (try? c.decodeIfPresent(type, forKey: key)) ?? nil
+        }
+        ok = opt(Bool.self, .ok)
+        action = opt(String.self, .action)
+        path = opt(String.self, .path)
+        branch = opt(String.self, .branch)
+        base = opt(String.self, .base)
+        createdBy = opt(String.self, .createdBy)
+        result = opt(String.self, .result)
+        reason = opt(String.self, .reason)
+        kind = opt(String.self, .kind)
+        verdict = opt(String.self, .verdict)
+        reasons = opt([String].self, .reasons)
+        tier = opt(String.self, .tier)
+        pr = opt(Int.self, .pr)
+        url = opt(String.self, .url)
+        comments = opt([PrCommentItem].self, .comments)
+        commentCount = comments?.count
+        replyId = opt(String.self, .replyId)
+        phase = opt(String.self, .phase)
+        note = opt(String.self, .note)
+        at = opt(Double.self, .at)
+        noteId = opt(String.self, .noteId)
+        summary = opt(String.self, .summary)
+        createdAt = opt(Double.self, .createdAt)
+        precision = opt(String.self, .precision)
+        status = opt(String.self, .status)
+        city = opt(String.self, .city)
+        region = opt(String.self, .region)
+        country = opt(String.self, .country)
+        timeZone = opt(String.self, .timeZone)
+        latitude = opt(Double.self, .latitude)
+        longitude = opt(Double.self, .longitude)
+        accuracy = opt(Double.self, .accuracy)
+        language = opt(String.self, .language)
+        speed = opt(Double.self, .speed)
+        replyMode = opt(String.self, .replyMode)
+        ended = opt(Bool.self, .ended)
+    }
 }

@@ -34,7 +34,7 @@ app-specific passwords into this file.
 | CI secret names (mac) | `APPLE_ID`, `APPLE_ID_PASSWORD`, `APPLE_TEAM_ID` |
 | Windows publisher placeholder | `build.win.signtoolOptions.publisherName`: `Allternit` |
 | Linux metadata | maintainer `Allternit <support@allternit.com>`, vendor `Allternit`, AppImage + deb targets |
-| Auto-update feed (runtime) | `updateElectronApp({ repo: 'allternit/desktop' })` in `src/main/unified-main.ts` |
+| Auto-update feed (runtime) | electron-updater on every OS, `Allternit/desktop` (`src/main/app-updater-logic.ts`, matches `build.publish`) |
 
 **Known mismatch to fix before first signed release:** `package.json` `build.publish` still says `Allternit/desktop`. Runtime + `src/main/manifest.ts` use `allternit/desktop`. Pick one GitHub repo and make publish + updater + README agree.
 

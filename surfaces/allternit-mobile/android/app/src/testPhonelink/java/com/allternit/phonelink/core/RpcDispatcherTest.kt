@@ -114,6 +114,7 @@ class RpcDispatcherTest {
         assertTrue(src, src.contains("EditText, id: 'com.openai.chatgpt:id/composer', {{20, 1400}, {580, 80}}, hint: 'Message', clickable editable"))
         assertTrue(src.startsWith("Window(application)"))
         assertEquals("pixels", r.getString("coordinate_space"))
+        assertEquals("com.openai.chatgpt.MainActivity", r.getString("activity"))
         assertFalse(r.has("nodes"))
     }
 
@@ -127,6 +128,8 @@ class RpcDispatcherTest {
         val structured = call("page_source", JSONObject().put("structured", true)).getJSONArray("nodes")
         assertEquals(FakeDeviceOps.defaultTree().size, structured.length())
         assertTrue(structured.getJSONObject(4).getString("ref").isNotEmpty())
+        assertFalse(structured.getJSONObject(4).getBoolean("checkable"))
+        assertTrue(structured.getJSONObject(3).getBoolean("editable"))
         val capped = call("page_source", JSONObject().put("max_elements", 2))
         assertTrue(capped.getBoolean("truncated"))
     }

@@ -4,7 +4,7 @@ When a session gets long, older messages are compacted into a summary, and a ses
 
 Actions:
 - windows: list the earlier stretches of history you can read (compacted parts of this session, and earlier sessions this one continues), newest first, each with a short summary.
-- search: find messages that contain `query`. Pass `window_id` to search one window only.
+- search: find messages that contain `query`. Pass `window_id` to search one window only. Use the literal words you need (an error, a file name, the user's own term), not words like "discussed".
 - read: read one window (`window_id`), or one message in it (`item_id`). A read returns at most 8,000 characters; read single messages to get more detail.
 
 `limit` caps windows and search results (at most 20). It reads only this conversation and the sessions it continues.

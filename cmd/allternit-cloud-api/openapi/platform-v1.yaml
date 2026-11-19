@@ -1941,6 +1941,40 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PhoneRunStarted" }
         default: { $ref: "#/components/responses/Error" }
+  /v1/phones/maps:
+    get:
+      operationId: listPhoneMaps
+      summary: List learned App Maps
+      description: One summary per app Allternit has mapped on the owner's Desktop (read only; exploring and forgetting a map stay on the Desktop, web, app and Gizzi). Errors 503 `phone_desktop_offline` while the Desktop is offline, 404 `no_desktop` when none is paired.
+      tags: [Phones]
+      parameters:
+        - { name: serial, in: query, schema: { type: string }, description: "Picks the Desktop that serves this phone." }
+        - { name: platform, in: query, schema: { type: string, enum: [android, ios] } }
+      responses:
+        "200":
+          description: The map summaries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneMapList" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/phones/maps/{app}:
+    parameters:
+      - { name: app, in: path, required: true, schema: { type: string, maxLength: 200 }, description: "Package or bundle id, e.g. com.android.settings." }
+    get:
+      operationId: getPhoneMap
+      summary: One app's map
+      description: The map file for one app. Errors 404 `map_not_found` (nothing learned yet), 403 `money_app` (money apps are never mapped), 503 `phone_desktop_offline`, 404 `no_desktop`.
+      tags: [Phones]
+      parameters:
+        - { name: serial, in: query, schema: { type: string }, description: "Picks the Desktop that serves this phone." }
+        - { name: platform, in: query, schema: { type: string, enum: [android, ios] }, description: "Default: whichever exists, android first." }
+      responses:
+        "200":
+          description: The map.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneMapResult" }
+        default: { $ref: "#/components/responses/Error" }
   /v1/phones/{serial}/history:
     parameters:
       - { name: serial, in: path, required: true, schema: { type: string }, description: "From GET /v1/phones (URL-encode it: serials contain colons)." }
@@ -2020,6 +2054,7 @@ paths:
                 max_steps: { type: integer, minimum: 1, maximum: 40, default: 15 }
                 bot_id: { type: string }
                 brain: { type: string, description: "provider/model" }
+                vision: { type: string, enum: [auto, always], description: "auto (default) skips the screenshot when the screen text is rich; always looks at it every step." }
       responses:
         "202":
           description: Running.
@@ -3235,6 +3270,38 @@ components:
         data: { type: array, items: { $ref: "#/components/schemas/Phone" } }
         has_more: { type: boolean }
         next_cursor: { type: [string, "null"] }
+    PhoneMapSummary:
+      type: object
+      properties:
+        app: { type: string }
+        platform: { type: string, enum: [android, ios] }
+        app_version: { type: string }
+        name: { type: string, description: "App label when known, else the package." }
+        screens: { type: integer }
+        edges: { type: integer }
+        routable_edges: { type: integer }
+        stale_edges: { type: integer }
+        truncated: { type: [object, "null"], additionalProperties: true }
+        last_seen: { type: string, format: date-time }
+    PhoneMapList:
+      type: object
+      properties:
+        ok: { type: boolean }
+        maps: { type: array, items: { $ref: "#/components/schemas/PhoneMapSummary" } }
+    PhoneMapResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        map:
+          type: object
+          additionalProperties: true
+          description: "The map file: `version`, `fp_version`, `platform`, `app`, `app_version`, `truncated`, `screens` (id to screen), `edges`."
+          properties:
+            platform: { type: string, enum: [android, ios] }
+            app: { type: string }
+            app_version: { type: string }
+            screens: { type: object, additionalProperties: true }
+            edges: { type: array, items: { type: object, additionalProperties: true } }
     PhoneSkillList:
       type: object
       properties:

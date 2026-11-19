@@ -16,6 +16,20 @@ import { MessageResponse } from '../MessageResponse';
 import { MessageActionsSelectedContext } from '../messageActions';
 import { RateLimitMessage } from './RateLimitMessage';
 const MAX_API_ERROR_CHARS = 1000;
+const CITE_RE = /\[\[cite:([^\]\s#]+)#L(\d+)(?:-L?(\d+))?\]\]/g;
+/** Turns [[cite:<ref>#L10-20]] tokens into a short dim-style `name:L10-20`. */
+export function formatCitations(text: string, names?: Record<string, string>): string {
+  return text.replace(CITE_RE, (_m, ref: string, a: string, b?: string) => {
+    const known = names?.[ref];
+    const short = known ?? (ref.length > 24 ? '\u2026' + ref.slice(-20) : ref);
+    return `${short}:L${a}${b ? `-${b}` : ''}`;
+  });
+}
+/** Dim footer line for assistant messages that used memory. */
+export function MemoryRefsLine({ count }: { count: number }) {
+  if (!count) return null;
+  return <Text dimColor={true}>used memory ({count})</Text>;
+}
 type Props = {
   param: TextBlockParam;
   addMargin: boolean;
@@ -133,7 +147,7 @@ export function AssistantTextMessage({
         const t3 = isSelected ? "messageActionsBackground" : undefined;
         const t4 = shouldShowDot && <NoSelect fromLeftEdge={true} minWidth={2}><Text color={isSelected ? "suggestion" : "text"}>{BLACK_CIRCLE}</Text></NoSelect>;
 
-        const t5 = <Box flexDirection="column"><Markdown>{text}</Markdown></Box>;
+        const t5 = <Box flexDirection="column"><Markdown>{formatCitations(text)}</Markdown></Box>;
 
         const t6 = <Box flexDirection="row">{t4}{t5}</Box>;
 

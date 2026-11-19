@@ -30,7 +30,7 @@ use tracing::warn;
 use crate::auth::AuthUser;
 use crate::AppState;
 
-const SUPPORTED_STYLES: [&str; 4] = ["concise", "balanced", "detailed", "custom"];
+const SUPPORTED_STYLES: [&str; 5] = ["concise", "balanced", "detailed", "learning", "custom"];
 
 pub fn agent_preferences_router() -> Router<Arc<AppState>> {
     Router::new()
@@ -1169,7 +1169,7 @@ mod profile_tests {
 
     #[test]
     fn style_md_carries_the_answer_shape_length_rule() {
-        for style in ["concise", "balanced", "detailed"] {
+        for style in ["concise", "balanced", "detailed", "learning"] {
             let md = render_style_md(style, "", &UserProfile::default(), &WritingStyle::default());
             assert!(md.contains(crate::answer_shapes::length_rule(style)), "{style}");
             assert!(md.contains("answer shapes"));

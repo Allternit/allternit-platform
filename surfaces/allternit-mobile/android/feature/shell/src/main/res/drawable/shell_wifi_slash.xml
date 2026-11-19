@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Native shell glyph (step 7c-2, iOS parity), drawn as Phosphor-style strokes on a 24 grid. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4,4L20,20 M2.5,9a14,14 0 0,1 5,-2.8 M12.5,5.6a14,14 0 0,1 9,3.4 M5.5,12.3a9,9 0 0,1 4,-2 M16,10.7a9,9 0 0,1 2.5,1.6 M8.7,15.5a5,5 0 0,1 4.5,-1.2 M12,19.2V19.3" />
+</vector>

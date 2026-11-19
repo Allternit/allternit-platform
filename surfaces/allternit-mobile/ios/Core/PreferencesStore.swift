@@ -4,7 +4,7 @@ import SwiftUI
 /// (agent_preferences_routes.rs — the raw values are the wire contract;
 /// the backend 400s anything outside this set).
 enum ResponseStyle: String, CaseIterable, Sendable {
-    case concise, balanced, detailed, custom
+    case concise, balanced, detailed, custom, learning
 
     var label: String {
         switch self {
@@ -12,6 +12,7 @@ enum ResponseStyle: String, CaseIterable, Sendable {
         case .balanced: return "Balanced"
         case .detailed: return "Detailed"
         case .custom: return "Custom"
+        case .learning: return "Learning"
         }
     }
 
@@ -28,6 +29,8 @@ enum ResponseStyle: String, CaseIterable, Sendable {
             return "Response style: give thorough, detailed responses — full context, reasoning, and examples where they help."
         case .custom:
             return nil
+        case .learning:
+            return "Response style: The person wants to learn, not only get the answer. Give a little context, then ask one guiding question per turn. Let them try; after two or three wrong tries, or when they ask, give the answer and explain it. Show the reasoning before any verdict. Praise good method plainly, with no superlatives. If they drift off task, steer back gently."
         }
     }
 }

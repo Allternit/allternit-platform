@@ -9,6 +9,7 @@ To generate a graph deterministically, call the `mdx_graph` tool with the graph 
 - Only use mdx-graphs components when they genuinely make the data clearer.
 - If the file includes any mdx-graphs JSX component, save it with the `.mdx` extension, not `.md`.
 - Use the exact component names and props shown below.
+- Keep inline visuals sparse: few boxes, short labels, two colours, readable on a phone. The explanation stays in your reply.
 
 ## Available components
 

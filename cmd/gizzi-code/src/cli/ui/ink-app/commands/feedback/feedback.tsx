@@ -19,7 +19,13 @@ export function renderFeedbackComponent(onDone: (result?: string, options?: {
 } = {}): React.ReactNode {
   return <Feedback abortSignal={abortSignal} messages={messages} initialDescription={initialDescription} onDone={onDone} backgroundTasks={backgroundTasks} />;
 }
+import { runNotesCommand } from './notes';
 export async function call(onDone: LocalJSXCommandOnDone, context: LocalJSXCommandContext, args?: string): Promise<React.ReactNode> {
+  const sub = (args || '').trim().match(/^notes?(?:\s+(.*))?$/i);
+  if (sub) {
+    onDone(await runNotesCommand(sub[1] ?? ''), { display: 'system' });
+    return null;
+  }
   const initialDescription = args || '';
   return renderFeedbackComponent(onDone, context.abortController.signal, context.messages, initialDescription);
 }

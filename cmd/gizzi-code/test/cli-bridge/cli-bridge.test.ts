@@ -58,6 +58,12 @@ describe("CliBridge MCP server", () => {
       "connector_search",
       "connector_suggest",
       "settings",
+      "second_opinion",
+      "status_update",
+      "feedback_note",
+      "user_location",
+      "voice_control",
+      "end_conversation",
       "question",
     ])
     // Screen and browser tasks need the app (see CliBridge.TOOLS).

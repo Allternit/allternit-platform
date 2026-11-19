@@ -311,7 +311,7 @@ export const PHONE_TOOLS = [
   },
   {
     name: 'phone.read_ui',
-    description: 'Read the screen as text: one line per element (class, label, id, bounds). On Phone-Linked phones it uses the helper\'s own read; on Android it parses the accessibility dump; on a USB-Agent iPhone use phone.screenshot instead.',
+    description: 'Read the screen as text: one line per element (class, label, id, bounds). Also returns app, activity and nodes[] (structured elements with clickable/scrollable/checkable/editable/password/focused flags). On Phone-Linked phones it uses the helper\'s own read; on Android it parses the accessibility dump; on a USB-Agent iPhone use phone.screenshot instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -319,6 +319,8 @@ export const PHONE_TOOLS = [
         filter: { type: 'object', properties: { label: { type: 'string' }, type: { type: 'string' } }, additionalProperties: false },
         visible_only: { type: 'boolean' },
         max_elements: { type: 'integer', minimum: 1, maximum: 1000 },
+        with_activity: { type: 'boolean', description: 'Android over adb: also look up the focused activity (one extra adb call). Otherwise activity is null.' },
+        with_version: { type: 'boolean', description: 'Android over adb: also look up the foreground app\'s versionName as app_version (one extra adb call).' },
       },
       additionalProperties: false,
     },
@@ -398,6 +400,7 @@ export const PHONE_TOOLS = [
         bot_id: { type: 'string', maxLength: 200, description: 'Your bot id: the task runs on your brain.' },
         brain: { type: 'string', maxLength: 200, description: 'A brain as provider/model, when bot_id is not known.' },
         model: { enum: ['Flash', 'Pro'], description: 'Only for the ARTEMIS fallback (Android over adb with GEMINI_API_KEY).' },
+        vision: { enum: ['auto', 'always'], description: 'Screenshot policy. auto (default) skips the screenshot when the screen tree is rich; always sends one every step.' },
       },
       required: ['task'],
       additionalProperties: false,
@@ -545,6 +548,16 @@ export const PHONE_TOOLS = [
     },
   },
   {
+    name: 'phone.calendar.delete',
+    description: 'iPhone with the Allternit app only: delete one calendar event by id (get the id from phone.calendar.list). The person always approves on the Desktop screen first. Device Access > Calendar must be on and the app open on the phone.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, id: { type: 'string', minLength: 1, maxLength: 200, description: 'Event id from phone.calendar.list.' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'phone.reminders.list',
     description: 'iPhone with the Allternit app only: list reminders (Device Access > Reminders must be on and the app open). Returns reminders [{id, title, due?, completed, list}].',
     inputSchema: {
@@ -565,6 +578,32 @@ export const PHONE_TOOLS = [
         notes: { type: 'string', maxLength: 2000 },
       },
       required: ['title'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.reminders.update',
+    description: 'iPhone with the Allternit app only: change one reminder by id (get the id from phone.reminders.list): title, due time, done or not, notes. Send only the fields to change. The person always approves on the Desktop screen first. Device Access > Reminders must be on and the app open.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: appSerialProp,
+        id: { type: 'string', minLength: 1, maxLength: 200, description: 'Reminder id from phone.reminders.list.' },
+        title: { type: 'string', minLength: 1, maxLength: 200 },
+        due: { type: 'string', maxLength: 40, description: 'ISO 8601.' },
+        completed: { type: 'boolean' },
+        notes: { type: 'string', maxLength: 2000 },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.location.get',
+    description: 'iPhone with the Allternit app only: get where the phone is. Use approximate (the default) unless distance truly matters; precise asks the person on the phone each time. Device Access > Location must be on and the app open. Never save a location to memory.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: appSerialProp, precision: { type: 'string', enum: ['approximate', 'precise'] } },
       additionalProperties: false,
     },
   },
@@ -653,6 +692,32 @@ export const PHONE_TOOLS = [
       type: 'object',
       properties: { serial: iphoneSerialProp, route: routeProp, id: { type: 'string', minLength: 1, maxLength: 200 } },
       required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.maps',
+    description:
+      'Read the app maps Explore has learned (screens, and the taps that lead between them). Without app: a summary per mapped app. With app (package name): that app\'s full map. Read only; never touches the phone.',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: { type: 'string', maxLength: 128 }, app: { type: 'string', maxLength: 200 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'phone.explore_app',
+    description:
+      'Start an Explore run that maps one app: it opens the app and walks its screens depth first, recording where each tap leads, then returns run_id at once. Android only. It never taps switches, text fields, or anything that pays, sends or deletes, and money apps are refused (money_app). One Explore per phone, and it needs a phone with no task or skill running (explore_running, phone_busy). Stop it with the run\'s stop (POST /api/aci/stop/<run_id>). Read the result with phone.maps.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        serial: { type: 'string', maxLength: 128 },
+        app: { type: 'string', maxLength: 200 },
+        minutes: { type: 'integer', minimum: 1, maximum: 30, default: 10 },
+        max_screens: { type: 'integer', minimum: 1, maximum: 300, default: 60 },
+      },
+      required: ['app'],
       additionalProperties: false,
     },
   },
@@ -828,7 +893,29 @@ function unescapeXml(value: string): string {
 
 /** uiautomator dump XML (binary-clean, from `exec-out … /dev/tty`) → elements. */
 export function parseUiDump(xml: string): UiElement[] {
-  const out: UiElement[] = [];
+  return parseUiDumpNodes(xml).map((n) => n.el);
+}
+
+/** A structured read_ui node (contract §1), before the index is assigned. */
+export interface UiNode {
+  index: number;
+  class: string;
+  label: string;
+  resource_id: string;
+  bounds: [number, number, number, number];
+  clickable: boolean;
+  scrollable: boolean;
+  checkable: boolean;
+  editable: boolean;
+  password: boolean;
+  focused: boolean;
+}
+
+type UiNodeFlags = Omit<UiNode, 'index' | 'class' | 'label' | 'resource_id' | 'bounds'>;
+
+/** Same walk as parseUiDump, with the flags and the root package kept (for read_ui nodes and app). */
+export function parseUiDumpNodes(xml: string): { el: UiElement; flags: UiNodeFlags; package: string }[] {
+  const out: { el: UiElement; flags: UiNodeFlags; package: string }[] = [];
   for (const tag of xml.matchAll(/<node\b[^>]*?>/g)) {
     const attrs: Record<string, string> = {};
     for (const m of tag[0].matchAll(/([\w:.-]+)="([^"]*)"/g)) attrs[m[1]] = unescapeXml(m[2]);
@@ -837,14 +924,38 @@ export function parseUiDump(xml: string): UiElement[] {
     if (!bounds) continue;
     const [x1, y1, x2, y2] = [Number(bounds[1]), Number(bounds[2]), Number(bounds[3]), Number(bounds[4])];
     out.push({
-      className: attrs.class,
-      label: attrs.text || attrs['content-desc'] || '',
-      id: attrs['resource-id'] || '',
-      bounds: `{{${x1}, ${y1}}, {${x2 - x1}, ${y2 - y1}}}`,
-      rect: { x: x1, y: y1, w: x2 - x1, h: y2 - y1 },
+      el: {
+        className: attrs.class,
+        label: attrs.text || attrs['content-desc'] || '',
+        id: attrs['resource-id'] || '',
+        bounds: `{{${x1}, ${y1}}, {${x2 - x1}, ${y2 - y1}}}`,
+        rect: { x: x1, y: y1, w: x2 - x1, h: y2 - y1 },
+      },
+      flags: {
+        clickable: attrs.clickable === 'true',
+        scrollable: attrs.scrollable === 'true',
+        checkable: attrs.checkable === 'true',
+        editable: isEditableClass(attrs.class) || /\btext-entry\b/.test(attrs.hint ?? ''),
+        password: attrs.password === 'true',
+        focused: attrs.focused === 'true',
+      },
+      package: attrs.package || '',
     });
   }
   return out;
+}
+
+const isEditableClass = (cls: string): boolean => /EditText|TextField|TextInput/.test(cls);
+
+function toNode(index: number, el: UiElement, flags: UiNodeFlags): UiNode {
+  return {
+    index,
+    class: el.className,
+    label: el.label,
+    resource_id: el.id,
+    bounds: [el.rect.x, el.rect.y, el.rect.x + el.rect.w, el.rect.y + el.rect.h],
+    ...flags,
+  };
 }
 
 /** The shared text form: `class "label" [id] {{x, y}, {w, h}}` (empty fields omitted). */
@@ -984,7 +1095,7 @@ export class PhoneToolRunner {
     this.raws.set(a, raw);
     const result = await this.dispatch(name, a);
     const recorder = this.deps.recorder;
-    if (recorder && name !== 'phone.devices' && name !== 'phone.skills' && name !== 'phone.save_skill') {
+    if (recorder && name !== 'phone.devices' && name !== 'phone.skills' && name !== 'phone.save_skill' && name !== 'phone.maps') {
       const serial = typeof a.serial === 'string' ? a.serial : this.onlyOnline();
       if (serial) recorder.record({ serial, tool: name, args: raw, result: result as Record<string, unknown>, durationMs: this.now() - started });
     }
@@ -1042,9 +1153,12 @@ export class PhoneToolRunner {
     if (!known) return fail('unknown_tool', `No phone tool named ${name}.`);
 
     if (name === 'phone.skills' || name === 'phone.save_skill') return this.skillCall(name, a);
+    if (name === 'phone.maps') return this.mapsRead(a);
 
     const serial = this.resolveSerial(a.serial, usb, links, apps);
     if (typeof serial !== 'string') return serial;
+    // Explore runs in allternit-api and the runtime guard checks every tap it makes (source "explore"), like phone.task.
+    if (name === 'phone.explore_app') return this.explore(serial, a);
     // Every acting call crosses here (task loop, replay, a bot's direct call, the gateway, MCP): the runtime decides, Desktop enforces.
     if (GUARDED_TOOLS.has(name) && !(name.startsWith('phone.web.') && !apps?.has(serial))) {
       const stop = await this.guardCheck(name, serial, a, { usb, links, apps });
@@ -1061,8 +1175,8 @@ export class PhoneToolRunner {
       if (name === 'phone.web.snapshot' && res.ok && Array.isArray(res.elements)) this.webEls.set(serial, res.elements as Array<Record<string, unknown>>);
       return res;
     }
-    if (name.startsWith('phone.web.') || name === 'phone.screen.request' || name.startsWith('phone.calendar.') || name.startsWith('phone.reminders.') || name.startsWith('phone.contacts.')) {
-      return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"); calendar, reminders and contacts are not available on other phones. On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
+    if (name.startsWith('phone.web.') || name === 'phone.screen.request' || name.startsWith('phone.calendar.') || name.startsWith('phone.reminders.') || name.startsWith('phone.contacts.') || name.startsWith('phone.location.')) {
+      return fail('not_supported', `${name} works on an iPhone connected with the Allternit app (serial "app:…"); calendar, reminders, contacts and location are not available on other phones. On this phone use phone.screenshot, phone.open_app, phone.tap and phone.type.`);
     }
     // Every lane: phone.task runs on the bot's brain in allternit-api; skills replay there too.
     if (name === 'phone.task') return this.task(serial, a, usb, links);
@@ -1075,7 +1189,8 @@ export class PhoneToolRunner {
       // Linked phones: mark bot use so background account reads wait (phone-account-reader.ts).
       links.noteActivity?.(serial, 1);
       try {
-        return withHints(name, a, await this.linkedCall(links, name, serial, a));
+        const res = await this.linkedCall(links, name, serial, a);
+        return withHints(name, a, res);
       } finally {
         links.noteActivity?.(serial, -1);
       }
@@ -1306,10 +1421,31 @@ export class PhoneToolRunner {
     }
     const xml = await this.uiDump(serial);
     if (typeof xml !== 'string') return xml;
-    let els = parseUiDump(xml);
-    if (filter.label) els = els.filter((e) => e.label.toLowerCase().includes(filter.label!.toLowerCase()));
-    if (filter.type) els = els.filter((e) => e.className.toLowerCase().includes(filter.type!.toLowerCase()));
-    return { ok: true, text: els.slice(0, max as number).map(formatUiElement).join('\n') };
+    const parsed = parseUiDumpNodes(xml);
+    let all = parsed;
+    if (filter.label) all = all.filter((e) => e.el.label.toLowerCase().includes(filter.label!.toLowerCase()));
+    if (filter.type) all = all.filter((e) => e.el.className.toLowerCase().includes(filter.type!.toLowerCase()));
+    all = all.slice(0, max as number);
+    // app: the first package attribute in the dump (free). activity / app_version cost one adb call each, so opt-in.
+    const app = parsed.find((n) => n.package)?.package ?? '';
+    let activity: string | null = null;
+    if (a.with_activity === true) activity = (await this.adbForegroundInfo(serial))?.activity ?? null;
+    const res: ToolResult = {
+      ok: true,
+      text: all.map((e) => formatUiElement(e.el)).join('\n'),
+      app,
+      activity,
+      nodes: all.map((e, i) => toNode(i, e.el, e.flags)),
+    };
+    if (a.with_version === true && app) res.app_version = await this.adbAppVersion(serial, app);
+    return res;
+  }
+
+  /** versionName of an installed package (`dumpsys package`), "" when unknown. */
+  private async adbAppVersion(serial: string, pkg: string): Promise<string> {
+    if (!/^[A-Za-z][\w]*(?:\.[\w]+)+$/.test(pkg)) return '';
+    const res = await this.deps.adb(['shell', `dumpsys package ${pkg} | grep -m1 versionName`], { serial, timeoutMs: 5_000 });
+    return res.code === 0 ? parseVersionName(res.stdout) : '';
   }
 
   private async screenText(serial: string): Promise<ToolResult> {
@@ -1365,6 +1501,7 @@ export class PhoneToolRunner {
     if (typeof a.task !== 'string' || !a.task.trim() || a.task.length > 2000) {
       return fail('invalid_args', 'task must be 1–2000 characters.');
     }
+    if (a.vision !== undefined && a.vision !== 'auto' && a.vision !== 'always') return fail('invalid_args', 'vision must be "auto" or "always".');
     const model = a.model === undefined ? 'Flash' : a.model;
     if (model !== 'Flash' && model !== 'Pro') return fail('invalid_args', 'model must be Flash or Pro.');
     if (a.max_steps !== undefined && (!isInt(a.max_steps, 40) || a.max_steps === 0)) return fail('invalid_args', 'max_steps must be 1–40.');
@@ -1377,6 +1514,7 @@ export class PhoneToolRunner {
           max_steps: a.max_steps as number | undefined,
           bot_id: typeof a.bot_id === 'string' ? a.bot_id : undefined,
           brain: typeof a.brain === 'string' ? a.brain : undefined,
+          vision: a.vision as 'auto' | 'always' | undefined,
         });
         if (out.ok === false && typeof out.error === 'string' && typeof out.message === 'string' && !('status' in out)) {
           return fail(out.error === 'not_found' ? 'not_found' : 'invalid_args', out.message);
@@ -1395,6 +1533,36 @@ export class PhoneToolRunner {
     }
     const result = await artemis.runTask(serial, a.task.trim(), model);
     return { ok: true, result, via: 'artemis' };
+  }
+
+  /** phone.maps: GET /phones/maps[/:app]. Read only. */
+  private async mapsRead(a: Record<string, unknown>): Promise<ToolResult> {
+    if (a.app !== undefined && (typeof a.app !== 'string' || !a.app.trim() || a.app.length > 200)) return fail('invalid_args', 'app must be a package name of 1–200 characters.');
+    const api = this.deps.api?.() ?? null;
+    if (!api) return fail('unsupported', 'App maps live in Allternit Desktop\'s local API, which isn\'t running.');
+    try {
+      const out = typeof a.app === 'string' ? await api.map(a.app.trim()) : await api.maps();
+      return out.ok === false ? (out as ToolResult) : { ...out, ok: true };
+    } catch (error) {
+      if (error instanceof PhoneApiUnavailable) return fail('unsupported', `App maps need Allternit Desktop's local API (${error.message}).`);
+      throw error;
+    }
+  }
+
+  /** phone.explore_app: POST /phones/maps/:app/explore. Contract error codes pass through unchanged. */
+  private async explore(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
+    if (typeof a.app !== 'string' || !a.app.trim() || a.app.length > 200) return fail('invalid_args', 'app must be a package name of 1–200 characters.');
+    if (a.minutes !== undefined && (!isInt(a.minutes, 30) || a.minutes === 0)) return fail('invalid_args', 'minutes must be 1–30.');
+    if (a.max_screens !== undefined && (!isInt(a.max_screens, 300) || a.max_screens === 0)) return fail('invalid_args', 'max_screens must be 1–300.');
+    const api = this.deps.api?.() ?? null;
+    if (!api) return fail('unsupported', 'Explore runs in Allternit Desktop\'s local API, which isn\'t running.');
+    try {
+      const out = await api.explore(a.app.trim(), { serial, minutes: a.minutes as number | undefined, max_screens: a.max_screens as number | undefined });
+      return out.ok === false ? (out as ToolResult) : { ...out, ok: true };
+    } catch (error) {
+      if (error instanceof PhoneApiUnavailable) return fail('unsupported', `Explore needs Allternit Desktop's local API (${error.message}).`);
+      throw error;
+    }
   }
 
   /** phone.skills / phone.save_skill / phone.run_skill → allternit-api. */
@@ -1682,8 +1850,15 @@ export class PhoneToolRunner {
 
   /** The app in front on an adb phone (`dumpsys activity`, the resumed activity's package). */
   private async adbForeground(serial: string): Promise<string | undefined> {
+    return (await this.adbForegroundInfo(serial))?.package;
+  }
+
+  /** Same one `dumpsys activity` line as adbForeground, read for the package and the full activity class. */
+  private async adbForegroundInfo(serial: string): Promise<{ package: string; activity: string | null } | undefined> {
     const res = await this.deps.adb(['shell', 'dumpsys activity activities | grep -E "topResumedActivity|mResumedActivity"'], { serial, timeoutMs: 5_000 });
-    return res.code === 0 ? parseForegroundPackage(res.stdout) ?? undefined : undefined;
+    if (res.code !== 0) return undefined;
+    const pkg = parseForegroundPackage(res.stdout);
+    return pkg ? { package: pkg, activity: parseForegroundActivity(res.stdout) } : undefined;
   }
 
   /** A Phone-Linked phone's name for the hold dialog (only looked up when a hold is made). */
@@ -1776,7 +1951,8 @@ export class PhoneToolRunner {
  * any lane runs them. phone.sms.send, phone.call.dial and phone.sms.read are
  * checked inside smsSend / callDial / smsRead, after validation and the rate
  * limit. Not checked (the guard has no rule for them): screenshot, read_ui,
- * screen_text, swipe, home, back, task (its loop checks every step), web.open,
+ * screen_text, swipe, home, back, task and explore_app (their loops check every
+ * step), maps (read only), web.open,
  * web.snapshot, web.scroll, web.back, web.wait, calendar/reminders/contacts,
  * skills. The Phone Use tools (shortcuts.run, actions.run, home.set,
  * home.scene) are checked in phoneUseApproval by their contract §8 class,
@@ -1833,6 +2009,48 @@ function phonePlatform(serial: string, lanes: GuardLanes): 'android' | 'ios' | u
 export function parseForegroundPackage(stdout: string): string | null {
   const m = /(?:topResumedActivity|mResumedActivity)[^\n]*?\s([A-Za-z][\w]*(?:\.[\w]+)+)\/[\w.$]+/.exec(stdout);
   return m ? m[1] : null;
+}
+
+/** `… com.whatsapp/.HomeActivity t42}` → "com.whatsapp.HomeActivity" (a leading dot is relative to the package). */
+export function parseForegroundActivity(stdout: string): string | null {
+  const m = /(?:topResumedActivity|mResumedActivity)[^\n]*?\s([A-Za-z][\w]*(?:\.[\w]+)+)\/([\w.$]+)/.exec(stdout);
+  if (!m) return null;
+  return m[2].startsWith('.') ? `${m[1]}${m[2]}` : m[2];
+}
+
+/** `    versionName=14` → "14". */
+export function parseVersionName(stdout: string): string {
+  return /versionName=(\S+)/.exec(stdout)?.[1] ?? '';
+}
+
+/** The Phone Link helper's structured page_source → read_ui nodes (contract §1), app and activity. */
+export function linkedNodes(r: unknown): { app: string; activity: string | null; nodes: UiNode[] } {
+  const o = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>;
+  const app = asText(o.foreground_app) || asText(o.bundle_id) || asText(o.package);
+  const activity = asText(o.activity) || null;
+  const nodes: UiNode[] = [];
+  for (const n of Array.isArray(o.nodes) ? o.nodes : []) {
+    if (!n || typeof n !== 'object') continue;
+    const v = n as Record<string, unknown>;
+    const b = (v.bounds && typeof v.bounds === 'object' ? v.bounds : {}) as Record<string, unknown>;
+    const [x, y, w, h] = [b.x, b.y, b.width, b.height];
+    if (![x, y, w, h].every((q) => typeof q === 'number' && Number.isFinite(q))) continue;
+    const cls = asText(v.class);
+    nodes.push({
+      index: nodes.length,
+      class: cls,
+      label: asText(v.label) || asText(v.text) || asText(v.content_desc),
+      resource_id: asText(v.resource_id),
+      bounds: [x as number, y as number, (x as number) + (w as number), (y as number) + (h as number)],
+      clickable: v.clickable === true,
+      scrollable: v.scrollable === true,
+      checkable: v.checkable === true,
+      editable: v.editable === true || isEditableClass(cls),
+      password: v.password === true,
+      focused: v.focused === true,
+    });
+  }
+  return { app, activity, nodes };
 }
 
 /** uiautomator XML → elements with the focused and password flags, and the first node's package. */

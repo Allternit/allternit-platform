@@ -1224,6 +1224,28 @@ export class PhonesResource {
   }
 
   /**
+   * List learned App Maps
+   *
+   * One summary per app Allternit has mapped on the owner's Desktop (read only; exploring and forgetting a map stay on the Desktop, web, app and Gizzi). Errors 503 `phone_desktop_offline` while the Desktop is offline, 404 `no_desktop` when none is paired.
+   *
+   * `GET /v1/phones/maps`
+   */
+  listMaps(query?: T.ListPhoneMapsQuery, options?: RequestOptions): Promise<T.ListPhoneMapsResponse> {
+    return this._client.request<T.ListPhoneMapsResponse>({ method: "GET", path: `/v1/phones/maps`, query: query, options });
+  }
+
+  /**
+   * One app's map
+   *
+   * The map file for one app. Errors 404 `map_not_found` (nothing learned yet), 403 `money_app` (money apps are never mapped), 503 `phone_desktop_offline`, 404 `no_desktop`.
+   *
+   * `GET /v1/phones/maps/{app}`
+   */
+  getMap(app: string, query?: T.GetPhoneMapQuery, options?: RequestOptions): Promise<T.GetPhoneMapResponse> {
+    return this._client.request<T.GetPhoneMapResponse>({ method: "GET", path: `/v1/phones/maps/${encodeURIComponent(app)}`, query: query, options });
+  }
+
+  /**
    * A phone's run history
    *
    * Every phone tool call on this phone (500 steps / 30 days), newest run first. Typed text, numbers and message bodies are redacted on the Desktop; frames and screen text stay there.

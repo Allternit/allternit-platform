@@ -174,7 +174,8 @@ function extractReasoning(parts: any[]): string | null {
  * Prompt hints a client may put on a user message (system.ts PromptContext): a phone
  * client sends form_factor "phone", a voice turn reply_mode "voice", every client
  * its IANA time_zone, and a client that draws no catalog cards (iOS, the Ink REPL)
- * answer_cards "widgets" (AnswerTurnGuard.widgetsManual). Only these keys and values
+ * answer_cards "widgets" (AnswerTurnGuard.widgetsManual), a code run nobody watches
+ * run_kind "background_code", a voice engine that reads expressive tags voice_tags "on". Only these keys and values
  * pass; SessionPrompt.prompt remembers the zone for turns without a client. Shared by
  * every message route here.
  */
@@ -183,12 +184,16 @@ export function promptHints(raw: any): Record<string, string> | undefined {
   const replyMode = raw?.reply_mode === "voice" ? "voice" : undefined
   const timeZone = Clock.validZone(raw?.time_zone)
   const answerCards = raw?.answer_cards === "widgets" ? "widgets" : undefined
-  if (!formFactor && !replyMode && !timeZone && !answerCards) return undefined
+  const runKind = raw?.run_kind === "background_code" ? "background_code" : undefined
+  const voiceTags = raw?.voice_tags === "on" ? "on" : undefined
+  if (!formFactor && !replyMode && !timeZone && !answerCards && !runKind && !voiceTags) return undefined
   return {
     ...(formFactor ? { form_factor: formFactor } : {}),
     ...(replyMode ? { reply_mode: replyMode } : {}),
     ...(timeZone ? { time_zone: timeZone } : {}),
     ...(answerCards ? { answer_cards: answerCards } : {}),
+    ...(runKind ? { run_kind: runKind } : {}),
+    ...(voiceTags ? { voice_tags: voiceTags } : {}),
   }
 }
 

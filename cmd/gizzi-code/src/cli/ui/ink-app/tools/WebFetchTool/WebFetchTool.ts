@@ -6,6 +6,7 @@ import { lazySchema } from '../../utils/lazySchema.js'
 import type { PermissionDecision } from '../../utils/permissions/PermissionResult.js'
 import { getRuleByContentsForTool } from '../../utils/permissions/permissions.js'
 import { isPreapprovedHost } from './preapproved.js'
+import { fenceUntrusted } from '../../../../../runtime/tools/guard/untrusted.js'
 import { DESCRIPTION, WEB_FETCH_TOOL_NAME } from './prompt.js'
 import {
   getToolUseSummary,
@@ -301,7 +302,7 @@ To complete your request, I need to fetch content from the redirected URL. Pleas
     return {
       tool_use_id: toolUseID,
       type: 'tool_result',
-      content: result,
+      content: fenceUntrusted(result, 'web'),
     }
   },
 } satisfies ToolDef<InputSchema, Output>)

@@ -1,0 +1,9 @@
+Leave the worktree this session is in and return to the folder it came from.
+
+Choose keep or remove. Keep is the safe default: the tree and its branch stay on disk.
+
+- Remove only when the person asked for it or the work is merged.
+- Remove works only on a worktree this session created, with no uncommitted changes and no unpushed commits. Otherwise the tree is kept and the result says why. This tool never throws work away.
+- If the person wants to discard work in a kept tree, tell them and let them decide; don't delete it some other way.
+
+Tell the person the path and branch of any tree you keep.

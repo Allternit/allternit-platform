@@ -46,6 +46,7 @@ All under `/api/v1/files/v2`. The relay maps any path containing `/files` to cap
 | `GET /roots/:root_id/list` | `ListQuery` (query string) | `ListResponse` |
 | `GET /items/:item_id` | | `StatResponse` (stat) |
 | `GET /items/:item_id/content` | `Range`, `If-None-Match: <rev>` | bytes; `ETag: "<rev>"`, 206 for ranges, 304 when unchanged (read) |
+| `GET /items/:item_id/range` | `unit` (`lines` default, or `bytes`), `start`, `end` (both inclusive; lines 1-based, bytes 0-based) | `RangeResponse`: `text`, `unit`, `start`, `end`, `total_lines`, `total_bytes`, `next_start` (absent at the end), `truncated`. At most 2000 lines and 256 KiB per call. Text form: extracted text for PDF and Word, UTF-8 otherwise; 415 `unsupported` for binary or no text, 416 for an unsatisfiable range. Same access as `/content` (read) |
 | `GET /items/:item_id/manifest` | `page_token` | `Manifest` |
 | `GET /chunks/:hash` | | one chunk's bytes (at most 4 MiB) |
 | `PUT /roots/:root_id/content` | `SmallWriteQuery` (query string: `parent_id`, `name`, `base_rev` when replacing, `on_conflict`, `device_name`, `utc_offset_minutes`); body at most 4 MiB | `MutationResponse` (small write) |

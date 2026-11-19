@@ -44,6 +44,7 @@ pub mod intel;
 mod memory;
 mod meta;
 pub mod models;
+mod range;
 #[cfg(test)]
 mod replica_tests;
 mod replicas;

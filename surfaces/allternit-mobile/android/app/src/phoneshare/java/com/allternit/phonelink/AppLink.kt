@@ -215,6 +215,7 @@ private class CurrentOps(private val current: () -> DeviceOps?) : DeviceOps {
     override fun isScreenOn() = o().isScreenOn()
     override fun isScreenLocked() = o().isScreenLocked()
     override fun foregroundPackage() = o().foregroundPackage()
+    override fun foregroundActivity() = o().foregroundActivity()
     override fun snapshot(): List<UiNode> = o().snapshot()
     override fun tap(x: Float, y: Float) = o().tap(x, y)
     override fun doubleTap(x: Float, y: Float) = o().doubleTap(x, y)

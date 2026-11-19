@@ -19,6 +19,8 @@ import {
   type AppPhoneLane,
   type RateStore,
   type ToolResult,
+  parseForegroundActivity,
+  parseVersionName,
 } from './phone-tools.js';
 import type { PhoneLane } from './phone-route.js';
 import { PhoneApiUnavailable, type PhoneApi } from './phone-runs.js';
@@ -313,7 +315,7 @@ describe('screen reading over adb (uiautomator dump)', () => {
   it('phone.read_ui turns the dump into the shared text form', async () => {
     const { r, calls } = dumpRunner(DUMP);
     const res = await r.call('phone.read_ui', {});
-    expect(res).toEqual({
+    expect(res).toMatchObject({
       ok: true,
       text: [
         'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
@@ -324,15 +326,87 @@ describe('screen reading over adb (uiautomator dump)', () => {
     expect(calls[0]).toEqual(['exec-out', 'uiautomator', 'dump', '/dev/tty']);
   });
 
+  it('phone.read_ui adds app, activity and nodes[] beside the unchanged text', async () => {
+    const xml = `<hierarchy>
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.example.app" content-desc="" checkable="false" clickable="false" focused="false" scrollable="false" password="false" bounds="[0,0][1080,2400]">
+    <node index="0" text="Name" resource-id="com.example.app:id/name" class="android.widget.EditText" package="com.example.app" content-desc="" checkable="false" clickable="true" focused="true" scrollable="false" password="false" bounds="[24,96][1056,180]" />
+    <node index="1" text="Secret" resource-id="com.example.app:id/pw" class="android.widget.EditText" package="com.example.app" content-desc="" checkable="false" clickable="true" focused="false" scrollable="false" password="true" bounds="[24,200][1056,280]" />
+    <node index="2" text="Wi-Fi" resource-id="com.example.app:id/sw" class="android.widget.Switch" package="com.example.app" content-desc="" checkable="true" clickable="true" focused="false" scrollable="false" password="false" bounds="[0,300][1080,420]" />
+    <node index="3" text="" resource-id="com.example.app:id/list" class="androidx.recyclerview.widget.RecyclerView" package="com.example.app" content-desc="" checkable="false" clickable="false" focused="false" scrollable="true" password="false" bounds="[0,420][1080,2400]" />
+  </node>
+</hierarchy>`;
+    const { r, calls } = dumpRunner(xml);
+    const res = (await r.call('phone.read_ui', {})) as unknown as { text: string; app: string; activity: unknown; nodes: Record<string, unknown>[] };
+    expect(res.text).toBe(
+      [
+        'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
+        'android.widget.EditText "Name" [com.example.app:id/name] {{24, 96}, {1032, 84}}',
+        'android.widget.EditText "Secret" [com.example.app:id/pw] {{24, 200}, {1032, 80}}',
+        'android.widget.Switch "Wi-Fi" [com.example.app:id/sw] {{0, 300}, {1080, 120}}',
+        'androidx.recyclerview.widget.RecyclerView [com.example.app:id/list] {{0, 420}, {1080, 1980}}',
+      ].join('\n'),
+    );
+    expect(res.app).toBe('com.example.app');
+    expect(res.activity).toBeNull();
+    expect(res.nodes).toHaveLength(5);
+    expect(res.nodes[1]).toEqual({
+      index: 1, class: 'android.widget.EditText', label: 'Name', resource_id: 'com.example.app:id/name',
+      bounds: [24, 96, 1056, 180], clickable: true, scrollable: false, checkable: false, editable: true, password: false, focused: true,
+    });
+    expect(res.nodes[2]).toMatchObject({ editable: true, password: true });
+    expect(res.nodes[3]).toMatchObject({ checkable: true, clickable: true, editable: false });
+    expect(res.nodes[4]).toMatchObject({ scrollable: true, bounds: [0, 420, 1080, 2400] });
+    expect(calls).toHaveLength(1); // no extra adb call unless with_activity / with_version
+    const capped = (await r.call('phone.read_ui', { filter: { type: 'switch' } })) as unknown as { nodes: { index: number; label: string }[] };
+    expect(capped.nodes).toHaveLength(1);
+    expect(capped.nodes[0]).toMatchObject({ index: 0, label: 'Wi-Fi' });
+  });
+
+  it('phone.read_ui with_activity and with_version make one extra adb call each', async () => {
+    const calls: string[][] = [];
+    const adb = (async (args: string[]) => {
+      calls.push(args);
+      const cmd = args.join(' ');
+      if (cmd.includes('topResumedActivity')) {
+        return { stdout: '  topResumedActivity=ActivityRecord{1a2b u0 com.openai.chat/.MainActivity t42}\n', stderr: '', code: 0 };
+      }
+      if (cmd.includes('versionName')) return { stdout: '    versionName=1.2.3\n', stderr: '', code: 0 };
+      return { stdout: '', stderr: '', code: 0 };
+    }) as AdbCall;
+    adb.binary = async () => Buffer.from(DUMP, 'utf8');
+    const r = new PhoneToolRunner({
+      adb,
+      gate: { request: async () => 'denied' },
+      rates: { load: () => [], save: () => {} },
+      artemis: () => null,
+      onlineSerials: () => ['10.0.0.7:5555'],
+    });
+    const res = (await r.call('phone.read_ui', { with_activity: true, with_version: true })) as unknown as Record<string, unknown>;
+    expect(res).toMatchObject({ ok: true, app: 'com.openai.chat', activity: 'com.openai.chat.MainActivity', app_version: '1.2.3' });
+    // The dump goes through adb.binary; the two opt-ins add exactly one adb call each.
+    expect(calls.map((c) => c.join(' '))).toEqual([
+      expect.stringContaining('topResumedActivity'),
+      expect.stringContaining('com.openai.chat'),
+    ]);
+  });
+
+  it('parses activity and version lines', () => {
+    expect(parseForegroundActivity('mResumedActivity: ActivityRecord{x u0 com.android.settings/com.android.settings.Settings$WifiSettingsActivity t9}')).toBe('com.android.settings.Settings$WifiSettingsActivity');
+    expect(parseForegroundActivity('topResumedActivity=ActivityRecord{x u0 com.whatsapp/.HomeActivity t1}')).toBe('com.whatsapp.HomeActivity');
+    expect(parseForegroundActivity('nothing')).toBeNull();
+    expect(parseVersionName('    versionName=14\n')).toBe('14');
+    expect(parseVersionName('')).toBe('');
+  });
+
   it('phone.read_ui filters by label and type and caps max_elements', async () => {
     const { r } = dumpRunner(DUMP);
-    expect(await r.call('phone.read_ui', { filter: { label: 'sign' } })).toEqual({
+    expect(await r.call('phone.read_ui', { filter: { label: 'sign' } })).toMatchObject({
       ok: true,
       text: 'android.widget.Button "Sign in" [com.openai.chat:id/login] {{24, 836}, {312, 48}}',
     });
     expect(await r.call('phone.read_ui', { filter: { type: 'textview' } })).toMatchObject({ ok: true });
     expect(((await r.call('phone.read_ui', { filter: { type: 'textview' } })) as unknown as { text: string }).text).not.toContain('Button');
-    expect(await r.call('phone.read_ui', { max_elements: 1 })).toEqual({
+    expect(await r.call('phone.read_ui', { max_elements: 1 })).toMatchObject({
       ok: true,
       text: 'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
     });
@@ -735,5 +809,60 @@ describe('Phone Use tools (contract §3)', () => {
 
     const android = iphoneRunner({ platform: 'android' });
     expect(await android.r.call('phone.shortcuts.run', { name: 'x' })).toMatchObject({ ok: false, error: 'not_supported' });
+  });
+});
+
+describe('phone.maps, phone.explore_app, phone.task vision', () => {
+  const tool = (name: string) => PHONE_TOOLS.find((t) => t.name === name) as unknown as { description: string; inputSchema: { properties: Record<string, any>; required?: string[]; additionalProperties: boolean } };
+
+  it('lists both tools with the contract schemas', () => {
+    expect(tool('phone.maps').inputSchema).toMatchObject({ additionalProperties: false });
+    expect(Object.keys(tool('phone.maps').inputSchema.properties).sort()).toEqual(['app', 'serial']);
+    expect(tool('phone.maps').inputSchema.required).toBeUndefined();
+    expect(tool('phone.explore_app').inputSchema.required).toEqual(['app']);
+    expect(tool('phone.explore_app').inputSchema.additionalProperties).toBe(false);
+    expect(tool('phone.explore_app').inputSchema.properties.minutes).toMatchObject({ minimum: 1, maximum: 30, default: 10 });
+    expect(tool('phone.explore_app').inputSchema.properties.max_screens).toMatchObject({ minimum: 1, maximum: 300, default: 60 });
+    expect(tool('phone.explore_app').description).toMatch(/Android only/);
+    expect(tool('phone.explore_app').description).toMatch(/money apps are refused/);
+    expect(tool('phone.task').inputSchema.properties.vision.enum).toEqual(['auto', 'always']);
+  });
+
+  it('phone.maps reads the list or one map and never needs a phone', async () => {
+    const maps = vi.fn(async () => ({ ok: true, maps: [{ app: 'com.x' }] }));
+    const map = vi.fn(async () => ({ ok: true, map: { app: 'com.x' } }));
+    const { r } = runner({ api: { maps, map } as unknown as PhoneApi, online: [] });
+    expect(await r.call('phone.maps', {})).toMatchObject({ ok: true, maps: [{ app: 'com.x' }] });
+    expect(await r.call('phone.maps', { app: 'com.x' })).toMatchObject({ ok: true, map: { app: 'com.x' } });
+    expect(map).toHaveBeenCalledWith('com.x');
+    const missing = { map: async () => ({ ok: false, error: 'map_not_found', message: 'none', status: 404 }) } as unknown as PhoneApi;
+    expect(await runner({ api: missing }).r.call('phone.maps', { app: 'com.y' })).toMatchObject({ ok: false, error: 'map_not_found' });
+    expect(await runner().r.call('phone.maps', {})).toMatchObject({ ok: false, error: 'unsupported' });
+  });
+
+  it('phone.explore_app passes the body through and returns run_id', async () => {
+    const explore = vi.fn(async () => ({ ok: true, status: 'running', run_id: 'explore-1' }));
+    const { r } = runner({ api: { explore } as unknown as PhoneApi });
+    expect(await r.call('phone.explore_app', { app: 'com.android.settings', minutes: 5, max_screens: 20 })).toMatchObject({ ok: true, run_id: 'explore-1', status: 'running' });
+    expect(explore).toHaveBeenCalledWith('com.android.settings', { serial: '192.168.1.20:41234', minutes: 5, max_screens: 20 });
+  });
+
+  it('phone.explore_app validates arguments and passes 403 money_app and 409 phone_busy through', async () => {
+    const { r } = runner({ api: { explore: async () => ({ ok: false, error: 'money_app', message: 'no', status: 403 }) } as unknown as PhoneApi });
+    expect(await r.call('phone.explore_app', { app: '' })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.explore_app', { app: 'com.x', minutes: 31 })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.explore_app', { app: 'com.x', max_screens: 0 })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.explore_app', { app: 'com.bank' })).toMatchObject({ ok: false, error: 'money_app', status: 403 });
+    const busy = runner({ api: { explore: async () => ({ ok: false, error: 'phone_busy', message: 'busy', status: 409 }) } as unknown as PhoneApi }).r;
+    expect(await busy.call('phone.explore_app', { app: 'com.x' })).toMatchObject({ ok: false, error: 'phone_busy', status: 409 });
+  });
+
+  it('phone.task passes vision through and rejects other values', async () => {
+    const task = vi.fn(async () => ({ ok: true, status: 'done' }));
+    const { r } = runner({ api: { task } as unknown as PhoneApi });
+    await r.call('phone.task', { task: 'x', vision: 'always' });
+    expect(task).toHaveBeenCalledWith('192.168.1.20:41234', expect.objectContaining({ goal: 'x', vision: 'always' }));
+    expect(await r.call('phone.task', { task: 'x', vision: 'never' })).toMatchObject({ error: 'invalid_args' });
+    expect(task).toHaveBeenCalledTimes(1);
   });
 });

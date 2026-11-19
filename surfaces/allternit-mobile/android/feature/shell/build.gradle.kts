@@ -1,5 +1,5 @@
 // :feature:shell — the native MainActivity (handoffs/android-native-2026-11-18, step 7b).
-// Sign-in gate, then a placeholder home (drawer and mode dial: step 7c). Only :app's nativeapp
+// Sign-in gate, then the home shell (drawer, mode fan: step 7c-1). Only :app's nativeapp
 // flavor depends on it; the play and phonelink TWA builds never see it.
 plugins {
     alias(libs.plugins.android.library)
@@ -35,6 +35,15 @@ kotlin {
 
 dependencies {
     implementation(project(":feature:onboarding"))
+    // Wave A: the chat screen that replaces the shell's chat placeholder.
+    implementation(project(":feature:chat"))
+    // Wave D: Projects and Artifacts replace the drawer rows' placeholders.
+    implementation(project(":feature:projects"))
+    implementation(project(":feature:artifacts"))
+    // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
+    implementation(project(":core:api"))
+    // Wave B: DataStore for the first-run "setup done" flag (iOS OnboardingStore, UserDefaults).
+    implementation(project(":core:data"))
     // setContent { } for MainActivity.
     implementation(libs.activity.compose)
 }

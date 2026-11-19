@@ -1,0 +1,15 @@
+Edit one cell of a Jupyter notebook (.ipynb). Read the notebook first so you know its cells and their order. Edits are cell-level: never rewrite the whole notebook to change one cell.
+
+Parameters:
+- filePath: absolute path to the .ipynb file.
+- operation: "replace", "insert" or "delete".
+- cellIndex: 0-indexed cell number.
+- cellType: "code" or "markdown". Required for insert. For replace, pass it only to change the type; otherwise the existing cell type is kept.
+- source: the new cell content. Required for insert and replace.
+
+Operations:
+- replace: swap the source of the cell at cellIndex.
+- insert: add a new cell before the cell at cellIndex. To add after a given cell, use that cell's index plus one. Use the cell count to append.
+- delete: remove the cell at cellIndex.
+
+Cell numbers shift after an insert or delete, so re-read before the next edit.

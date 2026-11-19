@@ -2,10 +2,21 @@ import { Hono } from "hono"
 import { validator } from "@/runtime/server/openapi"
 import z from "zod/v4"
 import { MemoryService } from "@/runtime/memory/memory-service"
+import { FeedbackNotes } from "@/runtime/primitives/feedback-notes"
 import { errors } from "@/runtime/server/error"
 
 export function MemoryRoutes() {
   return new Hono()
+    // GET /memory/feedback-notes — local feedback notes (device only), newest first
+    .get("/feedback-notes", async (c) => c.json(await FeedbackNotes.list()))
+
+    // DELETE /memory/feedback-notes/:id — delete one local feedback note
+    .delete("/feedback-notes/:id", async (c) => {
+      const ok = await FeedbackNotes.remove(c.req.param("id"))
+      if (!ok) return c.json({ name: "NotFound", message: "Note not found", data: {} }, 404)
+      return c.json(true)
+    })
+
     // GET /memory — list all memory entries
     .get("/", async (c) => {
       const entries = await MemoryService.list()

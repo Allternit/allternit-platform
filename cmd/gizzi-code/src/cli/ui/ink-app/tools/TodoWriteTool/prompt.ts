@@ -94,6 +94,7 @@ The assistant did not use the todo list because this is a single command executi
    - Exactly ONE task must be in_progress at any time (not less, not more)
    - Complete current tasks before starting new ones
    - Remove tasks that are no longer relevant from the list entirely
+   - Keep the list current. A stale list is worse than none
 3. **Task Completion Requirements**:
    - ONLY mark a task as completed when you have FULLY accomplished it
    - If you encounter errors, blockers, or cannot finish, keep the task as in_progress
