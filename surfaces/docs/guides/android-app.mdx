@@ -125,6 +125,27 @@ The Kotlin + Jetpack Compose app that will replace the Trusted Web Activity is b
 - **Modules:** `:core:design` (colors, radii, icons, haptics, friendly states), `:core:api` (generated API client), `:core:auth` (Clerk, session state, API token), `:feature:onboarding` (sign-in screen), `:feature:shell` (main activity and the home shell: home, drawer, mode fan). Only the `nativeapp` flavor depends on them; `scripts/android-check.sh` fails if Clerk or Compose reaches the Google Play or Phone Link build.
 - **Toolchain:** Kotlin 2.3.21, Compose BOM 2026.06.01, OkHttp 5.4.0 (`gradle/libs.versions.toml`). Clerk Android needs them.
 
+#### What works today
+
+The native app is built to match the iPhone app screen for screen, in ten waves. Every iOS screen has one row in the parity ledger (`surfaces/allternit-mobile/PARITY.md`, about 230 rows). A row counts as done only after the iOS screen and the Android screen were compared side by side and every difference was fixed. Where iOS has no screen, m.allternit.com is the reference. There are no Android-only screens.
+
+| Wave | What it covers | State |
+| --- | --- | --- |
+| Sign-in | Welcome loop, email code, Google, GitHub, Apple | Built, in testing. Apple waits on a return URL in the Apple Services ID. |
+| Home shell | Home, drawer, mode fan, composer, **+** sheet, **Pick a brain** | Built, in testing |
+| A. Chat | Sending, streamed replies, thinking, tool calls, permission asks, attachments, chat history, no-computer state | Being built |
+| B. First run | "Which AI should I think with?", Everything connected, Meet your bots | Not started |
+| C. Rest of the shell | Search, session overview, Inbox, thinking slider, test extras, moving from the old app's sign-in | Not started |
+| D. Projects and artifacts | Projects, project pad, folder covers, list/grid/deck, artifacts | Not started |
+| E. Bots | Bots, agents, activity, run tree, decisions, bot chat | Not started |
+| F. Modes | Automation, Cowork, Code, Computer (remote desktop, Teach, mini apps), Connect, Phones, Office, Models | Not started |
+| G. Settings | Settings and all sub-screens, Customize, Connectors, Skills, Plugins, Brain | Not started |
+| H. Money and voice | Google Play purchases, credits, voice mode, calls | Not started |
+| I. Phone system | Push (FCM), widgets, Quick Settings tiles, share target, shortcuts, Files, screen share | Not started |
+| J. Switch-over | Links from the web, Desktop and Gizzi; the staged switch on Google Play (10%, 50%, 100%) | Not started |
+
+Until a wave lands, its screens open a "coming in the next update" page in the native app. The Google Play app (the Trusted Web Activity) keeps every feature of m.allternit.com until the switch.
+
 #### Sign-in
 
 Sign-in uses the Clerk Android SDK (`com.clerk:clerk-android-api` 1.4.1) against the production instance `clerk.allternit.com`, the same instance as iOS and the web. `AllternitAuth` starts Clerk in `MainActivity.onCreate` and publishes the state (`Starting`, `SignedOut`, `Finishing`, `SignedIn`, `Unavailable`) as a `StateFlow`.
