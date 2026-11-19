@@ -5,6 +5,7 @@ import { BackgroundTask } from "../../src/runtime/session/background-task"
 import { BackgroundTaskTable } from "../../src/runtime/session/session.sql"
 import { Database, eq } from "../../src/runtime/session/storage/db"
 import { Todo } from "../../src/runtime/session/todo"
+import { Session } from "../../src/runtime/session"
 import { tmpdir } from "../fixture/fixture"
 
 /** PR8c quiet check-in and PR8d todo nudge, through the real stores. */
@@ -26,7 +27,7 @@ describe("context notice: quiet background command", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const sessionID = nextID("ses")
+        const sessionID = (await Session.create({ title: "context notice" })).id
         const id = nextID("task")
         await BackgroundTask.create({ id, parentSessionID: sessionID, kind: "shell", description: "pnpm build" })
         const at = () => ContextNotice.forTurn({ sessionID, model: noModel, messages: [] })
@@ -63,7 +64,7 @@ describe("context notice: todo nudge", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const sessionID = nextID("ses")
+        const sessionID = (await Session.create({ title: "context notice" })).id
         const at = (messages: any[]) => ContextNotice.forTurn({ sessionID, model: noModel, messages })
 
         // No open items: never nudges.
