@@ -66,6 +66,8 @@ dependencies {
     implementation(project(":core:api"))
     // Gap run GS-B: FilesSession (the Files drive signs in with the native session).
     implementation(project(":core:files"))
+    // Gap run GS-D: the brain picker lists the models on this phone (:ondevice PhoneModels).
+    implementation(project(":ondevice"))
     // Wave B: DataStore for the first-run "setup done" flag (iOS OnboardingStore, UserDefaults).
     implementation(project(":core:data"))
     // setContent { } for MainActivity.

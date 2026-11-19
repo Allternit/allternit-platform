@@ -205,6 +205,61 @@ class OnDeviceEngine private constructor(private val app: Context) {
         emitState()
     }
 
+    /**
+     * The native app's chat path (gap run GS-D): one reply for [key] straight into [onText], no TWA frames.
+     * Posts to the engine thread. [onEnd] gets null on success, else a person-facing message. [onText]
+     * returning false stops the reply (the chat's Stop).
+     */
+    fun chatDirect(
+        key: String,
+        roles: Array<String>,
+        contents: Array<String>,
+        maxTokens: Int,
+        temperature: Float,
+        onText: (String) -> Boolean,
+        onEnd: (error: String?, stats: JSONObject) -> Unit,
+    ) {
+        handler.post {
+            val l = try {
+                loadNow(key, DEFAULT_CTX, "auto")
+                loaded!!
+            } catch (f: Protocol.Failure) {
+                onEnd(f.message ?: "The model could not be loaded.", JSONObject().put("code", f.code))
+                return@post
+            } catch (e: Throwable) {
+                onEnd("The engine on this phone failed to start.", JSONObject())
+                return@post
+            }
+            handler.removeCallbacks(idleUnload)
+            generating = true
+            val stats = try {
+                NativeLlama.chat(
+                    l.handle, roles, contents,
+                    maxTokens = maxTokens.coerceIn(1, 4096),
+                    temperature = temperature,
+                    seed = -1,
+                    thinking = false,
+                ) { bytes -> onText(String(bytes, Charsets.UTF_8)) }
+            } catch (e: Throwable) {
+                JSONObject().put("finish", "error").put("error", e.message ?: "Generation failed.")
+            } finally {
+                generating = false
+            }
+            l.tokPerSec = stats.optDouble("tok_per_sec", 0.0)
+            l.ctxUsed = stats.optInt("ctx_used", 0)
+            stats.put("backend", backendId(l.backend))
+            onEnd(if (stats.optString("finish", "error") == "error") stats.optString("error", "Generation failed.") else null, stats)
+            scheduleIdle()
+            emitState()
+        }
+    }
+
+    /** Stops the reply in progress, whoever started it (the native chat's Stop). */
+    fun stopAny() = stopNative()
+
+    /** The loaded model's key, or null. */
+    fun loadedKey(): String? = loaded?.model?.key
+
     fun stop(id: String): Boolean {
         val s = current.get() ?: return false
         if (s.id != id || s.done) return false

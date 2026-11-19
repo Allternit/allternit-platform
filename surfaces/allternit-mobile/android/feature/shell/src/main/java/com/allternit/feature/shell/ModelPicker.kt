@@ -73,8 +73,8 @@ private data class ModelGroup(val key: String, val logo: String, val title: Stri
  * cards (All, Favorites, one per provider, Connect), the current model with its thinking levels,
  * then every model grouped by provider. Allternit Cloud rows split by upstream vendor
  * ("Anthropic · via Allternit Cloud"). A pick persists and the sheet stays open so the level can
- * be set, as on iOS. iOS's "On this iPhone" group has no Android source in this app, so it is
- * left out.
+ * be set, as on iOS. Models downloaded to this phone (gap run GS-D, :ondevice) show as the
+ * "On this phone" group, like iOS's "On this iPhone".
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -101,7 +101,7 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
             PickerScope.All -> Unit
         }
         if (reasoning && m.thinking == null) return@filter false
-        if (local && m.provider !in ModelProviderNames.local) return@filter false
+        if (local && m.provider != "ondevice" && m.provider !in ModelProviderNames.local) return@filter false
         q.isEmpty() || "${m.name} ${m.id} ${ModelProviderNames.name(m.provider)} ${m.thinking?.term.orEmpty()}".lowercase().contains(q)
     }
     val groups = buildList {
@@ -116,7 +116,7 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                     add(ModelGroup("allternit:$v", if (v == "other") "allternit" else v, "$name · via Allternit Cloud", rows.filter { ModelProviderNames.inferVendor(it) == v }))
                 }
             } else {
-                add(ModelGroup(pid, pid, ModelProviderNames.name(pid), rows))
+                add(ModelGroup(pid, pid, if (pid == "ondevice") "On this phone" else ModelProviderNames.name(pid), rows))
             }
         }
     }

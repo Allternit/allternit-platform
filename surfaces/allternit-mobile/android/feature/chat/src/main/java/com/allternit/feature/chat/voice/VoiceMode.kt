@@ -96,17 +96,22 @@ enum class TurnState { Idle, Listening, Thinking, Speaking }
  * through the normal chat send (the conversation stays in the text thread) → the streamed reply is
  * read aloud sentence by sentence ([Speaker]) → back to listening (hands free) or idle (push to talk).
  *
- * iOS also has Voice Session engines (Sherpa on-device, the person's own OpenAI or ElevenLabs key). Those
- * are not on Android yet (no Android build of the Sherpa pack in `:ondevice`, no BYOK realtime transport),
- * so this always runs the system route, which is iOS's last-resort route too.
+ * Gap run GS-D: the engines come from [VoiceEngines.choose] (iOS VoiceRouter): the person's own OpenAI key
+ * (Realtime listening + OpenAI speech) or ElevenLabs key (ElevenLabs speech), else the phone's recognizer and voice.
+ * The on-device sherpa-onnx engine is behind a feature check ([DeviceVoice]); without it the system route runs
+ * with a notice, as on iOS with no voice pack.
  */
 class VoiceModeViewModel(
     private val context: Context,
     private val chat: ChatViewModel,
     private val runtimeModelId: String?,
     private val effort: String?,
-    private val dictation: Dictation,
-    private val speaker: Speaker,
+    private val dictation: VoiceListener,
+    private val speaker: ReplySpeaker,
+    /** iOS engineLabel: null on the system recognizer path. */
+    val engineLabel: String? = null,
+    /** Why the chosen route fell back (iOS VoiceRouter.fallbackNotice). */
+    private val notice: String? = null,
 ) {
     var state by mutableStateOf(TurnState.Idle)
         private set
@@ -117,8 +122,6 @@ class VoiceModeViewModel(
         private set
     var statusLine by mutableStateOf<String?>(null)
         private set
-    /** iOS engineLabel: null on the system recognizer path. */
-    val engineLabel: String? = null
     val isConnecting: Boolean = false
 
     private var replyMessageId: String? = null
@@ -134,7 +137,7 @@ class VoiceModeViewModel(
     fun begin() {
         startedAt = System.currentTimeMillis()
         isActive = true
-        statusLine = null
+        statusLine = notice
         requestFocus()
         if (!hasMicPermission(context)) {
             statusLine = "Microphone access is off. Turn it on in Settings › Apps › Allternit."
@@ -315,13 +318,22 @@ class VoiceHost(private val context: Context) {
         private set
     val dictation = Dictation(context)
     val speaker by lazy { Speaker(context) }
+    /** Gap run GS-D: what this session listens and speaks with (VoiceEngines.choose). */
+    var listener by mutableStateOf<VoiceListener>(dictation)
+        private set
+    private var replySpeaker: ReplySpeaker? = null
     val isActive: Boolean get() = viewModel != null
 
     fun start(chat: ChatViewModel, runtimeModelId: String?, effort: String?, presentation: Presentation = Presentation.Full) {
         VoicePrefs.load(context)
         if (viewModel == null) {
-            val model = VoiceModeViewModel(context, chat, runtimeModelId, effort, dictation, speaker)
-            dictation.onStopped = { viewModel?.dictationEnded() }
+            val choice = VoiceEngines.choose(context, VoicePrefs.interactionMode == VoiceInteractionMode.PushToTalk, dictation, speaker)
+            replySpeaker?.takeIf { it !== choice.speaker && it !== speaker }?.shutdown()
+            listener = choice.listener
+            replySpeaker = choice.speaker
+            val model = VoiceModeViewModel(context, chat, runtimeModelId, effort, choice.listener, choice.speaker, choice.label, choice.notice)
+            choice.listener.onStopped = { viewModel?.dictationEnded() }
+            choice.speaker.onFinished = { viewModel?.speakerFinished() }
             speaker.onFinished = { viewModel?.speakerFinished() }
             viewModel = model
             model.begin()
@@ -335,12 +347,15 @@ class VoiceHost(private val context: Context) {
         val seconds = vm.endSession()
         viewModel = null
         presentation = Presentation.None
+        replySpeaker?.stop()
         speaker.stop()
         return seconds
     }
 
     fun dispose() {
         end()
+        replySpeaker?.takeIf { it !== speaker }?.shutdown()
+        replySpeaker = null
         speaker.shutdown()
     }
 }
@@ -348,8 +363,8 @@ class VoiceHost(private val context: Context) {
 /** iOS VoiceHostWiring: the transcript, errors and the chat feed flow into the view model. */
 @Composable
 fun VoiceHostWiring(host: VoiceHost, chat: ChatViewModel) {
-    LaunchedEffect(host) { snapshotFlow { host.dictation.transcript }.collect { host.viewModel?.liveTranscript = it } }
-    LaunchedEffect(host) { snapshotFlow { host.dictation.errorMessage }.collect { m -> if (m != null) host.viewModel?.dictationFailed(m) } }
+    LaunchedEffect(host) { snapshotFlow { host.listener.transcript }.collect { host.viewModel?.liveTranscript = it } }
+    LaunchedEffect(host) { snapshotFlow { host.listener.errorMessage }.collect { m -> if (m != null) host.viewModel?.dictationFailed(m) } }
     LaunchedEffect(host, chat) { snapshotFlow { chat.messages }.collect { host.viewModel?.replyUpdated(it) } }
     DisposableEffect(host) { onDispose { host.dispose() } }
 }
@@ -397,7 +412,7 @@ fun VoiceModeView(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
                         .clickable(onClickLabel = "Interrupt") { viewModel.interrupt() }.testTag("voiceReply"),
                 )
             } else {
-                VoiceSpeakerRing(state = viewModel.state, muted = viewModel.isMuted, level = host.dictation.micLevel, size = 120)
+                VoiceSpeakerRing(state = viewModel.state, muted = viewModel.isMuted, level = host.listener.micLevel, size = 120)
                 Text(
                     viewModel.state.statusLabel(viewModel), color = c.textSecondary, fontSize = 22.sp, fontFamily = FontFamily.Serif,
                     textAlign = TextAlign.Center,
@@ -529,7 +544,7 @@ fun VoiceQuickBar(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        VoiceSpeakerRing(viewModel.state, viewModel.isMuted, host.dictation.micLevel, size = 22)
+        VoiceSpeakerRing(viewModel.state, viewModel.isMuted, host.listener.micLevel, size = 22)
         Column(Modifier.weight(1f)) {
             Text(status, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             (viewModel.statusLine ?: viewModel.engineLabel)?.let { Text(it, color = c.textSecondary, fontSize = 11.sp, maxLines = 1) }
