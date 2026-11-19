@@ -171,6 +171,12 @@ npm run build:electron:dmg   # same, DMG target
 
 `build:electron` runs `prepare:*` steps first (platform static, computer-use driver, ACU gateway, Lima, Lume, mux, mesh node, office engine, API binary, connector catalog and sidecar, and on macOS the Files File Provider) and `verify:packaged-resources`.
 
+### Linux .deb install
+
+`apt install ./Allternit-Desktop-<version>-amd64.deb` installs the app in `/opt/Allternit Desktop` and links `/usr/bin/allternit`. The package depends on `bubblewrap` and `lsof` (the app uses both), so apt installs them with it.
+
+The install script (`build/linux/after-install.sh`) sets up Chromium's sandbox for the machine. It tests whether a normal, unprivileged user can create a user namespace, as the user `nobody` through `setpriv` (or `su` when `setpriv` is missing). If it can, `chrome-sandbox` stays mode `0755` and the app uses user namespaces. If it can't (Debian with `kernel.unprivileged_userns_clone=0`, hardened kernels, or a tool that is missing so the test can't run), the script makes `chrome-sandbox` `root:root` mode `4755` so the app uses the setuid sandbox. Without this, the app stops at launch with `FATAL credentials.cc:131`. On Ubuntu 24.04 and later the package also installs the AppArmor profile `/etc/apparmor.d/allternit`, which allows user namespaces for the app. The test runs once, at install time, so after you change the user-namespace setting, reinstall the package. The desktop entry sets `StartupWMClass=allternit-desktop`, which is the window class the app reports, so the dock groups the window under the right icon.
+
 ### macOS signing
 
 A Mac without a signing certificate (and CI without one) builds ad-hoc signed (`mac.identity: "-"` in `package.json`), not notarized. `scripts/build-local.cjs` signs with a **Developer ID Application** identity when the keychain has one, else with an **Apple Development** identity. Only `build-desktop.sh --release` or `ALLTERNIT_NOTARIZE=1` notarizes. Don't set the identity back to `null`. A `null` identity skips signing, so only the main binary keeps the linker's signature and the bundle has no sealed resources. macOS then reports a downloaded copy as **damaged** and offers only Move to Trash, which is what 1.1.8 and earlier did. An ad-hoc build gets the normal "Apple could not verify" prompt with **Open Anyway** instead (see [Installing on a Mac](/quickstart#installing-allternit-desktop-on-a-mac)).

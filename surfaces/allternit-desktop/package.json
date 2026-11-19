@@ -485,7 +485,8 @@
       "desktop": {
         "entry": {
           "Name": "Allternit Desktop",
-          "Comment": "Fully offline AI platform with local VM execution",
+          "StartupWMClass": "allternit-desktop",
+          "Comment": "Your bots, chats, projects and code, paired with your Allternit account",
           "Keywords": "AI;Agents;Chat;Productivity;"
         }
       },
@@ -550,8 +551,11 @@
       "artifactName": "Allternit-${version}${env.ALLTERNIT_BUILD_SUFFIX}.AppImage"
     },
     "deb": {
+      "afterInstall": "build/linux/after-install.sh",
       "depends": [
         "git",
+        "bubblewrap",
+        "lsof",
         "libgtk-3-0",
         "libnotify4",
         "libnss3",
