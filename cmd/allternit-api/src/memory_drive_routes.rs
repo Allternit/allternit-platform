@@ -871,7 +871,24 @@ struct CaptureTurnBody {
     source: String,
     /// Provenance label, e.g. `gizzi:session/abc`.
     label: String,
+    /// Missing (older clients) or `user`; `assistant` and `tool` rows are
+    /// recorded only for people who turned Allternit Sleep on.
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
     text: String,
+    /// Tool rows: the tool's name, its input (JSON text) and its output.
+    #[serde(default)]
+    tool_name: Option<String>,
+    #[serde(default)]
+    tool_input: Option<String>,
+    #[serde(default)]
+    tool_output: Option<String>,
+    /// Stable id of the turn from the client (message uuid). Accepted and
+    /// reserved: rows repeated within ten minutes are dropped by content.
+    #[serde(default)]
+    #[allow(dead_code)]
+    turn_id: Option<String>,
 }
 
 /// Record a turn the person typed somewhere Allternit doesn't see directly
@@ -883,8 +900,24 @@ async fn capture_turn(State(state): State<Arc<AppState>>, Extension(user): Exten
             return Err(ServiceError::Provenance("source must be gizzi with a gizzi: label".into()));
         }
         open(ctx, None, true)?;
-        let id = crate::memory_capture::record_turn(&ctx.0.db, &ctx.1.user_id, crate::memory_capture::Source::Gizzi, &b.label, &b.text)?;
-        Ok(json!({ "recorded": id.is_some() }))
+        let Some(role) = crate::memory_capture::Role::parse(b.role.as_deref()) else {
+            return Err(ServiceError::Provenance("role must be user, assistant or tool".into()));
+        };
+        let r = crate::memory_capture::record_row(
+            &ctx.0.db,
+            &ctx.1.user_id,
+            crate::memory_capture::Source::Gizzi,
+            &b.label,
+            role,
+            &b.text,
+            b.tool_name.as_deref(),
+            b.tool_input.as_deref().unwrap_or(""),
+            b.tool_output.as_deref().unwrap_or(""),
+        )?;
+        Ok(match r {
+            crate::memory_capture::Capture::Recorded(_) => json!({ "recorded": true }),
+            crate::memory_capture::Capture::Skipped(why) => json!({ "recorded": false, "reason": why }),
+        })
     })
     .await
 }
