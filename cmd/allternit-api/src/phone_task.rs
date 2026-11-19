@@ -467,6 +467,11 @@ async fn go_to(at: &RunAt<'_>, step: u32, here: Here, els: Vec<UiEl>, want: &str
                 if let Some(h) = hold_id {
                     a.insert("_hold".into(), json!(h));
                 }
+                // Marks the run-history step as a map replay. Desktop drops every `_` arg before the device sees it.
+                a.insert("_via".into(), json!("map"));
+                if let Some(s) = phone_map::find_screen(&map, &edge.to) {
+                    a.insert("_map_screen".into(), json!(s.name));
+                }
                 a
             }
             Gate::Changed(why) => {
@@ -834,6 +839,8 @@ async fn run_task_loop(
     let mut status = "max_steps";
     let mut result: Option<String> = None;
     let mut tally = RunTally::default();
+    // The map app the run last stood in: the package and its label when the map has one.
+    let mut map_app: Option<(String, String)> = None;
     // App Maps: on when there is a data dir and the phone's platform is known. A read
     // with no `nodes` (an old Desktop) leaves them off for that step.
     let platform = match data_dir {
@@ -867,6 +874,9 @@ async fn run_task_loop(
             p.observe(dir, platform, new);
         }
         let here = locate(data_dir, platform, read.as_ref());
+        if let Some(h) = &here {
+            map_app = Some((h.map.app.clone(), h.map.name.clone()));
+        }
         let wanted = std::mem::take(&mut want_shot);
         let need_shot = opts.vision == Vision::Always || wanted || els.is_empty() || !phone_map::tree_is_rich(read.as_ref());
         let image = if need_shot { screenshot(serial, &run_id, "task").await.map(|(_, url)| url) } else { None };
@@ -1105,6 +1115,13 @@ async fn run_task_loop(
         "holds": holds,
         "trail": trail_of(&steps),
     });
+    // The app the run used (its last map screen's app), for the completion event.
+    if let Some((pkg, label)) = map_app {
+        report["app"] = json!(pkg);
+        if !label.is_empty() {
+            report["app_label"] = json!(label);
+        }
+    }
     tally.write(&mut report);
     report
 }
@@ -2026,11 +2043,16 @@ mod tests {
         let taps = tool_calls(&calls, "phone.tap");
         assert_eq!(taps.len(), 2);
         assert!(taps.iter().all(|t| t["_pass"].as_str().is_some_and(|p| p.starts_with("pass_"))), "{taps:?}");
+        // ...and is marked as a map step, with the screen it went to, for the run history.
+        assert!(taps.iter().all(|t| t["_via"] == json!("map")), "{taps:?}");
+        assert_eq!((taps[0]["_map_screen"].as_str(), taps[1]["_map_screen"].as_str()), (Some("Network & internet"), Some("Wi-Fi")), "{taps:?}");
         // The prompt listed the known screens, here first; the next one heard where it arrived.
         let prompts = prompts.lock().unwrap().clone();
         assert!(prompts[0].0.contains("Known screens in com.android.settings") && prompts[0].0.contains(&format!("- {home} ")) && prompts[0].0.contains("(here)"), "{}", prompts[0].0);
         assert!(prompts[1].0.contains("arrived in 2 map steps"), "{}", prompts[1].0);
         assert_eq!(report["steps"][0]["map_steps"], json!(2));
+        // The report names the map app the run used, for the completion event.
+        assert_eq!(report["app"].as_str(), Some("com.android.settings"), "{report}");
         // Both edges worked again; a rich tree sent no screenshot; the tokens were kept.
         assert_eq!(edge_stats(&st.data_dir, &home, &network).map(|s| s.0), Some(2));
         assert_eq!(edge_stats(&st.data_dir, &network, &wifi).map(|s| s.0), Some(2));

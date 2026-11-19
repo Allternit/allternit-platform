@@ -73,6 +73,12 @@ pub struct Step {
     pub thumbnail: Option<String>,
     #[serde(default)]
     pub snapshot: bool,
+    /// `map` when an App Map replay made this call (a `go_to` edge), not the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
+    /// The map screen a `via: map` step went to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_screen: Option<String>,
 }
 
 /// What Desktop posts.
@@ -100,6 +106,11 @@ pub struct StepIn {
     pub image_base64: Option<String>,
     #[serde(default)]
     pub at: Option<String>,
+    /// `map` for a go_to replay step (also read from `args._via`).
+    #[serde(default)]
+    pub via: Option<String>,
+    #[serde(default)]
+    pub map_screen: Option<String>,
 }
 
 pub fn root(data_dir: &FsPath) -> PathBuf {
@@ -351,6 +362,10 @@ pub fn ingest(data_dir: &FsPath, serial: &str, body: StepIn) -> Result<Step, Str
         .at
         .filter(|a| chrono::DateTime::parse_from_rfc3339(a).is_ok())
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    // Only `map` is a known marker; the screen name is a short label.
+    let arg = |k: &str| body.args.get(k).and_then(Value::as_str).map(str::to_string);
+    let via = body.via.clone().or_else(|| arg("_via")).filter(|v| v == "map");
+    let map_screen = if via.is_some() { body.map_screen.clone().or_else(|| arg("_map_screen")).map(|n| clip(n.trim(), 80)).filter(|n| !n.is_empty()) } else { None };
     let step = Step {
         id: uuid::Uuid::new_v4().to_string(),
         run_id,
@@ -367,6 +382,8 @@ pub fn ingest(data_dir: &FsPath, serial: &str, body: StepIn) -> Result<Step, Str
         source: body.source.map(|s| clip(&s, 20)),
         thumbnail: None,
         snapshot: false,
+        via,
+        map_screen,
     };
     save(data_dir, step, image)
 }
@@ -623,6 +640,9 @@ pub fn run_event(report: &Value, source: &str) -> Value {
         "map_steps": n("map_steps"),
         "screenshots_sent": n("screenshots_sent"),
         "fallbacks": n("fallbacks"),
+        // The map app the run used (package, and its label when known).
+        "app": report.get("app").filter(|v| v.is_string()),
+        "app_label": report.get("app_label").filter(|v| v.is_string()),
     })
 }
 
@@ -798,6 +818,26 @@ mod tests {
     }
 
     #[test]
+    fn a_map_step_keeps_its_marker_and_an_old_step_still_parses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let from_args = ingest(tmp.path(), "link:m", StepIn { run_id: Some("task-m".into()), tool: "phone.tap".into(), args: json!({ "x": 1, "y": 2, "_via": "map", "_map_screen": "Wi-Fi", "_pass": "pass_x" }), ok: true, ..Default::default() }).unwrap();
+        assert_eq!((from_args.via.as_deref(), from_args.map_screen.as_deref()), (Some("map"), Some("Wi-Fi")));
+        // Other underscored args are not stored.
+        assert!(from_args.args.get("_pass").is_none() && from_args.args.get("_via").is_none(), "{:?}", from_args.args);
+        let top = ingest(tmp.path(), "link:m", StepIn { tool: "phone.back".into(), via: Some("map".into()), map_screen: Some("Home".into()), ok: true, ..Default::default() }).unwrap();
+        assert_eq!((top.via.as_deref(), top.map_screen.as_deref()), (Some("map"), Some("Home")));
+        // A model tap, or any other `via`, is unmarked.
+        let plain = ingest(tmp.path(), "link:m", StepIn { tool: "phone.tap".into(), via: Some("x".into()), ok: true, ..Default::default() }).unwrap();
+        assert!(plain.via.is_none() && plain.map_screen.is_none());
+        // The wire row round-trips with the fields; an old row without them parses.
+        let j = serde_json::to_value(&from_args).unwrap();
+        assert_eq!((j["via"].as_str(), j["map_screen"].as_str()), (Some("map"), Some("Wi-Fi")));
+        let old: Step = serde_json::from_value(json!({ "id": "i", "run_id": "r", "serial": "s", "at": "t", "tool": "phone.tap", "label": "tap", "ok": true })).unwrap();
+        assert!(old.via.is_none());
+        assert!(serde_json::to_value(&plain).unwrap().get("via").is_none());
+    }
+
+    #[test]
     fn ingest_groups_runs_and_bounds_the_path() {
         let tmp = tempfile::tempdir().unwrap();
         for tool in ["phone.read_ui", "phone.tap"] {
@@ -830,6 +870,10 @@ mod tests {
             (Some(1200), Some(40), Some(3), Some(1), Some(1))
         );
         assert_eq!(run_event(&json!({ "run_id": "x" }), "task")["map_steps"].as_u64(), Some(0));
+        // The app the run used rides along; a run with no app leaves it null.
+        let ev = run_event(&json!({ "run_id": "x", "app": "com.android.settings", "app_label": "Settings" }), "task");
+        assert_eq!((ev["app"].as_str(), ev["app_label"].as_str()), (Some("com.android.settings"), Some("Settings")));
+        assert!(run_event(&json!({ "run_id": "x" }), "task")["app"].is_null());
 
         let tmp = tempfile::tempdir().unwrap();
         let step = ingest(tmp.path(), "link:w", StepIn { run_id: Some("task-live-h1".into()), tool: "phone.read_ui".into(), args: json!({}), ok: true, ..Default::default() }).unwrap();
