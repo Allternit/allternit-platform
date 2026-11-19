@@ -69,7 +69,8 @@ struct ChatView: View {
                 sessionId: selectedSessionId,
                 viewModel: viewModel,
                 launchStyle: true,
-                chatMenuHoldsExtras: true
+                chatMenuHoldsExtras: true,
+                onNewChat: startNewChat
             )
         }
         .background(Color("BgPrimary"))
@@ -266,6 +267,9 @@ struct ChatContentView: View {
     /// The host has a chat ⋯ menu (ChatView), so Run on my phone and Capture
     /// to brain leave the + sheet. Other hosts keep them in the sheet.
     var chatMenuHoldsExtras: Bool = false
+    /// "Start a new chat" on an ended chat. The host clears its selected session; nil starts one in place.
+    var onNewChat: (() -> Void)? = nil
+    @ObservedObject private var sessions = ShellSessionsStore.shared
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -721,7 +725,7 @@ struct ChatContentView: View {
                 Text("This chat has ended")
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(Color("TextSecondary"))
-                Button("Start a new chat") { startNewChat() }
+                Button("Start a new chat") { if let onNewChat { onNewChat() } else { viewModel.startNewSession() } }
                     .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity)
