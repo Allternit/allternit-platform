@@ -64,3 +64,6 @@ include(":feature:billing")
 include(":feature:meetings")
 // Wave I1: push notifications (FCM), channels and notification buttons.
 include(":feature:push")
+// Wave I2: phone system surfaces (Glance widget, Quick Settings tiles, status sync, share target). :feature:push, :feature:shell
+// depend on it (nativeapp flavor only).
+include(":feature:system")
