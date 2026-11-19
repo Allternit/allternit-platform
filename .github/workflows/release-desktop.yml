@@ -1071,10 +1071,19 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Gate: the Linux .deb must install and start on Debian 12/13 and Ubuntu 22.04/24.04.
+  linux-desktop-smoke:
+    needs: build-linux
+    permissions:
+      contents: read
+    uses: ./.github/workflows/linux-desktop-smoke.yml
+    with:
+      deb_artifact: allternit-desktop-linux-deb
+
   # Publish GitHub Release
   release:
     name: Create GitHub Release
-    needs: [release-preflight, build-macos, build-windows, build-linux]
+    needs: [release-preflight, build-macos, build-windows, build-linux, linux-desktop-smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
