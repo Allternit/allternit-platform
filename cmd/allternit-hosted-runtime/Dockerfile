@@ -83,6 +83,16 @@ RUN arch="$(uname -m)" \
 
 COPY . .
 
+# Fetch libghostty-vt's Zig packages (lazy ones too) before cargo runs build.rs, with
+# retries: one dropped download (HttpConnectionClosing on dcimgui, 2026-11-19) failed
+# the whole image. build.rs then finds them in the global Zig cache.
+RUN cd factory/pane/vendor/libghostty-vt \
+    && for i in 1 2 3 4 5; do \
+         zig build --fetch=all && break; \
+         [ "$i" = 5 ] && exit 1; \
+         echo "zig fetch failed (try $i), retrying" >&2; sleep $((i * 10)); \
+       done
+
 RUN cargo build --release -p allternit-factory
 
 # ─────────────────────────────────────────────────────────────────────────────
