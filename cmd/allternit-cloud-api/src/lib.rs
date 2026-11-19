@@ -424,6 +424,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // ALLTERNIT_IDJAG_ES256_PEM.
         .merge(routes::managed_auth::routes())
         .merge(routes::edge_auth::routes())
+        // Link your Claude organization: our issuer's JWKS and discovery
+        // (public; 503 without ALLTERNIT_ANTHROPIC_CLIENT_ES256_PEM).
+        .merge(routes::anthropic_client_issuer::routes())
         // Sign in with Allternit: RFC 8414 metadata, /oauth2/authorize (public; never
         // redirects to an unregistered URI) and the consent API (Clerk session only).
         .merge(routes::oauth_server::routes())
