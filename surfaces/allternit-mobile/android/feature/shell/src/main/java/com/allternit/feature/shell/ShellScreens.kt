@@ -206,7 +206,7 @@ internal fun ShellHome(
  * headline. Pinned to the reference build's line.
  */
 @Composable
-private fun LaunchGreeting() {
+internal fun LaunchGreeting() {
     val c = AllternitTheme.colors
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
@@ -322,67 +322,6 @@ private fun ModeArrives(mode: ShellMode) {
 @Composable
 private fun BackButton(onBack: () -> Unit) {
     PhoneIconButton(DesignR.drawable.ph_caret_left, "Back", testTag = "shellBack", onClick = onBack)
-}
-
-/**
- * A chat until step 8 brings the real chat screen. A new chat shows what the person sent, with
- * its brain and attachments; an existing one shows its size. Both say replies come next.
- */
-@Composable
-internal fun ChatStub(session: AgentSession?, draft: ComposerDraft, onBack: () -> Unit, onNewChat: () -> Unit) {
-    val c = AllternitTheme.colors
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().testTag("chatStub")) {
-        PhoneHeader(
-            title = session?.title ?: "Allternit",
-            leading = { BackButton(onBack) },
-            trailing = { PhoneIconButton(R.drawable.shell_note_pencil, "New chat", testTag = "chatNewChat", onClick = onNewChat) },
-        )
-        Column(
-            modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (session != null) {
-                val parts = buildList {
-                    session.messageCount?.let { add(if (it == 1L) "1 message" else "$it messages") }
-                    relativeTime(session.timestampMillis).takeIf { it.isNotEmpty() }?.let { add("updated $it ago") }
-                }
-                if (parts.isNotEmpty()) {
-                    Text(parts.joinToString(" · "), color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
-                }
-            }
-            if (draft.text.isNotEmpty() || draft.attachments.isNotEmpty()) {
-                Column(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalAlignment = Alignment.End) {
-                    draft.attachments.forEach { AttachmentChip(it, onRemove = null) }
-                    if (draft.text.isNotEmpty()) {
-                        Text(
-                            text = draft.text,
-                            color = c.textPrimary,
-                            fontSize = 16.sp,
-                            modifier = Modifier
-                                .padding(top = 6.dp)
-                                .widthIn(max = 300.dp)
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(c.fillNeutral)
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                        )
-                    }
-                    val meta = listOfNotNull(draft.modelLabel, draft.agentMode, "On this phone".takeIf { draft.onPhone })
-                    if (meta.isNotEmpty()) Text(meta.joinToString(" · "), color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
-                }
-            }
-            FriendlyState(
-                style = FriendlyStyle.Empty,
-                title = "Replies arrive in the next update",
-                message = if (session != null) {
-                    "This chat opens here once the chat screen comes to this app."
-                } else {
-                    "Your message is kept here. The chat screen comes to this app next."
-                },
-            ) {
-                Icon(painter = painterResource(R.drawable.shell_chat), contentDescription = null, tint = c.textSecondary)
-            }
-        }
-    }
 }
 
 /** A drawer section whose screen is not built yet (Projects, Artifacts, …). */

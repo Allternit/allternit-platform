@@ -731,6 +731,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                         // No brain chosen: keep the draft and open the picker.
                         self.transientError = AgentChatClientError.noBrainMessage
                         self.needsBrainPick = true
+                    } else if isComputeGateRefusal(error) {
+                        // No computer (428 / relayed compute_required): AgentChatClient opened the
+                        // compute gate sheet; the draft is back in the composer, so no raw banner.
+                        self.transientError = nil
                     } else if ModelStore.cloudAlias(runtimeModelId) != nil,
                               let reason = CloudCreditsGate.reason(inRelayedError: error.localizedDescription) {
                         // The computer relayed cloud-api's 402: the credits sheet, not a banner.

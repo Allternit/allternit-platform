@@ -52,6 +52,30 @@ When a flow gains an `id:` selector, add its row here in the same change.
 | `createLoopTitle` | 18 | `ios/Features/Automation/Views/CreateLoopSheet.swift:39` | Modifier.testTag (step 7+) |
 | `loopsNew` | 18 | `ios/Features/Automation/Views/LoopsListView.swift:117` | Modifier.testTag (step 7+) |
 
+## Chat ids (wave A, no flow uses them yet)
+
+Same strings on both platforms where iOS sets one. The Android-only rows tag views iOS draws
+without an identifier; iOS should take the same id when a flow needs it.
+
+| id | iOS file that sets it | Android |
+| --- | --- | --- |
+| `chatJumpToBottom` | `ios/Features/Chat/Views/ChatView.swift:549` | `android/feature/chat/.../ChatScreen.kt` |
+| `chatNewChat` | `ios/Features/Chat/Views/ChatView.swift:63` | `android/feature/shell/.../ChatPage.kt` (and the home) |
+| `recentRow<sessionId>` | `ios/Features/History/Views/HistorySidebarView.swift:764` | `android/feature/shell/.../ShellDrawer.kt` (opens the chat) |
+| `recentsSeeAll` | `ios/Features/History/Views/HistorySidebarView.swift:510` | `android/feature/shell/.../ShellDrawer.kt` |
+| `drawerEmptyNew` | `ios/Features/History/Views/HistorySidebarView.swift:593` | `android/feature/shell/.../ShellDrawer.kt` |
+| `agentSheetTitle`, `agentSheetDone` | `ios/Features/Chat/Views/AgentSelectionSheet.swift:27,70` | none: the iOS sheet has no caller, so neither app shows it |
+| `chatScreen` | none | `android/feature/shell/.../ChatPage.kt` |
+| `chatFeed` | none | `android/feature/chat/.../ChatScreen.kt` |
+| `chatEditingBanner` | none | `android/feature/chat/.../ChatScreen.kt` |
+| `chatMenuDelete` | none | `android/feature/shell/.../ChatPage.kt` |
+| `composerStop` | none (label "Stop") | `android/feature/shell/.../Composer.kt` |
+| `chatComputeGate`, `chatComputeGateLink`, `chatComputeGatePlans`, `chatComputeGateCredits` | none | `android/feature/chat/.../ComputeGate.kt` |
+| `chatMenushareLink` | none (iOS ChatMenuPopover row "Share link") | `android/feature/shell/.../ChatPage.kt` |
+| `threadShareSheet` | none | `android/feature/chat/.../ThreadShare.kt` |
+| `plusSheetSketch` | none (iOS PlusRow "Sketch") | `android/feature/shell/.../PlusSheet.kt` |
+| `sketchSheet`, `sketchCancel`, `sketchUndo`, `sketchAttach` | none | `android/feature/shell/.../SketchSheet.kt` |
+
 Notes:
 
 - Ids ending in a dynamic suffix (`modeFanCard<mode>`, `drawerRow<railId>`, `automationTab<tab>`)

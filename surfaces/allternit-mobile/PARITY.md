@@ -130,24 +130,24 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: chats | — | src/fabric-session/phone/phone-nav.ts (PhoneSection chats) | — | todo | — |
-| ChatsScreen | — | src/fabric-session/phone/screens/ChatsScreen.tsx | — | todo | — |
-| ComposerView | ios/Features/Chat/Composer/ComposerView.swift | — | — | todo | — |
-| AgentSelectionSheet | ios/Features/Chat/Views/AgentSelectionSheet.swift | — | — | todo | — |
-| AnswerCardView | ios/Features/Chat/Views/AnswerCards/AnswerCardView.swift | — | — | todo | — |
-| ChatErrorCardView | ios/Features/Chat/Views/ChatErrorCardView.swift | — | — | todo | — |
-| ChatView | ios/Features/Chat/Views/ChatView.swift | — | — | todo | — |
-| ComposerPlusSheet | ios/Features/Chat/Views/ComposerPlusSheet.swift | — | — | todo | — |
-| ConnectSuggestCardView | ios/Features/Chat/Views/ConnectSuggestCardView.swift | — | — | todo | — |
+| section: chats | — | src/fabric-session/phone/phone-nav.ts (PhoneSection chats) | feature/shell/ShellScreens.kt (AllChatsScreen) | built (#2614) | — |
+| ChatsScreen | — | src/fabric-session/phone/screens/ChatsScreen.tsx | feature/shell/ShellScreens.kt (AllChatsScreen) → ChatPage.kt | built (#2614) | — |
+| ComposerView | ios/Features/Chat/Composer/ComposerView.swift | — | feature/shell/Composer.kt | built (#2614: send, stop, edit, no-brain pick) | — |
+| AgentSelectionSheet | ios/Features/Chat/Views/AgentSelectionSheet.swift | — | — | N/A: no caller on iOS (dead code) | — |
+| AnswerCardView | ios/Features/Chat/Views/AnswerCards/AnswerCardView.swift | — | feature/chat/ChatCards.kt (AnswerCard, WritingDraftCard) | built (#2614) | — |
+| ChatErrorCardView | ios/Features/Chat/Views/ChatErrorCardView.swift | — | feature/chat/ChatCards.kt (ChatErrorCard) | built (#2614) | — |
+| ChatView | ios/Features/Chat/Views/ChatView.swift | — | feature/chat/ChatScreen.kt + feature/shell/ChatPage.kt | built (#2614) | — |
+| ComposerPlusSheet | ios/Features/Chat/Views/ComposerPlusSheet.swift | — | feature/shell/PlusSheet.kt | built (#2614: photos, camera, files, GitHub upload on send) | — |
+| ConnectSuggestCardView | ios/Features/Chat/Views/ConnectSuggestCardView.swift | — | feature/chat/ChatCards.kt (ConnectSuggestCard) | built (#2614) | — |
 | DictationOnboardingSheet | ios/Features/Chat/Views/DictationOnboardingSheet.swift | — | — | todo | — |
-| FormSurfacesView | ios/Features/Chat/Views/FormSurfacesView.swift | — | — | todo | — |
-| ModelPickerSheet | ios/Features/Chat/Views/ModelPickerSheet.swift | — | — | todo | — |
-| PermissionPrimingSheet | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | — | todo | — |
-| RunCodeFilesView | ios/Features/Chat/Views/RunCodeFilesView.swift | — | — | todo | — |
-| SettingsChangeCardView | ios/Features/Chat/Views/SettingsChangeCardView.swift | — | — | todo | — |
-| SketchSheet | ios/Features/Chat/Views/SketchSheet.swift | — | — | todo | — |
+| FormSurfacesView | ios/Features/Chat/Views/FormSurfacesView.swift | — | — | N/A: no caller on iOS (dead code) | — |
+| ModelPickerSheet | ios/Features/Chat/Views/ModelPickerSheet.swift | — | feature/shell/ModelPicker.kt | built (#2614: the pick drives the send) | — |
+| PermissionPrimingSheet | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | — | todo (wave H): priming before the RECORD_AUDIO / POST_NOTIFICATIONS system dialog | — |
+| RunCodeFilesView | ios/Features/Chat/Views/RunCodeFilesView.swift | — | feature/chat/ChatCards.kt (RunCodeFilesView, UploadFileCard) | built (#2614) | — |
+| SettingsChangeCardView | ios/Features/Chat/Views/SettingsChangeCardView.swift | — | feature/chat/ChatCards.kt (SettingsChangeCard) | built (#2614: status + Open Settings; Apply/Undo on this phone with wave G) | — |
+| SketchSheet | ios/Features/Chat/Views/SketchSheet.swift | — | feature/shell/SketchSheet.kt (from PlusSheet.kt) | built (#2614) | — |
 | ThinkingSliderView | ios/Features/Chat/Views/ThinkingSliderView.swift | — | — | todo | — |
-| ThreadShareSheet | ios/Features/Chat/Views/ThreadShareSheet.swift | — | — | todo | — |
+| ThreadShareSheet | ios/Features/Chat/Views/ThreadShareSheet.swift | — | feature/chat/ThreadShare.kt (chat ⋯ menu, reply Share menu) | built (#2614) | — |
 | VoiceCaptionsView | ios/Features/Chat/Views/Voice/VoiceCaptionsView.swift | — | — | todo | — |
 | VoiceModeView | ios/Features/Chat/Views/Voice/VoiceModeView.swift | — | — | todo | — |
 | VoiceSettingsSheet | ios/Features/Chat/Views/Voice/VoiceSettingsSheet.swift | — | — | todo | — |
@@ -220,7 +220,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| HistorySidebarView | ios/Features/History/Views/HistorySidebarView.swift | — | — | todo | — |
+| HistorySidebarView | ios/Features/History/Views/HistorySidebarView.swift | — | feature/shell/ShellDrawer.kt | built (#2614: Recents open the chat) | — |
 
 ## Models
 
@@ -341,8 +341,8 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
 | CloudCreditsSheet | ios/Features/Shared/CloudCreditsSheet.swift | — | — | todo | — |
-| ComputeGateView | ios/Features/Shared/ComputeGateView.swift | — | — | todo | — |
-| ConnectComputerView | ios/Features/Shared/ConnectComputerView.swift | — | — | todo | — |
+| ComputeGateView | ios/Features/Shared/ComputeGateView.swift | — | feature/chat/ComputeGate.kt (ComputeGateCard) | built (#2614) | — |
+| ConnectComputerView | ios/Features/Shared/ConnectComputerView.swift | — | feature/chat/ComputeGate.kt (ConnectComputerSheet) | built (#2614) | — |
 | ImpactMapView | ios/Features/Shared/ImpactMapView.swift | — | — | todo | — |
 
 ## Shell

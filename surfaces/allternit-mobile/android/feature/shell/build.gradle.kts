@@ -35,6 +35,8 @@ kotlin {
 
 dependencies {
     implementation(project(":feature:onboarding"))
+    // Wave A: the chat screen that replaces the shell's chat placeholder.
+    implementation(project(":feature:chat"))
     // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
     implementation(project(":core:api"))
     // setContent { } for MainActivity.
