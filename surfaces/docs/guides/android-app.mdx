@@ -138,7 +138,8 @@ The native app is built to match the iPhone app screen for screen, in ten waves.
 | C. Rest of the shell | Search, session overview, Inbox, Quick task, Continue a CLI session, thinking slider, stage backdrop, test extras | Built, in testing |
 | D. Projects and artifacts | Projects (List, Grid, Deck), folder covers and **Folder look**, new project, project detail and pad, code and design projects, the artifacts library, artifact viewer and editor, studio, comments, PDF from template | Built, in testing |
 | E. Bots | Bots mode (launchpad, bot chat, live stage, bot page, threads, tasks), bot form, agent hub, marketplace, workspace files, agent activity, decisions, run tree, bot projects | Built, in testing. The bot's live desktop comes with Computer in wave F. |
-| F. Modes | Automation, Cowork, Code, Computer (remote desktop and the bot desktop, Teach, mini apps), Connect, Phones, Office, Models | Not started |
+| F1. Code | Code mode from the mode fan: the Code home (folder, tools, recent threads), threads in the chat screen, the pending-change review, Changes and file diffs, the file browser and editor, the terminal with Terminal bots, dev servers and preview, the thread overview with rename, archive and permission mode, the computer picker | Built, in testing |
+| F. Modes (rest) | Automation, Cowork, Computer (remote desktop and the bot desktop, Teach, mini apps), Connect, Phones, Office, Models | Not started |
 | G. Settings | Settings and all sub-screens, Customize, Connectors, Skills, Plugins, Brain | Not started |
 | H. Money and voice | Google Play purchases, credits, voice mode, calls | Not started |
 | I. Phone system | Push (FCM), widgets, Quick Settings tiles, share target, shortcuts, Files, screen share | Not started |
@@ -267,3 +268,14 @@ After the switch, people who used the Google Play app sign in once more.
 - **Edit with chat**: under a workspace file, tell the bot how to change it; review the green/red diff, then Apply and Save.
 - **Import a bot**: team files (.json) and bot packages (.zip). A package's memory, skills, tasks and docs are copied to your computer.
 - **Memory map**: on the bot page, tap any box to move focus; Open, Forget a memory or Turn off a skill (it names what could change first).
+
+#### Code mode
+
+Pick **Code** on the mode fan. The home shows the folder and branch your computer is working in, a row of tools (Terminal, Files, Changes, Computer) and your recent Code threads. The composer under it starts a new thread. A thread is the normal chat screen on a Code session, with a **Code tools** button and a banner when changes wait for your review.
+
+- **Review a change.** Tap the banner to see the diff, then Reject, Always Allow or Approve. Changes lists every file the thread edited with a before and after view.
+- **Files.** Browse the working folder one level at a time, open a file with line numbers and its uncommitted diff, and tap Edit to change and save it.
+- **Terminal.** Each shell is a pty on your computer, drawn natively on the phone (no web view). A key bar adds Esc, Tab, Ctrl, arrows and Ctrl-C. Terminal bots show as tabs and mirror their pane. Open **Dev servers** from a shell to preview a port.
+- **All threads.** Filter by Needs input, Working, Ready for review, Done or Archived; tap the dots on a row to rename, mark reviewed or archive. **Permissions** sets Manual, Auto-accept edits, Plan mode or Read only.
+- **No computer.** Every Code screen shows "Connect a computer or Allternit Cloud" until one is connected. **Computer** lets you pick which one runs your commands.
+

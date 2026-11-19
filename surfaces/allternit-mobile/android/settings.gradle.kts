@@ -37,3 +37,6 @@ include(":feature:projects")
 // Wave E: Bots mode. :feature:shell depends on it (nativeapp flavor only); it reuses :feature:chat and
 // :feature:artifacts (LibraryNet, library chrome).
 include(":feature:bots")
+// Wave F1: Code mode. :feature:shell depends on it (nativeapp flavor only); it reuses :feature:chat
+// (the relay: runtime calls, the pty socket) and :feature:artifacts (LibraryNet, library chrome).
+include(":feature:code")

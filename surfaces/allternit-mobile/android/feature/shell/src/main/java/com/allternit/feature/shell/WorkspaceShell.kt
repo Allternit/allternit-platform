@@ -210,6 +210,40 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     val botsStore = remember { com.allternit.feature.bots.BotModeStore(context) }
     var botsLaunch by remember { mutableStateOf(com.allternit.feature.bots.BotsLaunch()) }
 
+    // Wave F1: Code mode (iOS CodeModeView). The thread is this shell's chat screen on a code session;
+    // the Code home, the tools and the terminal come from :feature:code.
+    val codeStore = remember { com.allternit.feature.code.CodeStore(chatBackend) }
+    var codeRoute by remember { mutableStateOf<com.allternit.feature.code.CodeRoute?>(null) }
+    val codeHost = com.allternit.feature.code.CodeHost(
+        backend = chatBackend,
+        sessions = {
+            store.of(ShellMode.Code).map { sn ->
+                com.allternit.feature.code.CodeSessionRow(
+                    id = sn.id,
+                    title = sn.title,
+                    updatedMillis = sn.timestampMillis,
+                    status = when {
+                        sn.archived -> com.allternit.feature.code.CodeSessionStatus.Archived
+                        sn.needsInput -> com.allternit.feature.code.CodeSessionStatus.NeedsInput
+                        chat.isStreaming && chat.currentSessionId == sn.id -> com.allternit.feature.code.CodeSessionStatus.Working
+                        sn.readyForReview -> com.allternit.feature.code.CodeSessionStatus.ReadyForReview
+                        sn.completed -> com.allternit.feature.code.CodeSessionStatus.Done
+                        else -> com.allternit.feature.code.CodeSessionStatus.Idle
+                    },
+                )
+            } + store.archivedOf(ShellMode.Code).map { sn ->
+                com.allternit.feature.code.CodeSessionRow(sn.id, sn.title, sn.timestampMillis, com.allternit.feature.code.CodeSessionStatus.Archived)
+            }
+        },
+        reloadSessions = { if (account != null) store.load() },
+        openSession = { id -> codeRoute = null; openSessionId(id) },
+        currentSessionId = { chat.currentSessionId },
+        openConnections = {
+            codeRoute = null
+            page = ShellPage.Section(RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected))
+        },
+    )
+
     // Wave D: what the Projects and Artifacts screens need from the shell.
     val shellMenuButton: @Composable () -> Unit = {
         PhoneMenuButton(mode = mode, hold = hold, holdEnabled = !drawerOpenNow(drawer), onOpen = { setDrawer(true) }, onPick = ::pickMode)
@@ -386,6 +420,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             },
                             onNew = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
+                            codeHome = if (mode == ShellMode.Code) ({
+                                com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it })
+                            }) else null,
                         )
                         is ShellPage.Chat -> ChatPage(
                             chat = chat,
@@ -467,6 +504,21 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             onOpenProject = { entry -> page = ShellPage.Project(entry.id) },
                             onOpenBot = { page = ShellPage.Section(RailRow("bots", "Your bots", DesignR.drawable.ph_cpu)) },
                         )
+                    }
+                    // Wave F1: the Code tools over a Code thread, and the full-screen Code tool screens.
+                    if (mode == ShellMode.Code && page is ShellPage.Chat) {
+                        com.allternit.feature.code.CodeThreadTools(
+                            host = codeHost,
+                            sessionId = chat.currentSessionId,
+                            onRoute = { codeRoute = it },
+                            modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd)
+                                .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 52.dp),
+                        )
+                    }
+                    codeRoute?.let { r ->
+                        Box(Modifier.fillMaxSize().testTag("codeRoute")) {
+                            com.allternit.feature.code.CodeRouteScreen(codeHost, codeStore, r, onRoute = { codeRoute = it }, onClose = { codeRoute = null })
+                        }
                     }
                 }
                 if (p > 0f) {

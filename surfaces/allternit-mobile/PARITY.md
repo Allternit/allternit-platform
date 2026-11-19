@@ -161,23 +161,23 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: code | — | src/fabric-session/phone/phone-nav.ts (PhoneSection code) | — | todo | — |
-| PhoneCodeSessionsView | — | src/fabric-session/phone/screens/PhoneCodeSessionsView.tsx | — | todo | — |
-| PhoneCodeTerminal | — | src/fabric-session/phone/screens/PhoneCodeTerminal.tsx | — | todo | — |
-| ChangesetReviewSheet | ios/Features/Code/ChangesetReviewSheet.swift | — | — | todo | — |
-| CodeEditorView | ios/Features/Code/CodeEditor/CodeEditorView.swift | — | — | todo | — |
-| CodeModeView | ios/Features/Code/CodeModeView.swift | — | — | todo | — |
-| CodeOverviewSheet | ios/Features/Code/CodeOverviewSheet.swift | — | — | todo | — |
-| CodeRuntimePairingView | ios/Features/Code/CodeRuntimePairingView.swift | — | — | todo | — |
-| CodeThreadView | ios/Features/Code/CodeThreadView.swift | — | — | todo | — |
-| DevServerPortsView | ios/Features/Code/DevPreview/DevServerPortsView.swift | — | — | todo | — |
-| DevServerPreviewView | ios/Features/Code/DevPreview/DevServerPreviewView.swift | — | — | todo | — |
-| FileDiffDetailView | ios/Features/Code/DiffViewer/FileDiffDetailView.swift | — | — | todo | — |
-| SessionDiffListView | ios/Features/Code/DiffViewer/SessionDiffListView.swift | — | — | todo | — |
-| FileBrowserDirectoryView | ios/Features/Code/FileBrowser/FileBrowserDirectoryView.swift | — | — | todo | — |
-| FileBrowserView | ios/Features/Code/FileBrowser/FileBrowserView.swift | — | — | todo | — |
-| FileDetailView | ios/Features/Code/FileBrowser/FileDetailView.swift | — | — | todo | — |
-| TerminalSessionView | ios/Features/Code/TerminalSessionView.swift | — | — | todo | — |
+| section: code | — | src/fabric-session/phone/phone-nav.ts (PhoneSection code) | feature/shell/WorkspaceShell.kt (mode code: CodeHome under the composer) | built (#PRNUM) | — |
+| PhoneCodeSessionsView | — | src/fabric-session/phone/screens/PhoneCodeSessionsView.tsx | feature/code/CodeHome.kt (CodeOverviewScreen) | built (#PRNUM) | — |
+| PhoneCodeTerminal | — | src/fabric-session/phone/screens/PhoneCodeTerminal.tsx | feature/code/CodeTerminal.kt (TerminalScreen, PtySession, PaneMirror) | built (#PRNUM) | — |
+| ChangesetReviewSheet | ios/Features/Code/ChangesetReviewSheet.swift | — | feature/code/CodeDiffs.kt (ChangesetReviewSheet, PendingChangesBanner) | built (#PRNUM) | — |
+| CodeEditorView | ios/Features/Code/CodeEditor/CodeEditorView.swift | — | feature/code/CodeFiles.kt (CodeEditorScreen: line numbers, highlight, Save through files/write) | built (#PRNUM) | — |
+| CodeModeView | ios/Features/Code/CodeModeView.swift | — | feature/code/CodeHome.kt (CodeHome, CodeRouteScreen, CodeThreadTools) + feature/shell/WorkspaceShell.kt (Code card in the mode fan opens it) | built (#PRNUM) | — |
+| CodeOverviewSheet | ios/Features/Code/CodeOverviewSheet.swift | — | feature/code/CodeHome.kt (CodeOverviewScreen, ThreadActionsSheet, PermissionsScreen) | built (#PRNUM) | — |
+| CodeRuntimePairingView | ios/Features/Code/CodeRuntimePairingView.swift | — | feature/code/CodeHome.kt (CodeComputerScreen) | built (#PRNUM) | — |
+| CodeThreadView | ios/Features/Code/CodeThreadView.swift | — | feature/shell/ChatPage.kt on a code session + feature/code/CodeDiffs.kt (PendingChangesBanner) | built (#PRNUM) | — |
+| DevServerPortsView | ios/Features/Code/DevPreview/DevServerPortsView.swift | — | feature/code/CodeDevServer.kt (DevServerPortsScreen) | built (#PRNUM) | — |
+| DevServerPreviewView | ios/Features/Code/DevPreview/DevServerPreviewView.swift | — | feature/code/CodeDevServer.kt (DevServerPreviewScreen: WebView, requests fetched through the relay) | built (#PRNUM) | — |
+| FileDiffDetailView | ios/Features/Code/DiffViewer/FileDiffDetailView.swift | — | feature/code/CodeDiffs.kt (FileDiffDetailScreen) | built (#PRNUM) | — |
+| SessionDiffListView | ios/Features/Code/DiffViewer/SessionDiffListView.swift | — | feature/code/CodeDiffs.kt (SessionDiffScreen) | built (#PRNUM) | — |
+| FileBrowserDirectoryView | ios/Features/Code/FileBrowser/FileBrowserDirectoryView.swift | — | feature/code/CodeFiles.kt (FileBrowserDirectory) | built (#PRNUM) | — |
+| FileBrowserView | ios/Features/Code/FileBrowser/FileBrowserView.swift | — | feature/code/CodeFiles.kt (FileBrowserScreen) | built (#PRNUM) | — |
+| FileDetailView | ios/Features/Code/FileBrowser/FileDetailView.swift | — | feature/code/CodeFiles.kt (FileDetailScreen) | built (#PRNUM) | — |
+| TerminalSessionView | ios/Features/Code/TerminalSessionView.swift | — | feature/code/CodeTerminal.kt (TerminalScreen: native VT screen like SwiftTerm, no WebView) | built (#PRNUM) | — |
 
 ## Connect
 
