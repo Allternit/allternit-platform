@@ -125,9 +125,9 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| MeetingLiveView | ios/Features/Calls/Meetings/MeetingLiveView.swift | — | android/feature/meetings/.../MeetingsScreens.kt (MeetingLiveScreen), MeetingsData.kt (MeetingLiveSession, SSE) | built (H2PR) | — |
-| MeetingRecapView | ios/Features/Calls/Meetings/MeetingRecapView.swift | — | android/feature/meetings/.../MeetingsScreens.kt (MeetingRecapScreen) | built (H2PR) | — |
-| MeetingsView | ios/Features/Calls/Meetings/MeetingsView.swift | src/fabric-session/phone/phone-nav.ts (PhoneSection meetings) | android/feature/meetings/.../MeetingsScreens.kt (MeetingsScreen, PasteLinkSheet), MeetingsData.kt (MeetingsStore, MeetingsClient) | built (H2PR): drawer Meetings button with the `meetings` flag; Connect Zoom / Google calendar connect, meeting notifications and Live Activity are not ported (the empty state links to Settings › Meetings) | — |
+| MeetingLiveView | ios/Features/Calls/Meetings/MeetingLiveView.swift | — | android/feature/meetings/.../MeetingsScreens.kt (MeetingLiveScreen), MeetingsData.kt (MeetingLiveSession, SSE) | built (#2663) | — |
+| MeetingRecapView | ios/Features/Calls/Meetings/MeetingRecapView.swift | — | android/feature/meetings/.../MeetingsScreens.kt (MeetingRecapScreen) | built (#2663) | — |
+| MeetingsView | ios/Features/Calls/Meetings/MeetingsView.swift | src/fabric-session/phone/phone-nav.ts (PhoneSection meetings) | android/feature/meetings/.../MeetingsScreens.kt (MeetingsScreen, PasteLinkSheet), MeetingsData.kt (MeetingsStore, MeetingsClient) | built (#2663): drawer Meetings button with the `meetings` flag; Connect Zoom / Google calendar connect, meeting notifications and Live Activity are not ported (the empty state links to Settings › Meetings) | — |
 
 ## Chat
 
@@ -142,20 +142,20 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | ChatView | ios/Features/Chat/Views/ChatView.swift | — | feature/chat/ChatScreen.kt + feature/shell/ChatPage.kt | built (#2614) | — |
 | ComposerPlusSheet | ios/Features/Chat/Views/ComposerPlusSheet.swift | — | feature/shell/PlusSheet.kt | built (#2614: photos, camera, files, GitHub upload on send) | — |
 | ConnectSuggestCardView | ios/Features/Chat/Views/ConnectSuggestCardView.swift | — | feature/chat/ChatCards.kt (ConnectSuggestCard) | built (#2614) | — |
-| DictationOnboardingSheet | ios/Features/Chat/Views/DictationOnboardingSheet.swift | — | android/feature/chat/.../voice/VoiceSheets.kt (DictationOnboardingSheet) | built (H2PR) | — |
+| DictationOnboardingSheet | ios/Features/Chat/Views/DictationOnboardingSheet.swift | — | android/feature/chat/.../voice/VoiceSheets.kt (DictationOnboardingSheet) | built (#2663) | — |
 | FormSurfacesView | ios/Features/Chat/Views/FormSurfacesView.swift | — | — | N/A: no caller on iOS (dead code) | — |
 | ModelPickerSheet | ios/Features/Chat/Views/ModelPickerSheet.swift | — | feature/shell/ModelPicker.kt | built (#2614: the pick drives the send) | — |
-| PermissionPrimingSheet | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | android/feature/chat/.../voice/VoiceSheets.kt (PermissionPrimingSheet, rememberPrimedPermission) | built (H2PR): microphone priming before voice mode; camera/photos need none on Android (TakePicturePreview and the photo picker show no system dialog); the notifications sheet is built but the empty-chat notifications card that opens it is not ported | — |
+| PermissionPrimingSheet | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | android/feature/chat/.../voice/VoiceSheets.kt (PermissionPrimingSheet, rememberPrimedPermission) | built (#2663): microphone priming before voice mode; camera/photos need none on Android (TakePicturePreview and the photo picker show no system dialog); the notifications sheet is built but the empty-chat notifications card that opens it is not ported | — |
 | RunCodeFilesView | ios/Features/Chat/Views/RunCodeFilesView.swift | — | feature/chat/ChatCards.kt (RunCodeFilesView, UploadFileCard) | built (#2614) | — |
 | SettingsChangeCardView | ios/Features/Chat/Views/SettingsChangeCardView.swift | — | feature/chat/ChatCards.kt (SettingsChangeCard) | built (#2614: status + Open Settings; Apply/Undo on this phone with wave G) | — |
 | SketchSheet | ios/Features/Chat/Views/SketchSheet.swift | — | feature/shell/SketchSheet.kt (from PlusSheet.kt) | built (#2614) | — |
 | ThinkingSliderView | ios/Features/Chat/Views/ThinkingSliderView.swift | — | feature/shell/ThinkingSlider.kt | built (#2626) | — |
 | ThreadShareSheet | ios/Features/Chat/Views/ThreadShareSheet.swift | — | feature/chat/ThreadShare.kt (chat ⋯ menu, reply Share menu) | built (#2614) | — |
-| VoiceCaptionsView | ios/Features/Chat/Views/Voice/VoiceCaptionsView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceCaptions) | built (H2PR): bot stage not ported, so captions are not shown in voice mode yet | — |
-| VoiceModeView | ios/Features/Chat/Views/Voice/VoiceModeView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceModeView, VoiceModeViewModel, VoiceHost, VoiceQuickBar), VoiceEngine.kt | built (H2PR): system route (SpeechRecognizer + TextToSpeech); the Sherpa on-device engine, BYOK OpenAI/ElevenLabs sessions and the bot stage are not on Android | — |
-| VoiceSettingsSheet | ios/Features/Chat/Views/Voice/VoiceSettingsSheet.swift | — | android/feature/chat/.../voice/VoiceSheets.kt (VoiceSettingsSheet) | built (H2PR): Live mode look section not ported | — |
-| VoiceSpeakerView | ios/Features/Chat/Views/Voice/VoiceSpeakerView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceSpeakerRing) | built (H2PR): ring style only; blocks/ascii/glow/orb looks not ported | — |
-| VoiceSummaryCardView | ios/Features/Chat/Views/Voice/VoiceSummaryCardView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceSummaryCard) | built (H2PR) | — |
+| VoiceCaptionsView | ios/Features/Chat/Views/Voice/VoiceCaptionsView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceCaptions) | built (#2663): bot stage not ported, so captions are not shown in voice mode yet | — |
+| VoiceModeView | ios/Features/Chat/Views/Voice/VoiceModeView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceModeView, VoiceModeViewModel, VoiceHost, VoiceQuickBar), VoiceEngine.kt | built (#2663): system route (SpeechRecognizer + TextToSpeech); the Sherpa on-device engine, BYOK OpenAI/ElevenLabs sessions and the bot stage are not on Android | — |
+| VoiceSettingsSheet | ios/Features/Chat/Views/Voice/VoiceSettingsSheet.swift | — | android/feature/chat/.../voice/VoiceSheets.kt (VoiceSettingsSheet) | built (#2663): Live mode look section not ported | — |
+| VoiceSpeakerView | ios/Features/Chat/Views/Voice/VoiceSpeakerView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceSpeakerRing) | built (#2663): ring style only; blocks/ascii/glow/orb looks not ported | — |
+| VoiceSummaryCardView | ios/Features/Chat/Views/Voice/VoiceSummaryCardView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceSummaryCard) | built (#2663) | — |
 
 ## Code
 
