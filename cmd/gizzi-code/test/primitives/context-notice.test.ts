@@ -11,7 +11,8 @@ import { tmpdir } from "../fixture/fixture"
 /** PR8c quiet check-in and PR8d todo nudge, through the real stores. */
 
 let seq = 0
-const nextID = (prefix: string) => `${prefix}_q${String(++seq).padStart(6, "0")}`
+const run = Date.now().toString(36) + Math.random().toString(36).slice(2, 6) // the test database outlives a run
+const nextID = (prefix: string) => `${prefix}_q${run}${String(++seq).padStart(6, "0")}`
 const noModel = { id: "m", providerID: "p", limit: { context: 0, output: 0 } } as any
 const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
 const turn = (todowrite = false) =>
