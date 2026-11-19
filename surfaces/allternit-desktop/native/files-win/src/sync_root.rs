@@ -16,10 +16,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
-use windows::core::{Result, GUID, HSTRING, PCWSTR, PWSTR};
+use windows::core::{Interface, Result, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Foundation::Collections::IVector;
 use windows::Storage::Provider::*;
-use windows::Storage::StorageFolder;
+use windows::Storage::{IStorageFolder, StorageFolder};
 use windows::Win32::Foundation::{HANDLE, HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
@@ -93,7 +93,8 @@ fn register_storage_provider(spec: &Spec, id: &str) -> Result<()> {
     let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(spec.path.as_os_str()))?.get()?;
     let info = StorageProviderSyncRootInfo::new()?;
     info.SetId(&HSTRING::from(id))?;
-    info.SetPath(&folder)?;
+    // windows 0.58 has no StorageFolder -> IStorageFolder conversion for Param; cast it.
+    info.SetPath(&folder.cast::<IStorageFolder>()?)?;
     info.SetDisplayNameResource(&HSTRING::from(format!("Allternit · {}", spec.display_name)))?;
     if let Some(icon) = spec.icon {
         info.SetIconResource(&HSTRING::from(icon.as_os_str()))?;
