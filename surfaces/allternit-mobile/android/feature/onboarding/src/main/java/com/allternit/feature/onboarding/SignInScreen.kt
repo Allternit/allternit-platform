@@ -25,7 +25,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.Typography
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,6 +55,9 @@ import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -86,6 +91,28 @@ private object SignInColors {
 private val SignInPage = SignInColors.Page
 
 /**
+ * Roboto, bundled (res/font, SIL OFL 1.1). The web sign-in uses the system sans stack, which
+ * Chrome on Android draws in Roboto; Compose's default follows the phone maker's font instead
+ * (on the Moto a wide geometric face), so the same screen looked different in the app.
+ */
+private val SignInFont = FontFamily(
+    Font(R.font.roboto_regular, FontWeight.Normal),
+    Font(R.font.roboto_semibold, FontWeight.SemiBold),
+    Font(R.font.roboto_bold, FontWeight.Bold),
+)
+
+private fun Typography.withFamily(f: FontFamily): Typography {
+    fun TextStyle.f() = copy(fontFamily = f)
+    return copy(
+        displayLarge = displayLarge.f(), displayMedium = displayMedium.f(), displaySmall = displaySmall.f(),
+        headlineLarge = headlineLarge.f(), headlineMedium = headlineMedium.f(), headlineSmall = headlineSmall.f(),
+        titleLarge = titleLarge.f(), titleMedium = titleMedium.f(), titleSmall = titleSmall.f(),
+        bodyLarge = bodyLarge.f(), bodyMedium = bodyMedium.f(), bodySmall = bodySmall.f(),
+        labelLarge = labelLarge.f(), labelMedium = labelMedium.f(), labelSmall = labelSmall.f(),
+    )
+}
+
+/**
  * Native sign-in, laid out like the phone sign-in on m.allternit.com (allternit-ai
  * SignInRail, `.ast-rail-compact`) and iOS `LoginGateView`: the offline wordmark/Gizzi/cast loop
  * ([LoginArrival]), headline, the cream "Continue with Apple" button, GitHub and Google with
@@ -101,6 +128,18 @@ fun SignInScreen(
     modifier: Modifier = Modifier,
     onSkipAuth: (() -> Unit)? = null,
 ) {
+    // Every Text, button label and field below reads its style from this typography.
+    MaterialTheme(
+        colorScheme = MaterialTheme.colorScheme,
+        shapes = MaterialTheme.shapes,
+        typography = MaterialTheme.typography.withFamily(SignInFont),
+    ) {
+        SignInContent(modifier, onSkipAuth)
+    }
+}
+
+@Composable
+private fun SignInContent(modifier: Modifier, onSkipAuth: (() -> Unit)?) {
     val scope = rememberCoroutineScope()
     val view = LocalView.current
 
