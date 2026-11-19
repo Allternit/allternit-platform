@@ -477,6 +477,42 @@ export type PhoneList = {
   next_cursor?: (string | null);
 };
 
+export type PhoneMapSummary = {
+  app?: string;
+  platform?: "android" | "ios";
+  app_version?: string;
+  /**
+   * App label when known, else the package.
+   */
+  name?: string;
+  screens?: number;
+  edges?: number;
+  routable_edges?: number;
+  stale_edges?: number;
+  truncated?: (Record<string, unknown> | null);
+  last_seen?: string;
+};
+
+export type PhoneMapList = {
+  ok?: boolean;
+  maps?: Array<PhoneMapSummary>;
+};
+
+export type PhoneMapResult = {
+  ok?: boolean;
+  /**
+   * The map file: `version`, `fp_version`, `platform`, `app`, `app_version`, `truncated`, `screens` (id to screen), `edges`.
+   */
+  map?: {
+    platform?: "android" | "ios";
+    app?: string;
+    app_version?: string;
+    screens?: Record<string, unknown>;
+    edges?: Array<Record<string, unknown>>;
+    [key: string]: unknown;
+  };
+};
+
 export type PhoneSkillList = {
   data?: Array<{
     object?: "phone.skill";
@@ -1637,6 +1673,29 @@ export type RunPhoneSkillRequest = {
 
 export type RunPhoneSkillResponse = PhoneRunStarted;
 
+export type ListPhoneMapsQuery = {
+  /**
+   * Picks the Desktop that serves this phone.
+   */
+  serial?: string;
+  platform?: "android" | "ios";
+};
+
+export type ListPhoneMapsResponse = PhoneMapList;
+
+export type GetPhoneMapQuery = {
+  /**
+   * Picks the Desktop that serves this phone.
+   */
+  serial?: string;
+  /**
+   * Default: whichever exists, android first.
+   */
+  platform?: "android" | "ios";
+};
+
+export type GetPhoneMapResponse = PhoneMapResult;
+
 export type GetPhoneHistoryQuery = {
   /**
    * Only this run's steps.
@@ -1676,6 +1735,10 @@ export type RunPhoneTaskRequest = {
    * provider/model
    */
   brain?: string;
+  /**
+   * auto (default) skips the screenshot when the screen text is rich; always looks at it every step.
+   */
+  vision?: "auto" | "always";
 };
 
 export type RunPhoneTaskResponse = PhoneRunStarted;

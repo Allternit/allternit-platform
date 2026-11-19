@@ -47,6 +47,21 @@ impl PhoneHost for FakeDesktop {
                 return Err(PlatformError::api_error("phone_response_too_large", "too large"));
             }
         }
+        if path.contains("/phones/maps") {
+            return Ok(if path.contains("nomap.app") {
+                (404, json!({ "ok": false, "error": "map_not_found", "message": "No map for that app yet." }))
+            } else if path.contains("money.app") {
+                (403, json!({ "ok": false, "error": "money_app", "message": "App Maps are off for money apps." }))
+            } else if path.contains("offline.app") {
+                (503, json!({ "error": "runtime_offline" }))
+            } else if path.contains("com.android.settings") {
+                (200, json!({ "ok": true, "map": { "app": "com.android.settings", "platform": "android", "app_version": "14", "truncated": null,
+                    "screens": { "s1": { "id": "s1", "name": "Wi-Fi", "keys": ["secret:key"] }, "s2": { "id": "s2", "name": "Network" } },
+                    "edges": [{ "from": "s1", "to": "s2", "action": "tap", "locator": { "class": "x", "label": "Private label" } }] } }))
+            } else {
+                (200, json!({ "ok": true, "maps": [{ "app": "com.android.settings", "platform": "android", "screens": 2 }] }))
+            });
+        }
         Ok(if path.ends_with("/viewer-token") {
             if serial == "OFF" {
                 (503, json!({ "error": "desktop_offline" }))
@@ -423,4 +438,56 @@ fn approval_webhooks_are_registered_for_the_platform() {
         let e = crate::routes::allternit_events::find(name).unwrap();
         assert!(e.platform && e.payload.iter().all(|(k, _)| !k.contains("screen") && !k.contains("crop")), "{name}");
     }
+}
+
+#[test]
+fn phone_maps_tool_is_read_only_and_phone_task_takes_vision() {
+    let tools = phones::mcp_tools();
+    let maps = tools.iter().find(|t| t["name"] == "phone_maps").expect("phone_maps is listed");
+    let desc = maps["description"].as_str().unwrap().to_lowercase();
+    assert!(desc.contains("read only"), "{desc}");
+    assert!(phones::is_mcp_tool("phone_maps"));
+    for t in &tools {
+        let name = t["name"].as_str().unwrap();
+        assert!(!name.contains("explore") && !name.contains("forget"), "{name}");
+    }
+    let task = tools.iter().find(|t| t["name"] == "phone_task").unwrap();
+    assert_eq!(task["inputSchema"]["properties"]["vision"]["enum"], json!(["auto", "always"]));
+}
+
+#[tokio::test]
+async fn maps_relay_to_the_runtime_and_offline_matches_sibling_routes() {
+    let c = ctx().await;
+    let (_p, key) = project(&c, "dev_ph_maps").await;
+    let (s, v) = call(&c.app, "GET", "/v1/phones/maps?platform=android", &key, None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["maps"][0]["app"].as_str(), Some("com.android.settings"), "{v}");
+    let last = c.desktop.calls.lock().unwrap().last().unwrap().clone();
+    assert_eq!((last.0.as_str(), last.1.as_str()), ("GET", "/api/v1/phones/maps?platform=android"));
+    let (s, v) = call(&c.app, "GET", "/v1/phones/maps/com.android.settings", &key, None).await;
+    assert_eq!((s, v["map"]["app"].as_str()), (StatusCode::OK, Some("com.android.settings")), "{v}");
+    let (s, e) = call(&c.app, "GET", "/v1/phones/maps?platform=windows", &key, None).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_phone_request")), "{e}");
+    let (s, e) = call(&c.app, "GET", "/v1/phones/maps/nomap.app", &key, None).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::NOT_FOUND, Some("map_not_found")), "{e}");
+    let (s, e) = call(&c.app, "GET", "/v1/phones/maps/money.app", &key, None).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::FORBIDDEN, Some("money_app")), "{e}");
+    // Runtime offline: the same error the other /v1/phones routes return.
+    let (s, e) = call(&c.app, "GET", "/v1/phones/maps/offline.app", &key, None).await;
+    assert_eq!(e["error"]["code"].as_str(), Some("phone_desktop_offline"), "{e}");
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{e}");
+}
+
+#[tokio::test]
+async fn phone_task_vision_is_validated_and_passed_through() {
+    let c = ctx().await;
+    let (_p, key) = project(&c, "dev_ph_vision").await;
+    let (s, e) = call(&c.app, "POST", "/v1/phones/R5C/task", &key, Some(json!({ "goal": "x", "vision": "sometimes" }))).await;
+    assert_eq!((s, e["error"]["param"].as_str()), (StatusCode::BAD_REQUEST, Some("vision")), "{e}");
+    let (s, e) = call(&c.app, "POST", "/v1/phones/R5C/task", &key, Some(json!({ "goal": "x", "vision": "always" }))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{e}");
+    assert_eq!(c.desktop.calls.lock().unwrap().last().unwrap().2["vision"].as_str(), Some("always"));
+    let (s, _) = call(&c.app, "POST", "/v1/phones/R5C/task", &key, Some(json!({ "goal": "x" }))).await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    assert!(c.desktop.calls.lock().unwrap().last().unwrap().2.get("vision").is_none());
 }
