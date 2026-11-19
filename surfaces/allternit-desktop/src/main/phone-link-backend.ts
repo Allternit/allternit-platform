@@ -21,7 +21,7 @@ import { ANDROID_VENDOR_PACKAGES, type AndroidLinkStore } from './phone-link-and
 import { catalogApp, catalogAppByName, catalogPhoneApps, nameCatalogApps } from './phone-app-catalog.js';
 import { verifiedReader } from './phone-account-specs.js';
 import { scanLan, type DiscoveryDeps } from './phone-link-discovery.js';
-import { ANDROID_KEYS, PACKAGE_RE, resolveApp, type ToolErrorCode, type ToolResult, type UsbPhoneBackend } from './phone-tools.js';
+import { ANDROID_KEYS, PACKAGE_RE, linkedNodes, resolveApp, type ToolErrorCode, type ToolResult, type UsbPhoneBackend } from './phone-tools.js';
 import {
   ACCESSIBILITY_OFF_ACTION,
   isAccessibilityOffError,
@@ -633,10 +633,15 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
   private async readUi(phone: LinkedPhone, a: Record<string, unknown>): Promise<ToolResult> {
     const params = pageSourceParams(a);
     if ('error' in params) return params.error;
-    const res = await this.invoke<unknown>(phone, 'page_source', params.params);
+    // structured: the helper also returns nodes[], foreground_app and activity in the same answer (one call).
+    const res = await this.invoke<unknown>(phone, 'page_source', { ...params.params, structured: true });
     this.observeRead(phone, res);
     if (!res.ok) return res.result;
-    return { ok: true, text: textOf(res.value) };
+    const text = textOf(res.value);
+    // An older helper or the iPhone runner sends no structured nodes: plain {ok, text}, as before.
+    const got = linkedNodes(res.value);
+    if (!got.nodes.length && !got.app) return { ok: true, text };
+    return { ok: true, text, app: got.app, activity: got.activity, nodes: got.nodes };
   }
 
   private async screenText(phone: LinkedPhone): Promise<ToolResult> {

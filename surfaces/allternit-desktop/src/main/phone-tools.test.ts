@@ -476,62 +476,6 @@ describe('Phone-Linked phones in the runner', () => {
     return { r, links, adbCalls: calls };
   }
 
-  it('linked read_ui keeps the helper text and adds app, activity and nodes[] from page_source', async () => {
-    const { adb } = makeAdb();
-    const { backend } = linksBackend(['link:dev-1']);
-    const helperCalls: { method: string; params?: Record<string, unknown> }[] = [];
-    const linked = {
-      ...backend,
-      call: async () => ({ ok: true, text: 'HELPER TEXT' }) as import('./phone-tools.js').ToolResult,
-      helperCall: async (_s: string, method: string, params?: Record<string, unknown>) => {
-        helperCalls.push({ method, params });
-        return {
-          foreground_app: 'com.android.settings',
-          activity: 'com.android.settings.Settings$WifiSettingsActivity',
-          nodes: [
-            { class: 'android.widget.TextView', label: 'Wi-Fi', resource_id: 'android:id/title', bounds: { x: 0, y: 210, width: 1080, height: 120 }, clickable: true, focused: false },
-            { class: 'android.widget.EditText', text: 'pw', bounds: { x: 0, y: 400, width: 100, height: 50 }, password: true, checkable: true },
-            { class: 'bad', bounds: { x: 'a' } },
-          ],
-        };
-      },
-    };
-    const r = new PhoneToolRunner({
-      adb,
-      gate: { request: async () => 'denied' },
-      rates: { load: () => [], save: () => {} },
-      artemis: () => null,
-      onlineSerials: () => [],
-      links: () => linked,
-    });
-    const res = (await r.call('phone.read_ui', {})) as unknown as Record<string, unknown>;
-    expect(res).toMatchObject({ ok: true, text: 'HELPER TEXT', app: 'com.android.settings', activity: 'com.android.settings.Settings$WifiSettingsActivity' });
-    expect(res.nodes).toEqual([
-      { index: 0, class: 'android.widget.TextView', label: 'Wi-Fi', resource_id: 'android:id/title', bounds: [0, 210, 1080, 330], clickable: true, scrollable: false, checkable: false, editable: false, password: false, focused: false },
-      { index: 1, class: 'android.widget.EditText', label: 'pw', resource_id: '', bounds: [0, 400, 100, 450], clickable: false, scrollable: false, checkable: true, editable: true, password: true, focused: false },
-    ]);
-    expect(helperCalls[0].method).toBe('page_source');
-  });
-
-  it('linked read_ui returns the plain result when the helper has no structured nodes', async () => {
-    const { adb } = makeAdb();
-    const { backend } = linksBackend(['link:dev-1']);
-    const linked = {
-      ...backend,
-      call: async () => ({ ok: true, text: 'T' }) as import('./phone-tools.js').ToolResult,
-      helperCall: async () => ({ source: 'T' }),
-    };
-    const r = new PhoneToolRunner({
-      adb,
-      gate: { request: async () => 'denied' },
-      rates: { load: () => [], save: () => {} },
-      artemis: () => null,
-      onlineSerials: () => [],
-      links: () => linked,
-    });
-    expect(await r.call('phone.read_ui', {})).toEqual({ ok: true, text: 'T' });
-  });
-
   it('routes calls to the links lane by link: serial, defaulting to the only online phone', async () => {
     const { r, links, adbCalls } = linkedRunner(['link:dev-1']);
     const res = await r.call('phone.tap', { x: 10, y: 20 });

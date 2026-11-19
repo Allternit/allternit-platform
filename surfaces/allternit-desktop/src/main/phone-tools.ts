@@ -1124,7 +1124,7 @@ export class PhoneToolRunner {
       links.noteActivity?.(serial, 1);
       try {
         const res = await this.linkedCall(links, name, serial, a);
-        return withHints(name, a, name === 'phone.read_ui' && res.ok ? await this.addLinkedNodes(links, serial, a, res) : res);
+        return withHints(name, a, res);
       } finally {
         links.noteActivity?.(serial, -1);
       }
@@ -1761,29 +1761,6 @@ export class PhoneToolRunner {
     if (res.code !== 0) return undefined;
     const pkg = parseForegroundPackage(res.stdout);
     return pkg ? { package: pkg, activity: parseForegroundActivity(res.stdout) } : undefined;
-  }
-
-  /**
-   * Adds app, activity and nodes[] to a linked phone's read_ui. `text` is the helper's own and stays as is.
-   * One extra structured page_source; if it fails the plain result is returned unchanged.
-   */
-  private async addLinkedNodes(links: PhoneLinkBackend, serial: string, a: Record<string, unknown>, res: ToolResult): Promise<ToolResult> {
-    if (!res.ok || !links.helperCall) return res;
-    try {
-      const got = linkedNodes(await links.helperCall(serial, 'page_source', { format: 'text', structured: true, visible_only: true }, 5_000));
-      if (!got.nodes.length && !got.app) return res;
-      const filter = parseFilter(a);
-      let nodes = got.nodes;
-      if (!('ok' in filter)) {
-        if (filter.label) nodes = nodes.filter((n) => n.label.toLowerCase().includes(filter.label!.toLowerCase()));
-        if (filter.type) nodes = nodes.filter((n) => n.class.toLowerCase().includes(filter.type!.toLowerCase()));
-      }
-      const max = Number.isInteger(a.max_elements) ? (a.max_elements as number) : 200;
-      nodes = nodes.slice(0, max).map((n, i) => ({ ...n, index: i }));
-      return { ...res, app: got.app, activity: got.activity, nodes };
-    } catch {
-      return res;
-    }
   }
 
   /** A Phone-Linked phone's name for the hold dialog (only looked up when a hold is made). */

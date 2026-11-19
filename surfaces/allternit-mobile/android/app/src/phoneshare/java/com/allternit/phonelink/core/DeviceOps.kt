@@ -96,6 +96,13 @@ interface DeviceOps {
     fun isScreenLocked(): Boolean
     fun foregroundPackage(): String?
 
+    /**
+     * Class name of the last real Activity window the foreground package showed
+     * (from TYPE_WINDOW_STATE_CHANGED), or null when unknown. Lets App Maps tell
+     * screens of one app apart. Dialog and framework class names are skipped.
+     */
+    fun foregroundActivity(): String? = null
+
     /** Pre-order nodes of the on-screen windows (app, IME, system dialogs). */
     fun snapshot(): List<UiNode>
 
