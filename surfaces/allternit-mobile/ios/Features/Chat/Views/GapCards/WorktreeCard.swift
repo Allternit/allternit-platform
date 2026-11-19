@@ -1,11 +1,20 @@
 import SwiftUI
 
-/// Worktree card: a title row and one line of metadata. Stub: G4-G7 fill it in.
+/// Worktree card: entered or left, with the branch and path.
 struct WorktreeCard: View {
     let gap: GapToolMetadata
 
-    private var line: String {
-        [gap.action ?? (gap.result == nil ? "enter" : nil), gap.result, gap.branch, gap.path.map { ($0 as NSString).lastPathComponent }].compactMap { $0 }.joined(separator: " \u{00B7} ")
+    private var left: Bool { gap.result != nil || gap.action == "exit" }
+
+    private var state: String {
+        if left {
+            switch gap.result {
+            case "removed": return "Left, removed"
+            case "refused": return "Exit refused"
+            default: return "Left, kept"
+            }
+        }
+        return "Entered"
     }
 
     var body: some View {
@@ -15,12 +24,29 @@ struct WorktreeCard: View {
                     .foregroundColor(Color("AccentPrimary"))
                 Text("Worktree")
                     .foregroundColor(Color("TextSecondary"))
+                Spacer(minLength: 0)
+                Text(state)
+                    .foregroundColor(gap.result == "refused" ? Color.orange : Color("TextPrimary"))
             }
             .font(.caption.weight(.semibold))
-            if !line.isEmpty {
-                Text(line)
-                    .font(.footnote)
+            if let branch = gap.branch, !branch.isEmpty {
+                Label(branch, systemImage: "arrow.triangle.branch")
+                    .font(.footnote.weight(.medium))
                     .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let path = gap.path, !path.isEmpty {
+                Text(path)
+                    .font(.caption.monospaced())
+                    .foregroundColor(Color("TextSecondary"))
+                    .lineLimit(2)
+                    .truncationMode(.head)
+            }
+            if let reason = gap.reason, !reason.isEmpty {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
                     .lineLimit(2)
             }
         }

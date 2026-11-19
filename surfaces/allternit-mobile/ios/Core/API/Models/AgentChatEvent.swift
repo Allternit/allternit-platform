@@ -769,6 +769,14 @@ struct AgentSettingsResult: Equatable, Sendable {
 /// `*Metadata` schemas in gizzi runtime/primitives/gap-types.ts. Every field
 /// is optional, so a runtime that sends fewer fields still decodes. G4-G7
 /// fill in the cards that read it.
+struct PrCommentItem: Decodable, Equatable, Sendable {
+    var id: String? = nil
+    var author: String? = nil
+    var body: String? = nil
+    var path: String? = nil
+    var line: Int? = nil
+}
+
 struct GapToolMetadata: Decodable, Equatable, Sendable {
     static let worktreeEnter = "worktree_enter"
     static let worktreeExit = "worktree_exit"
@@ -814,6 +822,7 @@ struct GapToolMetadata: Decodable, Equatable, Sendable {
     var pr: Int? = nil
     var url: String? = nil
     var commentCount: Int? = nil
+    var comments: [PrCommentItem]? = nil
     var replyId: String? = nil
     /// status_update.
     var phase: String? = nil
@@ -874,7 +883,8 @@ struct GapToolMetadata: Decodable, Equatable, Sendable {
         tier = opt(String.self, .tier)
         pr = opt(Int.self, .pr)
         url = opt(String.self, .url)
-        commentCount = opt([Ignored].self, .comments)?.count
+        comments = opt([PrCommentItem].self, .comments)
+        commentCount = comments?.count
         replyId = opt(String.self, .replyId)
         phase = opt(String.self, .phase)
         note = opt(String.self, .note)

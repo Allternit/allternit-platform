@@ -94,6 +94,10 @@ http://127.0.0.1:8013/api/v1/admin
 http://127.0.0.1:8013/sandbox
 ```
 
+## Commands run sandboxed first
+
+Shell commands run inside the session sandbox first. The assistant leaves the sandbox only on clear evidence that the sandbox caused the failure. It does not retry outside on its own. It tells you and asks you to switch off `/sandbox`, the per-session switch, or to set the `GIZZI_SANDBOX_DISABLE` environment variable. There is no per-command bypass. The assistant never retargets sensitive paths to get around a block.
+
 ## Sandbox templates
 
 Sandbox templates are scoped to an organization and can only be managed by organization owners or admins.
