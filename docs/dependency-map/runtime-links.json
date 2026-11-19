@@ -691,6 +691,62 @@
       "label": "model host relay",
       "kind": "module",
       "path": "allternit/cmd/allternit-cloud-api/src/routes/model_hosts.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+      "label": "Platform API caller (project keys and alt_oat_ app tokens)",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+      "label": "Connections registry routes and claude-link",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/connections.rs"
+    },
+    {
+      "id": "allternit-ai/src/pages/OAuthAuthorizePage.tsx",
+      "label": "OAuthAuthorizePage.tsx",
+      "kind": "module",
+      "path": "allternit-ai/src/pages/OAuthAuthorizePage.tsx"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/cli/commands/auth.ts",
+      "label": "auth.ts",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/cli/commands/auth.ts"
+    },
+    {
+      "id": "allternit/surfaces/allternit-mobile/ios/Features/Settings",
+      "label": "Settings",
+      "kind": "module",
+      "path": "allternit/surfaces/allternit-mobile/ios/Features/Settings"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/providers/person-plan",
+      "label": "person-plan",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/providers/person-plan"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+      "label": "model_router.rs",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs"
+    },
+    {
+      "id": "external:anthropic-linked-billing",
+      "label": "Anthropic API (linked billing, operator token)",
+      "kind": "external",
+      "url": "https://api.anthropic.com",
+      "path": "https://api.anthropic.com"
+    },
+    {
+      "id": "external:claude-oauth",
+      "label": "Claude OAuth (auth.claude.com: link, token, revoke; fetches our JWKS)",
+      "kind": "external",
+      "url": "https://auth.claude.com",
+      "path": "https://auth.claude.com"
     }
   ],
   "edges": [
@@ -1741,6 +1797,78 @@
       "evidence": [
         "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts",
         "allternit/cmd/gizzi-code/src/cli/commands/models.ts"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/platform.allternit.com",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+      "kind": "HTTP /api/v1/platform/projects/:id/oauth-apps (create app, secret rotate, test users, redirect URIs, submit) and /api/v1/admin/oauth-apps (approve, suspend), signed-in session",
+      "evidence": [
+        "allternit/surfaces/docs/api/oauth-apps.mdx",
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/components/connect-kit",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+      "kind": "HTTP GET/PATCH/DELETE /api/v1/oauth/grants (Apps with access: spend, cap, revoke) and /api/v1/claude-link (start, status, unlink), session bearer",
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/pages/OAuthAuthorizePage.tsx",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+      "kind": "HTTP GET /api/v1/oauth/requests/:id, POST .../approve and .../deny (consent page for Sign in with Allternit); follows the returned redirect_to",
+      "evidence": [
+        "allternit/surfaces/docs/api/oauth-apps.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands/auth.ts",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+      "kind": "HTTP /api/v1/oauth/grants (gizzi auth apps list, cap, revoke) and /api/v1/claude-link (gizzi auth link and unlink claude-org)",
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-mobile/ios/Features/Settings",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+      "kind": "HTTP /api/v1/oauth/grants (Settings > Privacy > Connected apps) and /api/v1/claude-link (Settings > Connections)",
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/providers/person-plan",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+      "kind": "HTTP POST /v1/chat/completions for linked/claude/<model> (claude-org) with X-Allternit-Turn: person; refusals claude_link_* come back with fallbacks",
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+      "target": "external:anthropic-linked-billing",
+      "kind": "HTTPS POST /v1/chat/completions with the operator token, anthropic-user-profile-id and billing_policy bill_to user_profile; also /v1/user_profiles and the WIF token exchange /v1/oauth/token",
+      "evidence": [
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx",
+        "allternit/surfaces/docs/guides/claude-organization.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+      "target": "external:claude-oauth",
+      "kind": "HTTPS auth.claude.com /v1/oauth/par, /v1/oauth/token, /v1/oauth/revoke with private_key_jwt assertions; Anthropic fetches our JWKS at /oauth2/anthropic-client/jwks.json",
+      "evidence": [
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx",
+        "allternit/surfaces/docs/guides/claude-organization.mdx"
       ]
     }
   ]

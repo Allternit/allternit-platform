@@ -1,0 +1,57 @@
+---
+title: "Apps with access to your account"
+description: "Apps that use Sign in with Allternit can spend your credits under a monthly limit you set. See what each one spent, change its limit, or remove it."
+---
+
+**Status: BUILDING.** This is in review and not yet in production. See [status labels](/architecture#status-labels).
+
+Some apps made by other people let you sign in with Allternit. When you approve one, it can use Allternit AI models and pay for them from **your** Allternit credits. You set a monthly limit. The app can never spend more than that limit in a month.
+
+This is not the same as [Connected apps](/guides/connected-apps), which is about AI apps like ChatGPT reading your agents. This page is about apps that spend your credits.
+
+## How an app asks
+
+The app sends you to a page on ai.allternit.com. If you are signed out, you sign in first and come back to the same page. The page is the same on the web, on a phone and in the m.allternit.com app.
+
+## What the consent page shows
+
+- The app's name, logo and web address.
+- What it asks for, in plain words:
+  - Use AI models, paid from your Allternit credits.
+  - See your usage.
+  - See a private ID for your account. The ID is different for every app, so apps cannot match you up.
+  - Stay connected until you revoke it.
+- A **Monthly spend limit**. The page suggests $10.
+- **Allow** and **Deny**. Deny comes first.
+
+An app that Allternit has not finished reviewing is marked as a testing app. You can set at most $50 a month for it, and only people the developer listed can approve it. If you are not on the list, the page tells you so.
+
+The page says "request expired" if you wait more than 15 minutes. Go back to the app and start again.
+
+## The monthly limit
+
+The limit is in dollars of your Allternit credits. It starts again on the first of each month at 00:00 UTC. You can set it to $0, which means the app can sign in but cannot spend. When the app reaches the limit, its calls stop until next month or until you raise the limit. When your credits run out, its calls stop too. An app never tops up your credits for you.
+
+## See what an app spent
+
+Each app shows "Spent $X of $Y this month" and the date the limit resets. It also shows its logo, name, web address, what it can do, and a Testing app tag if it is not live.
+
+## Change a limit or remove an app
+
+- **Change the limit.** Edit the dollar amount and save. The new limit applies to this month at once. For a testing app the most you can set is $50.
+- **Revoke.** Tap **Revoke** and confirm. The app loses access right away. It has to ask again, and you can say no.
+
+## Where to find it
+
+| Where | Path |
+|---|---|
+| ai.allternit.com, Allternit Desktop and the phone layout | **Settings › Connections**, then **Apps with access** |
+| m.allternit.com app (and Android, which uses it) | **Settings › Connections**, then **Apps with access** |
+| iPhone | **Settings › Privacy › Connected apps** |
+| Gizzi Code | `gizzi auth apps list`, `gizzi auth apps cap <app> <dollars>`, `gizzi auth apps revoke <app>` |
+
+`gizzi auth apps list --json` prints the list as JSON. `gizzi auth apps revoke <app>` asks first. Add `--yes` to skip the question.
+
+## For developers
+
+To build an app that signs people in, read [Sign in with Allternit (OAuth apps)](/api/oauth-apps).

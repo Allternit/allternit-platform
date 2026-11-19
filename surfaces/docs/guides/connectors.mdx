@@ -55,6 +55,10 @@ A connector can have several accounts, such as two Gmail addresses. Press **Conn
 
 The phone apps Phone Link looks for use the same ids and categories as these connectors, so one app is one identity across both: Settings › Connections lists it under **Apps** with its phone lanes, and its connector page says which phones have it. A connector and a phone app are two different ways in. The connector calls the app's service with your sign-in; the phone lane drives the app itself on your phone.
 
+## Related
+
+Connectors give your chats tools. Two other pages are about who pays for AI models, not about tools. [Apps with access to your account](/guides/apps-with-access) lists outside apps that spend your credits, and [Bill Claude to your Claude organization](/guides/claude-organization) bills Claude chats to your own organization.
+
 ## For developers
 
 The directory is `GET /api/v1/connectors` (see [Connectors API](/api/connectors)), loaded once per session by allternit-ai `src/lib/connectors/connector-directory.ts`. The catalog ships in `cmd/allternit-api/assets/open-design/connectors.json`; the Customize screens are `src/views/customize/ConnectorsDirectory.tsx`. Icons: `src/components/connectors/ConnectorLogo.tsx` picks the tile with `src/lib/design/connector-tile.ts`. `scripts/gen-store-icons.mjs` saves App Store icons to `public/app-icons/store` from Apple's public search API (strict name and developer match, results cached, a reviewed deny list for same-name apps) and writes `app-store-icons.ts` and `app-brand-colors.ts`; logos that are already app icons are shown as they are. "Has a screen" opens `mini-apps` with `{ tab: "discover", app: <id> }`. The "On your phone" line matches the connector id against `phone.devices` apps from Desktop's phone app catalog (`surfaces/allternit-desktop/src/main/phone-app-catalog.json`).

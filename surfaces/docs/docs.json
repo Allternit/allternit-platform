@@ -209,6 +209,8 @@
               "guides/mcp-apps-status",
               "guides/mcp-events",
               "guides/connected-apps",
+              "guides/apps-with-access",
+              "guides/claude-organization",
               "guides/wake-a-bot-from-app-events"
             ],
             "icon": "/icons/window.svg"
@@ -392,6 +394,7 @@
               "operations/compute-providers",
               "operations/cloud-computer-network",
               "operations/upstream-funding",
+              "operations/claude-linked-billing",
               "operations/database-migrations",
               "operations/store-billing",
               "operations/cloud-api-edge",
@@ -917,6 +920,7 @@
                   "api/workspaces",
                   "api/har",
                   "api/oauth",
+                  "api/oauth-apps",
                   "api/pricing",
                   "api/backend-install",
                   "api/brain-git",
