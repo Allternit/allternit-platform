@@ -157,7 +157,15 @@ internal val AgentSession.archived: Boolean get() = metaBool("archived")
 internal val AgentSession.ephemeral: Boolean get() = metaBool("ephemeral")
 internal val AgentSession.isTerminal: Boolean
     get() = ((meta("sourceRef") as? JsonObject)?.get("harness") as? JsonPrimitive)?.contentOrNull == "gizzi-tui"
-internal val AgentSession.title: String get() = name?.trim()?.takeIf { it.isNotEmpty() } ?: "Untitled"
+internal val AgentSession.title: String get() = displayName(name)?.takeIf { it.isNotEmpty() } ?: "Untitled"
+
+/** iOS AutomationScheduleLogic.displayName: drop a routine run's `[bot:<name>] ` owner tag. */
+internal fun displayName(raw: String?): String? {
+    val n = raw?.trim() ?: return null
+    if (!n.startsWith("[bot:")) return n
+    val close = n.indexOf(']')
+    return if (close < 0) n else n.substring(close + 1).trim()
+}
 
 /** ShellSessionsStore.belongs: which mode's list a session sits in. */
 internal fun AgentSession.belongs(mode: ShellMode): Boolean {

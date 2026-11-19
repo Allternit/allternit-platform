@@ -324,12 +324,17 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         let artifacts = parts
             .filter { $0.type == "file" }
             .map { ArtifactRecord(part: $0, messageId: record.id) }
+        let tools = ToolCallRecord.fromHistory(parts)
+        // The gateway's `[Tool name]` placeholder lines duplicate the tool chips; drop them.
+        let content = tools.isEmpty ? record.content : record.content
+            .replacingOccurrences(of: #"(?m)^[ \t]*\[Tool [^\]\n]*\][ \t]*\r?\n?"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return MessageRecord(
             id: record.id,
             role: record.role,
-            content: record.content,
+            content: content,
             reasoning: record.thinking ?? "",
-            toolCalls: ToolCallRecord.fromHistory(parts),
+            toolCalls: tools,
             artifacts: artifacts,
             createdAt: parseTimestamp(record.timestamp) ?? Date(),
             memoryRefs: Array((record.metadata?.memoryRefs ?? []).prefix(10))
