@@ -37,6 +37,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalView
@@ -65,6 +66,8 @@ import kotlinx.coroutines.launch
 
 /** Which part of the sign-in rail is open (iOS LoginGateView: buttons, email form, Clerk's code step). */
 private enum class Step { Options, Email, Code }
+
+private val SignInPage = Color(0xFF141413)
 
 /**
  * Native sign-in, the Android twin of iOS `LoginGateView` (ios/App/AllternitApp.swift): the
@@ -112,7 +115,9 @@ fun SignInScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(c.bgPrimary)
+            // iOS paints the whole page #141413, the welcome loop's own background, so the loop
+            // sits on the page with no visible box (the theme's bgPrimary is lighter).
+            .background(SignInPage)
             .systemBarsPadding()
             .imePadding(),
         contentAlignment = Alignment.TopCenter,
