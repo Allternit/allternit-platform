@@ -17,6 +17,7 @@ The server fix goes live with the next cloud-api deploy; the Desktop fixes arriv
 - **Connection Settings (tray)** now opens **Settings › Computers** in the app. The redesigned **Where Allternit runs** page (on this computer, or your server or cloud computer; **Check**, then **Save and restart**) shows only when the app can't load the workspace. The unused Local Port field is gone.
 - **Linux app updates:** the Linux `.deb` now updates itself: it downloads the new version, shows the restart prompt, and asks for your password to install it. If it can't ask, a notification opens the download page. Users on 1.1.15 or older install the next `.deb` by hand once. See [Updates on Linux](/surfaces/desktop#updates-on-linux).
 - **Linux gaps closed:** **Start at login** now works on Linux (it writes `~/.config/autostart/allternit.desktop`). Allternit tells you once when a global shortcut cannot be registered, and once when the system has no keyring. Mini-app `.zip` releases install on Linux. See [Linux notes](/surfaces/desktop#linux-notes).
+- **Cloud computers and signed-out Desktops stop calling Allternit for nothing:** with no account session in the window, Desktop no longer asks for call rings, phone numbers, computer presence or the computer list every minute (each was refused). Other refused account requests wait 1 minute, then longer, up to 30 minutes. Signing in resumes them at once.
 
 ## Next — Phone feedback 1.0.4
 
