@@ -170,6 +170,22 @@ enum AgentChatEvent: Decodable, Sendable {
             let status: String?
             let error: String?
             let errorDetails: ErrorDetails?
+            /// Memories the reply used or changed. The v1 stream does not send
+            /// this today (history does); decoded so a frame that carries it
+            /// shows the chip live. A bad entry is dropped, never the frame.
+            let memoryRefs: [MemoryRef]?
+
+            private enum CodingKeys: String, CodingKey {
+                case status, error, errorDetails, memoryRefs
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                status = try? c.decodeIfPresent(String.self, forKey: .status)
+                error = try? c.decodeIfPresent(String.self, forKey: .error)
+                errorDetails = try? c.decodeIfPresent(ErrorDetails.self, forKey: .errorDetails)
+                memoryRefs = (try? c.decodeIfPresent(LossyArray<MemoryRef>.self, forKey: .memoryRefs))??.elements
+            }
         }
 
         let messageId: String?

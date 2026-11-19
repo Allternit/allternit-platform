@@ -2382,6 +2382,9 @@ async fn agent_chat_bridge(
         // Newest assistant usage seen on the bus (message.updated carries the
         // full message info incl. tokens) — attached to the finish frame.
         let mut last_usage: Option<serde_json::Value> = None;
+        // Memory entries the turn's memory tools touched (gizzi `memory_refs`),
+        // attached to the finish frame's metadata for the "Used memory" chip.
+        let mut last_memory_refs: Option<serde_json::Value> = None;
         // Assistant messages whose open-lane handoff frame went out.
         let mut handoffs_sent = std::collections::HashSet::<String>::new();
         // Latest context report (session.context.updated) and whether the
@@ -2525,6 +2528,9 @@ async fn agent_chat_bridge(
                             }
                             if let Some(usage) = usage_from_message_info(info) {
                                 last_usage = Some(usage);
+                            }
+                            if let Some(refs) = info.get("memory_refs").filter(|r| r.as_array().is_some_and(|a| !a.is_empty())) {
+                                last_memory_refs = Some(refs.clone());
                             }
                             // Open lane: a refused turn answered by an open
                             // model (gizzi sets `handoff` on the message).
@@ -3012,9 +3018,11 @@ async fn agent_chat_bridge(
                 }
             }
         }
-        yield Ok(sse_frame(trace_cursor).data(
-            cowork_turn_finish_frame(&msg_id, &finish, last_usage.as_ref()).to_string(),
-        ));
+        let mut finish_frame = cowork_turn_finish_frame(&msg_id, &finish, last_usage.as_ref());
+        if let Some(refs) = last_memory_refs.take() {
+            finish_frame["metadata"]["memoryRefs"] = refs;
+        }
+        yield Ok(sse_frame(trace_cursor).data(finish_frame.to_string()));
     };
 
     Sse::new(stream)

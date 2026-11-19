@@ -418,6 +418,9 @@ struct GizziMessageInfo {
     /// Open-lane refusal handoff `{from, to}` (gizzi MessageV2.Assistant).
     #[serde(default)]
     handoff: Option<serde_json::Value>,
+    /// Memory entries this turn's memory tools recalled or changed (gizzi MessageV2.Assistant.memory_refs).
+    #[serde(default)]
+    memory_refs: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -698,6 +701,7 @@ fn transform_message_with(
             "telemetry": run_telemetry(&message),
             "handoff": handoff_of(&message.parts),
             "cloudContinue": part_meta(&message.parts, "cloudContinue"),
+            "memoryRefs": message.info.memory_refs,
             "parts": message.parts,
             "error": message.info.error.as_ref().and_then(|e| e.data.clone()),
         }

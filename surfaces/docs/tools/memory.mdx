@@ -22,6 +22,10 @@ When memory is on, the session also carries a short guide to using it:
 | `memory_recall` | Search by words. Each hit carries its drive, topic, id, version, source and date. |
 | `memory_write` | Save, append, replace or delete one entry. |
 
+## Used memory chip
+
+Under a reply, ai and iOS show a "Used memory (n)" chip, and the TUI shows a dim "used memory (n)" line. The count comes from the memory tools the turn actually ran (`memory_list`, `memory_recall`, `memory_write`), recorded on the reply as `memory_refs` (up to 10 entries, each with an id, an optional title and the action: recalled, saved and so on). It never comes from the model's own claim that it used memory.
+
 ## Versions
 
 Every entry has a version: the first 12 hex characters of a SHA-256 hash of its stored line. Any change to the text or metadata changes it. `memory_list` and `memory_recall` return it, and a change to an existing entry must pass it as `if_version`.

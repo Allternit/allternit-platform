@@ -324,8 +324,8 @@ export const FILE_REF_PREFIX = "file:"
 /** The ref grammar for files: `file:<attachment or drive id>`. */
 export const FileRef = z
   .string()
-  .regex(/^file:[A-Za-z0-9._~\-/]+$/)
-  .describe("A file ref such as \"file:att_123\" or \"file:drive/notes.md\"")
+  .regex(/^file:(msg|upload|drive):[A-Za-z0-9._~\-/:]+$/)
+  .describe("A file ref: \"file:msg:<messageID>:<partIndex>\", \"file:upload:<id>\" or \"file:drive:<id>\"")
 export type FileRef = z.infer<typeof FileRef>
 
 export const RESOURCE_SEARCH_MAX_RESULTS = 20
