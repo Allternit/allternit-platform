@@ -385,6 +385,8 @@ for a in "$@"; do
   if [ "$prev" = --system-prompt ]; then sys="$a"; fi
   prev="$a"
 done
+# The system text has blank lines (the hard limits follow it): newlines as \n keep the JSON line valid.
+sys=$(printf '%s' "$sys" | awk '{ printf "%s%s", (NR > 1 ? "\\n" : ""), $0 }')
 [ "$tools_off" = yes ] || { echo 'tools were not turned off' >&2; exit 4; }
 [ "$BROWSER" = true ] && [ "$DISABLE_AUTOUPDATER" = 1 ] || { echo 'runner env missing' >&2; exit 5; }
 input=$(cat)
@@ -398,7 +400,7 @@ lines=$(printf '%s\n' "$input" | grep -c '"type"')
 echo '{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}'
 echo '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"O"}}}'
 echo '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"K"}}}'
-echo "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" ($lines lines, $model, $sys)\"}}}"
+printf '%s\n' "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" ($lines lines, $model, $sys)\"}}}"
 echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]}}'
 echo '{"type":"result","subtype":"success","is_error":false,"result":"OK","usage":{"input_tokens":12,"cache_read_input_tokens":3,"output_tokens":2}}'
 "#;

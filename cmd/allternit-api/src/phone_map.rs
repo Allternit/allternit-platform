@@ -253,10 +253,13 @@ pub fn fingerprint(app: &str, activity: Option<&str>, nodes: &[UiNode]) -> Fp {
         }
     }
     // A text field's label can be text the run typed: never a title (typed text stays out of maps).
-    let title = kept
-        .iter()
-        .filter(|n| !n.editable && !n.label.trim().is_empty())
+    // The toolbar's "Navigate up" / "Search" buttons sit level with the title and further left, so a
+    // plain (non-clickable) label wins; a screen with only buttons falls back to the top-left one.
+    let labelled = || kept.iter().filter(|n| !n.editable && !n.label.trim().is_empty());
+    let title = labelled()
+        .filter(|n| !n.clickable)
         .min_by_key(|n| (n.bounds[1], n.bounds[0]))
+        .or_else(|| labelled().min_by_key(|n| (n.bounds[1], n.bounds[0])))
         .map(|n| n.label.trim().chars().take(80).collect::<String>());
     let keys: Vec<String> = keys.into_iter().collect();
     let weak = id_keys.len() < MIN_ID_KEYS;

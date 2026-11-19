@@ -1035,7 +1035,7 @@ fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
 }
 
-/// Turn hints that pass only with their one allowed value (the fifth hint,
+/// Turn hints that pass only with their one allowed value (the other hint,
 /// `time_zone`, is checked by [`turn_time_zone`]). Shared by this route and
 /// agent_session_routes' message send.
 pub(crate) const VALUED_TURN_HINTS: [(&str, &str); 6] = [
@@ -3321,7 +3321,7 @@ mod tests {
     }
 
     #[test]
-    fn stored_turn_metadata_keeps_only_the_five_prompt_hints() {
+    fn stored_turn_metadata_keeps_only_the_prompt_hints() {
         let body = json!({ "metadata": {
             "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets",
             "time_zone": "America/Chicago", "screen_context": "available", "x": 1
@@ -3335,7 +3335,7 @@ mod tests {
             })
         );
         assert_eq!(kept.as_object().unwrap().len(), 5);
-        assert_eq!(super::VALUED_TURN_HINTS.len() + 1, 5, "four valued hints plus time_zone");
+        assert_eq!(super::VALUED_TURN_HINTS.len() + 1, 7, "six valued hints plus time_zone");
         let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud", "answer_cards": "all", "screen_context": "yes" } });
         assert_eq!(stored_turn_metadata(&body), None);
         let body = json!({ "metadata": { "answer_cards": true } });

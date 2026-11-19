@@ -2062,7 +2062,7 @@ mod tests {
         assert!(taps.iter().all(|t| t["_pass"].as_str().is_some_and(|p| p.starts_with("pass_"))), "{taps:?}");
         // ...and is marked as a map step, with the screen it went to, for the run history.
         assert!(taps.iter().all(|t| t["_via"] == json!("map")), "{taps:?}");
-        assert_eq!((taps[0]["_map_screen"].as_str(), taps[1]["_map_screen"].as_str()), (Some("Network & internet"), Some("Wi-Fi")), "{taps:?}");
+        assert_eq!((taps[0]["_map_screen"].as_str(), taps[1]["_map_screen"].as_str()), (Some("SubSettings network"), Some("SubSettings wifi")), "{taps:?}");
         // The prompt listed the known screens, here first; the next one heard where it arrived.
         let prompts = prompts.lock().unwrap().clone();
         assert!(prompts[0].0.contains("Known screens in com.android.settings") && prompts[0].0.contains(&format!("- {home} ")) && prompts[0].0.contains("(here)"), "{}", prompts[0].0);
