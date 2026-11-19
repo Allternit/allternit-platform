@@ -561,9 +561,42 @@ async fn get_run_thumb(State(state): State<Arc<AppState>>, Extension(user): Exte
     }
 }
 
+/// What a task or skill run spent and saved (contract section 6). Every run
+/// report carries the five fields; `run_event` copies them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RunTally {
+    /// Input tokens summed over the model replies (0 when the brain reports none).
+    pub tokens_in: u64,
+    /// Output tokens, the same way.
+    pub tokens_out: u64,
+    /// App Map edges replayed with no model call.
+    pub map_steps: u64,
+    /// Screenshots attached to model calls.
+    pub screenshots_sent: u64,
+    /// `go_to` replays that stopped (mismatch, no route, a changed screen), so the loop fell back.
+    pub fallbacks: u64,
+}
+
+impl RunTally {
+    pub fn add_usage(&mut self, u: &crate::gizzi_completion::Usage) {
+        self.tokens_in += u.tokens_in;
+        self.tokens_out += u.tokens_out;
+    }
+
+    /// Write the five fields into a run report.
+    pub fn write(&self, report: &mut Value) {
+        report["tokens_in"] = json!(self.tokens_in);
+        report["tokens_out"] = json!(self.tokens_out);
+        report["map_steps"] = json!(self.map_steps);
+        report["screenshots_sent"] = json!(self.screenshots_sent);
+        report["fallbacks"] = json!(self.fallbacks);
+    }
+}
+
 /// The owner ledger row of a finished task / skill run, from its report.
 pub fn run_event(report: &Value, source: &str) -> Value {
     let steps = report.get("steps").and_then(Value::as_array);
+    let n = |k: &str| report.get(k).and_then(Value::as_u64).unwrap_or(0);
     json!({
         "run_id": report.get("run_id"),
         "serial": report.get("serial"),
@@ -584,6 +617,12 @@ pub fn run_event(report: &Value, source: &str) -> Value {
         "thread_id": report.get("thread_id"),
         "session_id": report.get("session_id"),
         "reason": report.get("reason"),
+        // App Maps and spend (contract section 6); 0 on an old report.
+        "tokens_in": n("tokens_in"),
+        "tokens_out": n("tokens_out"),
+        "map_steps": n("map_steps"),
+        "screenshots_sent": n("screenshots_sent"),
+        "fallbacks": n("fallbacks"),
     })
 }
 
@@ -782,6 +821,15 @@ mod tests {
         assert_eq!(ev["holds"][0]["state"], "expired");
         // An old report with no hold fields still makes a complete event.
         assert_eq!((run_event(&json!({ "run_id": "x" }), "task")["held_ms"].as_u64(), run_event(&json!({}), "task")["holds"].clone()), (Some(0), json!([])));
+        // The App Map and spend fields ride along; an old report reads 0.
+        let mut tallied = json!({ "run_id": "task-t1", "steps": [] });
+        RunTally { tokens_in: 1200, tokens_out: 40, map_steps: 3, screenshots_sent: 1, fallbacks: 1 }.write(&mut tallied);
+        let ev = run_event(&tallied, "task");
+        assert_eq!(
+            (ev["tokens_in"].as_u64(), ev["tokens_out"].as_u64(), ev["map_steps"].as_u64(), ev["screenshots_sent"].as_u64(), ev["fallbacks"].as_u64()),
+            (Some(1200), Some(40), Some(3), Some(1), Some(1))
+        );
+        assert_eq!(run_event(&json!({ "run_id": "x" }), "task")["map_steps"].as_u64(), Some(0));
 
         let tmp = tempfile::tempdir().unwrap();
         let step = ingest(tmp.path(), "link:w", StepIn { run_id: Some("task-live-h1".into()), tool: "phone.read_ui".into(), args: json!({}), ok: true, ..Default::default() }).unwrap();
