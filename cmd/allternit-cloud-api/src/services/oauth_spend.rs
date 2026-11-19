@@ -1191,10 +1191,26 @@ mod tests {
         // Auto top-up is live on this "deploy", and the person has it on with a
         // card and a threshold above any balance this test reaches. A debit
         // through `deduct_credits_for_usage` would claim a pending attempt here.
-        std::env::set_var("AUTO_TOPUP_LIVE", "1");
-        if std::env::var("STRIPE_SECRET_KEY").is_err() {
-            std::env::set_var("STRIPE_SECRET_KEY", "sk_test_oauth_spend_never_used");
+        // The Stripe key is ALWAYS an obviously fake value here, even when a real
+        // one is in the environment, so a regression can never charge a real
+        // card. The original values are restored when the test ends.
+        struct EnvRestore(Vec<(&'static str, Option<String>)>);
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                for (k, v) in self.0.drain(..) {
+                    match v {
+                        Some(v) => std::env::set_var(k, v),
+                        None => std::env::remove_var(k),
+                    }
+                }
+            }
         }
+        let _restore = EnvRestore(vec![
+            ("AUTO_TOPUP_LIVE", std::env::var("AUTO_TOPUP_LIVE").ok()),
+            ("STRIPE_SECRET_KEY", std::env::var("STRIPE_SECRET_KEY").ok()),
+        ]);
+        std::env::set_var("AUTO_TOPUP_LIVE", "1");
+        std::env::set_var("STRIPE_SECRET_KEY", "sk_test_FAKE_oauth_spend_never_used");
         sqlx::query(
             "INSERT INTO billing_auto_topup (user_id, enabled, threshold_usd, amount_usd, monthly_cap_usd, stripe_customer_id, stripe_payment_method_id, status)
              VALUES ($1, true, 100, 25, 200, 'cus_test', 'pm_test', 'ok')",
