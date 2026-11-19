@@ -19,12 +19,13 @@
 #   cua-driver -> cua-driver (trycua/cua built from source at the version and commit
 #     pinned in surfaces/allternit-desktop/scripts/prepare-cua-driver.cjs; the
 #     upstream Linux prebuilt needs glibc 2.30). Needs libx11-dev libxi-dev
-#     libxkbcommon-dev on the build host.
+#     libxtst-dev libxkbcommon-dev on the build host.
 #
 # Two build modes, chosen per component:
 #   api, files-mount, factory, cua-driver: cargo-zigbuild with a `.<glibc>` target
 #     suffix pins the symbol versions at ZIG_GLIBC (2.17, older than any distro we
-#     could meet, at no cost). Zig + cargo-zigbuild pinned below, Zig checksum-verified.
+#     could meet, at no cost; factory and cua-driver at GLIBC_FLOOR, see below). Zig +
+#     cargo-zigbuild pinned below, Zig checksum-verified.
 #   voice: built inside ubuntu:18.04 (glibc 2.27 = GLIBC_FLOOR) because zig cannot link
 #     it: the prebuilt sherpa-onnx static lib (GCC 11) needs libstdc++ symbols zig's
 #     libc++ lacks (`std::string::_Rep::_S_empty_rep_storage`,
@@ -43,6 +44,9 @@ set -euo pipefail
 GLIBC_FLOOR=2.27
 # glibc symbol version the zigbuild components are pinned to (<= GLIBC_FLOOR).
 ZIG_GLIBC=2.17
+# factory and cua-driver link at GLIBC_FLOOR itself, because zig at 2.17 fails on symbols
+# glibc added in 2.27: factory's fat-LTO std references copy_file_range, and cua-driver
+# calls memfd_create (Wayland shm buffers): `ld.lld: error: undefined symbol: ...`.
 
 ZIG_VERSION=0.15.2
 # Same version the macOS job in release-desktop.yml pins; linux-x86_64 tarball sha256
@@ -140,16 +144,18 @@ setup_zigbuild() {
 
 cd "$REPO"
 ZB=(cargo zigbuild --release --target "${TARGET}.${ZIG_GLIBC}")
+ZB_FLOOR=(cargo zigbuild --release --target "${TARGET}.${GLIBC_FLOOR}")
 REL="${CARGO_TARGET_DIR:-$REPO/target}/$TARGET/release"
 put() { install -m 0755 "$REL/$1" "$OUT/$2"; ls -lh "$OUT/$2"; }
 ZB_READY=
 zb() { [ -n "$ZB_READY" ] || { setup_zigbuild; ZB_READY=1; }; "${ZB[@]}" "$@"; }
+zb_floor() { [ -n "$ZB_READY" ] || { setup_zigbuild; ZB_READY=1; }; "${ZB_FLOOR[@]}" "$@"; }
 
 for c in "${COMPONENTS[@]}"; do
   case "$c" in
     api)         zb --manifest-path cmd/allternit-api/Cargo.toml; put allternit-api allternit-api ;;
     files-mount) zb -p allternit-files-mount; put allternit-files-mount allternit-files-mount ;;
-    factory)     zb -p allternit-factory; put allternit-factory allternit-factory ;;
+    factory)     zb_floor -p allternit-factory; put allternit-factory allternit-factory ;;
     voice)
       TD="${CARGO_TARGET_DIR:-$REPO/target}/docker"; mkdir -p "$TD"
       docker run --rm -v "$REPO":/src -v "$OUT":/out -v "$TD":/target \
@@ -170,7 +176,7 @@ for c in "${COMPONENTS[@]}"; do
       [ "$(git -C "$CUA_SRC" rev-parse HEAD)" = "$CUA_COMMIT" ] || { echo "trycua/cua tag cua-driver-rs-v$CUA_VERSION is not commit $CUA_COMMIT" >&2; exit 1; }
       # The workspace pins its own toolchain (rust-toolchain.toml); rustup installs it.
       [ -n "$ZB_READY" ] || { setup_zigbuild; ZB_READY=1; }
-      (cd "$CUA_SRC/libs/cua-driver/rust" && CARGO_TARGET_DIR="$TDC/target" "${ZB[@]}" --locked -p cua-driver)
+      (cd "$CUA_SRC/libs/cua-driver/rust" && CARGO_TARGET_DIR="$TDC/target" "${ZB_FLOOR[@]}" --locked -p cua-driver)
       install -m 0755 "$TDC/target/$TARGET/release/cua-driver" "$OUT/cua-driver"; ls -lh "$OUT/cua-driver" ;;
     *) echo "unknown component: $c" >&2; exit 2 ;;
   esac

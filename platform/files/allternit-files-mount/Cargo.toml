@@ -35,3 +35,8 @@ urlencoding = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 fuser = { version = "0.16", default-features = false }
 libc = "0.2"
+# reqwest's default TLS is native-tls, i.e. the build host's libssl (libssl.so.3 on
+# Ubuntu 24.04, absent on Ubuntu 18.04/20.04 and Debian 10/11). Vendored OpenSSL links
+# it statically, the same as allternit-api, so the mount runs on every glibc >= 2.27
+# (scripts/build-linux-sidecars.sh builds it with cargo-zigbuild at glibc 2.17).
+openssl = { version = "0.10", features = ["vendored"] }

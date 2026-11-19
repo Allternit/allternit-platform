@@ -1005,11 +1005,12 @@ jobs:
         working-directory: surfaces/allternit-desktop
 
       - name: Build Cua Driver from source (Linux)
-        # The upstream Linux prebuilt needs glibc 2.30; built here at glibc 2.17 with
-        # cargo-zigbuild from the trycua/cua commit pinned in prepare-cua-driver.cjs.
+        # The upstream Linux prebuilt needs glibc 2.30. Built here with cargo-zigbuild at
+        # glibc 2.27 (the floor; it calls memfd_create) from the trycua/cua commit pinned
+        # in prepare-cua-driver.cjs.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libx11-dev libxi-dev libxkbcommon-dev
+          sudo apt-get install -y -qq libx11-dev libxi-dev libxtst-dev libxkbcommon-dev
           scripts/build-linux-sidecars.sh surfaces/allternit-desktop/resources/computer-use/linux cua-driver
 
       - name: Stage Cua Driver
