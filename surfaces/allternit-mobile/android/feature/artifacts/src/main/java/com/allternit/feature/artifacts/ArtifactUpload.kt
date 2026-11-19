@@ -166,9 +166,12 @@ internal fun NewArtifactSheet(
     onUploading: (String) -> Unit,
     onUploaded: (Result<String>) -> Unit,
     onDismiss: () -> Unit,
+    /** The library's scope: an upload keeps going after the sheet closes (its own scope would cancel it). */
+    scope: kotlinx.coroutines.CoroutineScope? = null,
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val ownScope = rememberCoroutineScope()
+    val scope = scope ?: ownScope
     fun run(name: String, block: suspend () -> Result<String>) { onUploading("Uploading $name…"); scope.launch { onUploaded(block()) } }
     val pdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) run(displayName(context, u) ?: "PDF") { ArtifactUploads.pdf(context, u) } }
     val image = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { u -> if (u != null) run("image") { ArtifactUploads.image(context, u, signedIn) } }

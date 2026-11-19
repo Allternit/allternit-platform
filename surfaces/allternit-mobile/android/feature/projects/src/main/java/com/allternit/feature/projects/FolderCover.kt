@@ -223,6 +223,9 @@ private val presets = listOf(
     Preset("badge", "Badge", "#9B6BD6", "symbol", "sans", "center", "dots", "none", "shadow"),
 )
 
+/** A custom look: no preset pill is selected. */
+private val NoPreset = Preset("", "", null, "", "", "", "", "", "")
+
 /**
  * iOS FolderLookSheet: preview, presets, colours, cover art (title / symbol / text / image /
  * none), cover style (font, position, pattern, frame, edge, sheets), the tab and the mode label.
