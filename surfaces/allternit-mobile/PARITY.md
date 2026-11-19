@@ -161,23 +161,23 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: code | — | src/fabric-session/phone/phone-nav.ts (PhoneSection code) | feature/shell/WorkspaceShell.kt (mode code: CodeHome under the composer) | built (#PRNUM) | — |
-| PhoneCodeSessionsView | — | src/fabric-session/phone/screens/PhoneCodeSessionsView.tsx | feature/code/CodeHome.kt (CodeOverviewScreen) | built (#PRNUM) | — |
-| PhoneCodeTerminal | — | src/fabric-session/phone/screens/PhoneCodeTerminal.tsx | feature/code/CodeTerminal.kt (TerminalScreen, PtySession, PaneMirror) | built (#PRNUM) | — |
-| ChangesetReviewSheet | ios/Features/Code/ChangesetReviewSheet.swift | — | feature/code/CodeDiffs.kt (ChangesetReviewSheet, PendingChangesBanner) | built (#PRNUM) | — |
-| CodeEditorView | ios/Features/Code/CodeEditor/CodeEditorView.swift | — | feature/code/CodeFiles.kt (CodeEditorScreen: line numbers, highlight, Save through files/write) | built (#PRNUM) | — |
-| CodeModeView | ios/Features/Code/CodeModeView.swift | — | feature/code/CodeHome.kt (CodeHome, CodeRouteScreen, CodeThreadTools) + feature/shell/WorkspaceShell.kt (Code card in the mode fan opens it) | built (#PRNUM) | — |
-| CodeOverviewSheet | ios/Features/Code/CodeOverviewSheet.swift | — | feature/code/CodeHome.kt (CodeOverviewScreen, ThreadActionsSheet, PermissionsScreen) | built (#PRNUM) | — |
-| CodeRuntimePairingView | ios/Features/Code/CodeRuntimePairingView.swift | — | feature/code/CodeHome.kt (CodeComputerScreen) | built (#PRNUM) | — |
-| CodeThreadView | ios/Features/Code/CodeThreadView.swift | — | feature/shell/ChatPage.kt on a code session + feature/code/CodeDiffs.kt (PendingChangesBanner) | built (#PRNUM) | — |
-| DevServerPortsView | ios/Features/Code/DevPreview/DevServerPortsView.swift | — | feature/code/CodeDevServer.kt (DevServerPortsScreen) | built (#PRNUM) | — |
-| DevServerPreviewView | ios/Features/Code/DevPreview/DevServerPreviewView.swift | — | feature/code/CodeDevServer.kt (DevServerPreviewScreen: WebView, requests fetched through the relay) | built (#PRNUM) | — |
-| FileDiffDetailView | ios/Features/Code/DiffViewer/FileDiffDetailView.swift | — | feature/code/CodeDiffs.kt (FileDiffDetailScreen) | built (#PRNUM) | — |
-| SessionDiffListView | ios/Features/Code/DiffViewer/SessionDiffListView.swift | — | feature/code/CodeDiffs.kt (SessionDiffScreen) | built (#PRNUM) | — |
-| FileBrowserDirectoryView | ios/Features/Code/FileBrowser/FileBrowserDirectoryView.swift | — | feature/code/CodeFiles.kt (FileBrowserDirectory) | built (#PRNUM) | — |
-| FileBrowserView | ios/Features/Code/FileBrowser/FileBrowserView.swift | — | feature/code/CodeFiles.kt (FileBrowserScreen) | built (#PRNUM) | — |
-| FileDetailView | ios/Features/Code/FileBrowser/FileDetailView.swift | — | feature/code/CodeFiles.kt (FileDetailScreen) | built (#PRNUM) | — |
-| TerminalSessionView | ios/Features/Code/TerminalSessionView.swift | — | feature/code/CodeTerminal.kt (TerminalScreen: native VT screen like SwiftTerm, no WebView) | built (#PRNUM) | — |
+| section: code | — | src/fabric-session/phone/phone-nav.ts (PhoneSection code) | feature/shell/WorkspaceShell.kt (mode code: CodeHome under the composer) | built (#2640) | — |
+| PhoneCodeSessionsView | — | src/fabric-session/phone/screens/PhoneCodeSessionsView.tsx | feature/code/CodeHome.kt (CodeOverviewScreen) | built (#2640) | — |
+| PhoneCodeTerminal | — | src/fabric-session/phone/screens/PhoneCodeTerminal.tsx | feature/code/CodeTerminal.kt (TerminalScreen, PtySession, PaneMirror) | built (#2640) | — |
+| ChangesetReviewSheet | ios/Features/Code/ChangesetReviewSheet.swift | — | feature/code/CodeDiffs.kt (ChangesetReviewSheet, PendingChangesBanner) | built (#2640) | — |
+| CodeEditorView | ios/Features/Code/CodeEditor/CodeEditorView.swift | — | feature/code/CodeFiles.kt (CodeEditorScreen: line numbers, highlight, Save through files/write) | built (#2640) | — |
+| CodeModeView | ios/Features/Code/CodeModeView.swift | — | feature/code/CodeHome.kt (CodeHome, CodeRouteScreen, CodeThreadTools) + feature/shell/WorkspaceShell.kt (Code card in the mode fan opens it) | built (#2640) | — |
+| CodeOverviewSheet | ios/Features/Code/CodeOverviewSheet.swift | — | feature/code/CodeHome.kt (CodeOverviewScreen, ThreadActionsSheet, PermissionsScreen) | built (#2640) | — |
+| CodeRuntimePairingView | ios/Features/Code/CodeRuntimePairingView.swift | — | feature/code/CodeHome.kt (CodeComputerScreen) | built (#2640) | — |
+| CodeThreadView | ios/Features/Code/CodeThreadView.swift | — | feature/shell/ChatPage.kt on a code session + feature/code/CodeDiffs.kt (PendingChangesBanner) | built (#2640) | — |
+| DevServerPortsView | ios/Features/Code/DevPreview/DevServerPortsView.swift | — | feature/code/CodeDevServer.kt (DevServerPortsScreen) | built (#2640) | — |
+| DevServerPreviewView | ios/Features/Code/DevPreview/DevServerPreviewView.swift | — | feature/code/CodeDevServer.kt (DevServerPreviewScreen: WebView, requests fetched through the relay) | built (#2640) | — |
+| FileDiffDetailView | ios/Features/Code/DiffViewer/FileDiffDetailView.swift | — | feature/code/CodeDiffs.kt (FileDiffDetailScreen) | built (#2640) | — |
+| SessionDiffListView | ios/Features/Code/DiffViewer/SessionDiffListView.swift | — | feature/code/CodeDiffs.kt (SessionDiffScreen) | built (#2640) | — |
+| FileBrowserDirectoryView | ios/Features/Code/FileBrowser/FileBrowserDirectoryView.swift | — | feature/code/CodeFiles.kt (FileBrowserDirectory) | built (#2640) | — |
+| FileBrowserView | ios/Features/Code/FileBrowser/FileBrowserView.swift | — | feature/code/CodeFiles.kt (FileBrowserScreen) | built (#2640) | — |
+| FileDetailView | ios/Features/Code/FileBrowser/FileDetailView.swift | — | feature/code/CodeFiles.kt (FileDetailScreen) | built (#2640) | — |
+| TerminalSessionView | ios/Features/Code/TerminalSessionView.swift | — | feature/code/CodeTerminal.kt (TerminalScreen: native VT screen like SwiftTerm, no WebView) | built (#2640) | — |
 
 ## Connect
 
