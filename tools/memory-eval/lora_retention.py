@@ -89,7 +89,9 @@ def build_dataset(fx, latest, known_filter):
         rows.append(("reversal", f, chat(f"What is {f['value']} to Mara?", f"It is Mara's {f['label']}.")))
         counts["reversal"] += 1
     for n in fx["day_notes"]:  # raw text so the mix is never only Q/A
-        rows.append(("raw", None, {"text": f"{n['date']}: {n['text']}"}))
+        # allternit_tune takes one row format per dataset (data.py detect_format), so the
+        # raw note is a chat row too: the note text is the assistant's verbatim reply.
+        rows.append(("raw", None, chat(f"What did Mara note on {n['date']}?", n["text"])))
         counts["raw_text"] += 1
     return rows, counts, skipped
 
@@ -104,7 +106,7 @@ def job_spec(dataset_path, base):
     return {
         "spec_version": 1, "engine": "allternit-tune", "engine_version": "0.1.0",
         "base": {"path": base},
-        "dataset": {"path": str(dataset_path), "format": "jsonl"},
+        "dataset": {"path": str(dataset_path), "format": "chat"},
         "method": "lora",
         "params": {"rank": 16, "alpha": 32, "lr": 0.0002, "epochs": 3, "max_seq_len": 1024},
         "resources": {"place": "local", "backend": "auto", "max_hours": 1},
