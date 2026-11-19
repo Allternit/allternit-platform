@@ -10,6 +10,7 @@ import { assertSafeServerExposure } from "@/cli/server-exposure"
 import { ProcessRegistry } from "@/runtime/process-registry"
 import { Sidecar } from "@/runtime/sidecar"
 import { onParentExit } from "@/runtime/util/parent-lifeline"
+import { SleepTriggers } from "@/runtime/memory/sleep/triggers"
 
 export const ServeCommand = cmd({
   command: "serve",
@@ -116,8 +117,11 @@ export const ServeCommand = cmd({
       note(`gizzi server received ${signal}; shutting down\n`)
       ProcessRegistry.killAll()
       void Sidecar.stop().catch(() => {})
-      server
-        .stop()
+      // Allternit Sleep: session_end for this runtime's sessions, capped at
+      // 500 ms; resolves at once when no session ran or Sleep is off.
+      SleepTriggers.endAll()
+        .catch(() => {})
+        .then(() => server.stop())
         .catch(() => {
           // stop() rejects if the socket is already closed; exiting anyway.
         })

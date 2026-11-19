@@ -10,11 +10,10 @@ import type { Message } from '../../types/message.js'
 import { getAssistantMessageText, getUserMessageText } from '../../utils/messages.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { platformRequest, platformSignedIn } from '../../../../../runtime/bots/platform-api.js'
+import { sleepEnabled } from '../../../../../runtime/memory/sleep/client.js'
 
 const sent = new Set<string>()
 const sentRows = new Set<string>()
-const SLEEP_STATUS_TTL_MS = 5 * 60 * 1000
-let sleepStatus: { enabled: boolean; at: number } | null = null
 
 /** The text of the last thing the person typed, if it's a real message. */
 export function lastUserText(messages: readonly Message[]): { id: string; text: string } | null {
@@ -102,25 +101,9 @@ export function turnRows(messages: readonly Message[]): TurnRow[] {
   return lastReply ? [lastReply, ...rows] : rows
 }
 
-/**
- * Whether the server's Allternit Sleep is on for this person: one status
- * call per process, kept five minutes. Off, an older runtime (404) or any
- * failure means off. (No tool in Gizzi is flagged sensitive today, so tool
- * output is sent as is when Sleep is on.)
- */
-async function sleepOn(): Promise<boolean> {
-  const now = Date.now()
-  if (sleepStatus && now - sleepStatus.at < SLEEP_STATUS_TTL_MS) return sleepStatus.enabled
-  let enabled = false
-  try {
-    const r = await platformRequest<{ enabled?: boolean }>('GET', '/api/v1/memory/sleep/status', undefined, { timeoutMs: 5_000 })
-    enabled = r?.enabled === true
-  } catch {
-    enabled = false
-  }
-  sleepStatus = { enabled, at: now }
-  return enabled
-}
+// Whether Sleep is on: runtime/memory/sleep/client.ts (one status call per
+// process, kept five minutes; off, 404 or any failure means off). No tool in
+// Gizzi is flagged sensitive today, so tool output is sent as is when Sleep is on.
 
 export async function captureUserTurn(messages: readonly Message[]): Promise<void> {
   const turn = lastUserText(messages)
@@ -133,7 +116,7 @@ export async function captureUserTurn(messages: readonly Message[]): Promise<voi
     const label = `gizzi:session/${session}`
     // With Sleep on the server keeps the full text (its own cap); off, it
     // clips to 4000 itself, so the older client cap stays for older runtimes.
-    const on = await sleepOn()
+    const on = await sleepEnabled()
     await platformRequest('POST', '/api/v1/memory/drive/capture/turn', {
       source: 'gizzi',
       label,

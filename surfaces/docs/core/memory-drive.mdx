@@ -144,7 +144,10 @@ new `Undo Dream YYYY-MM-DD` commit. If a line the Dream touched was edited later
 refuses and lists the files instead of guessing.
 
 The lexical `memory_consolidation` merge skips drive-backed facts. Gizzi's local
-`autoDream` stays off while the server Dream is on.
+`autoDream` stays off while the server Dream is on, and also while
+[Allternit Sleep](/api/memory-sleep) is on for the account. Gizzi saves both settings
+in the account's cached drive settings when a session starts, so only one consolidator
+runs.
 
 ## Delete forever
 

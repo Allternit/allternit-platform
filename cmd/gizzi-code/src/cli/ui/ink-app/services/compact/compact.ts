@@ -115,6 +115,7 @@ import {
   roughTokenCountEstimationForMessages,
 } from '../roughTokenEstimation.js'
 import { groupMessagesByApiRound } from './grouping.js'
+import { sleepPreCompact } from '../memoryDrive/sleep.js'
 import {
   getCompactPrompt,
   getCompactUserSummaryMessage,
@@ -412,6 +413,8 @@ export async function compactConversation(
 
     // Execute PreCompact hooks
     context.setSDKStatus?.('compacting')
+    // Allternit Sleep: fire-and-forget pre_compact; never awaited.
+    sleepPreCompact(context.agentId)
     const hookResult = await executePreCompactHooks(
       {
         trigger: isAutoCompact ? 'auto' : 'manual',
@@ -822,6 +825,8 @@ export async function partialCompactConversation(
     })
 
     context.setSDKStatus?.('compacting')
+    // Allternit Sleep: fire-and-forget pre_compact; never awaited.
+    sleepPreCompact(context.agentId)
     const hookResult = await executePreCompactHooks(
       {
         trigger: 'manual',

@@ -31,6 +31,7 @@ test/mcp/catalog.test.ts
 test/mcp/era.test.ts
 test/mcp/headers.test.ts
 test/memory/abort-leak.test.ts
+test/memory/sleep-triggers.test.ts
 test/package/native-assets.test.ts
 test/patch/patch.test.ts
 test/permission-task.test.ts
