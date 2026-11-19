@@ -1,6 +1,6 @@
 ---
 title: Memory Sleep API
-description: "Routes for Allternit Sleep: status, cycles, runtime signals, topic pages, disputes, settings and thresholds. Contract stage: every stage is off."
+description: "Routes for Allternit Sleep: status, cycles, runtime signals, topic pages, disputes, settings and thresholds. Every stage is off by default; the orchestrator runs cycles once you turn it on."
 ---
 
 Allternit Sleep is memory consolidation that runs on your own computer while you are
@@ -16,8 +16,8 @@ These routes are served by the Allternit API under `/api/v1`, next to the
 normal signed-in session; a request with no user gets `401`.
 
 <Note>
-This is the contract release. The routes, tables and settings exist, but every stage is
-off by default and none of them runs yet. Read routes return real empty states, never
+Every stage is off by default. The `orchestrator` stage (cycles from the unit queue)
+runs once you turn it on; the other stages are still contract only. Read routes return real empty states, never
 `501`. Write routes that need a later stage check their input, then refuse (see
 [Refused writes](#refused-writes)). The status column below says which stage makes each
 route live.
@@ -28,10 +28,10 @@ route live.
 | Route | Status | What it does |
 | --- | --- | --- |
 | `GET /memory/sleep/status` | Live | Master switch, stage flags, debt, last cycle, spend today, manifest, open disputes. |
-| `GET /memory/sleep/cycles` | Live (empty until the orchestrator) | Recent cycles, newest first. |
-| `GET /memory/sleep/cycles/:id` | Live (empty until the orchestrator) | One cycle and its report. |
+| `GET /memory/sleep/cycles` | Live (empty until the orchestrator stage runs a cycle) | Recent cycles, newest first. |
+| `GET /memory/sleep/cycles/:id` | Live (empty until the orchestrator stage runs a cycle) | One cycle and its report. |
 | `POST /memory/sleep/cycles/:id/undo` | Refuses until the orchestrator | Undo a cycle. |
-| `POST /memory/sleep/run` | Refuses until the orchestrator | Start a cycle now. |
+| `POST /memory/sleep/run` | Live with the orchestrator stage on; otherwise refuses | Queue a nap or daydream now. |
 | `POST /memory/sleep/signal` | Live with the orchestrator stage on; otherwise refuses | Runtime trigger: idle, pre-compact, session end, resume. |
 | `GET /memory/sleep/context` | Live (empty until the router) | What the runtime puts in front of the model at session start. |
 | `POST /memory/sleep/pages/load` | Refuses until the router | Load one topic page mid-session. |
@@ -54,7 +54,8 @@ route live.
 
 ### Refused writes
 
-`run`, `cycles/:id/undo`, `pages/load` and `disputes/:id/resolve` answer `409`.
+`run` (with the orchestrator stage off, or for `deep` and `rem`), `cycles/:id/undo`,
+`pages/load` and `disputes/:id/resolve` answer `409`.
 `signal` answers `200`, because the runtime sends it on every idle, compaction and
 session end, whether Sleep is on or not.
 
@@ -93,7 +94,8 @@ session end, whether Sleep is on or not.
 
 - `enabled` is the master switch. A stage runs only when `enabled` and its own flag are both `true`.
 - `stages` holds each stage's own flag.
-- `debt` is how much consolidation is waiting. It stays `0` until the orchestrator lands.
+- `debt` is sleep debt: memories added since your last finished nap (at most the last 7 days), divided by `debt_scale`. See [How a cycle runs](#how-a-cycle-runs).
+- `last_cycle` is the newest cycle row and `spend_today_usd` the sum of today's cycle spend.
 - `tracks.track2` (pages) is `on` when `enabled` and `stages.pages` are both on. `tracks.track1` (personal adapters) is the same for `stages.track1`.
 
 ## Cycles
@@ -115,6 +117,7 @@ session end, whether Sleep is on or not.
 | `trigger` | `idle`, `pre_compact`, `session_end`, `manual`, `clock` |
 | `kind` | `daydream`, `nap`, `deep`, `rem` |
 | `state` | `running`, `finished`, `stopped`, `failed`, `undone` |
+| `stage` | The stage running now, or the last one that ran: `capture`, `consolidation`, `fit`, `dream`, `curation`, `pages`, `checks`, `sign` |
 
 ### `GET /memory/sleep/cycles/:id`
 
@@ -128,7 +131,15 @@ before the cycle.
 ### `POST /memory/sleep/run`
 
 Optional body `{ "kind": "nap" }`, where `kind` is `daydream`, `nap`, `deep` or `rem`.
-Leave it out and Sleep picks the kind.
+Leave it out for a `nap`. With the `orchestrator` stage on, a `nap` or `daydream` is
+queued and the worker runs it within `worker_poll_s` seconds:
+
+```json
+{ "accepted": true, "kind": "nap", "queued": ["<unit id>"] }
+```
+
+It answers `202`. `queued` is empty when a manual run of that kind is already waiting
+or running. `deep` and `rem` answer `409` with `reason: "stage_not_built"`.
 
 ### `POST /memory/sleep/signal`
 
@@ -158,11 +169,56 @@ With the `orchestrator` stage on, a signal writes units to the queue and answers
 | `idle` | Queues one `nap`. If you raise `nap_after_ttl_multiple` above 1.0 the first idle queues a `daydream` (a light pass) instead. |
 | `pre_compact` | Records a `capture` unit (scratch values and unsaved high-attention items must be captured), then queues a `nap`. It answers `200` fast and never blocks compaction; an internal error is logged and answers `queued: []`. |
 | `session_end` | Queues a `nap`. No immediate work. |
-| `resume` | Cancels this session's `queued` daydream and nap units (`cancelled` lists them). A unit already `leased` gets `stop_requested: true` in its payload, and its cycle stops cleanly. |
+| `resume` | Cancels this session's `queued` daydream and nap units (`cancelled` lists them). A unit already `leased` gets `stop_requested: true` in its payload, and its cycle stops cleanly after the stage that is running; the rest is held and the session's next signal continues it. |
 
 There is at most one open (`queued` or `leased`) unit per session and kind, so a repeated
 signal never queues twice. With the stage off the signal is refused as shown above and
 nothing is written. `nap_after_ttl_multiple` (default 1.0) is in the thresholds list.
+
+## How a cycle runs
+
+With `enabled` and `stages.orchestrator` on, one background worker in the Allternit
+API takes queued `daydream` and `nap` units one at a time (one per user at once) and
+runs each as a cycle. Nothing is scheduled by launchd or cron.
+
+A nap runs these stages in this order. A daydream runs the first two only.
+
+| # | Stage | Runs when | Spends quota |
+| --- | --- | --- | --- |
+| 1 | `capture` | Always. Marks your queued `capture` units done and records what they asked for. | No |
+| 2 | `consolidation` | Always. Merges duplicate memories (the same job as the consolidation clock). | No |
+| 2b | `fit` | `stages.strengths` is on. Fits the decay half-life from your labelled recalls. | No |
+| 3 | `dream` | Dream is on for your drive and today's Dream has not finished. | Yes |
+| 4 | `curation` | A bot's weekly memory curation is due. | Yes |
+| 5 | `pages` | Not built yet. Recorded as skipped. | - |
+| 6 | `checks` | Not built yet. Recorded as skipped. | - |
+| 7 | `sign` | Not built yet. Recorded as skipped. | - |
+
+The cycle's `report` lists each stage with `status` (`done` or `skipped`), a `note`
+(for example `not_due`, `spend_cap`, `stage_off: strengths`), `spend_usd` and the job's
+own result.
+
+- **Daily spend cap.** A spending stage runs only when `daily_spend_cap_usd` is above 0
+  and today's spend plus the stage's estimate (`dream_cost_estimate_usd`,
+  `curation_cost_estimate_usd`) fits under it. Otherwise it is skipped with
+  `spend_cap`. With the default cap of 0, no stage spends quota and the others still run.
+- **Clean stop.** A `resume` signal stops the cycle after the stage that is running. The
+  cycle ends `stopped` and the remaining stages wait as a `held` unit; the session's next
+  signal queues it again and the next cycle starts from the next stage. The per-cycle stop
+  rule (`cycle_max_stages`, `cycle_max_minutes`) stops a cycle the same way.
+- **Failures.** A stage error ends the cycle `failed` and counts one attempt. After
+  `unit_max_attempts` failures (or expired leases) the unit is `deferred`: it is not
+  retried until your next cycle opens, then it gets fresh attempts.
+- **Sleep debt.** While `debt` is at or above `debt_pause_threshold`, consolidation
+  skips its decay step, so nothing fades while a nap is overdue.
+- **The old clocks.** The consolidation tick, the nightly Dream and the weekly bot
+  curation still run on their own for users with the orchestrator off, exactly as
+  before. With it on, they only queue a `nap` (session `clock`, at most one waiting)
+  and the cycle runs the job.
+
+Unit states in `sleep_units`: `queued`, `leased`, `done`, `cancelled`, `deferred`
+(failed `unit_max_attempts` times this cycle) and `held` (the rest of a stopped cycle,
+with `resume_from_stage` in its payload).
 
 ## Context and pages
 
@@ -312,6 +368,13 @@ Stage names are `labels_live`, `strengths`, `pages`, `router`, `orchestrator`,
 | `nap_after_ttl_multiple` | 1.0 | An idle signal starts a nap once the session has been idle this many times the cache time; below that it starts a daydream. |
 | `unit_max_attempts` | 3 | Attempts before a unit of work moves to the next cycle. |
 | `unit_lease_s` | 900 | Lease length for a running unit. |
+| `worker_poll_s` | 30 | Seconds between the Sleep worker's checks of the queue (global row only). |
+| `cycle_max_stages` | 8 | Per-cycle stop rule: most stages one cycle runs. The rest waits for the next signal. |
+| `cycle_max_minutes` | 30 | Per-cycle stop rule: no new stage starts after this many minutes. |
+| `dream_cost_estimate_usd` | 0.05 | Spend charged against the daily cap for one Dream. |
+| `curation_cost_estimate_usd` | 0.05 | Spend charged against the daily cap for one weekly curation. |
+| `debt_scale` | 50 | New memories since the last finished nap that make 1.0 of sleep debt. |
+| `debt_pause_threshold` | 1.0 | At or above this debt, memory decay pauses until a nap finishes. |
 | `page_budget_share` | 0.05 | Share of the model's context window for pages per message. |
 | `router_min_confidence` | 0.5 | Below this, the router falls back to embedding search. |
 | `pull_cost_multiple_max` | 2 | Most a mid-session page load may cost, as a multiple of a preload. |

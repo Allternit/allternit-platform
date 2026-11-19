@@ -332,10 +332,13 @@ pub async fn run_for_user(db: &DbHandle, client: &S1Client, user_id: &str, s1_li
     }
 
     let conn = db.connect().map_err(sql_err)?;
-    let strengths_on = crate::sleep::config::load(&conn, user_id)
-        .map(|c| c.stage_on(crate::sleep::types::Stage::Strengths))
-        .unwrap_or(false);
-    if strengths_on {
+    let sleep_cfg = crate::sleep::config::load(&conn, user_id).ok();
+    let strengths_on = sleep_cfg.as_ref().is_some_and(|c| c.stage_on(crate::sleep::types::Stage::Strengths));
+    // Sleep debt (step 5.1): while the user owes a nap, nothing decays.
+    let debt_paused = sleep_cfg.as_ref().is_some_and(|c| crate::sleep::cycle::decay_paused(&conn, c, user_id, chrono::Utc::now()));
+    if debt_paused {
+        tracing::info!(user = %user_id, "sleep debt: decay paused until a nap finishes");
+    } else if strengths_on {
         // Retrieval strength replaces the age rule: log what it would have done, change nothing.
         let ids = decay_candidates(&conn, user_id).map_err(sql_err)?;
         report.shadow_old_decay = ids.len();
@@ -391,19 +394,34 @@ pub fn spawn(state: Arc<AppState>) {
         let mut tick = tokio::time::interval(Duration::from_secs(6 * 3600));
         loop {
             tick.tick().await;
-            let db = state.db.clone();
-            let users = tokio::task::spawn_blocking(move || db.connect().and_then(|c| due_users(&c, 50))).await;
-            let Ok(Ok(users)) = users else { continue };
-            let client = S1Client::from_env();
-            let live = relation_bank_live();
-            for user in users {
-                match run_for_user(&state.db, &client, &user, live).await {
-                    Ok(r) => tracing::info!(user = %user, merged = r.merged, decayed = r.decayed, shadow = r.shadow_decisions, "memory consolidation"),
-                    Err(e) => tracing::warn!(user = %user, error = %e, "memory consolidation failed"),
-                }
-            }
+            tick_once(&state.db, &S1Client::from_env(), relation_bank_live(), 50).await;
         }
     });
+}
+
+/// One pass of the schedule over up to `limit` due users. A user whose Sleep
+/// `orchestrator` stage is on gets a queued nap instead (the Sleep cycle runs
+/// consolidation); everyone else is consolidated here exactly as before.
+/// Returns (users consolidated, users handed to Sleep).
+pub async fn tick_once(db: &DbHandle, client: &S1Client, live: bool, limit: usize) -> (usize, usize) {
+    let users = {
+        let db = db.clone();
+        tokio::task::spawn_blocking(move || db.connect().and_then(|c| due_users(&c, limit))).await
+    };
+    let Ok(Ok(users)) = users else { return (0, 0) };
+    let (mut ran, mut queued) = (0, 0);
+    for user in users {
+        if crate::sleep::queue::clock_feeds_queue(db, &user, "consolidation") {
+            queued += 1;
+            continue;
+        }
+        ran += 1;
+        match run_for_user(db, client, &user, live).await {
+            Ok(r) => tracing::info!(user = %user, merged = r.merged, decayed = r.decayed, shadow = r.shadow_decisions, "memory consolidation"),
+            Err(e) => tracing::warn!(user = %user, error = %e, "memory consolidation failed"),
+        }
+    }
+    (ran, queued)
 }
 
 // ─── Store adapters ─────────────────────────────────────────────────────────

@@ -792,6 +792,36 @@ pub fn dream_date(timezone: Option<&str>, now: chrono::DateTime<chrono::Utc>) ->
     (2..6).contains(&local.hour()).then(|| local.date())
 }
 
+/// Sleep cycle (step 5.1): the owner's local date when their Dream is due
+/// today. Same rules as the nightly clock (personal drive, dreaming on, no
+/// other computer syncing it), but no 02:00-06:00 window: the cycle runs when
+/// the user is idle. Not due once today's Dream finished (`applied`,
+/// `no_changes`, `undone`) or failed [`MAX_ATTEMPTS`] times; [`run`] keeps the
+/// UNIQUE(drive, date) lease and attempt rules.
+pub fn due_date(conn: &Connection, owner: &str, now: chrono::DateTime<chrono::Utc>) -> Result<Option<chrono::NaiveDate>> {
+    let drive: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT d.id, d.timezone FROM memory_drives d WHERE d.kind='personal' AND d.user_id=?1 AND d.dreaming_enabled=1
+             AND NOT EXISTS(SELECT 1 FROM memory_drive_peers p WHERE p.drive_id=d.id AND p.last_sync_at >= datetime('now','-7 days'))
+             LIMIT 1",
+            params![owner],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((drive_id, tz)) = drive else { return Ok(None) };
+    let date = match tz.as_deref().and_then(|t| t.parse::<chrono_tz::Tz>().ok()) {
+        Some(tz) => now.with_timezone(&tz).date_naive(),
+        None => now.with_timezone(&chrono::Local).date_naive(),
+    };
+    let finished: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM memory_dreams WHERE drive_id=?1 AND date=?2
+           AND (status IN ('applied','no_changes','undone') OR (status='failed' AND attempts>=?3)))",
+        params![drive_id, date.format("%Y-%m-%d").to_string(), MAX_ATTEMPTS],
+        |r| r.get(0),
+    )?;
+    Ok((!finished).then_some(date))
+}
+
 pub fn set_timezone(db: &DbHandle, owner: &str, timezone: &str) -> Result<()> {
     if timezone.parse::<chrono_tz::Tz>().is_err() {
         return Err(ServiceError::Provenance("unknown time zone".into()));
@@ -861,6 +891,10 @@ async fn sweep_owners(db: &DbHandle, date: chrono::NaiveDate, only: Option<&[Str
         }
     };
     for owner in owners.into_iter().filter(|o| only.map_or(true, |l| l.contains(o))) {
+        // Sleep `orchestrator` on: queue a nap instead; its cycle runs the Dream.
+        if crate::sleep::queue::clock_feeds_queue(db, &owner, "dream") {
+            continue;
+        }
         if let Err(e) = run(db.clone(), owner.clone(), date, gizzi_completer(owner.clone())).await {
             tracing::warn!("dream for a user failed: {e}");
         }

@@ -11,6 +11,9 @@
 //! - [`fit`]: fits decay parameters from labelled recalls (3.4).
 //! - [`strength`]: two strengths per memory behind the `strengths` stage (3.2).
 //! - [`trigger`]: runtime signals to queued `sleep_units` (5.2).
+//! - [`queue`]: unit leases, attempts, deferral and held continuations (5.1).
+//! - [`cycle`]: the orchestrator: fixed stage order, spend cap, clean stop,
+//!   sleep debt, and the background worker (5.1).
 //! - [`routes`]: `/api/v1/memory/sleep/...` and `/api/v1/memory/disputes...`.
 //!
 //! The module stays self-contained (D1) so it can become its own crate when
@@ -18,7 +21,9 @@
 //! `surfaces/docs/api/memory-sleep.mdx`.
 
 pub mod config;
+pub mod cycle;
 pub mod fit;
+pub mod queue;
 pub mod routes;
 pub mod strength;
 pub mod trigger;
