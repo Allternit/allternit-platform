@@ -39,6 +39,8 @@ dependencies {
     implementation(project(":feature:chat"))
     // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
     implementation(project(":core:api"))
+    // Wave B: DataStore for the first-run "setup done" flag (iOS OnboardingStore, UserDefaults).
+    implementation(project(":core:data"))
     // setContent { } for MainActivity.
     implementation(libs.activity.compose)
 }

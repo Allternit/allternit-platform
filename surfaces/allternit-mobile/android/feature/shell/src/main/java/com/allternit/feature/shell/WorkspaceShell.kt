@@ -72,9 +72,10 @@ private sealed interface ShellPage {
  * ☰ fans the modes out over everything; the fan and the drawer are never open together.
  *
  * [account] is null for the debug "Continue without signing in" path: no API calls then.
+ * [openSettingsOnStart] opens Settings first (a first-run checklist fix).
  */
 @Composable
-internal fun WorkspaceShell(account: Account?) {
+internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = false) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val view = LocalView.current
@@ -82,7 +83,8 @@ internal fun WorkspaceShell(account: Account?) {
     val scope = rememberCoroutineScope()
 
     var mode by remember { mutableStateOf(ShellModePrefs.load(context)) }
-    var page by remember { mutableStateOf<ShellPage>(ShellPage.Home) }
+    // A first-run checklist fix opens Settings once the workspace is up (iOS DeepLinkRouter).
+    var page by remember { mutableStateOf<ShellPage>(if (openSettingsOnStart) ShellPage.Settings else ShellPage.Home) }
     val store = remember { ShellSessionsStore() }
     val models = remember { ModelStore(context) }
     // One chat for the shell (iOS keeps one ChatViewModel): a running reply survives a trip

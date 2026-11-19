@@ -134,7 +134,7 @@ The native app is built to match the iPhone app screen for screen, in ten waves.
 | Sign-in | Welcome loop, email code, Google, GitHub, Apple | Built, in testing. Apple waits on a return URL in the Apple Services ID. |
 | Home shell | Home, drawer, mode fan, composer, **+** sheet, **Pick a brain** | Built, in testing |
 | A. Chat | Sending, streamed replies, thinking, tool calls, permission asks, attachments, chat history, no-computer state | Built, in testing |
-| B. First run | "Which AI should I think with?", Everything connected, Meet your bots | Not started |
+| B. First run | "Which AI should I think with?", the setup graph, Everything connected. Meet your bots is not ported yet, so setup skips that step for now. | Built, in testing |
 | C. Rest of the shell | Search, session overview, Inbox, thinking slider, test extras, moving from the old app's sign-in | Not started |
 | D. Projects and artifacts | Projects, project pad, folder covers, list/grid/deck, artifacts | Not started |
 | E. Bots | Bots, agents, activity, run tree, decisions, bot chat | Not started |
@@ -155,6 +155,20 @@ Sign-in uses the Clerk Android SDK (`com.clerk:clerk-android-api` 1.4.1) against
 - **Google, GitHub and Apple:** Clerk OAuth in a Custom Tab, returning through Clerk's `SSOReceiverActivity` on `clerk://<applicationId>.callback` (allowed in the Clerk dashboard for `com.allternit.app` and `com.allternit.app.ondevice`). Clerk is started with the Frontend API proxy `https://allternit.com/__clerk` (`AllternitAuth.PROXY_URL`), because the Google client only accepts the proxy's `/v1/oauth_callback`; without it Google answers `redirect_uri_mismatch`. iOS uses the same proxy. On Android, Apple goes through the web OAuth flow; iOS uses the native Sign in with Apple sheet.
 - **Organization:** the production instance requires one. A new account's session waits on the choose-organization task; the app uses the first membership or creates "First name's Organization", the same as iOS `finishOrganizationTaskIfNeeded`.
 - **API calls:** `AllternitAuth.tokenProvider` goes into `ApiClients.okHttp(bearer = …)`. It sends the Clerk session token (about 60 seconds) and gets a new one from Clerk's cache 10 seconds before it expires.
+
+#### First run
+
+After the first sign-in on a phone, the native app runs the same setup as the iPhone app (`FirstRunSetupView`) before the workspace opens. It is a full-screen swap, never on top of the sign-in screen. The code is in `:feature:shell`, package `firstrun`.
+
+- **When it shows:** the app asks your setup config (`GET /api/onboarding/config`, `user.onboardingComplete`). Done on the server: it never shows. Not done: it shows unless this phone already finished it. When the server can't answer in 8 seconds (no computer online to relay it), setup shows only for an account with no computer paired at all, so a returning user whose computer is asleep goes straight in and is asked again next launch. While it checks you see the A:// mark.
+- **Where "done" is stored:** DataStore key `allternit-onboarding-complete` (the iOS UserDefaults key), set when you finish. Finishing also saves the config with `onboardingComplete: true` and your default brain (`POST /api/onboarding/config`); if that fails, setup still finishes on the phone.
+- **Your AI:** the "Your workspace" graph on top (A:// in the middle, the five brains around it), Gizzi + A:// with A://'s state, the 30-block progress, then "Hi, I'm Gizzi. Which AI should I think with? If you already pay for one, use it here." The brains are connect-kit rows from `GET {cloud}/api/v1/connections`, in three groups: **Works on any device**, **Needs your computer** and **Coming soon**. **Allternit** is included and needs no computer: tap **Included** to make it your brain. **Gemini** and **An API key** take a key (paste it; it is checked with the vendor first). Plan rows (Claude, Grok, Kimi, ChatGPT, Copilot) sign in with a code in the browser and finish by themselves; they show **Chat only** because a plan answers only messages you send. A row the account can't use yet shows why and its fallback (**Use a key**, **Add a computer**). **More ways: an API key, a local brain** adds the last two rows.
+- **Your phone:** this phone is already connected. **Add a computer** is offered under **Later, if you need it**, with "Chat works without it". There is no computer step: plan chats with no computer are the simple start.
+- **Everything connected:** first the live setup checklist (`GET /api/v1/setup/checks` plus this phone's notification permission) with **Check again** and **Continue**; a row's fix button finishes setup and opens that fix (Android's notification settings for notifications, the Settings page for the rest). Then the graph of what is really connected (brains, computers, bots, channels, Memory Drive, Projects, Connectors), each node with a detail card. **Open Allternit** finishes setup. iOS plays a short branded hand-off first; Android opens the workspace at once.
+- **Your brain in chat:** the brain you picked becomes the composer's model (the same `allternit-runtime-model-id` selection chat sends with). Allternit Cloud picks the first catalog model as `allternit/<model>`, which works with no computer.
+- **Skip, Back, Next:** **Skip** on Your AI saves no brain unless one really connected; you are asked on first send instead. **Next** turns into **See it all** before the last step.
+- **Meet your bots:** iOS runs it between Your phone and Everything connected. Android skips that step until it is ported (the same order iOS uses when the step is off).
+- **Test ids:** `conn-row-<id>`, `conn-key-<id>`, `conn-disclosure`, `conn-disclosure-accept`, `conn-disclosure-decline`, `setup-add-computer` (shared with iOS), and Android's `setup-splash`, `setup-checklist`, `setup-checklist-continue`, `setup-open-allternit`.
 
 #### Home, drawer and modes
 

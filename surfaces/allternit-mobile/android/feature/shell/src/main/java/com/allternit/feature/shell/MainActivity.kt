@@ -1,6 +1,7 @@
 package com.allternit.feature.shell
 
 import android.content.Intent
+import android.provider.Settings
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -16,9 +17,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -35,6 +38,8 @@ import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.ThemeMode
 import com.allternit.feature.onboarding.SignInScreen
+import com.allternit.feature.shell.firstrun.FirstRunGate
+import com.allternit.feature.shell.firstrun.FirstRunStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -42,8 +47,10 @@ import kotlinx.coroutines.launch
  * The native app's only activity (PLAN.md section 2: single MainActivity). Launcher of the
  * `nativeapp` flavor; the play and phonelink builds keep the TWA launcher.
  *
- * Signed out → [SignInScreen]. Signed in → [WorkspaceShell]: home, drawer and mode fan (step 7c-1).
- * Search, the session overview and the real chat screen arrive in later steps.
+ * Signed out → [SignInScreen]. Signed in → the first-run setup ([FirstRunGate], iOS OnboardingView)
+ * until it is done on this phone, then [WorkspaceShell]: home, drawer and mode fan. Like iOS, the
+ * setup is a root swap after sign-in and never covers the sign-in screen; the debug "Continue
+ * without signing in" path skips it.
  *
  * Debug builds only: `adb shell am start -n com.allternit.app.ondevice/com.allternit.feature.shell.MainActivity
  * --es ticket <sign_in_token>` signs in with a Clerk sign-in token (Maestro, emulator checks).
@@ -52,6 +59,9 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     /** Debug "Continue without signing in" (iOS skipAuth): the home without a session. */
     private var skippedAuth by mutableStateOf(false)
+
+    /** A Settings section a setup checklist fix asked for, opened once the workspace is up. */
+    private var openSettingsOnStart by mutableStateOf(false)
 
     private fun applySystemBars(darkContent: Boolean) {
         val style = if (darkContent) {
@@ -71,6 +81,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             val state by AllternitAuth.state.collectAsState()
             val signedIn = state is AuthState.SignedIn || skippedAuth
+            val firstRun = remember { FirstRunStore(applicationContext) }
+            LaunchedEffect(firstRun) { firstRun.load() }
             // Sign-in is always dark, like iOS LoginGateView; the workspace is light by default.
             // System bar icons follow the screen: light icons on the dark sign-in, dark icons on
             // the light workspace. Bars stay transparent (no grey 3-button nav scrim).
@@ -88,7 +100,11 @@ class MainActivity : ComponentActivity() {
                     contentAlignment = Alignment.Center,
                 ) {
                     when (val s = state) {
-                        is AuthState.SignedIn -> WorkspaceShell(account = s.account)
+                        is AuthState.SignedIn -> when {
+                            !firstRun.loaded -> Unit
+                            !firstRun.isComplete -> FirstRunGate(firstRun, onDone = ::openSetupFix)
+                            else -> WorkspaceShell(account = s.account, openSettingsOnStart = openSettingsOnStart)
+                        }
                         else -> if (skippedAuth) {
                             WorkspaceShell(account = null)
                         } else {
@@ -121,6 +137,21 @@ class MainActivity : ComponentActivity() {
             }
         }
         handleDebugTicket(intent)
+    }
+
+    /**
+     * iOS opens the fix's Settings page through DeepLinkRouter once the workspace is up. The
+     * notifications fix opens Android's own notification settings for the app; every other
+     * section opens the workspace's Settings page.
+     */
+    private fun openSetupFix(fix: String?) {
+        when (fix) {
+            null -> Unit
+            "notifications" -> runCatching {
+                startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+            }
+            else -> openSettingsOnStart = true
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
