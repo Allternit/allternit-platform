@@ -244,6 +244,15 @@ allternit-desktop/
 
 The main process registers many other channels (for example `miniApps:*`); see `src/main/unified-main.ts`.
 
+## Linux notes
+
+- **Start at login.** The toggle writes `autostart/allternit.desktop` in `$XDG_CONFIG_HOME` (default `~/.config`), with `Exec` set to the installed binary (for the `.deb`, `/opt/Allternit Desktop/allternit`). Turning it off deletes the file. The toggle shows whether the file exists, so deleting it by hand turns the setting off.
+- **Keyring.** Allternit stores your sign-in with the system keyring. Without one (the Electron backend is `basic_text`), tokens get only weak encryption, so Desktop logs a warning and shows one notice: install `gnome-keyring` or KWallet. The app keeps working.
+- **Global shortcuts.** If a shortcut cannot be registered, Desktop logs it and shows one notice per session naming it. On Wayland, apps often cannot grab global keys; set the shortcut in your desktop's own keyboard settings instead. On X11 it usually means another app holds the key.
+- **Mini-app zip releases.** Zip archives are unpacked by Desktop itself (GNU tar cannot read zip). Paths that leave the install folder, symbolic links and oversize archives are refused.
+
+Developer notes: `src/main/linux-autostart.ts`, `shortcut-notice.ts`, `keyring-notice.ts`, `zip-extract.ts`.
+
 ## Pairing this computer
 
 The first time Desktop opens, or after you sign out, it shows the pairing window. It has the same "Allternit ⇄ computer" header as the in-app **Connect a computer** sheet, this computer's name and system, and three steps: **Sign in to your Allternit account**, **Approve this computer** and **Start Allternit**. Press **Sign in to pair**. A sign-in window opens. Signing in pairs the computer, so there is no code to type.

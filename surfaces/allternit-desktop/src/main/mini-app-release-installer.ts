@@ -43,6 +43,7 @@ import log from 'electron-log';
 import { getMiniAppSecretEnvironment, listMiniAppSecrets } from './mini-app-secrets.js';
 import { sandboxCommand, type MiniAppSandboxPermissions } from './mini-app-sandbox.js';
 import { startMiniAppPolicyProxy } from './mini-app-policy-proxy.js';
+import { extractZipSafely } from './zip-extract.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -360,7 +361,16 @@ export function validateExtractedTree(root: string): string | null {
 
 async function extractArchive(archivePath: string, mime: string, stagingDir: string): Promise<string | null> {
   if (mime === 'application/zip' && process.platform === 'linux') {
-    return 'Zip release archives are not supported on Linux yet; ask the publisher for a tar.gz build';
+    // GNU tar cannot read zip; extract in pure JS with the same traversal checks.
+    try {
+      const zipError = extractZipSafely(archivePath, stagingDir, {
+        maxEntries: MAX_ARCHIVE_ENTRIES,
+        maxBytes: MAX_EXTRACTED_BYTES,
+      });
+      return zipError ?? validateExtractedTree(stagingDir);
+    } catch (err) {
+      return `Could not extract archive: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
   const listing = await runTool('tar', ['-tf', archivePath]);
   if (listing.code !== 0) {

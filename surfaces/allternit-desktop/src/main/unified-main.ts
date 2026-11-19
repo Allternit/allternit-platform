@@ -7,6 +7,9 @@
  * - Version-locked: Desktop 1.2.3 = Backend 1.2.3
  */
 
+import { setLinuxAutostart, isLinuxAutostartEnabled } from './linux-autostart.js';
+import { noteShortcutResult } from './shortcut-notice.js';
+import { warnIfNoKeyring } from './keyring-notice.js';
 import { app, shell, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openPrivacySettings as openPrivacySettingsHelper, messagesAccessHint as messagesAccessHintHelper } from './messages-permissions.js';
@@ -3187,7 +3190,10 @@ app.whenReady().then(async () => {
   if (isMac) {
     app.setLoginItemSettings({ openAtLogin: prefs.startupOnLogin });
     if (prefs.menuBarMode) app.dock?.hide();
+  } else if (process.platform === 'linux' && prefs.startupOnLogin) {
+    setLinuxAutostart(true); // refresh Exec after an update; never delete on launch
   }
+  void warnIfNoKeyring(log);
 
   // Initialize MCP host if enabled
   if (featureFlagManager.get<boolean>('mcp.enabled')) {
@@ -3241,6 +3247,7 @@ app.whenReady().then(async () => {
   } else {
     log.warn(`[Main] Failed to register fallback global HUD hotkey: ${HUD_HOTKEY_FALLBACK} (another app may own it)`);
   }
+  for (const [accel, ok] of hudHotkeyStatus) noteShortcutResult(accel, ok);
   // Settings and the tray show which chords are taken by another app.
   void updateTrayMenu();
 
@@ -5361,11 +5368,12 @@ handleGuarded('menuBar:setMode', (_event, enabled: boolean) => {
   return true;
 });
 
-ipcMain.handle('startup:getOnLogin', () => persistedState.get('prefs').startupOnLogin);
+ipcMain.handle('startup:getOnLogin', () => (process.platform === 'linux' ? isLinuxAutostartEnabled() : persistedState.get('prefs').startupOnLogin));
 
 handleGuarded('startup:setOnLogin', (_event, enabled: boolean) => {
   persistedState.patch('prefs', { startupOnLogin: enabled });
   if (isMac) app.setLoginItemSettings({ openAtLogin: enabled });
+  else if (process.platform === 'linux') setLinuxAutostart(enabled);
   return true;
 });
 
