@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// "N need you" over the Workspace floor (top left): the bots waiting on the
+/// "1 needs you" / "N need you" over the Workspace floor (top left): the bots waiting on the
 /// person as stacked colour dots. A tap opens the first one's thread sheet
 /// with its approval card docked at the top.
 struct OfficeNeedPill: View {
@@ -9,6 +9,9 @@ struct OfficeNeedPill: View {
     let onTap: () -> Void
 
     @ObservedObject private var colors = BotColorStore.shared
+
+    /// Shared copy: "1 needs you" / "N need you".
+    private var label: String { bots.count == 1 ? "1 needs you" : "\(bots.count) need you" }
 
     var body: some View {
         Button(action: onTap) {
@@ -23,7 +26,7 @@ struct OfficeNeedPill: View {
                     }
                 }
                 .accessibilityHidden(true)
-                Text("\(bots.count) need you")
+                Text(label)
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(Color("TextPrimary"))
                     .lineLimit(1)
@@ -36,7 +39,7 @@ struct OfficeNeedPill: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(bots.count) need you: \(bots.prefix(3).map(\.botDisplayName).joined(separator: ", "))")
+        .accessibilityLabel("\(label): \(bots.prefix(3).map(\.botDisplayName).joined(separator: ", "))")
         .accessibilityHint("Opens \(bots.first?.botDisplayName ?? "the first one")")
     }
 }

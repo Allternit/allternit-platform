@@ -78,7 +78,8 @@ enum OfficeNeeds {
     }
 }
 
-/// The approval card docked at the top of a bot's thread sheet on the floor:
+/// The approval card docked at the top of a bot's thread sheet on the floor
+/// (shared copy: "<Bot> needs your approval" / "is asking" / "suggests"):
 /// what the bot waits on, with Approve / Not now (Answer for questions). It
 /// acts only through the app's existing calls: `AgentAskStore.reply` / `answer`
 /// / `skip` (the chat's PermissionAskView and QuestionCardView) and
@@ -123,7 +124,7 @@ struct OfficeApprovalCard: View {
             if answering, case .question(let request) = need {
                 // The chat's own question card, answered in place.
                 QuestionCardView(request: request, agentName: bot.botDisplayName) {
-                    onDone("Got your answer")
+                    onDone("Answered")
                 }
             } else {
                 buttons
@@ -141,7 +142,7 @@ struct OfficeApprovalCard: View {
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color("BgPanel")))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(bot.botDisplayName) needs you: \(headline)")
+        .accessibilityLabel("\(kicker): \(headline)")
     }
 
     // MARK: - Copy
@@ -156,8 +157,8 @@ struct OfficeApprovalCard: View {
 
     private var kicker: String {
         switch need {
-        case .permission: return "\(bot.botDisplayName) is waiting for approval"
-        case .question, .waiting: return "\(bot.botDisplayName) has a question"
+        case .permission: return "\(bot.botDisplayName) needs your approval"
+        case .question, .waiting: return "\(bot.botDisplayName) is asking"
         case .suggestion: return "\(bot.botDisplayName) suggests"
         }
     }
@@ -193,7 +194,7 @@ struct OfficeApprovalCard: View {
                 }
                 button("Approve", id: "yes", kind: .primary) {
                     try await AgentAskStore.shared.reply(ask, reply: "once")
-                    return "Approved, back to work"
+                    return "Approved: \(ask.actionLabel)"
                 }
             case .question(let request):
                 button("Not now", id: "no", kind: .quiet) {
@@ -211,7 +212,7 @@ struct OfficeApprovalCard: View {
                 }
                 button("Approve", id: "yes", kind: .primary) {
                     try await BotModeStore.shared.approve(thread)
-                    return "On it"
+                    return "Started: \(thread.displayTitle)"
                 }
             case .waiting(let thread):
                 Button("Not now") { onSkip() }

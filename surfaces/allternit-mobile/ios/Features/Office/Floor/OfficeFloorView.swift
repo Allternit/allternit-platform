@@ -16,6 +16,12 @@ import WebKit
 /// answer, open) opens its thread as a native sheet over the floor
 /// (OfficeThreadSheet) instead of leaving the floor; "N need you"
 /// (OfficeNeedPill) opens the first waiting bot with its approval card.
+///
+/// The chief dock (ChiefDockView) sits at the bottom for the main bot (talk,
+/// Autopilot, its suggestion); "While you were away" (OfficeDigestView) shows
+/// once over the floor after 30 minutes away. While a bot's thread sheet is
+/// open the dock hides: the sheet has its own composer, and the dock would sit
+/// half under the sheet.
 struct OfficeFloorView: View {
     @ObservedObject private var auth = AuthManager.shared
     @ObservedObject private var store = BotModeStore.shared
@@ -42,6 +48,17 @@ struct OfficeFloorView: View {
     @State private var doneBubbles: [OfficeDoneBubble] = []
     /// The bottom inset last sent with `focus`, to skip tiny height changes.
     @State private var focusedInset: CGFloat = -1
+    /// Autopilot's switch and rules, shared by the dock and the Autopilot sheet.
+    @StateObject private var autopilot = FloorAutopilotModel()
+    /// "While you were away", when the person was away 30 minutes or more.
+    @State private var digest: FloorDigest?
+    /// The account whose digest was checked this visit (once per visit per account).
+    @State private var digestCheckedFor: String?
+    /// The dock's height plus its margin, the frame's bottom inset while no sheet is open.
+    @State private var dockHeight: CGFloat = 0
+    @State private var isAutopilotPresented = false
+    @State private var isMainSetupPresented = false
+    @ReducedMotion private var reduceMotion
 
     var body: some View {
         ZStack {
@@ -69,6 +86,25 @@ struct OfficeFloorView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .transition(.opacity)
                 }
+                if showsFloorChrome, let digest {
+                    OfficeDigestView(digest: digest, mainBotName: mainBotName, onOpenBot: { botId in
+                        self.digest = nil
+                        openSheet(botId)
+                    }, onClose: { self.digest = nil })
+                    .padding(.horizontal, 12)
+                    .padding(.top, needBots.isEmpty ? 8 : 60)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .transition(.opacity)
+                    .onAppear { markSeen() }
+                }
+                if showsFloorChrome {
+                    chiefDock
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { dockHeight = $0 + 8 }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .transition(.opacity)
+                }
                 if !ready {
                     ProgressView("Opening the office…")
                         .padding(16)
@@ -76,10 +112,27 @@ struct OfficeFloorView: View {
                 }
             }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: sheet == nil)
         .background(Color("BgPanel"))
+        .sheet(isPresented: $isAutopilotPresented) {
+            AutopilotSheet(model: autopilot, mainBotName: mainBotName, bots: store.bots, pods: floor?.pods ?? [],
+                           onOpenBotSettings: mainBot.map { bot -> () -> Void in { openBotSettings(bot.id) } })
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isMainSetupPresented) {
+            // The existing "Set up your main bot" (PrimaryBotSetupDialog) the Bots rail opens.
+            MainBotSetupSheet(bots: store.bots) { _ in
+                hub.fetchAgentsIfNeeded(force: true)
+                Task {
+                    if canFocus, let latest = try? await BotModeClient.shared.floorState() { floor = latest }
+                    await autopilot.load()
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
         .sheet(item: $sheet, onDismiss: {
             focusedInset = -1
-            if canFocus { bridge.focus() }
+            focusDock()
         }) { target in
             if let bot = store.bot(target.botId) {
                 OfficeThreadSheet(
@@ -128,6 +181,25 @@ struct OfficeFloorView: View {
                 try? await Task.sleep(for: .seconds(15))
             }
         }
+        .onChange(of: ready) { _, isReady in
+            if isReady { focusDock() }
+        }
+        .onChange(of: frameVersion) { _, _ in
+            if ready { focusDock() }
+        }
+        .task(id: auth.currentUserId) {
+            // Autopilot for the dock's switch; a minute is fresh enough for changes made on another device.
+            guard isSignedIn else { return }
+            while !Task.isCancelled {
+                await autopilot.load()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+        .task(id: auth.currentUserId) { await checkDigest() }
+        .onDisappear {
+            // Leaving the Office counts as seen, so the next digest covers only the time away.
+            if isSignedIn, digestCheckedFor != nil { markSeen() }
+        }
         .task {
             // Statuses and questions come from the threads; keep them fresh while the floor is open.
             while !Task.isCancelled {
@@ -155,6 +227,78 @@ struct OfficeFloorView: View {
         default:
             break
         }
+    }
+
+    // MARK: - Chief dock, Autopilot, digest
+
+    private var isSignedIn: Bool { auth.isSignedIn || auth.isSkippingAuth }
+
+    /// The dock and digest show over the ready Workspace floor while no thread sheet is open.
+    private var showsFloorChrome: Bool { ready && mode == .workspace && sheet == nil }
+
+    /// The main bot: the floor's `mainBotId`, else `botProfile.chiefOfStaff`, else the primary template bot.
+    private var mainBot: AgentRecord? {
+        if let id = floor?.mainBotId, let bot = store.bot(id) { return bot }
+        return store.bots.first { $0.isMainBot } ?? store.bots.first { $0.isPrimaryTemplateBot }
+    }
+
+    /// The main bot's newest open suggestion (a proposed thread).
+    private var mainSuggestion: BotThread? {
+        guard let id = mainBot?.id else { return nil }
+        return store.threads(for: id).first { $0.status == "proposed" && $0.archived != true }
+    }
+
+    private var chiefDock: some View {
+        ChiefDockView(
+            account: isSignedIn ? .signedIn : .signedOut,
+            mainBot: mainBot,
+            suggestion: mainSuggestion,
+            autopilot: autopilot,
+            onSend: { text in
+                guard let id = mainBot?.id else { return false }
+                return await thread.send(text, to: id)
+            },
+            onOpenBot: { openSheet($0) },
+            onPickMainBot: { isMainSetupPresented = true },
+            onSignIn: { auth.isPresentingAuth = true },
+            onOpenAutopilot: { isAutopilotPresented = true },
+            onSuggestionStarted: { thread in done(botId: thread.botId, text: "Started: \(thread.displayTitle)") }
+        )
+    }
+
+    /// The main bot's settings, pushed once the Autopilot sheet has closed.
+    private func openBotSettings(_ botId: String) {
+        Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            navigator.open(.settings(botId))
+        }
+    }
+
+    /// With no sheet open, the frame keeps the floor clear of the dock.
+    private func focusDock() {
+        guard canFocus, sheet == nil else { return }
+        bridge.focus(inset: UIEdgeInsets(top: 0, left: 0, bottom: dockHeight, right: 0))
+    }
+
+    /// Once per visit: the digest since the server's last-seen time; shown when that was 30+ minutes ago
+    /// and something happened. Nothing to show marks the floor seen right away; a shown digest marks it
+    /// seen when it appears. A failed load shows nothing and leaves last-seen alone for the next visit.
+    private func checkDigest() async {
+        let account = auth.currentUserId ?? "local"
+        guard isSignedIn, digestCheckedFor != account else { return }
+        digest = nil
+        guard let latest = try? await BotModeClient.shared.floorDigest() else { return }
+        digestCheckedFor = account
+        let awayMs: Double = 30 * 60 * 1000
+        if latest.until - latest.since >= awayMs, latest.count > 0 {
+            digest = latest
+        } else {
+            markSeen()
+        }
+    }
+
+    private func markSeen() {
+        Task { try? await BotModeClient.shared.markFloorSeen() }
     }
 
     // MARK: - Thread sheet, needs, done bubbles
@@ -220,10 +364,9 @@ struct OfficeFloorView: View {
         return ranked.sorted { ($0.rank, $0.index) < ($1.rank, $1.index) }.map { $0.bot }
     }
 
-    /// The main bot's name for autopilot lines: the floor's main bot, else the primary template bot.
+    /// The main bot's name for autopilot lines and the dock's copy.
     private var mainBotName: String {
-        if let id = floor?.mainBotId, let bot = store.bot(id) { return bot.botDisplayName }
-        return store.bots.first { $0.isPrimaryTemplateBot }?.botDisplayName ?? "your main bot"
+        mainBot?.botDisplayName ?? "your main bot"
     }
 
     /// The live roster in the facility's `allternit:workspace` shape (workspace-feed.ts parseBots).
@@ -533,14 +676,16 @@ final class OfficePanelThread {
         }
     }
 
-    /// Sends a message from the panel into the bot's main chat, no navigation.
-    func send(_ text: String, to botId: String) async {
+    /// Sends a message from the panel (or the chief dock's mic) into the bot's main chat, no navigation.
+    /// False when it couldn't be sent.
+    @discardableResult
+    func send(_ text: String, to botId: String) async -> Bool {
         // Usually already picked (the panel posts select first); otherwise open it now.
         var ready = self.botId == botId && chats[botId]?.currentSessionId != nil
         if !ready { ready = await select(botId) }
         guard ready, let chat = chats[botId] else {
             if self.botId == botId, sendError == nil { fail(nil) }
-            return
+            return false
         }
         // Let the history land first so it can't replace the new message.
         for _ in 0..<50 where chat.messages.isEmpty && chat.transientError == nil {
@@ -548,12 +693,13 @@ final class OfficePanelThread {
         }
         guard !chat.isStreaming, !chat.isCreatingSession, chat.currentSessionId != nil else {
             if self.botId == botId { fail(nil) }
-            return
+            return false
         }
         sendError = nil
         let models = ModelStore.shared
         chat.sendMessage(text, runtimeModelId: models.selectedModelId, effort: models.effortForSend)
         schedule()
+        return true
     }
 
     private func fail(_ message: String?) {

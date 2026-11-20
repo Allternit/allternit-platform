@@ -137,14 +137,28 @@ struct OfficeThreadSheet: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Close \(bot.botDisplayName)'s thread")
+                .accessibilityLabel("Close")
+                .accessibilityHint("Closes \(bot.botDisplayName)'s thread")
             }
-            Picker("View", selection: $tab) {
-                Text("Thread").tag(Tab.thread)
-                Text("Screen").tag(Tab.screen)
+            HStack(spacing: 10) {
+                Picker("View", selection: $tab) {
+                    Text("Thread").tag(Tab.thread)
+                    Text("Screen").tag(Tab.screen)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityLabel("Thread or screen")
+                // The existing full bot chat (BotChatSessionView), on the chat this sheet shows.
+                Button("Open the full chat") {
+                    let route = BotRoute.chat(botId: bot.id, sessionId: sessionId)
+                    dismiss()
+                    navigator.open(route)
+                }
+                .font(.footnote.weight(.semibold))
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minHeight: 44)
+                .accessibilityHint("Leaves the floor for \(bot.botDisplayName)'s chat")
             }
-            .pickerStyle(.segmented)
-            .accessibilityLabel("Thread or screen")
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
