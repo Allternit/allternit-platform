@@ -1,5 +1,6 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -220,7 +221,7 @@ internal fun LaunchGreeting() {
             text = "What are we working on?",
             color = c.textPrimary,
             lineHeight = 38.sp,
-            fontFamily = FontFamily.Serif,
+            fontFamily = AllternitSerif,
             letterSpacing = (-0.64).sp,
             textAlign = TextAlign.Center,
             // One line like iOS: 32sp, stepping down on narrower phones instead of wrapping.
@@ -300,7 +301,7 @@ private fun ModeArrives(mode: ShellMode) {
             text = "${mode.label} arrives in the next update",
             color = c.textPrimary,
             fontSize = 20.sp,
-            fontFamily = FontFamily.Serif,
+            fontFamily = AllternitSerif,
             textAlign = TextAlign.Center,
         )
         Text(

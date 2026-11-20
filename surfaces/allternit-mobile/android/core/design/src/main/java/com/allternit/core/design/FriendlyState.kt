@@ -67,7 +67,7 @@ fun FriendlyState(
         ) { icon() }
         Text(
             title, color = c.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Medium,
-            fontFamily = FontFamily.Serif, textAlign = TextAlign.Center,
+            fontFamily = AllternitSerif, textAlign = TextAlign.Center,
         )
         Text(
             message, color = c.textSecondary, fontSize = 15.sp, textAlign = TextAlign.Center,

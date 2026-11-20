@@ -1,5 +1,6 @@
 package com.allternit.feature.bots
 
+import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -508,7 +509,7 @@ internal fun MarketplaceListingScreen(id: String, store: BotModeStore, nav: BotN
             val d = detail
             if (d == null) { ListState(error == null, error, true, "Couldn't load agent details", "") { scope.launch { load() } }; return@Column }
             val (l, reviews) = d
-            Text(l.title, color = c.textPrimary, fontSize = 22.sp, fontFamily = FontFamily.Serif)
+            Text(l.title, color = c.textPrimary, fontSize = 22.sp, fontFamily = AllternitSerif)
             l.publisherName?.let { Text("By $it", color = c.textSecondary, fontSize = 13.sp) }
             Text(l.description, color = c.textPrimary, fontSize = 15.sp)
             if (installed != null) Text("✓ Installed", color = AllternitStatic.StatusSuccess, fontSize = 14.sp, fontWeight = FontWeight.Medium)

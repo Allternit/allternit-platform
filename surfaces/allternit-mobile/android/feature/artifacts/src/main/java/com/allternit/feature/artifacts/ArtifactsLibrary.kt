@@ -1,5 +1,6 @@
 package com.allternit.feature.artifacts
 
+import com.allternit.core.design.AllternitSerif
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -310,7 +311,7 @@ fun ArtifactsLibraryScreen(
         ) {
             val full: androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
             item(key = "title", span = full) {
-                Text("Artifacts", color = c.textPrimary, fontSize = 30.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
+                Text("Artifacts", color = c.textPrimary, fontSize = 30.sp, fontFamily = AllternitSerif, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
             }
             item(key = "make", span = full) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

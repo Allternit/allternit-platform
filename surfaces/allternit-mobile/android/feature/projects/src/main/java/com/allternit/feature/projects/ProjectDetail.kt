@@ -1,5 +1,6 @@
 package com.allternit.feature.projects
 
+import com.allternit.core.design.AllternitSerif
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -239,7 +240,7 @@ fun ProjectDetailScreen(
                     FolderCover(look, project.title, project.mode, width = 46.dp, flat = true)
                     Column(Modifier.weight(1f)) {
                         Text(
-                            project.title, color = c.textPrimary, fontSize = 28.sp, fontFamily = FontFamily.Serif, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            project.title, color = c.textPrimary, fontSize = 28.sp, fontFamily = AllternitSerif, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.testTag("projectTitle").clickable(onClickLabel = "Rename project") { detailsOpen = true },
                         )
                         project.description?.takeIf { it.isNotBlank() }?.let { Text(it, color = c.textSecondary, fontSize = 14.sp) }
@@ -444,7 +445,7 @@ private fun ProjectStatusSheet(status: ProjectStatus?, onDismiss: () -> Unit) {
     val c = AllternitTheme.colors
     LibrarySheet("Status", "projectStatusSheet", onDismiss = onDismiss, trailing = LibrarySheetAction("Done", bold = true, onClick = onDismiss)) {
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(status?.stateLabel ?: "On track", color = c.textPrimary, fontSize = 20.sp, fontFamily = FontFamily.Serif)
+            Text(status?.stateLabel ?: "On track", color = c.textPrimary, fontSize = 20.sp, fontFamily = AllternitSerif)
             status?.nextAction?.let { Text("Next: $it", color = c.textSecondary, fontSize = 14.sp) }
             val labels = mapOf("goal" to "Goal", "status" to "Status", "next_actions" to "Next actions", "owners" to "Owners", "deadlines" to "Deadlines", "decisions" to "Decisions", "blockers" to "Blockers", "outcome" to "Outcome", "lessons" to "Lessons")
             ProjectStatus.sectionOrder.forEach { k ->

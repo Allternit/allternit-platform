@@ -9,6 +9,7 @@ import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.anchoredDraggable
 import androidx.compose.foundation.gestures.animateTo
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -35,7 +36,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -93,6 +96,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     val context = LocalContext.current
     val view = LocalView.current
     val density = LocalDensity.current
+    // Tap anywhere outside a text field to hide the keyboard (iOS dismisses it the same way).
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     androidx.compose.runtime.LaunchedEffect(Unit) { com.allternit.feature.chat.ChatHooks.onNotificationsGranted = { com.allternit.feature.push.AllternitPush.registerIfAuthorized(context) } }
 
@@ -393,7 +398,14 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
 
     // Every Text in the shell uses the bundled sans (iOS SF Pro sizes); the headline sets Serif itself.
     CompositionLocalProvider(LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = ShellSans)) {
-    BoxWithConstraints(Modifier.fillMaxSize().background(c.bgPrimary)) {
+    BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .background(c.bgPrimary)
+            // Children (buttons, fields) handle their own taps first; a tap on empty space
+            // reaches here and clears focus, which hides the keyboard.
+            .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) },
+    ) {
         val widthDp = drawerWidth(maxWidth)
         val widthPx = with(density) { widthDp.toPx() }
         val gapPx = with(density) { 24.dp.toPx() }

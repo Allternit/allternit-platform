@@ -1,5 +1,6 @@
 package com.allternit.feature.computer
 
+import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -397,7 +398,7 @@ private val TAGLINES = listOf("AI-Powered Browsing", "Navigate with Intelligence
 internal fun AciViewHeader(title: String, subtitle: String? = null, bottom: Dp = 24.dp) {
     val c = AllternitTheme.colors
     Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, color = c.textPrimary, fontSize = 30.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium, letterSpacing = (-0.3).sp)
+        Text(title, color = c.textPrimary, fontSize = 30.sp, fontFamily = AllternitSerif, fontWeight = FontWeight.Medium, letterSpacing = (-0.3).sp)
         if (subtitle != null) Text(subtitle, color = c.textSecondary, fontSize = 14.sp)
     }
 }
