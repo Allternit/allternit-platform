@@ -14,6 +14,7 @@ struct MemorySettingsView: View {
     /// Non-nil when the memory request genuinely failed — the view renders
     /// an error state with retry.
     @State private var loadError: String? = nil
+    @State private var needsComputer = false
     @State private var searchText = ""
     @State private var selectedDocument: MemoryDocument? = nil
     @State private var refreshToken = 0
@@ -108,6 +109,13 @@ struct MemorySettingsView: View {
                 ProgressView().padding(.top, 40)
                 Spacer()
             }
+        } else if needsComputer, documents.isEmpty {
+            Text("Your memory files are kept on your computer. Add a computer to see and edit them.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 12)
+                .accessibilityIdentifier("memoryNeedsComputer")
         } else if let loadError, documents.isEmpty {
             FriendlyStateView(
                 style: .offline,
@@ -246,6 +254,7 @@ struct MemorySettingsView: View {
     private func load() async {
         if documents.isEmpty { isLoading = true }
         loadError = nil
+        needsComputer = false
         do {
             async let statsResult = client.stats()
             async let documentsResult = client.listDocuments()
@@ -254,7 +263,11 @@ struct MemorySettingsView: View {
         } catch is CancellationError {
             // View disappeared mid-flight — keep current state.
         } catch {
-            loadError = error.localizedDescription
+            if memoryNeedsComputer(error) {
+                needsComputer = true
+            } else {
+                loadError = error.localizedDescription
+            }
         }
         isLoading = false
     }
