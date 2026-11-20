@@ -166,6 +166,8 @@ internal fun ShellHome(
     codeHome: (@Composable () -> Unit)? = null,
     /** Code mode's header button: the Code sessions view (iOS CodeSessionsButton → CodeOverview). */
     onCodeSessions: (() -> Unit)? = null,
+    /** Code mode's composer deck row (iOS CodeDeckRow): terminal, files, computer. */
+    codeActions: CodeComposerActions? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var phoneArmed by remember { mutableStateOf(false) }
@@ -202,7 +204,9 @@ internal fun ShellHome(
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             if (mode == ShellMode.Home) LaunchGreeting() else if (codeHome != null && mode == ShellMode.Code) codeHome() else ModeArrives(mode)
         }
-        if (mode == ShellMode.Home || (mode == ShellMode.Code && codeHome != null)) {
+        if (mode == ShellMode.Code && codeHome != null && codeActions != null) {
+            CodeLaunchComposer(models = models, noComputer = store.noComputer, actions = codeActions, onSend = onNewChat, onOpenSection = onOpenSection)
+        } else if (mode == ShellMode.Home || (mode == ShellMode.Code && codeHome != null)) {
             Composer(
                 models = models,
                 noComputer = store.noComputer,

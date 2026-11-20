@@ -153,6 +153,7 @@ internal fun ChatPage(
                     },
                     onOpenSection = onOpenSection,
                     isStreaming = chat.isStreaming,
+                    deck = ComposerDeck.Compact,
                     sendDisabled = chat.isCreatingSession,
                     onStop = chat::stopStreaming,
                     prefill = prefill,

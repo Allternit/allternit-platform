@@ -374,6 +374,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 onPrefillConsumed = spec.onPrefillConsumed,
                 pickerRequest = spec.pickerRequest,
                 placeholderOverride = spec.placeholder,
+                deck = ComposerDeck.None,
             )
         },
         currentModel = { models.selectedId to models.selected?.let { models.level(it) } },
@@ -500,6 +501,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it })
                             }) else null,
                             onCodeSessions = if (mode == ShellMode.Code) ({ codeRoute = com.allternit.feature.code.CodeRoute.Overview }) else null,
+                            codeActions = if (mode == ShellMode.Code) CodeComposerActions(
+                                onTerminal = { codeRoute = com.allternit.feature.code.CodeRoute.Terminal },
+                                onFiles = { codeRoute = com.allternit.feature.code.CodeRoute.Files },
+                                onComputer = { codeRoute = com.allternit.feature.code.CodeRoute.Computer },
+                            ) else null,
                         )
                         is ShellPage.Chat -> ChatPage(
                             chat = chat,

@@ -327,3 +327,10 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 - Sign PDF and Open in Office: iOS shows visible controls (a "Sign this PDF" bar under the PDF, an "Open in editor" banner), so both left the more menu (V2Artifact.kt). built.
 - Billing Usage: Connected accounts section, Cloud card plus one card per provider quota (BillingPages.kt). built.
 - Meeting banners: MeetingsStore.watch runs from the shell, so banners post with Meetings closed (MeetingsData.kt, ShellDrawer.kt). built.
+
+## Visual parity 1 (Moto test, 2026-11-19)
+- Composer (ComposerView + ComposerDeck): 16sp on a 24 line, open-at-rest deck with the "tools" tab, fold saved per device (allternit.composer.deckFolded), deck tucked 8dp under the tab, Agent mode diamond trigger, Plugins menu (Office suite, Extensions, More, Manage), Full/Compact/None variants (Home/chat/Bots), Stop with streaming bars, Send at 0.7 when disabled, mic accent while dictating (feature/shell/Composer.kt). built (#PRNUM)
+- Pick a brain (ModelPickerSheet): iOS sizes for search, filters, overview cards, rows, badges, star; letter provider tiles; 50% fill groups (feature/shell/ModelPicker.kt). built (#PRNUM)
+- Code mode (CodeModeView launchpad + CodeLaunchComposer): serif greeting, one line, Show usage; Terminal/Files/Computer move to the composer deck row (environment, folder, terminal) as iOS; prompt edge with model and status dot, coral `❯` monospace prompt, Return key (feature/code/CodeHome.kt, feature/shell/Composer.kt CodeLaunchComposer). built (#PRNUM)
+- A:// wordmark: PixelWordmark/AProtocolMark/MatrixLogo moved to core:design; BotNameText port draws every "A://" as the pixel mark (bots, setup, ACI, drawer) (core/design/PixelWordmark.kt). built (#PRNUM)
+- Icons: one Phosphor set from @phosphor-icons/react 2.1.10 (Desktop's family), every iOS SF Symbol mapped in core/design/ICONS.md, 97 hand-drawn module glyphs retired (core/design/res/drawable/ph_*.xml). built (#PRNUM)

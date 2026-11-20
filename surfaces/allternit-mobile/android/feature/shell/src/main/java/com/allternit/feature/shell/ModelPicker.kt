@@ -136,11 +136,11 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
             // Header: search, filters, overview cards.
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().clip(CircleShape).background(c.fillNeutral).padding(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth().clip(CircleShape).background(c.fillNeutral).padding(horizontal = 12.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(painterResource(DesignR.drawable.ph_magnifying_glass), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(16.dp))
+                    Icon(painterResource(DesignR.drawable.ph_magnifying_glass), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(15.dp))
                     Box(Modifier.weight(1f)) {
                         if (query.isEmpty()) Text("Search every model", color = c.textTertiary, fontSize = 16.sp)
                         BasicTextField(
@@ -159,10 +159,10 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                 }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     OverviewCard("All", "${offered.size} models", pick == PickerScope.All, "modelPickerAll", {
-                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_squares_four), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_squares_four), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
                     }) { pick = PickerScope.All }
                     OverviewCard("Favorites", "${models.favorites.size}", pick == PickerScope.Favorites, "modelPickerFavorites", {
-                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_star_fill), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_star_fill), contentDescription = null, tint = c.accentPrimary, modifier = Modifier.size(13.dp))
                     }) { pick = PickerScope.Favorites }
                     providerIds.forEach { pid ->
                         val count = offered.count { it.provider == pid }
@@ -181,7 +181,7 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                         }) { pick = PickerScope.Provider(pid) }
                     }
                     OverviewCard("Connect", "account", false, "modelPickerConnect", {
-                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(13.dp))
                     }) { onOpenSection(RailRow("models", "Models", com.allternit.core.design.R.drawable.ph_brain)) }
                 }
             }
@@ -232,7 +232,7 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                             }
                         }
                         item(key = "g-${group.key}") {
-                            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral)) {
+                            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral.copy(alpha = 0.5f))) {
                                 group.rows.forEachIndexed { i, m ->
                                     ModelRow(m, models) { creditsRequest = it }
                                     if (i < group.rows.lastIndex) Box(Modifier.fillMaxWidth().padding(start = 44.dp).height(1.dp).background(c.borderSubtle))
@@ -257,14 +257,14 @@ private fun FilterChip(label: String, on: Boolean, onClick: () -> Unit) {
     Text(
         label,
         color = if (on) c.textPrimary else c.textSecondary,
-        fontSize = 13.sp,
+        fontSize = 12.sp,
         modifier = Modifier
             .clip(CircleShape)
             .background(if (on) c.fillNeutral else Color.Transparent)
             .border(1.dp, if (on) c.accentPrimary.copy(alpha = 0.5f) else c.borderSubtle, CircleShape)
             .clickable(role = Role.Checkbox, onClick = onClick)
             .semantics { selected = on }
-            .padding(horizontal = 12.dp, vertical = 5.dp),
+            .padding(horizontal = 10.dp, vertical = 3.dp),
     )
 }
 
@@ -279,14 +279,14 @@ private fun OverviewCard(title: String, detail: String, active: Boolean, testTag
             .testTag(testTag)
             .clickable(role = Role.Tab, onClick = onClick)
             .semantics(mergeDescendants = true) { selected = active }
-            .padding(start = 8.dp, end = 12.dp, top = 7.dp, bottom = 7.dp),
+            .padding(start = 6.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(Modifier.size(28.dp), contentAlignment = Alignment.Center, content = icon)
         Column {
-            Text(title, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            Text(detail, color = c.textTertiary, fontSize = 11.5.sp, maxLines = 1)
+            Text(title, color = c.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(detail, color = c.textTertiary, fontSize = 10.5.sp, maxLines = 1)
         }
     }
 }
@@ -296,7 +296,18 @@ private fun OverviewCard(title: String, detail: String, active: Boolean, testTag
 private fun ProviderMark(pid: String, size: Dp) {
     val c = AllternitTheme.colors
     if (pid != "allternit") {
-        com.allternit.core.design.AppLogo(ModelProviderNames.name(pid), id = com.allternit.core.design.AppLogoCatalog.providerKey(pid), size = size)
+        // iOS ModelProviderMark: the vendor's initial on a neutral tile (plans show the vendor's letter).
+        val mark = when (pid) {
+            "plan-claude" -> "C"
+            "plan-chatgpt", "chatgpt-phone", "copilot" -> "G"
+            "plan-grok" -> "X"
+            "plan-kimi" -> "K"
+            else -> ModelProviderNames.name(pid).take(1)
+        }
+        val fontSize = with(androidx.compose.ui.platform.LocalDensity.current) { (size * 0.55f).toSp() }
+        Box(Modifier.size(size).clip(RoundedCornerShape(size * 0.28f)).background(c.fillNeutral), contentAlignment = Alignment.Center) {
+            Text(mark, color = c.textPrimary, fontSize = fontSize, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        }
         return
     }
     Box(
@@ -310,7 +321,7 @@ private fun ProviderMark(pid: String, size: Dp) {
 @Composable
 private fun RowBadge(text: String) {
     val c = AllternitTheme.colors
-    Text(text, color = c.textSecondary, fontSize = 11.sp, modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(c.fillNeutral).padding(horizontal = 5.dp, vertical = 1.dp))
+    Text(text, color = c.textSecondary, fontSize = 10.sp, modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(c.fillNeutral).padding(horizontal = 4.dp, vertical = 1.dp))
 }
 
 @Composable
@@ -335,24 +346,23 @@ private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allterni
                 selected = selectedRow
                 contentDescription = listOfNotNull(m.name, "default".takeIf { m.isDefault }).joinToString(", ")
             }
-            .padding(horizontal = 10.dp, vertical = 9.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        ProviderMark(m.provider, 26.dp)
+        ProviderMark(m.provider, 24.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(m.name, color = c.textPrimary, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Text(m.name, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (m.isDefault) RowBadge("Default")
             }
-            Text(rowSubtitle(m), color = c.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(rowSubtitle(m), color = c.textSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             m.thinking?.let { t -> RowBadge("${t.termOrDefault} · ${t.levels.size}") }
         }
-        if (selectedRow) Icon(painterResource(DesignR.drawable.ph_check), contentDescription = null, tint = c.accentPrimary, modifier = Modifier.size(15.dp))
+        if (selectedRow) Icon(painterResource(DesignR.drawable.ph_check), contentDescription = null, tint = c.accentPrimary, modifier = Modifier.size(13.dp))
         Box(
             Modifier
-                .size(36.dp)
-                .clip(CircleShape)
+                .size(30.dp)
                 .clickable(role = Role.Button, onClickLabel = if (favorite) "Unfavorite ${m.name}" else "Favorite ${m.name}") { models.toggleFavorite(m.id) }
                 .semantics { contentDescription = if (favorite) "Unfavorite ${m.name}" else "Favorite ${m.name}" },
             contentAlignment = Alignment.Center,
@@ -361,7 +371,7 @@ private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allterni
                 painterResource(if (favorite) com.allternit.core.design.R.drawable.ph_star_fill else com.allternit.core.design.R.drawable.ph_star),
                 contentDescription = null,
                 tint = if (favorite) c.accentPrimary else c.textTertiary,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(14.dp),
             )
         }
     }
@@ -381,7 +391,7 @@ private fun CurrentModel(m: PickerModel, models: ModelStore) {
             .fillMaxWidth()
             .padding(top = 10.dp, bottom = 6.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(c.fillNeutral)
+            .background(c.fillNeutral.copy(alpha = 0.5f))
             .border(1.dp, c.borderSubtle, RoundedCornerShape(18.dp))
             .padding(12.dp)
             .testTag("modelPickerCurrent"),
