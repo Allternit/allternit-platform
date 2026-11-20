@@ -325,6 +325,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     }
 
     remember { com.allternit.feature.office.OfficeFeature.install() }
+    com.allternit.feature.office.OfficeFeature.selectedModel = { models.selectedId to models.selected?.let { models.level(it) } }
+    com.allternit.feature.office.OfficeFeature.openChat = { id -> openSessionId(id) }
     val botsHost = com.allternit.feature.bots.BotsHost(
         signedIn = account != null,
         backend = chatBackend,

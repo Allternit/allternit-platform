@@ -177,7 +177,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | FileBrowserDirectoryView | ios/Features/Code/FileBrowser/FileBrowserDirectoryView.swift | — | feature/code/CodeFiles.kt (FileBrowserDirectory) | built (#2640) | — |
 | FileBrowserView | ios/Features/Code/FileBrowser/FileBrowserView.swift | — | feature/code/CodeFiles.kt (FileBrowserScreen) | built (#2640) | — |
 | FileDetailView | ios/Features/Code/FileBrowser/FileDetailView.swift | — | feature/code/CodeFiles.kt (FileDetailScreen) | built (#2640) | — |
-| TerminalSessionView | ios/Features/Code/TerminalSessionView.swift | — | feature/code/CodeTerminal.kt (TerminalScreen: native VT screen like SwiftTerm, no WebView) | built (#2640) | — |
+| TerminalSessionView | ios/Features/Code/TerminalSessionView.swift | — | feature/code/CodeTerminal.kt (TerminalScreen), feature/code/VtScreen.kt (native VT emulator like SwiftTerm, no WebView) | built (#2640; gap run A2 #2667: alternate screen, scroll regions, application cursor and keypad, SGR 256 and truecolour, DSR/DA replies; key bar follows the app mode) | — |
 
 ## Connect
 

@@ -33,6 +33,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
 import com.allternit.feature.artifacts.PillRow
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.zIndex
+import com.allternit.core.design.Haptics
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import com.allternit.feature.bots.RoutineRule
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -42,7 +58,8 @@ import java.util.Locale
 /*
  * The scheduler (iOS AutomationScheduler / AutomationTasksCalendar / AutomationRoutinesCalendar): Day, Week and
  * Month over the next runs of every cron task, and the Graph (iOS AutomationTasksGraph / RoutinesGraph).
- * Moving a task is a tap on it, then "Change time" (the wave E time editor), not a drag.
+ * Moving a task: press and hold a run, then drag it up or down (15-minute steps, as iOS SchedulerChip);
+ * the same move is on the row's accessibility actions, and "Change time" on the task still works.
  */
 
 private enum class CalMode(val label: String) { Day("Day"), Week("Week"), Month("Month") }
@@ -65,10 +82,10 @@ internal fun AutomationCalendar(store: AutomationStore, tasks: List<AutoTask>, o
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
             when (mode) {
-                CalMode.Day -> DayList(today, byDay[today].orEmpty(), onOpen, onNewAt, "Nothing runs today.")
+                CalMode.Day -> DayList(store, today, byDay[today].orEmpty(), onOpen, onNewAt, "Nothing runs today.")
                 CalMode.Week -> (0 until 7).forEach { i ->
                     val d = today.plusDays(i.toLong())
-                    DayList(d, byDay[d].orEmpty(), onOpen, onNewAt, "Nothing scheduled.")
+                    DayList(store, d, byDay[d].orEmpty(), onOpen, onNewAt, "Nothing scheduled.")
                 }
                 CalMode.Month -> {
                     val first = picked.withDayOfMonth(1)
@@ -104,7 +121,7 @@ internal fun AutomationCalendar(store: AutomationStore, tasks: List<AutoTask>, o
                             }
                         }
                     }
-                    DayList(picked, byDay[picked].orEmpty(), onOpen, onNewAt, "Nothing scheduled.")
+                    DayList(store, picked, byDay[picked].orEmpty(), onOpen, onNewAt, "Nothing scheduled.")
                 }
             }
         }
@@ -112,24 +129,14 @@ internal fun AutomationCalendar(store: AutomationStore, tasks: List<AutoTask>, o
 }
 
 @Composable
-private fun DayList(day: LocalDate, items: List<Occurrence>, onOpen: (AutoTask) -> Unit, onNewAt: (String) -> Unit, emptyText: String) {
+private fun DayList(store: AutomationStore, day: LocalDate, items: List<Occurrence>, onOpen: (AutoTask) -> Unit, onNewAt: (String) -> Unit, emptyText: String) {
     val c = AllternitTheme.colors
     val today = LocalDate.now()
     val label = when (day) { today -> "Today"; today.plusDays(1) -> "Tomorrow"; else -> day.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + day.monthValue + "/" + day.dayOfMonth }
     Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("automationDayList_$day"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(label.uppercase(), color = c.textTertiary, fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.6.sp)
         if (items.isEmpty()) Text(emptyText, color = c.textTertiary, fontSize = 13.sp)
-        items.take(30).forEach { o ->
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(10.dp)).background(c.fillNeutral).testTag("automationOcc_${o.task.id}")
-                    .clickable(role = Role.Button) { onOpen(o.task) }.padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(CronWords.time(o.at), color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(end = 2.dp))
-                Text(displayName(o.task.name), color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                TypeTag(o.task.type)
-            }
-        }
+        items.take(30).forEach { o -> OccurrenceRow(store, o, onOpen) }
         if (items.isEmpty()) Text("New task at 9:00 AM", color = c.accentCode, fontSize = 13.sp, modifier = Modifier.heightIn(min = 44.dp).testTag("automationNewAt_$day").clickable(role = Role.Button) { onNewAt(CronWords.DEFAULT_CRON) }.padding(vertical = 10.dp))
     }
 }
@@ -171,5 +178,51 @@ private fun GraphNode(store: AutomationStore, t: AutoTask, indent: Boolean, onOp
         }
         Text(listOfNotNull(CronWords.of(t), CronWords.nextLabel(t.nextRunAt)?.let { "next $it" }, store.botName(t.agentId)).joinToString(" · "), color = c.textSecondary, fontSize = 12.sp)
         if (t.runs.isNotEmpty()) RunStrip(t.runs)
+    }
+}
+
+/** One run in a day list: a tap opens it, press-and-hold then drag moves it in 15-minute steps (iOS SchedulerChip). */
+@Composable
+private fun OccurrenceRow(store: AutomationStore, o: Occurrence, onOpen: (AutoTask) -> Unit) {
+    val c = AllternitTheme.colors
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val view = LocalView.current
+    val rule = remember(o.task.scheduleExpression) { if (o.task.isCron && o.task.canRun) RoutineRule.fromCron(o.task.scheduleExpression) else null }
+    var dy by remember(o.task.id, o.at) { mutableFloatStateOf(0f) }
+    var dragging by remember(o.task.id, o.at) { mutableStateOf(false) }
+    val stepPx = with(density) { 24.dp.toPx() }
+    fun moveBy(minutes: Int) {
+        val r = rule ?: return
+        val at = (r.at + minutes).coerceIn(0, 24 * 60 - 15)
+        if (at != r.at) scope.launch { store.setCron(o.task, r.copy(at = at).cron) }
+    }
+    val locked = rule == null
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 44.dp)
+            .offset { IntOffset(0, dy.roundToInt()) }
+            .zIndex(if (dragging) 1f else 0f)
+            .graphicsLayer { scaleX = if (dragging) 1.03f else 1f; scaleY = if (dragging) 1.03f else 1f; shadowElevation = if (dragging) 24f else 0f }
+            .clip(RoundedCornerShape(10.dp)).background(c.fillNeutral).testTag("automationOcc_${o.task.id}")
+            .then(if (locked) Modifier else Modifier.pointerInput(o.task.id, o.at) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { dragging = true; Haptics.perform(view, Haptics.Kind.Tap) },
+                    onDrag = { change, amount -> change.consume(); dy += amount.y },
+                    onDragEnd = { val steps = (dy / stepPx).roundToInt(); dragging = false; dy = 0f; moveBy(steps * 15) },
+                    onDragCancel = { dragging = false; dy = 0f },
+                )
+            })
+            .semantics {
+                if (!locked) customActions = listOf(
+                    CustomAccessibilityAction("Move 15 minutes earlier") { moveBy(-15); true },
+                    CustomAccessibilityAction("Move 15 minutes later") { moveBy(15); true },
+                )
+            }
+            .clickable(role = Role.Button) { onOpen(o.task) }.padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(CronWords.time(o.at), color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(end = 2.dp))
+        Text(displayName(o.task.name), color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        TypeTag(o.task.type)
     }
 }
