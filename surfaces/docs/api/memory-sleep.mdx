@@ -359,6 +359,17 @@ the old 90-day decay no longer runs. The consolidation pass logs which memories 
 have decayed (`shadow_old_decay`) and changes nothing. With the stage off, nothing here
 runs and decay works as before. Recall ranking does not use the strengths yet.
 
+## Fitted decay
+
+Once you have at least `fit_min_labeled_events` recalls with answer-used labels, Sleep can
+fit how fast your memories fade from your own history. For each memory shown in a labelled
+recall it takes the days since that memory was last recalled and whether the reply used it,
+then fits `used chance = a x 0.5^(days / h)` by a grid search. The fitted `h` is saved as
+`strength_half_life_days` with source `fitted`. Below the label minimum, or when the labels
+show no clear decay, nothing is written and the default stays. A value you set yourself is
+never replaced. `strength_spacing_credit` is not fitted: the labels do not show it, so it
+keeps its default. Nothing runs this fit on a schedule yet.
+
 ## Events
 
 These events go on the memory activity stream. They are declared now and emitted once

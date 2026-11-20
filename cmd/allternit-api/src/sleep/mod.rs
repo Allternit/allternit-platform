@@ -8,6 +8,7 @@
 //! - [`types`]: route payloads, `SourceType`, `Stage`, `DisputeChoice`,
 //!   `SignalEvent`, and the `sleep.*` event names.
 //! - [`config`]: code defaults overlaid with `sleep_config` rows.
+//! - [`fit`]: fits decay parameters from labelled recalls (3.4).
 //! - [`strength`]: two strengths per memory behind the `strengths` stage (3.2).
 //! - [`routes`]: `/api/v1/memory/sleep/...` and `/api/v1/memory/disputes...`.
 //!
@@ -16,6 +17,7 @@
 //! `surfaces/docs/api/memory-sleep.mdx`.
 
 pub mod config;
+pub mod fit;
 pub mod routes;
 pub mod strength;
 pub mod score;
