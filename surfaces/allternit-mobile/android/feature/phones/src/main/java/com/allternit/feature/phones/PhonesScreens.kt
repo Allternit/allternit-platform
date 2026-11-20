@@ -98,6 +98,7 @@ fun PhonesSheet(host: PhonesHost, onDismiss: () -> Unit) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = c.textSecondary)
                     Text("Checking your bots…", color = c.textSecondary, fontSize = 14.sp)
                 }
+                l is PhonesLoad.Failed && l.noComputer -> FriendlyState(FriendlyStyle.Offline, "No computer connected", "Connect a computer or start Allternit Cloud to use this.", Modifier, "Retry", { attempt++ }) { Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textSecondary) }
                 l is PhonesLoad.Failed -> FriendlyState(FriendlyStyle.Offline, "Couldn't load your bots' phones", l.message, Modifier, "Retry", { attempt++ }) { Icon(painterResource(DesignR.drawable.ph_warning), null, tint = AllternitStatic.StatusWarning) }
                 l is PhonesLoad.Ok && l.entries.none { it.hasPhone } -> Text("No bot has a phone yet. Give one a number, an email address or a messaging channel.", color = c.textSecondary, fontSize = 13.sp)
                 l is PhonesLoad.Ok -> l.entries.filter { it.hasPhone }.forEach { e ->

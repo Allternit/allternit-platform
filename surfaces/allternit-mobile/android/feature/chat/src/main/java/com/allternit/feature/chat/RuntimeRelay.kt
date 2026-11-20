@@ -102,12 +102,12 @@ class RuntimeRelay(private val okHttp: OkHttpClient, private val config: ApiConf
                         wakeable = o.bool("wakeable") == true,
                         relayConnections = o.arr("relayConnections").size,
                     )
-                }
+                }.filter { it.runtimeType.lowercase() !in NON_COMPUTER_TYPES }
                 lastError = null
             }
             is ApiResult.HttpError -> lastError = RelayPick.Failed(
                 r.message ?: "Couldn't load your computers.",
-                gate = ChatErrors.isComputeGate(r.status, r.code, r.message),
+                gate = ChatErrors.isComputeGate(r.status, r.code, r.message) || r.status == 404 || r.status == 403,
             )
             is ApiResult.Network -> lastError = RelayPick.Failed("Could not connect to the server. Check your connection and try again.", false)
             is ApiResult.Decode -> lastError = RelayPick.Failed("Couldn't load your computers.", false)
@@ -137,6 +137,8 @@ class RuntimeRelay(private val okHttp: OkHttpClient, private val config: ApiConf
         const val KEY_SELECTED = "allternit.relay-runtime-id"
         const val STALE_MS = 30_000L
         const val UNREACHABLE_TTL_MS = 120_000L
+        /** A phone is not a computer: an account with only a phone registered has no computer. */
+        val NON_COMPUTER_TYPES = setOf("phone", "mobile", "ios", "android", "tablet")
     }
 }
 
@@ -147,14 +149,8 @@ internal object ChatErrors {
      * `compute_required` / `free_computers_retired`. iOS only catches 428 on the chat stream
      * (AgentChatClient throws a bare httpError for a relayed 409); Android catches all three.
      */
-    fun isComputeGate(status: Int?, code: String?, message: String?): Boolean {
-        if (status == 428) return true
-        val text = "${code.orEmpty()} ${message.orEmpty()}"
-        if (text.contains("data-plane node", ignoreCase = true)) return true
-        if (status != 409 && status != 410) return false
-        return Regex("""\b(compute_required|free_computers_retired)\b""", RegexOption.IGNORE_CASE).containsMatchIn(text) ||
-            message == "Agents need a computer."
-    }
+    fun isComputeGate(status: Int?, code: String?, message: String?): Boolean =
+        com.allternit.core.api.NoComputerRule.isGate(status, code, message)
 
     /** iOS statusSentence / web statusSentence. */
     fun statusSentence(status: Int): String? = when (status) {
