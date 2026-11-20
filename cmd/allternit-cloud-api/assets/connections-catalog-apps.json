@@ -1,0 +1,8084 @@
+{
+  "version": 1,
+  "generated_from": "services/open-connector provider definitions + cmd/allternit-api open-design connectors.json (curated wins on id)",
+  "apps": [
+    {
+      "id": "one_password",
+      "name": "1Password",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "one_password_events",
+      "name": "1Password Events API",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "twochat",
+      "name": "2Chat",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "7_shifts",
+      "name": "7shifts",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "a_leads",
+      "name": "A-Leads",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ably",
+      "name": "Ably",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ably_control",
+      "name": "Ably Control",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "abstract",
+      "name": "Abstract",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "abuseipdb",
+      "name": "AbuseIPDB",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "abyssale",
+      "name": "Abyssale",
+      "category": "Design",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "accredible_certificates",
+      "name": "Accredible Certificates",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "acculynx",
+      "name": "AccuLynx",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "accuweather",
+      "name": "AccuWeather",
+      "category": "Location",
+      "blurb": "Weather locations, current conditions, and forecasts from AccuWeather.",
+      "auth": "api_key"
+    },
+    {
+      "id": "activecampaign",
+      "name": "ActiveCampaign",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "active_trail",
+      "name": "ActiveTrail",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "adafruit_io",
+      "name": "Adafruit IO",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "addressfinder",
+      "name": "Addressfinder",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "addresszen",
+      "name": "AddressZen",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "adobe_commerce",
+      "name": "Adobe Commerce",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "adyen",
+      "name": "Adyen",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "adyntel",
+      "name": "Adyntel",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "aeroleads",
+      "name": "AeroLeads",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "affinda",
+      "name": "Affinda",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "affinity",
+      "name": "Affinity",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "aftership",
+      "name": "AfterShip",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "agent_mail",
+      "name": "AgentMail",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "agentql",
+      "name": "AgentQL",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "agenty",
+      "name": "Agenty",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "agiled",
+      "name": "Agiled",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "agility",
+      "name": "Agility CMS",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "agora",
+      "name": "Agora",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ahrefs",
+      "name": "Ahrefs",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "aimfox",
+      "name": "Aimfox",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "airbrake",
+      "name": "Airbrake",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "aircall",
+      "name": "Aircall",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "airtable",
+      "name": "Airtable",
+      "category": "Database",
+      "blurb": "Query Airtable bases, tables, and records for structured data artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "aivoov",
+      "name": "AiVOOV",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "alchemy",
+      "name": "Alchemy",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "algo_docs",
+      "name": "AlgoDocs",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "algolia",
+      "name": "Algolia",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "aliyun_oss",
+      "name": "Alibaba Cloud OSS",
+      "category": "Storage",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "aliyun_sts",
+      "name": "Alibaba Cloud STS",
+      "category": "Security",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "allternit-mail",
+      "name": "Allternit Mail",
+      "category": "Email",
+      "blurb": "Give an agent its own email address: approval-gated outbound send, an inbox it can read, and one-time codes and sign-in links pulled out of…",
+      "auth": "allternit"
+    },
+    {
+      "id": "alpaca",
+      "name": "Alpaca",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "alpha_vantage",
+      "name": "Alpha Vantage",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "alt_text_ai",
+      "name": "AltText.ai",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "amap",
+      "name": "AMap",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "amara",
+      "name": "Amara",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ambee",
+      "name": "Ambee",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ambient_weather",
+      "name": "Ambient Weather",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "amplemarket",
+      "name": "Amplemarket",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "amplitude",
+      "name": "Amplitude",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "anchor_browser",
+      "name": "Anchor Browser",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "anrok",
+      "name": "Anrok",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "anthropic_admin",
+      "name": "Anthropic Admin",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "apaleo",
+      "name": "Apaleo",
+      "category": "Hospitality",
+      "blurb": "Read Apaleo property, reservation, and folio data for hospitality workflows.",
+      "auth": "composio"
+    },
+    {
+      "id": "api_ninjas",
+      "name": "API Ninjas",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "api_sports",
+      "name": "API-SPORTS",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "api_bible",
+      "name": "API.Bible",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "api2pdf",
+      "name": "API2PDF",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "apiflash",
+      "name": "ApiFlash",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "apify",
+      "name": "Apify",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "apifymcp",
+      "name": "Apify MCP",
+      "category": "Automation",
+      "blurb": "Run Apify actors to scrape, crawl, and enrich data for live artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "apipie_ai",
+      "name": "APIpie AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "apiverve",
+      "name": "APIVerve",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "api_void",
+      "name": "APIVoid",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "apollo",
+      "name": "Apollo",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "appdrag",
+      "name": "AppDrag",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "appstle_subscriptions",
+      "name": "Appstle Subscriptions",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "appveyor",
+      "name": "AppVeyor",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "arxiv",
+      "name": "arXiv",
+      "category": "Data",
+      "blurb": "",
+      "auth": "no_auth"
+    },
+    {
+      "id": "asana",
+      "name": "Asana",
+      "category": "Project management",
+      "blurb": "Query Asana projects, tasks, and teams for delivery artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "ashby",
+      "name": "Ashby",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "asin_data_api",
+      "name": "ASIN Data API",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "assemblyai",
+      "name": "AssemblyAI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "atlas_so",
+      "name": "Atlas.so",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "attention",
+      "name": "Attention",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "attio",
+      "name": "Attio",
+      "category": "CRM",
+      "blurb": "Query Attio lists, records, and attributes for modern CRM workflows.",
+      "auth": "composio"
+    },
+    {
+      "id": "auth0_management",
+      "name": "Auth0 Management",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "autobound",
+      "name": "Autobound",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "autom",
+      "name": "Autom",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "autotask",
+      "name": "Autotask",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "aviationstack",
+      "name": "Aviationstack",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "avoma",
+      "name": "Avoma",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "aws_s3",
+      "name": "AWS S3",
+      "category": "Storage",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "aws_sts",
+      "name": "AWS STS",
+      "category": "Security",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "axiom",
+      "name": "Axiom",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ayrshare",
+      "name": "Ayrshare",
+      "category": "Social",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "qianfan",
+      "name": "Baidu Qianfan",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "balldontlie_worldcup",
+      "name": "BALLDONTLIE World Cup",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bamboohr",
+      "name": "BambooHR",
+      "category": "HR",
+      "blurb": "Read BambooHR employees, time off, and directories.",
+      "auth": "composio"
+    },
+    {
+      "id": "bannerbear",
+      "name": "Bannerbear",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "baremetrics",
+      "name": "Baremetrics",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bark",
+      "name": "Bark",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "basecamp",
+      "name": "Basecamp",
+      "category": "Project management",
+      "blurb": "Read Basecamp projects, todos, and messages.",
+      "auth": "composio"
+    },
+    {
+      "id": "baselinker",
+      "name": "BaseLinker",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "baserow",
+      "name": "Baserow",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "basin",
+      "name": "Basin",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "beaconchain",
+      "name": "Beaconcha.in",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "beamer",
+      "name": "Beamer",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "beehiiv",
+      "name": "Beehiiv",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "beeminder",
+      "name": "Beeminder",
+      "category": "Personal",
+      "blurb": "Read Beeminder goals and datapoints.",
+      "auth": "composio"
+    },
+    {
+      "id": "benchmark_email",
+      "name": "Benchmark Email",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "benzinga",
+      "name": "Benzinga",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bestbuy",
+      "name": "Best Buy",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "better_proposals",
+      "name": "Better Proposals",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "better_stack",
+      "name": "Better Stack",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bettercontact",
+      "name": "BetterContact",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bidsketch",
+      "name": "BidSketch",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "big_commerce",
+      "name": "BigCommerce",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "big_data_cloud",
+      "name": "BigDataCloud",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bigmailer",
+      "name": "BigMailer",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bigpicture_io",
+      "name": "BigPicture.io",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bird",
+      "name": "Bird",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bitbucket",
+      "name": "Bitbucket",
+      "category": "Developer",
+      "blurb": "Read Bitbucket repositories, pull requests, and pipelines to feed code-aware artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "bitly",
+      "name": "Bitly",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bitquery",
+      "name": "Bitquery",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bitrise",
+      "name": "Bitrise",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bitwarden",
+      "name": "Bitwarden",
+      "category": "Security",
+      "blurb": "Read Bitwarden organization vaults and metadata (no secret values).",
+      "auth": "composio"
+    },
+    {
+      "id": "blackbaud",
+      "name": "Blackbaud",
+      "category": "Nonprofit",
+      "blurb": "Read Blackbaud constituents, gifts, and campaigns.",
+      "auth": "composio"
+    },
+    {
+      "id": "blackboard",
+      "name": "Blackboard",
+      "category": "Education",
+      "blurb": "Read Blackboard courses, assignments, and users.",
+      "auth": "composio"
+    },
+    {
+      "id": "bland_ai",
+      "name": "Bland AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "blaze_meter_functional",
+      "name": "BlazeMeter Functional",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "blaze_meter_performance",
+      "name": "BlazeMeter Performance",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "blaze_meter_service_virtualization",
+      "name": "BlazeMeter Service Virtualization",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "blocknative",
+      "name": "Blocknative",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bluesky",
+      "name": "Bluesky",
+      "category": "Social",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "boldsign",
+      "name": "Boldsign",
+      "category": "Signing",
+      "blurb": "Read BoldSign envelopes, templates, and signers.",
+      "auth": "composio"
+    },
+    {
+      "id": "bolna",
+      "name": "Bolna",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "boloforms",
+      "name": "BoloForms",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bookingmood",
+      "name": "Bookingmood",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "booqable",
+      "name": "Booqable",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "borneo",
+      "name": "Borneo",
+      "category": "Security",
+      "blurb": "Read Borneo data discovery findings and policies.",
+      "auth": "composio"
+    },
+    {
+      "id": "botpress",
+      "name": "Botpress",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "botsonic",
+      "name": "Botsonic",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bot_star",
+      "name": "BotStar",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bouncer",
+      "name": "Bouncer",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "box",
+      "name": "Box",
+      "category": "Storage",
+      "blurb": "Browse and read Box files and folders for enterprise document workflows.",
+      "auth": "composio"
+    },
+    {
+      "id": "boxhero",
+      "name": "BoxHero",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "brandfetch",
+      "name": "Brandfetch",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "brave_search",
+      "name": "Brave Search",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "braze",
+      "name": "Braze",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "breathe",
+      "name": "Breathe",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "breeze",
+      "name": "Breeze",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "brevo",
+      "name": "Brevo",
+      "category": "Marketing",
+      "blurb": "Read Brevo contacts, campaigns, and SMS metrics.",
+      "auth": "composio"
+    },
+    {
+      "id": "brex",
+      "name": "Brex",
+      "category": "Finance",
+      "blurb": "Read Brex transactions, cards, and budgets.",
+      "auth": "composio"
+    },
+    {
+      "id": "bright_data",
+      "name": "Bright Data",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "browse_ai",
+      "name": "Browse AI",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "browserbase",
+      "name": "Browserbase",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "browserless",
+      "name": "Browserless",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "btcpay_server",
+      "name": "BTCPay Server",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bugbug",
+      "name": "BugBug",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bug_herd",
+      "name": "BugHerd",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bugsnag",
+      "name": "Bugsnag",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "builder_io",
+      "name": "Builder.io",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "buildium",
+      "name": "Buildium",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "buildkite",
+      "name": "Buildkite",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "builtwith",
+      "name": "BuiltWith",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "bunnycdn",
+      "name": "BunnyCDN",
+      "category": "Storage",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "businessmap",
+      "name": "Businessmap",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "buttondown",
+      "name": "Buttondown",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "byteforms",
+      "name": "ByteForms",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cal",
+      "name": "Cal",
+      "category": "Scheduling",
+      "blurb": "Read Cal.com event types, bookings, and availability.",
+      "auth": "composio"
+    },
+    {
+      "id": "calendarific",
+      "name": "Calendarific",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "calendly",
+      "name": "Calendly",
+      "category": "Scheduling",
+      "blurb": "Read Calendly event types, bookings, and users.",
+      "auth": "composio"
+    },
+    {
+      "id": "callerapi",
+      "name": "CallerAPI",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "callingly",
+      "name": "Callingly",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "callpage",
+      "name": "CallPage",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "callrail",
+      "name": "CallRail",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "campaign_cleaner",
+      "name": "Campaign Cleaner",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "canny",
+      "name": "Canny",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "canva",
+      "name": "Canva",
+      "category": "Design",
+      "blurb": "Read Canva designs and brand assets.",
+      "auth": "composio"
+    },
+    {
+      "id": "canvas",
+      "name": "Canvas",
+      "category": "Education",
+      "blurb": "Read Canvas LMS courses, assignments, and submissions.",
+      "auth": "composio"
+    },
+    {
+      "id": "capsule_crm",
+      "name": "Capsule CRM",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "capsulecrm",
+      "name": "Capsule CRM",
+      "category": "CRM",
+      "blurb": "Read Capsule CRM contacts, opportunities, and tasks.",
+      "auth": "composio"
+    },
+    {
+      "id": "carbone",
+      "name": "Carbone",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cardly",
+      "name": "Cardly",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cats",
+      "name": "CATS",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "celigo",
+      "name": "Celigo",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "census_bureau",
+      "name": "Census Bureau",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "censys",
+      "name": "Censys",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "central_station_crm",
+      "name": "CentralStationCRM",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sslmate_cert_spotter_api",
+      "name": "Cert Spotter",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "certifier",
+      "name": "Certifier",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "certn",
+      "name": "Certn",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "chargebee",
+      "name": "Chargebee",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "chartmogul",
+      "name": "ChartMogul",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "chaserhq",
+      "name": "ChaserHQ",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "chatarmin",
+      "name": "Chatarmin",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "chatbotkit",
+      "name": "ChatBotKit",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "chatpdf",
+      "name": "ChatPDF",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "chattermill",
+      "name": "Chattermill",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "chatwork",
+      "name": "Chatwork",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "check",
+      "name": "Check",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "checkly",
+      "name": "Checkly",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "chorus",
+      "name": "Chorus",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cin7_core",
+      "name": "Cin7 Core",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cincopa",
+      "name": "Cincopa",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "circle",
+      "name": "Circle",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "circleci",
+      "name": "CircleCI",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "claid_ai",
+      "name": "Claid AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "clari_copilot",
+      "name": "Clari Copilot",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "classmarker",
+      "name": "ClassMarker",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "clearout",
+      "name": "Clearout",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "clerk",
+      "name": "Clerk",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "clickhouse",
+      "name": "ClickHouse",
+      "category": "Data",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "clickmeeting",
+      "name": "ClickMeeting",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "clicksend",
+      "name": "ClickSend",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "clickup",
+      "name": "ClickUp",
+      "category": "Project management",
+      "blurb": "Query ClickUp spaces, lists, and tasks for planning artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "clockify",
+      "name": "Clockify",
+      "category": "Time tracking",
+      "blurb": "Read Clockify time entries, projects, and reports.",
+      "auth": "composio"
+    },
+    {
+      "id": "close",
+      "name": "Close",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cloudconvert",
+      "name": "CloudConvert",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cloudflare_browser_rendering",
+      "name": "Cloudflare Browser Run",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cloudflare_dns",
+      "name": "Cloudflare DNS",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cloudflare_r2",
+      "name": "Cloudflare R2",
+      "category": "Storage",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "cloudflare_worker",
+      "name": "Cloudflare Worker",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "cloudinary",
+      "name": "Cloudinary",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cloudlayer",
+      "name": "cloudlayer.io",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cockroach_labs",
+      "name": "Cockroach Labs",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "coda",
+      "name": "Coda",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "codacy",
+      "name": "Codacy",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "codegen",
+      "name": "Codegen",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "codemagic",
+      "name": "Codemagic",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "coderabbit",
+      "name": "CodeRabbit",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cohere",
+      "name": "Cohere",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "coinbase",
+      "name": "Coinbase",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "coinmarketcal",
+      "name": "CoinMarketCal",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "coinmarketcap",
+      "name": "CoinMarketCap",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "coinranking",
+      "name": "Coinranking",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "college_football_data",
+      "name": "CollegeFootballData",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "companycam",
+      "name": "CompanyCam",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "companyenrich",
+      "name": "CompanyEnrich",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "conductor",
+      "name": "Conductor",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "configcat",
+      "name": "ConfigCat",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "confluence",
+      "name": "Confluence",
+      "category": "Documentation",
+      "blurb": "Search and read Confluence spaces and pages for internal documentation context.",
+      "auth": "composio"
+    },
+    {
+      "id": "contactout",
+      "name": "ContactOut",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "contentful",
+      "name": "Contentful",
+      "category": "CMS",
+      "blurb": "Read Contentful content types, entries, and assets.",
+      "auth": "composio"
+    },
+    {
+      "id": "contentful_graphql",
+      "name": "Contentful GraphQL",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "contentstack_content_delivery",
+      "name": "Contentstack Content Delivery",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "contentstack_content_management",
+      "name": "Contentstack Content Management",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "control_d",
+      "name": "Control D",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "convertapi",
+      "name": "ConvertAPI",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "convex",
+      "name": "Convex",
+      "category": "Data platform",
+      "blurb": "Query Convex tables and functions for realtime-backed live artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "coresignal",
+      "name": "Coresignal",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "countdown_api",
+      "name": "Countdown API",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "coupa",
+      "name": "Coupa",
+      "category": "Procurement",
+      "blurb": "Read Coupa suppliers, invoices, and requisitions.",
+      "auth": "composio"
+    },
+    {
+      "id": "courier",
+      "name": "Courier",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "craftmypdf",
+      "name": "CraftMyPDF",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "crisp",
+      "name": "Crisp",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cronitor",
+      "name": "Cronitor",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "crowdin",
+      "name": "Crowdin",
+      "category": "Localization",
+      "blurb": "Read Crowdin projects, strings, and translations.",
+      "auth": "composio"
+    },
+    {
+      "id": "crunchbase",
+      "name": "Crunchbase",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "crustdata",
+      "name": "Crustdata",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "currencyapi",
+      "name": "currencyapi",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "currencyscoop",
+      "name": "CurrencyBeacon",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "currents_api",
+      "name": "Currents API",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "customerio",
+      "name": "Customer.io",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "customgpt",
+      "name": "CustomGPT.ai",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cutt_ly",
+      "name": "Cuttly",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "cyberimpact",
+      "name": "Cyberimpact",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "d2lbrightspace",
+      "name": "D2L Brightspace",
+      "category": "Education",
+      "blurb": "Read D2L Brightspace courses, enrollments, and gradebooks.",
+      "auth": "composio"
+    },
+    {
+      "id": "dadata_ru",
+      "name": "DaData.ru",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "daffy",
+      "name": "Daffy",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "dailybot",
+      "name": "Dailybot",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "dart",
+      "name": "Dart",
+      "category": "Project management",
+      "blurb": "Query Dart workspaces, tasks, and docs for engineering planning.",
+      "auth": "composio"
+    },
+    {
+      "id": "data247",
+      "name": "Data247",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "databar_ai",
+      "name": "Databar.ai",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "databox",
+      "name": "Databox",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "databricks",
+      "name": "Databricks",
+      "category": "Data platform",
+      "blurb": "Access Databricks workspaces, clusters, and SQL warehouses for data-driven artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "datadog",
+      "name": "Datadog",
+      "category": "Observability",
+      "blurb": "Query Datadog monitors, dashboards, and metrics for live reliability dashboards.",
+      "auth": "composio"
+    },
+    {
+      "id": "dataforseo",
+      "name": "DataForSEO",
+      "category": "Data",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "datascope",
+      "name": "DataScope",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "deck_co",
+      "name": "Deck.co",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "deepgram",
+      "name": "Deepgram",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "deepl",
+      "name": "DeepL",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "delighted",
+      "name": "Delighted",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "demodesk",
+      "name": "Demodesk",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "desktime",
+      "name": "DeskTime",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "detect_language",
+      "name": "Detect Language",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "devto",
+      "name": "Dev.to",
+      "category": "Social",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "devin",
+      "name": "Devin",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "dialpad",
+      "name": "Dialpad",
+      "category": "Communication",
+      "blurb": "Read Dialpad calls, contacts, and rooms.",
+      "auth": "composio"
+    },
+    {
+      "id": "dialpad_wfm",
+      "name": "Dialpad WFM",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "dida365",
+      "name": "Dida365",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "diffbot",
+      "name": "Diffbot",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "digital_ocean",
+      "name": "DigitalOcean",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "digitalocean",
+      "name": "DigitalOcean",
+      "category": "Developer",
+      "blurb": "Inspect DigitalOcean droplets, databases, and spaces for infra dashboards.",
+      "auth": "composio"
+    },
+    {
+      "id": "dingtalk_bot",
+      "name": "DingTalk Bot",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "discolike",
+      "name": "DiscoLike",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "category": "Communication",
+      "blurb": "Read Discord servers, channels, and messages for community analytics.",
+      "auth": "composio"
+    },
+    {
+      "id": "discordbot",
+      "name": "Discord Bot",
+      "category": "Communication",
+      "blurb": "Use a Discord bot identity to read servers, channels, and messages.",
+      "auth": "composio"
+    },
+    {
+      "id": "discourse",
+      "name": "Discourse",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "dixa",
+      "name": "Dixa",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "dns_filter",
+      "name": "DNSFilter",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "docker_hub",
+      "name": "Docker Hub",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "docmosis",
+      "name": "Docmosis",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "docparser",
+      "name": "Docparser",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "docraptor",
+      "name": "DocRaptor",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "docsautomator",
+      "name": "DocsAutomator",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "docsbot_ai",
+      "name": "DocsBot AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "docsend_2_pdf",
+      "name": "Docsend2pdf",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "no_auth"
+    },
+    {
+      "id": "docsumo",
+      "name": "Docsumo",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "docugenerate",
+      "name": "DocuGenerate",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "documenso",
+      "name": "Documenso",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "document360",
+      "name": "Document360",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "docuseal",
+      "name": "DocuSeal",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "docusign",
+      "name": "DocuSign",
+      "category": "Signing",
+      "blurb": "Read DocuSign envelopes, signers, and templates.",
+      "auth": "composio"
+    },
+    {
+      "id": "doppler",
+      "name": "Doppler",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "dovetail",
+      "name": "Dovetail",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "drata",
+      "name": "Drata",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "dropbox",
+      "name": "Dropbox",
+      "category": "Storage",
+      "blurb": "Search and read files stored in Dropbox for document-grounded artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "dropbox_sign",
+      "name": "Dropbox Sign",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "dropboxsign",
+      "name": "Dropbox Sign",
+      "category": "Signing",
+      "blurb": "Read Dropbox Sign (HelloSign) signature requests and templates.",
+      "auth": "composio"
+    },
+    {
+      "id": "dropcontact",
+      "name": "Dropcontact",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "dub",
+      "name": "Dub",
+      "category": "Marketing",
+      "blurb": "Read Dub links, domains, and analytics.",
+      "auth": "composio"
+    },
+    {
+      "id": "dynamics365",
+      "name": "Dynamics 365",
+      "category": "Integration",
+      "blurb": "Use Dynamics 365 tools and data directly from Open Design.",
+      "auth": "composio"
+    },
+    {
+      "id": "dynatrace",
+      "name": "Dynatrace",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "e2b",
+      "name": "E2B",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "eagle_doc",
+      "name": "Eagle Doc",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "easypost",
+      "name": "EasyPost",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ecologi",
+      "name": "Ecologi",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "egnyte",
+      "name": "Egnyte",
+      "category": "Storage",
+      "blurb": "Read Egnyte folders and files for regulated document workflows.",
+      "auth": "composio"
+    },
+    {
+      "id": "elasticsearch",
+      "name": "Elasticsearch",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "elevenlabs",
+      "name": "ElevenLabs",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "elevenreader",
+      "name": "ElevenReader",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "elevio",
+      "name": "Elevio",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "elorus",
+      "name": "Elorus",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "emailable",
+      "name": "Emailable",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "emaillistverify",
+      "name": "EmailListVerify",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "emailoctopus",
+      "name": "EmailOctopus",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "encharge",
+      "name": "Encharge",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "encodian",
+      "name": "Encodian",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "energy_performance_certificates",
+      "name": "Energy Performance Certificates",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "enigma",
+      "name": "Enigma",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "eodhd_apis",
+      "name": "EODHD APIs",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "epicgames",
+      "name": "Epic Games",
+      "category": "Gaming",
+      "blurb": "Read Epic Games store and developer portal data.",
+      "auth": "composio"
+    },
+    {
+      "id": "erpnext",
+      "name": "ERPNext",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "esignatures_io",
+      "name": "eSignatures.com",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "espocrm",
+      "name": "EspoCRM",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "evenium",
+      "name": "Evenium",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "eventbrite",
+      "name": "Eventbrite",
+      "category": "Events",
+      "blurb": "Read Eventbrite events, attendees, and orders.",
+      "auth": "composio"
+    },
+    {
+      "id": "eventee",
+      "name": "Eventee",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "eventzilla",
+      "name": "Eventzilla",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "everhour",
+      "name": "Everhour",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "exa",
+      "name": "Exa",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "excel",
+      "name": "Excel",
+      "category": "Spreadsheets",
+      "blurb": "Read Excel workbooks, worksheets, and ranges to pull numbers into live artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "exist",
+      "name": "Exist",
+      "category": "Personal",
+      "blurb": "Read Exist personal analytics and correlations.",
+      "auth": "composio"
+    },
+    {
+      "id": "expofp",
+      "name": "ExpoFP",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "facebook",
+      "name": "Facebook",
+      "category": "Social",
+      "blurb": "Read Facebook pages, posts, and insights.",
+      "auth": "composio"
+    },
+    {
+      "id": "fairing",
+      "name": "Fairing",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fal_ai",
+      "name": "fal.ai",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "faraday",
+      "name": "Faraday",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fathom",
+      "name": "Fathom",
+      "category": "Meetings",
+      "blurb": "Read Fathom call recordings and summaries.",
+      "auth": "composio"
+    },
+    {
+      "id": "feathery",
+      "name": "Feathery",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "featurebase",
+      "name": "Featurebase",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "feishu_app_bot",
+      "name": "Feishu App Bot",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "feishu_custom_bot",
+      "name": "Feishu Custom Bot",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fellow",
+      "name": "Fellow",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "felt",
+      "name": "Felt",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fern",
+      "name": "Fern",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ffhub",
+      "name": "FFHub",
+      "category": "Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fiber_ai",
+      "name": "Fiber AI",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fidel_api",
+      "name": "Fidel API",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "figma",
+      "name": "Figma",
+      "category": "Design",
+      "blurb": "Read Figma files, pages, frames, and components to reference real design context.",
+      "auth": "composio"
+    },
+    {
+      "id": "files_com",
+      "name": "Files.com",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fillout",
+      "name": "Fillout",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "finage",
+      "name": "Finage",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "financial_modeling_prep",
+      "name": "Financial Modeling Prep",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "findymail",
+      "name": "Findymail",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fireberry",
+      "name": "Fireberry",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "firecrawl",
+      "name": "Firecrawl",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fireflies",
+      "name": "Fireflies",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "firehydrant",
+      "name": "FireHydrant",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "firstbase",
+      "name": "Firstbase",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fixer",
+      "name": "Fixer",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "flagsmith",
+      "name": "Flagsmith",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "float",
+      "name": "Float",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "flomo",
+      "name": "flomo",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "flowiseai",
+      "name": "FlowiseAI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fluxguard",
+      "name": "Fluxguard",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fly",
+      "name": "Fly",
+      "category": "Developer",
+      "blurb": "Read Fly.io apps, machines, and volumes to power infra status artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "folk",
+      "name": "folk",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "followupboss",
+      "name": "Follow Up Boss",
+      "category": "CRM",
+      "blurb": "Read Follow Up Boss contacts, deals, and activities for real estate CRM.",
+      "auth": "composio"
+    },
+    {
+      "id": "fomo",
+      "name": "Fomo",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "football_data",
+      "name": "football-data.org",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "forem",
+      "name": "Forem",
+      "category": "Social",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "formbricks",
+      "name": "Formbricks",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "formcarry",
+      "name": "Formcarry",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "formsite",
+      "name": "Formsite",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "formspree",
+      "name": "Formspree",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "foursquare",
+      "name": "Foursquare",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fuxin",
+      "name": "Foxit Cloud API",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "fraudlabspro",
+      "name": "FraudLabs Pro",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "freeagent",
+      "name": "Freeagent",
+      "category": "Accounting",
+      "blurb": "Read FreeAgent invoices, expenses, and timeslips.",
+      "auth": "composio"
+    },
+    {
+      "id": "freshbooks",
+      "name": "FreshBooks",
+      "category": "Finance",
+      "blurb": "Read FreshBooks invoices, clients, and expenses.",
+      "auth": "composio"
+    },
+    {
+      "id": "freshdesk",
+      "name": "Freshdesk",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "freshsales",
+      "name": "Freshsales",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "freshservice",
+      "name": "Freshservice",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "freshteam",
+      "name": "Freshteam",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "front",
+      "name": "Front",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fullenrich",
+      "name": "FullEnrich",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gamma",
+      "name": "Gamma",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "geckoboard",
+      "name": "Geckoboard",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gem",
+      "name": "Gem",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gender_api",
+      "name": "Gender-API.com",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "genderapi_io",
+      "name": "GenderAPI.io",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "genderize",
+      "name": "Genderize",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "generic_email",
+      "name": "Generic Email (IMAP/SMTP)",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "geoapify",
+      "name": "Geoapify",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "geocodio",
+      "name": "Geocodio",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "geokeo",
+      "name": "Geokeo",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "getform",
+      "name": "Getform",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "getnote",
+      "name": "Getnote",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "getprospect",
+      "name": "GetProspect",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ghost",
+      "name": "Ghost",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gift_up",
+      "name": "Gift Up",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gigasheet",
+      "name": "Gigasheet",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "giphy",
+      "name": "GIPHY",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gist",
+      "name": "Gist",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "gitea",
+      "name": "Gitea",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gitee",
+      "name": "Gitee",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "category": "Developer",
+      "blurb": "Search and inspect GitHub repositories, issues, and pull requests.",
+      "auth": "composio"
+    },
+    {
+      "id": "gitlab",
+      "name": "GitLab",
+      "category": "Developer",
+      "blurb": "Inspect GitLab projects, issues, merge requests, and pipelines for engineering workflows.",
+      "auth": "composio"
+    },
+    {
+      "id": "givebutter",
+      "name": "Givebutter",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gladia",
+      "name": "Gladia",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gleap",
+      "name": "Gleap",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "globalping",
+      "name": "Globalping",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "glyphic",
+      "name": "Glyphic",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gmail",
+      "name": "Gmail",
+      "category": "Email",
+      "blurb": "Search and read Gmail threads to surface inbox context in artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "godial",
+      "name": "GoDial",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gong",
+      "name": "Gong",
+      "category": "Sales intelligence",
+      "blurb": "Read Gong call recordings, transcripts, and sales insights.",
+      "auth": "composio"
+    },
+    {
+      "id": "goody",
+      "name": "Goody",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "google_address_validation",
+      "name": "Google Address Validation",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "googleadmin",
+      "name": "Google Admin",
+      "category": "Admin",
+      "blurb": "Read Google Workspace admin directory, users, and groups.",
+      "auth": "composio"
+    },
+    {
+      "id": "googleads",
+      "name": "Google Ads",
+      "category": "Advertising",
+      "blurb": "Read Google Ads campaigns, ad groups, and performance reports.",
+      "auth": "composio"
+    },
+    {
+      "id": "google_analytics",
+      "name": "Google Analytics",
+      "category": "Data",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "googleanalytics",
+      "name": "Google Analytics",
+      "category": "Analytics",
+      "blurb": "Query Google Analytics 4 reports, metrics, and audiences.",
+      "auth": "composio"
+    },
+    {
+      "id": "google_bigquery",
+      "name": "Google BigQuery",
+      "category": "Data",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "googlebigquery",
+      "name": "Google BigQuery",
+      "category": "Analytics",
+      "blurb": "Run read-only BigQuery SQL for analytics-grounded artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "googlecalendar",
+      "name": "Google Calendar",
+      "category": "Calendar",
+      "blurb": "Read calendar events and availability from Google Calendar.",
+      "auth": "composio"
+    },
+    {
+      "id": "googlechat",
+      "name": "Google Chat",
+      "category": "Communication",
+      "blurb": "Read Google Chat spaces and messages for team-comms grounded artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "googleclassroom",
+      "name": "Google Classroom",
+      "category": "Education",
+      "blurb": "Read Google Classroom courses, coursework, and rosters.",
+      "auth": "composio"
+    },
+    {
+      "id": "googledocs",
+      "name": "Google Docs",
+      "category": "Productivity",
+      "blurb": "Read Google Docs content and comments to source text for live artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "google_drive",
+      "name": "Google Drive",
+      "category": "Storage",
+      "blurb": "Search and read files from Google Drive.",
+      "auth": "composio"
+    },
+    {
+      "id": "googledrive",
+      "name": "Google Drive",
+      "category": "Storage",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "googlemaps",
+      "name": "Google Maps",
+      "category": "Maps",
+      "blurb": "Query Google Maps places, routes, and geocoding.",
+      "auth": "composio"
+    },
+    {
+      "id": "googlemeet",
+      "name": "Google Meet",
+      "category": "Meetings",
+      "blurb": "Read Google Meet meeting and participant metadata.",
+      "auth": "composio"
+    },
+    {
+      "id": "googlephotos",
+      "name": "Google Photos",
+      "category": "Media",
+      "blurb": "Read Google Photos albums and media metadata.",
+      "auth": "composio"
+    },
+    {
+      "id": "google_routes",
+      "name": "Google Routes",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "google_search_console",
+      "name": "Google Search Console",
+      "category": "Data",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "googlesearchconsole",
+      "name": "Google Search Console",
+      "category": "Analytics",
+      "blurb": "Query Google Search Console pages, queries, and performance metrics.",
+      "auth": "composio"
+    },
+    {
+      "id": "googlesheets",
+      "name": "Google Sheets",
+      "category": "Spreadsheets",
+      "blurb": "Read and search Google Sheets spreadsheets to power tables, charts, and dashboards.",
+      "auth": "composio"
+    },
+    {
+      "id": "googleslides",
+      "name": "Google Slides",
+      "category": "Presentations",
+      "blurb": "Read Google Slides presentations for reference in new decks.",
+      "auth": "composio"
+    },
+    {
+      "id": "googlesuper",
+      "name": "Google Super",
+      "category": "Productivity",
+      "blurb": "Unified Google Workspace access across Gmail, Drive, Calendar, and Docs.",
+      "auth": "composio"
+    },
+    {
+      "id": "googletasks",
+      "name": "Google Tasks",
+      "category": "Tasks",
+      "blurb": "Read Google Tasks lists and tasks.",
+      "auth": "composio"
+    },
+    {
+      "id": "googlecontacts",
+      "name": "Googlecontacts",
+      "category": "Contacts",
+      "blurb": "Read Google Contacts people and groups.",
+      "auth": "composio"
+    },
+    {
+      "id": "googleforms",
+      "name": "Googleforms",
+      "category": "Forms",
+      "blurb": "Read Google Forms forms and responses.",
+      "auth": "composio"
+    },
+    {
+      "id": "gorgias",
+      "name": "Gorgias",
+      "category": "Support",
+      "blurb": "Read Gorgias tickets, customers, and macros for ecommerce support.",
+      "auth": "composio"
+    },
+    {
+      "id": "gosquared",
+      "name": "GoSquared",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "grafana",
+      "name": "Grafana",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "grafana_cloud",
+      "name": "Grafana Cloud",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "granola",
+      "name": "Granola",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "granolamcp",
+      "name": "Granola MCP",
+      "category": "Productivity",
+      "blurb": "Pull Granola meeting notes and summaries into briefing artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "graphhopper",
+      "name": "GraphHopper",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "greenhouse",
+      "name": "Greenhouse",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "griptape",
+      "name": "Griptape",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "grist",
+      "name": "Grist",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "groqcloud",
+      "name": "GroqCloud",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gtmetrix",
+      "name": "GTmetrix",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gumloop",
+      "name": "Gumloop",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gumroad",
+      "name": "Gumroad",
+      "category": "Commerce",
+      "blurb": "Read Gumroad products, sales, and customers.",
+      "auth": "composio"
+    },
+    {
+      "id": "guru",
+      "name": "Guru",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "gusto",
+      "name": "Gusto",
+      "category": "HR",
+      "blurb": "Read Gusto employees, payroll runs, and benefits.",
+      "auth": "composio"
+    },
+    {
+      "id": "habitica",
+      "name": "Habitica",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "hackernews",
+      "name": "Hacker News",
+      "category": "Social",
+      "blurb": "",
+      "auth": "no_auth"
+    },
+    {
+      "id": "hackerrank_work",
+      "name": "HackerRank Work",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "harmonic_ai",
+      "name": "Harmonic.ai",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "harvest",
+      "name": "Harvest",
+      "category": "Time tracking",
+      "blurb": "Read Harvest time entries, projects, and invoices.",
+      "auth": "composio"
+    },
+    {
+      "id": "haveibeenpwned",
+      "name": "Have I Been Pwned",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "headout",
+      "name": "Headout",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "healthchecks_io",
+      "name": "Healthchecks.io",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "helloleads",
+      "name": "HelloLeads",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "helpscout",
+      "name": "Help Scout",
+      "category": "Support",
+      "blurb": "Query Help Scout mailboxes, conversations, and customers.",
+      "auth": "composio"
+    },
+    {
+      "id": "helpscout_docs",
+      "name": "Help Scout Docs",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "here",
+      "name": "HERE",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "hex",
+      "name": "Hex",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "heygen",
+      "name": "HeyGen",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "heyreach",
+      "name": "HeyReach",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "heyy",
+      "name": "Heyy",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "heyzine",
+      "name": "Heyzine",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "higgsfield_ai",
+      "name": "Higgsfield AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "highlevel",
+      "name": "Highlevel",
+      "category": "CRM",
+      "blurb": "Query HighLevel contacts, pipelines, and campaigns.",
+      "auth": "composio"
+    },
+    {
+      "id": "high_level",
+      "name": "HighLevel",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "holded",
+      "name": "Holded",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "home_assistant",
+      "name": "Home Assistant",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "honeybadger",
+      "name": "Honeybadger",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "honeycomb",
+      "name": "Honeycomb",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "hookdeck",
+      "name": "Hookdeck",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "hoop",
+      "name": "Hoop",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "hotspotsystem",
+      "name": "HotspotSystem",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "html_to_image",
+      "name": "HTML to Image",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "htmlcsstoimage",
+      "name": "HTML/CSS to Image",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "hubspot",
+      "name": "HubSpot",
+      "category": "CRM",
+      "blurb": "Query HubSpot contacts, companies, deals, and tickets.",
+      "auth": "composio"
+    },
+    {
+      "id": "huggingface",
+      "name": "Hugging Face",
+      "category": "AI infrastructure",
+      "blurb": "Read Hugging Face models, datasets, and spaces metadata.",
+      "auth": "composio"
+    },
+    {
+      "id": "humanitix",
+      "name": "Humanitix",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "hunter",
+      "name": "Hunter",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "hyperbrowser",
+      "name": "Hyperbrowser",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "icypeas",
+      "name": "Icypeas",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ima",
+      "name": "ima",
+      "category": "AI",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "imagekit",
+      "name": "ImageKit",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "imgbb",
+      "name": "ImgBB",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "imgix",
+      "name": "Imgix",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "incident_io",
+      "name": "incident.io",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "insightoai",
+      "name": "Insighto.ai",
+      "category": "AI agents",
+      "blurb": "Read Insighto.ai voice agent conversations and analytics.",
+      "auth": "composio"
+    },
+    {
+      "id": "instagram",
+      "name": "Instagram",
+      "category": "Social",
+      "blurb": "Read Instagram media, profiles, and insights.",
+      "auth": "composio"
+    },
+    {
+      "id": "instantly_ai",
+      "name": "Instantly.ai",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "instatus",
+      "name": "Instatus",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "intelliprint",
+      "name": "Intelliprint",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "intercom",
+      "name": "Intercom",
+      "category": "Support",
+      "blurb": "Query Intercom conversations, users, and articles.",
+      "auth": "composio"
+    },
+    {
+      "id": "interzoid",
+      "name": "Interzoid",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ip2location",
+      "name": "IP2Location.io",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ip2proxy",
+      "name": "IP2Proxy",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ip2whois",
+      "name": "IP2WHOIS",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ipdata_co",
+      "name": "ipdata.co",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ipgeolocation_io",
+      "name": "IPGeolocation.io",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ipinfo_io",
+      "name": "IPinfo",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "iplocate",
+      "name": "IPLocate",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ipqualityscore",
+      "name": "IPQualityScore",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ipregistry",
+      "name": "Ipregistry",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ipstack",
+      "name": "ipstack",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "iqair_airvisual",
+      "name": "IQAir AirVisual",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kandji",
+      "name": "Iru (Kandji)",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "it_glue",
+      "name": "IT Glue",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wejam_ai",
+      "name": "Jam",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "jamie",
+      "name": "Jamie",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "jazzhr",
+      "name": "JazzHR",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "jigsawstack",
+      "name": "JigsawStack",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "jimeng_ai",
+      "name": "Jimeng AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "jiminny",
+      "name": "Jiminny",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "jin10",
+      "name": "Jin10",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "jira",
+      "name": "Jira",
+      "category": "Project management",
+      "blurb": "Search Jira issues, sprints, epics, and boards to build status reports and roadmap artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "jobnimbus",
+      "name": "JobNimbus",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "jotform",
+      "name": "Jotform",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "jsonbin",
+      "name": "JSONBin.io",
+      "category": "Storage",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "jumpcloud",
+      "name": "JumpCloud",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "juniper_mist",
+      "name": "Juniper Mist",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kaggle",
+      "name": "Kaggle",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kaleido",
+      "name": "Kaleido",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "keen_io",
+      "name": "Keen IO",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "keeper_scim",
+      "name": "Keeper SCIM",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kernel",
+      "name": "Kernel",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "keygen",
+      "name": "Keygen",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "keyword",
+      "name": "Keyword.com",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kickbox",
+      "name": "Kickbox",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kie_ai",
+      "name": "KIE.AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kintone",
+      "name": "Kintone",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kit",
+      "name": "Kit",
+      "category": "Marketing",
+      "blurb": "Read Kit (ConvertKit) subscribers, sequences, and broadcasts.",
+      "auth": "composio"
+    },
+    {
+      "id": "klangio",
+      "name": "Klangio",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "klaviyo",
+      "name": "Klaviyo",
+      "category": "Marketing",
+      "blurb": "Read Klaviyo lists, segments, flows, and campaign metrics.",
+      "auth": "composio"
+    },
+    {
+      "id": "klazify",
+      "name": "Klazify",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "klicktipp",
+      "name": "KlickTipp",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "klipfolio",
+      "name": "Klipfolio",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "knack",
+      "name": "Knack",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "knock",
+      "name": "Knock",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "knowbe4",
+      "name": "KnowBe4",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kommo",
+      "name": "Kommo",
+      "category": "CRM",
+      "blurb": "Read Kommo leads, contacts, and pipelines.",
+      "auth": "composio"
+    },
+    {
+      "id": "kontent_ai",
+      "name": "Kontent.ai",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kraken_io",
+      "name": "Kraken.io",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "kustomer",
+      "name": "Kustomer",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "l2s",
+      "name": "L2S",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "la_growth_machine",
+      "name": "La Growth Machine",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "label_studio",
+      "name": "Label Studio",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "landbot",
+      "name": "Landbot",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "langbase",
+      "name": "Langbase",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "langsmith",
+      "name": "LangSmith",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "laravel_cloud",
+      "name": "Laravel Cloud",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lattice",
+      "name": "Lattice",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "launch_darkly",
+      "name": "LaunchDarkly",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "leadfeeder",
+      "name": "Leadfeeder",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "leadmagic",
+      "name": "LeadMagic",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "leexi",
+      "name": "Leexi",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "leiga",
+      "name": "Leiga",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lemlist",
+      "name": "lemlist",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lemon_squeezy",
+      "name": "Lemon Squeezy",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lessonspace",
+      "name": "Lessonspace",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lever",
+      "name": "Lever",
+      "category": "Recruiting",
+      "blurb": "Query Lever opportunities, candidates, and postings.",
+      "auth": "composio"
+    },
+    {
+      "id": "lexoffice",
+      "name": "lexoffice",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lightfield",
+      "name": "Lightfield",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "category": "Project management",
+      "blurb": "Query Linear issues, projects, cycles, and teams to ground planning artifacts in live product data.",
+      "auth": "composio"
+    },
+    {
+      "id": "linguapop",
+      "name": "Linguapop",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lingvanex_translation_api",
+      "name": "Lingvanex Translation API",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "linkedin",
+      "name": "LinkedIn",
+      "category": "Social",
+      "blurb": "Read LinkedIn profiles, posts, and company pages.",
+      "auth": "composio"
+    },
+    {
+      "id": "linkedinads",
+      "name": "Linkedin Ads",
+      "category": "Advertising",
+      "blurb": "Read LinkedIn Ads campaigns, creatives, and analytics.",
+      "auth": "composio"
+    },
+    {
+      "id": "linkhut",
+      "name": "Linkhut",
+      "category": "Personal",
+      "blurb": "Read Linkhut bookmarks and tags.",
+      "auth": "composio"
+    },
+    {
+      "id": "linkly",
+      "name": "Linkly",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "linkup",
+      "name": "Linkup",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "linux_do",
+      "name": "Linux DO",
+      "category": "Social",
+      "blurb": "",
+      "auth": "no_auth"
+    },
+    {
+      "id": "listennotes",
+      "name": "Listen Notes",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "livesession",
+      "name": "LiveSession",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lob",
+      "name": "Lob",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lodgify",
+      "name": "Lodgify",
+      "category": "Hospitality",
+      "blurb": "Read Lodgify properties, bookings, and rates.",
+      "auth": "composio"
+    },
+    {
+      "id": "logo_dev",
+      "name": "Logo.dev",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "logsnag",
+      "name": "LogSnag",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lokalise",
+      "name": "Lokalise",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "longbridge",
+      "name": "Longbridge",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "loomio",
+      "name": "Loomio",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "loop_returns",
+      "name": "Loop Returns",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "loops",
+      "name": "Loops",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "loyverse",
+      "name": "Loyverse",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lucid_scim",
+      "name": "Lucid SCIM",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "luma",
+      "name": "Luma",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lumos",
+      "name": "Lumos",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "lusha",
+      "name": "Lusha",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "freepik",
+      "name": "Magnific (Freepik)",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailbluster",
+      "name": "MailBluster",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailboxlayer",
+      "name": "Mailboxlayer",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailbox_validator",
+      "name": "MailboxValidator",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailcheck",
+      "name": "Mailcheck",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailchimp",
+      "name": "Mailchimp",
+      "category": "Marketing",
+      "blurb": "Read Mailchimp audiences, campaigns, and reports.",
+      "auth": "composio"
+    },
+    {
+      "id": "mailercloud",
+      "name": "Mailercloud",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailerlite",
+      "name": "MailerLite",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailersend",
+      "name": "MailerSend",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailgun",
+      "name": "Mailgun",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailjet",
+      "name": "Mailjet",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailosaur",
+      "name": "Mailosaur",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mails_so",
+      "name": "Mails",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mailtrap",
+      "name": "Mailtrap",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "maintainx",
+      "name": "MaintainX",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "make",
+      "name": "Make",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "manatal",
+      "name": "Manatal",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "manus",
+      "name": "Manus",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mapbox",
+      "name": "Mapbox",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "marketstack",
+      "name": "Marketstack",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "polygon_io",
+      "name": "Massive (Polygon.io)",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mattermost",
+      "name": "Mattermost",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "matterport",
+      "name": "Matterport",
+      "category": "Design",
+      "blurb": "Read Matterport spaces and captures for 3D-grounded artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "mcdonalds_cn",
+      "name": "McDonald's China",
+      "category": "Location",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "maple_billing",
+      "name": "Measure",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mediastack",
+      "name": "Mediastack",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "meet_geek",
+      "name": "MeetGeek",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mem0",
+      "name": "Mem0",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "memberstack",
+      "name": "Memberstack",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "collegiate",
+      "name": "Merriam-Webster Collegiate",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "meta",
+      "name": "Meta",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "metaads",
+      "name": "Meta Ads",
+      "category": "Advertising",
+      "blurb": "Read Meta (Facebook/Instagram) Ads campaigns and insights.",
+      "auth": "composio"
+    },
+    {
+      "id": "metabase",
+      "name": "Metabase",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "metaso",
+      "name": "Metaso",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "metatextai",
+      "name": "MetatextAI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "metronome",
+      "name": "Metronome",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mezmo",
+      "name": "Mezmo",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "microsoft_clarity",
+      "name": "Microsoft Clarity",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "microsoftteams",
+      "name": "Microsoft Teams",
+      "category": "Communication",
+      "blurb": "Read Microsoft Teams channels, chats, and meetings for workplace context.",
+      "auth": "composio"
+    },
+    {
+      "id": "mindbody",
+      "name": "Mindbody",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mineru",
+      "name": "MinerU",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "minimax",
+      "name": "MiniMax",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "miro",
+      "name": "Miro",
+      "category": "Whiteboard",
+      "blurb": "Read Miro boards and sticky notes for whiteboard-based artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "missive",
+      "name": "Missive",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mistral_ai",
+      "name": "Mistral AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mixpanel",
+      "name": "Mixpanel",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mocean",
+      "name": "Mocean",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "moco",
+      "name": "MOCO",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "modjo_ai",
+      "name": "Modjo AI",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "moesif",
+      "name": "Moesif",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "momentum_io",
+      "name": "Momentum.io",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "monday",
+      "name": "Monday",
+      "category": "Project management",
+      "blurb": "Read monday.com boards, items, and updates.",
+      "auth": "composio"
+    },
+    {
+      "id": "mondaymcp",
+      "name": "Monday MCP",
+      "category": "Project management",
+      "blurb": "Run monday.com actions through the MCP integration.",
+      "auth": "composio"
+    },
+    {
+      "id": "moneybird",
+      "name": "Moneybird",
+      "category": "Accounting",
+      "blurb": "Read Moneybird invoices, contacts, and administrations.",
+      "auth": "composio"
+    },
+    {
+      "id": "mongo_db_atlas_administration",
+      "name": "MongoDB Atlas Administration",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "moonclerk",
+      "name": "MoonClerk",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "moorcheh",
+      "name": "Moorcheh",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "moosend",
+      "name": "Moosend",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mopinion",
+      "name": "Mopinion",
+      "category": "Data",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "mother_duck",
+      "name": "MotherDuck",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "motion",
+      "name": "Motion",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "msg91",
+      "name": "MSG91",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "mural",
+      "name": "Mural",
+      "category": "Whiteboard",
+      "blurb": "Read Mural boards and widgets for workshop-grounded artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "mx_toolbox",
+      "name": "MxToolbox",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "n8n",
+      "name": "n8n",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "namely",
+      "name": "Namely",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "nango",
+      "name": "Nango",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "nasa",
+      "name": "NASA",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "nasdaq",
+      "name": "Nasdaq Data Link",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "needle",
+      "name": "Needle",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "neon",
+      "name": "Neon",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "nethunt",
+      "name": "NetHunt",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "netlify",
+      "name": "Netlify",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "netsuite",
+      "name": "Netsuite",
+      "category": "ERP",
+      "blurb": "Query NetSuite records, saved searches, and reports.",
+      "auth": "composio"
+    },
+    {
+      "id": "neutrino",
+      "name": "Neutrino API",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "neverbounce",
+      "name": "NeverBounce",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "new_relic",
+      "name": "New Relic",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "news_api",
+      "name": "News API",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "newsdata_io",
+      "name": "NewsData.io",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "next_dns",
+      "name": "NextDNS",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ngrok",
+      "name": "ngrok",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ninjapear",
+      "name": "NinjaPear",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ninox",
+      "name": "Ninox",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "nocodb",
+      "name": "NocoDB",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "nocrm_io",
+      "name": "noCRM.io",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "northbeam",
+      "name": "Northbeam",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "northflank",
+      "name": "Northflank",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "notion",
+      "name": "Notion",
+      "category": "Productivity",
+      "blurb": "Search and read Notion pages and databases.",
+      "auth": "composio"
+    },
+    {
+      "id": "novu",
+      "name": "Novu",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ntfy",
+      "name": "ntfy",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "nylas",
+      "name": "Nylas",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "nyne_ai",
+      "name": "Nyne.ai",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ocrspace",
+      "name": "OCR.space",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "octave",
+      "name": "Octave",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "oksign",
+      "name": "OKSign",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "okta",
+      "name": "Okta",
+      "category": "Security",
+      "blurb": "Manage Okta directory users, groups, memberships, and user lifecycle operations.",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "omnisend",
+      "name": "Omnisend",
+      "category": "Marketing",
+      "blurb": "Read Omnisend campaigns, automations, and audiences.",
+      "auth": "composio"
+    },
+    {
+      "id": "oncehub",
+      "name": "OnceHub",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "onedesk",
+      "name": "OneDesk",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "one_drive",
+      "name": "OneDrive",
+      "category": "Storage",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "onedrive",
+      "name": "OneDrive",
+      "category": "Storage",
+      "blurb": "Search and read files in OneDrive for Microsoft 365 document workflows.",
+      "auth": "composio"
+    },
+    {
+      "id": "one_page_crm",
+      "name": "OnePageCRM",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "onesignal_rest_api",
+      "name": "OneSignal",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "oomnitza",
+      "name": "Oomnitza",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "fusion-api",
+      "name": "OOMOL Fusion API",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "open_exchange_rates",
+      "name": "Open Exchange Rates",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "openalex",
+      "name": "OpenAlex",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "opencage",
+      "name": "OpenCage",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "openfootball_worldcup",
+      "name": "OpenFootball World Cup",
+      "category": "Data",
+      "blurb": "",
+      "auth": "no_auth"
+    },
+    {
+      "id": "opengraph_io",
+      "name": "OpenGraph.io",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "open_hands",
+      "name": "OpenHands",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "openpagerank",
+      "name": "OpenPageRank",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "opensea",
+      "name": "OpenSea",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "openstatus",
+      "name": "OpenStatus",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "openweather_api",
+      "name": "OpenWeather",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "opsgenie",
+      "name": "Opsgenie",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "optimoroute",
+      "name": "OptimoRoute",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ordinal",
+      "name": "Ordinal",
+      "category": "Social",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ortto",
+      "name": "Ortto",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ossinsight",
+      "name": "OSS Insight",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "no_auth"
+    },
+    {
+      "id": "otter_ai",
+      "name": "Otter.ai",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "outline",
+      "name": "Outline",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "outlook",
+      "name": "Outlook",
+      "category": "Email",
+      "blurb": "Read Outlook mailboxes, calendars, and contacts for Microsoft 365 workflows.",
+      "auth": "composio"
+    },
+    {
+      "id": "owl_protocol",
+      "name": "Owl Protocol",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "paddle",
+      "name": "Paddle",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pagerduty",
+      "name": "PagerDuty",
+      "category": "Observability",
+      "blurb": "Read PagerDuty incidents, services, and schedules to power on-call runbooks.",
+      "auth": "composio"
+    },
+    {
+      "id": "pandadoc",
+      "name": "PandaDoc",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "paperform",
+      "name": "Paperform",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "paradym",
+      "name": "Paradym",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "parallel",
+      "name": "Parallel",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "parma",
+      "name": "Parma",
+      "category": "CRM",
+      "blurb": "Read Parma personal CRM contacts and interactions.",
+      "auth": "composio"
+    },
+    {
+      "id": "parsehub",
+      "name": "ParseHub",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "parsera",
+      "name": "Parsera",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "parseur",
+      "name": "Parseur",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "partnerstack",
+      "name": "PartnerStack",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "partner_stack_partner",
+      "name": "PartnerStack Partner",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "payhip",
+      "name": "Payhip",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "paymo",
+      "name": "Paymo",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "paystack",
+      "name": "Paystack",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pdf_api_io",
+      "name": "PDF-API.io",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pdf_co",
+      "name": "PDF.co",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pdfless",
+      "name": "Pdfless",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pdfmonkey",
+      "name": "PDFMonkey",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pendo",
+      "name": "Pendo",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "peopledatalabs",
+      "name": "People Data Labs",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "perdoo",
+      "name": "Perdoo",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "perigon",
+      "name": "Perigon",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "permit_io",
+      "name": "Permit.io",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "perplexity",
+      "name": "Perplexity",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "persona",
+      "name": "Persona",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "personal_ai",
+      "name": "Personal AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pexels",
+      "name": "Pexels",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "phantombuster",
+      "name": "PhantomBuster",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "photon",
+      "name": "Photon.codes",
+      "category": "Communication",
+      "blurb": "Send and receive messages through Photon.codes.",
+      "auth": "composio"
+    },
+    {
+      "id": "pilvio",
+      "name": "Pilvio",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pinata",
+      "name": "Pinata",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pinecone",
+      "name": "Pinecone",
+      "category": "AI infrastructure",
+      "blurb": "Query Pinecone indexes and namespaces for retrieval-augmented artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "pingdom",
+      "name": "Pingdom",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pipedream",
+      "name": "Pipedream",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pipedrive",
+      "name": "Pipedrive",
+      "category": "CRM",
+      "blurb": "Read Pipedrive deals, contacts, and activities.",
+      "auth": "composio"
+    },
+    {
+      "id": "pivotal_tracker",
+      "name": "Pivotal Tracker",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "placekey",
+      "name": "Placekey",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "placid",
+      "name": "Placid",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "plain",
+      "name": "Plain",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "plane",
+      "name": "Plane",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "plasmic",
+      "name": "Plasmic",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "platerecognizer",
+      "name": "Plate Recognizer",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "plausible_analytics",
+      "name": "Plausible Analytics",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "plisio",
+      "name": "Plisio",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "plunk",
+      "name": "Plunk",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "podscribe",
+      "name": "Podscribe",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "polar",
+      "name": "Polar",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "positionstack",
+      "name": "Positionstack",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "postgrid",
+      "name": "PostGrid",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "postgrid_verify",
+      "name": "PostGrid Verify",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "posthog",
+      "name": "PostHog",
+      "category": "Data",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "postman",
+      "name": "Postman",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "postmark",
+      "name": "Postmark",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "precoro",
+      "name": "Precoro",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "prerender",
+      "name": "Prerender",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "prisma",
+      "name": "Prisma",
+      "category": "Developer",
+      "blurb": "Inspect Prisma schema and data models for database-driven prototypes.",
+      "auth": "composio"
+    },
+    {
+      "id": "process_street",
+      "name": "Process Street",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "productboard",
+      "name": "Productboard",
+      "category": "Product",
+      "blurb": "Read Productboard features, notes, and roadmaps.",
+      "auth": "composio"
+    },
+    {
+      "id": "productive",
+      "name": "Productive",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "projectmanager",
+      "name": "ProjectManager",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "prospeo",
+      "name": "Prospeo",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "proxiedmail",
+      "name": "ProxiedMail",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "prtg_classic",
+      "name": "PRTG Classic",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pubmed",
+      "name": "PubMed",
+      "category": "Data",
+      "blurb": "Search, retrieve, match, and trace biomedical literature through official NCBI APIs. NCBI disclaimer and copyright information: https://www…",
+      "auth": "no_auth"
+    },
+    {
+      "id": "push_by_techulus",
+      "name": "Push by Techulus",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pushbullet",
+      "name": "Pushbullet",
+      "category": "Personal",
+      "blurb": "Read Pushbullet pushes and devices.",
+      "auth": "composio"
+    },
+    {
+      "id": "pushover",
+      "name": "Pushover",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "pylon",
+      "name": "Pylon",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "qlty",
+      "name": "Qlty",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "qq_mail",
+      "name": "QQ Mail",
+      "category": "Communication",
+      "blurb": "Unavailable on Cloudflare Workers. QQ Mail requires IMAP/SMTP, so run this provider from the Node.js runtime.",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "quaderno",
+      "name": "Quaderno",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "quentn",
+      "name": "Quentn",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "quickbase",
+      "name": "Quickbase",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "quickbooks",
+      "name": "QuickBooks",
+      "category": "Accounting",
+      "blurb": "Query QuickBooks customers, invoices, and accounts.",
+      "auth": "composio"
+    },
+    {
+      "id": "quickchart",
+      "name": "QuickChart",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "no_auth"
+    },
+    {
+      "id": "quipteams",
+      "name": "Quipteams",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "quo",
+      "name": "Quo (OpenPhone)",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "radar",
+      "name": "Radar",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ragie",
+      "name": "Ragie",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ramp",
+      "name": "Ramp",
+      "category": "Finance",
+      "blurb": "Read Ramp transactions, cards, and vendors.",
+      "auth": "composio"
+    },
+    {
+      "id": "rawg",
+      "name": "RAWG",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "raygun",
+      "name": "Raygun",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "razorpay",
+      "name": "Razorpay",
+      "category": "Payments",
+      "blurb": "Read Razorpay payments, orders, and settlements.",
+      "auth": "composio"
+    },
+    {
+      "id": "readme",
+      "name": "ReadMe",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "readwise",
+      "name": "Readwise",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "realphonevalidation",
+      "name": "RealPhoneValidation",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "rebrandly",
+      "name": "Rebrandly",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "recallai",
+      "name": "Recall.ai",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "recharge",
+      "name": "Recharge",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "recruitcrm",
+      "name": "Recruit CRM",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "recruitee",
+      "name": "Recruitee",
+      "category": "Recruiting",
+      "blurb": "Read Recruitee candidates, jobs, and pipelines.",
+      "auth": "composio"
+    },
+    {
+      "id": "recruiterflow",
+      "name": "Recruiterflow",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "recurly",
+      "name": "Recurly",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "reddit",
+      "name": "Reddit",
+      "category": "Social",
+      "blurb": "Read Reddit subreddits, posts, and comments.",
+      "auth": "composio"
+    },
+    {
+      "id": "redditads",
+      "name": "Reddit Ads",
+      "category": "Advertising",
+      "blurb": "Read Reddit Ads campaigns and performance.",
+      "auth": "composio"
+    },
+    {
+      "id": "redfox",
+      "name": "RedFoxHub",
+      "category": "Social",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "reducto",
+      "name": "Reducto",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "refiner",
+      "name": "Refiner",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "remove_bg",
+      "name": "remove.bg",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "render",
+      "name": "Render",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "renderform",
+      "name": "RenderForm",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "rentman",
+      "name": "Rentman",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "repairshopr",
+      "name": "RepairShopr",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "replicate",
+      "name": "Replicate",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "reply_io",
+      "name": "Reply.io",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "resend",
+      "name": "Resend",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "retell_ai",
+      "name": "Retell AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "retently",
+      "name": "Retently",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ringover",
+      "name": "Ringover",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "rippling",
+      "name": "Rippling",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "riveter",
+      "name": "Riveter",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "roam",
+      "name": "Roam",
+      "category": "Documentation",
+      "blurb": "Read Roam Research graphs and pages for networked-note artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "roam_scim",
+      "name": "Roam SCIM",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "roboflow",
+      "name": "Roboflow",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "rocket_chat",
+      "name": "Rocket.Chat",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "rocketlane",
+      "name": "Rocketlane",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "rocket_reach",
+      "name": "RocketReach",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "rollbar",
+      "name": "Rollbar",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "rootly",
+      "name": "Rootly",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "rosette_text_analytics",
+      "name": "Rosette Text Analytics",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "route4me",
+      "name": "Route4Me",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "runpod",
+      "name": "Runpod",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "runscope",
+      "name": "Runscope",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "saas_custom_domains",
+      "name": "SaaS Custom Domains",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "safetyculture",
+      "name": "SafetyCulture",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sage_hr",
+      "name": "Sage HR",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sage_sales_management",
+      "name": "Sage Sales Management",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "salesflare",
+      "name": "Salesflare",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "salesforce",
+      "name": "Salesforce",
+      "category": "CRM",
+      "blurb": "Query Salesforce objects, reports, and dashboards.",
+      "auth": "composio"
+    },
+    {
+      "id": "salesforceservicecloud",
+      "name": "Salesforce Service Cloud",
+      "category": "Support",
+      "blurb": "Query Salesforce Service Cloud cases, accounts, and knowledge articles.",
+      "auth": "composio"
+    },
+    {
+      "id": "salesmate",
+      "name": "Salesmate",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "satismeter",
+      "name": "SatisMeter",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "scheduleonce",
+      "name": "Scheduleonce",
+      "category": "Scheduling",
+      "blurb": "Read ScheduleOnce bookings, calendars, and event types.",
+      "auth": "composio"
+    },
+    {
+      "id": "scrape_do",
+      "name": "Scrape.do",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "scrape_graph_ai",
+      "name": "ScrapeGraphAI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "scraperapi",
+      "name": "ScraperAPI",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "scrapfly",
+      "name": "Scrapfly",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "scrapingant",
+      "name": "ScrapingAnt",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "scrapingbee",
+      "name": "ScrapingBee",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "scrapingdog",
+      "name": "Scrapingdog",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "screenshot_fyi",
+      "name": "screenshot.fyi",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "screenshotone",
+      "name": "ScreenshotOne",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "search_api",
+      "name": "SearchApi",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "securitytrails",
+      "name": "SecurityTrails",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "segment",
+      "name": "Segment",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "semantic_scholar",
+      "name": "Semantic Scholar",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "semrush",
+      "name": "Semrush",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sendbird",
+      "name": "Sendbird",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sender",
+      "name": "Sender",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sendfox",
+      "name": "SendFox",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sendgrid",
+      "name": "SendGrid",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sendloop",
+      "name": "Sendloop",
+      "category": "Marketing",
+      "blurb": "Read Sendloop lists and campaigns.",
+      "auth": "composio"
+    },
+    {
+      "id": "sendmator",
+      "name": "Sendmator",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sendspark",
+      "name": "Sendspark",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sensibo",
+      "name": "Sensibo",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sentry",
+      "name": "Sentry",
+      "category": "Observability",
+      "blurb": "Inspect Sentry issues, events, and release health to surface production incidents.",
+      "auth": "composio"
+    },
+    {
+      "id": "seqera",
+      "name": "Seqera",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "serpapi",
+      "name": "SerpApi",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "serpdog",
+      "name": "Serpdog",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "serphouse",
+      "name": "SERPHouse",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "serply",
+      "name": "Serply",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "servicem8",
+      "name": "Servicem8",
+      "category": "Field service",
+      "blurb": "Read ServiceM8 jobs, staff, and clients.",
+      "auth": "composio"
+    },
+    {
+      "id": "servicenow",
+      "name": "ServiceNow",
+      "category": "ITSM",
+      "blurb": "Read ServiceNow incidents, change requests, and CMDB records.",
+      "auth": "composio"
+    },
+    {
+      "id": "sevdesk",
+      "name": "sevdesk",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sharepoint",
+      "name": "SharePoint",
+      "category": "Storage",
+      "blurb": "Browse SharePoint sites and lists to pull structured enterprise content.",
+      "auth": "composio"
+    },
+    {
+      "id": "sheetdb",
+      "name": "SheetDB",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ship_bob",
+      "name": "ShipBob",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shipday",
+      "name": "Shipday",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shipengine",
+      "name": "ShipEngine",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shippo",
+      "name": "Shippo",
+      "category": "Logistics",
+      "blurb": "Read Shippo shipments, tracking, and labels.",
+      "auth": "composio"
+    },
+    {
+      "id": "ship_station",
+      "name": "ShipStation",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shodan",
+      "name": "Shodan",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shopify",
+      "name": "Shopify",
+      "category": "Commerce",
+      "blurb": "Read Shopify products, orders, and customers.",
+      "auth": "composio"
+    },
+    {
+      "id": "shopify_admin",
+      "name": "Shopify Admin",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shopify_partner",
+      "name": "Shopify Partner",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shopify_storefront",
+      "name": "Shopify Storefront",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "short_menu",
+      "name": "Short Menu",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "short_io",
+      "name": "Short.io",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shortcut",
+      "name": "Shortcut",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shorten_rest",
+      "name": "Shorten.REST",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shortpixel",
+      "name": "ShortPixel",
+      "category": "Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "shotstack",
+      "name": "Shotstack",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "signalbase",
+      "name": "Signalbase",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "signpath",
+      "name": "SignPath",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "signwell",
+      "name": "SignWell",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "similarweb_digitalrank_api",
+      "name": "Similarweb",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "simla",
+      "name": "Simla.com",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "simple_analytics",
+      "name": "Simple Analytics",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "simplesat",
+      "name": "Simplesat",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sitespeakai",
+      "name": "SiteSpeakAI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "skio",
+      "name": "Skio",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "skyfire",
+      "name": "Skyfire",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "slab",
+      "name": "Slab",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "category": "Communication",
+      "blurb": "Search Slack channels, read messages, and list users and channels.",
+      "auth": "composio"
+    },
+    {
+      "id": "slackbot",
+      "name": "Slackbot",
+      "category": "Communication",
+      "blurb": "Use a Slack bot identity to read channels and messages in a workspace.",
+      "auth": "composio"
+    },
+    {
+      "id": "sling",
+      "name": "Sling",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "slite",
+      "name": "Slite",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "smartlead_ai",
+      "name": "Smartlead",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "smartrecruiters",
+      "name": "SmartRecruiters",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "smartsheet",
+      "name": "Smartsheet",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sms_alert",
+      "name": "SMS Alert",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "smtp2go",
+      "name": "SMTP2GO",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "smugmug",
+      "name": "SmugMug",
+      "category": "Design",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "snapchat",
+      "name": "Snapchat",
+      "category": "Advertising",
+      "blurb": "Read Snapchat Ads Manager campaigns and audience insights.",
+      "auth": "composio"
+    },
+    {
+      "id": "snipe_it",
+      "name": "Snipe-IT",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "snowflake",
+      "name": "Snowflake",
+      "category": "Data platform",
+      "blurb": "Run read-only queries against Snowflake warehouses to pull analytics into live artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "solcast",
+      "name": "Solcast",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "spider",
+      "name": "Spider Cloud",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "splitwise",
+      "name": "Splitwise",
+      "category": "Finance",
+      "blurb": "Read Splitwise groups, expenses, and balances.",
+      "auth": "composio"
+    },
+    {
+      "id": "spotify",
+      "name": "Spotify",
+      "category": "Media",
+      "blurb": "Read Spotify playlists, tracks, and listener metadata.",
+      "auth": "composio"
+    },
+    {
+      "id": "square",
+      "name": "Square",
+      "category": "Payments",
+      "blurb": "Read Square payments, catalog, and locations.",
+      "auth": "composio"
+    },
+    {
+      "id": "stabilityai",
+      "name": "Stability AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "stackexchange",
+      "name": "Stack Exchange",
+      "category": "Research",
+      "blurb": "Search Stack Exchange questions, answers, and tags across sites.",
+      "auth": "composio"
+    },
+    {
+      "id": "stack_ai",
+      "name": "StackAI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "stannp",
+      "name": "Stannp",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "starton",
+      "name": "Starton",
+      "category": "Storage",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "statamic",
+      "name": "Statamic",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "statista",
+      "name": "Statista",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "statsig",
+      "name": "Statsig",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "statuscake",
+      "name": "StatusCake",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "statuspage",
+      "name": "Statuspage",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "statuspal",
+      "name": "StatusPal",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "stay_ai",
+      "name": "Stay AI",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "store_leads",
+      "name": "Store Leads",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "storecensus",
+      "name": "StoreCensus",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "stormboard",
+      "name": "Stormboard",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "stormglass_io",
+      "name": "Stormglass",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "storyblok",
+      "name": "Storyblok",
+      "category": "CMS",
+      "blurb": "Read Storyblok stories, spaces, and components.",
+      "auth": "composio"
+    },
+    {
+      "id": "strava",
+      "name": "Strava",
+      "category": "Fitness",
+      "blurb": "Read Strava activities, athletes, and segments.",
+      "auth": "composio"
+    },
+    {
+      "id": "streak",
+      "name": "Streak",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "streamtime",
+      "name": "Streamtime",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "category": "Payments",
+      "blurb": "Read Stripe customers, charges, subscriptions, and payouts.",
+      "auth": "composio"
+    },
+    {
+      "id": "subvisory",
+      "name": "Subvisory",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "sunoapi",
+      "name": "SunoAPI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "supabase",
+      "name": "Supabase",
+      "category": "Data platform",
+      "blurb": "Inspect Supabase projects, tables, and storage buckets for prototypes grounded in real data.",
+      "auth": "composio"
+    },
+    {
+      "id": "supadata",
+      "name": "Supadata",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "superchat",
+      "name": "Superchat",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "super_saas",
+      "name": "SuperSaaS",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "supervisely",
+      "name": "Supervisely",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "supportbee",
+      "name": "SupportBee",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "surecontact",
+      "name": "SureContact",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "surveymonkey",
+      "name": "SurveyMonkey",
+      "category": "Surveys",
+      "blurb": "Read SurveyMonkey surveys and responses.",
+      "auth": "composio"
+    },
+    {
+      "id": "svix",
+      "name": "Svix",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "swaggerhub",
+      "name": "SwaggerHub",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "systeme_io",
+      "name": "Systeme.io",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "taggun",
+      "name": "Taggun",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "talenthr",
+      "name": "TalentHR",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "talentlms",
+      "name": "TalentLMS",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tally",
+      "name": "Tally",
+      "category": "Forms",
+      "blurb": "Read Tally forms and submissions.",
+      "auth": "composio"
+    },
+    {
+      "id": "tanium",
+      "name": "Tanium",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tapfiliate",
+      "name": "Tapfiliate",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tave",
+      "name": "Táve",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tavily",
+      "name": "Tavily",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tavilymcp",
+      "name": "Tavily MCP",
+      "category": "Research",
+      "blurb": "Run Tavily web search and extraction for research-grounded artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "taxjar",
+      "name": "TaxJar",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "teamcamp",
+      "name": "Teamcamp",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "teamtailor",
+      "name": "Teamtailor",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram Bot",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "telnyx",
+      "name": "Telnyx",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "teltel",
+      "name": "TelTel",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "templated",
+      "name": "Templated",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tencent_docs",
+      "name": "Tencent Docs",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "tencent_maps",
+      "name": "Tencent Maps",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "terraform",
+      "name": "Terraform",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "textcortex",
+      "name": "TextCortex",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "textit",
+      "name": "TextIt",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "textrazor",
+      "name": "TextRazor",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "the_cat_api",
+      "name": "The Cat API",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "the_colony",
+      "name": "The Colony",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "the_dog_api",
+      "name": "The Dog API",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "the_odds_api",
+      "name": "The Odds API",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "the_swarm",
+      "name": "The Swarm",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "theirstack",
+      "name": "TheirStack",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ticketmaster",
+      "name": "Ticketmaster",
+      "category": "Events",
+      "blurb": "Read Ticketmaster events, venues, and attractions.",
+      "auth": "composio"
+    },
+    {
+      "id": "ticktick",
+      "name": "Ticktick",
+      "category": "Tasks",
+      "blurb": "Read TickTick lists and tasks for personal productivity artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "tidb",
+      "name": "TiDB Cloud",
+      "category": "Data",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "tikhub",
+      "name": "TikHub",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tiktok",
+      "name": "Tiktok",
+      "category": "Social",
+      "blurb": "Read TikTok videos, profiles, and analytics.",
+      "auth": "composio"
+    },
+    {
+      "id": "tiktok_business",
+      "name": "TikTok Business",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "timecamp",
+      "name": "TimeCamp",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "timelink",
+      "name": "timelink",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "timely",
+      "name": "Timely",
+      "category": "Time tracking",
+      "blurb": "Read Timely time entries and memories.",
+      "auth": "composio"
+    },
+    {
+      "id": "tinybird",
+      "name": "Tinybird",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tinyfishmcp",
+      "name": "TinyFish MCP",
+      "category": "Automation",
+      "blurb": "Run TinyFish browsing agents to capture structured web data into artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "tinypng",
+      "name": "TinyPNG",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tinyurl",
+      "name": "TinyURL",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tisane",
+      "name": "Tisane",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tldv",
+      "name": "tl;dv",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "todoist",
+      "name": "Todoist",
+      "category": "Tasks",
+      "blurb": "Read Todoist projects and tasks for personal productivity artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "together_ai",
+      "name": "Together AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "toggl",
+      "name": "Toggl Track",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tomba",
+      "name": "Tomba",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tomtom",
+      "name": "TomTom",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "toneden",
+      "name": "Toneden",
+      "category": "Marketing",
+      "blurb": "Read ToneDen campaigns and audiences for music marketing.",
+      "auth": "composio"
+    },
+    {
+      "id": "torii",
+      "name": "Torii",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tpscheck",
+      "name": "TPSCheck",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "trello",
+      "name": "Trello",
+      "category": "Project management",
+      "blurb": "Read Trello boards, lists, and cards for kanban-style artifacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "tremendous",
+      "name": "Tremendous",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "trent",
+      "name": "Trent",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "trigger_dev",
+      "name": "Trigger.dev",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tripadvisor",
+      "name": "Tripadvisor",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "triple_whale",
+      "name": "Triple Whale",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "truvera",
+      "name": "Truvera",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "turbot_pipes",
+      "name": "Turbot Pipes",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "turso",
+      "name": "Turso",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "tushare",
+      "name": "Tushare",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "twelve_data",
+      "name": "Twelve Data",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "twenty_crm",
+      "name": "Twenty CRM",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "twilio",
+      "name": "Twilio",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "twitter",
+      "name": "Twitter",
+      "category": "Social",
+      "blurb": "Read Twitter/X timelines, tweets, users, and searches.",
+      "auth": "composio"
+    },
+    {
+      "id": "twitterapi_io",
+      "name": "TwitterAPI.io",
+      "category": "Social",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "typeform",
+      "name": "Typeform",
+      "category": "Forms",
+      "blurb": "Read Typeform forms, responses, and analytics.",
+      "auth": "composio"
+    },
+    {
+      "id": "typefully",
+      "name": "Typefully",
+      "category": "Social",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "u301",
+      "name": "U301",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "umami",
+      "name": "Umami",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "unifapi",
+      "name": "UnifAPI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "unione",
+      "name": "UniOne",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "unipile",
+      "name": "Unipile",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "uniswap_api",
+      "name": "Uniswap API",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "unsplash",
+      "name": "Unsplash",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "updown_io",
+      "name": "updown.io",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "uploadcare",
+      "name": "Uploadcare",
+      "category": "Storage",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "upsales",
+      "name": "Upsales",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "uptimerobot",
+      "name": "UptimeRobot",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "urlscan",
+      "name": "urlscan.io",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "userflow",
+      "name": "Userflow",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "userlist",
+      "name": "Userlist",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "v0",
+      "name": "v0",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "v2ex",
+      "name": "V2EX",
+      "category": "Social",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "valyu",
+      "name": "Valyu",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "vapi",
+      "name": "Vapi",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "vatlayer",
+      "name": "VATlayer",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "vectorshift",
+      "name": "VectorShift",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "vercel",
+      "name": "Vercel",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "verifiedemail",
+      "name": "VerifiedEmail",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "veriphone",
+      "name": "Veriphone",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "vestaboard",
+      "name": "Vestaboard",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "viggle",
+      "name": "Viggle",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "vimeo",
+      "name": "Vimeo",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "virustotal",
+      "name": "VirusTotal",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "vitally",
+      "name": "Vitally",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "voiceflow",
+      "name": "Voiceflow",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "vtex",
+      "name": "VTEX",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "waboxapp",
+      "name": "waboxapp",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wachete",
+      "name": "Wachete",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wakatime",
+      "name": "WakaTime",
+      "category": "Time tracking",
+      "blurb": "Read WakaTime coding time, languages, and projects.",
+      "auth": "composio"
+    },
+    {
+      "id": "wappalyzer",
+      "name": "Wappalyzer",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "waterfall",
+      "name": "Waterfall",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "weatherapi",
+      "name": "WeatherAPI",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "weatherbit",
+      "name": "Weatherbit",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "weaviate",
+      "name": "Weaviate",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "webex",
+      "name": "Webex",
+      "category": "Communication",
+      "blurb": "Read Webex rooms, messages, and meeting metadata.",
+      "auth": "composio"
+    },
+    {
+      "id": "webflow",
+      "name": "Webflow",
+      "category": "CMS",
+      "blurb": "Read Webflow sites, collections, and items.",
+      "auth": "composio"
+    },
+    {
+      "id": "webinarjam",
+      "name": "WebinarJam",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "webscraper_io",
+      "name": "WebScraper.io",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "webscraping_ai",
+      "name": "WebScraping.AI",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "webshare",
+      "name": "Webshare",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "webvizio",
+      "name": "Webvizio",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wecom_bot",
+      "name": "WeCom Bot",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "what3words",
+      "name": "what3words",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "whatsapp",
+      "name": "WhatsApp",
+      "category": "Communication",
+      "blurb": "Read WhatsApp Business conversations and message metadata.",
+      "auth": "composio"
+    },
+    {
+      "id": "whoisfreaks",
+      "name": "WhoisFreaks",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "whop",
+      "name": "Whop",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "winston_ai",
+      "name": "Winston AI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wise",
+      "name": "Wise",
+      "category": "Finance",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wit_ai",
+      "name": "Wit.ai",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wiza",
+      "name": "Wiza",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wolfram_alpha_api",
+      "name": "Wolfram|Alpha",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "woocommerce",
+      "name": "WooCommerce",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "custom_credential"
+    },
+    {
+      "id": "woodpecker_co",
+      "name": "Woodpecker.co",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wordpress",
+      "name": "WordPress",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "workable",
+      "name": "Workable",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "workday",
+      "name": "Workday",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "workiom",
+      "name": "Workiom",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "workos",
+      "name": "WorkOS",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "workpath",
+      "name": "Workpath",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "worksnaps",
+      "name": "Worksnaps",
+      "category": "Productivity",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "world_news_api",
+      "name": "World News API",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wrike",
+      "name": "Wrike",
+      "category": "Project management",
+      "blurb": "Query Wrike folders, tasks, and custom fields.",
+      "auth": "composio"
+    },
+    {
+      "id": "writer",
+      "name": "Writer",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "wttr_in",
+      "name": "wttr.in",
+      "category": "Location",
+      "blurb": "",
+      "auth": "no_auth"
+    },
+    {
+      "id": "x_ai",
+      "name": "xAI",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "xata",
+      "name": "Xata",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "xero",
+      "name": "Xero",
+      "category": "Accounting",
+      "blurb": "Read Xero invoices, contacts, and ledgers.",
+      "auth": "composio"
+    },
+    {
+      "id": "yandex",
+      "name": "Yandex",
+      "category": "Search",
+      "blurb": "Query Yandex services such as search and translate.",
+      "auth": "composio"
+    },
+    {
+      "id": "yelp",
+      "name": "Yelp",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "ynab",
+      "name": "YNAB",
+      "category": "Finance",
+      "blurb": "Read YNAB budgets, accounts, and transactions.",
+      "auth": "composio"
+    },
+    {
+      "id": "you",
+      "name": "You.com",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "category": "Video",
+      "blurb": "Read YouTube channels, videos, comments, and analytics.",
+      "auth": "composio"
+    },
+    {
+      "id": "yuandian",
+      "name": "Yuan Dian",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "zendesk",
+      "name": "Zendesk",
+      "category": "Support",
+      "blurb": "Read Zendesk tickets, users, and help center articles.",
+      "auth": "composio"
+    },
+    {
+      "id": "zenrows",
+      "name": "ZenRows",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "zenserp",
+      "name": "Zenserp",
+      "category": "Data",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "zeplin",
+      "name": "Zeplin",
+      "category": "Design & Media",
+      "blurb": "",
+      "auth": "oauth2"
+    },
+    {
+      "id": "zerobounce",
+      "name": "ZeroBounce",
+      "category": "Communication",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "zhihu",
+      "name": "Zhihu",
+      "category": "AI",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "zigpoll",
+      "name": "Zigpoll",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "zipcodebase",
+      "name": "Zipcodebase",
+      "category": "Location",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "zixflow",
+      "name": "Zixflow",
+      "category": "Marketing",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "zoho",
+      "name": "Zoho",
+      "category": "CRM",
+      "blurb": "Query Zoho CRM modules, records, and reports.",
+      "auth": "composio"
+    },
+    {
+      "id": "zohobigin",
+      "name": "Zoho Bigin",
+      "category": "CRM",
+      "blurb": "Read Zoho Bigin pipelines, deals, and contacts.",
+      "auth": "composio"
+    },
+    {
+      "id": "zohobooks",
+      "name": "Zoho Books",
+      "category": "Finance",
+      "blurb": "Read Zoho Books invoices, customers, and ledgers.",
+      "auth": "composio"
+    },
+    {
+      "id": "zohodesk",
+      "name": "Zoho Desk",
+      "category": "Support",
+      "blurb": "Query Zoho Desk tickets, agents, and departments.",
+      "auth": "composio"
+    },
+    {
+      "id": "zohoinventory",
+      "name": "Zoho Inventory",
+      "category": "Commerce",
+      "blurb": "Read Zoho Inventory items, orders, and warehouses.",
+      "auth": "composio"
+    },
+    {
+      "id": "zohoinvoice",
+      "name": "Zoho Invoice",
+      "category": "Finance",
+      "blurb": "Read Zoho Invoice invoices, estimates, and customers.",
+      "auth": "composio"
+    },
+    {
+      "id": "zohomail",
+      "name": "Zoho Mail",
+      "category": "Email",
+      "blurb": "Search Zoho Mail folders and messages.",
+      "auth": "composio"
+    },
+    {
+      "id": "zoom",
+      "name": "Zoom",
+      "category": "Meetings",
+      "blurb": "Read Zoom meetings, recordings, and participant metadata.",
+      "auth": "composio"
+    },
+    {
+      "id": "zoominfo",
+      "name": "Zoominfo",
+      "category": "Sales intelligence",
+      "blurb": "Query ZoomInfo companies, contacts, and intent signals.",
+      "auth": "composio"
+    },
+    {
+      "id": "zorus",
+      "name": "Zorus",
+      "category": "Security",
+      "blurb": "",
+      "auth": "api_key"
+    },
+    {
+      "id": "zyte_api",
+      "name": "Zyte API",
+      "category": "Developer Tools",
+      "blurb": "",
+      "auth": "api_key"
+    }
+  ]
+}
