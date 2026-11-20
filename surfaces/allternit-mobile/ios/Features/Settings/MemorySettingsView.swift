@@ -319,7 +319,7 @@ private struct MemoryAboutYouSection: View {
     let refreshToken: Int
     @EnvironmentObject private var authManager: AuthManager
 
-    private enum Phase: Equatable { case loading, unavailable, failed(String), ready }
+    private enum Phase: Equatable { case loading, unavailable, noComputer, failed(String), ready }
 
     @State private var phase: Phase = .loading
     @State private var profile = TwinProfile(displayName: "", speakingStyle: "", signature: "", ownerDisclosure: "", updatedAt: nil)
@@ -345,6 +345,9 @@ private struct MemoryAboutYouSection: View {
                     }
                 case .unavailable:
                     Text("Your twin isn't available on this computer yet. Update Allternit Desktop, then pull to refresh.")
+                        .font(.footnote).foregroundColor(Color("TextSecondary"))
+                case .noComputer:
+                    Text("Your profile is kept on your computer. Add a computer to see and edit it.")
                         .font(.footnote).foregroundColor(Color("TextSecondary"))
                 case .failed(let message):
                     FriendlyInlineStateView(
@@ -451,7 +454,7 @@ private struct MemoryAboutYouSection: View {
             phase = .ready
         } catch is CancellationError {
         } catch {
-            if phase != .ready { phase = .failed(SettingsLoadFailure.from(error).message) }
+            if phase != .ready { phase = memoryNeedsComputer(error) ? .noComputer : .failed(SettingsLoadFailure.from(error).message) }
         }
     }
 
@@ -516,6 +519,7 @@ private struct MemoryItemsSection: View {
     @State private var loading = true
     @State private var twinError: String? = nil
     @State private var factsError: String? = nil
+    @State private var noComputer = false
     @State private var search = ""
     @State private var editingTwin: TwinMemory? = nil
     @State private var editingFact: MemoryFact? = nil
@@ -606,6 +610,12 @@ private struct MemoryItemsSection: View {
     private var list: some View {
         if loading && twinItems.isEmpty && facts.isEmpty {
             HStack { Spacer(); ProgressView().padding(.vertical, 20); Spacer() }
+        } else if noComputer && twinItems.isEmpty && facts.isEmpty {
+            // No computer paired: calm, not an error. Sleep below has the one "Add a computer" button.
+            Text("Your memories are kept on your computer. Add a computer to see and edit them.")
+                .font(.footnote).foregroundColor(Color("TextSecondary"))
+                .padding(.vertical, 8)
+                .accessibilityIdentifier("memoryNoComputer")
         } else if let message = twinError ?? factsError, twinItems.isEmpty && facts.isEmpty {
             FriendlyInlineStateView(
                 style: .error, icon: "exclamationmark.triangle",
@@ -680,14 +690,20 @@ private struct MemoryItemsSection: View {
         defer { loading = false }
         async let twin = Result { try await TwinClient.shared.memory() }
         async let learned = Result { try await MemoryFactsClient.shared.list() }
-        switch await twin {
+        let twinResult = await twin
+        let learnedResult = await learned
+        var gated = 0
+        if case .failure(let e) = twinResult, memoryNeedsComputer(e) { gated += 1 }
+        if case .failure(let e) = learnedResult, memoryNeedsComputer(e) { gated += 1 }
+        noComputer = gated > 0
+        switch twinResult {
         case .success(let items): twinItems = items; twinError = nil
         case .failure(let e):
             // 404 = no twin routes on this computer yet; not an error to show.
             if case APIError.httpError(let status, _) = e, status == 404 { twinItems = []; twinError = nil }
             else { twinError = e.localizedDescription }
         }
-        switch await learned {
+        switch learnedResult {
         case .success(let items): facts = items; factsError = nil
         case .failure(let e):
             if case APIError.httpError(let status, _) = e, status == 404 { facts = []; factsError = nil }
@@ -773,4 +789,14 @@ private struct MemoryFactEditor: View {
             }
         }
     }
+}
+
+/// True when a memory call failed because no computer is paired (428 from the
+/// cloud, or the 503 the app raises itself with no runtime). Memory lives on
+/// the computer, so this is a calm state, not an error.
+func memoryNeedsComputer(_ error: Error) -> Bool {
+    if let relay = error as? RuntimeRelayError, case .noComputer = relay { return true }
+    guard let api = error as? APIError else { return false }
+    if case .httpError(let status, _) = api, status == 428 || status == 503 { return true }
+    return api.isComputeGateRefusal
 }

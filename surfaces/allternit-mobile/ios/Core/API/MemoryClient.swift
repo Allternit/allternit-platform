@@ -169,7 +169,7 @@ struct MemorySleepError: Error, LocalizedError, Equatable, Sendable {
         .notFound: "That sleep wasn't found.",
         .refused: "Sleep is off. Turn it on above.",
         .conflict: "This changed since you opened it.",
-        .noComputer: "Memory still works. Sleep runs on your computer: open Allternit Desktop or pair one to use it.",
+        .noComputer: "Memory and Sleep run on your computer. Open Allternit Desktop or pair a computer to use them.",
         .computerOffline: "Your computer isn't responding. Open Allternit Desktop or wake your cloud computer, then try again.",
         .server: "Sleep is unavailable right now. Try again in a moment.",
     ]
