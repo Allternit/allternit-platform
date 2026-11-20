@@ -265,7 +265,7 @@ struct ACIPairComputerSheet: View {
                     VStack(alignment: .leading, spacing: 12) {
                         step(1, Text("Install Allternit Desktop on the computer."))
                         step(2, Text("Open it and sign in with the same account you use on this phone. Or open a terminal on the computer and run ")
-                             + Text("ao fabric pair").font(.system(size: 14, design: .monospaced))
+                             + Text("gizzi pair").font(.system(size: 14, design: .monospaced))
                              + Text("."))
                         step(3, Text("Return to Computers on your phone. Tap your computer to open its live desktop."))
                     }

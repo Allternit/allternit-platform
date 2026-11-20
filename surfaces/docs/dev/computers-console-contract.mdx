@@ -1,0 +1,153 @@
+---
+title: "Computers console contract"
+description: "Node routes, cloud routes, JSON shapes, actions, approvals and cloud settings behind the Computers console."
+---
+
+This is the developer contract for the Computers console: one screen that shows every computer you own (cloud, paired, and this machine) with live health, services, ports, updates, findings and logs. It is the reference all surfaces build against (web, phone layout, PWA, Desktop, iOS, Android, Gizzi Code, `cmd/cli`).
+
+Status: contract agreed 2026-11-20 and not built yet. Migrations 153, 154 and 155 are named here; the SQL files do not exist yet.
+
+## Decisions (D1 to D10)
+
+| Id | Decision |
+|---|---|
+| D1 | The collector is a new Rust crate, `host-probe`, mounted at loopback `/v1/host/*` by allternit-api and the ao shim. Rejected: the gizzi fabric-worker, a Node server, pushed Python scripts. |
+| D2 | Node routes are a fixed set under `/v1/host/*` (below). |
+| D3 | Cloud serves a list route, a relay proxy and a metrics route. The cloud never polls computers. |
+| D4 | Each node adds a 60 second sample to its heartbeat. The cloud keeps 48 hours of samples with a 5 minute rollup. |
+| D5 | The probe is unprivileged and read-only. Changes need an approval id and write a change record first. |
+| D6 | A restore point comes before a fix (rule below). |
+| D7 | One pairing path: runtime pairing. See [Computer pairing](/dev/computer-pairing). |
+| D8 | Cloud computer settings (below). |
+| D9 | SSH uses per-computer keys plus short-lived agent keys. |
+| D10 | Web sheets are ConnectSheet panels, drawn with the neutral scale (no tan Space palette). |
+
+## Node routes (loopback `/v1/host/*`)
+
+Served by `host-probe` on every runtime (allternit-api and the ao shim). Read routes need no approval. The one write route is `POST /v1/host/actions`.
+
+| Route | Returns |
+|---|---|
+| `GET /v1/host/snapshot` | `HostSnapshot` |
+| `GET /v1/host/services` | `{ services: HostService[] }` |
+| `GET /v1/host/ports` | `{ ports: HostPort[] }` |
+| `GET /v1/host/updates` | `{ updates: HostUpdate[] }` |
+| `GET /v1/host/findings` | `{ findings: HostFinding[] }` |
+| `GET /v1/host/logs/stream?unit=` | Server-sent events, one `LogLine` JSON object per `data:` line |
+| `POST /v1/host/actions` | `HostActionResult` |
+
+### HostSnapshot
+
+| Field | Type |
+|---|---|
+| `sampledAt` | ISO 8601 string |
+| `uptimeSec` | number |
+| `os` | `{ name: string, version: string, family: 'linux' \| 'macos' \| 'windows', arch: string }` |
+| `cpu` | `{ percent: number, cores: number, load1?: number }` |
+| `memory` | `{ usedBytes: number, totalBytes: number }` |
+| `disk` | `{ mount: string, usedBytes: number, totalBytes: number }[]` |
+| `net` | `{ rxBytesPerSec: number, txBytesPerSec: number }` |
+
+### HostService
+
+`{ name: string, unit: string, state: 'running' | 'stopped' | 'failed' | 'unknown', enabled: boolean, description?: string, pid?: number, memoryBytes?: number }`
+
+Linux uses systemd units, macOS uses launchd jobs, Windows uses services.
+
+### HostPort
+
+`{ port: number, protocol: 'tcp' | 'udp', address: string, process?: string, pid?: number, exposure: 'loopback' | 'lan' | 'public' }`
+
+### HostUpdate
+
+`{ id: string, name: string, current?: string, available: string, security: boolean, kind: 'package' | 'os' }`
+
+### HostFinding
+
+`{ id: string, severity: 'info' | 'warning' | 'critical', category: 'disk' | 'security' | 'service' | 'update' | 'config', title: string, detail: string, suggestedAction?: HostAction }`
+
+### LogLine
+
+`{ ts: string, unit: string, level: 'debug' | 'info' | 'warn' | 'error', message: string }`
+
+Logs are masked at the node (tokens, keys, passwords, and email local parts are replaced before the line leaves the machine). Retention is **off by default**: the cloud never stores log lines unless the user turns retention on for that computer.
+
+### Actions
+
+`POST /v1/host/actions` body: `{ type, target, approval_id }`. Response: `{ change_id: string, undo?: { type: string, target: string, label: string } }` (the TypeScript names are camelCase: `changeId`).
+
+The action list is fixed:
+
+| `type` | `target` |
+|---|---|
+| `service.start` | service unit name |
+| `service.stop` | service unit name |
+| `service.restart` | service unit name |
+| `port.free` | port number (stops the owning process) |
+| `updates.install` | update id, or `all-security` |
+| `space.clean` | clean-up item id from a finding |
+| `snippet.run` | saved snippet id |
+
+An unknown `type` returns 400. A missing or unapproved `approval_id` returns 403 and changes nothing.
+
+## Cloud routes (allternit-cloud-api)
+
+| Route | Behaviour |
+|---|---|
+| `GET /api/v1/computers/console` | One list of `ConsoleComputer` rows: kind `cloud` \| `paired` \| `desktop`, group, provider, region, os, address, last sample, services count, last backup. |
+| `GET /api/v1/computers/:id/host/*` and `POST` | Relay proxy to the node's `/v1/host/*`, after an access-tier check (owner or organization member, same rule as `paired_computers.rs` `may_use`). |
+| `GET /api/v1/computers/:id/metrics?window=24h` | `MetricSeries[]` from `computer_metric_samples`. |
+
+Rules:
+
+- An asleep cloud computer answers the relay with **409** `{ error: 'asleep', lastSample }`. The console never wakes a computer to read it.
+- The relay allow-list on the cloud side is `is_allowed_runtime_path` in `cmd/allternit-cloud-api/src/routes/runtime_relay.rs:1686-1709`. The prefix `/v1` is already allowed, so `/v1/host/*` needs no new entry. The capability strings at `relay.rs:42-47` in the node are capability names, not paths.
+- Offline, CPU and disk alert rules push to the phone and Desktop.
+
+## Approval, change record and undo
+
+1. The user approves one concrete action in the console. The cloud issues an `approval_id` bound to that action, that computer and that user.
+2. The node writes a change record first (runtime home, not the platform database), then runs the action, then logs to audit.
+3. `change_id` points at the record. If the action can be reversed, the response carries `undo`, which is itself an action that needs its own approval.
+
+## Restore point rule
+
+- Cloud computer: the latest Orgo daily backup is recorded with the change record. If no backup is newer than 24 hours the console says so before the user approves.
+- Paired computer: the change record only.
+- On-demand Orgo disk snapshots are unsupported and show a plain message.
+
+## Privileged helper model
+
+The probe never runs as root and no password is stored. Changes that need elevation use a one-time setup that the user approves:
+
+| OS | Helper |
+|---|---|
+| Linux | A sudoers drop-in that allows one helper binary only. |
+| macOS | A privileged launchd helper, installed once. |
+| Windows | An elevated service, installed once. |
+| Orgo cloud | Already root, no setup. |
+
+## SSH key model
+
+Each computer gets its own key. Agents get short-lived keys. The probe writes a marked `authorized_keys` block and only edits inside the markers. Paired computers are reached over their mesh IP (the mesh `autogroup:self` rule is untouched). Cloud computers use the Orgo SSH endpoint. Mesh stays off for cloud computers.
+
+## Cloud computer settings (Orgo)
+
+`CloudComputerSettings`: `{ location, sizeId, diskGb, sleepAfterMin, wakePolicy, image }`.
+
+- Location is chosen on create: `nyc`, `chi`, `lon` or `syd`. Move, restart, resize, grow disk, clone and rebuild are supported.
+- Rebuild is delete, create and first boot in the same location. It is held until a backup check passes, because it destroys the only disk copy.
+- Daily backups are on.
+- Image is Ubuntu only (`image: 'ubuntu'`). Starter templates ship only if their `setup.sh` passes.
+- Public URLs are out of scope.
+- Resize, grow, clone and region prices are read from one real request before the UI ships (Eoj gate G3).
+
+## Migrations
+
+| Number | Content |
+|---|---|
+| 153 | Pairing link (`paired_computers.runtime_device_id`), instance location and template |
+| 154 | `computer_metric_samples`, alert rules |
+| 155 | SSH keys, snippets |
+
+Take the next free number above origin/main and open PRs when the files are written. Production applies migrations through the cloud-api deploy, not sqlx (see the cloud-api deploy notes).
