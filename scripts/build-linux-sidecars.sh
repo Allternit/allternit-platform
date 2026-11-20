@@ -203,7 +203,14 @@ for c in "${COMPONENTS[@]}"; do
       [ -n "$CUA_VERSION" ] && [ -n "$CUA_COMMIT" ] || { echo "VERSION / LINUX_SOURCE_COMMIT not found in $PREP" >&2; exit 1; }
       TDC="${CARGO_TARGET_DIR:-$REPO/target}/cua"; mkdir -p "$TDC"
       CUA_SRC="${CUA_SRC_DIR:-$TDC/src-$CUA_VERSION}"
-      [ -d "$CUA_SRC/.git" ] || git clone -q --depth 1 --branch "cua-driver-rs-v$CUA_VERSION" https://github.com/trycua/cua.git "$CUA_SRC"
+      # A src dir restored from a CI target cache can hold a pruned .git; git then walks up to
+      # the outer repo and rev-parse returns ITS HEAD. Re-clone unless the dir is its own repo
+      # at the pinned commit.
+      if [ "$(git -C "$CUA_SRC" rev-parse --show-toplevel 2>/dev/null)" != "$(cd "$CUA_SRC" 2>/dev/null && pwd -P)" ] \
+         || [ "$(git -C "$CUA_SRC" rev-parse HEAD 2>/dev/null)" != "$CUA_COMMIT" ]; then
+        rm -rf "$CUA_SRC"
+        git clone -q --depth 1 --branch "cua-driver-rs-v$CUA_VERSION" https://github.com/trycua/cua.git "$CUA_SRC"
+      fi
       [ "$(git -C "$CUA_SRC" rev-parse HEAD)" = "$CUA_COMMIT" ] || { echo "trycua/cua tag cua-driver-rs-v$CUA_VERSION is not commit $CUA_COMMIT" >&2; exit 1; }
       # The workspace pins its own toolchain (rust-toolchain.toml); rustup installs it.
       [ -n "$ZB_READY" ] || { setup_zigbuild; ZB_READY=1; }
