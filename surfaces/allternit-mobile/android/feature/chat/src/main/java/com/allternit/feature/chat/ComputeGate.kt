@@ -55,7 +55,7 @@ private const val DOWNLOAD_URL = "https://www.allternit.com/download"
  * a computer, and the composer keeps the draft.
  */
 @Composable
-internal fun ComputeGateCard(reason: ComputeGateReason, backend: ChatBackend, onConnected: () -> Unit, onDismiss: () -> Unit) {
+fun ComputeGateCard(reason: ComputeGateReason, backend: ChatBackend, onConnected: () -> Unit, onDismiss: () -> Unit) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
