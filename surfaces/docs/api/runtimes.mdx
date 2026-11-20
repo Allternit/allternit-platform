@@ -1,0 +1,150 @@
+---
+title: "Runtimes API"
+description: "GET /api/v1/runtimes on cloud-api and on a computer's runtime: the runtime registry, its caching, the installed map on your own computer, and the bot record fields that name a runtime."
+---
+
+A runtime is the program a bot runs in: Allternit itself, or a coding CLI such as Claude Code, Codex, Kimi or Antigravity. The brain is the model that runtime uses. Every picker (Desktop, ai.allternit.com, the phone apps and Gizzi Code) reads the same list of runtimes from this endpoint, so they always offer the same choices.
+
+The list is the `runtimes` array of `cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json` (version 3). Both servers build it into their binary, so a new runtime arrives with a new release, not at run time.
+
+## GET /api/v1/runtimes
+
+No sign-in needed. Two servers answer the same path with the same list:
+
+- **cloud-api** answers web and phones, so the picker works with no computer.
+- **allternit-api** on a computer answers Desktop. When the caller owns that computer, it also adds `installed` (see [What is installed](#what-is-installed)).
+
+```bash
+curl https://<cloud-api>/api/v1/runtimes
+```
+
+```json
+{
+  "version": 3,
+  "runtimes": [
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "vendor": "Anthropic",
+      "category": "coding",
+      "tool": "claude-cli",
+      "aliases": ["claude-cli"],
+      "adapter": { "kind": "stream-json" },
+      "brains": ["anthropic"],
+      "access": ["plan", "key"],
+      "more": false,
+      "systemLayer": { "via": "append-flag" },
+      "look": { "default": "terminal", "terminal": { "kind": "tui", "bg": "#1a1918" } },
+      "docs": "https://code.claude.com/docs"
+    }
+  ]
+}
+```
+
+The example is shortened. A real `look` carries the full set of tokens.
+
+| Field | Meaning |
+|---|---|
+| `id` | The runtime id a bot record stores. For a CLI that already had a native harness id (`claude`, `codex`, `kimi`), it is that id. |
+| `tool` | The CLI in the catalog's `tools` list that this runtime runs. `null` for the Allternit runtime. |
+| `aliases` | Other ids that name the same runtime, for example `agy` for `antigravity`. Lookups ignore case. |
+| `adapter.kind` | How Allternit drives it: `native`, `acp`, `stream-json`, `codex-app-server`, `gateway`, `one-shot-json`, `text` or `unsupported`. |
+| `brains` | `"any"`, or the provider ids whose models this runtime can run. |
+| `access` | How a user pays for it: `plan`, `key`, `local`, `credits`. |
+| `more` | `true` puts it under "More" in the picker. |
+| `status` | An optional note to show, such as "API key or Enterprise only". |
+| `systemLayer.via` | How Allternit adds its rules to the runtime's own prompt. It only ever appends. |
+| `look` | Data-only drawing tokens for the runtime's own view (terminal or desktop). Clients draw them; the server never reads them and passes them through unchanged. |
+| `liveUi` | Present when the runtime has a web app of its own that can run on your computer. |
+| `legacy` | Older ids that map to this runtime: `harness` and `uhp`. |
+
+Clients ignore fields they do not know, so new fields can be added without a new version.
+
+### Caching
+
+- The response has a strong `ETag`. It is a hash of the catalog file, so it is the same on both servers and changes only when the file changes.
+- `Cache-Control: public, max-age=3600`.
+- Send the ETag back in `If-None-Match` to get `304 Not Modified` with no body.
+- Clients keep the last good copy and use it when the request fails, so the picker still opens offline.
+
+### What is installed
+
+When the caller owns the computer, allternit-api adds one more key. Ownership means the runtime belongs to one person (the Desktop app or a self-hosted install) and the request carries the Desktop access token or a valid signed-in session.
+
+```json
+{
+  "version": 3,
+  "runtimes": [],
+  "installed": {
+    "allternit": { "installed": true, "signedIn": true, "version": null },
+    "claude": { "installed": true, "signedIn": true, "version": null },
+    "codex": { "installed": false, "signedIn": false, "version": null }
+  }
+}
+```
+
+- `installed` and `signedIn` come from the same check the Connections page and `GET /api/v1/cli-tools/catalog` use.
+- `version` is `null` for now: that check does not read the CLI's version yet.
+- This response is per computer and per person, so it is sent with `Cache-Control: private, no-cache` and no ETag.
+- cloud-api never sends `installed`. Only your computer knows what is installed on it.
+
+## Bot record fields
+
+A bot's runtime and brain live in the agent's `config` ([Agents API](/api/agents)). All of these fields are optional, so older clients keep working.
+
+```json
+{
+  "config": {
+    "botBrain": {
+      "mode": "native_harness",
+      "harness": "claude",
+      "modelRef": { "providerID": "anthropic", "modelID": "claude-sonnet-5-5" },
+      "runtime": "claude",
+      "access": "plan",
+      "autoSwitchedFrom": "codex"
+    },
+    "agentView": { "view": "runtime", "look": "terminal" }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `botBrain.runtime` | The runtime `id` from the registry. |
+| `botBrain.access` | How this bot pays: `plan`, `key`, `local` or `credits`. |
+| `botBrain.autoSwitchedFrom` | Set when the picker changed the brain because the new runtime could not run the old one. The app shows a one-line note. |
+| `agentView` | Which view the bot opens in: `view` is `allternit`, `runtime` or `split`, and `look` is `terminal` or `desktop`. It is its own key, so saving `botBrain` never resets it. |
+| `botKind` | Read only, on `GET /api/v1/agents/:id` and the agent list. `connected` when the bot is run by another company's service (it has a vendor execution binding), otherwise `allternit`. It is computed on every read and never stored. |
+
+The fields `mode`, `harness`, `uhpHarnessId`, `nativeSessionId`, `modelRef` and `effort` are unchanged.
+
+### How the server fills in the record
+
+Each create, `PUT` or `PATCH` that carries `config.botBrain` passes through one normalizer before it is saved, so a record always has both the old and the new fields and they agree:
+
+- **No `runtime`.** It is worked out from the old fields:
+  - `allternit_cloud` becomes `allternit`.
+  - `native_harness` with harness h becomes the runtime whose `legacy.harness`, id or alias is h, or `custom` when there is none.
+  - `uhp_harness` becomes the runtime whose `legacy.uhp` holds `uhpHarnessId`, or `custom`.
+- **With `runtime`.** `mode` and `harness` are worked out from it. The Allternit runtime sets `mode: "allternit_cloud"`. A runtime with adapter `unsupported` sets `uhp_harness`. Any other runtime sets `native_harness` with its harness id.
+- **A runtime this server does not know** (a newer client may know more runtimes) is kept and treated as a native harness with that id. `custom` keeps the stored `mode` and `harness` as they are.
+- Every other key in `botBrain` is kept. An empty or missing `botBrain` is left alone.
+
+Config is merged one top-level key at a time. A client that saves only `botBrain` replaces that object, which is why `agentView` is a separate key.
+
+## Wire names that stay `vendor`
+
+In the apps and these docs, bots run by another company's service are called **Connected bots**. Their wire names did not change, and there is no `connected` alias:
+
+- the bot type `'vendor'`
+- the `vendor_bot_*` tables and `bot_execution_bindings.type = 'vendor'`
+- the MCP route `/mcp/bots/<id>`
+- the event `vendor.ticket.created`
+
+`botKind: "connected"` is the one place the new name appears in an API response, and it is read only.
+
+## Related
+
+- [Agents API](/api/agents) for the full agent record.
+- [Connections API](/api/connections) for signing in to the CLIs a runtime needs.
+- [Connected bots](/guides/vendor-bots) for the user guide.
