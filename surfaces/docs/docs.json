@@ -467,6 +467,8 @@
               "cli/studio",
               "cli/authentication",
               "cli/connect",
+              "cli/runtime",
+              "cli/bot",
               "cli/headless-execution",
               "cli/background-runs",
               "cli/output",

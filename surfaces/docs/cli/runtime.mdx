@@ -1,0 +1,71 @@
+---
+title: gizzi runtime
+description: "List the runtimes a bot can run on, and manage Gizzi's local runtime registry"
+---
+
+## Overview
+
+A **runtime** is the agent program a bot runs on: Allternit's own runtime, or a coding CLI such as Claude Code, Codex, Kimi or Antigravity. The **brain** is the model the runtime uses. Every surface reads the same runtime list (the `runtimes` array of `cli-catalog.json`), so the terminal, Desktop and the phone apps show the same choices.
+
+`gizzi runtime` has these subcommands:
+
+| Subcommand | What it does |
+|---|---|
+| `catalog` | List every runtime a bot can run on, grouped by category |
+| `runtimes` | List the runtimes registered in Gizzi's local daemon registry |
+| `register` | Find local agent CLIs and register them, or save a self-hosted Agents Server (`--self-hosted`) |
+| `status` | Show the local registry, or a saved self-hosted server |
+| `daemon` | Start a WebSocket runtime daemon for this machine |
+
+`runtimes`, `register`, `status` and `daemon` are also under `gizzi agents harness`. See [Agent daemon](/cli/agent-daemon) and [Self-hosted workers](/self-hosted/workers).
+
+## gizzi runtime catalog
+
+```bash
+gizzi runtime catalog          # the main runtimes
+gizzi runtime catalog --all    # also the ones under "More"
+gizzi runtime catalog --json   # every entry as JSON
+```
+
+The table has one section per category (Native, Coding, Personal, General, Experimental). Each row shows:
+
+| Column | Meaning |
+|---|---|
+| ID | The id to pass to `--runtime` (aliases such as `claude-cli` or `agy` work too) |
+| NAME | The display name |
+| ADAPTER | How Gizzi talks to it: `native`, `acp`, `stream-json`, `codex-app-server`, `gateway`, `one-shot-json`, `text` or `unsupported` |
+| BRAINS | `any` when the runtime can use any model, or `locked: <provider>` when it runs one vendor's models only (Claude Code runs Anthropic models, Codex runs OpenAI models) |
+| ACCESS | How you can pay for it: `[plan]` your own subscription, `[key]` an API key, `[local]` a model on your machine, `[credits]` Allternit credits |
+| LOCAL | `built in`, `installed` or `not installed`: whether the runtime's CLI is found on this machine, using the same lookup as model discovery |
+| STATUS | A note when one applies, for example "API key or Enterprise only" |
+
+Example (columns trimmed):
+
+```text
+  ID           NAME         ADAPTER           BRAINS             ACCESS                          LOCAL          STATUS
+
+Native (1)
+  allternit    Allternit    native            any                [plan] [key] [local] [credits]  built in
+
+Coding (19)
+  claude       Claude Code  stream-json       locked: anthropic  [plan] [key]                    installed
+  codex        Codex        codex-app-server  locked: openai     [plan] [key]                    not installed
+  ...
+
+12 more runtimes hidden. Show them with --all.
+```
+
+The table hides runtimes marked "More" unless you pass `--all`. `--json` always prints every entry, each with its `more` flag, so a script can filter them itself. When the CLI lookup applies, an entry also gets `installed: true | false`.
+
+| Flag | What it does |
+|---|---|
+| `--all` | Include the runtimes under "More" in the table |
+| `--json` | Print every registry entry as JSON, with an `installed` field where it is known |
+
+## Pick a runtime for a bot
+
+Use `--runtime` and `--brain` on `gizzi agents bot create` and `gizzi agents bot edit`. See [gizzi agents bot](/cli/bot).
+
+```bash
+gizzi agents bot edit reviewer --runtime claude
+```
