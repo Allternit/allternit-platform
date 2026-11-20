@@ -23,17 +23,15 @@
 //! Ports are filled in later by the `ports` module, so they are not here.
 
 use std::collections::HashMap;
-use std::io::Read;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::cmd::{first_line, run};
 use crate::{OsFamily, ProbeError, Result};
 
-/// How long any one command may run.
-pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+pub use crate::cmd::COMMAND_TIMEOUT;
 
 /// Normalized service state. Serialized as `running` | `stopped` | `failed` | `unknown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,10 +84,14 @@ pub struct HostService {
     /// ISO 8601 UTC time it last became active, when the provider says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<String>,
+    /// Ports the service's main process listens on. Filled by
+    /// [`crate::ports::services_with_ports`]; empty from [`services`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<u16>,
 }
 
 impl HostService {
-    fn new(
+    pub(crate) fn new(
         provider: ServiceProvider,
         name: impl Into<String>,
         unit: impl Into<String>,
@@ -106,6 +108,7 @@ impl HostService {
             provider,
             cpu_percent: None,
             since: None,
+            ports: Vec::new(),
         }
     }
 }
@@ -194,89 +197,6 @@ pub fn services_report(opts: &ServiceOptions) -> Result<ServicesReport> {
 
     enrich_with_process_stats(&mut services);
     Ok(ServicesReport { services, providers })
-}
-
-// ---------------------------------------------------------------------------
-// Command runner
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-struct CmdOutput {
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
-}
-
-#[derive(Debug)]
-enum RunError {
-    NotFound,
-    Timeout,
-    Io(String),
-}
-
-impl RunError {
-    fn reason(&self, program: &str) -> String {
-        match self {
-            RunError::NotFound => format!("{program} not found"),
-            RunError::Timeout => format!("{program} timed out"),
-            RunError::Io(e) => format!("{program}: {e}"),
-        }
-    }
-}
-
-/// Run `program args` with no shell and a timeout; the child is killed when
-/// the timeout passes.
-fn run(program: &str, args: &[&str], timeout: Duration) -> std::result::Result<CmdOutput, RunError> {
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                RunError::NotFound
-            } else {
-                RunError::Io(e.to_string())
-            }
-        })?;
-
-    fn drain<R: Read + Send + 'static>(r: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(mut r) = r {
-                let _ = r.read_to_end(&mut buf);
-            }
-            buf
-        })
-    }
-    let out_h = drain(child.stdout.take());
-    let err_h = drain(child.stderr.take());
-
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) => {
-                if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    // Reader threads end when the pipes close; do not block on
-                    // them if a grandchild still holds a pipe open.
-                    return Err(RunError::Timeout);
-                }
-                std::thread::sleep(Duration::from_millis(15));
-            }
-            Err(e) => return Err(RunError::Io(e.to_string())),
-        }
-    };
-    let stdout = out_h.join().unwrap_or_default();
-    let stderr = err_h.join().unwrap_or_default();
-    Ok(CmdOutput {
-        code: status.code(),
-        stdout: String::from_utf8_lossy(&stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr).into_owned(),
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -780,10 +700,6 @@ fn enrich_with_process_stats(services: &mut [HostService]) {
     }
 }
 
-fn first_line(s: &str) -> String {
-    s.lines().find(|l| !l.trim().is_empty()).unwrap_or("no output").trim().to_string()
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1007,29 +923,6 @@ mod tests {
         assert!(v.get("description").is_none() && v.get("since").is_none());
         let back: HostService = serde_json::from_value(v).unwrap();
         assert_eq!(back, s);
-    }
-
-    #[test]
-    fn missing_program_is_not_found() {
-        let r = run("allternit-no-such-program-xyz", &[], Duration::from_secs(1));
-        assert!(matches!(r, Err(RunError::NotFound)));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn slow_command_times_out() {
-        let t = Instant::now();
-        let r = run("sleep", &["5"], Duration::from_millis(150));
-        assert!(matches!(r, Err(RunError::Timeout)));
-        assert!(t.elapsed() < Duration::from_secs(2));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn runner_captures_output_without_a_shell() {
-        let o = run("echo", &["a;b $HOME"], Duration::from_secs(2)).unwrap();
-        assert_eq!(o.code, Some(0));
-        assert_eq!(o.stdout.trim(), "a;b $HOME", "arguments are not interpreted");
     }
 
     #[test]

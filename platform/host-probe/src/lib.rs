@@ -14,15 +14,21 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod cmd;
 pub mod os;
+pub mod ports;
 pub mod services;
 pub mod snapshot;
+pub mod updates;
 
+pub use cmd::SourceStatus;
+pub use ports::{ports, ports_report, services_with_ports, Exposure, HostPort, PortsReport, Protocol};
 pub use services::{
     services, services_report, HostService, ProviderStatus, ServiceOptions, ServiceProvider, ServiceState,
     ServicesReport,
 };
 pub use snapshot::{snapshot, Sampler, SNAPSHOT_INTERVAL};
+pub use updates::{updates, updates_report, HostUpdate, UpdateKind, UpdateOptions, UpdateSource, UpdatesReport};
 
 /// Errors from the probe.
 #[derive(Debug, thiserror::Error)]
