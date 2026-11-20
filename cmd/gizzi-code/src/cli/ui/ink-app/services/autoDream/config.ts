@@ -5,7 +5,7 @@
 
 import { getInitialSettings } from '../../utils/settings/settings'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/growthbook'
-import { serverDreamingActiveSync } from '../../../../../runtime/memory/drive/paths'
+import { serverDreamingActiveSync, sleepActiveSync } from '../../../../../runtime/memory/drive/paths'
 /**
  * Whether background memory consolidation should run. User setting
  * (autoDreamEnabled in settings.json) overrides the GrowthBook default
@@ -15,6 +15,8 @@ export function isAutoDreamEnabled(): boolean {
   // The Memory Drive's server-side nightly Dream owns consolidation when it
   // is on for this account; a local dream would compete with it.
   if (serverDreamingActiveSync()) return false
+  // Allternit Sleep (server cycle) consolidates too when it is on: one consolidator only.
+  if (sleepActiveSync()) return false
   const setting = getInitialSettings().autoDreamEnabled
   if (setting !== undefined) return setting
   const gb = getFeatureValue_CACHED_MAY_BE_STALE<{ enabled?: unknown } | null>(

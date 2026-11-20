@@ -2,6 +2,7 @@ import { BusEvent } from "@/shared/bus/bus-event"
 import { Bus } from "@/shared/bus"
 import { Instance } from "@/runtime/context/project/instance"
 import z from "zod/v4"
+import { SleepTriggers } from "@/runtime/memory/sleep/triggers"
 
 export namespace SessionStatus {
   export const Info = z
@@ -79,6 +80,9 @@ export namespace SessionStatus {
         sessionID,
       })
       delete state()[sessionID]
+      // Allternit Sleep: a quiet session starts its idle timer (cache TTL).
+      // No-op for sessions without a top-level prompt here (subagents).
+      SleepTriggers.sessionIdle(sessionID)
       return
     }
     state()[sessionID] = status

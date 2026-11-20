@@ -47,6 +47,7 @@ import {
   type DriveAccount,
 } from "./paths"
 import type { DriveOverview } from "./report"
+import { sleepEnabled } from "../sleep/client"
 import {
   DrivePlatform,
   readAccountStore,
@@ -348,6 +349,8 @@ export namespace MemoryDrive {
     await personal.sync()
     const mounted = await refreshMounts(account).catch(() => [] as DriveMount[])
     await refreshSettings().catch(() => {})
+    // Prime the Sleep status (and its cached bit for the sync autoDream gate).
+    await sleepEnabled().catch(() => false)
     for (const mount of mounted.filter((m) => m.ref !== "personal").slice(0, MAX_MOUNTS)) {
       await (await open(mount.ref)).sync().catch((error) => log.info("mounted drive sync failed", { ref: mount.ref, error: String(error) }))
     }
@@ -400,7 +403,8 @@ export namespace MemoryDrive {
     if (!account.signedIn) return false
     const settings = await DrivePlatform.settings(ref)
     await updateAccountStore(account, (s) => {
-      s.settings = { ...s.settings, [ref]: { dreaming_enabled: !!settings.dreaming_enabled, at: new Date().toISOString() } }
+      // Merge: the Sleep status bit (sleep_enabled) lives in the same entry.
+      s.settings = { ...s.settings, [ref]: { ...s.settings?.[ref], dreaming_enabled: !!settings.dreaming_enabled, at: new Date().toISOString() } }
     })
     return !!settings.dreaming_enabled
   }

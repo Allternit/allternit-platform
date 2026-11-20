@@ -19,6 +19,7 @@ import { ProviderTransform } from "@/runtime/providers/adapters/transform"
 import { SessionTrace } from "@/runtime/session/trace"
 import { Todo } from "@/runtime/session/todo"
 import { HookDispatcher } from "@/runtime/hooks/dispatcher"
+import { SleepTriggers } from "@/runtime/memory/sleep/triggers"
 
 export namespace SessionCompaction {
   const log = Log.create({ service: "session.compaction" })
@@ -125,6 +126,8 @@ export namespace SessionCompaction {
     abort: AbortSignal
     auto: boolean
   }) {
+    // Allternit Sleep: fire-and-forget, never awaited, so compaction runs with the API down.
+    SleepTriggers.preCompact(input.sessionID)
     await HookDispatcher.emit({
       name: "PreCompact",
       timestamp: Date.now(),

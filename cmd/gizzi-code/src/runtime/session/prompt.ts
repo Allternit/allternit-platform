@@ -98,6 +98,8 @@ import { SessionLimit } from "@/runtime/session/limit"
 import type { QuotaWindow } from "@/runtime/providers/quota"
 import { Budget } from "@/runtime/session/budget"
 import * as TurnRouter from "@/runtime/routing/turn-router"
+import { SleepTriggers } from "@/runtime/memory/sleep/triggers"
+import { PROMPT_CACHE_TTL_S } from "@/shared/util/cache-countdown"
 
 // @ts-ignore — suppress ai-sdk stdout warnings (see server.ts for details)
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -393,6 +395,10 @@ const message = await createUserMessage(input)
     if (input.noReply === true) {
       return message
     }
+
+    // Allternit Sleep: a new prompt cancels the idle timer (and sends
+    // `resume` after an `idle`). Top-level sessions only; fire-and-forget.
+    if (!session.parentID) SleepTriggers.promptArrived(input.sessionID, PROMPT_CACHE_TTL_S)
 
     // Usage limits (P3.17): a paused session holds the turn until it
     // resumes; one about to run into a limit lands here instead of failing.
@@ -1574,6 +1580,10 @@ const message = await createUserMessage(input)
           } satisfies MessageV2.TextPart)
           continue
         }
+        // Allternit Sleep: the turn is done; idle after the prompt-cache TTL
+        // (native Anthropic requests here use the 5-minute ephemeral cache,
+        // see processor.ts). Fire-and-forget; never blocks the turn.
+        if (!session.parentID) SleepTriggers.turnEnded(sessionID, PROMPT_CACHE_TTL_S)
         if (format.type === "json_schema") {
           // Model stopped without calling StructuredOutput tool
           processor.message.error = new MessageV2.StructuredOutputError({

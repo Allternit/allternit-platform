@@ -14,6 +14,7 @@ import {
   type AutoCompactTrackingState,
 } from './services/compact/autoCompact.js'
 import { buildPostCompactMessages } from './services/compact/compact.js'
+import { sleepPromptStarted, sleepTurnEnded } from './services/memoryDrive/sleep.js'
 /* eslint-disable @typescript-eslint/no-require-imports */
 const reactiveCompact = feature('REACTIVE_COMPACT')
   ? (require('./services/compact/reactiveCompact.js') as typeof import('./services/compact/reactiveCompact.js'))
@@ -225,15 +226,25 @@ export async function* query(
   Terminal
 > {
   const consumedCommandUuids: string[] = []
-  const terminal = yield* queryLoop(params, consumedCommandUuids)
-  // Only reached if queryLoop returned normally. Skipped on throw (error
-  // propagates through yield*) and on .return() (Return completion closes
-  // both generators). This gives the same asymmetric started-without-completed
-  // signal as print.ts's drainCommandQueue when the turn fails.
-  for (const uuid of consumedCommandUuids) {
-    notifyCommandLifecycle(uuid, 'completed')
+  // Allternit Sleep (main thread only): a prompt cancels the idle timer; the
+  // end of the whole prompt (done, stop-hook loops included, aborted or
+  // failed) starts it. Bracketing query() rather than handleStopHooks, which
+  // can run several times per prompt and is skipped on abort/API errors.
+  const sleepAgentId = params.toolUseContext.agentId
+  sleepPromptStarted(sleepAgentId)
+  try {
+    const terminal = yield* queryLoop(params, consumedCommandUuids)
+    // Only reached if queryLoop returned normally. Skipped on throw (error
+    // propagates through yield*) and on .return() (Return completion closes
+    // both generators). This gives the same asymmetric started-without-completed
+    // signal as print.ts's drainCommandQueue when the turn fails.
+    for (const uuid of consumedCommandUuids) {
+      notifyCommandLifecycle(uuid, 'completed')
+    }
+    return terminal
+  } finally {
+    sleepTurnEnded(sleepAgentId)
   }
-  return terminal
 }
 
 async function* queryLoop(

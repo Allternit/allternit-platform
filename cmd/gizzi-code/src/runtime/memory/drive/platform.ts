@@ -156,7 +156,12 @@ interface AccountStore {
   drives: Record<string, StoredDrive>
   mounts?: DriveMount[]
   mountsAt?: string
-  settings?: Record<string, DriveSettings & { at: string }>
+  /**
+   * Cached per drive ref. `dreaming_enabled` comes from GET /memory/drive/settings
+   * (refreshed at session start); `sleep_enabled` from GET /memory/sleep/status
+   * (runtime/memory/sleep/client.ts). Either one keeps local autoDream off.
+   */
+  settings?: Record<string, Partial<DriveSettings> & { at?: string; sleep_enabled?: boolean; sleep_at?: string }>
   /** Signed-out drive already merged into this account. */
   mergedLocal?: string
 }

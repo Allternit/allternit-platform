@@ -233,6 +233,25 @@ There is at most one open (`queued` or `leased`) unit per session and kind, so a
 signal never queues twice. With the stage off the signal is refused as shown above and
 nothing is written. `nap_after_ttl_multiple` (default 1.0) is in the thresholds list.
 
+#### Who sends what: Gizzi
+
+Gizzi sends these signals from both of its loops: the terminal app (`gizzi`) and the
+runtime that Allternit Desktop and other hosts run (`gizzi serve`). It sends them only
+for your own top-level chat, never for subagents. It sends nothing when you are signed
+out, when `GET /memory/sleep/status` says Sleep is off, or when the runtime is older
+and answers `404`. Gizzi checks the status once per process and keeps the answer for
+five minutes.
+
+| `event` | When Gizzi sends it |
+| --- | --- |
+| `idle` | Once, when no new message arrives within the prompt-cache time after a turn ends. That time is 300 s, or 3600 s with one-hour caching. Gizzi sends it in `cache_ttl_s`. |
+| `resume` | Your next message after an `idle`. Gizzi does not wait for the reply. |
+| `pre_compact` | When compaction starts. Gizzi does not wait for the reply, so compaction runs even when the API is slow or down. |
+| `session_end` | When the app quits or `gizzi serve` shuts down. Gizzi waits at most 500 ms, then quits anyway. |
+
+There is no timer job behind these signals. Each one follows something the session did.
+When Sleep is on, Gizzi's local `autoDream` stays off, so only one consolidator runs.
+
 ## How a cycle runs
 
 With `enabled` and `stages.orchestrator` on, one background worker in the Allternit
