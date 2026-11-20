@@ -33,7 +33,7 @@ struct ConnLogoView: View {
 }
 
 /// The status dot before the words (web `StatusDot`).
-private struct ConnStatusDot: View {
+struct ConnStatusDot: View {
     let state: ConnState
     @ReducedMotion private var reduceMotion
     @State private var dim = false
@@ -108,29 +108,14 @@ struct ConnectionRowView: View {
                             .lineLimit(1)
                     }
                 }
-                if blocked {
-                    Text(store.unavailableReason(entry.id))
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    HStack(spacing: 6) {
-                        if row.state != .off { ConnStatusDot(state: row.state) }
-                        Text(store.statusLine(entry))
-                            .font(.system(size: 13))
-                            .foregroundColor(row.state == .off ? Color("TextTertiary") : Color("TextSecondary"))
-                            .lineLimit(2)
-                    }
-                    if entry.id == "claude-org" && row.state == .off {
-                        Text(ConnectionsCatalog.claudeOrgNote)
-                            .font(.system(size: 12.5))
-                            .foregroundColor(Color("TextSecondary"))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+                ConnStatusLines(entry: entry, store: store, row: row, blocked: blocked)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            trailing(row: row, blocked: blocked)
+            if let customAction {
+                customAction
+            } else {
+                ConnRowTrailing(entry: entry, row: row, blocked: blocked, opensPage: opensPage, compact: compact, onAction: onAction)
+            }
         }
         .padding(.horizontal, compact ? 12 : 16)
         .padding(.vertical, compact ? 9 : 11)
@@ -138,17 +123,61 @@ struct ConnectionRowView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conn-row-\(entry.id)")
     }
+}
 
-    @ViewBuilder
-    private func trailing(row: ConnectionWire, blocked: Bool) -> some View {
-        if let customAction {
-            customAction
-        } else if blocked {
-            let fallbacks = Array(row.fallbacks.prefix(compact ? 1 : 2))
+/// The status under a row's or card's name: the unavailable reason, or the
+/// dot and the one status line (plus the Claude organization note).
+struct ConnStatusLines: View {
+    let entry: ConnEntry
+    @ObservedObject var store: ConnectionsStore
+    let row: ConnectionWire
+    let blocked: Bool
+    var lineLimit = 2
+
+    var body: some View {
+        if blocked {
+            Text(store.unavailableReason(entry.id))
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextSecondary"))
+                .lineLimit(lineLimit + 1)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if row.state != .off { ConnStatusDot(state: row.state) }
+                Text(store.statusLine(entry))
+                    .font(.system(size: 13))
+                    .foregroundColor(row.state == .off ? Color("TextTertiary") : Color("TextSecondary"))
+                    .lineLimit(lineLimit)
+            }
+            if entry.id == "claude-org" && row.state == .off {
+                Text(ConnectionsCatalog.claudeOrgNote)
+                    .font(.system(size: 12.5))
+                    .foregroundColor(Color("TextSecondary"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// The one action of a row or card: fallbacks when unavailable, Included,
+/// Fix, open (chevron on a row, "Open" on a card), Disconnect or Connect.
+/// `fill` stretches the buttons to the card's width.
+struct ConnRowTrailing: View {
+    let entry: ConnEntry
+    let row: ConnectionWire
+    let blocked: Bool
+    var opensPage = false
+    var compact = false
+    var fill = false
+    let onAction: (ConnRowAction) -> Void
+
+    var body: some View {
+        if blocked {
+            let fallbacks = Array(row.fallbacks.prefix(compact || fill ? 1 : 2))
             VStack(alignment: .trailing, spacing: 6) {
                 ForEach(fallbacks, id: \.self) { f in
                     Button(ConnectionsCatalog.fallbackLabel(f)) { onAction(.fallback(f)) }
-                        .buttonStyle(ConnQuietButtonStyle())
+                        .buttonStyle(ConnQuietButtonStyle(fill: fill))
                 }
             }
         } else if entry.mainWay == .included && !(entry.id == "cloud-computer" && row.state != .on) {
@@ -161,18 +190,24 @@ struct ConnectionRowView: View {
             ProgressView().controlSize(.small)
         } else if row.state == .needs {
             Button(entry.id == "claude-org" && row.reasonCode != "spend_limit_reached" ? "Link again" : "Fix") { onAction(.fix) }
-                .buttonStyle(ConnPrimaryButtonStyle())
+                .buttonStyle(ConnPrimaryButtonStyle(fill: fill))
         } else if opensPage {
-            Button { onAction(.open) } label: { PhoneRowChevron().padding(8) }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open \(entry.name)")
+            if fill {
+                Button("Open") { onAction(.open) }
+                    .buttonStyle(ConnQuietButtonStyle(fill: true))
+                    .accessibilityLabel("Open \(entry.name)")
+            } else {
+                Button { onAction(.open) } label: { PhoneRowChevron().padding(8) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open \(entry.name)")
+            }
         } else if row.state == .on {
             Button(entry.id == "claude-org" ? "Unlink" : "Disconnect") { onAction(.disconnect) }
-                .buttonStyle(ConnQuietButtonStyle())
+                .buttonStyle(ConnQuietButtonStyle(fill: fill))
                 .accessibilityLabel(entry.id == "claude-org" ? "Unlink your Claude organization" : "Disconnect \(entry.name)")
         } else {
             Button(entry.id == "cloud-computer" ? "See plans" : entry.id == "claude-org" ? "Link" : "Connect") { onAction(.connect) }
-                .buttonStyle(ConnQuietButtonStyle())
+                .buttonStyle(ConnQuietButtonStyle(fill: fill))
                 .accessibilityLabel(entry.id == "claude-org" ? "Link your Claude organization" : "Connect \(entry.name)")
         }
     }
@@ -180,19 +215,24 @@ struct ConnectionRowView: View {
 
 /// The kit's quiet pill button (`quietButton`).
 struct ConnQuietButtonStyle: ButtonStyle {
+    /// Full width (Grid and Deck cards).
+    var fill = false
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13.5, weight: .medium))
             .foregroundColor(Color("TextPrimary"))
             .lineLimit(1)
             .padding(.horizontal, 12)
-            .frame(minHeight: 32)
+            .frame(maxWidth: fill ? .infinity : nil, minHeight: 32)
             .background(Capsule().fill(Color("TextPrimary").opacity(configuration.isPressed ? 0.14 : 0.07)))
     }
 }
 
 /// The kit's filled pill button (`primaryButton`).
 struct ConnPrimaryButtonStyle: ButtonStyle {
+    /// Full width (Grid and Deck cards).
+    var fill = false
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
@@ -201,7 +241,7 @@ struct ConnPrimaryButtonStyle: ButtonStyle {
             .foregroundColor(Color("BgPrimary"))
             .lineLimit(1)
             .padding(.horizontal, 14)
-            .frame(minHeight: 32)
+            .frame(maxWidth: fill ? .infinity : nil, minHeight: 32)
             .background(Capsule().fill(Color("TextPrimary").opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)))
     }
 }
