@@ -919,7 +919,7 @@ mod tests {
     #[test]
     fn s256_matches_rfc7636_appendix_b() {
         assert_eq!(
-            s256_challenge("dBjftJeZ4CVP-mJ92K9GkPVGQ3UumDrWHUYs7e0Q9Do"),
+            s256_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
             "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
         );
         assert!(!is_valid_code_verifier(&"a".repeat(42)));

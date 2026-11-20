@@ -190,6 +190,8 @@ async fn ctx_with(router: Option<ModelRouter>) -> Arc<ApiState> {
         state.model_router = router;
     }
     sqlx::raw_sql("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT)").execute(&state.db).await.unwrap();
+    // 125 alters platform_projects and references it (050 makes it in prod).
+    sqlx::raw_sql("CREATE TABLE IF NOT EXISTS platform_projects (id TEXT PRIMARY KEY)").execute(&state.db).await.unwrap();
     for sql in [
         include_str!("../../../migrations_pg/007_inference_usage.sql"),
         include_str!("../../../migrations_pg/009_inference_pools.sql"),

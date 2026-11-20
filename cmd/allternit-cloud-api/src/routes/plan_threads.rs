@@ -164,7 +164,11 @@ fn project_uuid(raw: &str) -> Result<String, ApiError> {
 /// alias the catalog resolves (hidden aliases included). Clients send the
 /// bare alias on the wire and store it with the `allternit/` prefix.
 fn storable_model(state: &ApiState, model: &str) -> bool {
-    if crate::routes::model_router::is_person_only_model(model) || is_linked_claude_model(model) {
+    // linked/… only by the strict check: is_person_only_model takes any `linked/claude/` prefix.
+    if model.starts_with("linked/") {
+        return is_linked_claude_model(model);
+    }
+    if crate::routes::model_router::is_person_only_model(model) {
         return true;
     }
     model

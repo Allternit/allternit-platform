@@ -1525,7 +1525,7 @@ mod tests {
     // ─── /oauth2/token, /oauth2/revoke, /oauth2/userinfo, /api/v1/oauth/usage ──
 
     /// RFC 7636 appendix B: the verifier behind CHALLENGE.
-    const VERIFIER: &str = "dBjftJeZ4CVP-mJ92K9GkPVGQ3UumDrWHUYs7e0Q9Do";
+    const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
     const TEST_SECRET: &str = "test-oauth-sub-secret-0123456789abcdef";
 
     struct TokenFixture {

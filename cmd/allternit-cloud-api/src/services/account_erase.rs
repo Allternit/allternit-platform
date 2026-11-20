@@ -129,6 +129,9 @@ pub const ERASE: &[(&str, &str)] = &[
     // (tokens and spend cascade), then their own apps (redirect URIs cascade),
     // before platform_projects. Test-user rows go by account or address; the
     // address is read before SCRUB clears it.
+    // Tokens cascade from their grant; listed so the actor check sees replaced_by
+    // (a token id, not a person) as handled.
+    ("oauth_tokens", "grant_id IN (SELECT id FROM oauth_grants WHERE user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)))"),
     ("oauth_grants", "user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("oauth_auth_requests", "user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("oauth_app_test_users", "user_id = $1 OR email IN (SELECT lower(email) FROM users WHERE id = $1) OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
