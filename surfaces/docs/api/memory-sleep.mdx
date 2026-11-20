@@ -253,9 +253,10 @@ A nap runs these stages in this order. A daydream runs the first two only.
 | 6 | `checks` | `stages.checks` is on. Spaced checks and the tether ladder (see Spaced checks). | No |
 | 7 | `sign` | Not built yet. Recorded as skipped. | - |
 
-The cycle's `report` lists each stage with `status` (`done` or `skipped`), a `note`
+The cycle row stores each stage with `status` (`done`, `skipped` or `failed`), a `note`
 (for example `not_due`, `spend_cap`, `stage_off: strengths`), `spend_usd` and the job's
-own result.
+own result. The `sleep.cycle.stage` event uses the same fields. The report route
+(`GET sleep/cycles/:id`, see Cycle report) turns them into `outcome` and `reason`.
 
 - **Daily spend cap.** A spending stage runs only when `daily_spend_cap_usd` is above 0
   and today's spend plus the stage's estimate (`dream_cost_estimate_usd`,
