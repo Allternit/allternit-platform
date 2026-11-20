@@ -118,7 +118,7 @@ enum MemorySleep {
         switch s.stage {
         case "capture":
             let n = s.count("captured")
-            return n > 0 ? ["Saved \(plural(n, "thing", "things")) that were still open"] : []
+            return n > 0 ? ["Saved \(plural(n, "thing", "things")) that \(n == 1 ? "was" : "were") still open"] : []
         case "consolidation":
             var out: [String] = []
             if s.count("merged") > 0 { out.append("Merged \(plural(s.count("merged"), "repeated memory", "repeated memories"))") }
