@@ -24,7 +24,9 @@
 //!   stages or `cycle_max_minutes`; the rest is held the same way.
 //! - **Daily spend cap.** A spending stage runs only when `daily_spend_cap_usd`
 //!   is above 0 and today's spend plus its estimate fits under it; otherwise
-//!   it is recorded `skipped: spend_cap`. Non-spending stages always run.
+//!   it is recorded `skipped: spend_cap`. Non-spending stages always run. The
+//!   estimate only gates the run; the spend recorded afterwards is the real
+//!   cost from the usage ledger ([`ledger_spend_usd`]).
 //! - **Failure.** An error ends the cycle `failed` and counts one attempt on
 //!   the unit (`queue::fail`); after `unit_max_attempts` it is deferred.
 //! - **Sleep debt.** New memories since the last finished nap over
@@ -99,14 +101,18 @@ pub struct StepRecord {
     pub note: Option<String>,
     pub spend_usd: f64,
     pub detail: Value,
+    /// When the stage began and ended (`sleep_cycles` time format). The
+    /// report reads the usage ledger over this window for the real spend.
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
 }
 
 impl StepRecord {
     fn done(step: Step, detail: Value) -> Self {
-        StepRecord { step, status: "done", note: None, spend_usd: 0.0, detail }
+        StepRecord { step, status: "done", note: None, spend_usd: 0.0, detail, started_at: None, finished_at: None }
     }
     fn skipped(step: Step, note: impl Into<String>) -> Self {
-        StepRecord { step, status: "skipped", note: Some(note.into()), spend_usd: 0.0, detail: Value::Null }
+        StepRecord { step, status: "skipped", note: Some(note.into()), spend_usd: 0.0, detail: Value::Null, started_at: None, finished_at: None }
     }
 }
 
@@ -143,6 +149,19 @@ pub trait Jobs: Send + Sync {
     async fn curate(&self, user: &str, bots: Vec<String>) -> Result<Value, String>;
 }
 
+/// A Dream run as the cycle records it. The Dream id and its two commits are
+/// what `report.rs` needs to undo it.
+pub fn dream_detail(date: NaiveDate, row: Option<crate::memory_dream::DreamRow>) -> Value {
+    match row {
+        Some(r) => json!({
+            "date": date.to_string(), "status": r.status, "dream_id": r.id,
+            "revision": r.revision, "base_revision": r.base_revision,
+            "summary": r.summary, "error": r.error,
+        }),
+        None => json!({ "date": date.to_string(), "status": null }),
+    }
+}
+
 /// The real jobs.
 pub struct LiveJobs {
     pub state: Arc<crate::AppState>,
@@ -166,8 +185,9 @@ impl Jobs for LiveJobs {
             .await
             .map_err(|e| e.to_string())?;
         // A failed Dream keeps its own bounded retry (attempts per drive and
-        // date); the cycle reports it and the next due cycle retries.
-        Ok(json!({ "date": date.to_string(), "status": row.map(|r| r.status) }))
+        // date); the cycle reports it and the next due cycle retries. The Dream
+        // id and its commits are what `report.rs` needs to undo it.
+        Ok(dream_detail(date, row))
     }
 
     fn curation_due(&self, conn: &Connection, user: &str, now: DateTime<Utc>) -> Result<Vec<String>, String> {
@@ -244,6 +264,25 @@ fn can_spend(cfg: &Resolved, spent_today: f64, estimate: f64) -> bool {
     cap > 0.0 && spent_today + estimate <= cap
 }
 
+/// Real model spend in USD that the usage ledger (`llm_usage_events`) holds
+/// for `user` in `[from, to)`: the `memory` surface, which is what Dream's
+/// `gizzi_completer` (`memory_dream.rs`) and curation's `curate_bot`
+/// (`memory_curation.rs`) scope their calls to, tenant = user. S1 decision
+/// rows carry no spend and are left out. Ledger rows are written as the model
+/// call finishes and can land after the stage returns, so `report.rs` reads
+/// this again at report time and records any late spend on the cycle.
+pub fn ledger_spend_usd(conn: &Connection, user: &str, from: &str, to: &str) -> rusqlite::Result<f64> {
+    let micro: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(COALESCE(recomputed_cost_microdollars, cost_microdollars)), 0)
+           FROM llm_usage_events
+          WHERE user_id = ?1 AND surface = 'memory' AND COALESCE(tier, '') != 'S1'
+            AND status != 'in_progress' AND created_at >= ?2 AND created_at < ?3",
+        params![user, from, to],
+        |r| r.get(0),
+    )?;
+    Ok(micro as f64 / 1_000_000.0)
+}
+
 fn sql(e: rusqlite::Error) -> String {
     e.to_string()
 }
@@ -279,13 +318,10 @@ async fn run_step(db: &DbHandle, jobs: &dyn Jobs, cfg: &Resolved, unit: &Unit, c
             if !can_spend(cfg, spent_today, estimate) {
                 return Ok(StepRecord::skipped(step, "spend_cap"));
             }
-            let mut rec = StepRecord::done(step, jobs.dream(user, date).await?);
-            // TODO(sleep 5.5): charge the real cost. Dream's model call is
-            // metered in the usage ledger (`usage_ledger`, surface `memory`,
-            // tenant = user, via `gizzi_completer`), written asynchronously, so
-            // the configured estimate is charged against the cap for now.
-            rec.spend_usd = estimate;
-            Ok(rec)
+            // The estimate above only gates the run. The real cost is read from
+            // the usage ledger by `run_once` once the stage returns (see
+            // [`ledger_spend_usd`]).
+            Ok(StepRecord::done(step, jobs.dream(user, date).await?))
         }
         Step::Curation => {
             let bots = {
@@ -299,11 +335,7 @@ async fn run_step(db: &DbHandle, jobs: &dyn Jobs, cfg: &Resolved, unit: &Unit, c
             if !can_spend(cfg, spent_today, estimate) {
                 return Ok(StepRecord::skipped(step, "spend_cap"));
             }
-            let mut rec = StepRecord::done(step, jobs.curate(user, bots).await?);
-            // TODO(sleep 5.5): real cost from the usage ledger (surface
-            // `memory`, tenant = user, `memory_curation::curate_bot`).
-            rec.spend_usd = estimate;
-            Ok(rec)
+            Ok(StepRecord::done(step, jobs.curate(user, bots).await?))
         }
         Step::Pages => Ok(StepRecord::skipped(step, "waits for G1/4.2")),
         Step::Checks => Ok(StepRecord::skipped(step, "waits for step 6.3")),
@@ -373,7 +405,15 @@ pub async fn run_once(db: &DbHandle, jobs: &dyn Jobs, worker: &str, clock: &Cloc
             queue::renew(&conn, &unit.id, worker, now, lease_s).map_err(sql)?;
         }
         match run_step(db, jobs, &cfg, &unit, &cycle_id, step, now, spent_before + report.spend_usd).await {
-            Ok(rec) => {
+            Ok(mut rec) => {
+                let end = clock();
+                rec.started_at = Some(queue::ts(now));
+                rec.finished_at = Some(queue::ts(end));
+                if rec.status == "done" && matches!(step, Step::Dream | Step::Curation) {
+                    let conn = db.connect().map_err(sql)?;
+                    // Up to the next second so rows stamped in the stage's last second count.
+                    rec.spend_usd = ledger_spend_usd(&conn, &unit.user_id, &queue::ts(now), &queue::ts(end + Duration::seconds(1))).map_err(sql)?;
+                }
                 report.spend_usd += rec.spend_usd;
                 report.steps.push(rec);
                 let conn = db.connect().map_err(sql)?;
@@ -485,6 +525,17 @@ mod tests {
         fail_consolidation: AtomicBool,
         /// (db, user, session): send a `resume` signal while consolidation runs, once.
         resume_during: Mutex<Option<(DbHandle, String, String)>>,
+        /// (db, user, micro-dollars): the model spend Dream's call writes to the usage ledger.
+        dream_spend: Mutex<Option<(DbHandle, String, i64)>>,
+    }
+
+    /// One usage-ledger row for the `memory` surface, stamped at the test clock.
+    fn ledger_row(db: &DbHandle, user: &str, micro: i64) {
+        db.connect().unwrap().execute(
+            "INSERT INTO llm_usage_events (id, user_id, surface, cost_microdollars, status, created_at)
+             VALUES (?1, ?2, 'memory', ?3, 'ok', '2026-11-19 12:00:00')",
+            params![uuid::Uuid::new_v4().to_string(), user, micro],
+        ).unwrap();
     }
 
     #[async_trait]
@@ -504,6 +555,9 @@ mod tests {
         }
         async fn dream(&self, _user: &str, _date: NaiveDate) -> Result<Value, String> {
             self.calls.lock().unwrap().push("dream".into());
+            if let Some((db, user, micro)) = self.dream_spend.lock().unwrap().take() {
+                ledger_row(&db, &user, micro);
+            }
             Ok(json!({ "status": "applied" }))
         }
         fn curation_due(&self, _conn: &Connection, _user: &str, _now: DateTime<Utc>) -> Result<Vec<String>, String> {
@@ -521,6 +575,9 @@ mod tests {
         turn_on(&db, "u1", &["orchestrator", "strengths"], 10.0);
         let unit = signal(&db, "u1", "s1", SignalEvent::SessionEnd).queued[0].clone();
         let stub = Stub::default();
+        *stub.dream_spend.lock().unwrap() = Some((db.clone(), "u1".into(), 40_000));
+        // Another user's memory spend in the same second is not this cycle's.
+        ledger_row(&db, "someone-else", 900_000);
 
         let r = run_once(&db, &stub, "w1", &clock()).await.unwrap().unwrap();
         assert_eq!(r.state, "finished", "{r:?}");
@@ -535,7 +592,10 @@ mod tests {
             .query_row("SELECT state, stage, spend_usd FROM sleep_cycles WHERE id = ?1", [r.cycle_id.as_deref().unwrap()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .unwrap();
         assert_eq!((state.as_str(), stage.as_str()), ("finished", "sign"));
-        assert!((spend - 0.10).abs() < 1e-9, "dream + curation estimates: {spend}");
+        // The real cost from the usage ledger (Dream wrote 0.04; curation wrote
+        // nothing); the 0.05 estimates only gate the cap.
+        assert!((spend - 0.04).abs() < 1e-9, "dream's ledger cost: {spend}");
+        assert!((r.steps[3].spend_usd - 0.04).abs() < 1e-9 && r.steps[4].spend_usd == 0.0);
         assert_eq!(unit_state(&db, &unit).0, "done");
         // Nothing else to run.
         assert!(run_once(&db, &stub, "w1", &clock()).await.unwrap().is_none());
@@ -614,6 +674,7 @@ mod tests {
         turn_on(&db, "u2", &["orchestrator"], 0.05);
         signal(&db, "u2", "s1", SignalEvent::SessionEnd);
         let stub = Stub::default();
+        *stub.dream_spend.lock().unwrap() = Some((db.clone(), "u2".into(), 50_000));
         let r = run_once(&db, &stub, "w1", &clock()).await.unwrap().unwrap();
         assert_eq!((r.steps[3].status, r.steps[4].note.as_deref()), ("done", Some("spend_cap")));
         assert_eq!(*stub.calls.lock().unwrap(), vec!["consolidate", "dream"]);

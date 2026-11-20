@@ -30,7 +30,7 @@ route live.
 | `GET /memory/sleep/status` | Live | Master switch, stage flags, debt, last cycle, spend today, manifest, open disputes. |
 | `GET /memory/sleep/cycles` | Live (empty until the orchestrator stage runs a cycle) | Recent cycles, newest first. |
 | `GET /memory/sleep/cycles/:id` | Live (empty until the orchestrator stage runs a cycle) | One cycle and its report. |
-| `POST /memory/sleep/cycles/:id/undo` | Refuses until the orchestrator | Undo a cycle. |
+| `POST /memory/sleep/cycles/:id/undo` | Live | Undo a finished or stopped cycle. |
 | `POST /memory/sleep/run` | Live with the orchestrator stage on; otherwise refuses | Queue a nap or daydream now. |
 | `POST /memory/sleep/signal` | Live with the orchestrator stage on; otherwise refuses | Runtime trigger: idle, pre-compact, session end, resume. |
 | `GET /memory/sleep/context` | Live (empty until the router) | What the runtime puts in front of the model at session start. |
@@ -54,7 +54,7 @@ route live.
 
 ### Refused writes
 
-`run` (with the orchestrator stage off, or for `deep` and `rem`), `cycles/:id/undo`,
+`run` (with the orchestrator stage off, or for `deep` and `rem`),
 `pages/load` and `disputes/:id/resolve` answer `409`.
 `signal` answers `200`, because the runtime sends it on every idle, compaction and
 session end, whether Sleep is on or not.
@@ -108,7 +108,8 @@ session end, whether Sleep is on or not.
 { "cycles": [
   { "id": "cyc_1", "trigger": "idle", "kind": "nap", "state": "finished", "stage": null,
     "session_id": "s_123", "spend_usd": 0.04, "manifest_before": "man_0", "manifest_after": "man_1",
-    "started_at": "2026-11-20 03:10:00", "finished_at": "2026-11-20 03:12:41", "undone_at": null }
+    "started_at": "2026-11-20 03:10:00", "finished_at": "2026-11-20 03:12:41", "undone_at": null,
+    "summary": "nap finished: consolidation merged 2, decayed 1; Dream 3 changes; spent $0.0412" }
 ], "count": 1 }
 ```
 
@@ -121,12 +122,68 @@ session end, whether Sleep is on or not.
 
 ### `GET /memory/sleep/cycles/:id`
 
-`{ "cycle": { ... }, "report": { ... } | null }`, with the same cycle fields as the list.
+`{ "cycle": { ... }, "report": { ... } | null }`, with the same cycle fields as the list
+(including `summary`, the same line `status.last_cycle` carries). `report` is `null` while
+the cycle is running.
+
+```json
+{ "report": {
+  "cycle_id": "cyc_1", "kind": "nap", "state": "finished", "spend_usd": 0.0412,
+  "summary": "nap finished: ...", "stop_reason": null, "resume_from_stage": null, "error": null,
+  "stages": [
+    { "stage": "consolidation", "outcome": "ran", "reason": null, "spend_usd": 0,
+      "counts": { "merged": 2, "decayed": 1 },
+      "started_at": "2026-11-20 03:10:01", "finished_at": "2026-11-20 03:10:09" },
+    { "stage": "dream", "outcome": "ran", "reason": null, "spend_usd": 0.0412,
+      "counts": { "merged": 1, "resolved": 0, "lessons": 2, "pruned": 0, "proposals": 0, "skipped": 1 },
+      "started_at": "2026-11-20 03:10:09", "finished_at": "2026-11-20 03:12:30" }
+  ],
+  "undo": {
+    "available": true, "undone_at": null,
+    "dream": { "dream_id": "drm_1", "status": "applied", "revision": "r2", "base_revision": "r1" },
+    "manifest": { "before": null, "after": null },
+    "cannot_undo": ["consolidation: merged or decayed facts have no undo"],
+    "result": null
+  } } }
+```
+
+`stages` lists every stage of the cycle's plan (a daydream lists capture and
+consolidation) in order. `outcome` is `ran`, `skipped` (with the `reason`, for example
+`spend_cap`, `not_due` or `stage_off: strengths`), `failed` (the error), `held` (a clean
+stop left it for the next signal) or `not_run`. `counts` per stage: `capture` has
+`captured`; `consolidation` has `scanned`, `candidates`, `merged`, `decayed`; `fit` has
+`events`, `fitted`, `kept_owner`; `dream` has the Dream summary; `curation` has `bots`.
+
+**Spend is real.** A stage's `spend_usd` is the cost the usage ledger holds for your
+`memory` surface calls during that stage (Dream and curation). The ledger can write after
+the stage returns, so this route reads it again and raises the stage and cycle spend when
+more arrived; that is the number the daily cap counts. The configured estimates
+(`dream_cost_estimate_usd`, `curation_cost_estimate_usd`) only decide whether a stage may
+start. Other `memory` model calls of yours in the same minutes (for example fact
+extraction) fall in the same window and count too.
 
 ### `POST /memory/sleep/cycles/:id/undo`
 
-No body. Returns `404` for an unknown cycle. Once live, undo restores the manifest from
-before the cycle.
+No body. Works for a `finished` or `stopped` cycle of yours, with or without the
+orchestrator stage on.
+
+- The Dream part is undone with Dream's own undo: it reverses only the lines the Dream
+  changed and keeps anything you added or edited since.
+- The page manifest is rolled back to `manifest_before`. Cycles write no manifest until
+  pages land (step 4.1), so today this part is recorded as `recorded_no_op`.
+- Consolidation merges and decays and curation edits have no undo. They are listed in
+  `cannot_undo`; nothing pretends to reverse them.
+
+`200`: `{ "undone": true, "undone_at": "...", "cycle": { ... }, "parts": [ { "part": "dream",
+"status": "undone", "detail": "...", "revision": "..." } ], "cannot_undo": [ ... ] }`, and the
+cycle's `state` becomes `undone`. A part `status` is `undone`, `nothing_to_undo`,
+`recorded_no_op` or `cannot_undo`.
+
+| Status | Meaning |
+| --- | --- |
+| `404` | Unknown cycle (or another user's). |
+| `409` `already undone` | The cycle was undone before. |
+| `409` | The cycle is running or failed, or you edited lines the Dream changed after it ran (`conflicts` lists the files); nothing was changed and the cycle stays undoable. |
 
 ### `POST /memory/sleep/run`
 

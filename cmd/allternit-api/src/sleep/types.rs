@@ -235,6 +235,8 @@ pub struct CycleSummary {
     pub started_at: String,
     pub finished_at: Option<String>,
     pub undone_at: Option<String>,
+    /// One line on what the cycle did (`report::summary`); null while it runs.
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
