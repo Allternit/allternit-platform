@@ -239,7 +239,7 @@ private fun PlusRow(icon: Int, title: String, value: String? = null, chevron: Bo
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (active) c.borderSubtle.copy(alpha = 0.6f) else Color.Transparent)
+            .background(if (active) c.borderSubtle.copy(alpha = c.borderSubtle.alpha * 0.6f) else Color.Transparent)
             .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
             .clickable(role = Role.Button) {
                 Haptics.perform(view, Haptics.Kind.Tap)

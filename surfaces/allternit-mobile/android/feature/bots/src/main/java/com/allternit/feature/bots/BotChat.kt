@@ -325,7 +325,7 @@ private fun DeckButton(label: String, on: Boolean, testTag: String, meta: String
     val c = AllternitTheme.colors
     val view = LocalView.current
     Row(
-        Modifier.height(32.dp).clip(CircleShape).background(if (on) c.textPrimary else c.fillNeutral.copy(alpha = 0.7f)).testTag(testTag)
+        Modifier.height(32.dp).clip(CircleShape).background(if (on) c.textPrimary else c.fillNeutral.copy(alpha = c.fillNeutral.alpha * 0.7f)).testTag(testTag)
             .clickable(role = Role.Tab) { Haptics.perform(view, Haptics.Kind.Tap); onClick() }.padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
