@@ -82,9 +82,9 @@ enum class LibraryLayout(val raw: String, val label: String) {
     List("list", "List"), Grid("grid", "Grid"), Deck("deck", "Deck");
 
     companion object {
-        fun load(context: Context, key: String): LibraryLayout {
+        fun load(context: Context, key: String, default: LibraryLayout = Grid): LibraryLayout {
             val raw = context.getSharedPreferences("allternit_library", Context.MODE_PRIVATE).getString(key, null)
-            return entries.firstOrNull { it.raw == raw } ?: Grid
+            return entries.firstOrNull { it.raw == raw } ?: default
         }
 
         fun save(context: Context, key: String, layout: LibraryLayout) {

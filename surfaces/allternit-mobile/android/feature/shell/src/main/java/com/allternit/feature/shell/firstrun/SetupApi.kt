@@ -540,3 +540,105 @@ internal object ConnectionsCatalog {
         else -> entry(id)?.let { "Use ${it.name}" } ?: "Other way"
     }
 }
+
+// The "More" list (contract §11): GET {cloud}/api/v1/connections/catalog
+
+/** One entry of the catalog; the field names mirror the wire (iOS ConnCatalogEntry). */
+internal data class CatalogEntry(
+    val id: String,
+    val group: String,
+    val name: String,
+    val blurb: String?,
+    val category: String?,
+    val ways: List<String>,
+    val runsOn: String?,
+    val connectorId: String?,
+    val keyPage: String?,
+    val logo: String?,
+    val available: Boolean,
+    val unavailableReason: String?,
+    val fallbacks: List<String>,
+) {
+    /** The ways this app can run today: a key paste (key sheet or connector key) and a browser sign-in. */
+    val runnable: Boolean get() = ways.firstOrNull() in setOf("paste", "oauth")
+
+    /** The row the page draws for this entry until the server has a live one. */
+    fun wire() = ConnectionWire(id, runsOn = runsOn, available = available, unavailableReason = unavailableReason, fallbacks = fallbacks)
+
+    fun entry() = ConnEntry(
+        id = id, name = name, mono = name.firstOrNull()?.uppercase() ?: "?",
+        blurb = blurb?.takeIf { it.isNotBlank() } ?: category,
+        way = if (ways.firstOrNull() == "paste") ConnWay.Paste else ConnWay.OAuth,
+        runsOn = when (runsOn) { "computer" -> ConnRunsOn.Computer; "device" -> ConnRunsOn.Device; "runner" -> ConnRunsOn.Runner; else -> ConnRunsOn.Server },
+        group = group,
+    )
+
+    companion object {
+        fun parse(v: JsonElement): CatalogEntry? {
+            val id = v["id"].str() ?: return null
+            return CatalogEntry(
+                id = id, group = v["group"].str() ?: "apps", name = v["name"].str() ?: id, blurb = v["blurb"].str(),
+                category = v["category"].str(), ways = v["ways"].arr().mapNotNull { it.str() }, runsOn = v["runs_on"].str(),
+                connectorId = v["connector_id"].str(), keyPage = v["key_page"].str(), logo = v["logo"].str(),
+                available = v["available"].bool() ?: true, unavailableReason = v["unavailable_reason"].str(),
+                fallbacks = v["fallbacks"].arr().mapNotNull { it.str() },
+            )
+        }
+    }
+}
+
+/** One page of the catalog: `counts` follow `q` but not `group`; `nextCursor` is opaque. */
+internal data class CatalogPage(val total: Int, val nextCursor: String?, val counts: Map<String, Int>, val entries: List<CatalogEntry>)
+
+internal object ConnectionsCatalogClient {
+    const val PAGE = 24
+
+    /** [limit] 0 returns only the per-group counts (the More tiles read that). */
+    suspend fun page(group: String? = null, q: String = "", cursor: String? = null, limit: Int = PAGE): CatalogPage {
+        val query = buildMap {
+            if (group != null) put("group", group)
+            q.trim().takeIf { it.isNotEmpty() }?.let { put("q", it.take(64)) }
+            if (cursor != null) put("cursor", cursor)
+            put("limit", limit.toString())
+        }
+        val json = SetupHttp.cloud("GET", "api/v1/connections/catalog", null, query)
+        val counts = json["counts"].obj().orEmpty().mapNotNull { (k, v) -> v.num()?.toInt()?.let { k to it } }.toMap()
+        return CatalogPage(
+            total = json["total"].num()?.toInt() ?: 0,
+            nextCursor = json["next_cursor"].str()?.takeIf { it.isNotEmpty() },
+            counts = counts,
+            entries = json["entries"].arr().mapNotNull(CatalogEntry::parse),
+        )
+    }
+}
+
+/** An app connected through the computer's connector gateway (iOS ConnectorsClient, the part More needs). */
+internal data class ConnectedApp(val id: String, val name: String, val detail: String?, val logo: String?)
+
+/**
+ * The connector calls More uses for apps (the same routes as Settings › Customize › Connectors):
+ * `GET connectors`, `POST connectors/<id>/connect`, `DELETE connectors/<id>/disconnect`. They go
+ * to the person's computer through cloud-api, so they fail when no computer answers.
+ */
+internal object AppConnectorsClient {
+    suspend fun connected(): List<ConnectedApp> {
+        val json = SetupHttp.v1("GET", "connectors")
+        val list = (json["connectors"] ?: json["items"]).arr().ifEmpty { json.arr() }
+        return list.mapNotNull { c ->
+            val id = c["id"].str() ?: return@mapNotNull null
+            if (c["connection"]["status"].str() != "connected") return@mapNotNull null
+            val detail = listOfNotNull(c["connection"]["account"].str(), c["category"].str()).firstOrNull()
+            ConnectedApp(id, c["name"].str() ?: id, detail, c["logo"].str())
+        }
+    }
+
+    /** Returns the sign-in page to open, when the connector needs one. */
+    suspend fun connect(id: String, apiKey: String? = null): String? {
+        val body = buildJsonObject { if (apiKey != null) put("api_key", apiKey) }
+        return SetupHttp.v1("POST", "connectors/$id/connect", body)["authorize_url"].str()
+    }
+
+    suspend fun disconnect(id: String) {
+        SetupHttp.v1("DELETE", "connectors/$id/disconnect")
+    }
+}
