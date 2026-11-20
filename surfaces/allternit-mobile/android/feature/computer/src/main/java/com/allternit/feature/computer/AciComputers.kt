@@ -37,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
@@ -79,18 +78,9 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
     var openComputer by remember { mutableStateOf<ComputerRecord?>(null) }
     var detail by remember { mutableStateOf<AciDevice?>(null) }
     var refreshing by remember { mutableStateOf(false) }
-    val consoleOn = ConsoleFlag.enabled(LocalContext.current)
-    var consoleState by remember { mutableStateOf<ConsoleState>(ConsoleState.Loading) }
-    var consoleAttempt by remember { mutableIntStateOf(0) }
-    var hostedOpen by remember { mutableStateOf(false) }
-    LaunchedEffect(consoleOn, consoleAttempt, host.signedIn) {
-        if (!consoleOn) return@LaunchedEffect
-        consoleState = ConsoleState.Loading
-        consoleState = when (val r = AciApi.console()) {
-            is AciApi.Result.Ok -> ConsoleState.Loaded(r.value)
-            is AciApi.Result.Failed -> if (r.message == CONSOLE_UNAVAILABLE) ConsoleState.Unavailable else ConsoleState.Failed(r.message)
-        }
-    }
+    // Account flag `computers_console` (iOS AccountFlagsClient): off = today's screen, unchanged.
+    var consoleOn by remember { mutableStateOf(false) }
+    LaunchedEffect(host.signedIn) { consoleOn = host.signedIn && AciApi.consoleFlag() }
     val workflowRuntime = devices?.firstOrNull { it.isOnline } ?: devices?.firstOrNull()
 
     suspend fun openDesktop(device: AciDevice) {
@@ -109,16 +99,9 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
     }, modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp).testTag("aciComputers")) {
             AciViewHeader("Computers")
-            if (consoleOn) {
-                AciConsoleOverview(consoleState, onRetry = { consoleAttempt++ }, onPair = { pairOpen = true }, onHosted = { hostedOpen = true },
-                    onOpen = { cp ->
-                        // Tapping opens today's detail until the console detail lands (step 5.2).
-                        val match = devices?.firstOrNull { it.id == cp.id } ?: devices?.firstOrNull { it.displayName == cp.name }
-                        if (match != null) detail = match else pickerOpen = true
-                    })
-            } else {
             AciWideButton(DesignR.drawable.ph_plus, "Add a computer", "aciAddComputer") { pairOpen = true }
             AciWideButton(DesignR.drawable.ph_desktop, "View a computer's screen", "aciViewScreen") { pickerOpen = true }
+            if (consoleOn) AciConsoleSection()
             when {
                 devices == null -> Text("Loading computers…", color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp))
@@ -148,7 +131,6 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
                     Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
                 }
             }
-            }
             Spacer(Modifier.height(24.dp))
             AciLinkedPhonesSection(host.signedIn, host.openPhoneLive)
             AciCloudBackupsSection(host.signedIn)
@@ -156,15 +138,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
             AciWorkflowsSection(host, workflowRuntime)
         }
     }
-    if (pairOpen) AciPairComputerSheet(command = if (consoleOn) "gizzi pair" else "ao fabric pair") { pairOpen = false }
-    if (hostedOpen) {
-        ModalBottomSheet(onDismissRequest = { hostedOpen = false }, containerColor = c.bgPanel) {
-            Column(Modifier.padding(16.dp).testTag("aciHostedSheet")) {
-                com.allternit.feature.chat.ComputeGateCard(com.allternit.feature.chat.ComputeGateReason.NoComputer, host.backend,
-                    onConnected = { hostedOpen = false; consoleAttempt++ }, onDismiss = { hostedOpen = false })
-            }
-        }
-    }
+    if (pairOpen) AciPairComputerSheet { pairOpen = false }
     if (pickerOpen) AciComputerScreenSheet(onDismiss = { pickerOpen = false })
     detail?.let { d ->
         Dialog(onDismissRequest = { detail = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -187,7 +161,7 @@ internal fun lastSeen(raw: String?): String {
 /** "Add a computer": hero, title, one line and the three numbered steps. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AciPairComputerSheet(command: String = "ao fabric pair", onDismiss: () -> Unit) {
+private fun AciPairComputerSheet(onDismiss: () -> Unit) {
     val c = AllternitTheme.colors
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.bgPanel, shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)) {
         Column(Modifier.verticalScroll(rememberScrollState()).testTag("aciPairSheet"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -202,7 +176,7 @@ private fun AciPairComputerSheet(command: String = "ao fabric pair", onDismiss: 
                 Step(1, buildAnnotatedString { append("Install Allternit Desktop on the computer.") })
                 Step(2, buildAnnotatedString {
                     append("Open it and sign in with the same account you use on this phone. Or open a terminal on the computer and run ")
-                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp)) { append(command) }
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp)) { append("ao fabric pair") }
                     append(".")
                 })
                 Step(3, buildAnnotatedString { append("Return to Computers on your phone. Tap your computer to open its live desktop.") })
