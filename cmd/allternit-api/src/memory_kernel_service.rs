@@ -747,6 +747,11 @@ pub fn recall_logged(
 
     // Retrieval stats feed consolidation's decay (WP-M1d).
     let fact_ids: Vec<&str> = results.iter().filter(|r| r.item_type == "fact").map(|r| r.id.as_str()).collect();
+    // Sleep `strengths` stage (flagged users only): reconsolidate before the legacy
+    // stats overwrite last_retrieved_at.
+    if let Err(e) = crate::sleep::strength::on_recall(&conn, user_id, &fact_ids) {
+        tracing::debug!(error = %e, "sleep strengths not updated");
+    }
     if let Err(e) = crate::memory_consolidation::note_retrieved(&conn, user_id, &fact_ids) {
         tracing::debug!(error = %e, "memory retrieval stats not recorded");
     }

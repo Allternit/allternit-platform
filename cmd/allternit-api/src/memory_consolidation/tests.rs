@@ -218,3 +218,38 @@ fn due_users_skips_recent_runs() {
     conn.execute("INSERT INTO memory_consolidation_runs (id, user_id) VALUES ('r', 'u2')", []).unwrap();
     assert_eq!(due_users(&conn, 10).unwrap(), vec!["u1".to_string()]);
 }
+
+fn turn_on_strengths(conn: &Connection) {
+    for k in ["enabled", "stage.strengths"] {
+        conn.execute("INSERT INTO sleep_config (user_id, key, value_json, source) VALUES ('u1', ?1, 'true', 'owner')", params![k]).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn flag_off_decays_exactly_as_today_and_strengths_stay_null() {
+    let db = db();
+    let conn = db.connect().unwrap();
+    fact(&conn, "old_low", "Maybe likes jazz", 0.3, 200);
+    let r = run_for_user(&db, &off(), "u1", false).await.unwrap();
+    assert_eq!((r.decayed, r.shadow_old_decay), (1, 0));
+    crate::memory_kernel_service::recall_with_embedding(&db, "u1", None, None, "jazz", None, 5).unwrap();
+    let (s, rs): (Option<f64>, Option<f64>) =
+        conn.query_row("SELECT storage_strength, retrieval_strength FROM memory_facts WHERE id = 'old_low'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!((s, rs), (None, None));
+}
+
+#[tokio::test]
+async fn flag_on_logs_the_old_decay_in_shadow_and_scores_recalled_facts() {
+    let db = db();
+    let conn = db.connect().unwrap();
+    turn_on_strengths(&conn);
+    fact(&conn, "old_low", "Maybe likes jazz", 0.3, 200);
+    let r = run_for_user(&db, &off(), "u1", false).await.unwrap();
+    assert_eq!((r.decayed, r.shadow_old_decay), (0, 1));
+    let decayed_at: Option<String> = conn.query_row("SELECT decayed_at FROM memory_facts WHERE id = 'old_low'", [], |r| r.get(0)).unwrap();
+    assert_eq!(decayed_at, None, "the old rule changes nothing for a flagged user");
+    crate::memory_kernel_service::recall_with_embedding(&db, "u1", None, None, "jazz", None, 5).unwrap();
+    let (s, rs): (Option<f64>, Option<f64>) =
+        conn.query_row("SELECT storage_strength, retrieval_strength FROM memory_facts WHERE id = 'old_low'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert!(s.is_some() && rs == Some(1.0));
+}

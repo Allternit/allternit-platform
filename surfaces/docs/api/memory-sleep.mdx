@@ -309,6 +309,11 @@ used (every other id in `results` counts as unused), plus `label_source` set to 
 | `fit_min_labeled_events` | 200 | Labelled events needed before fitted values replace defaults. |
 | `check_router_sample` | 200 | Fixed router sample size in the bounded check. |
 | `check_neighbours` | 5 | Neighbours checked for each changed memory. |
+| `strength_half_life_days` | 30 | Days for retrieval strength to halve at storage strength 0. |
+| `strength_spacing_credit` | 0.2 | Storage strength a fully spaced recall earns. |
+| `strength_difficulty_weight` | 1 | Extra credit for a recall made while retrieval strength was low. |
+| `strength_min_spacing_days` | 1 | Days since the last recall that earn full spacing credit. |
+| `strength_instant_credit_cap` | 0.02 | Most a recall under the minimum spacing can earn. |
 
 ### `PUT /memory/sleep/config`
 
@@ -318,6 +323,17 @@ used (every other id in `results` counts as unused), plus `label_source` set to 
 
 Every key must be one of the keys above, and its value must be in range. Whole-number
 keys refuse fractions. One bad key returns `400`, and nothing is written.
+
+## Two strengths
+
+With the `strengths` stage on, each memory keeps two numbers. Storage strength says how
+well it is learned and only rises. Retrieval strength says how reachable it is now: it
+fades with time and a recall resets it to 1. Time never deletes or retires a memory. A
+recall raises storage strength by more when it is spaced out and when the memory had
+faded. A repeat recall seconds later earns almost nothing. For a user with the stage on,
+the old 90-day decay no longer runs. The consolidation pass logs which memories it would
+have decayed (`shadow_old_decay`) and changes nothing. With the stage off, nothing here
+runs and decay works as before. Recall ranking does not use the strengths yet.
 
 ## Events
 
