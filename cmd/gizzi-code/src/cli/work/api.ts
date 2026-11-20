@@ -201,6 +201,25 @@ export function stopComputer(id: string): Promise<{ id: string; status: string }
   return gateway(`/api/v1/computers/${encodeURIComponent(id)}/stop`, { method: "POST" })
 }
 
+export type RestorePoint = { id: string; created_at?: string; stateful?: boolean }
+
+/** Restore points on a computer (allternit-api `/api/v1/computers/:id/snapshots`). */
+export async function listRestorePoints(id: string): Promise<RestorePoint[]> {
+  return (await gateway<{ snapshots?: RestorePoint[] }>(`/api/v1/computers/${encodeURIComponent(id)}/snapshots`)).snapshots ?? []
+}
+
+export function createRestorePoint(id: string): Promise<{ snapshot_id: string }> {
+  return gateway(`/api/v1/computers/${encodeURIComponent(id)}/snapshots`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stateful: false }),
+  })
+}
+
+export function restoreRestorePoint(id: string, snapshotId: string): Promise<{ success: boolean }> {
+  return gateway(`/api/v1/computers/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}/restore`, { method: "POST" })
+}
+
 // ── bots pause (allternit-api GET/PUT /api/v1/bots/pause) ─────────────────
 
 export type BotPause = { paused: boolean; since: number | null; by: string | null }
