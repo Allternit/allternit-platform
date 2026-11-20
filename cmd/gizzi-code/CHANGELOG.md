@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.17.0 (2026-11-19)
+
+- **Worktrees.** `worktree_enter` and `worktree_exit` move a session into its own git worktree, only when asked. Exit keeps a tree that has uncommitted or unpushed work, and never removes a tree another session made.
+- **Second opinion and PR comments.** `second_opinion` runs a read-only reviewer and returns a verdict with reasons. `pr_comments` lists and replies to PR comments through `gh`; a reply asks first.
+- **Status while it works.** Long-running tools carry a short label, `status_update` shows the current phase, and a quiet check-in arrives after 10 silent minutes. `feedback_note` keeps notes on this device (`/feedback notes` in the TUI).
+- **File search with citations.** `resource` searches and reads chat files, uploads and Files drive items, and answers cite lines (`name:L10-20` in the TUI). Answers that used memory show "used memory (n)".
+- **Phone and voice.** Phone calendar, reminders and location tools; `user_location` uses the location shared with a message. `voice_control` works on voice turns, and `end_conversation` can end Gizzi's own chats after a warning.
+- **Phone maps.** `gizzi` phone maps, explore, forget-map and stop; `task --vision`; map steps show in the outcome.
+- **Prompts.** Safety, care, chat and code prompts fixed and extended (vendor gap review G1–G2); web, search, connector and MCP results are fenced as untrusted text.
+
 ## 2.16.0 (2026-11-17)
 
 - **Gizzi is the assistant.** Chats and the TUI introduce the assistant as Gizzi. The built-in agents and the TUI, voice and coordinator prompts are rewritten (prompts wave 3); the answer manual loads only the template a turn picks.
