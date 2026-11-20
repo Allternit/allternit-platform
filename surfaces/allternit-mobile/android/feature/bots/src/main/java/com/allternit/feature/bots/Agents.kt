@@ -47,6 +47,7 @@ import com.allternit.feature.artifacts.LibrarySheetAction
 import com.allternit.feature.artifacts.LibrarySpinner
 import com.allternit.feature.artifacts.PillRow
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -323,7 +324,7 @@ internal fun BotHomeScreen(bot: BotRecord, host: BotsHost, store: BotModeStore, 
     var files by remember { mutableStateOf<Int?>(null) }
     var webhooks by remember { mutableStateOf<Int?>(null) }
     var runOpen by remember { mutableStateOf(false) }
-    suspend fun load() {
+    suspend fun load() = coroutineScope {
         val t = async { BotsApi.listBotThreads(bot.id) }
         val r = async { BotsApi.listRoutines().orNull() }
         val f = async { BotsApi.listWorkspaceFiles(bot.id).orNull() }

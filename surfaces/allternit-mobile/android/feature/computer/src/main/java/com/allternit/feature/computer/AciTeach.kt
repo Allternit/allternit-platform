@@ -58,7 +58,7 @@ internal data class TeachSkill(val raw: JsonObject) {
     val subtitle: String get() = steps.size.let { n -> "$n step${if (n == 1) "" else "s"}" }.let { n -> domain?.let { "$it · $n" } ?: n }
 }
 
-/** `/api/har-derived-api/*` on the person's own computer, through the relay (iOS TeachClient). */
+/** `/api/har-derived-api/…` on the person's own computer, through the relay (iOS TeachClient). */
 internal class TeachClient(private val backend: ChatBackend) {
     sealed interface Out<out T> { data class Ok<T>(val v: T) : Out<T>; data class Failed(val message: String, val gate: Boolean = false) : Out<Nothing> }
     private suspend fun call(path: String, method: String = "GET", body: String? = null): Out<JsonElement> = when (val r = backend.runtimeJson(method, "/api/har-derived-api/$path", body)) {

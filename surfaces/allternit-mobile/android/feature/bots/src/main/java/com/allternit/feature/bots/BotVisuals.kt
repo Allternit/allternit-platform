@@ -199,9 +199,9 @@ fun AgentIdenticon(seed: String, size: Dp = 40.dp) {
         val unit = this.size.width / 5
         for (row in 0 until 5) for (col in 0 until 3) {
             val bit = row * 3 + col
-            val filled = ((h ushr bit) and 1uL) == 1uL || bit == 12
+            val filled = ((h shr bit) and 1uL) == 1uL || bit == 12
             if (!filled) continue
-            val color = if (((tint ushr bit) and 3uL) == 0uL) accent else warm
+            val color = if (((tint shr bit) and 3uL) == 0uL) accent else warm
             for (x in listOf(col * unit, (4 - col) * unit)) {
                 drawRoundRect(color, Offset(x, row * unit), Size(unit * 0.84f, unit * 0.84f), CornerRadius(unit * 0.22f))
             }

@@ -38,6 +38,7 @@ dependencies {
     // LibraryNet (the /api/v1 routes), the JSON helpers and the library chrome.
     implementation(project(":feature:artifacts"))
     implementation(project(":core:auth"))
+    implementation(libs.activity.compose)
     // ChatStreamEvent (the benchmark times a streamed reply).
     implementation(project(":core:stream"))
     // Gap run GS-D: the on-phone llama.cpp engine, downloads and storage ("On this phone").

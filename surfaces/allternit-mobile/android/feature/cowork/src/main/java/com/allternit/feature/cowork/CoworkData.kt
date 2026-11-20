@@ -24,7 +24,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 /*
  * Cowork data (iOS CoworkTasksClient, CoworkSessionsClient, FabricTransportClient and their stores).
  * Tasks are `api/v1/tasks` on the cloud host; sessions (`cowork/sessions`) ride the relay to the user's
- * computer; Fabric Transport (approvals, runs) is `fabric/transport/*` and `runs` on the API router.
+ * computer; Fabric Transport (approvals, runs) is `fabric/transport/…` and `runs` on the API router.
  * A phone with no computer gets [CRes.NoComputer], never a raw error.
  */
 

@@ -31,8 +31,8 @@ import kotlinx.serialization.json.putJsonObject
 
 /*
  * Automation data (iOS AutomationClient, RoutinesClient, LoopsClient, CronClient, TaskBoardClient and
- * the AutomationStore). Goals, routines and loops are `/api/v1/automation/*` on allternit-api (LibraryNet,
- * like the bots wave); the computer's own routines, loops and heartbeats (`v1/automations/*`, `v1/cron/*`)
+ * the AutomationStore). Goals, routines and loops are `/api/v1/automation/…` on allternit-api (LibraryNet,
+ * like the bots wave); the computer's own routines, loops and heartbeats (`v1/automations/…`, `v1/cron/…`)
  * and the Factory board (`api/factory/tasks/board`) ride the relay to the user's computer. A phone with
  * no computer gets [AResult.NoComputer], never a raw error.
  */
@@ -217,7 +217,7 @@ internal fun parseLocalLoop(o: JsonObject): LocalLoop? {
 
 // MARK: - Calls
 
-/** The `/api/v1/automation/*` routes plus the relay routes, one object per backend (iOS AutomationClient and friends). */
+/** The `/api/v1/automation/…` routes plus the relay routes, one object per backend (iOS AutomationClient and friends). */
 class AutomationApi(val backend: ChatBackend) {
     suspend fun routines(): AResult<List<AutoTask>> = v1("GET", "automation/routines?recent_runs=14", doing = "load routines").mapList("routines") { parseRoutine(it) }
     suspend fun loops(): AResult<List<AutoTask>> = v1("GET", "automation/loops?recent_runs=14", doing = "load loops").mapList("loops") { parseRoutine(it, TaskType.Loop) }

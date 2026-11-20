@@ -162,7 +162,7 @@ internal fun BotHomeTabsScreen(bot: BotRecord, initial: BotHomeTab, host: BotsHo
                 }
                 BotHomeTab.Artifacts -> BotArtifactsList(bot, host)
                 BotHomeTab.Routines -> BotRoutinesView(bot)
-                BotHomeTab.Memory -> BotMemoryView(bot, nav)
+                BotHomeTab.Memory -> BotMemoryView(bot, nav, host.backend)
                 BotHomeTab.Config -> AgentDetailView(bot, store, nav)
             }
         }
@@ -284,7 +284,7 @@ internal fun BotRoutinesView(bot: BotRecord) {
 
 /** iOS BotMemoryView: the impact map, Teach <bot>, and what it remembers (search, swipe-free Forget). */
 @Composable
-internal fun BotMemoryView(bot: BotRecord, nav: BotNavigator) {
+internal fun BotMemoryView(bot: BotRecord, nav: BotNavigator, backend: com.allternit.feature.chat.ChatBackend? = null) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var memories by remember { mutableStateOf<List<BotMemoryItem>>(emptyList()) }
