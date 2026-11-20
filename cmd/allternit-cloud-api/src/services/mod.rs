@@ -30,6 +30,7 @@ pub mod meeting_launcher;
 pub mod node_resolution;
 /// Sign in with Allternit: OAuth apps (CONTRACT-oauth-linked-billing-2026-11, Part A).
 pub mod oauth_apps;
+pub mod oauth_tokens;
 pub mod ops_alert;
 pub mod provisioning;
 pub mod quota_service;
