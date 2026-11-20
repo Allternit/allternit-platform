@@ -135,8 +135,31 @@ impl PaneLaunchEnv {
     }
 }
 
+/// Session markers a coding agent sets for its own child processes. The pane
+/// server inherits them when it is first started from inside an agent's shell
+/// (e.g. `gizzi agents ...` run by a Claude Code session), and every pane it
+/// later spawns would carry them. A `claude` started in such a pane then thinks
+/// it is a child of that old session: it turns transcript saving off and talks
+/// to the old session's messaging socket. Removed before the pane's own launch
+/// env is applied, so a Factory bot that sets one of these on purpose keeps it.
+const INHERITED_AGENT_SESSION_ENV: &[&str] = &[
+    "CODEX_THREAD_ID",
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_PID",
+    "AI_AGENT",
+];
+
 fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
-    cmd.env_remove("CODEX_THREAD_ID");
+    for key in INHERITED_AGENT_SESSION_ENV {
+        cmd.env_remove(key);
+    }
     for (key, value) in &launch_env.extra {
         // Spawn-time transcript configuration; the agent must not inherit it.
         if crate::ao::transcript::is_transcript_key(key) {
@@ -3454,6 +3477,40 @@ mod tests {
         apply_pane_launch_env(&mut cmd, &PaneLaunchEnv::default());
 
         assert!(cmd.get_env("CODEX_THREAD_ID").is_none());
+    }
+
+    #[test]
+    fn pane_launch_env_removes_outer_claude_code_session() {
+        let mut cmd = CommandBuilder::new("shell");
+        for key in INHERITED_AGENT_SESSION_ENV {
+            cmd.env(key, "outer-session");
+        }
+        cmd.env("CLAUDE_CODE_USE_BEDROCK", "1");
+
+        apply_pane_launch_env(&mut cmd, &PaneLaunchEnv::default());
+
+        for key in INHERITED_AGENT_SESSION_ENV {
+            assert!(cmd.get_env(key).is_none(), "{key} leaked into the pane");
+        }
+        // User configuration is not a session marker and stays.
+        assert!(cmd.get_env("CLAUDE_CODE_USE_BEDROCK").is_some());
+    }
+
+    #[test]
+    fn pane_launch_env_keeps_agent_env_a_bot_sets_on_purpose() {
+        let mut cmd = CommandBuilder::new("shell");
+        cmd.env("CLAUDE_CODE_ENTRYPOINT", "outer-session");
+        let launch_env = PaneLaunchEnv::from_extra(vec![(
+            "CLAUDE_CODE_ENTRYPOINT".to_string(),
+            "factory-bot".to_string(),
+        )]);
+
+        apply_pane_launch_env(&mut cmd, &launch_env);
+
+        assert_eq!(
+            cmd.get_env("CLAUDE_CODE_ENTRYPOINT"),
+            Some(std::ffi::OsStr::new("factory-bot"))
+        );
     }
 
     #[test]
