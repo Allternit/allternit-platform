@@ -457,6 +457,10 @@ pub fn persist_facts_typed(
             let mut persisted = Vec::new();
             for ((text, t), id) in facts.iter().zip(out.fact_ids) {
                 if let Some(id) = id {
+                    // Sleep write-time scores (no model call); a no-op with Sleep off.
+                    if let Err(e) = crate::sleep::score::score_written_fact(&conn, user_id, &id, text, observation_id) {
+                        tracing::debug!("sleep write score skipped: {e}");
+                    }
                     persisted.push(MemoryFact {
                         id,
                         user_id: user_id.to_string(),
@@ -502,6 +506,11 @@ pub fn persist_facts_typed(
              VALUES (?1, ?2, ?3, ?4, 0.85, ?5)",
             params![fact_id, user_id, agent_id, fact, observation_id],
         )?;
+
+        // Sleep write-time scores (no model call); a no-op with Sleep off.
+        if let Err(e) = crate::sleep::score::score_written_fact(&conn, user_id, &fact_id, fact, observation_id) {
+            tracing::debug!("sleep write score skipped: {e}");
+        }
 
         // Best-effort embedding index; failures should not block fact persistence.
         let _ = store_embedding(db, user_id, "fact", &fact_id, fact);

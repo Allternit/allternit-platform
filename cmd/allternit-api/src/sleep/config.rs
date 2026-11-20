@@ -114,6 +114,18 @@ pub const DEFS: &[Def] = &[
     num("strength_difficulty_weight", 1.0, 0.0, 10.0, "Extra credit for a recall made while retrieval strength was low."),
     num("strength_min_spacing_days", 1.0, 0.01, 365.0, "Days since the last recall that earn full spacing credit."),
     num("strength_instant_credit_cap", 0.02, 0.0, 1.0, "Most a recall under the minimum spacing can earn."),
+    num("credence_user_said", 0.9, 0.0, 1.0, "Write-time credence of a fact the user said."),
+    num("credence_tool_observed", 0.8, 0.0, 1.0, "Write-time credence of a fact a tool reported."),
+    num("credence_imported", 0.6, 0.0, 1.0, "Write-time credence of an imported fact."),
+    num("credence_model_inferred", 0.5, 0.0, 1.0, "Write-time credence of a fact the model inferred."),
+    num("credence_dream_generated", 0.3, 0.0, 1.0, "Write-time credence of a fact a dream produced."),
+    num("attention_base", 0.1, 0.0, 1.0, "Attention every new fact starts with."),
+    num("attention_w_remember", 0.35, 0.0, 1.0, "Attention added when the user flagged it (remember this)."),
+    num("attention_w_self", 0.2, 0.0, 1.0, "Attention added for a first-person statement about the user."),
+    num("attention_w_repeat", 0.15, 0.0, 1.0, "Attention added when a near-duplicate is already stored."),
+    num("attention_w_surprise", 0.2, 0.0, 1.0, "Attention added when the fact updates an existing one."),
+    num("attention_w_stakes", 0.2, 0.0, 1.0, "Attention added for money, health, legal or deadline facts."),
+    num("attention_repeat_jaccard", 0.6, 0.0, 1.0, "Word overlap at or above which two facts count as a repeat."),
 ];
 
 pub fn def(key: &str) -> Option<&'static Def> {
