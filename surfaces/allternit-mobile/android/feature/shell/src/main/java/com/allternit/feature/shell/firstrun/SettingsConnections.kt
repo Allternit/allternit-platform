@@ -78,6 +78,26 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
         }
     }
 
+    fun connect(id: String) {
+        message = null
+        when (id) {
+            "phone-control" -> openPhoneControl()
+            "phone", "android-screen" -> openAndroidScreen()
+            "gizzi", "server", "cloud-computer" -> sheet = ConnSheet.OnComputer(id)
+            "openai-voice", "elevenlabs" -> message = "Voice keys are set under Voice and dictation."
+            else -> sheet = connectRoute(id)
+        }
+    }
+
+    fun fallback(id: String) {
+        sheet = when {
+            id == "this-mac" -> ConnSheet.OnComputer("this-mac")
+            id == "github" -> ConnSheet.Login("copilot")
+            id.endsWith("-key") || id == "api-key" -> ConnSheet.Keys(if (id == "api-key") null else id)
+            else -> null
+        }
+    }
+
     /**
      * The Claude organization row's one action (iOS ConnectionRowView + ConnectionsSettingsView.act):
      * Link (off), Unlink after a confirm (on), Link again (needs), and for a reached spend limit
@@ -97,26 +117,6 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
         else -> ({
             SetupQuietButton("Link", Modifier.testTag("claude-org-link").semantics { contentDescription = "Link your Claude organization" }) { connect("claude-org") }
         })
-    }
-
-    fun connect(id: String) {
-        message = null
-        when (id) {
-            "phone-control" -> openPhoneControl()
-            "phone", "android-screen" -> openAndroidScreen()
-            "gizzi", "server", "cloud-computer" -> sheet = ConnSheet.OnComputer(id)
-            "openai-voice", "elevenlabs" -> message = "Voice keys are set under Voice and dictation."
-            else -> sheet = connectRoute(id)
-        }
-    }
-
-    fun fallback(id: String) {
-        sheet = when {
-            id == "this-mac" -> ConnSheet.OnComputer("this-mac")
-            id == "github" -> ConnSheet.Login("copilot")
-            id.endsWith("-key") || id == "api-key" -> ConnSheet.Keys(if (id == "api-key") null else id)
-            else -> null
-        }
     }
 
     Column(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary).statusBarsPadding().navigationBarsPadding().testTag("settingsConnections")) {

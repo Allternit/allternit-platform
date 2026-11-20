@@ -110,10 +110,10 @@ internal fun CardHeader(icon: Int, title: String, tint: Color = AllternitTheme.c
 
 /** The capsule action button the cards share (iOS ChatErrorCardView / QuestionCardButtonStyle). */
 @Composable
-internal fun CapsuleButton(title: String, icon: Int? = null, primary: Boolean = false, enabled: Boolean = true, label: String? = null, onClick: () -> Unit) {
+internal fun CapsuleButton(title: String, icon: Int? = null, primary: Boolean = false, enabled: Boolean = true, label: String? = null, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     Row(
-        Modifier
+        modifier
             .heightIn(min = 32.dp)
             .clip(CircleShape)
             .background(if (primary) c.accentPrimary else c.fillNeutral)
@@ -171,8 +171,19 @@ internal fun TransientBanner(message: String, onDismiss: () -> Unit) {
 
 // MARK: - Error card (iOS ChatErrorCardView)
 
+/** Same URL as feature:shell ConnectionsCatalog.CLAUDE_LINKED_PLATFORMS_URL (chat can't see the shell module). */
+private const val CLAUDE_LINKED_PLATFORMS_URL = "https://platform.claude.com/linked-platforms"
+
 @Composable
-internal fun ChatErrorCard(error: ChatError, onChooseModel: () -> Unit, onRetry: () -> Unit) {
+internal fun ChatErrorCard(
+    error: ChatError,
+    onChooseModel: () -> Unit,
+    onRetry: () -> Unit,
+    /** Draws only these actions (credits is left out when no Cloud model is listed). */
+    availableActions: Set<ChatErrorAction> = emptySet(),
+    onAction: (ChatErrorAction) -> Unit = {},
+) {
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
     val c = AllternitTheme.colors
     var details by remember { mutableStateOf(false) }
     CardChrome(Modifier.widthIn(max = 320.dp), border = AllternitStatic.StatusWarning.copy(alpha = 0.4f)) {
@@ -181,6 +192,16 @@ internal fun ChatErrorCard(error: ChatError, onChooseModel: () -> Unit, onRetry:
             Text(error.title, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         }
         Text(error.detail, color = c.textSecondary, fontSize = 12.sp, lineHeight = 16.sp)
+        val shown = error.claudeActions.filter { it in availableActions }
+        shown.forEach { a ->
+            CapsuleButton(a.title, primary = a == ChatErrorAction.UseCredits, label = a.title, modifier = Modifier.testTag(a.tag)) { onAction(a) }
+        }
+        // iOS: a reached spend limit also points at Claude's Linked platforms page, where it is raised.
+        if (error.claudeLinkCode == "claude_link_spend_limit") {
+            CapsuleButton("Linked platforms", label = "Open Claude's Linked platforms page", modifier = Modifier.testTag("error-linked-platforms")) {
+                runCatching { uri.openUri(CLAUDE_LINKED_PLATFORMS_URL) }
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (error.isModelError) CapsuleButton("Choose a model", icon = DesignR.drawable.ph_cpu, onClick = onChooseModel)
             CapsuleButton("Retry", icon = com.allternit.core.design.R.drawable.ph_arrow_clockwise, primary = !error.isModelError, onClick = onRetry)

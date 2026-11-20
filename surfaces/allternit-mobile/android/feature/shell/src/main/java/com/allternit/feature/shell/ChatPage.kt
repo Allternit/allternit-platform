@@ -88,6 +88,7 @@ internal fun ChatPage(
                 prefill = ChatViewModel.strippedText(m.content)
             },
             onOpenSettings = onOpenSettings,
+            creditsModelId = { models.cloudModels.let { cloud -> cloud.firstOrNull { it.id == models.selectedId } ?: cloud.firstOrNull() }?.id },
             onConnectConnector = { onOpenSection(RailRow("connectors", "Connectors", com.allternit.core.design.R.drawable.ph_lightning)) },
             onShareLink = { shareOpen = true },
             onOpenArtifact = onOpenArtifact,

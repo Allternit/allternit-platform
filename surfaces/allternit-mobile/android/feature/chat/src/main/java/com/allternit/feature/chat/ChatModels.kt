@@ -107,6 +107,30 @@ data class QuestionItem(val header: String?, val question: String, val options: 
 data class ChatError(val name: String?, val message: String?, val raw: String) {
     val isModelError: Boolean get() = name == NO_BRAIN || name == "ProviderModelNotFoundError"
 
+    /**
+     * The `claude_link_*` code of a Claude organization refusal (iOS ChatErrorAction.forClaudeLink), from the
+     * error name or the refusal body `{"error":{"code","message"},"fallbacks":[...]}` (HTTP error or the one
+     * mid-stream `data:` frame). Null for every other error.
+     */
+    val claudeLinkCode: String?
+        get() = name?.takeIf { it.startsWith("claude_link_") }
+            ?: CLAUDE_CODE.find("$message $raw")?.groupValues?.get(1)
+
+    /** The server's own sentence from a refusal body, when there is one. */
+    private val refusalMessage: String?
+        get() = if (claudeLinkCode == null) null else REFUSAL_MESSAGE.find(raw)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+
+    /** Use credits, Link again (disconnected only), Manage Claude organization. Empty for other errors. */
+    val claudeActions: List<ChatErrorAction>
+        get() {
+            val code = claudeLinkCode ?: return emptyList()
+            return buildList {
+                add(ChatErrorAction.UseCredits)
+                if (code == "claude_link_disconnected") add(ChatErrorAction.LinkAgain)
+                add(ChatErrorAction.ManageClaudeOrg)
+            }
+        }
+
     val title: String
         get() = when (name) {
             NO_BRAIN -> "Pick a brain first."
@@ -118,16 +142,25 @@ data class ChatError(val name: String?, val message: String?, val raw: String) {
         get() = when (name) {
             NO_BRAIN -> "Choose the brain this chat runs on, then send again."
             "ProviderModelNotFoundError" -> "The model for this chat couldn't be found. Pick another model and try again."
-            else -> message?.trim()?.takeIf { it.isNotEmpty() } ?: "The response failed before it could complete."
+            else -> refusalMessage ?: message?.trim()?.takeIf { it.isNotEmpty() } ?: "The response failed before it could complete."
         }
 
     companion object {
         const val NO_BRAIN = "no_brain"
+        private val CLAUDE_CODE = Regex("\"?(claude_link_[a-z_]+)\"?")
+        private val REFUSAL_MESSAGE = Regex("\"message\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
         /** The API's streamed no_brain error text (iOS AgentChatClientError.noBrainMessage). */
         const val NO_BRAIN_MESSAGE = "Pick a brain first."
 
         fun connectionInterrupted(description: String) = ChatError(null, description, description)
     }
+}
+
+/** A button a Claude organization refusal adds to the error card (iOS ChatErrorAction). The chat decides what each does. */
+enum class ChatErrorAction(val title: String, val tag: String) {
+    UseCredits("Use Allternit credits for this message", "error-use-credits"),
+    LinkAgain("Link again", "error-link-again"),
+    ManageClaudeOrg("Manage Claude organization", "error-manage-claude-org"),
 }
 
 /** One feed row (iOS MessageRecord). */

@@ -67,6 +67,8 @@ class ChatCallbacks(
     val onEdit: (MessageRecord) -> Unit,
     /** "Open Settings" on a settings-change card. */
     val onOpenSettings: () -> Unit,
+    /** The Allternit Cloud model "Use Allternit credits for this message" re-sends on; null hides the button (iOS creditsFallbackModelId). */
+    val creditsModelId: () -> String? = { null },
     /** "Connect" on a connector suggestion (the shell's Connectors page). */
     val onConnectConnector: (String) -> Unit,
     /** "Share link…" from a reply's Share menu (the host opens ThreadShareSheet). */
@@ -121,6 +123,19 @@ fun ChatScreen(
             onRetry = { id ->
                 val (model, effort) = callbacks.currentModel()
                 viewModel.retryFailed(id, model, effort)
+            },
+            availableErrorActions = buildSet {
+                add(ChatErrorAction.ManageClaudeOrg)
+                add(ChatErrorAction.LinkAgain)
+                if (callbacks.creditsModelId() != null) add(ChatErrorAction.UseCredits)
+            },
+            onErrorAction = { id, action ->
+                when (action) {
+                    // Only on tap: re-send this one message on Allternit credits (iOS resendOnCloudModel).
+                    ChatErrorAction.UseCredits -> callbacks.creditsModelId()?.let { cloud -> viewModel.retryFailed(id, cloud, callbacks.currentModel().second) }
+                    // Settings holds Connections, where the Claude organization row lives.
+                    ChatErrorAction.LinkAgain, ChatErrorAction.ManageClaudeOrg -> callbacks.onOpenSettings()
+                }
             },
             onRegenerate = {
                 val (model, effort) = callbacks.currentModel()
