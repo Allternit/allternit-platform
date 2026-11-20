@@ -217,3 +217,6 @@ iOS Bots mode sets few ids (`botsOptionsThreads`, `botsOptionsOffice`, `botsOpti
 
 ## Gap run E
 heartbeatOrphans, heartbeatOrphan-<id>, codeUsageTab-Overview, codeUsageTab-Models, codeUsageModelsEmpty, codeUsageModel-<model>, v2ArtifactSignPdf (bar), v2ArtifactLegacyEditor (banner), usage_connectedAccounts, usage_account_<provider>
+
+## Visual parity 1
+composerToolsTab, composerDeck, deckPluginsMore, deckPluginsManage, deckPlugin<name>, deckModeOff, codeComposer, codeModelChip, codeAttach, codeVoice, codeEnvironment, codeFolder, codeOpenTerminal, codeGreeting, codeShowUsage, codeHomeNoComputer

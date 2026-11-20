@@ -681,7 +681,7 @@ internal fun PhoneMenuButton(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            painter = painterResource(R.drawable.shell_list),
+            painter = painterResource(com.allternit.core.design.R.drawable.ph_list),
             contentDescription = null,
             tint = c.textPrimary,
             modifier = Modifier.size(22.dp),

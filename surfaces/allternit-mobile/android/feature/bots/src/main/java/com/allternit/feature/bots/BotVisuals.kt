@@ -270,7 +270,7 @@ internal fun NavRow(label: String, icon: Int?, value: String? = null, testTag: S
             Text(label, color = if (destructive) AllternitStatic.StatusError else c.textPrimary, fontSize = 16.sp, modifier = Modifier.weight(1f, fill = false))
             Spacer(Modifier.weight(1f))
             if (value != null) Text(value, color = c.textSecondary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            if (!destructive) Icon(painterResource(R.drawable.bots_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(14.dp))
+            if (!destructive) Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(14.dp))
         }
         if (!last) Box(Modifier.padding(start = 48.dp).fillMaxWidth().height(1.dp).background(c.borderSubtle))
     }

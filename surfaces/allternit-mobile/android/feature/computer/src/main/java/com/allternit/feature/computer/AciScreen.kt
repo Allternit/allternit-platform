@@ -266,8 +266,7 @@ private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> U
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 560.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("A://", color = c.textPrimary, fontSize = 40.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 24.dp))
+                com.allternit.core.design.AProtocolMark(height = 30.dp, ink = c.textPrimary, modifier = Modifier.padding(bottom = 24.dp))
                 Text(title, color = c.textPrimary, fontSize = 32.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(bottom = 32.dp)) {
                     Box(Modifier.width(32.dp).height(1.dp).background(c.borderStrong))
@@ -453,7 +452,7 @@ internal fun AciPromoHero(height: Dp = 132.dp, topRadius: Dp = 16.dp) {
                 rotateCard(deg, o, cw, ch, card, line)
             }
         }
-        Text("A://", color = c.textPrimary, fontSize = 34.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+        com.allternit.core.design.AProtocolMark(height = 26.dp, ink = c.textPrimary)
     }
 }
 

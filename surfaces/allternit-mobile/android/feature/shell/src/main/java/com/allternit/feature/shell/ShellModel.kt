@@ -29,7 +29,7 @@ import java.time.OffsetDateTime
  * `modeFanCard<raw>` and the persisted value. Cowork is not a mode (a composer toggle in Home).
  */
 internal enum class ShellMode(val raw: String, val label: String, @DrawableRes val icon: Int, val accent: Color) {
-    Home("home", "Home", R.drawable.shell_house, ModeAccents.Chat.accent),
+    Home("home", "Home", com.allternit.core.design.R.drawable.ph_house, ModeAccents.Chat.accent),
     Bots("bots", "Bots", DesignR.drawable.ph_cpu, ModeAccents.Cowork.accent),
     Code("code", "Code", DesignR.drawable.ph_terminal, ModeAccents.Code.accent),
     Aci("aci", "ACI", DesignR.drawable.ph_globe, ModeAccents.Browser.accent);
@@ -94,17 +94,17 @@ internal object ShellModePrefs {
 internal data class RailRow(val id: String, val label: String, @DrawableRes val icon: Int)
 
 internal fun railRows(mode: ShellMode): List<RailRow> {
-    val projects = RailRow("projects", "Projects", R.drawable.shell_folder)
-    val artifacts = RailRow("artifacts-library", "Artifacts", R.drawable.shell_file_text)
+    val projects = RailRow("projects", "Projects", com.allternit.core.design.R.drawable.ph_folder)
+    val artifacts = RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)
     return when (mode) {
         ShellMode.Home -> listOf(
             projects, artifacts,
-            RailRow("automation-tasks", "Automation Tasks", R.drawable.shell_clock),
+            RailRow("automation-tasks", "Automation Tasks", com.allternit.core.design.R.drawable.ph_clock),
             RailRow("customize", "Customize", DesignR.drawable.ph_sliders_horizontal),
         )
         ShellMode.Code -> listOf(
             projects, artifacts,
-            RailRow("code-automations", "Automation Tasks", R.drawable.shell_clock),
+            RailRow("code-automations", "Automation Tasks", com.allternit.core.design.R.drawable.ph_clock),
         )
         ShellMode.Aci -> listOf(
             RailRow("mcp-apps", "MCP Apps", DesignR.drawable.ph_plugs_connected),

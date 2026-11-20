@@ -1,5 +1,10 @@
 package com.allternit.feature.code
 
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -91,45 +96,67 @@ sealed interface CodeRoute {
     data class Permissions(val sessionId: String) : CodeRoute
 }
 
-/** The Code home under the composer: the folder, the tools and the recent threads. */
+/** iOS CodeModeView.greetings: one is picked each time the launchpad opens. */
+private val CodeGreetings = listOf(
+    "What's up next?",
+    "Ready to ship something?",
+    "What are we building today?",
+    "Pick a task and let's run it.",
+    "Need a hand with the codebase?",
+)
+
+/**
+ * The Code launchpad above the composer (iOS CodeModeView.launchpad): the serif greeting, one
+ * line, and Show usage. Terminal, Files and Computer live in the composer's deck row and the
+ * thread's Panes, and threads in the Code sessions view (the checklist in the header), as on iOS.
+ */
 @Composable
 fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit) {
     val c = AllternitTheme.colors
     var folder by remember { mutableStateOf<CodeResult<CodeFolder>?>(null) }
+    val greeting = remember { CodeGreetings.random() }
     LaunchedEffect(Unit) { host.reloadSessions() }
     LaunchedEffect(Unit) { folder = CodeApi.folder(host.backend) }
-    val sessions = host.sessions()
-    Column(Modifier.fillMaxSize().testTag("codeHome"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        when (val f = folder) {
-            is CodeResult.Ok -> if (f.value.directory.trim('/').isNotEmpty()) Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(f.value.name, color = c.textPrimary, fontSize = 15.sp, fontFamily = CodeMono, modifier = Modifier.testTag("codeFolderName"))
-                f.value.branch?.let { Text("on $it", color = c.textSecondary, fontSize = 13.sp, fontFamily = CodeMono) }
-            }
-            CodeResult.NoComputer -> Row(Modifier.padding(horizontal = 16.dp).testTag("codeHomeNoComputer"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("codeHome")) {
+        if (folder == CodeResult.NoComputer) {
+            // iOS ConnectComputerView over the launchpad.
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp).testTag("codeHomeNoComputer"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("No computer connected", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.weight(1f))
                 CodePill("Connect", testTag = "codeHomeConnect") { onRoute(CodeRoute.Computer) }
             }
-            is CodeResult.Failed -> Text(f.message, color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp))
-            null -> Unit
         }
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CodePill("Terminal", testTag = "codeToolTerminal") { onRoute(CodeRoute.Terminal) }
-            CodePill("Files", testTag = "codeToolFiles") { onRoute(CodeRoute.Files) }
-            val target = host.currentSessionId() ?: sessions.firstOrNull()?.id
-            if (target != null) CodePill("Changes", testTag = "codeToolChanges") { onRoute(CodeRoute.Changes(target)) }
-            CodePill("Computer", testTag = "codeToolComputer") { onRoute(CodeRoute.Computer) }
-        }
-        if (sessions.isEmpty()) {
-            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text("Run a command or describe a task to start coding.", color = c.textSecondary, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 32.dp).testTag("codeEmpty"))
-            }
-        } else {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Recent threads", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                Text("See all", color = c.accentCode, fontSize = 14.sp, modifier = Modifier.testTag("codeSeeAll").clickable { onRoute(CodeRoute.Overview) }.padding(8.dp))
-            }
-            LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-                items(sessions.take(8), key = { it.id }) { s -> SessionRow(s, onClick = { host.openSession(s.id) }) }
+        Column(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 28.dp, bottom = 24.dp)) {
+            Text(
+                greeting,
+                color = c.textPrimary,
+                fontSize = 28.sp,
+                lineHeight = 34.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                letterSpacing = (-0.56).sp,
+                modifier = Modifier.testTag("codeGreeting").semantics { heading() },
+            )
+            Text(
+                "Run a command or describe a task to start coding.",
+                color = c.textSecondary,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                modifier = Modifier.padding(top = 8.dp).testTag("codeEmpty"),
+            )
+            Row(
+                Modifier
+                    .padding(top = 24.dp)
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(c.bgTertiary)
+                    .testTag("codeShowUsage")
+                    .clickable { onRoute(CodeRoute.Usage) }
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(painterResource(com.allternit.core.design.R.drawable.ph_chart_bar), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(13.dp))
+                Text("Show usage", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
         }
     }

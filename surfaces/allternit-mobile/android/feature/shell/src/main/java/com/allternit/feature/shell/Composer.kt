@@ -1,5 +1,6 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.design.MatrixLogo
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -35,6 +36,16 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,6 +66,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
@@ -159,6 +172,12 @@ private object SwipeTip {
     const val KEY = "allternit.nudge.composer-swipe"
 }
 
+/** Which deck rides under the card (iOS ComposerDeckVariant): Full on Home, Compact in a chat, None on Bots. */
+internal enum class ComposerDeck { None, Compact, Full }
+
+/** The person's fold choice, per device (iOS deckFoldedDefaultsKey). The band is open at rest. */
+private const val DeckFoldedKey = "allternit.composer.deckFolded"
+
 /** Upward travel on the composer that opens the folded deck band (iOS deckSwipeDistance). */
 private val DeckSwipeDistance = 24.dp
 
@@ -190,6 +209,8 @@ internal fun Composer(
     placeholderOverride: String? = null,
     /** Wave H2: starts voice mode for this chat (iOS ComposerView onVoiceMode); null leaves the button disabled. */
     onVoiceMode: (() -> Unit)? = null,
+    /** iOS ComposerView `deck`: Full (Home, rotating hints), Compact (a chat, "Reply…"), None (Bots). */
+    deck: ComposerDeck = ComposerDeck.Full,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -200,7 +221,7 @@ internal fun Composer(
     var text by rememberSaveable { mutableStateOf("") }
     val attachments = remember { mutableStateListOf<ComposerAttachment>() }
     var focused by remember { mutableStateOf(false) }
-    var swipedOpen by remember { mutableStateOf(false) }
+    var deckFolded by remember { mutableStateOf(prefs.getBoolean(DeckFoldedKey, false)) }
     var tipSeen by remember { mutableStateOf(prefs.getBoolean(SwipeTip.KEY, false)) }
     var chipDismissed by rememberSaveable { mutableStateOf(false) }
     var agentMode by rememberSaveable { mutableStateOf<String?>(null) }
@@ -212,9 +233,17 @@ internal fun Composer(
 
     val hasDraft = text.isNotBlank() || attachments.isNotEmpty()
     val armedMode = DeckModes.firstOrNull { it.id == agentMode }
-    val deckOpen = focused || hasDraft || swipedOpen || agentMode != null
+    // iOS deckOpen(folded:): open at rest; only the tools tab or a swipe folds it. Focus, typing and modes never change it.
+    val deckOpen = deck != ComposerDeck.None && !deckFolded
     val chipVisible = noComputer && !chipDismissed
-    val showsTip = !tipSeen && !deckOpen && !chipVisible
+    val showsTip = !tipSeen && deck != ComposerDeck.None && deckFolded && !chipVisible
+    val canSend = hasDraft && !sendDisabled
+
+    fun setDeckFolded(folded: Boolean) {
+        Haptics.perform(view, Haptics.Kind.Tap)
+        deckFolded = folded
+        prefs.edit().putBoolean(DeckFoldedKey, folded).apply()
+    }
 
     fun markTipSeen() {
         tipSeen = true
@@ -223,6 +252,7 @@ internal fun Composer(
 
     val placeholders = when {
         placeholderOverride != null -> listOf(placeholderOverride)
+        deck != ComposerDeck.Full -> listOf("Reply…")
         agentMode == null -> ComposerPlaceholders.chat
         armedMode != null -> ComposerPlaceholders.byMode(armedMode)
         else -> ComposerPlaceholders.agentNoMode
@@ -230,15 +260,11 @@ internal fun Composer(
     LaunchedEffect(focused, text.isEmpty(), agentMode) {
         if (agentMode != null) placeholderIndex = 0
         // Rotate every 7s at rest; paused while focused or typing, so it never changes under the user.
-        if (focused || text.isNotEmpty()) return@LaunchedEffect
+        if (deck != ComposerDeck.Full || focused || text.isNotEmpty()) return@LaunchedEffect
         while (true) {
             delay(7_000)
             placeholderIndex += 1
         }
-    }
-    LaunchedEffect(focused) {
-        // Blur with an empty draft folds a swiped-open band.
-        if (!focused && !hasDraft) swipedOpen = false
     }
 
     LaunchedEffect(Unit) { models.load() }
@@ -327,7 +353,7 @@ internal fun Composer(
         }
         AnimatedVisibility(visible = chipVisible, enter = fadeIn(), exit = fadeOut()) {
             NoticeCard(
-                icon = R.drawable.shell_desktop,
+                icon = com.allternit.core.design.R.drawable.ph_desktop,
                 title = NoComputerCopy.TITLE,
                 detail = NoComputerCopy.DETAIL,
                 testTag = "composerComputerChip",
@@ -337,7 +363,7 @@ internal fun Composer(
         }
         AnimatedVisibility(visible = showsTip, enter = fadeIn(), exit = fadeOut()) {
             NoticeCard(
-                icon = R.drawable.shell_caret_up,
+                icon = com.allternit.core.design.R.drawable.ph_caret_up,
                 title = SwipeTip.TEXT,
                 detail = null,
                 testTag = "composerSwipeTip",
@@ -362,16 +388,17 @@ internal fun Composer(
                         onDragStart = { dy = 0f },
                         onDragEnd = {
                             // Up by 24dp opens, down by 24dp closes (iOS nextSwipedOpen).
-                            if (-dy >= swipePx && !swipedOpen) {
-                                swipedOpen = true
+                            if (deck == ComposerDeck.None) return@detectVerticalDragGestures
+                            if (-dy >= swipePx && deckFolded) {
                                 markTipSeen()
-                                Haptics.perform(view, Haptics.Kind.Tap)
-                            } else if (dy >= swipePx && swipedOpen) {
-                                swipedOpen = false
+                                setDeckFolded(false)
+                            } else if (dy >= swipePx && !deckFolded) {
+                                setDeckFolded(true)
                             }
                         },
                     ) { _, amount -> dy += amount }
                 }
+                .zIndex(1f)
                 .testTag("composerCard"),
         ) {
             if (attachments.isNotEmpty()) {
@@ -382,18 +409,18 @@ internal fun Composer(
                     attachments.forEach { a -> AttachmentChip(a) { attachments.remove(a) } }
                 }
             }
-            Box(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 12.dp)) {
+            Box(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 4.dp)) {
                 if (text.isEmpty()) {
                     Crossfade(targetState = placeholders[placeholderIndex % placeholders.size], animationSpec = tween(250), label = "placeholder") { p ->
-                        Text(p, color = c.textTertiary, fontSize = 17.sp, lineHeight = 22.sp)
+                        Text(p, color = c.textTertiary, fontSize = 16.sp, lineHeight = 24.sp)
                     }
                 }
                 BasicTextField(
                     value = text,
                     onValueChange = { text = it },
-                    textStyle = TextStyle(color = c.textPrimary, fontSize = 17.sp, lineHeight = 22.sp, fontFamily = ShellSans),
+                    textStyle = TextStyle(color = c.textPrimary, fontSize = 16.sp, lineHeight = 24.sp, fontFamily = ShellSans),
                     cursorBrush = SolidColor(c.textPrimary),
-                    maxLines = 8,
+                    maxLines = 6,
                     modifier = Modifier
                         .fillMaxWidth()
                         .onFocusChanged { focused = it.isFocused }
@@ -422,11 +449,12 @@ internal fun Composer(
                         .semantics { contentDescription = "Add to chat" },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(painterResource(R.drawable.shell_plus), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(22.dp).rotate(plusTurn))
+                    Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp).rotate(plusTurn))
                 }
                 Spacer(Modifier.weight(1f))
                 ModelChip(models = models, open = pickerOpen) { pickerOpen = true }
                 if (isStreaming) {
+                    StreamingBars()
                     // Stop while a reply runs (iOS: square.fill on the neutral circle, label "Stop").
                     Box(
                         modifier = Modifier
@@ -448,22 +476,28 @@ internal fun Composer(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
+                            .alpha(if (canSend) 1f else 0.7f)
                             .clip(CircleShape)
-                            .background(if (sendDisabled || text.isBlank()) c.accentPrimary.copy(alpha = 0.4f) else c.accentPrimary)
+                            .background(c.accentPrimary)
                             .testTag("composerSend")
                             .clickable(role = Role.Button, onClickLabel = "Send message") { send() }
                             .semantics { contentDescription = "Send message" },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(painterResource(DesignR.drawable.ph_arrow_up), contentDescription = null, tint = c.onAccent, modifier = Modifier.size(20.dp))
+                        Icon(painterResource(DesignR.drawable.ph_arrow_up), contentDescription = null, tint = c.onAccent, modifier = Modifier.size(18.dp))
                     }
                 } else {
                     Row {
                         if (dictationAvailable) {
-                            ControlGlyph(R.drawable.shell_mic, if (dictation.isRecording) "Stop dictation" else "Dictate", "composerMic") { toggleDictation() }
+                            ControlGlyph(
+                                if (dictation.isRecording) DesignR.drawable.ph_microphone_fill else DesignR.drawable.ph_microphone,
+                                if (dictation.isRecording) "Stop dictation" else "Dictate",
+                                "composerMic",
+                                tint = if (dictation.isRecording) c.accentPrimary else null,
+                            ) { toggleDictation() }
                         }
                         // iOS draws the voice button at 0.4, disabled, where voice mode has no chat to talk to.
-                        ControlGlyph(R.drawable.shell_waveform, "Start voice mode", "composerVoice", enabled = onVoiceMode != null) {
+                        ControlGlyph(com.allternit.core.design.R.drawable.ph_waveform, "Start voice mode", "composerVoice", enabled = onVoiceMode != null) {
                             Haptics.perform(view, Haptics.Kind.Tap)
                             startVoice()
                         }
@@ -472,15 +506,21 @@ internal fun Composer(
             }
         }
 
+        if (deck != ComposerDeck.None) {
+            ToolsTab(folded = deckFolded) { setDeckFolded(!deckFolded) }
+        }
         AnimatedVisibility(visible = deckOpen, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             DeckBand(
+                compact = deck == ComposerDeck.Compact,
+                onMention = { tag -> if (!text.contains(tag)) text = tag + text },
+                onAt = { text += if (text.isEmpty() || text.endsWith(" ")) "@" else " @" },
                 armed = armedMode,
                 onPickMode = { m ->
                     Haptics.perform(view, Haptics.Kind.Tap)
                     agentMode = m?.id
                 },
                 onPlugins = { onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece)) },
-                onArtifacts = { onOpenSection(RailRow("artifacts-library", "Artifacts", R.drawable.shell_file_text)) },
+                onArtifacts = { onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
             )
         }
     }
@@ -523,7 +563,7 @@ internal fun Composer(
 
 /** A 44dp glyph button in the controls row (iOS micButton / voiceButton). */
 @Composable
-private fun ControlGlyph(icon: Int, label: String, testTag: String, enabled: Boolean = true, onClick: () -> Unit) {
+private fun ControlGlyph(icon: Int, label: String, testTag: String, enabled: Boolean = true, tint: Color? = null, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     Box(
         modifier = Modifier
@@ -534,7 +574,7 @@ private fun ControlGlyph(icon: Int, label: String, testTag: String, enabled: Boo
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(painterResource(icon), contentDescription = null, tint = c.textSecondary.copy(alpha = if (enabled) 1f else 0.4f), modifier = Modifier.size(22.dp))
+        Icon(painterResource(icon), contentDescription = null, tint = tint ?: c.textSecondary.copy(alpha = if (enabled) 1f else 0.4f), modifier = Modifier.size(20.dp))
     }
 }
 
@@ -569,7 +609,7 @@ private fun ModelChip(models: ModelStore, open: Boolean, onClick: () -> Unit) {
             ) { MatrixLogo(size = 18.dp) }
             Text(label, color = c.textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp))
         }
-        Icon(painterResource(R.drawable.shell_caret_down), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(11.dp).rotate(turn))
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(10.dp).rotate(turn))
     }
 }
 
@@ -601,7 +641,7 @@ private fun NoticeCard(icon: Int, title: String, detail: String?, testTag: Strin
                 .semantics { contentDescription = dismissLabel },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(painterResource(R.drawable.shell_x), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
         }
     }
 }
@@ -619,10 +659,10 @@ private fun PhoneArmedChip(onClear: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Icon(painterResource(R.drawable.shell_device_mobile), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(12.dp))
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_device_mobile), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(12.dp))
         Text("On this phone", color = c.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Box(Modifier.size(32.dp).clickable(role = Role.Button, onClickLabel = "Don't run on this phone", onClick = onClear), contentAlignment = Alignment.Center) {
-            Icon(painterResource(R.drawable.shell_x), contentDescription = "Don't run on this phone", tint = c.textPrimary, modifier = Modifier.size(10.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), contentDescription = "Don't run on this phone", tint = c.textPrimary, modifier = Modifier.size(10.dp))
         }
     }
 }
@@ -642,45 +682,72 @@ internal fun AttachmentChip(a: ComposerAttachment, onRemove: (() -> Unit)?) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         val icon = when (a.kind) {
-            "photo", "camera" -> R.drawable.shell_photo
-            "github" -> R.drawable.shell_link
-            else -> R.drawable.shell_file_text
+            "photo", "camera" -> com.allternit.core.design.R.drawable.ph_image
+            "github" -> com.allternit.core.design.R.drawable.ph_link
+            else -> com.allternit.core.design.R.drawable.ph_file_text
         }
         Icon(painterResource(icon), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
         Text(a.name, color = c.textPrimary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp).padding(vertical = 8.dp))
         if (onRemove != null) {
             Box(Modifier.size(32.dp).clickable(role = Role.Button, onClickLabel = "Remove ${a.name}", onClick = onRemove), contentAlignment = Alignment.Center) {
-                Icon(painterResource(R.drawable.shell_x), contentDescription = "Remove ${a.name}", tint = c.textSecondary, modifier = Modifier.size(10.dp))
+                Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), contentDescription = "Remove ${a.name}", tint = c.textSecondary, modifier = Modifier.size(10.dp))
             }
         }
     }
 }
 
+/** The Allternit Office suite and the Office extensions in Plugins ▾ (iOS DeckPlugin). */
+private val DeckPluginSuite = listOf(
+    "Allternit Docs" to DesignR.drawable.deck_docs,
+    "Allternit Sheets" to DesignR.drawable.deck_sheets,
+    "Allternit Slides" to DesignR.drawable.deck_slides,
+    "Allternit PDF" to DesignR.drawable.deck_pdf,
+    "Allternit Sign" to DesignR.drawable.deck_sign,
+)
+private val DeckPluginExtensions = listOf("Allternit for Word", "Allternit for Excel", "Allternit for PowerPoint")
+
 /**
- * The deck band under the card (iOS ComposerDeckBand): Agent mode ▾ | Plugins | Artifacts,
- * tucked 8dp under the card with rounded bottom corners.
+ * The deck band under the card (iOS ComposerDeckBand): Agent mode ▾ | Plugins ▾ | Artifacts,
+ * tucked 8dp under the card (its top padding clears it), rounded bottom corners, outlined on
+ * the sides and bottom. Full: 16 side padding, 52 high; Compact: 12, 40.
  */
 @Composable
-private fun DeckBand(armed: DeckMode?, onPickMode: (DeckMode?) -> Unit, onPlugins: () -> Unit, onArtifacts: () -> Unit) {
+private fun DeckBand(
+    compact: Boolean,
+    armed: DeckMode?,
+    onPickMode: (DeckMode?) -> Unit,
+    onMention: (String) -> Unit,
+    onAt: () -> Unit,
+    onPlugins: () -> Unit,
+    onArtifacts: () -> Unit,
+) {
     val c = AllternitTheme.colors
     var menu by remember { mutableStateOf(false) }
+    var plugins by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
+    val border = c.borderSubtle
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 0.dp)
+            .offset(y = (-8).dp)
+            .zIndex(0f)
             .clip(shape)
             .background(c.bgPanel)
-            .border(1.dp, c.borderSubtle, shape)
+            .drawBehindOutline(border)
             .horizontalScroll(rememberScrollState())
-            .heightIn(min = 52.dp)
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .heightIn(min = if (compact) 48.dp else 60.dp)
+            .padding(start = if (compact) 12.dp else 16.dp, end = if (compact) 12.dp else 16.dp, top = if (compact) 20.dp else 22.dp, bottom = if (compact) 6.dp else 8.dp)
             .testTag("composerDeck"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Box {
-            DeckTrigger(armed?.icon ?: DesignR.drawable.deck_auto, armed?.label ?: "Agent mode", "deckMode") { menu = true }
+            if (armed != null) {
+                // Picking a mode turns the trigger into that mode's chip.
+                DeckTrigger(armed.icon, armed.label, "deckMode", iconSize = 14, ink = armed.color ?: c.textSecondary, tintIcon = false) { menu = true }
+            } else {
+                DeckTrigger(DesignR.drawable.ph_diamond_fill, "Agent mode", "deckMode", iconSize = 10) { menu = true }
+            }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
                 Text("Agent mode", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
                 DeckModes.forEach { m ->
@@ -690,7 +757,7 @@ private fun DeckBand(armed: DeckMode?, onPickMode: (DeckMode?) -> Unit, onPlugin
                     }
                 }
                 if (armed != null) {
-                    MenuRow(icon = null, title = "Turn off agent mode", testTag = "deckModeOff") {
+                    MenuRow(icon = DesignR.drawable.ph_x, title = "Clear mode", testTag = "deckModeOff") {
                         menu = false
                         onPickMode(null)
                     }
@@ -698,9 +765,89 @@ private fun DeckBand(armed: DeckMode?, onPickMode: (DeckMode?) -> Unit, onPlugin
             }
         }
         DeckSeparator()
-        DeckTrigger(DesignR.drawable.ph_puzzle_piece, "Plugins", "deckPlugins", onClick = onPlugins)
+        Box {
+            DeckTrigger(null, "Plugins", "deckPlugins") { plugins = true }
+            DropdownMenu(expanded = plugins, onDismissRequest = { plugins = false }, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
+                Text("Allternit Office", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
+                DeckPluginSuite.forEach { (name, icon) ->
+                    MenuRow(icon = icon, title = name, testTag = "deckPlugin$name") {
+                        plugins = false
+                        onMention("@$name ")
+                    }
+                }
+                Text("Extensions", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
+                DeckPluginExtensions.forEach { name ->
+                    MenuRow(icon = DesignR.drawable.ph_puzzle_piece, title = name, testTag = "deckPlugin$name") {
+                        plugins = false
+                        onMention("@$name ")
+                    }
+                }
+                MenuRow(icon = null, title = "More plugins…", testTag = "deckPluginsMore") {
+                    plugins = false
+                    onAt()
+                }
+                MenuRow(icon = null, title = "Manage plugins…", testTag = "deckPluginsManage") {
+                    plugins = false
+                    onPlugins()
+                }
+            }
+        }
         DeckSeparator()
-        DeckTrigger(R.drawable.shell_stack, "Artifacts", "deckArtifacts", chevron = false, onClick = onArtifacts)
+        DeckTrigger(DesignR.drawable.ph_stack, "Artifacts", "deckArtifacts", onClick = onArtifacts)
+    }
+}
+
+/** The band's outline: both sides and the rounded bottom, no top edge (iOS DeckOutline). */
+private fun Modifier.drawBehindOutline(color: Color): Modifier = this.then(
+    Modifier.drawBehind {
+        val r = 16.dp.toPx()
+        val w = 1.dp.toPx()
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(w / 2, 0f)
+            lineTo(w / 2, size.height - r)
+            arcTo(androidx.compose.ui.geometry.Rect(w / 2, size.height - 2 * r, 2 * r, size.height - w / 2), 180f, -90f, false)
+            lineTo(size.width - r, size.height - w / 2)
+            arcTo(androidx.compose.ui.geometry.Rect(size.width - 2 * r, size.height - 2 * r, size.width - w / 2, size.height - w / 2), 90f, -90f, false)
+            lineTo(size.width - w / 2, 0f)
+        }
+        drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = w))
+    },
+)
+
+/** The grey "tools" pull tab under the card's bottom-left edge (iOS ComposerToolsTab): the only deck toggle. */
+@Composable
+private fun ToolsTab(folded: Boolean, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    Row(
+        modifier = Modifier
+            .padding(start = 16.dp)
+            .zIndex(1f)
+            .clip(RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp))
+            .background(c.fillNeutral)
+            .testTag("composerToolsTab")
+            .clickable(role = Role.Button, onClickLabel = if (folded) "Show tools" else "Hide tools", onClick = onClick)
+            .semantics { contentDescription = if (folded) "Show tools" else "Hide tools" }
+            .heightIn(min = 24.dp)
+            .widthIn(min = 44.dp)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+    ) {
+        Icon(painterResource(if (folded) DesignR.drawable.ph_caret_down else DesignR.drawable.ph_caret_up), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(9.dp))
+        Text("tools", color = c.textSecondary.copy(alpha = 0.8f), fontSize = 10.sp)
+    }
+}
+
+/** Three small bars beside Stop while a turn runs (iOS StreamingBars). */
+@Composable
+private fun StreamingBars() {
+    val c = AllternitTheme.colors
+    val t = rememberInfiniteTransition(label = "bars")
+    Row(Modifier.height(16.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        repeat(3) { i ->
+            val h by t.animateFloat(6f, 16f, infiniteRepeatable(tween(500, delayMillis = i * 180), RepeatMode.Reverse), label = "bar$i")
+            Box(Modifier.width(2.dp).height(h.dp).clip(CircleShape).background(c.textPrimary))
+        }
     }
 }
 
@@ -709,12 +856,14 @@ private fun DeckSeparator() {
     Text("|", color = AllternitTheme.colors.textSecondary.copy(alpha = 0.4f), fontSize = 11.sp)
 }
 
+/** One deck trigger (iOS trigger): icon (bold), 12pt bold label, a small ▴ at 0.6. */
 @Composable
-private fun DeckTrigger(icon: Int, label: String, testTag: String, chevron: Boolean = true, onClick: () -> Unit) {
+private fun DeckTrigger(icon: Int?, label: String, testTag: String, iconSize: Int = 13, ink: Color? = null, tintIcon: Boolean = true, onClick: () -> Unit) {
     val c = AllternitTheme.colors
+    val color = ink ?: c.textSecondary
     Row(
         modifier = Modifier
-            .heightIn(min = 32.dp)
+            .heightIn(min = 28.dp)
             .clip(RoundedCornerShape(8.dp))
             .testTag(testTag)
             .clickable(role = Role.Button, onClick = onClick)
@@ -722,9 +871,179 @@ private fun DeckTrigger(icon: Int, label: String, testTag: String, chevron: Bool
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Icon(painterResource(icon), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
-        Text(label, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        if (chevron) Icon(painterResource(R.drawable.shell_caret_up), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.6f), modifier = Modifier.size(9.dp))
+        if (icon != null) {
+            if (tintIcon) Icon(painterResource(icon), contentDescription = null, tint = color, modifier = Modifier.size(iconSize.dp))
+            else androidx.compose.foundation.Image(painterResource(icon), contentDescription = null, modifier = Modifier.size(iconSize.dp))
+        }
+        Text(label, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Icon(painterResource(DesignR.drawable.ph_caret_up), contentDescription = null, tint = color.copy(alpha = 0.6f), modifier = Modifier.size(8.dp))
+    }
+}
+
+
+/** What the Code composer's deck row opens (iOS CodeDeckRow): the computer, the folder, the shell. */
+internal class CodeComposerActions(val onTerminal: () -> Unit, val onFiles: () -> Unit, val onComputer: () -> Unit)
+
+private val CodeCoral = Color(0xFFD97757)
+private val CodeIdle = Color(0xFF8EAB84)
+
+/**
+ * The Code launch composer (iOS CodeLaunchComposer): the computer chip, the prompt edge (dashed
+ * rules with the model ▾ and a status dot), the `❯` prompt in monospace with + · voice · Return,
+ * a dashed hairline, then the deck row (environment · folder · terminal). No card, no deck band.
+ */
+@Composable
+internal fun CodeLaunchComposer(
+    models: ModelStore,
+    noComputer: Boolean,
+    actions: CodeComposerActions,
+    onSend: (ComposerDraft) -> Unit,
+    onOpenSection: (RailRow) -> Unit,
+) {
+    val c = AllternitTheme.colors
+    val context = LocalContext.current
+    val view = LocalView.current
+    var text by rememberSaveable { mutableStateOf("") }
+    var focused by remember { mutableStateOf(false) }
+    var pickerOpen by remember { mutableStateOf(false) }
+    var chipDismissed by rememberSaveable { mutableStateOf(false) }
+    val trimmed = text.trim()
+    LaunchedEffect(Unit) { models.load() }
+    val dictation = remember { com.allternit.feature.chat.voice.Dictation(context) }
+    var dictationBase by remember { mutableStateOf("") }
+    androidx.compose.runtime.DisposableEffect(dictation) { onDispose { dictation.stop() } }
+    LaunchedEffect(dictation) {
+        androidx.compose.runtime.snapshotFlow { dictation.transcript }.collect { t -> if (t.isNotEmpty()) text = dictationBase + t }
+    }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            dictationBase = if (text.isEmpty() || text.endsWith(" ")) text else "$text "
+            dictation.start()
+        }
+    }
+    fun toggleDictation() {
+        Haptics.perform(view, Haptics.Kind.Tap)
+        if (dictation.isRecording) dictation.stop()
+        else if (com.allternit.feature.chat.voice.hasMicPermission(context)) {
+            com.allternit.feature.chat.voice.VoicePrefs.load(context)
+            dictationBase = if (text.isEmpty() || text.endsWith(" ")) text else "$text "
+            dictation.start()
+        } else micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
+    fun send() {
+        if (trimmed.isEmpty()) return
+        if (models.selectedId.isNullOrEmpty()) { pickerOpen = true; return }
+        dictation.stop()
+        Haptics.perform(view, Haptics.Kind.Tap)
+        val draft = ComposerDraft(text = trimmed, modelId = models.selectedId, modelLabel = models.chipLabel, effort = models.selected?.let { models.level(it) })
+        text = ""
+        onSend(draft)
+    }
+    val border = if (focused) c.borderStrong else c.borderSubtle
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(horizontal = 10.dp)
+            .testTag("codeComposer"),
+    ) {
+        AnimatedVisibility(visible = noComputer && !chipDismissed, enter = fadeIn(), exit = fadeOut()) {
+            NoticeCard(
+                icon = DesignR.drawable.ph_desktop,
+                title = NoComputerCopy.TITLE,
+                detail = NoComputerCopy.DETAIL,
+                testTag = "composerComputerChip",
+                dismissLabel = "Dismiss",
+                onDismiss = { chipDismissed = true },
+            )
+        }
+        // The prompt edge: rules, the model ▾, the status dot.
+        Row(Modifier.fillMaxWidth().height(36.dp).zIndex(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            DashedRule(border, Modifier.width(10.dp))
+            DashedRule(border, Modifier.weight(1f))
+            Row(
+                Modifier
+                    .heightIn(min = 36.dp)
+                    .testTag("codeModelChip")
+                    .clickable(role = Role.Button, onClickLabel = "Model: ${models.chipLabel}") { pickerOpen = true },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                MatrixLogo(size = 14.dp)
+                Text(models.chipLabel, color = c.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 200.dp))
+                Icon(painterResource(DesignR.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
+            }
+            Box(Modifier.size(6.dp).clip(CircleShape).background(CodeIdle))
+            DashedRule(border, Modifier.width(10.dp))
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Box(
+                Modifier.padding(vertical = 6.dp).size(40.dp).testTag("codeAttach")
+                    .clickable(role = Role.Button, onClickLabel = "Attach") { actions.onFiles() },
+                contentAlignment = Alignment.Center,
+            ) { Icon(painterResource(DesignR.drawable.ph_plus), contentDescription = "Attach", tint = c.textSecondary, modifier = Modifier.size(18.dp)) }
+            Row(Modifier.weight(1f).padding(start = 12.dp, end = 4.dp, top = 9.dp, bottom = 9.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("❯", color = CodeCoral, fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, lineHeight = 22.sp)
+                Box(Modifier.weight(1f)) {
+                    if (text.isEmpty()) Text("Describe a task...", color = c.textTertiary, fontSize = 16.sp, lineHeight = 22.sp, fontFamily = FontFamily.Monospace)
+                    BasicTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        textStyle = TextStyle(color = c.textPrimary, fontSize = 16.sp, lineHeight = 22.sp, fontFamily = FontFamily.Monospace),
+                        cursorBrush = SolidColor(CodeCoral),
+                        maxLines = 6,
+                        modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }.testTag("composerInput").semantics { contentDescription = "Describe a task" },
+                    )
+                }
+            }
+            Row(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(40.dp).testTag("codeVoice").clickable(role = Role.Button, onClickLabel = if (dictation.isRecording) "Stop voice input" else "Start voice mode") { toggleDictation() },
+                    contentAlignment = Alignment.Center,
+                ) { Icon(painterResource(DesignR.drawable.ph_waveform), contentDescription = null, tint = if (dictation.isRecording) CodeCoral else c.textSecondary, modifier = Modifier.size(16.dp)) }
+                if (trimmed.isNotEmpty()) {
+                    // A terminal runs on Enter: the run key is the Return key.
+                    Box(
+                        Modifier.size(40.dp).clip(RoundedCornerShape(6.dp)).background(CodeCoral).testTag("composerSend")
+                            .clickable(role = Role.Button, onClickLabel = "Send") { send() },
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(painterResource(DesignR.drawable.ph_arrow_elbow_down_left), contentDescription = "Send", tint = Color.White, modifier = Modifier.size(16.dp)) }
+                }
+            }
+        }
+        DashedRule(border, Modifier.fillMaxWidth())
+        // The deck row: environment · folder · (spacer) · terminal.
+        Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            CodeDeckIcon(DesignR.drawable.ph_desktop, "Environment: This computer", "codeEnvironment", onClick = actions.onComputer)
+            CodeDeckIcon(DesignR.drawable.ph_folder, "Working folder", "codeFolder", onClick = actions.onFiles)
+            Spacer(Modifier.weight(1f))
+            CodeDeckIcon(DesignR.drawable.ph_terminal_window, "Open terminal", "codeOpenTerminal", onClick = actions.onTerminal)
+        }
+    }
+    if (pickerOpen) {
+        ModelPickerSheet(models = models, onOpenSection = { row -> pickerOpen = false; onOpenSection(row) }, onDismiss = { pickerOpen = false })
+    }
+}
+
+@Composable
+private fun CodeDeckIcon(icon: Int, label: String, testTag: String, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    Box(
+        Modifier.width(36.dp).height(40.dp).testTag(testTag).clickable(role = Role.Button, onClickLabel = label, onClick = onClick).semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) { Icon(painterResource(icon), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(16.dp)) }
+}
+
+/** A 1dp dashed rule, 3 on 3 off (iOS DashedHairline). */
+@Composable
+private fun DashedRule(color: Color, modifier: Modifier) {
+    Canvas(modifier.height(1.dp)) {
+        drawLine(color, androidx.compose.ui.geometry.Offset(0f, 0.5f), androidx.compose.ui.geometry.Offset(size.width, 0.5f), strokeWidth = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 3.dp.toPx())))
     }
 }
 

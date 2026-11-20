@@ -128,7 +128,7 @@ internal fun PlusSheet(
                             contentAlignment = Alignment.Center,
                         ) {
                             Box(Modifier.size(34.dp).clip(CircleShape).background(c.fillNeutral), contentAlignment = Alignment.Center) {
-                                Icon(painterResource(R.drawable.shell_x), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
+                                Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
                             }
                         }
                         Spacer(Modifier.weight(1f))
@@ -155,11 +155,11 @@ internal fun PlusSheet(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 PlusGroup {
-                    PlusRow(R.drawable.shell_camera, "Camera", testTag = "plusSheetCamera") { camera.launch(null) }
+                    PlusRow(com.allternit.core.design.R.drawable.ph_camera, "Camera", testTag = "plusSheetCamera") { camera.launch(null) }
                     PlusDivider()
-                    PlusRow(R.drawable.shell_file_plus, "Add files", testTag = "plusSheetAddFiles") { files.launch(arrayOf("*/*")) }
+                    PlusRow(com.allternit.core.design.R.drawable.ph_file_plus, "Add files", testTag = "plusSheetAddFiles") { files.launch(arrayOf("*/*")) }
                     PlusDivider()
-                    PlusRow(R.drawable.shell_link, "GitHub link", active = githubOpen, testTag = "plusSheetGithub") { githubOpen = !githubOpen }
+                    PlusRow(com.allternit.core.design.R.drawable.ph_link, "GitHub link", active = githubOpen, testTag = "plusSheetGithub") { githubOpen = !githubOpen }
                     if (githubOpen) {
                         GithubField(githubUrl, onChange = { githubUrl = it }) {
                             val url = githubUrl.trim()
@@ -170,19 +170,19 @@ internal fun PlusSheet(
                     }
                     PlusDivider()
                     // iOS: Camera · Add files · GitHub link · Sketch (full-screen canvas).
-                    PlusRow(R.drawable.shell_scribble, "Sketch", testTag = "plusSheetSketch") { sketchOpen = true }
+                    PlusRow(com.allternit.core.design.R.drawable.ph_scribble_loop, "Sketch", testTag = "plusSheetSketch") { sketchOpen = true }
                 }
                 PlusGroup {
-                    PlusRow(R.drawable.shell_shield_check, "Permission settings", chevron = true) {
-                        onOpenSection(RailRow("permission-settings", "Permission settings", R.drawable.shell_shield_check))
+                    PlusRow(com.allternit.core.design.R.drawable.ph_shield_check, "Permission settings", chevron = true) {
+                        onOpenSection(RailRow("permission-settings", "Permission settings", com.allternit.core.design.R.drawable.ph_shield_check))
                     }
                     PlusDivider()
-                    PlusRow(R.drawable.shell_desktop, "Computer", value = if (noComputer) "No computer" else "Connected", chevron = true) {
-                        onOpenSection(RailRow("computers", "Computer", R.drawable.shell_desktop))
+                    PlusRow(com.allternit.core.design.R.drawable.ph_desktop, "Computer", value = if (noComputer) "No computer" else "Connected", chevron = true) {
+                        onOpenSection(RailRow("computers", "Computer", com.allternit.core.design.R.drawable.ph_desktop))
                     }
                     PlusDivider()
-                    PlusRow(R.drawable.shell_folder, "Project", value = "None", chevron = true) {
-                        onOpenSection(RailRow("projects", "Projects", R.drawable.shell_folder))
+                    PlusRow(com.allternit.core.design.R.drawable.ph_folder, "Project", value = "None", chevron = true) {
+                        onOpenSection(RailRow("projects", "Projects", com.allternit.core.design.R.drawable.ph_folder))
                     }
                 }
                 PlusGroup {
@@ -190,12 +190,12 @@ internal fun PlusSheet(
                     PlusDivider()
                     PlusToggleRow(DesignR.drawable.ph_magnifying_glass, "Research", "Deeper, multi-source research before answering", research, onResearch)
                     PlusDivider()
-                    PlusRow(R.drawable.shell_bolt, "Connectors", chevron = true, testTag = "plusSheetConnectors") {
-                        onOpenSection(RailRow("connectors", "Connectors", R.drawable.shell_bolt))
+                    PlusRow(com.allternit.core.design.R.drawable.ph_lightning, "Connectors", chevron = true, testTag = "plusSheetConnectors") {
+                        onOpenSection(RailRow("connectors", "Connectors", com.allternit.core.design.R.drawable.ph_lightning))
                     }
                     PlusDivider()
-                    PlusRow(R.drawable.shell_grad_cap, "Skills", chevron = true) {
-                        onOpenSection(RailRow("skills", "Skills", R.drawable.shell_grad_cap))
+                    PlusRow(com.allternit.core.design.R.drawable.ph_graduation_cap, "Skills", chevron = true) {
+                        onOpenSection(RailRow("skills", "Skills", com.allternit.core.design.R.drawable.ph_graduation_cap))
                     }
                     PlusDivider()
                     PlusRow(DesignR.drawable.ph_puzzle_piece, "Plugins", chevron = true) {
@@ -254,7 +254,7 @@ private fun PlusRow(icon: Int, title: String, value: String? = null, chevron: Bo
         Icon(painterResource(icon), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(22.dp))
         Text(title, color = c.textPrimary, fontSize = 15.sp, maxLines = 1, modifier = Modifier.weight(1f))
         if (value != null) Text(value, color = c.textSecondary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (chevron) Icon(painterResource(R.drawable.shell_caret_right), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.7f), modifier = Modifier.size(12.dp))
+        if (chevron) Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_right), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.7f), modifier = Modifier.size(12.dp))
     }
 }
 

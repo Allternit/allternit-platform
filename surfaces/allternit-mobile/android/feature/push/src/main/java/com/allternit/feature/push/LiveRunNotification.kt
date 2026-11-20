@@ -50,7 +50,7 @@ object LiveRunNotification {
             focus?.contentHash?.let { put("contentHash", it) }
         }
         val builder = Notification.Builder(context, CHANNEL_LIVE)
-            .setSmallIcon(DesignR.drawable.vc_bell)
+            .setSmallIcon(com.allternit.core.design.R.drawable.ph_bell)
             .setContentTitle(title)
             .setContentText(line)
             .setCategory(Notification.CATEGORY_PROGRESS)

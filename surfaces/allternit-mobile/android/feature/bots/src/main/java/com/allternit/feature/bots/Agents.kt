@@ -105,7 +105,7 @@ internal fun AgentHubScreen(host: BotsHost, store: BotModeStore, nav: BotNavigat
                             if (crew.isNotEmpty()) { SectionHeader("Crew"); AgentGroup(crew, store, nav) { pendingDelete = it } }
                             SectionHeader("Templates")
                             RowGroup {
-                                NavRow("New from template", R.drawable.bots_grid, "Research, review, write, and more", "hubNewFromTemplate", last = false) { templatesOpen = true }
+                                NavRow("New from template", com.allternit.core.design.R.drawable.ph_squares_four, "Research, review, write, and more", "hubNewFromTemplate", last = false) { templatesOpen = true }
                                 NavRow("Discover agents | bots", DesignR.drawable.ph_globe, "Browse the marketplace", "hubMarketplace") { nav.open(BotRoute.Marketplace) }
                             }
                             if (bots.isNotEmpty()) { SectionHeader("Bots"); AgentGroup(bots, store, nav) { pendingDelete = it } }
@@ -173,7 +173,7 @@ private fun AgentGroup(list: List<BotRecord>, store: BotModeStore, nav: BotNavig
                 BotAvatar(a, 34.dp)
                 Column(Modifier.weight(1f)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(a.displayName, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                        com.allternit.core.design.BotNameText(a.displayName, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                         if (a.isPrimary) Text("PRIMARY", color = c.textTertiary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                     }
                     val parent = a.parentAgentId?.let { store.bot(it)?.displayName }
@@ -206,21 +206,21 @@ internal fun AgentDetailView(bot: BotRecord, store: BotModeStore, nav: BotNaviga
         Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             BotAvatar(bot, 52.dp)
             Column(Modifier.weight(1f)) {
-                Text(bot.displayName, color = c.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                com.allternit.core.design.BotNameText(bot.displayName, color = c.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 Text(bot.tagline, color = c.textSecondary, fontSize = 13.sp, maxLines = 2)
             }
         }
-        if (bot.isBot) RowGroup { NavRow("Edit name, look and job", R.drawable.bots_pencil, null, "agentEditLook") { editOpen = true } }
+        if (bot.isBot) RowGroup { NavRow("Edit name, look and job", com.allternit.core.design.R.drawable.ph_pencil_simple, null, "agentEditLook") { editOpen = true } }
         SectionHeader("Identity")
         RowGroup {
-            NavRow("System prompt", R.drawable.bots_file_text, if (bot.systemPrompt.isNullOrEmpty()) "Add" else "Edit", "agentSystemPrompt", last = false) { promptOpen = true }
-            NavRow("Greeting", R.drawable.bots_hand, if (bot.greeting.isNullOrEmpty()) "Add" else "Edit", "agentGreeting") { greetingOpen = true }
+            NavRow("System prompt", com.allternit.core.design.R.drawable.ph_file_text, if (bot.systemPrompt.isNullOrEmpty()) "Add" else "Edit", "agentSystemPrompt", last = false) { promptOpen = true }
+            NavRow("Greeting", com.allternit.core.design.R.drawable.ph_hand, if (bot.greeting.isNullOrEmpty()) "Add" else "Edit", "agentGreeting") { greetingOpen = true }
         }
         Text("Both prompt sources are active: the platform layers the persona and instruction files with the system prompt — neither overrides the other.", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
         SectionHeader("Model")
         RowGroup { NavRow("Brain", DesignR.drawable.ph_cpu, if (bot.model.isEmpty()) "Default" else "${bot.provider}/${bot.modelShort}", "agentModel") { brainOpen = true } }
         SectionHeader("Workspace files")
-        RowGroup { NavRow("Workspace files", R.drawable.bots_folder, null, "agentWorkspaceFiles") { filesOpen = true } }
+        RowGroup { NavRow("Workspace files", com.allternit.core.design.R.drawable.ph_folder, null, "agentWorkspaceFiles") { filesOpen = true } }
         SectionHeader("Behavior")
         RowGroup {
             NavRow("Behavior", DesignR.drawable.ph_sliders_horizontal, "View", "agentBehavior", last = false) { behaviorOpen = true }
@@ -344,7 +344,7 @@ internal fun BotHomeScreen(bot: BotRecord, host: BotsHost, store: BotModeStore, 
                     Text(bot.greeting ?: bot.tagline, color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.weight(1f))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Pill("Chat", "botHomeChat", primary = true, icon = R.drawable.bots_chat) { nav.open(BotRoute.Chat(bot.id, null)) }
+                    Pill("Chat", "botHomeChat", primary = true, icon = com.allternit.core.design.R.drawable.ph_chat_circle) { nav.open(BotRoute.Chat(bot.id, null)) }
                     Pill("Run Task", "botHomeRunTask", icon = DesignR.drawable.ph_play_fill) { runOpen = true }
                 }
             }
@@ -382,7 +382,7 @@ internal fun BotHomeScreen(bot: BotRecord, host: BotsHost, store: BotModeStore, 
                 RuntimeLine("Virtual Computer", "View")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Pill("Connections", "botHomeConnections") { host.openConnections() }
-                    Pill("Computer", "botHomeComputer", icon = R.drawable.bots_desktop) { nav.open(BotRoute.Computer(bot.id)) }
+                    Pill("Computer", "botHomeComputer", icon = com.allternit.core.design.R.drawable.ph_desktop) { nav.open(BotRoute.Computer(bot.id)) }
                 }
             }
             HomeCard("Config", accent) {
@@ -390,7 +390,7 @@ internal fun BotHomeScreen(bot: BotRecord, host: BotsHost, store: BotModeStore, 
                 RuntimeLine("System prompt", if (bot.systemPrompt.isNullOrEmpty()) "Add" else "Edit")
                 RuntimeLine("Greeting", if (bot.greeting.isNullOrEmpty()) "Add" else "Edit")
                 RuntimeLine("Workspace files", files?.toString() ?: "…")
-                Pill("Open settings", "botHomeSettings", icon = R.drawable.bots_gear) { nav.open(BotRoute.Settings(bot.id)) }
+                Pill("Open settings", "botHomeSettings", icon = com.allternit.core.design.R.drawable.ph_gear) { nav.open(BotRoute.Settings(bot.id)) }
             }
         }
     }
@@ -644,7 +644,7 @@ internal fun BotWorkspaceFilesSheet(bot: BotRecord, nav: BotNavigator, onDismiss
                     SectionHeader(cat.label)
                     Text(cat.guidance, color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(start = 20.dp, bottom = 6.dp))
                     RowGroup {
-                        catFiles.forEach { f -> NavRow(f.fileName, R.drawable.bots_file_text, f.sizeLabel, "botWorkspaceFile${f.path}", last = false) { edit(f) } }
+                        catFiles.forEach { f -> NavRow(f.fileName, com.allternit.core.design.R.drawable.ph_file_text, f.sizeLabel, "botWorkspaceFile${f.path}", last = false) { edit(f) } }
                         missing.forEachIndexed { i, d ->
                             NavRow(d, DesignR.drawable.ph_plus, if (creating) "…" else "Create", "botWorkspaceCreate${cat.path(d)}", last = i == missing.lastIndex) {
                                 if (creating) return@NavRow

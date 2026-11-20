@@ -483,13 +483,13 @@ fun MeetingLiveScreen(sessionId: String, meeting: Meeting?, onBack: () -> Unit, 
         } else {
             Row(Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 val paused = live.status == GizziStatus.Paused
-                ControlButton(if (paused) DesignR.drawable.vc_mic else DesignR.drawable.vc_mic_off, if (paused) "Resume" else "Stop listening", active = paused,
+                ControlButton(if (paused) com.allternit.core.design.R.drawable.ph_microphone else com.allternit.core.design.R.drawable.ph_microphone_slash, if (paused) "Resume" else "Stop listening", active = paused,
                     busy = live.busyAction == "stop_listening" || live.busyAction == "resume", enabled = live.status == GizziStatus.Live || paused) { scope.launch { live.toggleListening() } }
                 val speak = live.session?.speakReplies == true
-                ControlButton(if (speak) DesignR.drawable.vc_speaker else DesignR.drawable.vc_speaker_off, "Speak replies", active = speak, busy = live.busyAction == "speak", enabled = live.session != null) {
+                ControlButton(if (speak) com.allternit.core.design.R.drawable.ph_speaker_high else com.allternit.core.design.R.drawable.ph_speaker_slash, "Speak replies", active = speak, busy = live.busyAction == "speak", enabled = live.session != null) {
                     scope.launch { live.setSpeakReplies(!speak) }
                 }
-                ControlButton(DesignR.drawable.vc_call_end, "Leave", destructive = true, busy = live.busyAction == "leave", enabled = true) { confirmLeave = true }
+                ControlButton(com.allternit.core.design.R.drawable.ph_phone_x, "Leave", destructive = true, busy = live.busyAction == "leave", enabled = true) { confirmLeave = true }
             }
         }
     }

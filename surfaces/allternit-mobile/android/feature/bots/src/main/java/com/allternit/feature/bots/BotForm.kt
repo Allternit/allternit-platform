@@ -405,7 +405,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
                             RowGroup(Modifier.padding(horizontal = 0.dp)) {
                                 NavRow("Bring a vendor’s bot instead", DesignR.drawable.ph_plugs_connected, null, "botFormVendor", last = false) { vendorOpen = true }
                                 NavRow("Import a bot", DesignR.drawable.ph_upload_simple, null, "botFormImport", last = onBrowseTemplates == null) { importOpen = true }
-                                if (onBrowseTemplates != null) NavRow("Browse team templates", R.drawable.bots_grid, null, "botFormTemplates") { onBrowseTemplates() }
+                                if (onBrowseTemplates != null) NavRow("Browse team templates", com.allternit.core.design.R.drawable.ph_squares_four, null, "botFormTemplates") { onBrowseTemplates() }
                             }
                         }
                     }

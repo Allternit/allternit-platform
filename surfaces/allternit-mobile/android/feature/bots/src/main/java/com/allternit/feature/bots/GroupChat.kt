@@ -548,7 +548,7 @@ internal fun GroupsListScreen(store: BotModeStore, nav: BotNavigator) {
     LaunchedEffect(Unit) { load() }
     val shown = query.trim().lowercase().let { q -> if (q.isEmpty()) store.groups else store.groups.filter { it.name.lowercase().contains(q) } }
     BotScreen("Group chats", nav, testTag = "groupsListScreen", trailing = {
-        Icon(painterResource(R.drawable.bots_plus), "New group chat", tint = c.textPrimary, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { creating = true }.padding(10.dp).testTag("groupsNew"))
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), "New group chat", tint = c.textPrimary, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { creating = true }.padding(10.dp).testTag("groupsNew"))
     }) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
             if (store.groups.isNotEmpty()) {
@@ -637,7 +637,7 @@ internal fun NewGroupChatSheet(store: BotModeStore, onDismiss: () -> Unit, onCre
                     ) {
                         BotAvatar(b, 28.dp)
                         Column(Modifier.weight(1f)) {
-                            Text(b.displayName, color = c.textPrimary, fontSize = 15.sp)
+                            com.allternit.core.design.BotNameText(b.displayName, color = c.textPrimary, fontSize = 15.sp)
                             vendors[b.id]?.let { Text("Runs on $it", color = c.textSecondary, fontSize = 12.sp) }
                         }
                         if (on) Text("✓", color = c.accentPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -690,7 +690,7 @@ private fun AddGroupMembersSheet(room: GroupRoom, store: BotModeStore, onDismiss
                             ) {
                                 BotAvatar(b, 28.dp)
                                 Column(Modifier.weight(1f)) {
-                                    Text(b.displayName, color = c.textPrimary, fontSize = 15.sp)
+                                    com.allternit.core.design.BotNameText(b.displayName, color = c.textPrimary, fontSize = 15.sp)
                                     vendors[b.id]?.let { Text("Runs on $it", color = c.textSecondary, fontSize = 12.sp) }
                                 }
                                 if (on) Text("✓", color = c.accentPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -752,7 +752,7 @@ internal fun GroupRoomScreen(groupId: String, host: BotsHost, store: BotModeStor
     val count = room.members.size
     Column(Modifier.fillMaxSize().testTag("botGroupScreen")) {
         BotScreen("# ${room.name}", nav, testTag = "botGroupHeader", trailing = {
-            Icon(painterResource(R.drawable.bots_plus), "Add members", tint = if (running) c.textTertiary else c.textPrimary, modifier = Modifier.size(40.dp).clip(CircleShape).clickable(enabled = !running) { adding = true }.padding(10.dp).testTag("groupAddMembers"))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), "Add members", tint = if (running) c.textTertiary else c.textPrimary, modifier = Modifier.size(40.dp).clip(CircleShape).clickable(enabled = !running) { adding = true }.padding(10.dp).testTag("groupAddMembers"))
         }) {
             Column(Modifier.fillMaxSize()) {
                 // The members pill: N bots · you; docked, their faces, and a tap brings the stage back.
@@ -820,7 +820,7 @@ private fun GroupMessageRow(m: GroupMessage, store: BotModeStore) {
         Row(Modifier.fillMaxWidth().padding(end = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             MemberFace(store, m.botId ?: "bot", 28.dp)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(m.displayName ?: "Bot", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                com.allternit.core.design.BotNameText(m.displayName ?: "Bot", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 SelectionContainer { Text(m.text, color = c.textPrimary, fontSize = 15.sp) }
             }
         }
@@ -857,7 +857,7 @@ private fun GroupStage(room: GroupRoom, store: BotModeStore, speaking: String?, 
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Box(Modifier.offset(y = lift.dp)) { MemberFace(store, m.botId, face, live = talking) }
                     Box(Modifier.width(face * 0.5f).heightIn(min = 3.dp, max = 3.dp).clip(CircleShape).background(color(i, m.botId).copy(alpha = 0.35f)))
-                    Text(m.displayName, color = if (talking) c.textPrimary else c.textSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    com.allternit.core.design.BotNameText(m.displayName, color = if (talking) c.textPrimary else c.textSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

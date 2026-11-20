@@ -139,7 +139,7 @@
         <service android:name="com.allternit.feature.system.RunRoutineTile" android:exported="true" android:icon="@drawable/ic_shortcut_handoff" android:label="Run a routine" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
         </service>
-        <service android:name="com.allternit.feature.system.PauseBotsTile" android:exported="true" android:icon="@drawable/vc_bell" android:label="Pause all bots" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+        <service android:name="com.allternit.feature.system.PauseBotsTile" android:exported="true" android:icon="@drawable/ph_bell" android:label="Pause all bots" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
         </service>
     </application>

@@ -181,20 +181,20 @@ internal fun BotComputerScreen(bot: BotRecord, nav: BotNavigator) {
                         }
                         if (status.wsUrl != null) {
                             Hairline()
-                            NavRow("View desktop", R.drawable.bots_desktop, null, "botViewDesktop", last = false) { viewing = status }
+                            NavRow("View desktop", com.allternit.core.design.R.drawable.ph_desktop, null, "botViewDesktop", last = false) { viewing = status }
                         }
                         Hairline()
                         if (status.controlState == "human_controls") {
-                            NavRow("Hand back to ${bot.displayName}", R.drawable.bots_hand, null, "botDesktopHandBack", last = true) {
+                            NavRow("Hand back to ${bot.displayName}", com.allternit.core.design.R.drawable.ph_hand, null, "botDesktopHandBack", last = true) {
                                 if (!busy) scope.launch { BotDesktopStore.handBack(bot.id) }
                             }
                         } else {
-                            NavRow("Take over", R.drawable.bots_hand, null, "botDesktopTakeOver", last = status.controlState == "human_observing") {
+                            NavRow("Take over", com.allternit.core.design.R.drawable.ph_hand, null, "botDesktopTakeOver", last = status.controlState == "human_observing") {
                                 if (!busy) scope.launch { BotDesktopStore.takeOver(bot.id) }
                             }
                             if (status.controlState != "human_observing") {
                                 Hairline()
-                                NavRow("Watch without pausing", R.drawable.bots_eye, null, "botDesktopObserve", last = true) {
+                                NavRow("Watch without pausing", com.allternit.core.design.R.drawable.ph_eye, null, "botDesktopObserve", last = true) {
                                     if (!busy) scope.launch { BotDesktopStore.observe(bot.id) }
                                 }
                             }
@@ -204,7 +204,7 @@ internal fun BotComputerScreen(bot: BotRecord, nav: BotNavigator) {
                         Text("${bot.displayName} has no desktop running.", color = c.textSecondary, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
                         Hairline()
                         val provisioning = entry?.provisioning == true
-                        NavRow(if (provisioning) "Starting…" else "Start a desktop", R.drawable.bots_desktop, null, "botDesktopProvision", last = true) {
+                        NavRow(if (provisioning) "Starting…" else "Start a desktop", com.allternit.core.design.R.drawable.ph_desktop, null, "botDesktopProvision", last = true) {
                             if (!provisioning) scope.launch { BotDesktopStore.provision(bot.id) }
                         }
                     }
@@ -226,7 +226,7 @@ internal fun BotComputerScreen(bot: BotRecord, nav: BotNavigator) {
                                 Text(r.name, color = c.textPrimary, fontSize = 15.sp)
                                 Text("${r.kindLabel} · ${r.status.replaceFirstChar { it.uppercase() }}", color = c.textSecondary, fontSize = 12.5.sp)
                             }
-                            Icon(painterResource(R.drawable.bots_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(14.dp))
+                            Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(14.dp))
                         }
                         if (i < computers.lastIndex) Hairline()
                     }
@@ -280,7 +280,7 @@ internal fun BotDesktopView(bot: BotRecord, status: BotDesktopStatus, onClose: (
             dark = true,
             trailing = {
                 if (session.allowsInput) {
-                    BarIcon(com.allternit.core.rfb.R.drawable.rfb_keyboard, if (keyboard) "Hide keyboard" else "Show keyboard", "botDesktopKeyboard", tint = Color.White) { keyboard = !keyboard }
+                    BarIcon(com.allternit.core.rfb.com.allternit.core.design.R.drawable.ph_keyboard, if (keyboard) "Hide keyboard" else "Show keyboard", "botDesktopKeyboard", tint = Color.White) { keyboard = !keyboard }
                 }
                 Text(
                     BotDesktopStatus.controlLabel(live), color = badge, fontSize = 12.sp,
@@ -297,7 +297,7 @@ internal fun BotDesktopView(bot: BotRecord, status: BotDesktopStatus, onClose: (
                             .padding(horizontal = 14.dp, vertical = 8.dp).testTag("botDesktopHandBackPill"),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Icon(painterResource(R.drawable.bots_hand), null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_hand), null, tint = Color.White, modifier = Modifier.size(16.dp))
                         Text("Hand back to bot", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                     }
                 } else {
@@ -305,7 +305,7 @@ internal fun BotDesktopView(bot: BotRecord, status: BotDesktopStatus, onClose: (
                         Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.18f)).padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Icon(painterResource(R.drawable.bots_eye), null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_eye), null, tint = Color.White, modifier = Modifier.size(14.dp))
                         Text(if (live == "human_observing") "You're observing — view only" else "Bot is driving — view only", color = Color.White, fontSize = 12.sp)
                     }
                 }

@@ -374,6 +374,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 onPrefillConsumed = spec.onPrefillConsumed,
                 pickerRequest = spec.pickerRequest,
                 placeholderOverride = spec.placeholder,
+                deck = ComposerDeck.None,
             )
         },
         currentModel = { models.selectedId to models.selected?.let { models.level(it) } },
@@ -388,9 +389,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
 
     /** iOS newOptions: press and hold the New pill. */
     fun newOptions(): List<NewOption> {
-        val quick = NewOption("quick-task", "Quick task", R.drawable.shell_bolt) { quickTaskOpen = true }
-        val scheduled = NewOption("scheduled", "New scheduled task", R.drawable.shell_clock) {
-            openPage(ShellPage.Section(RailRow(if (mode == ShellMode.Code) "code-automations" else "automation-tasks", "Automation Tasks", R.drawable.shell_clock)))
+        val quick = NewOption("quick-task", "Quick task", com.allternit.core.design.R.drawable.ph_lightning) { quickTaskOpen = true }
+        val scheduled = NewOption("scheduled", "New scheduled task", com.allternit.core.design.R.drawable.ph_clock) {
+            openPage(ShellPage.Section(RailRow(if (mode == ShellMode.Code) "code-automations" else "automation-tasks", "Automation Tasks", com.allternit.core.design.R.drawable.ph_clock)))
         }
         fun continueCli(surface: String) = NewOption("continue-cli", "Continue CLI session", DesignR.drawable.ph_terminal) { cliPickerSurface = surface }
         return when (mode) {
@@ -500,6 +501,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it })
                             }) else null,
                             onCodeSessions = if (mode == ShellMode.Code) ({ codeRoute = com.allternit.feature.code.CodeRoute.Overview }) else null,
+                            codeActions = if (mode == ShellMode.Code) CodeComposerActions(
+                                onTerminal = { codeRoute = com.allternit.feature.code.CodeRoute.Terminal },
+                                onFiles = { codeRoute = com.allternit.feature.code.CodeRoute.Files },
+                                onComputer = { codeRoute = com.allternit.feature.code.CodeRoute.Computer },
+                            ) else null,
                         )
                         is ShellPage.Chat -> ChatPage(
                             chat = chat,

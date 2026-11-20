@@ -256,7 +256,7 @@ fun ChatScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(painterResource(R.drawable.chat_pencil), null, tint = c.textSecondary, modifier = Modifier.size(13.dp))
+                Icon(painterResource(com.allternit.core.design.R.drawable.ph_pencil_simple), null, tint = c.textSecondary, modifier = Modifier.size(13.dp))
                 Text("Editing message — sending replaces everything after it", color = c.textSecondary, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
                 Box(
                     Modifier.size(32.dp).clickable(role = Role.Button, onClick = onCancelEdit).semantics { contentDescription = "Cancel edit" },

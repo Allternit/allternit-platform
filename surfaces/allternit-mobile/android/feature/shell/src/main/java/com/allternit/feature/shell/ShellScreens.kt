@@ -1,5 +1,7 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.design.GizziCodeWordmark
+import com.allternit.core.design.AProtocolMark
 import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -164,6 +166,8 @@ internal fun ShellHome(
     codeHome: (@Composable () -> Unit)? = null,
     /** Code mode's header button: the Code sessions view (iOS CodeSessionsButton → CodeOverview). */
     onCodeSessions: (() -> Unit)? = null,
+    /** Code mode's composer deck row (iOS CodeDeckRow): terminal, files, computer. */
+    codeActions: CodeComposerActions? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var phoneArmed by remember { mutableStateOf(false) }
@@ -175,7 +179,7 @@ internal fun ShellHome(
             trailing = {
                 if (mode == ShellMode.Home) {
                     Box {
-                        PhoneIconButton(R.drawable.shell_dots, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
+                        PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
                         ChatOptionsMenu(
                             expanded = menuOpen,
                             phoneArmed = phoneArmed,
@@ -189,9 +193,9 @@ internal fun ShellHome(
                 }
                 if (mode == ShellMode.Code && onCodeSessions != null) {
                     // iOS CodeModeView header: the Code sessions view (CodeSessionsButton), no new-chat pencil.
-                    PhoneIconButton(R.drawable.shell_checklist, "Code sessions", testTag = "codeSessionsButton", iconSize = 20, onClick = onCodeSessions)
+                    PhoneIconButton(com.allternit.core.design.R.drawable.ph_list_checks, "Code sessions", testTag = "codeSessionsButton", iconSize = 20, onClick = onCodeSessions)
                 } else {
-                    PhoneIconButton(R.drawable.shell_note_pencil, mode.newLabel, testTag = "chatNewChat", onClick = onNew)
+                    PhoneIconButton(com.allternit.core.design.R.drawable.ph_note_pencil, mode.newLabel, testTag = "chatNewChat", onClick = onNew)
                 }
             },
             // iOS Code launchpad title: the gizzi code lockup.
@@ -200,7 +204,9 @@ internal fun ShellHome(
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             if (mode == ShellMode.Home) LaunchGreeting() else if (codeHome != null && mode == ShellMode.Code) codeHome() else ModeArrives(mode)
         }
-        if (mode == ShellMode.Home || (mode == ShellMode.Code && codeHome != null)) {
+        if (mode == ShellMode.Code && codeHome != null && codeActions != null) {
+            CodeLaunchComposer(models = models, noComputer = store.noComputer, actions = codeActions, onSend = onNewChat, onOpenSection = onOpenSection)
+        } else if (mode == ShellMode.Home || (mode == ShellMode.Code && codeHome != null)) {
             Composer(
                 models = models,
                 noComputer = store.noComputer,
@@ -257,7 +263,7 @@ private fun ChatOptionsMenu(expanded: Boolean, phoneArmed: Boolean, onDismiss: (
         modifier = Modifier.width(300.dp),
     ) {
         MenuRow(
-            icon = R.drawable.shell_device_mobile,
+            icon = com.allternit.core.design.R.drawable.ph_device_mobile,
             title = "Run on my phone",
             checked = phoneArmed,
             testTag = "chatMenurunOnPhone",
