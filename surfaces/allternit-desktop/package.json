@@ -1,6 +1,6 @@
 {
   "name": "@allternit/desktop",
-  "version": "1.1.17",
+  "version": "1.1.18",
   "description": "Allternit Desktop: your bots, chats, projects and code, with this computer paired to your Allternit account.",
   "main": "dist/main/unified-main.js",
   "type": "module",
@@ -101,6 +101,9 @@
   },
   "build": {
     "appId": "com.allternit.desktop",
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "productName": "Allternit Desktop",
     "asar": true,
     "protocols": [

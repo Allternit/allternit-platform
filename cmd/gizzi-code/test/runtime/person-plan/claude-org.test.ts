@@ -24,7 +24,7 @@ describe("claude-org discovery", () => {
     expect(out[0]!.id).toBe("claude-org")
     expect(out[0]!.name).toBe("Claude organization")
     expect(out[0]!.options).toEqual({ runtime: "person-plan" })
-    expect(out[0]!.models.map((m) => [m.id, m.name])).toEqual([["claude-sonnet-5-5", "claude-sonnet-5-5 (your organization)"]])
+    expect(out[0]!.models.map((m) => [m.id, m.name])).toEqual([["claude-sonnet-5-5", "Claude Sonnet 5.5 (your organization)"]])
   })
   test("discovery_skips_claude_org_when_needs_or_off", () => {
     for (const state of ["needs", "off", "connecting"]) {
