@@ -76,6 +76,8 @@ pub mod mcp_edge;
 pub mod managed_auth;
 /// Trusted outside issuers and the edge JWT-bearer authorization server (WP4).
 pub mod edge_auth;
+/// "Sign in with Allternit": OAuth authorization endpoint, metadata and consent API (migration 150).
+pub mod oauth_server;
 pub mod mcp_events;
 pub mod mcp_event_callbacks;
 pub mod allternit_events;
