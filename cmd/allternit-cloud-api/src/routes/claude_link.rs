@@ -233,8 +233,11 @@ mod tests {
         let method = request.method().to_string();
         let path = request.uri().path().to_string();
         let query = request.uri().query().unwrap_or_default().to_string();
-        let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
-        let (auth, beta) = (header("authorization"), header("anthropic-beta"));
+        // Scoped: a closure borrowing `request` (Body is !Sync) must not live across the await below.
+        let (auth, beta) = {
+            let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
+            (header("authorization"), header("anthropic-beta"))
+        };
         let bytes = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
         let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         fake.seen.lock().unwrap().push(Seen { method: method.clone(), path: path.clone(), query, auth, beta, body: body.clone() });

@@ -579,7 +579,7 @@ mod tests {
         let o = open(&conn, "u1", &a, &b).unwrap().unwrap();
         assert_eq!((o.state.as_str(), o.pick.clone()), ("needs_user", None));
         let d = get(&conn, "u1", &o.id).unwrap().unwrap();
-        assert_eq!((d.pick, d.picked_by, d.resolved_at), (None, None, None));
+        assert_eq!((&d.pick, &d.picked_by, &d.resolved_at), (&None, &None, &None));
         assert!(d.stakes.unwrap() >= 0.7 && d.margin.unwrap() < 0.15, "{d:?}");
         // No pick applied: both facts are still current, credence untouched.
         assert_eq!(current(&db).len(), 2);
