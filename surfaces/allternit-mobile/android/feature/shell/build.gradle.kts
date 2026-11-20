@@ -60,6 +60,8 @@ dependencies {
     implementation(project(":feature:meetings"))
     // Wave I1: push notifications (FCM token registration, channels, taps).
     implementation(project(":feature:push"))
+    // Wave I2: status snapshot refresh on foreground, the system links (widget, tiles, shortcuts).
+    implementation(project(":feature:system"))
     // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
     implementation(project(":core:api"))
     // Wave B: DataStore for the first-run "setup done" flag (iOS OnboardingStore, UserDefaults).

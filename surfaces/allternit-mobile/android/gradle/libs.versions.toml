@@ -34,6 +34,9 @@ playBilling = "8.3.0"
 # flavor carries it. No google-services plugin: the Firebase options come from string resources :app generates from
 # the local client config (app/build.gradle.kts, firebaseResValues), so nothing Firebase-specific is in git.
 firebaseMessaging = "24.1.0"
+# Jetpack Glance (Apache-2.0) for the home-screen status widget (wave I2, iOS AllternitWidgets StatusWidget). Only
+# :feature:system uses it, so only the nativeapp flavor carries it.
+glance = "1.1.1"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -53,6 +56,7 @@ androidx-browser = { group = "androidx.browser", name = "browser", version = "1.
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "playBilling" }
 firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging", version.ref = "firebaseMessaging" }
+glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

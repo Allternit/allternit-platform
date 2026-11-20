@@ -216,6 +216,19 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     // Wave E: Bots mode (iOS BotsModeRootView), with the shell's chat backend, composer and backdrop.
     val botsStore = remember { com.allternit.feature.bots.BotModeStore(context) }
     var botsLaunch by remember { mutableStateOf(com.allternit.feature.bots.BotsLaunch()) }
+    // Wave I2: a widget, tile or shortcut link (allternit://bot/<id>/chat, allternit://routines) while the workspace is up.
+    LaunchedEffect(launch.nonce) {
+        if (launch.nonce == 0L) return@LaunchedEffect
+        val bot = launch.botId
+        if (bot != null) {
+            mode = ShellMode.Bots
+            ShellModePrefs.save(context, ShellMode.Bots)
+            botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = bot)
+            page = ShellPage.Home
+        } else if (launch.tab != null && launch.tab != "settings") {
+            launchSection(launch.tab)?.let { page = ShellPage.Section(it) }
+        }
+    }
     // Wave F4a: the live view of a linked phone (iOS ACIComputersPane fullScreenCover PhoneLiveView).
     var phoneLive by remember { mutableStateOf<com.allternit.feature.computer.CloudPhone?>(null) }
 
@@ -803,6 +816,8 @@ internal data class ShellLaunch(
     val inboxItem: String? = null,
     /** Non-zero for a notification tap (wave I1): a new value re-applies the launch to a workspace already up. */
     val nonce: Long = 0L,
+    /** Open this bot's chat in Bots mode (a widget, tile or shortcut link, wave I2). */
+    val botId: String? = null,
 )
 
 /** iOS ModeBarItem raw values and the web rail ids → the drawer row they open. */

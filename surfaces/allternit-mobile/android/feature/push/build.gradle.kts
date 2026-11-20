@@ -40,6 +40,8 @@ dependencies {
     implementation(project(":core:auth"))
     // ChatBackends.runtimeJson: the notification buttons call the inbox and session routes through the computer.
     implementation(project(":feature:chat"))
+    // Wave I2: the status snapshot behind the ongoing "live run" notification.
+    implementation(project(":feature:system"))
     implementation(libs.firebase.messaging)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)

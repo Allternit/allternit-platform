@@ -370,19 +370,19 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
 | LazyScreen | — | src/fabric-session/phone/screens/LazyScreen.tsx | — | todo | — |
-| PhoneFilesOverlay | — | src/fabric-session/phone/screens/PhoneFilesOverlay.tsx | — | todo | — |
+| PhoneFilesOverlay | — | src/fabric-session/phone/screens/PhoneFilesOverlay.tsx | feature/settings (Files drive screens, #2646 / #2655) | built (#2665): covered by the native Files rows (drive browser, share and Inbox): android/feature/settings Files pages (#2646 / #2655) and app/files/FilesUi.kt | — |
 
 ## System surfaces
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| File Provider -> existing DocumentsProvider | ios/AllternitFileProvider | — | — | todo | — |
+| File Provider -> existing DocumentsProvider | ios/AllternitFileProvider | — | android/app/src/main/java/com/allternit/app/files/AllternitDocumentsProvider.kt | built (#2665): the provider is declared in src/main, so the nativeapp flavor ships it (authority ${applicationId}.files) next to ShareToComputerActivity and FilesSignInActivity. Its sign-in still uses the Custom Tab hand-off with the Keystore-sealed token: the native Clerk session cannot mint a Files token without a new cloud-api route, so the second sign-in stays | — |
 | iMessage extension | ios/AllternitMessages | — | — | N/A: no Android equivalent (Eoj 2026-11-18) | — |
 | Push notifications | ios/AllternitNotifications | android/feature/push/AllternitPush.kt (+ PushNotifications, AllternitMessagingService, NotificationActionReceiver) | I1 | built (#2664) | FCM; no notification extension (private bodies arrive in full, like an iOS app without `nse`) |
 | Screen share (broadcast) | ios/AllternitScreen | — | — | todo | — |
-| Share extension -> Android share target | ios/AllternitShare | — | — | todo | — |
-| Widgets -> Glance app widgets | ios/AllternitWidgets | — | — | todo | — |
-| Live Activities -> ongoing notifications | ios/AllternitWidgets | — | — | todo | — |
-| Control widgets -> Quick Settings tiles | ios/AllternitWidgets | — | — | todo | — |
+| Share extension -> Android share target | ios/AllternitShare | — | android/feature/system/ShareActivity.kt, app/src/nativeapp/AndroidManifest.xml | built (#2665): ACTION_SEND / SEND_MULTIPLE for text, links, images and files open "Share to a bot" (bot picker from the roster, note, one-time consent, upload through the chat uploads, one message). The TWA GET share target is removed for nativeapp only | — |
+| Widgets -> Glance app widgets | ios/AllternitWidgets | — | android/feature/system/StatusWidget.kt, StatusSnapshot.kt, StatusSync.kt | built (#2665): the status widget (small 2x2: working / needs you / focus step and the five empty states; wide 4x2 adds Ask, Call, Needs you and Run routine, because Android has no flip). Lock-screen accessory families have no Android widget | — |
+| Live Activities -> ongoing notifications | ios/AllternitWidgets | — | android/feature/push/LiveRunNotification.kt | built (#2665): one ongoing notification for the focus bot (name, step, progress bar, +N others, Approve / Deny when approveInline), driven by the status snapshot on every push and app foreground; the Meeting and Loop lock-screen layouts and the Dynamic Island have no Android surface | — |
+| Control widgets -> Quick Settings tiles | ios/AllternitWidgets | — | android/feature/system/Tiles.kt, app/src/nativeapp/AndroidManifest.xml | built (#2665): six TileServices, one per iOS control (Call main bot, Ask a bot, Hand off a task, Show what needs me, Run a routine, Pause all bots); Pause toggles in place through PUT /api/v1/bots/pause. Run a routine opens Automation Tasks (a tile has no routine picker) | — |
 | Focus filter | ios/SystemSurfaces/Intents/FocusFilter.swift | — | — | N/A: no Android equivalent (Eoj 2026-11-18) | — |
-| App Intents -> app shortcuts | ios/SystemSurfaces/Intents | — | — | todo | — |
+| App Intents -> app shortcuts | ios/SystemSurfaces/Intents | — | android/app/src/nativeapp/res/xml/shortcuts.xml, feature/system/StatusSync.kt (SystemLinks, publishShortcuts), feature/shell/MainActivity.kt (readSystemLink) | built (#2665): the four iOS shortcuts (Ask a bot, Hand off, Needs you, Call main bot) open native screens through allternit:// links; Ask <bot> shortcuts for the first two roster bots are dynamic. The iOS Siri phrases, Spotlight entities and the memory, schedule and phone intents have no Android shortcut; Call main bot opens the home chat (voice mode lives in its composer) | — |

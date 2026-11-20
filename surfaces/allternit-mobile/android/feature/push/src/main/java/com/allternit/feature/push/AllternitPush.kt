@@ -133,6 +133,8 @@ object AllternitPush {
     /** Sign-out (runs before the session is dropped, so the DELETE still has the leaving account's bearer). */
     private suspend fun willSignOut(context: Context) {
         context.getSystemService(NotificationManager::class.java)?.cancelAll()
+        // Wave I2: the widget, tiles and shortcuts drop the leaving account's snapshot.
+        com.allternit.feature.system.StatusSync.clear(context)
         val p = prefs(context)
         val token = p.getString(KEY_TOKEN, null)
         if (!p.getBoolean(KEY_REGISTERED, false) || token.isNullOrBlank()) return

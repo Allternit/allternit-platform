@@ -177,6 +177,39 @@ class MainActivity : ComponentActivity() {
         handleDebugTicket(intent)
         readOpenedDocument(intent)
         readPushTap(intent)
+        readSystemLink(intent)
+    }
+
+    /** Foreground: refresh the status snapshot and redraw the widget, tiles, shortcuts and the ongoing run notification. */
+    override fun onStart() {
+        super.onStart()
+        lifecycleScope.launch {
+            val snap = runCatching { com.allternit.feature.system.StatusSync.refresh(applicationContext) }.getOrNull()
+            com.allternit.feature.push.LiveRunNotification.update(applicationContext, snap)
+        }
+    }
+
+    /**
+     * An `allternit://` link from the widget, a Quick Settings tile or a shortcut (iOS DeepLinkRouter): `inbox`,
+     * `inbox/<id>`, `bot/<id>/chat`, `bot/main/chat`, `call/main`, `handoff`, `routines`. The workspace applies it
+     * through [ShellLaunch.nonce] like a notification tap.
+     */
+    private fun readSystemLink(intent: Intent) {
+        val uri = intent.data ?: return
+        if (intent.action != Intent.ACTION_VIEW || uri.scheme != com.allternit.feature.system.SystemLinks.SCHEME) return
+        val segments = listOfNotNull(uri.host) + uri.pathSegments
+        val nonce = System.nanoTime()
+        shellLaunch = when (segments.firstOrNull()) {
+            "inbox" -> ShellLaunch(sheet = "inbox", inboxItem = segments.getOrNull(1), nonce = nonce)
+            // Bots mode opens the bot's chat; "main" is the first bot of the roster (BotsLaunch.openBotId null opens the launchpad).
+            "bot" -> ShellLaunch(mode = ShellMode.Bots, botId = segments.getOrNull(1)?.takeIf { it != "main" }, nonce = nonce)
+            // The call is the chat's voice mode on the home chat; the shell has no separate call screen.
+            "call" -> ShellLaunch(mode = ShellMode.Home, nonce = nonce)
+            "handoff" -> ShellLaunch(mode = ShellMode.Bots, nonce = nonce)
+            "routines", "routine" -> ShellLaunch(tab = "automation-tasks", nonce = nonce)
+            else -> ShellLaunch(mode = ShellMode.Home, nonce = nonce)
+        }
+        intent.data = null
     }
 
     /**
@@ -224,6 +257,7 @@ class MainActivity : ComponentActivity() {
         handleDebugTicket(intent)
         readOpenedDocument(intent)
         readPushTap(intent)
+        readSystemLink(intent)
     }
 
     /**

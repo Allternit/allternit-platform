@@ -106,7 +106,7 @@ object PushNotifications {
     }
 
     /** The iOS category's buttons, in iOS order. */
-    private fun actionsFor(context: Context, category: String?, tag: String, title: String, data: Map<String, String>): List<Notification.Action> {
+    internal fun actionsFor(context: Context, category: String?, tag: String, title: String, data: Map<String, String>): List<Notification.Action> {
         fun background(action: String, label: String, reply: String? = null): Notification.Action {
             val intent = Intent(context, NotificationActionReceiver::class.java).apply {
                 this.action = "com.allternit.push.$action"
@@ -141,7 +141,7 @@ object PushNotifications {
     /** The data keys a button needs (iOS reads them from `userInfo["data"]`). */
     val PASSED_KEYS = setOf("inboxId", "contentHash", "runtimeId", "sessionId", "threadSessionId", "url", "event", "botId")
 
-    private fun openIntent(context: Context, key: String, data: Map<String, String>): PendingIntent? {
+    internal fun openIntent(context: Context, key: String, data: Map<String, String>): PendingIntent? {
         val intent = AllternitPush.tapIntent(context, data) ?: return null
         return PendingIntent.getActivity(context, key.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
