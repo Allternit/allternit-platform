@@ -207,6 +207,62 @@ pub(crate) fn is_device_inference_path(path: &str) -> bool {
     path == "/v1/chat/completions"
 }
 
+/// `AuthenticatedUser::token_id` prefix for a "Sign in with Allternit" access
+/// token (`oauth:<oauth_tokens.id>`). No `api_keys` row has this id.
+pub const OAUTH_TOKEN_ID_PREFIX: &str = "oauth:";
+
+/// The one permission an `alt_oat_` caller's `AuthenticatedUser` carries. It is
+/// deliberately not `inference`: `chat_completions` must take the OAuth billing
+/// path (the `OAuthCaller` extension, user wallet under the grant cap), and
+/// until it does, `can_run_inference` refuses the call (403) instead of billing
+/// the person's wallet uncapped.
+pub const OAUTH_INFERENCE_PERMISSION: &str = "oauth:inference";
+
+/// Prefixes of the "Sign in with Allternit" secrets: access token, refresh
+/// token, client secret. None of them is ever an account credential.
+fn is_oauth_secret(token: &str) -> bool {
+    [
+        crate::services::oauth_tokens::ACCESS_TOKEN_PREFIX,
+        crate::services::oauth_tokens::REFRESH_TOKEN_PREFIX,
+        crate::services::oauth_apps::CLIENT_SECRET_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| token.starts_with(prefix))
+}
+
+/// An `alt_oat_` bearer on the chat route (contract A6, A9): the person who
+/// consented, with the grant's `inference` scope, under the per-grant rate
+/// limit. Puts an `AuthContext` (token id `oauth:<id>`, permission
+/// [`OAUTH_INFERENCE_PERMISSION`]) and the `OAuthCaller` (billing marker
+/// `UserWallet`) in the request extensions.
+async fn oauth_inference(state: &ApiState, token: &str, mut request: Request<Body>, next: Next) -> Response {
+    use crate::routes::platform_v1::{caller, limits};
+    use axum::response::IntoResponse;
+    let oauth = match caller::authenticate_oauth(&state.db, token).await {
+        Ok(oauth) => oauth,
+        Err(error) => return error.into_response(),
+    };
+    if let Err(error) = oauth.require("inference") {
+        return error.into_response();
+    }
+    let rate = match limits::check_grant_rate_limit(&state.db, oauth.grant_id).await {
+        Ok(info) => info,
+        Err((error, info)) => return limits::rate_limited_response(error, info),
+    };
+    request.extensions_mut().insert(AuthContext {
+        user: AuthenticatedUser {
+            user_id: oauth.user_id.clone(),
+            token_id: format!("{OAUTH_TOKEN_ID_PREFIX}{}", oauth.token_id),
+            permissions: vec![OAUTH_INFERENCE_PERMISSION.to_string()],
+        },
+        is_development: false,
+    });
+    request.extensions_mut().insert(oauth);
+    let mut response = next.run(request).await;
+    rate.apply(response.headers_mut());
+    response
+}
+
 pub async fn auth_middleware(
     State(state): State<Arc<ApiState>>,
     request: Request<Body>,
@@ -262,6 +318,16 @@ pub async fn auth_middleware(
                 Err(_) => unauthorized_response("Invalid or expired token"),
             };
         }
+    }
+
+    // "Sign in with Allternit" access tokens work on the chat route only, as the
+    // person who consented. Anywhere else they are not a credential (401): an
+    // outside app never gets account access.
+    if let Some(oat) = token.as_deref().filter(|t| crate::routes::platform_v1::caller::is_oauth_access_token(t)) {
+        if is_device_inference_path(request.uri().path()) {
+            return oauth_inference(&state, oat, request, next).await;
+        }
+        return unauthorized_response("Invalid or expired token");
     }
 
     // A person's signed-in Clerk session on the chat route: web and iOS send
@@ -344,6 +410,11 @@ pub(crate) async fn validate_token_from_ip(
     client_ip: Option<std::net::IpAddr>,
 ) -> Result<Result<Option<AuthenticatedUser>, crate::services::api_keys::KeyRejection>, sqlx::Error> {
     use crate::services::api_keys::KeyRejection;
+    // OAuth tokens and client secrets (contract Part A) never act as the
+    // account: not here, not through `resolve_user_id`.
+    if is_oauth_secret(token) {
+        return Ok(Ok(None));
+    }
     if let Some(token_record) = lookup_api_token(db, token).await? {
         // Check expiration
         if token_record.is_expired() {

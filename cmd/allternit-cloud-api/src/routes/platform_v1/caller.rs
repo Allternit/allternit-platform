@@ -4,12 +4,24 @@
 //! hashed in `api_keys` with `project_id` set. Legacy `alt_<64hex>` keys never
 //! authenticate here, and project keys never authenticate on the legacy
 //! `resolve_user_scoped` / `authenticate_api_key` paths.
+//!
+//! "Sign in with Allternit" access tokens (`alt_oat_…`, contract Part A) resolve
+//! to an [`OAuthCaller`], never to a `PlatformCaller`: an OAuth token has no
+//! project, so no handler that takes a `PlatformCaller` can ever see one.
+//! [`authenticate_from`] answers such a token with 403 `insufficient_scope`
+//! once the token itself is good (A6: no project route is reachable). The one
+//! route an OAuth token may call is `POST /v1/chat/completions`, where
+//! `auth::middleware` puts the `OAuthCaller` (with its
+//! [`CallerBilling::UserWallet`] marker) in the request extensions.
 
 use axum::{extract::FromRequestParts, http::request::Parts};
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::{FromRow, PgPool};
+use uuid::Uuid;
 
 use super::PlatformError;
+use crate::services::oauth_tokens::{self, AccessTokenError, ACCESS_TOKEN_PREFIX};
 
 pub const LIVE_PREFIX: &str = "alt_live_";
 pub const TEST_PREFIX: &str = "alt_test_";
@@ -177,6 +189,109 @@ impl PlatformCaller {
     pub fn rpm_limit(&self) -> u32 {
         effective_rpm(self.plan, self.rpm_override).0
     }
+
+    /// A project key (or the console acting on a project): the project pays (A8).
+    pub fn billing(&self) -> CallerBilling {
+        CallerBilling::Project
+    }
+}
+
+/// Who pays for a request (contract A8). Project keys: the app's project, as
+/// before. `alt_oat_` tokens: the wallet of the person who consented, under the
+/// grant's monthly cap (reserve, then settle).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CallerBilling {
+    Project,
+    UserWallet {
+        grant_id: Uuid,
+        /// `oauth_grants.monthly_cap_cents` when the token was checked.
+        cap_cents: i64,
+    },
+}
+
+/// Platform scopes an OAuth grant's scopes give (A6). Only `inference` maps to
+/// a platform scope. `usage` is served by `GET /api/v1/oauth/usage` alone (the
+/// grant's own spend, not the project usage report), and `profile` and
+/// `offline_access` by the OAuth endpoints. No other platform scope is reachable.
+pub fn platform_scopes_for_oauth(oauth_scopes: &[String]) -> Vec<String> {
+    oauth_scopes.iter().filter(|s| s.as_str() == "inference").cloned().collect()
+}
+
+/// An `alt_oat_` bearer, checked by [`oauth_tokens::authenticate_access_token`]
+/// (revoked, expired, suspended app and the test-user gate included).
+#[derive(Debug, Clone, Serialize)]
+pub struct OAuthCaller {
+    /// The person who consented; their wallet pays.
+    pub user_id: String,
+    pub app_id: Uuid,
+    pub client_id: String,
+    pub grant_id: Uuid,
+    pub token_id: Uuid,
+    /// The grant's own OAuth scopes (D3).
+    pub oauth_scopes: Vec<String>,
+    /// The platform scopes they map to ([`platform_scopes_for_oauth`]).
+    pub scopes: Vec<String>,
+    pub billing: CallerBilling,
+    pub expires_at: DateTime<Utc>,
+}
+
+impl OAuthCaller {
+    pub fn has_scope(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|s| s == scope)
+    }
+
+    /// 403 `insufficient_scope` unless the grant maps to platform `scope`.
+    pub fn require(&self, scope: &str) -> Result<(), PlatformError> {
+        if self.has_scope(scope) {
+            Ok(())
+        } else {
+            Err(PlatformError::permission(
+                "insufficient_scope",
+                format!("This access token lacks the '{scope}' scope. Ask the person to sign in again with it."),
+            ))
+        }
+    }
+}
+
+/// An `AccessTokenError` (A9) in the `/v1` error shape.
+fn oauth_error(error: AccessTokenError) -> PlatformError {
+    let status = error.status();
+    if status == axum::http::StatusCode::UNAUTHORIZED {
+        PlatformError::authentication(error.code(), error.message())
+    } else if status == axum::http::StatusCode::FORBIDDEN {
+        PlatformError::permission(error.code(), error.message())
+    } else {
+        if let AccessTokenError::Server(cause) = &error {
+            tracing::error!(error = %cause, "oauth access token check failed");
+        }
+        PlatformError::api_error("internal_error", "An internal error occurred. Please retry.")
+    }
+}
+
+/// `alt_oat_…` (no `Bearer `) → the person it acts for. 401 `invalid_token`,
+/// `oauth_token_expired` or `oauth_grant_revoked`; 403 `app_not_approved_for_user`.
+pub async fn authenticate_oauth(db: &PgPool, token: &str) -> Result<OAuthCaller, PlatformError> {
+    let access = oauth_tokens::authenticate_access_token(db, token).await.map_err(oauth_error)?;
+    Ok(OAuthCaller {
+        scopes: platform_scopes_for_oauth(&access.scopes),
+        billing: CallerBilling::UserWallet { grant_id: access.grant_id, cap_cents: access.monthly_cap_cents },
+        user_id: access.user_id,
+        app_id: access.app_id,
+        client_id: access.client_id,
+        grant_id: access.grant_id,
+        token_id: access.token_id,
+        oauth_scopes: access.scopes,
+        expires_at: access.expires_at,
+    })
+}
+
+/// The 403 every project route gives a good OAuth token (A6).
+fn oauth_on_project_route() -> PlatformError {
+    PlatformError::permission(
+        "insufficient_scope",
+        "Sign in with Allternit access tokens can call only POST /v1/chat/completions. This route needs a project API key.",
+    )
 }
 
 /// Requests per minute a project gets: its override when set (> 0), else the
@@ -238,6 +353,12 @@ pub async fn authenticate_from(
             "Provide your API key as 'Authorization: Bearer alt_live_…' (or alt_test_…).",
         )
     })?;
+    // An OAuth token is checked first (a revoked or expired one is a 401, a
+    // non-test user a 403), then refused: it has no project.
+    if is_oauth_access_token(token) {
+        authenticate_oauth(db, token).await?;
+        return Err(oauth_on_project_route());
+    }
     let env = key_env(token).ok_or_else(|| {
         PlatformError::authentication("invalid_api_key", "The API key is not a valid project key.")
     })?;
@@ -380,6 +501,17 @@ pub fn is_project_key_token(token: &str) -> bool {
     token.starts_with(LIVE_PREFIX) || token.starts_with(TEST_PREFIX)
 }
 
+/// True for a "Sign in with Allternit" access token (`alt_oat_…`).
+pub fn is_oauth_access_token(token: &str) -> bool {
+    token.starts_with(ACCESS_TOKEN_PREFIX)
+}
+
+/// True for a bearer the `/v1` middleware authenticates itself: a project key
+/// or an OAuth access token. Neither goes to the Agency API or the console path.
+pub fn is_platform_bearer(token: &str) -> bool {
+    is_project_key_token(token) || is_oauth_access_token(token)
+}
+
 #[axum::async_trait]
 impl<S: Send + Sync> FromRequestParts<S> for PlatformCaller {
     type Rejection = PlatformError;
@@ -430,6 +562,19 @@ mod tests {
         let open = caller(None, &["agents"]);
         assert_eq!(open.account_filter(None).unwrap(), None);
         assert_eq!(open.account_filter(Some("acct_b")).unwrap().as_deref(), Some("acct_b"));
+    }
+
+    #[test]
+    fn oauth_scope_map_reaches_only_inference() {
+        let all: Vec<String> = ["inference", "usage", "profile", "offline_access"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(platform_scopes_for_oauth(&all), vec!["inference".to_string()]);
+        assert!(platform_scopes_for_oauth(&["usage".to_string(), "profile".to_string()]).is_empty());
+        let hex64 = "a".repeat(64);
+        assert!(is_platform_bearer(&format!("alt_oat_{hex64}")));
+        assert_eq!(key_env(&format!("alt_oat_{hex64}")), None);
+        assert!(!is_platform_bearer(&format!("alt_ort_{hex64}")));
+        // A grant gets the default per-key limit (the contract sets none).
+        assert_eq!(super::super::limits::GRANT_RPM, Plan::Sandbox.rpm());
     }
 
     #[test]
