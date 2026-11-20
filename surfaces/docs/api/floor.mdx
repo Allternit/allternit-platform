@@ -1,0 +1,64 @@
+---
+title: "Floor API"
+description: "The Office floor feed: bots grouped into pods, what each one needs from you, and the events the floor draws."
+---
+
+These routes are served by the local `allternit-api` under `/api/v1/floor`. They return the signed-in owner's bots only. Threads marked incognito are left out.
+
+## GET /floor/state
+
+Returns every active bot and how the floor groups them.
+
+```json
+{
+  "v": 2,
+  "mainBotId": "bot_main",
+  "pods": [
+    { "id": "chief", "name": "Chief", "color": "#2F80ED", "kind": "chief", "botIds": ["bot_main"] },
+    { "id": "proj_7", "name": "Q4 report", "color": "#27AE60", "kind": "project", "botIds": ["bot_a"] },
+    { "id": "team", "name": "Team", "color": "#9B51E0", "kind": "team", "botIds": ["bot_b"] }
+  ],
+  "bots": [
+    {
+      "id": "bot_a", "status": "working", "updatedAt": 1790000000000,
+      "lastKind": "finished", "lastText": "Sent the draft",
+      "pod": "proj_7",
+      "needs": { "approval": 0, "question": 1, "suggestion": 2 },
+      "lastResult": { "text": "Sent the draft", "at": 1790000000000, "threadId": "th_1" }
+    }
+  ]
+}
+```
+
+The v1 fields (`bots[].id`, `status`, `updatedAt`, `lastKind`, `lastText`) are unchanged, so v1 clients keep working.
+
+### Fields added in v2
+
+| Field | Meaning |
+| --- | --- |
+| `v` | Always `2`. |
+| `mainBotId` | The main bot: the bot flagged `botProfile.chiefOfStaff`, or one made from the primary template. `null` when there is none. |
+| `pods[]` | `id`, `name` (40 characters at most), `color` (`#rrggbb`, stable for an id), `kind` (`project`, `team` or `chief`), `botIds`. A pod with no bots is not sent. |
+| `bots[].pod` | The id of the pod the bot sits in. |
+| `bots[].needs` | Counts of things waiting on you. `question` is the bot's threads in the needs-you state. `suggestion` is its proposed threads. `approval` is always `0` for now, because approvals are not yet tied to a bot. |
+| `bots[].lastResult` | `{ text, at, threadId }` for the bot's newest finished thread in the last 24 hours (text cut to 120 characters), or `null`. |
+
+### How pods are chosen
+
+1. The main bot sits alone in the `chief` pod.
+2. Any other bot goes to the project of its newest working thread.
+3. Otherwise it goes to its first project membership, by project id.
+4. Otherwise it goes to the `team` pod.
+
+At most 8 project pods are sent, those with the most recent thread activity. Bots in the other projects fold into `team`. Pod order is `chief`, then projects by recent activity, then `team`.
+
+## GET /floor/events
+
+Query: `since` and `until` (ms), `limit` (default 500, at most 2000). Returns `{ "events": [...] }`, oldest first.
+
+| `kind` | Source | Extra fields |
+| --- | --- | --- |
+| `started`, `finished`, `failed`, `needs_you` | Thread events | `text` when the event has a status line |
+| `handoff` | A bot-to-bot hop | `toBotId`, and `label` (60 characters at most) |
+
+`label` is the title of the thread that received the hop. Hops that link no thread have no `label`.

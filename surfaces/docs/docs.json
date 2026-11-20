@@ -875,6 +875,7 @@
                   "api/connectors",
                   "api/tools",
                   "api/office",
+                  "api/floor",
                   "api/office-engine",
                   "api/voice",
                   "api/voice-tickets",
