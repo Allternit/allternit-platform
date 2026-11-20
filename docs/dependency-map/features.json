@@ -3326,6 +3326,34 @@
       ]
     },
     {
+      "id": "feature:facility-campus",
+      "label": "Facility campus: twelve districts",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "The 3D facility grows from one building to a 1,280 x 960 m campus of twelve districts, loaded by distance under a frame budget, with travel by map, cart and shuttle. Bots light Bot Quarter homes, projects fill Commons Loop studios and cloud computers light Compute Row halls through additive fields in the allternit:workspace payload. In review as websites PRs 147 to 160; not merged.",
+      "touches": [
+        "external:allternit-facility",
+        "allternit-ai/src/views/office/OfficeFloor.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
+        "allternit/surfaces/docs/guides/facility.mdx",
+        "allternit/surfaces/docs/architecture/facility-campus.mdx",
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-17",
+          "note": "Eoj: campus of twelve districts replaces the neighbour blocks; no backend change, the stage manifest is a static file; project and computer names show only in the signed-in embed."
+        },
+        {
+          "on": "2026-11-19",
+          "note": "Docs written ahead of the websites PRs 147 to 160. Do not merge the docs before those PRs merge."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/facility-campus.mdx"
+      ]
+    },
+    {
       "id": "feature:waiting-games",
       "label": "Waiting games (Play in the message box)",
       "product": "product:ai-allternit",
