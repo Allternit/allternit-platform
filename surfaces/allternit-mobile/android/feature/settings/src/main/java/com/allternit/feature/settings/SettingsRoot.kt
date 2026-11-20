@@ -358,7 +358,7 @@ private fun AdvancedPage(host: SettingsHost, back: () -> Unit, push: (String) ->
                         SDivider()
                         SToggleRow("Save chat drafts", "settingsRow_saveDrafts", drafts, icon = DesignR.drawable.ph_floppy_disk, onChange = { drafts = it; SettingsPrefs.setSaveDrafts(context, it) })
                         SDivider()
-                        SToggleRow("Waiting games", "settingsRow_waitingGames", games, icon = DesignR.drawable.ph_play_fill, onChange = { games = it; SettingsPrefs.setWaitingGames(context, it) })
+                        SToggleRow("Waiting games", "settingsRow_waitingGames", games, icon = DesignR.drawable.ph_game_controller, onChange = { games = it; SettingsPrefs.setWaitingGames(context, it) })
                     }
                     "computers" -> {
                         SDivider()
