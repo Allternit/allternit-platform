@@ -26,6 +26,20 @@ import {
   type HostUpdate,
 } from "@/cli/work/console"
 import {
+  addKey,
+  checkPublicKey,
+  formatKeys,
+  formatRuns,
+  formatSnippets,
+  listKeys,
+  listSnippets,
+  parseList,
+  parsePort,
+  removeKey,
+  runForward,
+  runSnippet,
+} from "@/cli/work/console-access"
+import {
   cloudBase,
   createRestorePoint,
   listRestorePoints,
@@ -446,6 +460,87 @@ const ComputersRestoreCommand = cmd({
   }),
 })
 
+const ComputersForwardCommand = cmd({
+  command: "forward <computer> <remotePort> [localPort]",
+  describe: consoleEnabled() ? "forward a local port to a port on a computer (default local port = remote port)" : false,
+  builder: (y: Argv) =>
+    y.positional("computer", { type: "string", demandOption: true }).positional("remotePort", { type: "string", demandOption: true }).positional("localPort", { type: "string" }),
+  handler: (args) => gated(async () => {
+    const remote = parsePort(args.remotePort, "remotePort")
+    const local = args.localPort === undefined ? remote : parsePort(args.localPort, "localPort")
+    const row = await resolveRow(String(args.computer))
+    const ctl = new AbortController()
+    process.once("SIGINT", () => ctl.abort())
+    process.stdout.write(`Forwarding 127.0.0.1:${local} to port ${remote} on ${row.name}. Press Ctrl-C to stop.\n`)
+    await runForward(row.id, remote, local, ctl.signal, (m) => process.stderr.write(m + "\n"))
+  }),
+})
+
+const ComputersKeysCommand = cmd({
+  command: "keys <action> <computer> [arg]",
+  describe: consoleEnabled() ? "SSH keys on a computer: list | add <public key file> [--label] | remove <key id>" : false,
+  builder: (y: Argv) =>
+    y
+      .positional("action", { type: "string", choices: ["list", "add", "remove"], demandOption: true })
+      .positional("computer", { type: "string", demandOption: true })
+      .positional("arg", { type: "string", describe: "add: path to a .pub file; remove: key id" })
+      .option("label", { type: "string", describe: "name for the key (add)" })
+      .option("json", { type: "boolean", describe: "print JSON" }),
+  handler: (args) => gated(async () => {
+    const row = await resolveRow(String(args.computer))
+    if (args.action === "list") {
+      const keys = await listKeys(row.id)
+      process.stdout.write((args.json ? JSON.stringify(keys, null, 2) : formatKeys(keys)) + "\n")
+    } else if (args.action === "add") {
+      if (!args.arg) throw new Error("Give the path to a public key file: gizzi computers keys add <computer> ~/.ssh/id_ed25519.pub")
+      const file = String(args.arg).replace(/^~(?=\/)/, process.env.HOME ?? "~")
+      const raw = await Bun.file(file).text().catch(() => {
+        throw new Error(`Cannot read ${file}.`)
+      })
+      const text = checkPublicKey(raw)
+      const k = await addKey(row.id, args.label ? String(args.label) : (text.split(" ")[2] ?? "cli key"), text)
+      process.stdout.write(`Added key ${k.id} to ${row.name}.\n`)
+    } else {
+      if (!args.arg) throw new Error("Give the key id: gizzi computers keys remove <computer> <key id>")
+      await removeKey(row.id, String(args.arg))
+      process.stdout.write(`Removed key ${args.arg} from ${row.name}.\n`)
+    }
+  }),
+})
+
+const ComputersSnippetCommand = cmd({
+  command: "snippet <action> [snippet]",
+  describe: consoleEnabled() ? "saved snippets: list | run <snippet> --on <c1,c2> (asks first)" : false,
+  builder: (y: Argv) =>
+    y
+      .positional("action", { type: "string", choices: ["list", "run"], demandOption: true })
+      .positional("snippet", { type: "string", describe: "snippet id or name (run)" })
+      .option("on", { type: "string", describe: "comma-separated computers (run)" })
+      .option("yes", { type: "boolean", alias: "y", describe: "skip the question (the server still issues approval ids)" })
+      .option("json", { type: "boolean", describe: "print JSON" }),
+  handler: (args) => gated(async () => {
+    const snippets = await listSnippets()
+    if (args.action === "list") {
+      process.stdout.write((args.json ? JSON.stringify(snippets, null, 2) : formatSnippets(snippets)) + "\n")
+      return
+    }
+    if (!args.snippet) throw new Error("Give the snippet: gizzi computers snippet run <snippet> --on <c1,c2>")
+    const sn = pick(snippets, String(args.snippet))
+    if (!sn) throw new Error(`No snippet named or with id "${args.snippet}". Run \`gizzi computers snippet list\`.`)
+    const keys = parseList(args.on)
+    if (!keys.length) throw new Error("Say where to run it: --on <computer1,computer2>")
+    const rows = await Promise.all(keys.map((k) => resolveRow(k)))
+    const names = Object.fromEntries(rows.map((r) => [r.id, r.name]))
+    if (!args.yes && !(await ask(`Run "${sn.name}"${sn.command ? ` (${sn.command})` : ""} on ${rows.map((r) => r.name).join(", ")}?`))) {
+      process.stdout.write("Not run. Pass --yes to skip the question.\n")
+      return
+    }
+    const runs = await runSnippet(sn.id, rows.map((r) => r.id))
+    process.stdout.write((args.json ? JSON.stringify(runs, null, 2) : formatRuns(runs, names)) + "\n")
+    if (runs.some((r) => r.error)) process.exitCode = 1
+  }),
+})
+
 export const ComputersCommand = cmd({
   command: "computers",
   describe: "your computers: list, start, stop (run a session on one with `gizzi run --on`)",
@@ -464,6 +559,9 @@ export const ComputersCommand = cmd({
       .command(ComputersWakeCommand)
       .command(ComputersSnapshotCommand)
       .command(ComputersRestoreCommand)
+      .command(ComputersForwardCommand)
+      .command(ComputersKeysCommand)
+      .command(ComputersSnippetCommand)
       .demandCommand(1, "Specify a computers command (ls, start, stop, status, link)"),
   handler: () => {},
 })

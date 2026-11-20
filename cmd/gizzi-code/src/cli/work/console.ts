@@ -51,7 +51,7 @@ export class Asleep extends Error {
   }
 }
 
-async function authHeaders(): Promise<Record<string, string>> {
+export async function authHeaders(): Promise<Record<string, string>> {
   const env = process.env.ALLTERNIT_API_TOKEN?.trim()
   if (env) return { Authorization: `Bearer ${env}` }
   const { Pairing } = await import("@/runtime/services/pairing/pairing")
@@ -59,7 +59,7 @@ async function authHeaders(): Promise<Record<string, string>> {
   return Pairing.tokenUsable(device) ? { Authorization: `Bearer ${device!.deviceToken!}` } : {}
 }
 
-async function request(path: string, init: RequestInit = {}): Promise<Response> {
+export async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const res = await fetch(`${cloudBase()}${path}`, {
     ...init,
     headers: { ...(await authHeaders()), ...(init.headers as Record<string, string>) },
