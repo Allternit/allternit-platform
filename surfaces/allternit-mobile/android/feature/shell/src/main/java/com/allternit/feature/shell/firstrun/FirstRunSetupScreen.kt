@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.Haptics
@@ -484,17 +485,17 @@ internal fun ConnLogo(entry: ConnEntry) {
 
 /** Name (with "New" or a tag) and the status line, shared by [ConnectionRow] and the Grid/Deck card (iOS ConnStatusLines). */
 @Composable
-internal fun ConnStatusLines(entry: ConnEntry, store: ConnectionsStore, tag: String?) {
+internal fun ConnStatusLines(entry: ConnEntry, store: ConnectionsStore, tag: String?, maxLines: Int = Int.MAX_VALUE) {
     val c = setupColors
     val r = store.row(entry.id)
     val available = store.isAvailable(entry.id)
     val status = if (!available) store.unavailableReason(entry.id) else store.statusLine(entry)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(entry.name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.ink, maxLines = 1)
+        Text(entry.name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         if (tag != null) Text(tag, fontSize = 11.sp, color = c.okFg, modifier = Modifier.background(c.okBg, CircleShape).padding(horizontal = 7.dp, vertical = 2.dp))
         else if (entry.isNew && r.state != ConnState.On) Text("New", fontSize = 11.sp, color = c.sub, modifier = Modifier.background(c.fill2, CircleShape).padding(horizontal = 7.dp, vertical = 2.dp))
     }
-    Text(status, fontSize = 12.5.sp, color = if (r.state == ConnState.Needs) c.errFg else c.sub)
+    Text(status, fontSize = 12.5.sp, color = if (r.state == ConnState.Needs) c.errFg else c.sub, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 }
 
 /**

@@ -36,7 +36,7 @@ internal fun ConnectionCard(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         ConnLogo(entry)
-        Column { ConnStatusLines(entry, store, null) }
+        Column { ConnStatusLines(entry, store, null, maxLines = 2) }
         Spacer(Modifier.weight(1f))
         Spacer(Modifier.height(2.dp))
         ConnRowTrailing(entry, store, trailing, onConnect, onFallback, fill = true)
