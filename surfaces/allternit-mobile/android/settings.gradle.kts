@@ -54,3 +54,6 @@ include(":feature:phones")
 // Wave F4b: Allternit Office (the floor, documents, the editor web view, PDF signing, local documents). :feature:shell
 // depends on it (nativeapp flavor only); it reuses :feature:bots (the roster), :feature:chat and :feature:artifacts.
 include(":feature:office")
+// Wave G1: Settings part 1 (the root, Advanced, Account, Privacy, Notifications, Memory, Devices, Models, Subagents,
+// MCP, Webhooks). :feature:shell depends on it (nativeapp flavor only).
+include(":feature:settings")

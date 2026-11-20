@@ -582,7 +582,25 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             onOpenChat = ::openSessionId,
                             onSignIn = { page = ShellPage.Settings },
                         )
-                        ShellPage.Settings -> SettingsScreen(account, onBack = { page = ShellPage.Home })
+                        // Wave G1: Settings part 1 (iOS SettingsView): the root, Advanced and the Account, Privacy, Notifications,
+                        // Connections, Memory, Devices, Models, Subagents, MCP and Webhooks pages.
+                        ShellPage.Settings -> com.allternit.feature.settings.SettingsRoot(
+                            com.allternit.feature.settings.SettingsHost(
+                                account = account,
+                                backend = chatBackend,
+                                versionName = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() },
+                                onClose = { page = ShellPage.Home },
+                                connections = { onBack ->
+                                    com.allternit.feature.shell.firstrun.ConnectionsSettingsScreen(
+                                        onBack = onBack,
+                                        openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
+                                        openAndroidScreen = { page = ShellPage.Section(RailRow("android-screen", "Android phone", DesignR.drawable.ph_cpu)) },
+                                    )
+                                },
+                                openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
+                                openModels = { page = ShellPage.Section(RailRow("models", "Models", DesignR.drawable.ph_cpu)) },
+                            ),
+                        )
                         ShellPage.AllChats -> SessionOverviewScreen(
                             mode = mode,
                             store = store,

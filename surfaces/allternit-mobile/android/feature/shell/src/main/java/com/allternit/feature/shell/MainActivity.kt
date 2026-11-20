@@ -104,11 +104,14 @@ class MainActivity : ComponentActivity() {
             // Sign-in is always dark, like iOS LoginGateView; the workspace is light by default.
             // System bar icons follow the screen: light icons on the dark sign-in, dark icons on
             // the light workspace. Bars stay transparent (no grey 3-button nav scrim).
-            DisposableEffect(signedIn) {
-                applySystemBars(darkContent = !signedIn)
+            val appearance = com.allternit.feature.settings.AppearancePrefs.mode
+            DisposableEffect(signedIn, appearance) {
+                applySystemBars(darkContent = !signedIn || appearance == ThemeMode.Dark)
                 onDispose {}
             }
-            AllternitTheme(themeMode = if (signedIn) ThemeMode.Light else ThemeMode.Dark) {
+            // Settings > Appearance picks the workspace theme (light by default); sign-in is always dark.
+            LaunchedEffect(Unit) { com.allternit.feature.settings.AppearancePrefs.load(applicationContext) }
+            AllternitTheme(themeMode = if (signedIn) com.allternit.feature.settings.AppearancePrefs.mode else ThemeMode.Dark) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

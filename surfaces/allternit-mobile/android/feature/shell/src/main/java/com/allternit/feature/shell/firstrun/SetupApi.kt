@@ -366,6 +366,11 @@ internal object ConnectionsClient {
         return json["state"].str()?.let(ConnState::of) to login
     }
 
+    /** iOS ConnectionsClient.disconnect: `DELETE /api/v1/connections/<id>`. */
+    suspend fun disconnect(id: String, target: String?) {
+        send(id, target, "DELETE")
+    }
+
     suspend fun submit(id: String, target: String?, value: String): ConnectionWire? =
         ConnectionWire.parse(send("$id/submit", target, "POST", buildJsonObject { put("value", value) }))
 
@@ -411,6 +416,8 @@ internal data class ConnEntry(
     val way: ConnWay,
     val runsOn: ConnRunsOn = ConnRunsOn.Server,
     val isNew: Boolean = false,
+    /** The Settings > Connections group: brains, computers, phones, tools, voice, apps or channels (iOS ConnGroup). */
+    val group: String = "brains",
 )
 
 internal data class ConnKeyProvider(val id: String, val name: String, val keyPage: String)
@@ -426,7 +433,30 @@ internal object ConnectionsCatalog {
         ConnEntry("kimi", "Kimi", "K", "Kimi plan", ConnWay.Code, ConnRunsOn.Runner),
         ConnEntry("api-key", "An API key", "⚿", "OpenAI, Anthropic, Google, xAI, OpenRouter and more", ConnWay.Paste),
         ConnEntry("local", "Local brain", "L", "Runs offline on your own computer", ConnWay.Install, ConnRunsOn.Computer),
-        ConnEntry("this-mac", "Your Mac or PC", "C", "Lets Allternit use the apps on it", ConnWay.Install, ConnRunsOn.Computer),
+        ConnEntry("this-mac", "Your Mac or PC", "C", "Lets Allternit use the apps on it", ConnWay.Install, ConnRunsOn.Computer, group = "computers"),
+        // Settings > Connections groups the setup flow does not show (iOS ConnectionsCatalog).
+        ConnEntry("cloud-computer", "Allternit Cloud computer", "C", way = ConnWay.Included, group = "computers"),
+        ConnEntry("server", "Your own server", "S", "A Linux machine you own", ConnWay.Install, ConnRunsOn.Computer, group = "computers"),
+        ConnEntry("phone", "Your phone", "P", "iPhone or Android", ConnWay.Install, ConnRunsOn.Device, group = "phones"),
+        ConnEntry("android-screen", "Android phone (screen share)", "A", "See and tap your Android from any device", ConnWay.Install, isNew = true, group = "phones"),
+        ConnEntry("phone-control", "Let your bots use this phone", "P", "Taps and types in your phone apps for you", ConnWay.Install, ConnRunsOn.Device, group = "phones"),
+        ConnEntry("gizzi", "Gizzi Code", "G", way = ConnWay.Install, runsOn = ConnRunsOn.Computer, group = "tools"),
+        ConnEntry("claude-code", "Claude Code", "C", way = ConnWay.Code, runsOn = ConnRunsOn.Computer, group = "tools"),
+        ConnEntry("codex", "Codex", "X", way = ConnWay.Code, runsOn = ConnRunsOn.Computer, group = "tools"),
+        ConnEntry("gemini-cli", "Gemini CLI", "G", way = ConnWay.Code, runsOn = ConnRunsOn.Computer, group = "tools"),
+        ConnEntry("cursor", "Cursor Agent", "C", way = ConnWay.Code, runsOn = ConnRunsOn.Computer, group = "tools"),
+        ConnEntry("grok-cli", "Grok CLI", "X", way = ConnWay.Code, runsOn = ConnRunsOn.Computer, group = "tools"),
+        ConnEntry("kimi-cli", "Kimi CLI", "K", way = ConnWay.Code, runsOn = ConnRunsOn.Computer, group = "tools"),
+        ConnEntry("openai-voice", "OpenAI", "O", "Realtime voice", ConnWay.Paste, ConnRunsOn.Device, group = "voice"),
+        ConnEntry("elevenlabs", "ElevenLabs", "E", "Studio voices", ConnWay.Paste, ConnRunsOn.Device, group = "voice"),
+        ConnEntry("gmail", "Gmail", "G", way = ConnWay.OAuth, group = "apps"),
+        ConnEntry("drive", "Google Drive", "D", way = ConnWay.OAuth, group = "apps"),
+        ConnEntry("slack", "Slack", "S", way = ConnWay.OAuth, group = "apps"),
+        ConnEntry("github", "GitHub", "H", way = ConnWay.OAuth, group = "apps"),
+        ConnEntry("notion", "Notion", "N", way = ConnWay.OAuth, group = "apps"),
+        ConnEntry("telegram", "Telegram", "T", way = ConnWay.OAuth, group = "channels"),
+        ConnEntry("whatsapp", "WhatsApp", "W", way = ConnWay.OAuth, group = "channels"),
+        ConnEntry("discord", "Discord", "D", way = ConnWay.OAuth, group = "channels"),
     )
 
     val keyProviders = listOf(
