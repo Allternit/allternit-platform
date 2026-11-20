@@ -12,7 +12,10 @@ import WebKit
 /// relays: Swift → `feed(json)` → the frame; the frame's actions → `office`
 /// message handler. Picking a bot shows its main chat in the panel
 /// (`allternit:workspace:thread`); a message written there is sent in the
-/// background and its reply streams into the panel; answer/open push the chat.
+/// background and its reply streams into the panel. Picking a bot (select,
+/// answer, open) opens its thread as a native sheet over the floor
+/// (OfficeThreadSheet) instead of leaving the floor; "N need you"
+/// (OfficeNeedPill) opens the first waiting bot with its approval card.
 struct OfficeFloorView: View {
     @ObservedObject private var auth = AuthManager.shared
     @ObservedObject private var store = BotModeStore.shared
@@ -32,6 +35,13 @@ struct OfficeFloorView: View {
     @State private var floor: FloorStateV2?
     @ObservedObject private var status = BotStatusStore.shared
     @State private var bridge = OfficeFloorBridge()
+    @ObservedObject private var asks = AgentAskStore.shared
+    /// The bot whose thread sheet is open over the floor.
+    @State private var sheet: OfficeSheetTarget?
+    /// Done bubbles after an approval or answer, sent with the feed for 10 minutes.
+    @State private var doneBubbles: [OfficeDoneBubble] = []
+    /// The bottom inset last sent with `focus`, to skip tiny height changes.
+    @State private var focusedInset: CGFloat = -1
 
     var body: some View {
         ZStack {
@@ -50,6 +60,15 @@ struct OfficeFloorView: View {
                 OfficeFloorWeb(feed: feedJSON, thread: thread, bridge: bridge, mode: mode, attempt: attempt, visitorKey: "allternit.facility.visitor.\(auth.currentUserId ?? "local")", onReady: { version in frameVersion = version; ready = true }, onAction: handle)
                     .id(auth.currentUserId ?? "local")
                     .ignoresSafeArea(edges: .bottom)
+                if ready, mode == .workspace, !needBots.isEmpty {
+                    OfficeNeedPill(bots: needBots) {
+                        if let first = needBots.first { openSheet(first.id) }
+                    }
+                    .padding(.leading, 12)
+                    .padding(.top, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .transition(.opacity)
+                }
                 if !ready {
                     ProgressView("Opening the office…")
                         .padding(16)
@@ -58,6 +77,24 @@ struct OfficeFloorView: View {
             }
         }
         .background(Color("BgPanel"))
+        .sheet(item: $sheet, onDismiss: {
+            focusedInset = -1
+            if canFocus { bridge.focus() }
+        }) { target in
+            if let bot = store.bot(target.botId) {
+                OfficeThreadSheet(
+                    bot: bot,
+                    mainBotName: mainBotName,
+                    onHeight: { focusSheet(botId: target.botId, height: $0) },
+                    onDone: { done(botId: target.botId, text: $0) }
+                )
+                // The floor stays visible and tappable above the short sheet (the scene strip).
+                .presentationDetents([.fraction(0.45), .large])
+                .presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.45)))
+                .presentationDragIndicator(.visible)
+                .presentationBackground(Color("BgPanel"))
+            }
+        }
         .navigationTitle("Office")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -95,6 +132,7 @@ struct OfficeFloorView: View {
             // Statuses and questions come from the threads; keep them fresh while the floor is open.
             while !Task.isCancelled {
                 await store.refreshThreads()
+                await refreshAsks()
                 try? await Task.sleep(for: .seconds(15))
             }
         }
@@ -107,19 +145,85 @@ struct OfficeFloorView: View {
         }
         guard let botId, store.bot(botId) != nil else { return }
         switch action {
-        case "select":
-            // The full facility opens real native bot work, then returns to the same world.
-            navigator.open(.chat(botId: botId, sessionId: nil))
+        case "select", "answer", "open":
+            // The bot's thread opens over the floor; a waiting bot shows its approval card at the top.
+            openSheet(botId)
         case "message":
             // Written in the panel: sent into the bot's main chat here, the reply streams back into the panel.
             guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
             Task { await thread.send(text, to: botId) }
-        case "answer", "open":
-            // A waiting bot's question is at the top of its main chat.
-            navigator.open(.chat(botId: botId, sessionId: nil))
         default:
             break
         }
+    }
+
+    // MARK: - Thread sheet, needs, done bubbles
+
+    /// Focus messages go only to the v2 Workspace frame.
+    private var canFocus: Bool { mode == .workspace && frameVersion >= 2 }
+
+    private func openSheet(_ botId: String) {
+        guard store.bot(botId) != nil else { return }
+        if sheet?.botId != botId { focusedInset = -1 }
+        sheet = OfficeSheetTarget(botId: botId)
+    }
+
+    /// Keeps the picked bot in the floor above the sheet: its height is the frame's bottom inset (CSS px = pt).
+    private func focusSheet(botId: String, height: CGFloat) {
+        guard canFocus, sheet?.botId == botId, abs(height - focusedInset) > 16 else { return }
+        focusedInset = height
+        bridge.focus(botId: botId, inset: UIEdgeInsets(top: 0, left: 0, bottom: height, right: 0))
+    }
+
+    /// After an approval or answer: a done bubble over the bot, then fresh needs.
+    private func done(botId: String, text: String) {
+        let at = Int(Date().timeIntervalSince1970 * 1000)
+        doneBubbles.append(OfficeDoneBubble(id: "done:\(botId):\(at)", botId: botId, text: String(text.prefix(120)), at: at))
+        doneBubbles = Array(doneBubbles.suffix(8))
+        Task {
+            await store.refreshThreads()
+            await OfficeNeeds.refresh(botId: botId)
+            if canFocus, let latest = try? await BotModeClient.shared.floorState() { floor = latest }
+        }
+    }
+
+    /// Questions across chats (one call) and permissions for bots that wait (at most 4 bots a poll).
+    private func refreshAsks() async {
+        await asks.refreshAll()
+        let waitingBots = store.bots.filter { bot in
+            (status.entries[bot.id]?.state.pendingApprovalsCount ?? 0) > 0
+                || store.threads(for: bot.id).contains { $0.archived != true && $0.group == "waiting" }
+        }
+        for bot in waitingBots.prefix(4) { await OfficeNeeds.refresh(botId: bot.id) }
+    }
+
+    /// Bots that need the person: approvals first, then questions, then suggestions; roster order within each.
+    private var needBots: [AgentRecord] {
+        let serverNeeds = Dictionary((floor?.bots ?? []).map { ($0.id, $0.needs) }, uniquingKeysWith: { a, _ in a })
+        var ranked: [(rank: Int, index: Int, bot: AgentRecord)] = []
+        for (index, bot) in store.bots.enumerated() {
+            let waiting = store.threads(for: bot.id).filter { $0.archived != true && $0.group == "waiting" }.count
+            let approvals = status.entries[bot.id]?.state.pendingApprovalsCount ?? 0
+            let feed = OfficeFloorFeedV2.need(serverNeeds[bot.id] ?? nil, approvals: approvals, waitingThreads: waiting)
+            let local = OfficeNeeds.first(for: bot.id)
+            let kind: String?
+            switch local {
+            case .permission?: kind = "approval"
+            case .question?, .waiting?: kind = (feed?["kind"] as? String) == "approval" ? "approval" : "question"
+            case .suggestion?: kind = (feed?["kind"] as? String) ?? "suggestion"
+            case nil: kind = feed?["kind"] as? String
+            }
+            guard let kind else { continue }
+            let rank = kind == "approval" ? 0 : kind == "question" ? 1 : 2
+            ranked.append((rank, index, bot))
+        }
+        return ranked.sorted { ($0.rank, $0.index) < ($1.rank, $1.index) }.map { $0.bot }
+    }
+
+    /// The main bot's name for autopilot lines: the floor's main bot, else the primary template bot.
+    private var mainBotName: String {
+        if let id = floor?.mainBotId, let bot = store.bot(id) { return bot.botDisplayName }
+        return store.bots.first { $0.isPrimaryTemplateBot }?.botDisplayName ?? "your main bot"
     }
 
     /// The live roster in the facility's `allternit:workspace` shape (workspace-feed.ts parseBots).
@@ -162,6 +266,15 @@ struct OfficeFloorView: View {
                 approvals[bot.id] = status.entries[bot.id]?.state.pendingApprovalsCount ?? 0
             }
             OfficeFloorFeedV2.decorate(message: &message, bots: bots, floor: floor, approvals: approvals, waiting: waiting)
+            // Done bubbles (kind "done") ride with the result bubbles: newest first, at most 8, 10 minutes.
+            let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+            let done: [[String: Any]] = doneBubbles.filter { nowMs - $0.at < 10 * 60 * 1000 }.map {
+                ["id": $0.id, "botId": $0.botId, "kind": "done", "text": $0.text, "at": $0.at]
+            }
+            if !done.isEmpty {
+                let all = done + ((message["bubbles"] as? [[String: Any]]) ?? [])
+                message["bubbles"] = Array(all.sorted { ($0["at"] as? Int ?? 0) > ($1["at"] as? Int ?? 0) }.prefix(8))
+            }
         }
         if auth.currentUserId != nil {
             let projects = Self.workspaceProjects(projectStore.projects)
@@ -207,6 +320,21 @@ struct OfficeFloorView: View {
         guard url.scheme == "https", let host = url.host?.lowercased() else { return false }
         return host == "allternit.com" || host.hasSuffix(".allternit.com")
     }
+}
+
+/// The bot whose thread sheet is open over the floor.
+struct OfficeSheetTarget: Identifiable, Equatable {
+    let botId: String
+    var id: String { botId }
+}
+
+/// A `bubbles` item of kind "done" (frame contract v2), shown after an approval or answer.
+struct OfficeDoneBubble {
+    let id: String
+    let botId: String
+    let text: String
+    /// Epoch milliseconds.
+    let at: Int
 }
 
 /// Which 3dfacility embed the Office tab shows.
