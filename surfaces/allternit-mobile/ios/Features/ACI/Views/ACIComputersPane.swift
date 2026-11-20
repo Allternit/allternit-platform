@@ -777,6 +777,7 @@ struct ACIConsoleSection: View {
     private enum Phase { case loading, ready([ACIComputersClient.ConsoleComputer]), unavailable, failed(String) }
     @State private var phase: Phase = .loading
     @State private var attempt = 0
+    @State private var selected: ACIComputersClient.ConsoleComputer? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -784,6 +785,7 @@ struct ACIConsoleSection: View {
         }
         .padding(.bottom, 8)
         .task(id: attempt) { await load() }
+        .sheet(item: $selected) { ACIConsoleDetailView(computer: $0) }
     }
 
     @ViewBuilder
@@ -823,7 +825,11 @@ struct ACIConsoleSection: View {
                     .accessibilityElement(children: .combine)
                 }
             }
-            ForEach(rows) { card($0) }
+            ForEach(rows) { row in
+                Button { selected = row } label: { card(row) }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens details")
+            }
         }
     }
 
@@ -895,6 +901,415 @@ struct ACIConsoleSection: View {
             phase = .unavailable
         } catch {
             phase = .failed((error as? LocalizedError)?.errorDescription ?? "Couldn't load computers. Try again.")
+        }
+    }
+}
+
+// MARK: - Console detail (flag `computers_console`)
+
+/// One computer's detail: Overview, Services (+ live logs), Usage, Ports.
+/// Reads `GET /api/v1/computers/:id/host/*` and `/metrics` through the
+/// cloud relay. Read-only: no actions yet. A 409 means the computer is
+/// asleep, so the last sample shows with "Asleep, not woken" and nothing
+/// is retried; 404/501 shows "not available". Live logs run only while
+/// the Services log view is on screen and the app is in the foreground.
+struct ACIConsoleDetailView: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    @Environment(\.dismiss) private var dismiss
+
+    private enum Section: String, CaseIterable, Identifiable {
+        case overview = "Overview", services = "Services", usage = "Usage", ports = "Ports"
+        var id: String { rawValue }
+    }
+    @State private var section: Section = .overview
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Section", selection: $section) {
+                    ForEach(Section.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        switch section {
+                        case .overview: ACIConsoleOverviewTab(computer: computer)
+                        case .services: ACIConsoleServicesTab(computer: computer)
+                        case .usage: ACIConsoleUsageTab(computer: computer)
+                        case .ports: ACIConsolePortsTab(computer: computer)
+                        }
+                    }
+                    .padding(16)
+                }
+            }
+            .background(Color("BgPrimary"))
+            .navigationTitle(computer.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+        }
+    }
+}
+
+/// Loads one host read and exposes the five states every tab shares.
+private enum ACIConsoleLoad<T> {
+    case loading
+    case ready(T)
+    case asleep(ACIComputersClient.ConsoleSnapshot?)
+    case unavailable
+    case failed(String)
+
+    static func run(_ work: () async throws -> T) async -> ACIConsoleLoad<T> {
+        do { return .ready(try await work()) }
+        catch ACIComputersClient.Failure.notAvailable { return .unavailable }
+        catch ACIComputersClient.Failure.asleep(let s) { return .asleep(s) }
+        catch is CancellationError { return .loading }
+        catch { return .failed((error as? LocalizedError)?.errorDescription ?? "Couldn't load this. Try again.") }
+    }
+}
+
+private func consoleNote(_ text: String) -> some View {
+    Text(text)
+        .font(.system(size: 14)).foregroundColor(Color("TextSecondary"))
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity).padding(.vertical, 24)
+}
+
+private func consoleCard<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+    VStack(alignment: .leading, spacing: 10) { content() }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("FillNeutral"))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color("BorderSubtle"), lineWidth: 1))
+}
+
+private func consoleMeter(_ label: String, _ percent: Double) -> some View {
+    let p = min(max(percent, 0), 100)
+    return HStack(spacing: 10) {
+        Text(label).font(.system(size: 13)).foregroundColor(Color("TextSecondary")).frame(width: 56, alignment: .leading)
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color("TextPrimary").opacity(0.1))
+                Capsule().fill(p >= 85 ? Theme.statusWarning : Color("TextPrimary").opacity(0.5))
+                    .frame(width: geo.size.width * p / 100)
+            }
+        }
+        .frame(height: 6)
+        Text("\(Int(p))%").font(.system(size: 13)).foregroundColor(Color("TextPrimary")).frame(width: 40, alignment: .trailing)
+    }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("\(label) \(Int(p)) percent")
+}
+
+private func consoleRow(_ k: String, _ v: String) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+        Text(k).font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+        Spacer(minLength: 12)
+        Text(v).font(.system(size: 14)).foregroundColor(Color("TextPrimary")).multilineTextAlignment(.trailing)
+    }
+    .accessibilityElement(children: .combine)
+}
+
+private func consoleDuration(_ sec: Double) -> String {
+    let s = Int(sec)
+    let d = s / 86_400, h = (s % 86_400) / 3_600, m = (s % 3_600) / 60
+    if d > 0 { return "\(d)d \(h)h" }
+    if h > 0 { return "\(h)h \(m)m" }
+    return "\(max(m, 1))m"
+}
+
+private func consoleBytes(_ b: Double) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(b), countStyle: .binary)
+}
+
+// MARK: Overview
+
+private struct ACIConsoleOverviewTab: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    @State private var state: ACIConsoleLoad<ACIComputersClient.HostSnapshot> = .loading
+    @State private var attempt = 0
+
+    var body: some View {
+        Group {
+            switch state {
+            case .loading: consoleNote("Loading…")
+            case .unavailable: consoleNote("Live details aren't available for this computer yet.")
+            case .failed(let m):
+                VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
+            case .asleep(let last):
+                consoleNote("Asleep, not woken. This is the last sample from while it was awake.")
+                if let last = last ?? computer.lastSample { meters(cpu: last.cpu.percent, mem: last.memoryPercent, disk: last.diskPercent) }
+                facts(snapshot: nil)
+            case .ready(let s):
+                meters(cpu: s.cpu.percent, mem: s.memoryPercent, disk: s.diskPercent)
+                facts(snapshot: s)
+            }
+        }
+        .task(id: attempt) { state = .loading; state = await .run { try await ACIComputersClient.shared.hostSnapshot(id: computer.id) } }
+    }
+
+    private func meters(cpu: Double, mem: Double, disk: Double) -> some View {
+        consoleCard {
+            Text("Right now").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+            consoleMeter("CPU", cpu); consoleMeter("Memory", mem); consoleMeter("Disk", disk)
+        }
+    }
+
+    private func facts(snapshot s: ACIComputersClient.HostSnapshot?) -> some View {
+        consoleCard {
+            Text("About").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+            consoleRow("System", [s?.os?.name, s?.os?.version].compactMap { $0 }.joined(separator: " ").nilIfEmpty ?? computer.os)
+            if let arch = s?.os?.arch { consoleRow("Architecture", arch) }
+            if let cores = s?.cpu.cores { consoleRow("Processor", "\(cores) cores") }
+            if let s { consoleRow("Memory", "\(consoleBytes(s.memory.usedBytes)) of \(consoleBytes(s.memory.totalBytes))") }
+            consoleRow("Provider", [computer.provider, computer.region].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+            if let a = computer.address, !a.isEmpty { consoleRow("Address", a) }
+            if let up = s?.uptimeSec { consoleRow("Uptime", consoleDuration(up)) }
+        }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+// MARK: Services + logs
+
+private struct ACIConsoleServicesTab: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    @State private var state: ACIConsoleLoad<[ACIComputersClient.HostService]> = .loading
+    @State private var attempt = 0
+    @State private var logsFor: ACIComputersClient.HostService? = nil
+
+    var body: some View {
+        Group {
+            switch state {
+            case .loading: consoleNote("Loading services…")
+            case .unavailable: consoleNote("Services aren't available for this computer yet.")
+            case .asleep: consoleNote("Asleep, not woken. Services show when it is awake.")
+            case .failed(let m):
+                VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
+            case .ready(let rows) where rows.isEmpty: consoleNote("No services reported.")
+            case .ready(let rows):
+                ForEach(rows) { svc in
+                    Button { logsFor = svc } label: {
+                        HStack(spacing: 10) {
+                            Circle().fill(color(svc.state)).frame(width: 8, height: 8)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(svc.name).font(.system(size: 15, weight: .medium)).foregroundColor(Color("TextPrimary"))
+                                Text(svc.description ?? svc.unit).font(.system(size: 12)).foregroundColor(Color("TextTertiary")).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                            Text(svc.state.capitalized).font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                            Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+                        }
+                        .padding(14)
+                        .background(Color("FillNeutral"))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Shows live logs")
+                }
+            }
+        }
+        .task(id: attempt) { state = .loading; state = await .run { try await ACIComputersClient.shared.hostServices(id: computer.id) } }
+        .sheet(item: $logsFor) { ACIConsoleLogsView(computer: computer, service: $0) }
+    }
+
+    private func color(_ state: String) -> Color {
+        switch state {
+        case "running": return Theme.statusSuccess
+        case "failed": return Theme.statusWarning
+        default: return Color("TextTertiary")
+        }
+    }
+}
+
+/// Live log stream for one unit. Streams only while visible and active in
+/// the foreground; lines are masked at the node and kept in memory only
+/// (last 300 lines).
+private struct ACIConsoleLogsView: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    let service: ACIComputersClient.HostService
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var lines: [ACIComputersClient.LogLine] = []
+    @State private var note: String? = nil
+    @State private var errorsOnly = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Toggle("Errors only", isOn: $errorsOnly)
+                    .font(.system(size: 14)).padding(.horizontal, 16).padding(.vertical, 8)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            if let note { consoleNote(note) }
+                            else if lines.isEmpty { consoleNote("Waiting for log lines…") }
+                            ForEach(Array(shown.enumerated()), id: \.offset) { i, l in
+                                Text(l.message)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundColor(tint(l.level))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .id(i)
+                            }
+                        }
+                        .padding(12)
+                    }
+                    .background(Color("FillNeutral"))
+                    .onChange(of: shown.count) { _, n in if n > 0 { proxy.scrollTo(n - 1, anchor: .bottom) } }
+                }
+            }
+            .background(Color("BgPrimary"))
+            .navigationTitle("Logs · \(service.name)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+        }
+        // Restarts when the app returns to the foreground; cancelled when it leaves or the sheet closes.
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            note = nil
+            do {
+                for try await line in ACIComputersClient.shared.logStream(id: computer.id, unit: service.unit) {
+                    lines.append(line)
+                    if lines.count > 300 { lines.removeFirst(lines.count - 300) }
+                }
+            } catch ACIComputersClient.Failure.notAvailable {
+                note = "Logs aren't available for this computer yet."
+            } catch ACIComputersClient.Failure.asleep {
+                note = "Asleep, not woken."
+            } catch is CancellationError {
+            } catch {
+                note = (error as? LocalizedError)?.errorDescription ?? "The log stream stopped."
+            }
+        }
+    }
+
+    private var shown: [ACIComputersClient.LogLine] {
+        errorsOnly ? lines.filter { $0.level == "error" || $0.level == "warn" } : lines
+    }
+
+    private func tint(_ level: String) -> Color {
+        switch level {
+        case "error": return Theme.statusWarning
+        case "warn": return Theme.statusWarning.opacity(0.8)
+        default: return Color("TextPrimary")
+        }
+    }
+}
+
+// MARK: Usage
+
+private struct ACIConsoleUsageTab: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    @State private var state: ACIConsoleLoad<[ACIComputersClient.MetricSeries]> = .loading
+    @State private var attempt = 0
+
+    var body: some View {
+        Group {
+            switch state {
+            case .loading: consoleNote("Loading usage…")
+            case .unavailable: consoleNote("Usage history isn't available for this computer yet.")
+            case .asleep: consoleNote("Asleep, not woken. History shows what it recorded while awake.")
+            case .failed(let m):
+                VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
+            case .ready(let series) where series.allSatisfy({ $0.values.isEmpty }):
+                consoleNote("No usage recorded in the last 24 hours.")
+            case .ready(let series):
+                chart("CPU", "cpu", series, percent: true)
+                chart("Memory", "memory", series, percent: true)
+                chart("Disk", "disk", series, percent: true)
+                chart("Network in", "net_rx", series, percent: false)
+                chart("Network out", "net_tx", series, percent: false)
+            }
+        }
+        .task(id: attempt) { state = .loading; state = await .run { try await ACIComputersClient.shared.metrics(id: computer.id) } }
+    }
+
+    /// Simple bars: one per sample, neutral grey, amber at 85% or more for percent charts.
+    @ViewBuilder
+    private func chart(_ title: String, _ metric: String, _ all: [ACIComputersClient.MetricSeries], percent: Bool) -> some View {
+        if let values = all.first(where: { $0.metric == metric })?.values, !values.isEmpty {
+            let top = percent ? 100 : max(values.max() ?? 1, 1)
+            let bars = Self.bucket(values, into: 48)
+            consoleCard {
+                HStack {
+                    Text("\(title) · 24 hours").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                    Spacer(minLength: 0)
+                    Text(percent ? "\(Int(values.last ?? 0))%" : "\(consoleBytes(values.last ?? 0))/s")
+                        .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                }
+                HStack(alignment: .bottom, spacing: 2) {
+                    ForEach(Array(bars.enumerated()), id: \.offset) { _, v in
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(percent && v >= 85 ? Theme.statusWarning : Color("TextPrimary").opacity(0.45))
+                            .frame(height: max(2, 64 * CGFloat(min(v / top, 1))))
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .frame(height: 64, alignment: .bottom)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(title), last 24 hours, now \(Int(values.last ?? 0))\(percent ? " percent" : "")")
+            }
+        }
+    }
+
+    private static func bucket(_ v: [Double], into n: Int) -> [Double] {
+        guard v.count > n else { return v }
+        let size = Double(v.count) / Double(n)
+        return (0..<n).map { i in
+            let slice = v[Int(Double(i) * size)..<min(v.count, max(Int(Double(i + 1) * size), Int(Double(i) * size) + 1))]
+            return slice.reduce(0, +) / Double(slice.count)
+        }
+    }
+}
+
+// MARK: Ports
+
+private struct ACIConsolePortsTab: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    @State private var state: ACIConsoleLoad<[ACIComputersClient.HostPort]> = .loading
+    @State private var attempt = 0
+
+    var body: some View {
+        Group {
+            switch state {
+            case .loading: consoleNote("Loading ports…")
+            case .unavailable: consoleNote("Ports aren't available for this computer yet.")
+            case .asleep: consoleNote("Asleep, not woken. Ports show when it is awake.")
+            case .failed(let m):
+                VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
+            case .ready(let rows) where rows.isEmpty: consoleNote("No listening ports.")
+            case .ready(let rows):
+                ForEach(rows.sorted { $0.port < $1.port }) { p in
+                    HStack(spacing: 10) {
+                        Text("\(p.port)").font(.system(size: 15, weight: .medium, design: .monospaced)).foregroundColor(Color("TextPrimary"))
+                        Text(p.protocol.uppercased()).font(.system(size: 11)).foregroundColor(Color("TextTertiary"))
+                        Text(p.process ?? "Unknown program").font(.system(size: 14)).foregroundColor(Color("TextSecondary")).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Text(label(p.exposure))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(p.exposure == "public" ? Theme.statusWarning : Color("TextSecondary"))
+                    }
+                    .padding(14)
+                    .background(Color("FillNeutral"))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color("BorderSubtle"), lineWidth: 1))
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+        .task(id: attempt) { state = .loading; state = await .run { try await ACIComputersClient.shared.hostPorts(id: computer.id) } }
+    }
+
+    private func label(_ exposure: String) -> String {
+        switch exposure {
+        case "public": return "Open to the internet"
+        case "lan": return "Local network"
+        default: return "This computer only"
         }
     }
 }
