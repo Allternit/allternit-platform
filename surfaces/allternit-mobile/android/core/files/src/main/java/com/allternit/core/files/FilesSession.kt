@@ -22,6 +22,24 @@ object FilesSession {
      * True in the nativeapp flavor, even before MainActivity ran in this process (the DocumentsProvider can start
      * the process on its own): the launcher entry is the native MainActivity.
      */
+    private val personClearers = java.util.concurrent.CopyOnWriteArrayList<(Context) -> Unit>()
+
+    /** :app's Files drive registers its local reset here (it can't be reached from feature modules). */
+    fun onPersonChange(clear: (Context) -> Unit) {
+        personClearers += clear
+    }
+
+    /**
+     * Sign-out (iOS AuthManager: `FilesDriveBridge.clearLocal()` when the reason clears person data): the Files key
+     * material on this phone (device secret and sealed envelopes), the kept-on-phone list, and :app's drive state
+     * (Files token, tickets, unlock tokens, cached listings and content). Blocking file work: call off the main thread.
+     */
+    fun clearPerson(context: Context) {
+        FilesKeyRing.forgetLocal(context)
+        FilesPins.clear(context)
+        for (clear in personClearers) runCatching { clear(context.applicationContext) }
+    }
+
     fun isNativeApp(context: Context): Boolean = bearer != null ||
         context.packageManager.getLaunchIntentForPackage(context.packageName)?.component?.className == NATIVE_MAIN
 }

@@ -253,6 +253,12 @@ class FilesKeyRing(
         fun seg(s: String): String = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
         /** "123 456" */
+        /** Sign-out: the sealed device secret and every envelope leave this phone (the person's Files key material). */
+        fun forgetLocal(context: Context) {
+            context.applicationContext.getSharedPreferences("files_keys", Context.MODE_PRIVATE).edit()
+                .remove("device_secret").remove("envelopes").apply()
+        }
+
         fun spaced(code: String): String = if (code.length == 6) code.take(3) + " " + code.takeLast(3) else code
     }
 }

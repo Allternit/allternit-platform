@@ -101,6 +101,8 @@ class MainActivity : ComponentActivity() {
         }
         // Wave I1: notification channels, push registration after each sign-in, token removal at sign-out.
         com.allternit.feature.push.AllternitPush.start(applicationContext)
+        // Sign-out clears the person's Files key material, Files drive and voice keys (iOS clearsPersonData).
+        com.allternit.feature.settings.SettingsPersonData.start(applicationContext)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {

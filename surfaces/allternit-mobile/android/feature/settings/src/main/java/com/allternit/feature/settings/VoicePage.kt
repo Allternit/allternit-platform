@@ -90,25 +90,41 @@ internal enum class VoiceVendor(val id: String, val title: String, val keyPage: 
 
 /** The user's own voice keys, Keystore-sealed on this phone (iOS VoiceProviderKeys in the Keychain). */
 internal object VoiceKeys {
-    class Saved(val apiKey: String, val voiceId: String?, val label: String)
+    /** [updatedAt] is the change time in epoch ms (0 = saved before account sync existed), for VoiceKeySync. */
+    class Saved(val apiKey: String, val voiceId: String?, val label: String, val updatedAt: Long = 0)
 
     private fun secret(context: Context, v: VoiceVendor) =
         SealedSecret(context.applicationContext, "voice-${v.id}", KeystoreBox("voice_keys_v1", "allternit-voice-keys-v1"))
 
     fun load(context: Context, v: VoiceVendor): Saved? = secret(context, v).read()?.let {
         runCatching { JSONObject(it) }.getOrNull()?.let { o ->
-            Saved(o.optString("api_key"), o.optString("voice_id").ifEmpty { null }, o.optString("label")).takeIf { s -> s.apiKey.isNotBlank() }
+            Saved(o.optString("api_key"), o.optString("voice_id").ifEmpty { null }, o.optString("label"), o.optLong("updated_at", 0)).takeIf { s -> s.apiKey.isNotBlank() }
         }
     }
 
+    /**
+     * A key connected on this phone (paste or QR hand-off): sealed, Where voice runs switches to it, the vendor's
+     * opt-out clears, and with "Save to my Allternit account" on it is sent up (iOS VoiceKeySync.localChanged).
+     */
     fun store(context: Context, v: VoiceVendor, apiKey: String, voiceId: String?, label: String) {
-        secret(context, v).write(JSONObject().put("api_key", apiKey.trim()).put("voice_id", voiceId ?: "").put("label", label).toString())
+        write(context, v, apiKey, voiceId, label, System.currentTimeMillis())
         // Where voice runs (iOS SettingsStore.voiceRoute). Not a secret.
         SettingsPrefs.setString(context, "voice.route", v.id)
+        VoiceKeySync.setOptedOut(context, v, false)
+        VoiceKeySync.localChanged(context, v)
     }
 
+    /** A key pulled from the account, or the server's change time adopted: never touches Where voice runs. */
+    fun write(context: Context, v: VoiceVendor, apiKey: String, voiceId: String?, label: String, updatedAt: Long) {
+        secret(context, v).write(
+            JSONObject().put("api_key", apiKey.trim()).put("voice_id", voiceId ?: "").put("label", label).put("updated_at", updatedAt).toString(),
+        )
+    }
+
+    /** Disconnect: this phone only. The vendor is opted out so a pull won't bring it back; the account copy stays. */
     fun remove(context: Context, v: VoiceVendor) {
         secret(context, v).write(null)
+        VoiceKeySync.setOptedOut(context, v, true)
         if (SettingsPrefs.string(context, "voice.route") == v.id) SettingsPrefs.setString(context, "voice.route", "")
     }
 
@@ -311,10 +327,17 @@ internal fun VoicePage(back: () -> Unit) {
     var checking by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val saved = remember(revision) { VoiceVendor.entries.associateWith { VoiceKeys.load(context, it) } }
+    val sync by VoiceKeySync.state
+    val signedIn = com.allternit.core.auth.AllternitAuth.state.value is com.allternit.core.auth.AuthState.SignedIn
+    // iOS: pull once and merge on Voice page open (the newer copy of each vendor wins).
+    LaunchedEffect(Unit) { if (signedIn && VoiceKeySync.sync(context)) revision++ }
 
     SPage("Voice and dictation", tag = "settingsVoice", onBack = back) {
         SLabel("Your own provider")
-        SNote("Optional. For a different voice, connect your own account. Your key is kept only on this phone, sealed by Android's keystore, and goes straight to that company, never to Allternit. You pay them directly.")
+        SNote(
+            if (sync.enabled) "Optional. For a different voice, connect your own account. Your key is kept on this phone, sealed by Android's keystore, and in your Allternit account, encrypted. Voice calls go straight to that company. You pay them directly."
+            else "Optional. For a different voice, connect your own account. Your key is kept only on this phone, sealed by Android's keystore, and goes straight to that company, never to Allternit. You pay them directly.",
+        )
         SCard {
             VoiceVendor.entries.forEachIndexed { i, v ->
                 if (i > 0) SDivider()
@@ -333,6 +356,15 @@ internal fun VoicePage(back: () -> Unit) {
         SCard(Modifier.padding(top = 12.dp)) {
             SRow("Scan from my computer", "voice_scanRow", detail = "Already set up on ai.allternit.com or Allternit Desktop? Show the QR code there and scan it. The key is sent end-to-end encrypted. Allternit can't read it.", onClick = { scanning = true })
         }
+        SCard(Modifier.padding(top = 12.dp)) {
+            SToggleRow(
+                "Save to my Allternit account", "voice_accountSync", sync.enabled,
+                onChange = { on -> scope.launch { VoiceKeySync.setEnabled(context, on); revision++ } },
+                detail = if (signedIn) "Off by default. Your other signed-in devices get your keys." else "Sign in to Allternit to save keys to your account.",
+                enabled = signedIn && !sync.busy,
+            )
+        }
+        sync.error?.let { SError(it) }
         SNote("Disconnect removes a key from this phone only. To cut a key off everywhere, revoke it in your OpenAI or ElevenLabs account.")
     }
 

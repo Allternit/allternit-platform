@@ -69,7 +69,13 @@ class AllternitDocumentsProvider : DocumentsProvider() {
     private val closeHandler by lazy { Handler(HandlerThread("files-close").apply { start() }.looper) }
     private val rootsChecked = ConcurrentHashMap<String, Long>()
 
-    override fun onCreate(): Boolean = true
+    override fun onCreate(): Boolean {
+        // Sign-out clears this person's drive (iOS FilesDriveBridge.clearLocal); the hook lives in :core:files
+        // because the sign-out runs in feature modules. Providers start with the process, so it is always set.
+        val ctx = context?.applicationContext ?: return true
+        com.allternit.core.files.FilesSession.onPersonChange { c -> FilesDrive.get(c).signOut() }
+        return true
+    }
 
     // ------------------------------------------------------------------ roots
 
@@ -333,7 +339,16 @@ class AllternitDocumentsProvider : DocumentsProvider() {
     }
 
     private fun openItem(cid: String, rid: String, iid: String, mode: String, pfdMode: Int, signal: CancellationSignal?): ParcelFileDescriptor {
-        val item = drive.item(cid, iid) ?: blocking(signal) { drive.stat(cid, iid) }
+        val item = drive.item(cid, iid) ?: try {
+            blocking(signal) { drive.stat(cid, iid) }
+        } catch (e: Exception) {
+            // Kept on this phone (FilesPins): opens without the network from the kept copy (iOS FilesPinKeeper).
+            val kept = drive.cache.contentFile(cid, iid)
+            if (!mode.contains('w') && kept.exists() && com.allternit.core.files.FilesPins.isPinned(context!!, cid, iid)) {
+                return ParcelFileDescriptor.open(kept, ParcelFileDescriptor.MODE_READ_ONLY)
+            }
+            throw e
+        }
         if (item.kind == ItemKind.FOLDER) throw FileNotFoundException("${item.name} is a folder")
         val root = drive.root(cid, rid)
         if (root != null && root.policy.protected && !drive.isUnlocked(cid)) {
