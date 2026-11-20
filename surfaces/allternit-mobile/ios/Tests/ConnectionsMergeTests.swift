@@ -65,4 +65,33 @@ final class ConnectionsMergeTests: XCTestCase {
         XCTAssertEqual(result.login?.openURL?.absoluteString, "https://accounts.x.ai/oauth2/device?user_code=KQ7M-24TX")
         XCTAssertNotNil(result.login?.expiry)
     }
+
+    /// Contract §11: a catalog page decodes leniently, and More never lists
+    /// what the page already shows or a way this app can't run.
+    func testCatalogPageDecodesAndHidesListedEntries() throws {
+        let json = """
+        {"version":1,"group":"apps","q":"","total":40,"next_cursor":"24",
+         "counts":{"brains":11,"apps":1190,"channels":0},
+         "entries":[
+          {"id":"airtable","group":"apps","name":"Airtable","category":"Project management","ways":["oauth"],
+           "runs_on":"computer","connector_id":"airtable","key_page":null,"logo":null,"available":false,
+           "unavailable_reason":"Runs on a computer.","fallbacks":["this-mac"]},
+          {"id":"gmail","group":"apps","name":"Gmail","ways":["oauth"]},
+          {"id":"google-key","group":"brains","name":"Google AI Studio","ways":["paste"]},
+          {"id":"teleport","group":"apps","name":"Teleport","ways":["warp"],"fallbacks":null}
+         ]}
+        """
+        let page = try JSONDecoder().decode(ConnCatalogPage.self, from: Data(json.utf8))
+        XCTAssertEqual(page.total, 40)
+        XCTAssertEqual(page.nextCursor, "24")
+        XCTAssertEqual(page.counts["apps"], 1190)
+        XCTAssertEqual(page.entries[0].unavailableReason, "Runs on a computer.")
+        XCTAssertEqual(page.entries[0].fallbacks, ["this-mac"])
+        XCTAssertFalse(page.entries[0].available)
+        XCTAssertEqual(page.entries[3].fallbacks, [])
+
+        // The page lists Gmail, and the Gemini row is the AI Studio key.
+        let extras = ConnectionsMerge.catalogExtras(page.entries, listed: ["gmail", "gemini", "google-key"])
+        XCTAssertEqual(extras.map(\.id), ["airtable"], "listed ids and unknown ways are hidden")
+    }
 }
