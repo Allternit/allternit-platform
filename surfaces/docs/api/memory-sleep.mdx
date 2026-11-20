@@ -295,7 +295,7 @@ with `resume_from_stage` in its payload).
 - `enabled` is the router stage.
 - `overlay` holds your corrections that are not applied to a page yet. Each one is `{ id, topic_id, claim_id, correction, as_of }`.
 - `disputes` holds the open disputes, in the same shape as `GET /memory/disputes`.
-- `intentions` holds open reminders: `{ id, content, cue_kind, cue, due_at }`.
+- `intentions` holds reminders that fired since the last read: `{ id, content, cue_kind, cue, due_at, fired_at }`. Each is returned once. `intentions_open` counts the ones still waiting. Both are empty unless the `intentions` stage is on.
 - `budget.share` is the share of the model's context window pages may use.
 
 ### `POST /memory/sleep/pages/load`
@@ -479,6 +479,31 @@ memory for a shorter form on pages. `untethered` memories leave recall results b
 deleted: loading the fact by its id still returns it. With the stage off, recall and
 `memory_facts.tether` are untouched and no check row is written.
 
+## Reminders (prospective memory)
+
+With the `intentions` stage on, a user turn that says "remind me ..." is kept as a reminder
+and brought back at the right moment. It needs no model call and no scheduler.
+
+**What it catches.**
+
+- *Event cues*: "remind me when I mention Acme", "next time we talk about pricing, ...",
+  "when I open the billing project, ...". The cue words are stored and matched later as
+  whole words in a turn. An event reminder expires after `intention_event_expiry_days`.
+- *Time cues*: "remind me tomorrow at 9", "remind me on Friday to send the deck", "remind me
+  in two weeks", "remind me at 5pm", "remind me on 2026-12-01". Times are read as UTC, and
+  a day with no clock means 09:00. A date this parser cannot place exactly ("next month",
+  "on March 3rd", "soon") is kept as an event cue on those words instead of a due time.
+
+**When it fires.** On each user turn, before a new reminder is read from that turn: an event
+reminder fires when its words are in the turn, a time reminder fires on the first turn at or
+after its due time (nothing runs in between), and an open reminder past its expiry becomes
+`expired` and is dropped.
+
+**Delivery.** A fired reminder comes back once, in `intentions` on
+`GET /memory/sleep/context`, so the runtime can preload it on its next request. Reading it
+marks it `done`. States: `open`, `fired`, `done`, `expired`. With the stage off nothing is
+captured, fired or delivered.
+
 ## Settings and thresholds
 
 Every value has a default in code. Your own value overrides it. Each value reports its
@@ -546,6 +571,7 @@ used (every other id in `results` counts as unused), plus `label_source` set to 
 | `page_budget_share` | 0.05 | Share of the model's context window for pages per message. |
 | `router_min_confidence` | 0.5 | Below this, the router falls back to embedding search. |
 | `pull_cost_multiple_max` | 2 | Most a mid-session page load may cost, as a multiple of a preload. |
+| `intention_event_expiry_days` | 30 | Days an event-cue reminder stays open before it expires. |
 | `checks_max_per_cycle` | 40 | Most memories one nap's checks test, whatever the library size. |
 | `checks_sample_size` | 8 | Slots kept for the fixed sample, spread over tether state and age. |
 | `checks_spacing_base_days` | 3 | Days before a first check, and the wait after a check that did not pass. |
@@ -589,7 +615,7 @@ words. `credence` (0 to 1) says how likely the fact is true and comes only from 
 came from: you said it, a tool reported it, it was imported, the model inferred it, or a
 dream produced it. `flashbulb` is 1 when you flagged the fact. A flag raises attention
 and never credence. `source_type` names the source. With Sleep off these four columns
-stay empty. The goal-link signal waits for the `intentions` stage.
+stay empty. The goal-link signal is not scored yet.
 
 ### `PUT /memory/sleep/config`
 

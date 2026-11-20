@@ -121,6 +121,7 @@ pub const DEFS: &[Def] = &[
     int("fit_min_labeled_events", 200, 1.0, 1_000_000.0, "Labelled events needed before fitted values replace defaults."),
     int("check_router_sample", 200, 0.0, 100_000.0, "Fixed router sample size in the bounded check."),
     int("check_neighbours", 5, 0.0, 100.0, "Neighbours checked per changed memory."),
+    int("intention_event_expiry_days", 30, 1.0, 3650.0, "Days an event-cue reminder (\"when I mention X\") stays open before it expires."),
     int("checks_max_per_cycle", 40, 1.0, 1000.0, "Most memories one nap's checks stage tests, whatever the library size."),
     int("checks_sample_size", 8, 0.0, 500.0, "Slots in the check set kept for a fixed sample, stratified by tether state and age."),
     num("checks_spacing_base_days", 3.0, 0.1, 365.0, "Days before a memory's first check, and the wait after a check that did not pass."),

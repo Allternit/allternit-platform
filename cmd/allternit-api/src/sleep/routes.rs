@@ -332,21 +332,12 @@ fn build_context(conn: &Connection, cfg: &Resolved, user: &str) -> rusqlite::Res
         .into_iter()
         .filter(|d| d.state != "resolved")
         .collect();
-    let mut stmt = conn.prepare(
-        "SELECT id, content, cue_kind, cue, due_at FROM memory_intentions
-         WHERE user_id = ?1 AND state = 'open' ORDER BY created_at DESC LIMIT 50",
-    )?;
-    let intentions = stmt
-        .query_map(params![user], |r| {
-            Ok(json!({
-                "id": r.get::<_, String>(0)?,
-                "content": r.get::<_, String>(1)?,
-                "cue_kind": r.get::<_, String>(2)?,
-                "cue": r.get::<_, Option<String>>(3)?,
-                "due_at": r.get::<_, Option<String>>(4)?,
-            }))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    // Fired reminders arrive once (then `done`); the rest only count.
+    let (intentions, intentions_open) = if cfg.stage_on(Stage::Intentions) {
+        super::intentions::deliver(conn, user, chrono::Utc::now())?
+    } else {
+        (Vec::new(), 0)
+    };
     let mut stmt = conn.prepare(
         "SELECT id, topic_id, claim_id, correction, as_of FROM memory_overlays
          WHERE user_id = ?1 AND applied_at IS NULL ORDER BY created_at ASC LIMIT 200",
@@ -376,6 +367,7 @@ fn build_context(conn: &Connection, cfg: &Resolved, user: &str) -> rusqlite::Res
         "overlay": overlay,
         "disputes": open,
         "intentions": intentions,
+        "intentions_open": intentions_open,
         "budget": { "share": cfg.number("page_budget_share"), "tokens": null },
         "manifest_id": manifest_id,
         "signature": signature,
