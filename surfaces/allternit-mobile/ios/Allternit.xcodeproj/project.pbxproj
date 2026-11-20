@@ -101,6 +101,7 @@
 		18E5D18CC6278F309A431090 /* McpDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50BA8075C4FBCA27CA52761 /* McpDirectory.swift */; };
 		18FE2A9753D9AA213D2F70CB /* StudioJobsClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A7F365B18052381753C55D1 /* StudioJobsClientTests.swift */; };
 		191AC8C7EFABC895B86FA079 /* NodeDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFFE812B71668541B86320E1 /* NodeDirectory.swift */; };
+		1276FDDC3B9E7BA08C44CD3E /* MemorySleepTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B1A701AEDAA698D6E93A5E0 /* MemorySleepTests.swift */; };
 		197FDE10C651D798E7CA2A8F /* MenuHoldMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC164D723D0F262FF86C5E1E /* MenuHoldMachineTests.swift */; };
 		19C6803A1FE6FEA07D600A05 /* VendorConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 253CBA6E772A288FB5A4D4A9 /* VendorConnectView.swift */; };
 		19E0767DE23B690FFA6BE33A /* Mesh.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = C7B9F283E2DE6838A4FDF9C4 /* Mesh.xcframework */; };
@@ -531,6 +532,7 @@
 		94CC66D2C74EEE1ED16D40F0 /* CronDays.swift in Sources */ = {isa = PBXBuildFile; fileRef = A53CF550D3EEC133E7F574B3 /* CronDays.swift */; };
 		9659676428438A32C643F67D /* TalkIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3E20F23087ED407F24BFE7C /* TalkIntents.swift */; };
 		965ECCD0C479654C756FAAFD /* MemorySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D11953529A9295E82BD8B098 /* MemorySettingsView.swift */; };
+		93F626142169CE206BE81AF0 /* MemorySleepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F124C32C20D5D3361059B189 /* MemorySleepView.swift */; };
 		969E92990F6D2206E57F0066 /* VPSServersManagerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7355CA3620D382F4B41E9531 /* VPSServersManagerView.swift */; };
 		96CE3F2C05E73CF1F5C77761 /* PhoneIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 856F61ACB40C279586500F11 /* PhoneIntents.swift */; };
 		9732E99BE774AAB7B04CDD0C /* ScreenReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FE097E0BC23DAF691A01479 /* ScreenReader.swift */; };
@@ -1637,6 +1639,7 @@
 		BBBF352C41F4185192ED4DF8 /* LoopsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopsListView.swift; sourceTree = "<group>"; };
 		BBE8F35E82EC2D8E0341AA8D /* MemoryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryModels.swift; sourceTree = "<group>"; };
 		BBFDDFD12AE0870C838F3F6D /* StageBackdropPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StageBackdropPicker.swift; sourceTree = "<group>"; };
+		2B1A701AEDAA698D6E93A5E0 /* MemorySleepTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemorySleepTests.swift; sourceTree = "<group>"; };
 		BC164D723D0F262FF86C5E1E /* MenuHoldMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuHoldMachineTests.swift; sourceTree = "<group>"; };
 		BC38600E663C6F544F71E862 /* AllternitFileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AllternitFileProvider.entitlements; sourceTree = "<group>"; };
 		BC9B4BA16EDF46885053622B /* CronJob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CronJob.swift; sourceTree = "<group>"; };
@@ -1701,6 +1704,7 @@
 		D0B3BCB3BDF4ECA5836070E6 /* RuntimePairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimePairing.swift; sourceTree = "<group>"; };
 		D0BF177593C244D2D2C6459A /* FilesInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilesInbox.swift; sourceTree = "<group>"; };
 		D11953529A9295E82BD8B098 /* MemorySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemorySettingsView.swift; sourceTree = "<group>"; };
+		F124C32C20D5D3361059B189 /* MemorySleepView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemorySleepView.swift; sourceTree = "<group>"; };
 		D11C32229F89EB88A1204714 /* SessionTasksStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTasksStore.swift; sourceTree = "<group>"; };
 		D129CF0D5A7B51D59834876E /* ComputeBillingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputeBillingView.swift; sourceTree = "<group>"; };
 		D16FDC6861426CA87CFE1D12 /* VoiceRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceRouter.swift; sourceTree = "<group>"; };
@@ -2746,6 +2750,7 @@
 				8EC97BEAC1CDE9F1E7225FFE /* KeyboardModeTests.swift */,
 				171D5808AEEEBB1DA45D9EC0 /* LinkBoardDecodingTests.swift */,
 				4D3988B903632B3ADBE8074A /* LiveActivityManagerTests.swift */,
+				2B1A701AEDAA698D6E93A5E0 /* MemorySleepTests.swift */,
 				BC164D723D0F262FF86C5E1E /* MenuHoldMachineTests.swift */,
 				FD8B49B37F98609F680978B5 /* MessageDraftCardTests.swift */,
 				B4FF0B496D38903A463A4B81 /* NativePaneRendererTests.swift */,
@@ -3605,6 +3610,7 @@
 				D6425E0E57B4EF0768177493 /* MemoryDriveHistoryView.swift */,
 				7BC7009B64E30A104CD2DDBA /* MemoryDriveView.swift */,
 				D11953529A9295E82BD8B098 /* MemorySettingsView.swift */,
+				F124C32C20D5D3361059B189 /* MemorySleepView.swift */,
 				1808CC15112D76EE1D423E3F /* ModelManagementView.swift */,
 				9A56EA2A93A483FB59104108 /* NodesManagerView.swift */,
 				0E837436D2E5AB5FC0941654 /* NotificationsSettingsView.swift */,
@@ -4262,6 +4268,7 @@
 				48A676ACD7FE23AE89509C3A /* KeyboardModeTests.swift in Sources */,
 				F145B9FC8506FF516F81359D /* LinkBoardDecodingTests.swift in Sources */,
 				D3F8D1E73F813E13DAAFF1D2 /* LiveActivityManagerTests.swift in Sources */,
+				1276FDDC3B9E7BA08C44CD3E /* MemorySleepTests.swift in Sources */,
 				197FDE10C651D798E7CA2A8F /* MenuHoldMachineTests.swift in Sources */,
 				1A50A4EF874CED28EA26C293 /* MessageDraftCardTests.swift in Sources */,
 				1D30FE683EABE02400B9EE6C /* NativePaneRendererTests.swift in Sources */,
@@ -4696,6 +4703,7 @@
 				AE4827F580E76F77A891EB2A /* MemoryModels.swift in Sources */,
 				A0D56A46C6A07C804FF7524F /* MemoryScheduleIntents.swift in Sources */,
 				965ECCD0C479654C756FAAFD /* MemorySettingsView.swift in Sources */,
+				93F626142169CE206BE81AF0 /* MemorySleepView.swift in Sources */,
 				ACB610E41731EA47FE42DC98 /* MenuHoldMachine.swift in Sources */,
 				AAAC91D038EC9566F923403B /* MeshClient.swift in Sources */,
 				A943F45FE89277BE010B3BAB /* MeshEnrollClient.swift in Sources */,
