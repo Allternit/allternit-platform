@@ -284,6 +284,79 @@ pub struct Checked {
     pub report: Vec<String>,
     /// The contradictions that passed the checks (their deletes are in `ops`).
     pub contradictions: Vec<CheckedContradiction>,
+    /// The lessons that passed the checks, for the Sleep hypothesis queue.
+    pub lessons: Vec<CheckedLesson>,
+}
+
+/// One accepted lesson (its entry is in `ops`).
+#[derive(Debug, Clone)]
+pub struct CheckedLesson {
+    pub entry_id: String,
+    pub text: String,
+    pub evidence: Vec<String>,
+    /// Index of its line in `report`.
+    pub report_line: usize,
+}
+
+/// A lesson the hypothesis queue kept; written by the normal Dream commit.
+#[derive(Debug, Clone)]
+pub struct KeptLesson {
+    pub entry_id: String,
+    pub hypothesis_id: String,
+    pub evidence: Vec<String>,
+}
+
+/// Sleep `rem` stage (D11): each lesson becomes a hypothesis scored by its
+/// metric; a lesson with no gain loses its write. With the stage off nothing
+/// changes. Returns the kept lessons for [`finalize_lessons`].
+pub fn queue_lessons(conn: &Connection, owner: &str, checked: &mut Checked, turns: &[Evidence]) -> Vec<KeptLesson> {
+    use crate::sleep::hypotheses::{judge_lesson, LessonCandidate};
+    let Ok(cfg) = crate::sleep::config::load(conn, owner) else { return vec![] };
+    if !cfg.stage_on(crate::sleep::types::Stage::Rem) {
+        return vec![];
+    }
+    let mut kept = Vec::new();
+    let mut dropped: BTreeSet<String> = BTreeSet::new();
+    for l in std::mem::take(&mut checked.lessons) {
+        let evidence: Vec<(String, String)> = l
+            .evidence
+            .iter()
+            .filter_map(|id| turns.iter().find(|t| t.id == *id).map(|t| (t.id.clone(), t.content.clone())))
+            .collect();
+        let cand = LessonCandidate { entry_id: l.entry_id.clone(), text: l.text.clone(), evidence };
+        match judge_lesson(conn, owner, None, &cfg, &cand) {
+            Ok((hid, true)) => kept.push(KeptLesson { entry_id: l.entry_id.clone(), hypothesis_id: hid, evidence: l.evidence.clone() }),
+            Ok((_, false)) | Err(_) => {
+                // A lesson that scored no gain, or could not be scored, writes nothing.
+                dropped.insert(l.entry_id.clone());
+                checked.report[l.report_line] = format!("- **Lesson** not kept (no gain on its evidence): “{}”", l.text);
+                checked.summary.lessons = checked.summary.lessons.saturating_sub(1);
+            }
+        }
+    }
+    checked.ops.retain(|op| !matches!(op, Operation::UpsertEntry { entry, .. } if dropped.contains(&entry.id)));
+    kept
+}
+
+/// After the Dream commit: mark each kept lesson's fact and point it at its evidence.
+pub fn finalize_lessons(conn: &Connection, owner: &str, drive: &DriveRecord, kept: &[KeptLesson]) {
+    for k in kept {
+        let fact: Option<String> = conn
+            .query_row(
+                "SELECT fact_id FROM memory_drive_entries WHERE drive_id = ?1 AND entry_id = ?2",
+                params![drive.id, k.entry_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .flatten();
+        if let Some(f) = fact {
+            if let Err(e) = crate::sleep::hypotheses::finalize_lesson(conn, owner, &k.hypothesis_id, &f, &k.evidence) {
+                tracing::warn!("dream lesson provenance skipped: {e}");
+            }
+        }
+    }
 }
 
 /// One accepted contradiction, kept so the Sleep `disputes` stage can turn
@@ -395,6 +468,7 @@ pub fn check(plan: &Plan, shown: &[Shown], evidence: &[Evidence], today: chrono:
             continue;
         }
         out.report.push(format!("- **Lesson** added to `lessons.md`: “{}”", entry.text));
+        out.lessons.push(CheckedLesson { entry_id: entry.id.clone(), text: entry.text.clone(), evidence: l.evidence.clone(), report_line: out.report.len() - 1 });
         out.ops.push(Operation::UpsertEntry { path: "lessons.md".into(), entry });
         out.summary.lessons += 1;
     }
@@ -599,6 +673,7 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
     if crate::sleep::disputes::stage_on(&conn, owner) {
         dispute_contradictions(&conn, owner, drive, &mut checked);
     }
+    let kept_lessons = queue_lessons(&conn, owner, &mut checked, turns);
     let report = report_markdown(&date_s, &checked);
     let sm = &checked.summary;
     step(
@@ -645,6 +720,7 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
         match service::apply_as(db, owner, &expected, &ops, &message, AUTHOR) {
             Ok(r) => {
                 conn.execute("UPDATE memory_dreams SET base_revision=?2 WHERE id=?1", params![id, expected])?;
+                finalize_lessons(&conn, owner, drive, &kept_lessons);
                 finish(&conn, id, "applied", Some(&r.revision), Some(&report), &checked.summary, None)?;
                 done(
                     "applied",

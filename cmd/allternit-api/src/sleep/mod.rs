@@ -22,6 +22,9 @@
 //! - [`checks`]: spaced checks, the bounded check set and the tether ladder (6.3).
 //! - [`intentions`]: prospective memory: reminders captured from user turns,
 //!   fired by cue or due time, delivered once through context (6.4).
+//! - [`hypotheses`]: the queue Dream lessons and REM links wait in, kept only
+//!   when their metric improves (5.4).
+//! - [`rem`]: REM insight links, their metric, self-off and the use hook (5.4).
 //! - [`routes`]: `/api/v1/memory/sleep/...` and `/api/v1/memory/disputes...`.
 //!
 //! The module stays self-contained (D1) so it can become its own crate when
@@ -34,8 +37,10 @@ pub mod config;
 pub mod cycle;
 pub mod disputes;
 pub mod fit;
+pub mod hypotheses;
 pub mod intentions;
 pub mod queue;
+pub mod rem;
 pub mod report;
 pub mod routes;
 pub mod strength;

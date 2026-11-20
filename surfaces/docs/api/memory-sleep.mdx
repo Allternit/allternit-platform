@@ -119,7 +119,7 @@ session end, whether Sleep is on or not.
 | `trigger` | `idle`, `pre_compact`, `session_end`, `manual`, `clock` |
 | `kind` | `daydream`, `nap`, `deep`, `rem` |
 | `state` | `running`, `finished`, `stopped`, `failed`, `undone` |
-| `stage` | The stage running now, or the last one that ran: `capture`, `consolidation`, `fit`, `dream`, `curation`, `pages`, `checks`, `sign` |
+| `stage` | The stage running now, or the last one that ran: `capture`, `consolidation`, `fit`, `dream`, `rem`, `curation`, `pages`, `checks`, `sign` |
 
 ### `GET /memory/sleep/cycles/:id`
 
@@ -247,6 +247,7 @@ A nap runs these stages in this order. A daydream runs the first two only.
 | 2 | `consolidation` | Always. Merges duplicate memories (the same job as the consolidation clock). | No |
 | 2b | `fit` | `stages.strengths` is on. Fits the decay half-life from your labelled recalls. | No |
 | 3 | `dream` | Dream is on for your drive and today's Dream has not finished. | Yes |
+| 3b | `rem` | `stages.rem` is on and REM has not switched itself off (see REM and the hypothesis queue). | No |
 | 4 | `curation` | A bot's weekly memory curation is due. | Yes |
 | 5 | `pages` | Not built yet. Recorded as skipped. | - |
 | 6 | `checks` | `stages.checks` is on. Spaced checks and the tether ladder (see Spaced checks). | No |
@@ -479,6 +480,41 @@ memory for a shorter form on pages. `untethered` memories leave recall results b
 deleted: loading the fact by its id still returns it. With the stage off, recall and
 `memory_facts.tether` are untouched and no check row is written.
 
+## REM and the hypothesis queue
+
+Dream lessons and REM links are guesses, so with `stages.rem` on they do not write
+anything until a metric says they help. Each guess is a row in `sleep_hypotheses`
+(`kind` `lesson` or `link`, a `metric`, `score_before`, `score_after`, and a `state` of
+`pending`, `kept` or `rejected`). A guess that does not score a gain is rejected and
+writes nothing. With `stages.rem` off, Dream writes its lessons exactly as before.
+No model call is made to score a guess.
+
+- **Dream lessons** (metric `evidence_reach`). For each turn the lesson cites, the
+  query is that turn's own content words. A turn is reached when the keyword index
+  returns, in the top `checks_recall_k`, a fact drawn from that turn.
+  `score_before` counts the turns reached today. `score_after` counts them with the
+  lesson added as a temporary fact in a transaction that is rolled back. A kept lesson
+  is written as today and then marked `source_type = dream_generated` with the low
+  `credence_dream_generated`, plus a `caused_by` edge (origin `dream_lesson`) to each
+  evidence turn.
+- **REM links** (metric `seed_reach_gain`). REM starts from failed recalls (a recall log
+  with `label_used = []`), corrections (disputes resolved by `user_said_update`) and
+  open disputes. It finds memories that share words with the seed but sit below the
+  top results, and proposes an `about_entity` link (origin `rem`) from a top result to
+  each. The score is how many useful memories (sharing the seed's words) the seed's
+  recall reaches with neighbour expansion, before and after the link is inserted in a
+  rolled-back transaction. A link is kept, and written for real, only on a gain of at
+  least `hypothesis_keep_margin`.
+- **An insight is a link that gets used.** When a kept link's memory is later labelled
+  used, `rem.note_link_used` raises `insight_score` and `attention` on both ends.
+- **Self-off.** When the keep rate over the last `rem_window_cycles` cycles that
+  decided a link is under `rem_min_keep_rate`, REM writes a `fitted` row
+  `rem_auto_off = 1` and skips itself. Set `rem_auto_off` to 0 as the owner to turn it
+  back on.
+
+The cycle report's `rem` stage counts `links_proposed`, `links_kept`, `links_rejected`,
+`lessons_kept`, `lessons_rejected` and `keep_rate`.
+
 ## Reminders (prospective memory)
 
 With the `intentions` stage on, a user turn that says "remind me ..." is kept as a reminder
@@ -556,7 +592,7 @@ Stage names are `labels_live`, `strengths`, `pages`, `router`, `orchestrator`,
 | `unit_max_attempts` | 3 | Attempts before a unit of work moves to the next cycle. |
 | `unit_lease_s` | 900 | Lease length for a running unit. |
 | `worker_poll_s` | 30 | Seconds between the Sleep worker's checks of the queue (global row only). |
-| `cycle_max_stages` | 8 | Per-cycle stop rule: most stages one cycle runs. The rest waits for the next signal. |
+| `cycle_max_stages` | 9 | Per-cycle stop rule: most stages one cycle runs. The rest waits for the next signal. |
 | `cycle_max_minutes` | 30 | Per-cycle stop rule: no new stage starts after this many minutes. |
 | `dream_cost_estimate_usd` | 0.05 | Spend charged against the daily cap for one Dream. |
 | `curation_cost_estimate_usd` | 0.05 | Spend charged against the daily cap for one weekly curation. |
@@ -578,6 +614,11 @@ Stage names are `labels_live`, `strengths`, `pages`, `router`, `orchestrator`,
 | `dispute_w_goal` | 0.2 | Arbiter weight of fit with your current goal, when one is known. |
 | `dispute_recency_days` | 30 | Age gap in days at which recency counts in full. |
 | `rem_min_keep_rate` | 0.25 | REM turns itself off under this keep rate. |
+| `rem_window_cycles` | 5 | REM judges its keep rate over this many recent cycles that decided a link. |
+| `rem_max_candidates` | 6 | Most REM link candidates scored in one cycle. |
+| `hypothesis_keep_margin` | 1 | A Dream lesson or REM link is kept only if its metric rises by at least this much, and by more than 0. |
+| `rem_insight_step` | 0.1 | Insight and attention a kept REM link adds to both memories when one is later used. |
+| `rem_auto_off` | 0 | 1 = REM switched itself off. REM writes it as a `fitted` row; set 0 yourself to turn REM back on. |
 | `fit_min_labeled_events` | 200 | Labelled events needed before fitted values replace defaults. |
 | `check_router_sample` | 200 | Fixed router sample size in the bounded check. |
 | `check_neighbours` | 5 | Neighbours checked for each changed memory. |
