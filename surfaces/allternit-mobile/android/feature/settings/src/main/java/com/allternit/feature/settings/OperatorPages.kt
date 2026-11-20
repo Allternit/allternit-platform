@@ -334,34 +334,6 @@ internal fun FilesPage(back: () -> Unit, push: (String) -> Unit) {
     }
 }
 
-@Composable
-internal fun FilesKeysPage(back: () -> Unit) {
-    val (load, reload) = rememberLoad("filesKeys") { Net.cloud("GET", "api/v1/files-keys").toLoad("load your Files key") }
-    SPage("Files key", tag = "settingsFilesKeys", onBack = back) {
-        SNote("Your Files key never leaves your devices unlocked. A new device asks one you already trust.")
-        LoadView(load, reload, "load your Files key") { body ->
-            val o = body.obj
-            val key = o?.get("key")?.obj ?: o
-            if (key == null || key.isEmpty()) StateBox("No Files key yet", "Set up Files on iPhone or on a computer first. This phone then asks for access from there.", null, null) else {
-                SCard {
-                    key.facts(emptySet()).forEachIndexed { i, (k, v) -> if (i > 0) SDivider(); SRow(k, "filesKeys_fact_$i", value = v, chevron = false) }
-                }
-                val devices = (key["devices"] ?: o?.get("devices")).listUnder("devices", "items")
-                if (devices.isNotEmpty()) {
-                    SLabel("Devices")
-                    SCard {
-                        devices.forEachIndexed { i, d ->
-                            if (i > 0) SDivider()
-                            SRow(d.str("name") ?: d.str("device_name") ?: d.str("id") ?: "Device", "filesKeys_device_$i", detail = d.str("added_at") ?: d.str("created_at"), chevron = false)
-                        }
-                    }
-                }
-            }
-        }
-        SNote("Approving, declining and replacing keys needs the Files encryption engine, which isn't on Android yet. Do those on iPhone or a computer.")
-    }
-}
-
 /** The self-hosted server this phone talks to (iOS SelfHostedServerStore). The key stays in this app's private storage. */
 internal object SelfHosted {
     private const val FILE = "allternit_selfhosted"

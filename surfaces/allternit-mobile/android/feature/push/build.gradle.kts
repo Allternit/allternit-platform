@@ -34,6 +34,8 @@ kotlin {
 }
 
 dependencies {
+    // Gap run GS-B: the device read token is kept Keystore-sealed (SealedSecret) for private notification bodies.
+    implementation(project(":core:files"))
     // ApiConfig, ApiClients, AllternitApi.registerDeviceToken / unregisterDeviceToken.
     implementation(project(":core:api"))
     // AllternitAuth: the token, the signed-in state and the sign-out hook.

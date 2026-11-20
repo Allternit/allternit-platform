@@ -64,6 +64,8 @@ dependencies {
     implementation(project(":feature:system"))
     // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
     implementation(project(":core:api"))
+    // Gap run GS-B: FilesSession (the Files drive signs in with the native session).
+    implementation(project(":core:files"))
     // Wave B: DataStore for the first-run "setup done" flag (iOS OnboardingStore, UserDefaults).
     implementation(project(":core:data"))
     // setContent { } for MainActivity.

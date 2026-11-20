@@ -230,6 +230,9 @@ dependencies {
     // Files key crypto (files/FilesKeyCrypto.kt): X25519, HKDF-SHA256 and
     // ChaCha20-Poly1305 from BouncyCastle (MIT), the same version :ondevice uses.
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    // Gap run GS-B: the Files key crypto, key ring and session hook live in :core:files (every flavor), shared with
+    // the native Settings and computer screens. No Compose or Clerk inside, so play and phonelink stay as they were.
+    implementation(project(":core:files"))
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM tests (android.jar only ships stubs). Public domain
     // since 20231013.

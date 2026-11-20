@@ -1,4 +1,4 @@
-package com.allternit.app.files
+package com.allternit.core.files
 
 import org.bouncycastle.crypto.InvalidCipherTextException
 import org.bouncycastle.crypto.digests.SHA256Digest
@@ -29,7 +29,7 @@ import java.security.SecureRandom
  * ([XChaCha20Poly1305]). Platform crypto can't be used: minSdk is 26, `XDH` arrives in
  * API 33 and `ChaCha20-Poly1305` in API 28.
  */
-internal object FilesKeyCrypto {
+object FilesKeyCrypto {
     const val WRAP_ALG = "x25519-hkdf-sha256-xchacha20poly1305"
     const val CIPHER = "xchacha20poly1305"
     private const val MAX_HEAD_BYTES = 1 shl 20
@@ -60,7 +60,7 @@ internal object FilesKeyCrypto {
     }
 
     /** A Files root key in memory. */
-    class RootKey(val keyId: String, internal val bytes: ByteArray) {
+    class RootKey(val keyId: String, val bytes: ByteArray) {
         init { require(bytes.size == 32) { "a Files root key is 32 bytes" } }
         fun subkey(info: String): ByteArray = hkdf(bytes, ByteArray(0), info.toByteArray(Charsets.UTF_8))
 
@@ -222,7 +222,7 @@ internal object FilesKeyCrypto {
  * `00 00 00 00 || nonce[16..24]`. BC has no XChaCha AEAD, so only the HChaCha20 step is
  * here, and it uses BC's own ChaCha core for the 20 rounds.
  */
-internal object XChaCha20Poly1305 {
+object XChaCha20Poly1305 {
     fun seal(plain: ByteArray, key: ByteArray, nonce: ByteArray, aad: ByteArray): ByteArray {
         val aead = cipher(true, key, nonce, aad)
         val out = ByteArray(aead.getOutputSize(plain.size))

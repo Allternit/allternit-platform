@@ -64,9 +64,7 @@ internal class FilesAuth(private val context: Context) {
 
     /** Stable id for this phone as a Files device (`X-Allternit-Device-Id`, wake consent). */
     val deviceId: String
-        get() = prefs.getString("device_id", null) ?: ("and_" + UUID.randomUUID().toString().replace("-", "")).also {
-            prefs.edit().putString("device_id", it).apply()
-        }
+        get() = com.allternit.core.files.FilesKeyRing.deviceId(context)
 
     /** The phone's name, used in conflict copies ("Lease (conflict Pixel 9 2026-11-15 1042).pdf"). */
     val deviceName: String
@@ -74,6 +72,9 @@ internal class FilesAuth(private val context: Context) {
             ?.takeIf { it.isNotBlank() } ?: Build.MODEL
 
     fun token(): String? {
+        // Native app (gap run GS-B): the Clerk session is accepted on every Files route (resolve_user_scoped
+        // "compute"), so it is the Files credential and there is no Custom Tab hand-off.
+        com.allternit.core.files.FilesSession.bearer?.let { return it() }
         cachedToken?.let { return it }
         if (!tokenFile.exists()) return null
         return try {
@@ -86,6 +87,9 @@ internal class FilesAuth(private val context: Context) {
     }
 
     fun signedIn(): Boolean = token() != null
+
+    /** The nativeapp flavor: Files signs in with the app's own session; sign-in means opening the app. */
+    fun usesAppSession(): Boolean = com.allternit.core.files.FilesSession.isNativeApp(context)
 
     fun signOut() {
         cachedToken = null

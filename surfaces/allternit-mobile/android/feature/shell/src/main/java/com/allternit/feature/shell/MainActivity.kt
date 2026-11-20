@@ -94,6 +94,11 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         AllternitAuth.start(applicationContext)
+        // Gap run GS-B: the Files drive (DocumentsProvider, Share > Save to computer, Files key) signs in with this
+        // session instead of its own Custom Tab hand-off. Every Files route accepts the Clerk session.
+        com.allternit.core.files.FilesSession.bearer = {
+            if (AllternitAuth.state.value is AuthState.SignedIn) AllternitAuth.tokenProvider.bearerToken() else null
+        }
         // Wave I1: notification channels, push registration after each sign-in, token removal at sign-out.
         com.allternit.feature.push.AllternitPush.start(applicationContext)
         enableEdgeToEdge()

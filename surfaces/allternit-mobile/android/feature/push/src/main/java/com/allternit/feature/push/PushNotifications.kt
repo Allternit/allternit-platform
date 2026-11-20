@@ -80,8 +80,14 @@ object PushNotifications {
         else -> CHANNEL_GENERAL
     }
 
-    /** Posts the notification for one FCM data message (keys from cloud-api routes/fcm.rs `message`). */
-    fun show(context: Context, data: Map<String, String>) {
+    /** The bot behind a communication notification (iOS INSendMessageIntent sender, "<name> (assistant)"). */
+    class Sender(val name: String, val avatar: android.graphics.Bitmap?)
+
+    /**
+     * Posts the notification for one FCM data message (keys from cloud-api routes/fcm.rs `message`). [sender] makes it
+     * a conversation notification (MessagingStyle with the bot as the sender), [largeIcon] shows the bot's avatar.
+     */
+    fun show(context: Context, data: Map<String, String>, sender: Sender? = null, largeIcon: android.graphics.Bitmap? = null) {
         if (!AllternitPush.notificationsAllowed(context)) return
         ensureChannels(context)
         val tag = data["tag"]?.takeIf { it.isNotBlank() } ?: "push-${System.currentTimeMillis()}"
@@ -96,6 +102,20 @@ object PushNotifications {
             .setAutoCancel(true)
             .setWhen(System.currentTimeMillis())
             .setShowWhen(true)
+        largeIcon?.let { builder.setLargeIcon(it) }
+        // A private push: the lock screen hides the body when the person has "hide sensitive content" on.
+        if (data["private"] == "true") builder.setVisibility(Notification.VISIBILITY_PRIVATE)
+        if (sender != null && Build.VERSION.SDK_INT >= 28) {
+            val person = android.app.Person.Builder()
+                .setName("${sender.name} (assistant)")
+                .setKey("bot:" + (data["botId"]?.takeIf { it.isNotBlank() } ?: sender.name))
+                .setBot(true)
+                .apply { sender.avatar?.let { setIcon(Icon.createWithBitmap(it)) } }
+                .build()
+            val me = android.app.Person.Builder().setName("You").build()
+            builder.setStyle(Notification.MessagingStyle(me).addMessage(body, System.currentTimeMillis(), person))
+            builder.setCategory(Notification.CATEGORY_MESSAGE)
+        }
         // One bot's notifications group together (APNs thread-id).
         data["botId"]?.takeIf { it.isNotBlank() }?.let { builder.setGroup("bot-$it") }
         if (category == APPROVAL_INLINE || category == APPROVAL_REVIEW) builder.setCategory(Notification.CATEGORY_REMINDER)
