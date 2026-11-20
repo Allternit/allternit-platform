@@ -23,17 +23,17 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | section: aci | — | src/fabric-session/phone/phone-nav.ts (PhoneSection aci) | feature/shell/WorkspaceShell.kt (mcp-apps / browser-extensions / computers rows → AciRoot) | built (#2644) | — |
 | AciScreen | — | src/fabric-session/phone/screens/AciScreen.tsx | feature/computer/AciScreen.kt (AciRoot) | built (#2644) | — |
 | ACIAgentRunView | ios/Features/ACI/Views/ACIAgentRunView.swift | — | feature/computer/AciRun.kt (AciAgentRunView, AciRunModel) | built (#2644) | — |
-| ACIComputerDetailView | ios/Features/ACI/Views/ACIComputerDetailView.swift | src/fabric-session/phone/screens/PhoneComputerViewOverlay.tsx | core/rfb/ComputerDrive.kt (ComputerDriveScreen) + feature/computer/AciComputers.kt | built (#2644): Desktop path (live screen, take control, start); its Files and Inbox requests rows wait for the Android Files drive | — |
-| ACIExtensionsView | ios/Features/ACI/Views/ACIExtensionsView.swift | — | — | left (#2644): the ACI tab shows a plain 'arrives in the next update' line; next ACI step | — |
-| ACIMcpAppsView | ios/Features/ACI/Views/ACIMcpAppsView.swift | — | — | left (#2644): the ACI tab shows a plain 'arrives in the next update' line; next ACI step | — |
+| ACIComputerDetailView | ios/Features/ACI/Views/ACIComputerDetailView.swift | src/fabric-session/phone/screens/PhoneComputerViewOverlay.tsx | core/rfb/ComputerDrive.kt (ComputerDriveScreen) + feature/computer/AciComputers.kt | built (#2644): Desktop path (live screen, take control, start); its Files and Inbox requests rows wait for the Android Files drive Files rows (#2646): feature/computer/AciFiles.kt (roots, folders, Inbox requests; open/save/upload/scan and the wake sheet are not built: left) | — |
+| ACIExtensionsView | ios/Features/ACI/Views/ACIExtensionsView.swift | — | feature/computer/AciExtensions.kt | built (#2646): My Extensions and Marketplace, category filter, detail sheet, Upload; kept on this phone like iOS. Left: none | — |
+| ACIMcpAppsView | ios/Features/ACI/Views/ACIMcpAppsView.swift | — | feature/computer/AciMcpApps.kt + McpOfficialServers.kt | built (#2646): Installed, Discover (catalog + 94 official servers), Build, Add by URL, installed-app sheet (permission mode, tools, screen, Remove). Left: Discover landing shelves/collections and vendor logo marks | — |
 | ACITabView | ios/Features/ACI/Views/ACITabView.swift | — | feature/computer/AciScreen.kt (AciRoot, landing, target picker, nudge) | built (#2644) | — |
 | ACIWebBrowserView | ios/Features/ACI/Views/ACIWebBrowserView.swift | — | feature/computer/AciRun.kt (AciWebBrowser) | built (#2644) | — |
-| AppScreenWebView | ios/Features/ACI/Views/AppScreenWebView.swift | — | — | left (#2644): next ACI step | — |
-| BrowserChatView | ios/Features/ACI/Views/BrowserChatView.swift | — | — | left (#2644): a browser session from the drawer opens in the shared chat page; the 'Browser chat' header is next | — |
-| FilesInboxRequestsView | ios/Features/ACI/Views/Files/FilesInboxRequestsView.swift | — | — | left (#2644): waits for the Android Files drive | — |
-| MiniAppRuntimeView | ios/Features/ACI/Views/MiniAppRuntimeView.swift | src/fabric-session/phone/screens/PhoneMiniAppOverlay.tsx | — | left (#2644): next ACI step | — |
-| MiniAppsStoreView | ios/Features/ACI/Views/MiniAppsStoreView.swift | — | — | left (#2644): next ACI step | — |
-| TeachView | ios/Features/ACI/Views/TeachView.swift | src/fabric-session/phone/screens/PhoneTeachOverlay.tsx | — | left (#2644): the drawer's Teach row still opens the section stub; next ACI step | — |
+| AppScreenWebView | ios/Features/ACI/Views/AppScreenWebView.swift | — | feature/computer/AciWeb.kt | built (#2646): app screen in the installed-app sheet, openFull, connect, Clerk token bridge. Left: not checked on a device | — |
+| BrowserChatView | ios/Features/ACI/Views/BrowserChatView.swift | — | feature/shell ChatPage | built (#2646): a browser session opens in the shared chat page under ACI mode; no separate title bar (the shell header is the back control) | — |
+| FilesInboxRequestsView | ios/Features/ACI/Views/Files/FilesInboxRequestsView.swift | — | feature/computer/AciFiles.kt | built (#2646): Inbox requests list, Approve, Reject over the Files drive v2 relay. :app Files client is not a dependency of a feature module, so this has its own relay calls | — |
+| MiniAppRuntimeView | ios/Features/ACI/Views/MiniAppRuntimeView.swift | src/fabric-session/phone/screens/PhoneMiniAppOverlay.tsx | feature/computer/AciMiniApps.kt | built (#2646): web view, or native capabilities when the app has no page | — |
+| MiniAppsStoreView | ios/Features/ACI/Views/MiniAppsStoreView.swift | — | feature/computer/AciMiniApps.kt | built (#2646): search, categories, Open, Pin; opened from MCP Apps (Mini Apps chip). Left: iOS opens it from the history sidebar; Android has no such row | — |
+| TeachView | ios/Features/ACI/Views/TeachView.swift | src/fabric-session/phone/screens/PhoneTeachOverlay.tsx | feature/computer/AciTeach.kt | built (#2646): the drawer Teach row and the Teach nudge open it; skills, editor, Run, Import .har + Analyze, Delete. Left: Schedule sheet, business profile, striking recorded actions | — |
 
 ## AgentActivity
 

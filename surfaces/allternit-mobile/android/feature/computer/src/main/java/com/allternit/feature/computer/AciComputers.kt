@@ -66,9 +66,7 @@ import java.util.Date
 /**
  * ACI › Computers (iOS ACIComputersPane, AciScreen.tsx `ComputersPane`): Add a computer (the pairing
  * steps), View a computer's screen, the paired computers, linked phones, cloud computer backups and
- * workflows. A computer opens its live desktop (Files-drive computers open their detail on iOS; the
- * Android Files drive is not built, so every computer opens straight to its desktop, as iOS does for
- * a computer without Files).
+ * workflows. A computer opens its live desktop (a computer opens its detail with Desktop and Files, as iOS does).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,6 +76,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
     var pairOpen by remember { mutableStateOf(false) }
     var pickerOpen by remember { mutableStateOf(false) }
     var openComputer by remember { mutableStateOf<ComputerRecord?>(null) }
+    var detail by remember { mutableStateOf<AciDevice?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     val workflowRuntime = devices?.firstOrNull { it.isOnline } ?: devices?.firstOrNull()
 
@@ -114,7 +113,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
                 else -> devices.forEach { d ->
                     val online = d.status != "offline"
                     Column(
-                        Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(onClickLabel = "Open desktop for ${d.displayName}") { scope.launch { openDesktop(d) } }
+                        Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(onClickLabel = "Open ${d.displayName}") { detail = d }
                             .padding(vertical = 16.dp).testTag("aciComputerRow"),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
@@ -137,6 +136,11 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
     }
     if (pairOpen) AciPairComputerSheet { pairOpen = false }
     if (pickerOpen) AciComputerScreenSheet(onDismiss = { pickerOpen = false })
+    detail?.let { d ->
+        Dialog(onDismissRequest = { detail = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            AciComputerDetail(d, onOpenDesktop = { scope.launch { openDesktop(d) } }, onBack = { detail = null })
+        }
+    }
     openComputer?.let { computer ->
         Dialog(onDismissRequest = { openComputer = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
             ComputerDriveScreen(computer, backTitle = "Computers", onBack = { openComputer = null })

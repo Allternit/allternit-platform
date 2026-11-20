@@ -95,6 +95,7 @@ fun AciRoot(host: AciHost) {
     var destination by remember { mutableStateOf<AciDestination>(AciDestination.Landing) }
     var devices by remember { mutableStateOf<List<AciDevice>?>(null) }
     var pairSeen by remember { mutableStateOf(AciOnceNudge.seen(context, "pair-computer")) }
+    var teachSeen by remember { mutableStateOf(AciOnceNudge.seen(context, "teach")) }
     val tab = AciNav.tab
     val landing = destination == AciDestination.Landing
     LaunchedEffect(host.signedIn) {
@@ -106,6 +107,16 @@ fun AciRoot(host: AciHost) {
         // The browser and a run bring their own top bar.
         if (tab != AciTab.Agent || landing) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) { host.menuButton() }
+        }
+        if (!teachSeen && AciNav.teachOpen.not() && (tab != AciTab.Agent || landing)) {
+            AciNudgeCard(
+                title = "Teach the agent a site",
+                message = "Record a site once in Allternit Desktop and the agent saves the path as a skill it can replay. On your phone you can see what's been taught and import a recording.",
+                closeLabel = "Dismiss Teach suggestion",
+                actionTitle = "Open Teach",
+                onClose = { AciOnceNudge.remember(context, "teach"); teachSeen = true },
+                onAction = { AciOnceNudge.remember(context, "teach"); teachSeen = true; AciNav.openTeach() },
+            )
         }
         val list = devices.orEmpty()
         if (tab == AciTab.Agent && landing && list.isNotEmpty()) {
@@ -149,21 +160,19 @@ fun AciRoot(host: AciHost) {
                 AciTab.Computers -> AciComputersPane(host, devices, onRefresh = {
                     devices = (AciApi.devices() as? AciApi.Result.Ok)?.value ?: devices
                 })
-                AciTab.Apps -> AciNotYet("MCP Apps", "aciApps")
-                AciTab.Extensions -> AciNotYet("ACI Extensions", "aciExtensions")
+                AciTab.Apps -> AciMcpAppsView(host)
+                AciTab.Extensions -> AciExtensionsView()
             }
         }
     }
-}
-
-/** MCP Apps and ACI Extensions are the next ACI step; say so plainly instead of a blank page. */
-@Composable
-private fun AciNotYet(title: String, tag: String) {
-    val c = AllternitTheme.colors
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).testTag(tag)) {
-        AciViewHeader(title)
-        Text("$title arrives in the next update of this app. Open it in Allternit Desktop or on the web for now.",
-            color = c.textSecondary, fontSize = 14.sp, lineHeight = 20.sp)
+    if (AciNav.teachOpen) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { AciNav.teachOpen = false }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            AciTeachScreen(host, onRun = { prompt ->
+                AciNav.teachOpen = false
+                AciNav.open(AciTab.Agent)
+                destination = AciDestination.Agent(prompt)
+            }, onBack = { AciNav.teachOpen = false })
+        }
     }
 }
 
