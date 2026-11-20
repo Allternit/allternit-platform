@@ -65,7 +65,8 @@ jobs:
           for p in "Allternit-Desktop-$V-arm64.dmg" "Allternit-Desktop-$V-x64.dmg" "Allternit-Setup-$V.exe" "Allternit-Desktop-$V-amd64.deb"; do
             [ -f "dist/$p" ] || { echo "::error::missing dist/$p"; exit 1; }
           done
-          if gh release view "v$V" -R Allternit/desktop >/dev/null 2>&1; then
+          # A draft of this version is fine (the next step deletes it); a public one is not.
+          if [ "$(gh release view "v$V" -R Allternit/desktop --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
             echo "::error::v$V is already published on Allternit/desktop"; exit 1
           fi
 
