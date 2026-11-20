@@ -3,7 +3,10 @@ import { Tool } from "@/runtime/tools/builtins/tool"
 import { MemoryDrive } from "@/runtime/memory/drive/drive"
 import { MemoryKernelAdapter } from "@/runtime/memory/kernel-adapter"
 import { Question } from "@/runtime/integrations/question"
-import { askDisputes, relatedLines, resolveDispute, type DisputeNote } from "@/runtime/memory/sleep/dispute-note"
+import { askDisputes, needsUser, relatedLines, resolveDispute, type DisputeNote } from "@/runtime/memory/sleep/dispute-note"
+import { Flag } from "@/runtime/context/flag/flag"
+import { Session } from "@/runtime/session"
+import * as BotTurn from "@/runtime/bots/bot-turn"
 import DESCRIPTION from "@/runtime/tools/builtins/memory-recall.txt"
 
 export const MemoryRecallTool = Tool.define("memory_recall", {
@@ -49,9 +52,17 @@ export const MemoryRecallTool = Tool.define("memory_recall", {
       lines.push("", "Also related (server recall; find the entry with memory_list before changing it):", ...related.lines)
     }
     if (disputes.length > 0) {
-      // The question tool's own mechanism: Question.ask raises question.asked and waits for question.replied.
-      const notes = await askDisputes(ctx.sessionID, disputes, { ask: (input) => Question.ask(input), resolve: resolveDispute })
-      lines.push(...notes.map((n) => `- ${n}`))
+      if (await canAskUser(ctx.sessionID)) {
+        // The question tool's own mechanism: Question.ask raises question.asked and waits for question.replied.
+        const notes = await askDisputes(ctx.sessionID, disputes, { ask: (input) => Question.ask(input), resolve: resolveDispute })
+        lines.push(...notes.map((n) => `- ${n}`))
+      } else {
+        // Headless clients, bot turns and subagents have nobody to answer: never block on a question there.
+        for (const d of disputes) {
+          if (needsUser(d))
+            lines.push(`- Memory conflict ${d.id} needs the user, who cannot be asked here; do not rely on either side.`)
+        }
+      }
     }
     return {
       title: `Recalled ${count} memor${count === 1 ? "y" : "ies"}`,
@@ -60,3 +71,12 @@ export const MemoryRecallTool = Tool.define("memory_recall", {
     }
   },
 })
+
+/** Ask only where the question tool exists (same rule as registry.ts) and a person is there:
+ * not in a bot's turn and not in a subagent session (no parent). */
+async function canAskUser(sessionID: string): Promise<boolean> {
+  const client = ["app", "cli", "desktop"].includes(Flag.GIZZI_CLIENT) || Flag.GIZZI_ENABLE_QUESTION_TOOL
+  if (!client || BotTurn.get(sessionID)) return false
+  const session = await Session.get(sessionID).catch(() => undefined)
+  return !!session && !session.parentID
+}
