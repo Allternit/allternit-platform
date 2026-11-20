@@ -266,7 +266,9 @@
         "allternit-ai/src/views/tasks",
         "allternit/cmd/allternit-api",
         "allternit/cmd/gizzi-code",
-        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding"
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding",
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/gizzi-code/src/runtime/drivers"
       ],
       "decisions": [
         {
@@ -384,6 +386,10 @@
         {
           "on": "2026-10-27",
           "note": "Threads carry a purpose, icon and colour (V281). With a purpose the bot greets and offers three starter tasks (POST /threads/:id/starters); runs started there wear the thread's colour tag. Borrowed from OpenDuet channels (MIT)."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Harness & Bots 2.0: a bot picks a runtime (how it works) and a brain (how it thinks); botBrain gains runtime/access/autoSwitchedFrom, normalized server-side from the registry (see Runtime registry and runtimes API, Runtime views)."
         }
       ],
       "evidence": [
@@ -2506,7 +2512,10 @@
         "allternit-ai/src/views/agent-view",
         "allternit/cmd/allternit-api",
         "allternit/services/subscription-gateway",
-        "allternit-ai/src/lib/bots"
+        "allternit-ai/src/lib/bots",
+        "allternit/cmd/allternit-api/src/agent_*",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts"
       ],
       "decisions": [
         {
@@ -2532,6 +2541,10 @@
         {
           "on": "2026-10-27",
           "note": "Eoj approved dropping the last CopilotKit code dependency: OpenDots and OpenBot (CopilotKit) now run through the gateway's own Intelligence client (adapters/_shared/copilotkit-intelligence.ts, wire-compatible with @copilotkit/core 1.75.0 IntelligenceAgent run mode: POST /agent/:id/run receipt, Phoenix channel join with stream_mode run, ag_ui_event pushes). No /connect replay or reconnect; a dropped socket is reported as unconfirmed. @copilotkit/core is removed. The OpenBot default realtime origin is now wss:// (the old https:// default could never match a wss endpoint)."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "User-facing name is Connected bot (wire name stays vendor). GET /agents/:id adds botKind connected when a vendor binding exists; runtime and brain pickers show 'Run by <Vendor>' and gizzi bot edit refuses --runtime/--brain."
         }
       ],
       "evidence": [
@@ -5274,6 +5287,73 @@
       "evidence": [
         "allternit/surfaces/docs/guides/claude-organization.mdx",
         "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ]
+    },
+    {
+      "id": "feature:runtime-registry",
+      "label": "Runtime registry and runtimes API",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "One list of runtimes a bot can run on (runtimes[] in cli-catalog.json v3): adapter, which brains fit, access, status, system layer and look tokens. gizzi reads it directly (gizzi runtime catalog, bot create/edit --runtime/--brain, /runtime in the TUI); allternit-api and cloud-api serve it as GET /api/v1/runtimes for Desktop, web and the phone apps. The local CLI driver uses it for adapters and append-only system layers.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+        "allternit/cmd/gizzi-code/src/runtime/drivers",
+        "allternit/cmd/gizzi-code/src/cli/commands",
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/allternit-api/src/cli_*",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit/cmd/allternit-api/src/agent_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
+        "allternit/surfaces/docs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-20",
+          "note": "Harness & Bots 2.0: the registry is a top-level runtimes[] in cli-catalog.json (no second file). Runtime id = old native harness id. fits() accepts vendor, subs- and CLI provider ids; one rule for every client. Wire names stay (vendor, botBrain.mode/harness); new botBrain.runtime/access/autoSwitchedFrom are additive."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Gizzi: gizzi runtime catalog [--all] [--json], --runtime/--brain on bot create/edit (--model alias), /runtime picker in the TUI (Runtime then Brain, auto-switch note, Connected bots locked 'Run by <Vendor>')."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/runtime/catalog.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/RuntimePicker.tsx",
+        "allternit/cmd/allternit-api/src/cli_catalog.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes.rs",
+        "allternit/surfaces/docs/api/runtimes.mdx"
+      ]
+    },
+    {
+      "id": "feature:runtime-views",
+      "label": "Runtime views",
+      "product": "product:digital-twin",
+      "status": "building",
+      "description": "Every runtime gets its own view of a bot's work: the View switch (Allternit / Runtime / Split, Split hidden below 900 px) draws the runtime's terminal or app look from the registry's data-only look tokens, or frames its live web app from the user's computer. The runtime/brain picker sits beside it. Same feature on Desktop, web, PWA, iOS, Android and Gizzi.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/cli_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit-ai/src/components/bots",
+        "allternit-ai/src/lib/bots",
+        "allternit/surfaces/allternit-mobile/ios",
+        "allternit/surfaces/allternit-mobile/android",
+        "allternit/cmd/gizzi-code/src/cli/commands",
+        "allternit/surfaces/docs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-20",
+          "note": "Look config is data only (palette, glyphs, banner lines, step verbs, footer slots) so Swift and Kotlin draw it; agentView {view, look} is a separate config key so old clients saving botBrain don't wipe it. Phones show the look pack plus 'Open on your computer' for live web apps."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes.rs",
+        "allternit/cmd/allternit-api/src/bot_brain.rs"
       ]
     }
   ],
