@@ -7,7 +7,9 @@ import androidx.compose.runtime.setValue
 import com.allternit.core.data.Prefs
 import com.allternit.feature.chat.RelayPick
 import com.allternit.feature.chat.RuntimeRelay
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 
@@ -49,7 +51,8 @@ internal class FirstRunStore(context: Context) {
     suspend fun complete() {
         forceRun = false
         completedOnDevice = true
-        prefs.setBoolean(KEY_COMPLETE, true)
+        // The write must land even if the composition leaves and cancels the caller.
+        withContext(NonCancellable) { prefs.setBoolean(KEY_COMPLETE, true) }
     }
 
     fun skipThisLaunch() {

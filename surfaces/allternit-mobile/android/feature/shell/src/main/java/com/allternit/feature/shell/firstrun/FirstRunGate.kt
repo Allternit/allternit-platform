@@ -91,9 +91,10 @@ internal fun FirstRunGate(store: FirstRunStore, accountFirstName: String?, onDon
                 accountFirstName = accountFirstName,
                 onFinish = { _, data, fix ->
                     finish(context, data)
+                    // Persist first: onDone swaps the root and cancels this scope (iOS marks complete before leaving).
+                    store.complete()
                     // The fix is queued before the root swaps to the workspace.
                     onDone(fix)
-                    store.complete()
                 },
             )
         } else {
