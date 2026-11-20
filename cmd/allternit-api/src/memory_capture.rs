@@ -28,6 +28,12 @@ use crate::memory_drive_service::{Result, ServiceError};
 const KEY: &str = "memory_capture";
 /// Longest captured message; longer ones are clipped.
 const MAX_TURN_CHARS: usize = 4000;
+/// Longest raw user turn kept for a person who turned Allternit Sleep on
+/// (Sleep's source of truth; extraction input stays at `MAX_TURN_CHARS`).
+pub const MAX_RAW_TURN_CHARS: usize = 64_000;
+/// Tool rows: input and output are clipped separately, with a marker.
+const MAX_TOOL_INPUT_CHARS: usize = 4_000;
+const MAX_TOOL_OUTPUT_CHARS: usize = 16_000;
 const FOLDER_SYNC_EVERY: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -85,38 +91,154 @@ pub fn save(conn: &Connection, owner: &str, s: &Settings) -> Result<()> {
 }
 
 fn clean_turn(text: &str) -> Option<String> {
+    clean_turn_cap(text, MAX_TURN_CHARS)
+}
+
+fn clean_turn_cap(text: &str, cap: usize) -> Option<String> {
     let t = text.trim();
     // Commands ("/start", "/help") aren't about the person.
     if t.is_empty() || t.starts_with('/') {
         return None;
     }
-    Some(t.chars().take(MAX_TURN_CHARS).collect())
+    Some(t.chars().take(cap).collect())
+}
+
+/// `s` cut to `cap` chars; a cut ends with `[truncated N chars]`.
+fn clip_marked(s: &str, cap: usize) -> String {
+    let n = s.chars().count();
+    if n <= cap {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(cap).collect();
+    format!("{head}\n[truncated {} chars]", n - cap)
+}
+
+/// What a captured row is: the person's message, the assistant's reply, or a
+/// tool call with its result.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Role {
+    User,
+    Assistant,
+    Tool,
+}
+
+impl Role {
+    /// `None` role means an older client: a user turn.
+    pub fn parse(s: Option<&str>) -> Option<Role> {
+        match s.map(str::trim).filter(|s| !s.is_empty()) {
+            None | Some("user") => Some(Role::User),
+            Some("assistant") => Some(Role::Assistant),
+            Some("tool") => Some(Role::Tool),
+            Some(_) => None,
+        }
+    }
+
+    fn kind(self) -> &'static str {
+        match self {
+            Role::User => "turn_user",
+            Role::Assistant => "turn_assistant",
+            Role::Tool => "turn_tool",
+        }
+    }
+}
+
+/// Result of a capture attempt.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Capture {
+    Recorded(String),
+    /// Nothing stored, and why (`source_off`, `sleep_off`, `incognito`,
+    /// `empty`, `repeat`, `no_owner`).
+    Skipped(&'static str),
+}
+
+impl Capture {
+    pub fn id(self) -> Option<String> {
+        match self {
+            Capture::Recorded(id) => Some(id),
+            Capture::Skipped(_) => None,
+        }
+    }
+}
+
+/// The row text for a tool call: name, input (4k), then output (16k).
+fn tool_content(name: &str, input: &str, output: &str) -> String {
+    format!("{}\n{}\n---\n{}", name.trim(), clip_marked(input.trim(), MAX_TOOL_INPUT_CHARS), clip_marked(output.trim(), MAX_TOOL_OUTPUT_CHARS))
+}
+
+/// The session a `gizzi:session/<id>` label names.
+fn gizzi_session(label: &str) -> Option<&str> {
+    label.strip_prefix("gizzi:session/").filter(|s| !s.is_empty())
 }
 
 /// Record the owner's own message from `source` with provenance `label`
 /// (e.g. `telegram:chat/123`). Returns the observation id when recorded,
 /// `None` when that source is switched off or there is nothing to keep.
 pub fn record_turn(db: &DbHandle, owner: &str, source: Source, label: &str, text: &str) -> Result<Option<String>> {
+    record_row(db, owner, source, label, Role::User, text, None, "", "").map(Capture::id)
+}
+
+/// Record one row of a turn. User rows are as before, except that with Sleep
+/// on the full text (up to `MAX_RAW_TURN_CHARS`) is kept. Assistant and tool
+/// rows are recorded only with Sleep on. Nothing is recorded for an
+/// incognito Gizzi session. Every role respects the per-source switches.
+/// For tool rows `text` is unused: `tool_name`, `tool_input`, `tool_output`
+/// make the content.
+#[allow(clippy::too_many_arguments)]
+pub fn record_row(
+    db: &DbHandle,
+    owner: &str,
+    source: Source,
+    label: &str,
+    role: Role,
+    text: &str,
+    tool_name: Option<&str>,
+    tool_input: &str,
+    tool_output: &str,
+) -> Result<Capture> {
     if owner.is_empty() {
-        return Ok(None);
+        return Ok(Capture::Skipped("no_owner"));
     }
     crate::memory_drive::validate_source(label).map_err(|e| ServiceError::Provenance(e.to_string()))?;
-    let Some(text) = clean_turn(text) else { return Ok(None) };
     let conn = db.connect()?;
     if !settings(&conn, owner).allows(source) {
-        return Ok(None);
+        return Ok(Capture::Skipped("source_off"));
     }
-    // A redelivered message (webhook retry, replay) is captured once.
+    if source == Source::Gizzi {
+        if let Some(sid) = gizzi_session(label) {
+            if db.is_session_ephemeral(sid).unwrap_or(false) {
+                return Ok(Capture::Skipped("incognito"));
+            }
+        }
+    }
+    let sleep_on = crate::sleep::config::load(&conn, owner).map(|r| r.enabled()).unwrap_or(false);
+    if role != Role::User && !sleep_on {
+        return Ok(Capture::Skipped("sleep_off"));
+    }
+    let content = match role {
+        Role::User => clean_turn_cap(text, if sleep_on { MAX_RAW_TURN_CHARS } else { MAX_TURN_CHARS }),
+        Role::Assistant => {
+            let t = text.trim();
+            (!t.is_empty()).then(|| clip_marked(t, MAX_RAW_TURN_CHARS))
+        }
+        Role::Tool => {
+            let name = tool_name.map(str::trim).unwrap_or("");
+            (!name.is_empty()).then(|| tool_content(name, tool_input, tool_output))
+        }
+    };
+    let Some(content) = content else { return Ok(Capture::Skipped("empty")) };
+    let kind = role.kind();
+    // A redelivered message (webhook retry, replay, client resend) is
+    // captured once.
     let repeat: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM memory_observations WHERE user_id = ?1 AND source = ?2 AND content = ?3 AND timestamp >= datetime('now', '-10 minutes'))",
-        params![owner, label, text],
+        "SELECT EXISTS(SELECT 1 FROM memory_observations WHERE user_id = ?1 AND source = ?2 AND kind = ?3 AND content = ?4 AND timestamp >= datetime('now', '-10 minutes'))",
+        params![owner, label, kind, content],
         |r| r.get(0),
     )?;
     if repeat {
-        return Ok(None);
+        return Ok(Capture::Skipped("repeat"));
     }
-    crate::memory_kernel_service::record_observation(db, owner, None, None, "turn_user", &text, Some(label))
-        .map(Some)
+    crate::memory_kernel_service::record_observation(db, owner, None, None, kind, &content, Some(label))
+        .map(Capture::Recorded)
         .map_err(|e| ServiceError::Provenance(e.to_string()))
 }
 
@@ -296,6 +418,66 @@ mod tests {
         assert_eq!(clean_turn("   "), None);
         assert_eq!(clean_turn("I moved to Saint Paul").as_deref(), Some("I moved to Saint Paul"));
         assert_eq!(clean_turn(&"x".repeat(MAX_TURN_CHARS + 10)).map(|t| t.len()), Some(MAX_TURN_CHARS));
+    }
+
+    fn sleep_on(db: &DbHandle, owner: &str) {
+        let conn = db.connect().unwrap();
+        crate::sleep::config::set_owner(&conn, owner, crate::sleep::config::Group::Setting, &[("enabled".to_string(), serde_json::json!(true))]).unwrap();
+    }
+
+    fn rows(db: &DbHandle, owner: &str, kind: &str) -> Vec<String> {
+        let conn = db.connect().unwrap();
+        let mut st = conn.prepare("SELECT content FROM memory_observations WHERE user_id = ?1 AND kind = ?2").unwrap();
+        let v = st.query_map(params![owner, kind], |r| r.get::<_, String>(0)).unwrap().map(|r| r.unwrap()).collect();
+        v
+    }
+
+    const LABEL: &str = "gizzi:session/s1";
+
+    #[test]
+    fn sleep_off_keeps_todays_capture() {
+        let db = DbHandle::new_memory().unwrap();
+        let big = "a".repeat(10_000);
+        let r = record_row(&db, "u1", Source::Gizzi, LABEL, Role::Assistant, "hello", None, "", "").unwrap();
+        assert_eq!(r, Capture::Skipped("sleep_off"));
+        let r = record_row(&db, "u1", Source::Gizzi, LABEL, Role::Tool, "", Some("bash"), "{}", "out").unwrap();
+        assert_eq!(r, Capture::Skipped("sleep_off"));
+        assert!(record_turn(&db, "u1", Source::Gizzi, LABEL, &big).unwrap().is_some());
+        assert!(rows(&db, "u1", "turn_assistant").is_empty() && rows(&db, "u1", "turn_tool").is_empty());
+        assert_eq!(rows(&db, "u1", "turn_user")[0].len(), MAX_TURN_CHARS);
+    }
+
+    #[test]
+    fn sleep_on_records_assistant_tool_and_full_user_text() {
+        let db = DbHandle::new_memory().unwrap();
+        sleep_on(&db, "u1");
+        let big = "b".repeat(10_000);
+        assert!(record_turn(&db, "u1", Source::Gizzi, LABEL, &big).unwrap().is_some());
+        assert_eq!(rows(&db, "u1", "turn_user")[0].len(), 10_000);
+        assert!(matches!(record_row(&db, "u1", Source::Gizzi, LABEL, Role::Assistant, "Sure, done.", None, "", "").unwrap(), Capture::Recorded(_)));
+        assert_eq!(rows(&db, "u1", "turn_assistant"), vec!["Sure, done.".to_string()]);
+        let out = "o".repeat(40_000);
+        assert!(matches!(record_row(&db, "u1", Source::Gizzi, LABEL, Role::Tool, "", Some("bash"), "{\"cmd\":\"ls\"}", &out).unwrap(), Capture::Recorded(_)));
+        let t = &rows(&db, "u1", "turn_tool")[0];
+        assert!(t.starts_with("bash\n{\"cmd\":\"ls\"}\n---\n"), "{t}");
+        assert!(t.ends_with("[truncated 24000 chars]"), "{}", &t[t.len() - 40..]);
+        // A resend of the same row inside ten minutes is dropped.
+        assert_eq!(record_row(&db, "u1", Source::Gizzi, LABEL, Role::Assistant, "Sure, done.", None, "", "").unwrap(), Capture::Skipped("repeat"));
+        // Another person with Sleep off gets nothing.
+        assert_eq!(record_row(&db, "u2", Source::Gizzi, LABEL, Role::Assistant, "hi", None, "", "").unwrap(), Capture::Skipped("sleep_off"));
+    }
+
+    #[test]
+    fn incognito_sessions_and_switched_off_sources_record_nothing() {
+        let db = DbHandle::new_memory().unwrap();
+        sleep_on(&db, "u1");
+        db.connect().unwrap().execute("INSERT INTO ephemeral_sessions (session_id) VALUES ('s-inc')", []).unwrap();
+        for role in [Role::User, Role::Assistant] {
+            let r = record_row(&db, "u1", Source::Gizzi, "gizzi:session/s-inc", role, "secret", None, "", "").unwrap();
+            assert_eq!(r, Capture::Skipped("incognito"));
+        }
+        save(&db.connect().unwrap(), "u1", &Settings { gizzi: false, ..Settings::default() }).unwrap();
+        assert_eq!(record_row(&db, "u1", Source::Gizzi, LABEL, Role::Assistant, "x", None, "", "").unwrap(), Capture::Skipped("source_off"));
     }
 
     #[test]

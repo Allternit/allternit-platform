@@ -235,10 +235,28 @@ logins are not logged.
 
 ### `POST /memory/drive/capture/turn`
 
-Body `{ source: "gizzi", label: "gizzi:session/<id>", text }`. Gizzi sends the person's message at
-the end of each turn. The API records it as a `turn_user` observation with the label as its source
-when the `gizzi` switch is on, and runs no extraction, because Gizzi saves memories itself. Returns
-`{ recorded }`.
+Body `{ source: "gizzi", label: "gizzi:session/<id>", text, role?, turn_id?, tool_name?, tool_input?, tool_output? }`.
+Gizzi sends the person's message at the end of each turn. The API records it as a `turn_user`
+observation with the label as its source when the `gizzi` switch is on, and runs no extraction,
+because Gizzi saves memories itself. Returns `{ recorded }`, or `{ recorded: false, reason }` when
+nothing was kept (`source_off`, `sleep_off`, `incognito`, `empty`, `repeat`).
+
+What is recorded depends on Allternit Sleep:
+
+- **Sleep off (default).** Only the person's message, clipped to 4000 characters. A request with
+  `role` `assistant` or `tool` records nothing (`sleep_off`). Old clients that send no `role` are
+  treated as `user`.
+- **Sleep on.** The person's message is kept in full up to 64,000 characters, and Gizzi also sends
+  the assistant's last text reply of the turn (`role: "assistant"`, stored as `turn_assistant`) and
+  each tool call (`role: "tool"`, stored as `turn_tool`). A tool row reads
+  `<tool_name>`, the input clipped to 4000 characters, `---`, then the output clipped to 16,000
+  characters; a clipped part ends with `[truncated N chars]`. Gizzi checks
+  `GET /memory/sleep/status` once per process (cached five minutes) and sends these extra rows only
+  when `enabled` is true. Tool output is sent as is: no Gizzi tool is marked sensitive yet.
+
+Nothing is recorded for an incognito session, for any role, and every role respects the `gizzi`
+capture switch. A row repeated with the same content in the same session within ten minutes is
+dropped (`turn_id` is accepted for later use).
 
 **Channels** are captured where messages arrive. In `channel_transports::accept_events_with` and
 in bot email, a message is captured only when its sender matches the account's verified owner
