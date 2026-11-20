@@ -95,7 +95,7 @@ session end, whether Sleep is on or not.
 
 - `enabled` is the master switch. A stage runs only when `enabled` and its own flag are both `true`.
 - `stages` holds each stage's own flag.
-- `debt` is sleep debt: memories added since your last finished nap (at most the last 7 days), divided by `debt_scale`. See [How a cycle runs](#how-a-cycle-runs).
+- `debt` is sleep debt: memories added since your last finished nap (at most the last 7 days), divided by `debt_scale`. At or above `debt_pause_threshold` decay pauses and new extracted facts under `debt_intake_min_attention` are not stored. See [How a cycle runs](#how-a-cycle-runs).
 - `last_cycle` is the newest cycle row and `spend_today_usd` the sum of today's cycle spend.
 - `tracks.track2` (pages) is `on` when `enabled` and `stages.pages` are both on. `tracks.track1` (personal adapters) is the same for `stages.track1`.
 
@@ -270,7 +270,7 @@ own result. The `sleep.cycle.stage` event uses the same fields. The report route
   `unit_max_attempts` failures (or expired leases) the unit is `deferred`: it is not
   retried until your next cycle opens, then it gets fresh attempts.
 - **Sleep debt.** While `debt` is at or above `debt_pause_threshold`, consolidation
-  skips its decay step, so nothing fades while a nap is overdue.
+  skips its decay step, so nothing fades while a nap is overdue. Extraction also gets a stricter intake: a new fact whose attention score is under `debt_intake_min_attention` is not stored (the turn itself is still logged). Updates, forgets, explicit saves and facts flagged with a remember marker are never held.
 - **The old clocks.** The consolidation tick, the nightly Dream and the weekly bot
   curation still run on their own for users with the orchestrator off, exactly as
   before. With it on, they only queue a `nap` (session `clock`, at most one waiting)
@@ -605,6 +605,7 @@ used (every other id in `results` counts as unused), plus `label_source` set to 
 | `curation_cost_estimate_usd` | 0.05 | Spend charged against the daily cap for one weekly curation. |
 | `debt_scale` | 50 | New memories since the last finished nap that make 1.0 of sleep debt. |
 | `debt_pause_threshold` | 1.0 | At or above this debt, memory decay pauses until a nap finishes. |
+| `debt_intake_min_attention` | 0.25 | While sleep debt pauses fading, new facts scoring below this attention are not stored (0 = off). |
 | `page_budget_share` | 0.05 | Share of the model's context window for pages per message. |
 | `router_min_confidence` | 0.5 | Below this, the router falls back to embedding search. |
 | `pull_cost_multiple_max` | 2 | Most a mid-session page load may cost, as a multiple of a preload. |

@@ -108,6 +108,7 @@ pub const DEFS: &[Def] = &[
     num("curation_cost_estimate_usd", 0.05, 0.0, 100.0, "Spend charged against the daily cap for one weekly curation run."),
     num("debt_scale", 50.0, 1.0, 100_000.0, "New memories since the last finished nap that make 1.0 of sleep debt."),
     num("debt_pause_threshold", 1.0, 0.0, 1000.0, "At or above this sleep debt, memory decay pauses until a nap finishes."),
+    num("debt_intake_min_attention", 0.25, 0.0, 1.0, "While sleep debt pauses fading, new facts scoring below this attention are not stored (0 = off)."),
     num("page_budget_share", 0.05, 0.0, 0.5, "Share of the model's context window for pages per message."),
     num("router_min_confidence", 0.5, 0.0, 1.0, "Below this the router falls back to embedding top-k."),
     num("pull_cost_multiple_max", 2.0, 1.0, 100.0, "Gate G2: a mid-session pull may cost at most this multiple of preload."),
