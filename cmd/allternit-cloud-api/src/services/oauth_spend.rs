@@ -723,9 +723,9 @@ mod tests {
 
     use super::*;
     use crate::model_router::{catalog::starter_catalog, ModelInfo, ModelRouter, ModelRouterError, UpstreamProvider};
-    use crate::routes::platform_v1::{project_billing, projects, ProjectEnv};
+    use crate::routes::platform_v1::{projects, ProjectEnv};
     use crate::routes::test_support::{platform_schema, test_state, MockGateway};
-    use crate::services::api_keys::{self, hash_token, CreateProjectKeyInput};
+    use crate::services::api_keys::{self, hash_token};
     use crate::services::oauth_apps::{ClientType, CreateOAuthAppInput};
     use crate::ApiState;
 
@@ -930,12 +930,34 @@ mod tests {
 
     /// A live grant for the person with `cap_cents` and one access token.
     async fn grant(c: &Ctx, cap_cents: i32) -> (Uuid, String) {
+        grant_on(c, c.app_id, cap_cents).await
+    }
+
+    /// A second app in the same project. One person holds at most one live grant
+    /// per app (oauth_grants_live_app_user), so "another grant of the same person"
+    /// lives on another app.
+    async fn other_app(c: &Ctx) -> Uuid {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO oauth_apps (id, project_id, owner_user_id, client_id, name, client_type, state, scopes)
+             SELECT $1, project_id, owner_user_id, $2, name || ' 2', client_type, state, scopes FROM oauth_apps WHERE id = $3",
+        )
+        .bind(id)
+        .bind(format!("alt_app_{}", Uuid::new_v4().simple()))
+        .bind(c.app_id)
+        .execute(&c.db)
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn grant_on(c: &Ctx, app_id: Uuid, cap_cents: i32) -> (Uuid, String) {
         let grant_id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO oauth_grants (id, app_id, user_id, scopes, monthly_cap_cents, sub) VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(grant_id)
-        .bind(c.app_id)
+        .bind(app_id)
         .bind(PERSON)
         .bind(vec!["inference".to_string(), "usage".to_string()])
         .bind(cap_cents)
@@ -1104,7 +1126,8 @@ mod tests {
         assert_eq!(reply["error"]["code"], USER_CREDITS_EXHAUSTED, "{reply}");
 
         // Enough for one hold, but another grant of the same person already holds it.
-        let (other_grant, _) = grant(&c, 5_000).await;
+        let other = other_app(&c).await;
+        let (other_grant, _) = grant_on(&c, other, 5_000).await;
         set_wallet(&c, PERSON, (hold.cents + hold.cents / 2) as f64 / 100.0).await;
         let held = reserve(&c.db, other_grant, PERSON, hold.cents).await.unwrap();
         let (status, reply) = chat(&c, &token, &request).await;
@@ -1345,7 +1368,8 @@ mod tests {
         );
 
         // The window turns at 00:00 UTC on the 1st.
-        let (edge_grant, _) = grant(&c, 50).await;
+        let edge_app = other_app(&c).await;
+        let (edge_grant, _) = grant_on(&c, edge_app, 50).await;
         let before = Utc.with_ymd_and_hms(2026, 12, 31, 23, 59, 59).unwrap();
         let after = Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap();
         let full = reserve_at(&c.db, edge_grant, PERSON, 50, before).await.unwrap();
@@ -1363,17 +1387,13 @@ mod tests {
     #[tokio::test]
     async fn project_key_billing_unchanged() {
         let c = ctx().await;
-        let owner = projects::Principal { user_id: OWNER.to_string(), org_id: None, org_admin: false };
-        let project = projects::create_project(&c.db, &owner, "Billing", ProjectEnv::Live).await.unwrap();
-        project_billing::put_test_card(&c.db, &project.id).await;
-        let token = api_keys::create_project_key(
+        // An account API key (`alt_…`): the gateway route's own credential. Project keys
+        // (`alt_live_`/`alt_test_`) authenticate only on the Platform API (api_keys.rs).
+        let token = api_keys::create_api_key(
             &c.db,
-            CreateProjectKeyInput {
+            api_keys::CreateApiKeyInput {
                 user_id: OWNER.to_string(),
                 organization_id: None,
-                project_id: project.id.clone(),
-                account_id: None,
-                env: ProjectEnv::Live,
                 name: "k".to_string(),
                 scopes: vec!["inference".to_string()],
             },
@@ -1392,13 +1412,13 @@ mod tests {
         let ledger = ledger(&c, OWNER).await;
         assert_eq!(ledger.len(), 1);
         assert!(close(ledger[0].0, -actual) && ledger[0].1 == "inference", "{ledger:?}");
-        let (project_id, client): (Option<String>, Option<String>) =
-            sqlx::query_as("SELECT project_id, client FROM inference_usage WHERE user_id = $1")
+        let (billed_to, client): (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT billed_to, client FROM inference_usage WHERE user_id = $1")
                 .bind(OWNER)
                 .fetch_one(&c.db)
                 .await
                 .unwrap();
-        assert_eq!(project_id, Some(project.id.clone()));
+        assert_ne!(billed_to.as_deref(), Some(BILLED_TO), "not the OAuth grant payer");
         assert_ne!(client, Some(usage_client(&c.client_id)));
         let grant_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_grant_spend").fetch_one(&c.db).await.unwrap();
         assert_eq!(grant_rows, 0);

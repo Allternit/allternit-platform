@@ -351,6 +351,16 @@ mod tests {
         )
         .await
         .unwrap();
+        // The app is still `testing`: only listed test users may use its tokens.
+        for user in [PERSON, OTHER] {
+            sqlx::query("INSERT INTO oauth_app_test_users (app_id, email, user_id) VALUES ($1, $2, $3)")
+                .bind(app.app.id)
+                .bind(format!("{user}@example.com"))
+                .bind(user)
+                .execute(&state.db)
+                .await
+                .unwrap();
+        }
         Ctx { state, project_id: project.id, app_id: app.app.id }
     }
 

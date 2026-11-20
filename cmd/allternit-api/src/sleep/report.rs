@@ -465,7 +465,8 @@ mod tests {
         // The Dream runs through its real apply path.
         let dream = crate::memory_dream::run(f.db.clone(), "u1".into(), date, complete).await.unwrap().unwrap();
         assert_eq!(dream.status, "applied");
-        assert_eq!(active_facts(&f.db), vec!["User likes tea."]);
+        // Sleep 5.4: a kept Dream lesson is written as a fact (memory_dream::finalize_lessons).
+        assert_eq!(active_facts(&f.db), vec!["User likes tea.", "User wants short answers."]);
 
         cycle_row(&f.db, "cyc_1", "u1", "finished", vec![
             rec(Step::Consolidation, "done", None, json!({ "merged": 0, "decayed": 0 })),

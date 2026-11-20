@@ -117,7 +117,7 @@ class VoicePackManager private constructor(val pack: VoicePack) {
             partialBytes(context) > 0 -> VoicePackState.Paused(partialBytes(context).toDouble() / pack.totalBytes)
             else -> (state as? VoicePackState.Failed) ?: VoicePackState.Missing
         }
-        setState(next)
+        postState(next)
     }
 
     /** Bytes the pack holds on this phone (installed files plus any partial download). */
@@ -139,7 +139,7 @@ class VoicePackManager private constructor(val pack: VoicePack) {
      */
     fun installBlocking(context: Context, cellular: Boolean = true, onProgress: ((Double) -> Unit)? = null): Boolean {
         val app = context.applicationContext
-        if (isInstalled(app)) { setState(VoicePackState.Ready); return true }
+        if (isInstalled(app)) { postState(VoicePackState.Ready); return true }
         val mine = CountDownLatch(1)
         val wait: CountDownLatch? = synchronized(lock) {
             onProgress?.let { progressListeners.add(it) }
@@ -152,23 +152,23 @@ class VoicePackManager private constructor(val pack: VoicePack) {
             synchronized(lock) { onProgress?.let { progressListeners.remove(it) } }
             return isInstalled(app)
         }
-        setState(VoicePackState.Downloading(0.0))
+        postState(VoicePackState.Downloading(0.0))
         var last = 0.0
         val result = try {
             download(app, cellular) { p ->
                 last = p
                 val listeners = synchronized(lock) { progressListeners.toList() }
                 listeners.forEach { it(p) }
-                setState(VoicePackState.Downloading(p))
+                postState(VoicePackState.Downloading(p))
             }
-            setState(VoicePackState.Ready)
+            postState(VoicePackState.Ready)
             true
         } catch (e: PackCancelled) {
-            if (e.keepPartial) setState(VoicePackState.Paused(last))
-            else { root(app).listFiles()?.filter { it.name.endsWith(".part") }?.forEach { it.delete() }; setState(VoicePackState.Missing) }
+            if (e.keepPartial) postState(VoicePackState.Paused(last))
+            else { root(app).listFiles()?.filter { it.name.endsWith(".part") }?.forEach { it.delete() }; postState(VoicePackState.Missing) }
             false
         } catch (e: Exception) {
-            setState(VoicePackState.Failed(e.message ?: "The voice model download failed."))
+            postState(VoicePackState.Failed(e.message ?: "The voice model download failed."))
             false
         } finally {
             synchronized(lock) {
@@ -189,7 +189,7 @@ class VoicePackManager private constructor(val pack: VoicePack) {
         val live = synchronized(lock) { if (running != null) { stopRequest = false; true } else false }
         if (!live) {
             root(context).listFiles()?.filter { it.name.endsWith(".part") }?.forEach { it.delete() }
-            setState(VoicePackState.Missing)
+            postState(VoicePackState.Missing)
         }
     }
 
@@ -200,7 +200,7 @@ class VoicePackManager private constructor(val pack: VoicePack) {
         Thread({
             live?.await(30, TimeUnit.SECONDS)
             root(app).deleteRecursively()
-            setState(VoicePackState.Missing)
+            postState(VoicePackState.Missing)
         }, "voice-pack-remove").apply { isDaemon = true }.start()
     }
 
@@ -229,7 +229,7 @@ class VoicePackManager private constructor(val pack: VoicePack) {
         )
     }
 
-    private fun setState(next: VoicePackState) {
+    private fun postState(next: VoicePackState) {
         if (Looper.myLooper() == Looper.getMainLooper()) state = next else main.post { state = next }
     }
 

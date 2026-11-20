@@ -459,6 +459,9 @@ pub async fn run_once(db: &DbHandle, jobs: &dyn Jobs, worker: &str, clock: &Cloc
     };
 
     let started = now;
+    // Ledger rows already counted for an earlier stage: a later stage in the same
+    // second must not count them again.
+    let mut ledger_counted_to = None;
     for step in plan.iter().skip(start).copied() {
         let now = clock();
         {
@@ -492,8 +495,16 @@ pub async fn run_once(db: &DbHandle, jobs: &dyn Jobs, worker: &str, clock: &Cloc
                 rec.finished_at = Some(queue::ts(end));
                 if rec.status == "done" && matches!(step, Step::Dream | Step::Curation) {
                     let conn = db.connect().map_err(sql)?;
-                    // Up to the next second so rows stamped in the stage's last second count.
-                    rec.spend_usd = ledger_spend_usd(&conn, &unit.user_id, &queue::ts(now), &queue::ts(end + Duration::seconds(1))).map_err(sql)?;
+                    // Up to the next second so rows stamped in the stage's last second count,
+                    // from where the previous counted stage stopped.
+                    let to = end + Duration::seconds(1);
+                    let from = ledger_counted_to.map_or(now, |prev| if prev > now { prev } else { now });
+                    rec.spend_usd = if to > from {
+                        ledger_spend_usd(&conn, &unit.user_id, &queue::ts(from), &queue::ts(to)).map_err(sql)?
+                    } else {
+                        0.0
+                    };
+                    ledger_counted_to = Some(to);
                 }
                 report.spend_usd += rec.spend_usd;
                 let (status, note, spend) = (rec.status, rec.note.clone(), rec.spend_usd);

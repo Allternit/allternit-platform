@@ -69,9 +69,11 @@ final class ModelStore: ObservableObject {
     init(defaults: UserDefaults = .standard, chatClient: AgentChatClient = AgentChatClient()) {
         self.defaults = defaults
         self.chatClient = chatClient
-        self.lastCloudModelId = defaults.string(forKey: Keys.lastCloudModelId)
-        self.selectedModelId = defaults.string(forKey: Keys.selectedModelId)
-        if lastCloudModelId == nil, Self.cloudAlias(selectedModelId) != nil { self.lastCloudModelId = selectedModelId }
+        // Locals first: reading self before every stored property is set does not compile.
+        let storedSelected = defaults.string(forKey: Keys.selectedModelId)
+        let storedCloud = defaults.string(forKey: Keys.lastCloudModelId)
+        self.lastCloudModelId = storedCloud ?? (Self.cloudAlias(storedSelected) != nil ? storedSelected : nil)
+        self.selectedModelId = storedSelected
         self.selectedEffort = defaults.string(forKey: Keys.selectedEffort) ?? "medium"
         self.fastMode = defaults.bool(forKey: Keys.fastMode)
     }
