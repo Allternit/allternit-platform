@@ -54,9 +54,8 @@
 //! row (`credit_transactions`) has source [`WALLET_SOURCE`] and
 //! `transaction_id` `oauth:<grant_id>:<request_id>` ([`ledger_ref`]), which
 //! ties the debit to the grant and to the usage row's `request_id`.
-//! `inference_usage` has no `billed_to`, `oauth_app_id` or `grant_id` columns
-//! yet; until a migration adds them, those three facts live in `client`, the
-//! ledger source and the ledger key.
+//! The row also carries `billed_to = 'user_wallet'`, `oauth_app_id` and
+//! `oauth_grant_id` (migrations_pg/151).
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -501,8 +500,16 @@ pub fn usage_client(client_id: &str) -> String {
 }
 
 /// The usage row's attribution for an app's call: no project and no key (the
-/// app's project does not pay), the app as the client, the request id.
-pub fn attribution(client_id: &str, request_id: String, started_at: std::time::Instant) -> InferenceAttribution {
+/// app's project does not pay), the app as the client, the request id, and
+/// the payer columns of migrations_pg/151 (`billed_to = user_wallet`, the app
+/// and the grant).
+pub fn attribution(
+    client_id: &str,
+    app_id: Uuid,
+    grant_id: Uuid,
+    request_id: String,
+    started_at: std::time::Instant,
+) -> InferenceAttribution {
     InferenceAttribution {
         project_id: None,
         key_id: None,
@@ -511,6 +518,9 @@ pub fn attribution(client_id: &str, request_id: String, started_at: std::time::I
         started_at: Some(started_at),
         capture_request: None,
         person_turn: false,
+        billed_to: Some(inference_settlement::BILLED_TO_USER_WALLET),
+        oauth_app_id: Some(app_id),
+        oauth_grant_id: Some(grant_id),
     }
 }
 
@@ -861,6 +871,7 @@ mod tests {
             include_str!("../../migrations_pg/009_inference_pools.sql"),
             include_str!("../../migrations_pg/125_inference_attribution.sql"),
             include_str!("../../migrations_pg/150_oauth_apps.sql"),
+            include_str!("../../migrations_pg/151_anthropic_links.sql"),
         ] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(&db).await.expect("migration applies");
         }
@@ -1144,18 +1155,22 @@ mod tests {
         let ledger = ledger(&c, PERSON).await;
         assert_eq!(ledger.len(), 3);
         assert!(ledger.iter().all(|(amount, source)| close(*amount, -actual) && source == WALLET_SOURCE), "{ledger:?}");
-        let rows: Vec<(String, Option<String>, Option<String>, f64, bool)> = sqlx::query_as(
-            "SELECT model, client, project_id, cost_usd, estimated FROM inference_usage WHERE user_id = $1",
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(String, Option<String>, Option<String>, f64, bool, Option<String>, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
+            "SELECT model, client, project_id, cost_usd, estimated, billed_to, oauth_app_id, oauth_grant_id \
+             FROM inference_usage WHERE user_id = $1",
         )
         .bind(PERSON)
         .fetch_all(&c.db)
         .await
         .unwrap();
-        for (model, client, project_id, cost, estimated) in rows {
+        for (model, client, project_id, cost, estimated, billed_to, app_id, row_grant) in rows {
             assert_eq!(model, "gpt-4o");
             assert_eq!(client, Some(usage_client(&c.client_id)));
             assert_eq!(project_id, None, "the app's project does not pay");
             assert!(close(cost, actual) && !estimated);
+            assert_eq!(billed_to.as_deref(), Some("user_wallet"));
+            assert_eq!((app_id, row_grant), (Some(c.app_id), Some(grant_id)), "the row names the app and the grant");
         }
         let ledger_keys: Vec<String> =
             sqlx::query_scalar("SELECT transaction_id FROM credit_transactions WHERE user_id = $1").bind(PERSON).fetch_all(&c.db).await.unwrap();

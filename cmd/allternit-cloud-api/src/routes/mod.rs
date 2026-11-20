@@ -76,6 +76,8 @@ pub mod mcp_edge;
 pub mod managed_auth;
 /// Trusted outside issuers and the edge JWT-bearer authorization server (WP4).
 pub mod edge_auth;
+/// Link your Claude organization: our issuer's JWKS and discovery (contract B1).
+pub mod anthropic_client_issuer;
 /// "Sign in with Allternit": OAuth authorization endpoint, metadata and consent API (migration 150).
 pub mod oauth_server;
 /// Signed-in person's OAuth grants (list, cap, revoke) and the admin review of apps.

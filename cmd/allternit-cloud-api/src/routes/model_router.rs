@@ -116,6 +116,9 @@ pub(crate) async fn inference_attribution(
             .get(inference_settlement::TURN_HEADER)
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.trim().eq_ignore_ascii_case("person")),
+        billed_to: None,
+        oauth_app_id: None,
+        oauth_grant_id: None,
     }
 }
 
@@ -489,7 +492,7 @@ async fn oauth_chat_completions(
         pool_id,
         prices,
         input_tokens_estimate: input_tokens,
-        attribution: oauth_spend::attribution(&oauth.client_id, request_id.clone(), started_at),
+        attribution: oauth_spend::attribution(&oauth.client_id, oauth.app_id, grant_id, request_id.clone(), started_at),
     };
 
     let streaming = request.is_streaming();
