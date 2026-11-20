@@ -24,6 +24,10 @@ on:
         description: Mirror installers to runtime.allternit.com (R2)
         type: boolean
         default: true
+      exclude:
+        description: Optional extended regex of file names to leave out (e.g. a known-bad installer)
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -51,20 +55,41 @@ jobs:
         with:
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
-          pattern: allternit-desktop-{macos,windows,linux-deb}
+          # Every installer + updater feed artifact: macOS, Windows, and Linux x64/arm64
+          # (.deb, .rpm, AppImage, latest-linux*.yml). Same set release-desktop.yml attaches.
+          pattern: allternit-desktop-*
           merge-multiple: true
-          path: dist
+          path: raw
+
+      - name: Pick the release files
+        env:
+          EXCLUDE: ${{ inputs.exclude }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find raw -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.deb' \
+            -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.blockmap' -o -name 'latest*.yml' \) -print0 |
+          while IFS= read -r -d '' f; do
+            b=$(basename "$f")
+            if [ -n "$EXCLUDE" ] && printf '%s\n' "$b" | grep -Eq -e "$EXCLUDE"; then echo "excluded $b"; continue; fi
+            cp "$f" "dist/$b"
+          done
 
       - name: Check the version matches
         run: |
           set -euo pipefail
           ls -l dist
-          for y in dist/latest.yml dist/latest-mac.yml; do
+          for y in dist/latest.yml dist/latest-mac.yml dist/latest-linux.yml dist/latest-linux-arm64.yml; do
             grep -qx "version: $V" "$y" || { echo "::error::$y is not version $V"; head -1 "$y"; exit 1; }
           done
-          for p in "Allternit-Desktop-$V-arm64.dmg" "Allternit-Desktop-$V-x64.dmg" "Allternit-Setup-$V.exe" "Allternit-Desktop-$V-amd64.deb"; do
+          for p in "Allternit-Desktop-$V-arm64.dmg" "Allternit-Desktop-$V-x64.dmg" "Allternit-Setup-$V.exe" \
+                   "Allternit-Desktop-$V-amd64.deb" "Allternit-Desktop-$V-arm64.deb"; do
             [ -f "dist/$p" ] || { echo "::error::missing dist/$p"; exit 1; }
           done
+          for g in "Allternit-Desktop-$V-x86_64.rpm" "Allternit-Desktop-$V-x86_64.AppImage"; do
+            [ -f "dist/$g" ] || { echo "::error::missing dist/$g"; exit 1; }
+          done
+          ls dist/*.rpm | grep -Eq -- '-(aarch64|arm64)\.rpm$' || { echo "::error::missing the arm64 .rpm"; exit 1; }
           if gh release view "v$V" -R Allternit/desktop >/dev/null 2>&1; then
             echo "::error::v$V is already published on Allternit/desktop"; exit 1
           fi
