@@ -312,7 +312,7 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | File Provider -> existing DocumentsProvider | System surfaces | ios/AllternitFileProvider | — | — | todo | — |
 | Focus filter | System surfaces | ios/SystemSurfaces/Intents/FocusFilter.swift | — | — | N/A: no Android equivalent (Eoj 2026-11-18) | — |
 | Live Activities -> ongoing notifications | System surfaces | ios/AllternitWidgets | — | — | todo | — |
-| Push notifications | System surfaces | ios/AllternitNotifications | — | — | todo | — |
+| Push notifications | System surfaces | ios/AllternitNotifications | android/feature/push/AllternitPush.kt, PushNotifications.kt, AllternitMessagingService.kt, NotificationActionReceiver.kt | I1 | built (#2664) | FCM data messages; channels per iOS category with the iOS buttons; tap opens the inbox item, Decisions, Settings or Bots |
 | Share extension -> Android share target | System surfaces | ios/AllternitShare | — | — | todo | — |
 | Widgets -> Glance app widgets | System surfaces | ios/AllternitWidgets | — | — | todo | — |
 | iMessage extension | System surfaces | ios/AllternitMessages | — | — | N/A: no Android equivalent (Eoj 2026-11-18) | — |

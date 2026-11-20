@@ -242,6 +242,7 @@ internal fun NotificationsPage(host: SettingsHost, back: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     val overrides = remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     SPage("Notifications", tag = "settingsNotifications", onBack = back) {
+        ThisPhoneNotifications()
         SLabel("Phone notifications")
         SNote("For your whole account. These reach every phone and browser you turned notifications on for, even when Allternit is closed.")
         LoadView(prefsLoad, reloadPrefs, "load your notification choices") { body ->
@@ -349,4 +350,42 @@ private fun QuietHoursCard(q: JsonObject, reload: () -> Unit) {
         Row(Modifier.padding(top = 8.dp)) { SButton("Save hours", "quiet_save", enabled = Regex("\\d{1,2}:\\d{2}").matches(start) && Regex("\\d{1,2}:\\d{2}").matches(end)) { save() } }
     }
     SError(error)
+}
+
+/**
+ * iOS NotificationsSettingsView "This iPhone" row: whether this phone may show notifications. Allow asks through the
+ * priming sheet (AppPermission.Notifications, wave H2) and then the system dialog, and registers the phone for push
+ * (wave I1, AllternitPush). Blocked: opens Android's notification settings for the app.
+ */
+@androidx.compose.runtime.Composable
+private fun ThisPhoneNotifications() {
+    val context = LocalContext.current
+    var allowed by remember { mutableStateOf(com.allternit.feature.push.AllternitPush.notificationsAllowed(context)) }
+    fun openSystemSettings() {
+        runCatching {
+            context.startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+    val ask = com.allternit.feature.chat.voice.rememberPrimedPermission(com.allternit.feature.chat.voice.AppPermission.Notifications) { granted ->
+        allowed = com.allternit.feature.push.AllternitPush.notificationsAllowed(context)
+        when {
+            granted && allowed -> com.allternit.feature.push.AllternitPush.registerIfAuthorized(context)
+            !allowed -> openSystemSettings()
+            else -> Unit
+        }
+    }
+    SLabel("This phone")
+    SNote(
+        when {
+            !allowed -> "Allternit hasn’t been allowed to notify you on this phone yet."
+            !com.allternit.feature.push.AllternitPush.isConfigured(context) -> "This build can’t receive push notifications."
+            else -> com.allternit.feature.push.AllternitPush.lastRegistrationError(context)?.let { "Push isn’t set up yet: $it" }
+                ?: "Banners from Allternit on this phone, even when the app is closed."
+        },
+    )
+    if (!allowed) SButton("Allow notifications", tag = "settingsNotificationsAllow") { ask() }
 }

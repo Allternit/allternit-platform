@@ -290,8 +290,20 @@ object AllternitAuth {
         }
     }
 
+    /** Work that must run before the session is dropped (wave I1: push removes this phone's token). */
+    private val signOutHooks = java.util.concurrent.CopyOnWriteArrayList<suspend () -> Unit>()
+
+    /**
+     * Registers [hook] to run at the start of [signOut], while the leaving account's token still works
+     * (iOS PushNotificationManager.willSignOut runs before the session goes). A failing hook never blocks sign-out.
+     */
+    fun addSignOutHook(hook: suspend () -> Unit) {
+        signOutHooks += hook
+    }
+
     /** Signs out of Clerk on this device and forgets the cached token. */
     suspend fun signOut(): StepResult {
+        for (hook in signOutHooks) runCatching { hook() }
         tokenProvider.clear()
         cancelEmail()
         return when (val r = Clerk.auth.signOut()) {

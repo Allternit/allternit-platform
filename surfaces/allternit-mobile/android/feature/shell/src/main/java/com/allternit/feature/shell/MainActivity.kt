@@ -94,6 +94,8 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         AllternitAuth.start(applicationContext)
+        // Wave I1: notification channels, push registration after each sign-in, token removal at sign-out.
+        com.allternit.feature.push.AllternitPush.start(applicationContext)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
@@ -174,6 +176,25 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG) readDebugLaunch(intent)
         handleDebugTicket(intent)
         readOpenedDocument(intent)
+        readPushTap(intent)
+    }
+
+    /**
+     * A tapped notification (or its Open / Review button) opens what it points at (iOS
+     * PushNotificationManager.handleTap → DeepLinkRouter): the inbox item, Decisions for an approval, Settings, or
+     * Bots for a bot's message. The workspace applies it when it is already up ([ShellLaunch.nonce]).
+     */
+    private fun readPushTap(intent: Intent) {
+        val tap = com.allternit.feature.push.AllternitPush.readTap(intent) ?: return
+        val nonce = System.nanoTime()
+        val url = tap.url.orEmpty()
+        shellLaunch = when {
+            tap.inboxItem != null -> ShellLaunch(sheet = "inbox", inboxItem = tap.inboxItem, nonce = nonce)
+            tap.event == "approval.requested" -> ShellLaunch(sheet = "inbox", nonce = nonce)
+            url.contains("settings") -> ShellLaunch(tab = "settings", nonce = nonce)
+            tap.botId != null || tap.sessionId != null -> ShellLaunch(mode = ShellMode.Bots, nonce = nonce)
+            else -> ShellLaunch(mode = ShellMode.Home, nonce = nonce)
+        }
     }
 
     /** An ACTION_VIEW on a content or file Uri (a PDF, text, Word or Excel file) opens in the local document viewer. */
@@ -202,6 +223,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         handleDebugTicket(intent)
         readOpenedDocument(intent)
+        readPushTap(intent)
     }
 
     /**

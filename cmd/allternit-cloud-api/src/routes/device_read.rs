@@ -156,6 +156,7 @@ mod tests {
             include_str!("../../migrations_pg/039_push_subscriptions.sql"),
             include_str!("../../migrations_pg/111_apns_device_tokens.sql"),
             include_str!("../../migrations_pg/120_ios_system_surfaces.sql"),
+            include_str!("../../migrations_pg/152_device_token_platform.sql"),
         ] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(&db).await.expect("migration applies");
         }

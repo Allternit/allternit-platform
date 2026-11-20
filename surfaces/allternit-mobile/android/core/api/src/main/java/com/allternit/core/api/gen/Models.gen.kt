@@ -162,8 +162,9 @@ data class ProviderModel(
 @Serializable
 data class RegisterDeviceTokenRequest(
     @SerialName("token") val token: String,
+    /** "ios" (default) or "android". */
     @SerialName("platform") val platform: String? = null,
-    /** "sandbox" or "production". */
+    /** "sandbox" or "production" (iOS only). */
     @SerialName("environment") val environment: String? = null,
     @SerialName("deviceId") val deviceId: String? = null,
     @SerialName("osVersion") val osVersion: String? = null,

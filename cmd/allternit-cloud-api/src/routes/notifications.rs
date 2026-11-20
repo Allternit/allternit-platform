@@ -1321,7 +1321,8 @@ async fn decide_and_send(db: &PgPool, transport: &dyn PushTransport, vapid: &Vap
     if matches!(event.as_str(), "message.received" | "agent.message.sent") && !web_push::allow_message_push(db, user, &msg.tag).await {
         return Outcome::Skipped;
     }
-    let sent = if apns_only { super::apns::send_to_user(db, user, &msg).await } else { web_push::send_to_user(db, transport, vapid, user, &msg).await };
+    // Phone-only events go to the native apps: iPhones (APNs) and Android phones (FCM).
+    let sent = if apns_only { super::apns::send_to_user(db, user, &msg).await + super::fcm::send_to_user(db, user, &msg).await } else { web_push::send_to_user(db, transport, vapid, user, &msg).await };
     if sent > 0 {
         Outcome::Sent
     } else {
@@ -1408,7 +1409,7 @@ pub(crate) mod tests {
 
     pub(crate) async fn schema(db: &PgPool) {
         events_backbone_schema(db).await;
-        for sql in [include_str!("../../migrations_pg/039_push_subscriptions.sql"), include_str!("../../migrations_pg/060_notification_preferences.sql"), include_str!("../../migrations_pg/102_notification_quiet_hours.sql"), include_str!("../../migrations_pg/107_quiet_hours_levels.sql"), include_str!("../../migrations_pg/111_apns_device_tokens.sql"), include_str!("../../migrations_pg/120_ios_system_surfaces.sql")] {
+        for sql in [include_str!("../../migrations_pg/039_push_subscriptions.sql"), include_str!("../../migrations_pg/060_notification_preferences.sql"), include_str!("../../migrations_pg/102_notification_quiet_hours.sql"), include_str!("../../migrations_pg/107_quiet_hours_levels.sql"), include_str!("../../migrations_pg/111_apns_device_tokens.sql"), include_str!("../../migrations_pg/120_ios_system_surfaces.sql"), include_str!("../../migrations_pg/152_device_token_platform.sql")] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
         }
     }

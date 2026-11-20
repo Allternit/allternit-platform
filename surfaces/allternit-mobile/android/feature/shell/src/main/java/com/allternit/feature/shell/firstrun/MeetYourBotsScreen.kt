@@ -304,6 +304,8 @@ internal fun MeetYourBotsScreen(onFinish: (String?) -> Unit, doneLabel: String? 
     var asking by remember { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         notificationsOn = granted
+        // Same consent moment registers this phone for push (iOS requestPermissionAndRegister).
+        if (granted) com.allternit.feature.push.AllternitPush.registerIfAuthorized(context)
         asking = false
         model.next()
     }
