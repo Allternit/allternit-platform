@@ -121,7 +121,7 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
             CONNECTION_GROUPS.firstOrNull { it.first == e.group }?.second?.lowercase()?.contains(q) == true
     }
 
-    val listed = ConnectionsCatalog.entries.filter { store.isListed(it.id) } + store.promoted
+    val listed = ConnectionsCatalog.entries + store.promoted
     val needs = listed.filter { store.state(it.id) == ConnState.Needs }
     val counts = mapOf(
         ConnStatus.All to listed.size,
@@ -131,7 +131,7 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
     )
 
     fun shown(group: String): List<ConnEntry> {
-        val base = ConnectionsCatalog.entries.filter { it.group == group && store.isListed(it.id) }
+        val base = ConnectionsCatalog.entries.filter { it.group == group }
         val extra = store.promoted.filter { it.group == group && base.none { b -> b.id == it.id } }
         return (base + extra).filter { e ->
             visible(e) && when (status) {
