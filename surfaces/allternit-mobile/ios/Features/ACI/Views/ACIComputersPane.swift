@@ -44,7 +44,7 @@ struct ACIComputersPane: View {
         }
         .refreshable { await relay.refresh() }
         .task { await relay.refresh() }
-        .task { consoleOn = ((try? await AccountFlagsClient.shared.string("computers_console")) ?? nil) != nil }
+        .task { consoleOn = (try? await AccountFlagsClient.shared.string("computers_console")) != nil }
         .overlay(alignment: .bottom) { ACIToast(message: $toast) }
         .sheet(isPresented: $isPairOpen) { ACIPairComputerSheet() }
         .sheet(isPresented: $isScreenPickerOpen) { ACIComputerScreenSheet() }
