@@ -166,3 +166,4 @@ test/runtime/cowork-store-boundary.test.ts
 test/runtime/process-registry.test.ts
 test/commands/status-json.test.ts
 test/studio-client.test.ts
+test/memory/sleep-reminders.test.ts

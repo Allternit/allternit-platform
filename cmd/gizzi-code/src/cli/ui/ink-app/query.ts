@@ -14,7 +14,7 @@ import {
   type AutoCompactTrackingState,
 } from './services/compact/autoCompact.js'
 import { buildPostCompactMessages } from './services/compact/compact.js'
-import { sleepPromptStarted, sleepTurnEnded } from './services/memoryDrive/sleep.js'
+import { sleepPromptStarted, sleepTurnEnded, sleepReminderStart, sleepReminderTail, sleepReminderEnd } from './services/memoryDrive/sleep.js'
 /* eslint-disable @typescript-eslint/no-require-imports */
 const reactiveCompact = feature('REACTIVE_COMPACT')
   ? (require('./services/compact/reactiveCompact.js') as typeof import('./services/compact/reactiveCompact.js'))
@@ -233,6 +233,7 @@ export async function* query(
   const sleepAgentId = params.toolUseContext.agentId
   sleepPromptStarted(sleepAgentId)
   try {
+    await sleepReminderStart(sleepAgentId, params.toolUseContext.options.mainLoopModel)
     const terminal = yield* queryLoop(params, consumedCommandUuids)
     // Only reached if queryLoop returned normally. Skipped on throw (error
     // propagates through yield*) and on .return() (Return completion closes
@@ -244,7 +245,14 @@ export async function* query(
     return terminal
   } finally {
     sleepTurnEnded(sleepAgentId)
+    sleepReminderEnd(sleepAgentId)
   }
+}
+
+/** Fired Sleep reminders ride as a meta user message at the tail (cache-safe). */
+function withSleepReminders(messages: Message[], agentId: string | undefined): Message[] {
+  const text = sleepReminderTail(agentId)
+  return text ? [...messages, createUserMessage({ content: text, isMeta: true })] : messages
 }
 
 async function* queryLoop(
@@ -627,7 +635,7 @@ async function* queryLoop(
           let streamingFallbackOccured = false
           queryCheckpoint('query_api_streaming_start')
           for await (const message of deps.callModel({
-            messages: prependUserContext(messagesForQuery, userContext),
+            messages: withSleepReminders(prependUserContext(messagesForQuery, userContext), toolUseContext.agentId),
             systemPrompt: fullSystemPrompt,
             thinkingConfig: toolUseContext.options.thinkingConfig,
             tools: toolUseContext.options.tools,

@@ -7,6 +7,7 @@
 import { getPromptCache1hAllowlist, getPromptCache1hEligible, getSessionId } from '../../bootstrap/state.js'
 import { registerCleanup } from '../../utils/cleanupRegistry.js'
 import { promptCacheTtlSeconds } from '../../../../../shared/util/cache-countdown.js'
+import { SleepReminders } from '../../../../../runtime/memory/sleep/reminders.js'
 import { SleepTriggers } from '../../../../../runtime/memory/sleep/triggers.js'
 
 let exitHooked = false
@@ -45,4 +46,26 @@ export function sleepTurnEnded(agentId: string | undefined): void {
 export function sleepPreCompact(agentId: string | undefined): void {
   if (agentId) return
   SleepTriggers.preCompact(sessionKey())
+}
+
+/**
+ * Main-thread prompt start: read fired Sleep reminders (capped wait, never
+ * throws) and keep them for this prompt's model calls. Subagents get none.
+ */
+export async function sleepReminderStart(agentId: string | undefined, model?: string): Promise<void> {
+  if (agentId) return
+  await SleepReminders.turnStart(sessionKey(), model)
+}
+
+/** Tail text for the next model call of this prompt (undefined when none). */
+export function sleepReminderTail(agentId: string | undefined): string | undefined {
+  if (agentId) return undefined
+  const lines = SleepReminders.tail(sessionKey())
+  return lines.length ? ['<system-reminder>', ...lines, '</system-reminder>'].join('\n') : undefined
+}
+
+/** The prompt ended: drop its reminders. */
+export function sleepReminderEnd(agentId: string | undefined): void {
+  if (agentId) return
+  SleepReminders.clear(sessionKey())
 }
