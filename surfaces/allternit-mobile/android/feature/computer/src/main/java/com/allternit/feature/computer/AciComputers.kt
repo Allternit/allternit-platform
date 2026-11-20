@@ -162,7 +162,7 @@ private fun AciPairComputerSheet(onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.bgPanel, shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)) {
         Column(Modifier.verticalScroll(rememberScrollState()).testTag("aciPairSheet"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Box {
-                AciPromoHero(height = 176.dp, topRadius = 0.dp)
+                AciPromoHero(AciHero.Pair, height = 176.dp, imageHeight = 92.dp, topRadius = 0.dp)
                 Box(Modifier.padding(16.dp).size(44.dp).clip(CircleShape).background(c.bgPrimary).clickable(onClickLabel = "Close pairing instructions") { onDismiss() },
                     contentAlignment = Alignment.Center) { Icon(painterResource(DesignR.drawable.ph_x), null, tint = c.textSecondary, modifier = Modifier.size(18.dp)) }
             }
