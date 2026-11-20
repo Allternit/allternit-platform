@@ -99,6 +99,7 @@ import type { QuotaWindow } from "@/runtime/providers/quota"
 import { Budget } from "@/runtime/session/budget"
 import * as TurnRouter from "@/runtime/routing/turn-router"
 import { SleepTriggers } from "@/runtime/memory/sleep/triggers"
+import { SleepReminders } from "@/runtime/memory/sleep/reminders"
 import { PROMPT_CACHE_TTL_S } from "@/shared/util/cache-countdown"
 
 // @ts-ignore — suppress ai-sdk stdout warnings (see server.ts for details)
@@ -398,7 +399,11 @@ const message = await createUserMessage(input)
 
     // Allternit Sleep: a new prompt cancels the idle timer (and sends
     // `resume` after an `idle`). Top-level sessions only; fire-and-forget.
-    if (!session.parentID) SleepTriggers.promptArrived(input.sessionID, PROMPT_CACHE_TTL_S)
+    if (!session.parentID) {
+      SleepTriggers.promptArrived(input.sessionID, PROMPT_CACHE_TTL_S)
+      // Fired Sleep reminders for this turn (capped wait; rides in the tail below).
+      await SleepReminders.turnStart(input.sessionID, input.model?.modelID)
+    }
 
     // Usage limits (P3.17): a paused session holds the turn until it
     // resumes; one about to run into a limit lands here instead of failing.
@@ -1387,6 +1392,7 @@ const message = await createUserMessage(input)
         return undefined
       })
       if (contextNotice) tail.push(contextNotice)
+      tail.push(...SleepReminders.tail(sessionID)) // only top-level turns ever set it
       // WP9: Context Compiler, shadow mode behind GIZZI_KERNEL_COMPILERS (off by
       // default). Records a ContextProjectionV1; never changes `system`.
       if (KernelTurn.enabled())
