@@ -23,6 +23,7 @@ import com.allternit.feature.artifacts.num
 import com.allternit.feature.artifacts.obj
 import com.allternit.feature.artifacts.str
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -114,10 +115,11 @@ internal fun PlatformPage(back: () -> Unit) {
 
 /** iOS RuntimeOperationsView: the runtime budget dashboard (iOS BudgetDashboardView), then Prewarm and Replay. */
 @Composable
-internal fun RuntimeOpsPage(back: () -> Unit, push: (String) -> Unit) {
+internal fun RuntimeOpsPage(host: SettingsHost, back: () -> Unit, push: (String) -> Unit) {
     SPage("Runtime operations", tag = "settingsRuntimeOps", onBack = back) {
         SNote("How many credits your bots may use each hour, and the tools that keep the runtime fast.")
         BudgetDashboard()
+        ExecutionModeCard(host)
         SCard(Modifier.padding(top = 18.dp)) {
             SRow("Prewarm", "runtime_prewarm", onClick = { push("prewarm") })
             SDivider()
@@ -335,6 +337,44 @@ internal object SelfHosted {
         return if (t.startsWith("https://") && t.length > 8) t else null
     }
 
+    /**
+     * iOS SelfHostedClient.streamEvents: `GET /v1/sessions/:id/events/stream` as server-sent events, resuming after the last
+     * `seq` it saw. Returns when the coroutine is cancelled; a dropped connection reconnects after two seconds.
+     */
+    suspend fun stream(base: String, key: String, sessionId: String, onEvent: (JsonObject) -> Unit) = withContext(Dispatchers.IO) {
+        val live = client.newBuilder().readTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS).build()
+        var lastSeq = 0
+        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+            try {
+                val b = Request.Builder().url("$base/v1/sessions/${LibraryNet.escape(sessionId)}/events/stream")
+                    .header("Authorization", "Bearer $key").header("Accept", "text/event-stream")
+                if (lastSeq > 0) b.header("Last-Event-ID", lastSeq.toString())
+                live.newCall(b.build()).execute().use { r ->
+                    if (r.code == 401 || r.code == 403 || r.code == 404) return@withContext
+                    val source = r.body?.source() ?: return@use
+                    val data = StringBuilder()
+                    while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                        val line = source.readUtf8Line() ?: break
+                        when {
+                            line.isEmpty() -> {
+                                if (data.isNotEmpty()) {
+                                    val ev = runCatching { json.parseToJsonElement(data.toString()) as? JsonObject }.getOrNull()
+                                    val seq = ev?.num("seq")?.toInt()
+                                    if (ev != null && seq != null && seq > lastSeq) { lastSeq = seq; onEvent(ev) }
+                                    data.clear()
+                                }
+                            }
+                            line.startsWith("data:") -> data.append(line.removePrefix("data:").removePrefix(" "))
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
+            kotlinx.coroutines.delay(2000)
+        }
+    }
+
     suspend fun call(base: String, key: String?, method: String, path: String, body: JsonObject? = null, idempotency: String? = null): Load<JsonElement> = withContext(Dispatchers.IO) {
         try {
             val b = Request.Builder().url(base + path)
@@ -415,8 +455,12 @@ internal fun SelfHostedSessionPage(back: () -> Unit) {
     var env by remember { mutableStateOf<String?>(null) }
     var sessionId by remember { mutableStateOf<String?>(null) }
     var draft by remember { mutableStateOf("") }
-    var sent by remember { mutableStateOf(listOf<String>()) }
+    var events by remember { mutableStateOf(listOf<JsonObject>()) }
     var error by remember { mutableStateOf<String?>(null) }
+    androidx.compose.runtime.LaunchedEffect(sessionId) {
+        val id = sessionId ?: return@LaunchedEffect
+        SelfHosted.stream(base, key, id) { ev -> events = events + ev }
+    }
     SPage("Session", tag = "settingsSelfHostedSession", onBack = back) {
         if (base.isBlank()) { StateBox("No server connected", "Connect a server first.", null, null); return@SPage }
         if (sessionId == null) {
@@ -453,7 +497,16 @@ internal fun SelfHostedSessionPage(back: () -> Unit) {
             }
         } else {
             val sid = sessionId ?: ""
-            sent.forEach { SNote("You: $it") }
+            events.forEach { ev ->
+                val d = ev["data"] as? JsonObject
+                when (ev.str("type")) {
+                    "message" -> SNote("${if (d?.str("role") == "user") "You" else "Agent"}: ${d?.str("content").orEmpty()}")
+                    "tool_call" -> SNote("Tool: ${d?.str("name").orEmpty()}")
+                    "tool_result" -> SNote(if (d?.bool("is_error") == true) "Tool failed: ${d?.str("output").orEmpty()}" else "Tool result: ${d?.str("output").orEmpty().take(300)}")
+                    "status" -> d?.str("status")?.let { SNote("Status: $it${d.str("reason")?.let { r -> " ($r)" } ?: ""}") }
+                    "error" -> SError(d?.str("message") ?: "Something went wrong on the server.")
+                }
+            }
             SField("Message", draft, "selfHosted_message", { draft = it }, singleLine = false)
             Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SButton("Send", "selfHosted_send", enabled = draft.isNotBlank()) {
@@ -461,14 +514,13 @@ internal fun SelfHostedSessionPage(back: () -> Unit) {
                     scope.launch {
                         error = null
                         val r = SelfHosted.call(base, key, "POST", "/v1/sessions/${LibraryNet.escape(sid)}/messages", buildJsonObject { put("content", text) }, UUID.randomUUID().toString())
-                        if (r is Load.Ready) { sent = sent + text; draft = "" } else error = (r as? Load.Failed)?.message
+                        if (r is Load.Ready) draft = "" else error = (r as? Load.Failed)?.message
                     }
                 }
                 SButton("Stop", "selfHosted_interrupt") {
                     scope.launch { SelfHosted.call(base, key, "POST", "/v1/sessions/${LibraryNet.escape(sid)}/interrupt", null) }
                 }
             }
-            SNote("Replies stream in the Allternit app on the server's own screen. The live stream view isn't on Android yet.")
         }
         SError(error)
     }

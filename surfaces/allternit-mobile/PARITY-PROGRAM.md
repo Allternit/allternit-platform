@@ -264,23 +264,23 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | MemoryDriveView | Settings | ios/Features/Settings/MemoryDriveView.swift | — | feature/settings/MemoryPages.kt (MemoryDrivePage) | built (#2653) | purge and write are not built |
 | MemorySettingsView | Settings | ios/Features/Settings/MemorySettingsView.swift | — | feature/settings/MemoryPages.kt (MemoryPage) | built (#2653) | memories can be forgotten; editing a memory and About you are not built |
 | ModelManagementView | Settings | ios/Features/Settings/ModelManagementView.swift | — | feature/settings/ManagePages.kt (ModelsPage) | built (#2653) | provider keys are managed on Connections |
-| NodesManagerView | Settings | ios/Features/Settings/NodesManagerView.swift | — | feature/settings/ResourcePages.kt (NODES) | built (#2655) | Join token screen not built |
+| NodesManagerView | Settings | ios/Features/Settings/NodesManagerView.swift | — | feature/settings/ResourcePages.kt (NODES), SettingsExtras.kt (NodeJoinToken) | built (#2655, #2674) | — |
 | NotificationsSettingsView | Settings | ios/Features/Settings/NotificationsSettingsView.swift | — | feature/settings/AccountPages.kt (NotificationsPage) | built (#2653) | event choices, critical-alert texts and quiet hours; the system permission and Live Activities rows are iOS-only |
 | OrganizationAccessView | Settings | ios/Features/Settings/OrganizationAccessView.swift | — | feature/settings/AccountPages.kt (OrganizationPage) | built (#2653) | — |
 | PlatformSettingsView | Settings | ios/Features/Settings/PlatformSettingsView.swift | — | feature/settings/OperatorPages.kt (PlatformPage) | built (#2655) | — |
 | PrewarmManagerView | Settings | ios/Features/Settings/PrewarmManagerView.swift | — | feature/settings/OperatorPages.kt (PrewarmPage) | built (#2655) | — |
 | PrivacySettingsView | Settings | ios/Features/Settings/PrivacySettingsView.swift | — | feature/settings/AccountPages.kt (PrivacyPage) | built (#2653) | Face ID lock row not built (needs the biometric library) |
 | ReplayManagerView | Settings | ios/Features/Settings/ReplayManagerView.swift | — | feature/settings/OperatorPages.kt (REPLAY) | built (#2655) | — |
-| RuntimeOperationsView | Settings | ios/Features/Settings/RuntimeOperationsView.swift | — | feature/settings/OperatorPages.kt (RuntimeOpsPage) | built (#2655) | Execution mode switch not built |
+| RuntimeOperationsView | Settings | ios/Features/Settings/RuntimeOperationsView.swift | — | feature/settings/OperatorPages.kt (RuntimeOpsPage), SettingsExtras.kt (ExecutionModeCard) | built (#2655, #2674) | — |
 | SafariView | Settings | ios/Features/Settings/SafariView.swift | — | feature/settings/SettingsKit.kt (openLink: Custom Tab) | built (#2653) | honours Open links in |
 | SelfHostedSessionView | Settings | ios/Features/Settings/SelfHosted/SelfHostedSessionView.swift | — | feature/settings/OperatorPages.kt (SelfHostedSessionPage) | built (#2655) | Live event stream not built |
 | SelfHostedSettingsView | Settings | ios/Features/Settings/SelfHosted/SelfHostedSettingsView.swift | — | feature/settings/OperatorPages.kt (SelfHostedPage) | built (#2655) | — |
 | SettingsScreen | Settings | — | src/fabric-session/phone/screens/SettingsScreen.tsx | feature/settings/SettingsRoot.kt | built (#2653) | part 2 replaces the placeholders |
 | SettingsView | Settings | ios/Features/Settings/SettingsView.swift | — | feature/settings/SettingsRoot.kt (SettingsRoot, RootList, AdvancedPage) | built (#2653) | Accounts card shows the person and organization; switching organizations and other remembered accounts is not built. Customize and part-2 pages show a placeholder naming the screen |
-| SubagentsSettingsView | Settings | ios/Features/Settings/SubagentsSettingsView.swift | — | feature/settings/ManagePages.kt (SubagentsPage) | built (#2653) | — |
+| SubagentsSettingsView | Settings | ios/Features/Settings/SubagentsSettingsView.swift | — | feature/settings/ManagePages.kt (SubagentsPage) | built (#2653, #2674 field names) | — |
 | TwinSettingsView | Settings | ios/Features/Settings/TwinSettingsView.swift | — | feature/settings/OperatorPages.kt (TwinPage) | built (#2655) | — |
 | VPSServersManagerView | Settings | ios/Features/Settings/VPSServersManagerView.swift | — | feature/settings/ResourcePages.kt (VPS_SERVERS) | built (#2655) | Connection test not built |
-| WebhooksSettingsView | Settings | ios/Features/Settings/WebhooksSettingsView.swift | — | feature/settings/ManagePages.kt (WebhooksPage) | built (#2653) | — |
+| WebhooksSettingsView | Settings | ios/Features/Settings/WebhooksSettingsView.swift | — | feature/settings/ManagePages.kt (WebhooksPage) | built (#2653, #2674 field names) | — |
 | section: settings | Settings | — | src/fabric-session/phone/phone-nav.ts (PhoneSection settings) | feature/shell WorkspaceShell.kt (ShellPage.Settings -> SettingsRoot) | built (#2653) | drawer avatar and the first-run fix open it |
 
 ## Wave H. Money + voice

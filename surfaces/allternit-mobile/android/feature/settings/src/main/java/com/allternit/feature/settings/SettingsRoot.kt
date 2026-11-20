@@ -195,10 +195,10 @@ fun SettingsRoot(host: SettingsHost) {
             "cloud-instances" -> ResourcePage(CLOUD_INSTANCES, back)
             "cloud-deploy" -> ResourcePage(CLOUD_DEPLOY, back)
             "vps-servers" -> ResourcePage(VPS_SERVERS, back)
-            "nodes" -> ResourcePage(NODES, back)
+            "nodes" -> ResourcePage(NODES, back, footer = ({ NodeJoinToken() }))
             "cloud-backups" -> CloudBackupsPage(back)
             "byoc" -> ResourcePage(BYOC, back)
-            "runtime-ops" -> RuntimeOpsPage(back, push)
+            "runtime-ops" -> RuntimeOpsPage(host, back, push)
             "prewarm" -> PrewarmPage(back)
             "replay" -> ResourcePage(REPLAY, back)
             "meetings" -> MeetingsPage(back)
@@ -243,6 +243,7 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
                 if (account.organizationId != null) {
                     SDivider()
                     SRow("Organization", "settingsOrgRow", icon = DesignR.drawable.ph_globe, detail = "Bots, chats and billing follow the active account.", onClick = { push("organization") })
+                    OrgSwitcher(account.organizationId)
                 }
             } else {
                 AccountRow("Account", "Sign in to sync across devices", "settingsAccountRow") { push("profile") }

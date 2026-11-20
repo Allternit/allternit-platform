@@ -361,6 +361,8 @@ fun CustomizeRoot(host: SettingsHost, onBack: () -> Unit) {
     when (more) {
         "mcp" -> { McpPage(host) { more = null }; return }
         "webhooks" -> { WebhooksPage(host) { more = null }; return }
+        "sources" -> { SourcesPage { more = null }; return }
+        "publish" -> { PublishPage({ more = null }, { more = null; section = "plugins" }, host.onClose); return }
     }
     SPage("Customize", tag = "customizeScreen", onBack = onBack) {
         if (host.account == null) {
@@ -385,6 +387,10 @@ fun CustomizeRoot(host: SettingsHost, onBack: () -> Unit) {
             SRow("MCP servers", "customize_more_mcp", icon = DesignR.drawable.ph_plugs_connected_thin, onClick = { more = "mcp" })
             SDivider()
             SRow("Webhooks", "customize_more_webhooks", icon = DesignR.drawable.ph_webhooks_logo, onClick = { more = "webhooks" })
+            SDivider()
+            SRow("Sources", "customize_more_sources", icon = DesignR.drawable.ph_plugs_connected_thin, onClick = { more = "sources" })
+            SDivider()
+            SRow("Publish", "customize_more_publish", icon = DesignR.drawable.ph_arrow_square_out, onClick = { more = "publish" })
         }
     }
 }

@@ -82,7 +82,7 @@ internal fun JsonObject.facts(skip: Set<String>): List<Pair<String, String>> = e
 }
 
 @Composable
-internal fun ResourcePage(spec: ResourceSpec, back: () -> Unit) {
+internal fun ResourcePage(spec: ResourceSpec, back: () -> Unit, footer: (@Composable () -> Unit)? = null) {
     val (load, reload) = rememberLoad(spec.tag) { resourceCall(spec.cloud, "GET", spec.list).toLoad("load ${spec.title.lowercase()}") }
     var selected by remember { mutableStateOf<JsonObject?>(null) }
     var creating by remember { mutableStateOf(false) }
@@ -114,6 +114,7 @@ internal fun ResourcePage(spec: ResourceSpec, back: () -> Unit) {
         if (spec.createTitle != null && spec.createPath != null) {
             SCard(Modifier.padding(top = 18.dp)) { SRow(spec.createTitle, "${spec.tag}_new", chevron = false, onClick = { creating = true }) }
         }
+        footer?.invoke()
         SButton("Refresh", "${spec.tag}_refresh") { reload() }
     }
 }
@@ -210,13 +211,13 @@ private fun ResourceForm(spec: ResourceSpec, onBack: () -> Unit, onDone: () -> U
 }
 
 private fun esc(s: String) = LibraryNet.escape(s)
-private fun JsonObject.id(): String = first(listOf("id", "name")) ?: ""
+private fun JsonObject.id(): String = first(listOf("deployment_id", "id", "name")) ?: ""
 
 private const val WIZ = "api/v1/cloud/wizard/deployments"
 
 internal val CLOUD_INSTANCES = ResourceSpec(
     title = "Cloud instances", tag = "cloudInstances", cloud = true, list = WIZ, listKeys = listOf("deployments", "sessions", "items"),
-    titleKeys = listOf("instance_name", "name", "id"), detailKeys = listOf("status", "provider", "step"),
+    idKeys = listOf("deployment_id", "id"), titleKeys = listOf("instance_name", "name", "id"), detailKeys = listOf("status", "provider", "step"),
     note = "Servers you registered with Allternit. Advance a setup, bootstrap it, or cancel it.",
     empty = "No registered instances. Register one and it shows up here.",
     actions = listOf(
@@ -240,7 +241,7 @@ internal val CLOUD_INSTANCES = ResourceSpec(
 
 internal val CLOUD_DEPLOY = ResourceSpec(
     title = "Cloud deployments", tag = "cloudDeploy", list = "deployments", listKeys = listOf("deployments", "items"),
-    titleKeys = listOf("instance_name", "name", "id"), detailKeys = listOf("status", "provider_id", "region_id"),
+    idKeys = listOf("deployment_id", "id"), titleKeys = listOf("instance_name", "name", "id"), detailKeys = listOf("status", "provider_id", "region_id"),
     note = "Allternit servers being built at a cloud provider, and the ones already running.",
     empty = "No deployments yet.",
     actions = listOf(
@@ -335,6 +336,7 @@ internal fun CloudBackupsPage(back: () -> Unit) {
             createTitle = "Make a restore point now", createPath = "$base/snapshots",
         ),
         back = { computer = null },
+        footer = ({ ComputerExportRow(base) }),
     )
 }
 

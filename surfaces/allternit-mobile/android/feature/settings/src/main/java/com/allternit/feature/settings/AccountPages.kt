@@ -178,7 +178,8 @@ internal fun PrivacyPage(host: SettingsHost, back: () -> Unit) {
     var working by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<String?>(null) }
     SPage("Privacy", tag = "settingsPrivacy", onBack = back) {
-        SCard {
+        AppLockRow()
+        SCard(Modifier.padding(top = 12.dp)) {
             SToggleRow("Improve the model for everyone", "privacy_improve", improve, detail = "Allow your chats to be used to improve Allternit's models. Saved on this device.",
                 onChange = { improve = it; SettingsPrefs.setImproveModel(context, it) })
         }

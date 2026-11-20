@@ -113,13 +113,20 @@ internal fun MemoryDrivePage(host: SettingsHost, back: () -> Unit, push: (String
     val (tree, reloadTree) = rememberLoad(drive) { Net.get("memory/drive/tree" + driveQuery(drive)).toLoad("load the files") }
     var open by remember { mutableStateOf<String?>(null) }
     var content by remember { mutableStateOf<String?>(null) }
+    var revision by remember { mutableStateOf<String?>(null) }
+    var purging by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    SPage("Memory drive", tag = "settingsMemoryDrive", onBack = if (open != null) ({ open = null; content = null }) else back) {
+    SPage("Memory drive", tag = "settingsMemoryDrive", onBack = if (purging) ({ purging = false }) else if (open != null) ({ open = null; content = null; revision = null }) else back) {
         if (open != null) {
             val path = open ?: ""
             SNote(path)
             SCard { SRow("History", "drive_history", detail = "Every saved version of this file.", onClick = { DriveSelection.path = path; push("memory-history") }) }
-            SNote(content ?: "Loading...")
+            if (purging) {
+                PurgeMemories(DriveSelection.drive, content ?: "", revision ?: "", onDone = { msg -> purging = false; message = msg; open = null; content = null; revision = null; reloadTree() })
+            } else {
+                if (revision != null && MemoryEntries.parse(content ?: "").isNotEmpty()) SCard { SRow("Delete memories", "drive_purge", destructive = true, detail = "Remove entries from this file and its history.", onClick = { purging = true }) }
+                SNote(content ?: "Loading...")
+            }
         } else {
             LoadView(mounts, reloadMounts, "load your drives") { body ->
                 val rows = body.listUnder("mounts", "drives", "items")
@@ -144,6 +151,7 @@ internal fun MemoryDrivePage(host: SettingsHost, back: () -> Unit, push: (String
                             content = null
                             scope.launch {
                                 val r = Net.get("memory/drive/file?path=${q(path)}${driveQuery(DriveSelection.drive, false)}")
+                                revision = if (r is ApiResult.Ok) r.value.obj.str("revision") else null
                                 content = if (r is ApiResult.Ok) (r.value.obj.str("content") ?: r.value.obj.str("text") ?: "(empty)") else r.friendly("open the file")
                             }
                         })
@@ -174,6 +182,8 @@ internal fun MemoryHistoryPage(host: SettingsHost, back: () -> Unit) {
     val (copies, reloadCopies) = rememberLoad("copies") { Net.get("memory/drive/copies").toLoad("load the copies") }
     var shown by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var selected by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var confirmRestore by remember { mutableStateOf(false) }
     SPage("History", tag = "settingsMemoryHistory", onBack = back) {
         SNote(path.ifBlank { "No file chosen. Open a file in the Memory drive first." })
         LoadView(history, reloadHistory, "load the history") { body ->
@@ -184,6 +194,7 @@ internal fun MemoryHistoryPage(host: SettingsHost, back: () -> Unit) {
                     if (i > 0) SDivider()
                     SRow(r.str("message") ?: r.str("summary") ?: rev.take(8), "history_rev_$i", detail = listOfNotNull(r.str("author"), r.str("at") ?: r.str("created_at") ?: r.str("date")).joinToString(" · ").ifBlank { null }, onClick = {
                         shown = "Loading..."
+                        selected = rev to (((r["parents"] as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonPrimitive)?.content ?: EMPTY_TREE)
                         scope.launch {
                             val res = Net.get("memory/drive/file?path=${q(path)}&revision=${q(rev)}${driveQuery(drive, false)}")
                             shown = if (res is ApiResult.Ok) (res.value.obj.str("content") ?: res.value.obj.str("text") ?: "(empty)") else res.friendly("open that version")
@@ -193,6 +204,39 @@ internal fun MemoryHistoryPage(host: SettingsHost, back: () -> Unit) {
             }
         }
         shown?.let { SLabel("Version"); SNote(it) }
+        selected?.let { (rev, parent) ->
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SButton("What changed", "history_diff") {
+                    scope.launch {
+                        val r = Net.get("memory/drive/diff?from=${q(parent)}&to=${q(rev)}&path=${q(path)}${driveQuery(drive, false)}")
+                        shown = if (r is ApiResult.Ok) (r.value.obj.str("diff")?.ifBlank { null } ?: "No changes.") else r.friendly("load the changes")
+                    }
+                }
+                SButton("Compare with now", "history_compare") {
+                    scope.launch {
+                        val cur = Net.get("memory/drive/file?path=${q(path)}${driveQuery(drive, false)}")
+                        val now = (cur as? ApiResult.Ok)?.value?.obj?.str("revision")
+                        if (now == null) { shown = cur.friendly("load the current version"); return@launch }
+                        val r = Net.get("memory/drive/diff?from=${q(rev)}&to=${q(now)}&path=${q(path)}${driveQuery(drive, false)}")
+                        shown = if (r is ApiResult.Ok) (r.value.obj.str("diff")?.ifBlank { null } ?: "Same as now.") else r.friendly("compare")
+                    }
+                }
+                SButton("Restore", "history_restore") { confirmRestore = true }
+            }
+        }
+        if (confirmRestore) androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmRestore = false },
+            title = { androidx.compose.material3.Text("Restore this version?") },
+            text = { androidx.compose.material3.Text("The file goes back to this text. History stays, so you can undo it.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    confirmRestore = false
+                    val rev = selected?.first ?: return@TextButton
+                    scope.launch { message = restoreMemoryFile(path, rev, drive); reloadHistory() }
+                }) { androidx.compose.material3.Text("Restore") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmRestore = false }) { androidx.compose.material3.Text("Cancel") } },
+        )
         SLabel("Copies")
         LoadView(copies, reloadCopies, "load the copies") { body ->
             val rows = body.listUnder("copies", "items")
@@ -214,4 +258,22 @@ internal fun MemoryHistoryPage(host: SettingsHost, back: () -> Unit) {
         }
         message?.let { SNote(it) }
     }
+}
+
+private const val EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+/** iOS MemoryDriveHistoryAPI.restore: one new SetFile commit with the old text, guarded by the current revision. */
+private suspend fun restoreMemoryFile(path: String, rev: String, drive: String?): String {
+    val old = Net.get("memory/drive/file?path=${q(path)}&revision=${q(rev)}${driveQuery(drive, false)}")
+    val oldText = (old as? ApiResult.Ok)?.value?.obj?.str("content") ?: return old.friendly("load that version")
+    val cur = Net.get("memory/drive/file?path=${q(path)}${driveQuery(drive, false)}")
+    val curRev = (cur as? ApiResult.Ok)?.value?.obj?.str("revision") ?: return cur.friendly("load the current version")
+    val body = buildJsonObject {
+        if (!drive.isNullOrBlank() && drive != "personal") put("drive", drive)
+        put("expected_revision", curRev)
+        put("message", "Restore $path to ${rev.take(8)} in Settings")
+        put("operations", kotlinx.serialization.json.JsonArray(listOf(buildJsonObject { put("SetFile", buildJsonObject { put("path", path); put("content", oldText) }) })))
+    }
+    val r = Net.send("POST", "memory/drive/write", body)
+    return if (r is ApiResult.Ok) "Restored." else r.friendly("restore that version")
 }
