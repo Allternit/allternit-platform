@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.18.0 (2026-11-20)
+
+- **Allternit Sleep.** Gizzi sends Sleep signals (idle, resume, before compaction, session end) when Sleep is on, and local autoDream stays off so only one consolidator runs. `gizzi memory sleep status|run|report|undo|on|off`, `gizzi memory disputes [resolve]` and `gizzi memory pages`; Sleep rows in the TUI `/memory` view.
+- **Memory conflicts.** Recall shows conflicting memories to the model with both sides and a pick; a conflict that needs you is asked once per session, and the answer resolves it.
+- **Reminders from Sleep.** Fired Sleep reminders arrive at the start of a turn, in the CLI and in the Desktop runtime.
+- **Claude organization.** The `claude-org` provider bills chats to your own Claude organization (`<model> (your organization)`). `gizzi auth link claude-org` / `unlink claude-org`, and a "Claude organization" line in `gizzi auth status`.
+- **Apps with access.** `gizzi auth apps list`, `apps cap <app> <dollars>` and `apps revoke <app>` for apps that use Sign in with Allternit.
+- **Fixes.** `time` lookups read a named place in its own zone and no longer match "in/at/am" inside words; the computer-use prompt is back under its size cap; `bun test` no longer depends on the machine it runs on.
+
 ## 2.17.0 (2026-11-19)
 
 - **Worktrees.** `worktree_enter` and `worktree_exit` move a session into its own git worktree, only when asked. Exit keeps a tree that has uncommitted or unpushed work, and never removes a tree another session made.
