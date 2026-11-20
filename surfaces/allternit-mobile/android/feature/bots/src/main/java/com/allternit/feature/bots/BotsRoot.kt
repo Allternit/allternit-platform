@@ -124,6 +124,25 @@ class BotsOfficeKit internal constructor(private val host: BotsHost, private val
     /** Pushes the bot's full chat screen over the floor. */
     fun openFullChat(botId: String) = nav.open(BotRoute.Chat(botId, null))
 
+    /** The bot's settings (iOS AgentDetailView: Behavior, trust tier), the chief dock's Autopilot sheet links here. */
+    fun openBotSettings(botId: String) = nav.open(BotRoute.Settings(botId))
+
+    /** The shell's sign-in (Settings), for the chief dock's signed-out state. */
+    fun openSignIn() = host.openSignIn()
+
+    /**
+     * "Pick your main bot" (step 27): Bots mode's own new-bot sheet ([NewBotSheet]); the first bot made on an account
+     * with no main bot becomes the main bot ([BotFormData.needsMain]). [onDone] runs after the roster is refreshed.
+     */
+    @Composable
+    fun MainBotSetup(onDismiss: () -> Unit, onDone: () -> Unit) {
+        val scope = rememberCoroutineScope()
+        NewBotSheet(
+            store = store, host = host, onBrowseTemplates = null, onDismiss = onDismiss,
+            onCreated = { scope.launch { store.refreshAll(); onDone() } },
+        )
+    }
+
     /**
      * The bot's main chat, embedded. [refreshKey] re-reads the session's permission asks (bump it after an approval
      * from the sheet's card so the chat's own card closes too).

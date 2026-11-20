@@ -67,6 +67,8 @@ fun OfficeApprovalCard(
     more: Int,
     onDone: (need: OfficeNeed, bubble: String?) -> Unit,
     modifier: Modifier = Modifier,
+    /** The suggestion's accept button: "Approve" on the sheet, "Yes, do it" on the chief dock (step 27). */
+    suggestionApproveTitle: String = "Approve",
 ) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
@@ -157,7 +159,7 @@ fun OfficeApprovalCard(
                     CardButton("Not now", "officeCardNotNow", label = "Not now: ${need.thread.displayTitle}", enabled = busy == null, busy = busy == "no") {
                         act("no", null) { store.act(need.thread, "decline").botsProblem("close the suggestion") }
                     }
-                    CardButton("Approve", "officeCardApprove", primary = true, label = "Approve: ${need.thread.displayTitle}", enabled = busy == null, busy = busy == "yes") {
+                    CardButton(suggestionApproveTitle, "officeCardApprove", primary = true, label = "$suggestionApproveTitle: ${need.thread.displayTitle}", enabled = busy == null, busy = busy == "yes") {
                         act("yes", "Started: ${need.thread.displayTitle}".take(120)) { store.act(need.thread, "approve").botsProblem("start it") }
                     }
                 }

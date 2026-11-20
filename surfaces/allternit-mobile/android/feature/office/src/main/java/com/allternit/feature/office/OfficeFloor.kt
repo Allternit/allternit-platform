@@ -181,20 +181,31 @@ private class OfficePanelThread(private val store: BotModeStore, private val bac
         }
     }
 
-    /** Sends a message from the panel into the bot's main chat, no navigation. */
-    fun send(text: String, id: String) {
+    /**
+     * Sends a message from the panel (or the chief dock's mic, step 27) into the bot's main chat, no navigation.
+     * [onResult] gets null once the message is on its way, else why it couldn't be sent.
+     */
+    fun send(text: String, id: String, onResult: (String?) -> Unit = {}) {
         scope.launch {
             var ready = botId == id && chats[id]?.currentSessionId != null
             if (!ready) ready = select(id)
             val chat = chats[id]
-            if (!ready || chat == null) { if (botId == id && sendError == null) sendError = "Couldn't send. Try again."; return@launch }
+            if (!ready || chat == null) {
+                if (botId == id && sendError == null) sendError = "Couldn't send. Try again."
+                onResult(sendError?.takeIf { botId == id } ?: "Couldn't send. Try again."); return@launch
+            }
             // Let the history land first so it can't replace the new message.
             var waited = 0
             while (waited < 50 && chat.messages.isEmpty() && chat.transientError == null) { delay(100); waited++ }
-            if (chat.isStreaming || chat.isCreatingSession || chat.currentSessionId == null) { if (botId == id) sendError = "Couldn't send. Try again."; return@launch }
+            if (chat.isStreaming || chat.isCreatingSession || chat.currentSessionId == null) {
+                val why = if (chat.isStreaming) "Still answering. Try again in a moment." else "Couldn't send. Try again."
+                if (botId == id) sendError = why
+                onResult(why); return@launch
+            }
             sendError = null
             val (modelId, effort) = OfficeFeature.selectedModel()
             chat.send(ChatSendRequest(text = text, runtimeModelId = modelId, effort = effort))
+            onResult(null)
         }
     }
 
@@ -291,6 +302,9 @@ addEventListener('message', (e) => {
  * On the Workspace floor (step 26) with a [kit], tapping a bot opens [OfficeThreadSheet] over the floor instead, the
  * "N need you" pill ([OfficeNeedPill]) opens the first waiting bot with its [OfficeApprovalCard], and an approval adds
  * a done bubble to the feed.
+ * Step 27 adds the chief dock ([ChiefDock]: the main bot, hold-to-talk, the Autopilot switch and its [AutopilotSheet],
+ * the main bot's suggestion card) at the bottom of the floor, hidden while a thread sheet is open, and the
+ * "While you were away" card ([OfficeDigestCard]) when the Office opens after 30 minutes or more away.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -320,6 +334,38 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
     val needs = remember(store, backend) { OfficeNeeds(store, backend) }
     var done by remember { mutableStateOf<List<OfficeDoneBubble>>(emptyList()) }
     val sheetOn = kit != null
+    // Step 27: Autopilot, the dock's send line, the digest, and the sheets the dock opens.
+    val autopilot = remember(userId) { AutopilotModel() }
+    var autopilotOpen by rememberSaveable { mutableStateOf(false) }
+    var pickMainOpen by rememberSaveable { mutableStateOf(false) }
+    var sendStatus by remember { mutableStateOf<String?>(null) }
+    var digest by remember { mutableStateOf<FloorDigest?>(null) }
+    // One `POST /floor/seen` per Office visit (kept across rotation, so the digest isn't lost to a second post).
+    var seenPosted by rememberSaveable(userId) { mutableStateOf(false) }
+    val mainBot = officeMainBot(store, floor)
+    LaunchedEffect(autopilot) { if (userId != null && sheetOn) autopilot.load() }
+    LaunchedEffect(userId, sheetOn) {
+        if (userId == null || !sheetOn || seenPosted) return@LaunchedEffect
+        val seen = FloorClient.seen() ?: return@LaunchedEffect
+        seenPosted = true
+        val previous = seen.previous
+        if (previous != null && digestDue(seen)) FloorClient.digest(previous)?.takeIf { !it.isEmpty }?.let { digest = it }
+    }
+    LaunchedEffect(sendStatus) { if (sendStatus != null) { delay(6_000); sendStatus = null } }
+
+    /** After a card's answer (sheet or dock): drop the need, add the done bubble, then re-read threads, needs and floor. */
+    fun needDone(need: OfficeNeed, bubble: String?) {
+        needs.markAnswered(need)
+        if (bubble != null) {
+            val now = System.currentTimeMillis()
+            done = (done.filter { now - it.at < 600_000L } + OfficeDoneBubble("done-${need.id}-$now", need.botId, bubble, now)).takeLast(8)
+        }
+        scope.launch {
+            store.refreshThreads()
+            needs.refresh()
+            if (frameV2 && userId != null) FloorClient.state()?.let { floor = it }
+        }
+    }
 
     // Names only for the Commons studios; a failed load just omits the field. Statuses and questions come from the
     // threads, so keep them fresh while the floor is open (iOS: every 15 s).
@@ -448,6 +494,37 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
                     modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
                 )
             }
+            // The chief dock; it hides while a thread sheet is open so the two never stack.
+            if (kit != null && !full && sheetBot == null) {
+                val main = mainBot
+                val suggestion = main?.let { m -> needs.items.firstOrNull { it is OfficeNeed.Suggestion && it.botId == m.id } as? OfficeNeed.Suggestion }
+                ChiefDock(
+                    mainBot = main, signedIn = userId != null, store = store, backend = kit.backend, autopilot = autopilot,
+                    suggestion = suggestion, sendStatus = sendStatus,
+                    onTalk = { text ->
+                        if (main != null) {
+                            sendStatus = "Sending to ${main.displayName}…"
+                            thread.send(text, main.id) { err -> sendStatus = err ?: "Sent to ${main.displayName}. Tap to open the thread." }
+                        }
+                    },
+                    onOpenMain = { main?.let { sheetBot = it.id } },
+                    onOpenAutopilot = { autopilotOpen = true },
+                    onPickMain = { pickMainOpen = true },
+                    onSignIn = { kit.openSignIn() },
+                    onSuggestionDone = { n, b -> needDone(n, b) },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
+            // "While you were away": once per visit after 30+ minutes away; a line opens that bot's sheet.
+            val away = digest
+            if (kit != null && away != null && !full && sheetBot == null) {
+                OfficeDigestCard(
+                    away, store, mainBot?.displayName,
+                    onOpenBot = { id -> digest = null; sheetBot = id },
+                    onDismiss = { digest = null },
+                    modifier = Modifier.align(Alignment.TopCenter).padding(start = 12.dp, end = 12.dp, top = 58.dp),
+                )
+            }
         }
     }
 
@@ -456,24 +533,33 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
         if (store.bot(openId) == null) {
             LaunchedEffect(openId) { sheetBot = null; link.focus(null) }
         } else {
-            val mainName = floor?.mainBotId?.let { store.bot(it)?.displayName } ?: store.bots.firstOrNull { it.isPrimaryTemplateBot }?.displayName
+            val mainName = mainBot?.displayName
             OfficeThreadSheet(
                 botId = openId, store = store, kit = kit, needs = needs, mainBotName = mainName,
                 onInset = { bottom -> link.focus(openId, bottom = bottom) },
-                onDone = { need, bubble ->
-                    needs.markAnswered(need)
-                    if (bubble != null) {
-                        val now = System.currentTimeMillis()
-                        done = (done.filter { now - it.at < 600_000L } + OfficeDoneBubble("done-${need.id}-$now", need.botId, bubble, now)).takeLast(8)
-                    }
-                    scope.launch {
-                        store.refreshThreads()
-                        needs.refresh()
-                        if (frameV2 && userId != null) FloorClient.state()?.let { floor = it }
-                    }
-                },
+                onDone = { need, bubble -> needDone(need, bubble) },
                 onDismiss = { sheetBot = null; link.focus(null) },
             )
         }
+    }
+
+    if (kit != null && autopilotOpen && !full) {
+        AutopilotSheet(
+            model = autopilot, mainBot = mainBot, bots = store.bots, pods = floor?.pods.orEmpty(),
+            onOpenBotSettings = { id -> kit.openBotSettings(id) },
+            onDismiss = { autopilotOpen = false },
+        )
+    }
+    if (kit != null && pickMainOpen) {
+        kit.MainBotSetup(
+            onDismiss = { pickMainOpen = false },
+            onDone = {
+                pickMainOpen = false
+                scope.launch {
+                    if (frameV2 && userId != null) FloorClient.state()?.let { floor = it }
+                    autopilot.load()
+                }
+            },
+        )
     }
 }
