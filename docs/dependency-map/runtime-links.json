@@ -1742,6 +1742,47 @@
         "allternit/cmd/gizzi-code/src/runtime/services/freeweightsUpload.ts",
         "allternit/cmd/gizzi-code/src/cli/commands/models.ts"
       ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/memory",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP POST /api/v1/memory/sleep/signal",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/memory",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP GET /api/v1/memory/sleep/status",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/memory",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP GET /api/v1/memory/sleep/context",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/memory",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP POST /api/v1/memory/disputes/:id/resolve",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/routes.rs",
+        "allternit/cmd/allternit-api/src/sleep/disputes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/memory",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "HTTP POST /api/v1/memory/drive/capture/turn (role extension)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/routes.rs"
+      ]
     }
   ]
 }
