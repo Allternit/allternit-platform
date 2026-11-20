@@ -20,6 +20,8 @@ final class ACIComputersClient: Sendable {
         case notAvailable
         /// 409 from the host relay: the computer is asleep and is never woken to be read.
         case asleep(ConsoleSnapshot?)
+        /// 403 `needs_elevation` from `POST host/actions`: the one-time admin helper is not set up on that computer.
+        case needsElevation(String)
 
         var errorDescription: String? {
             switch self {
@@ -31,6 +33,7 @@ final class ACIComputersClient: Sendable {
             case .server(let message): return message
             case .notAvailable: return "Not available on your account yet."
             case .asleep: return "Asleep, not woken."
+            case .needsElevation: return "This change needs the one-time admin helper on that computer."
             }
         }
     }
@@ -376,6 +379,119 @@ final class ACIComputersClient: Sendable {
         }
     }
 
+    // MARK: Console manage (findings, approvals, SSH keys, backups, settings)
+
+    /// Contract `HostAction` (`{ type, target }`); `label` is the plain sentence the node may add.
+    struct HostAction: Decodable, Sendable, Equatable {
+        let type: String
+        let target: String
+        let label: String?
+    }
+
+    struct HostFinding: Decodable, Sendable, Identifiable, Equatable {
+        let id: String
+        let severity: String      // info | warning | critical
+        let category: String      // disk | security | service | update | config
+        let title: String
+        let detail: String
+        let suggestedAction: HostAction?
+    }
+
+    struct HostActionResult: Decodable, Sendable, Equatable {
+        let changeId: String
+        let undo: HostAction?
+    }
+
+    struct SSHKey: Decodable, Sendable, Identifiable, Equatable {
+        let id: String
+        let label: String
+        let fingerprint: String?
+        let createdAt: String?
+        let kind: String?         // "agent" keys are short-lived
+    }
+
+    struct CloudBackup: Decodable, Sendable, Identifiable, Equatable {
+        let id: String
+        let createdAt: String
+        let sizeBytes: Double?
+    }
+
+    private struct FindingsEnvelope: Decodable { let findings: [ACILossy<HostFinding>]? }
+    private struct KeysEnvelope: Decodable { let keys: [ACILossy<SSHKey>]? }
+    private struct BackupsEnvelope: Decodable { let backups: [ACILossy<CloudBackup>]? }
+    private struct ApprovalEnvelope: Decodable { let approvalId: String?; let approval_id: String? }
+
+    private func jsonBody(_ dict: [String: String]) -> Data? { try? JSONSerialization.data(withJSONObject: dict) }
+
+    func hostFindings(id: String) async throws -> [HostFinding] {
+        let env = try? JSONDecoder().decode(FindingsEnvelope.self, from: try await cloud(hostPath(id, "host/findings")))
+        return (env?.findings ?? []).compactMap(\.value)
+    }
+
+    /// The cloud issues one approval id bound to this action, this computer and this user.
+    func requestApproval(id: String, type: String, target: String) async throws -> String {
+        let data = try await cloud(hostPath(id, "approvals"), method: "POST", body: jsonBody(["type": type, "target": target]))
+        let env = try? JSONDecoder().decode(ApprovalEnvelope.self, from: data)
+        guard let approval = env?.approvalId ?? env?.approval_id, !approval.isEmpty else {
+            throw Failure.server("Couldn't get an approval for this change. Nothing was changed.")
+        }
+        return approval
+    }
+
+    func runHostAction(id: String, type: String, target: String, approvalId: String) async throws -> HostActionResult {
+        let data = try await cloud(hostPath(id, "host/actions"), method: "POST",
+                                   body: jsonBody(["type": type, "target": target, "approval_id": approvalId]))
+        guard let result = try? JSONDecoder().decode(HostActionResult.self, from: data) else {
+            throw Failure.server("The change ran but the answer was unreadable. Check Activity.")
+        }
+        return result
+    }
+
+    func sshKeys(id: String) async throws -> [SSHKey] {
+        let data = try await cloud(hostPath(id, "ssh-keys"))
+        let decoder = JSONDecoder()
+        if let rows = try? decoder.decode([ACILossy<SSHKey>].self, from: data) { return rows.compactMap(\.value) }
+        return ((try? decoder.decode(KeysEnvelope.self, from: data))?.keys ?? []).compactMap(\.value)
+    }
+
+    func addSSHKey(id: String, label: String, publicKey: String) async throws {
+        _ = try await cloud(hostPath(id, "ssh-keys"), method: "POST", body: jsonBody(["label": label, "publicKey": publicKey]))
+    }
+
+    func removeSSHKey(id: String, keyId: String) async throws {
+        let key = keyId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? keyId
+        _ = try await cloud(hostPath(id, "ssh-keys/\(key)"), method: "DELETE")
+    }
+
+    /// Orgo daily backups (cloud computers only).
+    func cloudBackups(id: String) async throws -> [CloudBackup] {
+        let data = try await cloud(hostPath(id, "backups"))
+        let decoder = JSONDecoder()
+        if let rows = try? decoder.decode([ACILossy<CloudBackup>].self, from: data) { return rows.compactMap(\.value) }
+        return ((try? decoder.decode(BackupsEnvelope.self, from: data))?.backups ?? []).compactMap(\.value)
+    }
+
+    func restoreCloudBackup(id: String, backupId: String) async throws {
+        _ = try await cloud(hostPath(id, "backups/restore"), method: "POST", body: jsonBody(["backupId": backupId]))
+    }
+
+    /// Cloud settings: restart, move (`location` = nyc | chi | lon | syd), rebuild.
+    func restartCloud(id: String) async throws { _ = try await cloud(hostPath(id, "restart"), method: "POST") }
+    func moveCloud(id: String, location: String) async throws {
+        _ = try await cloud(hostPath(id, "move"), method: "POST", body: jsonBody(["location": location]))
+    }
+    func rebuildCloud(id: String) async throws { _ = try await cloud(hostPath(id, "rebuild"), method: "POST") }
+
+    /// Paired computers: rename and remove (`DELETE /api/v1/computers/paired/:id` exists today).
+    func renamePaired(id: String, name: String) async throws {
+        let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        _ = try await cloud("api/v1/computers/paired/\(enc)", method: "PATCH", body: jsonBody(["name": name]))
+    }
+    func removePaired(id: String) async throws {
+        let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        _ = try await cloud("api/v1/computers/paired/\(enc)", method: "DELETE")
+    }
+
     // MARK: Plumbing
 
     private func cloud(_ path: String, method: String = "GET", body: Data? = nil, authFailure: Bool = false) async throws -> Data {
@@ -411,13 +527,24 @@ final class ACIComputersClient: Sendable {
         guard let http = response as? HTTPURLResponse else { throw Failure.server("Couldn't load this. Try again.") }
         guard (200...299).contains(http.statusCode) else {
             let path = http.url?.path ?? ""
-            if [404, 501].contains(http.statusCode),
-               path.hasSuffix("computers/console") || path.contains("/host/") || path.hasSuffix("/metrics") {
+            let consolePath = path.hasSuffix("computers/console") || path.contains("/host/") || path.hasSuffix("/metrics")
+                || path.contains("/ssh-keys") || path.hasSuffix("/backups") || path.hasSuffix("/backups/restore")
+                || path.hasSuffix("/approvals") || path.hasSuffix("/restart") || path.hasSuffix("/move")
+                || path.hasSuffix("/rebuild") || path.contains("/computers/paired/")
+            if [404, 405, 501].contains(http.statusCode), consolePath {
                 throw Failure.notAvailable
             }
-            if http.statusCode == 409, path.contains("/host/") || path.hasSuffix("/metrics") {
-                struct Asleep: Decodable { let lastSample: ConsoleSnapshot? }
-                throw Failure.asleep((try? JSONDecoder().decode(Asleep.self, from: data))?.lastSample)
+            if http.statusCode == 409, consolePath {
+                struct Asleep: Decodable { let error: String?; let lastSample: ConsoleSnapshot? }
+                let body = try? JSONDecoder().decode(Asleep.self, from: data)
+                // A 409 with another reason (for example a refused action) is not "asleep".
+                if body?.error == nil || body?.error == "asleep" { throw Failure.asleep(body?.lastSample) }
+            }
+            if http.statusCode == 403 {
+                struct Elevation: Decodable { let error: String?; let message: String? }
+                if let e = try? JSONDecoder().decode(Elevation.self, from: data), e.error == "needs_elevation" {
+                    throw Failure.needsElevation(e.message ?? "")
+                }
             }
             struct Body: Decodable { let detail: String?; let message: String?; let error: String? }
             let body = try? JSONDecoder().decode(Body.self, from: data)

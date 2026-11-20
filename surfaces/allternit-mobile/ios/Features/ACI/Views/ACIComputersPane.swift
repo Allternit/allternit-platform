@@ -907,9 +907,11 @@ struct ACIConsoleSection: View {
 
 // MARK: - Console detail (flag `computers_console`)
 
-/// One computer's detail: Overview, Services (+ live logs), Usage, Ports.
+/// One computer's detail: Overview, Services (+ live logs), Usage, Ports,
+/// Access, Backups, Health (approve a fix) and Settings.
 /// Reads `GET /api/v1/computers/:id/host/*` and `/metrics` through the
-/// cloud relay. Read-only: no actions yet. A 409 means the computer is
+/// cloud relay. Changes (a Health fix, restore, restart, move, rebuild,
+/// SSH keys, rename, unpair) always ask first. A 409 means the computer is
 /// asleep, so the last sample shows with "Asleep, not woken" and nothing
 /// is retried; 404/501 shows "not available". Live logs run only while
 /// the Services log view is on screen and the app is in the foreground.
@@ -919,6 +921,7 @@ struct ACIConsoleDetailView: View {
 
     private enum Section: String, CaseIterable, Identifiable {
         case overview = "Overview", services = "Services", usage = "Usage", ports = "Ports"
+        case access = "Access", backups = "Backups", health = "Health", settings = "Settings"
         var id: String { rawValue }
     }
     @State private var section: Section = .overview
@@ -926,11 +929,24 @@ struct ACIConsoleDetailView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("Section", selection: $section) {
-                    ForEach(Section.allCases) { Text($0.rawValue).tag($0) }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Section.allCases) { item in
+                            Button { section = item } label: {
+                                Text(item.rawValue)
+                                    .font(.system(size: 14, weight: section == item ? .semibold : .regular))
+                                    .foregroundColor(Color("TextPrimary"))
+                                    .padding(.horizontal, 14).frame(minHeight: 36)
+                                    .background(section == item ? Color("FillNeutral") : Color.clear)
+                                    .clipShape(Capsule())
+                                    .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(section == item ? .isSelected : [])
+                        }
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16).padding(.vertical, 10)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         switch section {
@@ -938,6 +954,10 @@ struct ACIConsoleDetailView: View {
                         case .services: ACIConsoleServicesTab(computer: computer)
                         case .usage: ACIConsoleUsageTab(computer: computer)
                         case .ports: ACIConsolePortsTab(computer: computer)
+                        case .access: ACIConsoleAccessTab(computer: computer)
+                        case .backups: ACIConsoleBackupsTab(computer: computer)
+                        case .health: ACIConsoleHealthTab(computer: computer)
+                        case .settings: ACIConsoleSettingsTab(computer: computer)
                         }
                     }
                     .padding(16)
@@ -1311,5 +1331,670 @@ private struct ACIConsolePortsTab: View {
         case "lan": return "Local network"
         default: return "This computer only"
         }
+    }
+}
+
+// MARK: - Console manage tabs: Access, Backups, Health, Settings
+
+/// Press and hold for one second to confirm (the iOS form of Arc HoldToConfirm).
+/// VoiceOver users get a plain activate action instead of the hold.
+private struct ACIHoldButton: View {
+    let title: String
+    var danger = false
+    var disabled = false
+    let action: () -> Void
+    @State private var progress: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            GeometryReader { geo in
+                Rectangle()
+                    .fill((danger ? Theme.statusError : Color("TextPrimary")).opacity(0.18))
+                    .frame(width: geo.size.width * progress)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(danger ? Theme.statusError : Color("TextPrimary"))
+        }
+        .frame(maxWidth: .infinity, minHeight: 48)
+        .background(Color("FillNeutral"))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
+        .opacity(disabled ? 0.45 : 1)
+        .allowsHitTesting(!disabled)
+        .onLongPressGesture(minimumDuration: 1.0, maximumDistance: 40, perform: {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            action()
+        }, onPressingChanged: { pressing in
+            if pressing { withAnimation(.linear(duration: 1.0)) { progress = 1 } }
+            else { withAnimation(.easeOut(duration: 0.2)) { progress = 0 } }
+        })
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityHint("Press and hold to confirm")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { if !disabled { action() } }
+    }
+}
+
+/// Plain sentence for a failed change. Never a status code.
+private func consoleFailureText(_ error: Error) -> String {
+    switch error {
+    case ACIComputersClient.Failure.notAvailable: return "This isn't available for this computer yet."
+    case ACIComputersClient.Failure.asleep: return "This computer is asleep. It is not woken for this. Nothing was changed."
+    default: return (error as? LocalizedError)?.errorDescription ?? "That didn't work. Nothing was changed."
+    }
+}
+
+private func consoleAgo(_ raw: String) -> String {
+    guard let date = ACIDates.parse(raw) else { return raw }
+    return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+}
+
+private func consoleWhen(_ raw: String) -> String {
+    guard let date = ACIDates.parse(raw) else { return raw }
+    return date.formatted(date: .abbreviated, time: .shortened)
+}
+
+/// Newest backup newer than 24 hours, or nil.
+private func consoleFreshBackup(_ backups: [ACIComputersClient.CloudBackup]) -> ACIComputersClient.CloudBackup? {
+    backups.compactMap { b in ACIDates.parse(b.createdAt).map { (b, $0) } }
+        .filter { Date().timeIntervalSince($0.1) < 24 * 3600 }
+        .max { $0.1 < $1.1 }?.0
+}
+
+private func consoleStatusLine(_ text: String?, error: Bool = false) -> some View {
+    Group {
+        if let text {
+            Text(text).font(.system(size: 13))
+                .foregroundColor(error ? Theme.statusError : Color("TextSecondary"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: Access
+
+private struct ACIConsoleAccessTab: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    @State private var state: ACIConsoleLoad<[ACIComputersClient.SSHKey]> = .loading
+    @State private var attempt = 0
+    @State private var adding = false
+    @State private var removing: ACIComputersClient.SSHKey? = nil
+    @State private var message: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            consoleCard {
+                Text("Who can use it").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                if computer.group == "Shared with you" {
+                    consoleRow("You", "Member")
+                    Text("It was shared with you. The owner decides who else can use it.")
+                        .font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+                } else {
+                    consoleRow("You", "Owner")
+                    Text("Members of your organization can use it when it is shared with them. Agents ask before they change anything.")
+                        .font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+                }
+            }
+            if computer.kind == "cloud" {
+                consoleCard {
+                    Text("Hosted by Allternit").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                    Text("Part of your plan. You reach it through the Allternit relay. Nothing is opened to the internet.")
+                        .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                }
+            } else {
+                consoleCard {
+                    Text("Pairing").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                    Text("To pair another computer, install Gizzi there and run:")
+                        .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                    Text("gizzi pair").font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(Color("TextPrimary"))
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color("TextPrimary").opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .textSelection(.enabled)
+                    Text("Install: npm install -g @allternit/gizzi-code")
+                        .font(.system(size: 12)).foregroundColor(Color("TextTertiary")).textSelection(.enabled)
+                }
+            }
+            keysCard
+        }
+        .sheet(isPresented: $adding) {
+            ACIConsoleAddKeySheet(computer: computer) { attempt += 1 }
+        }
+        .confirmationDialog("Remove this key?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                            titleVisibility: .visible, presenting: removing) { key in
+            Button("Remove \(key.label)", role: .destructive) { Task { await remove(key) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in Text("It can no longer sign in to this computer.") }
+    }
+
+    private var keysCard: some View {
+        consoleCard {
+            HStack {
+                Text("SSH keys").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                Spacer()
+                if case .ready = state { ACIPillButton(title: "Add a key") { adding = true } }
+            }
+            switch state {
+            case .loading: consoleNote("Loading…")
+            case .unavailable: consoleNote("SSH keys aren't available on your account yet.")
+            case .asleep: consoleNote("Asleep, not woken. Keys show when it is awake.")
+            case .failed(let m):
+                VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
+            case .ready(let keys):
+                if keys.isEmpty {
+                    consoleNote("No keys yet. Add one to sign in over SSH.")
+                } else {
+                    ForEach(keys) { key in
+                        HStack(spacing: 10) {
+                            Image(systemName: "key").foregroundColor(Color("TextTertiary"))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(key.label).font(.system(size: 14)).foregroundColor(Color("TextPrimary"))
+                                Text(key.kind == "agent" ? "Short-lived, rotates on its own" : (key.fingerprint ?? ""))
+                                    .font(.system(size: 11, design: .monospaced)).foregroundColor(Color("TextTertiary"))
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer()
+                            if key.kind != "agent" {
+                                Button { removing = key } label: { Image(systemName: "trash") }
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .accessibilityLabel("Remove \(key.label)")
+                            }
+                        }
+                    }
+                }
+            }
+            consoleStatusLine(message)
+        }
+        .task(id: attempt) { state = .loading; state = await .run { try await ACIComputersClient.shared.sshKeys(id: computer.id) } }
+    }
+
+    private func remove(_ key: ACIComputersClient.SSHKey) async {
+        do {
+            try await ACIComputersClient.shared.removeSSHKey(id: computer.id, keyId: key.id)
+            message = "Removed \(key.label)."
+            attempt += 1
+        } catch { message = consoleFailureText(error) }
+    }
+}
+
+private struct ACIConsoleAddKeySheet: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    let onAdded: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var label = ""
+    @State private var publicKey = ""
+    @State private var busy = false
+    @State private var error: String? = nil
+
+    private var looksPrivate: Bool { publicKey.contains("PRIVATE KEY") }
+    private var valid: Bool {
+        let k = publicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !label.trimmingCharacters(in: .whitespaces).isEmpty && !looksPrivate
+            && (k.hasPrefix("ssh-") || k.hasPrefix("ecdsa-") || k.hasPrefix("sk-"))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") { TextField("Studio Mac", text: $label) }
+                Section("Public key") {
+                    TextField("ssh-ed25519 AAAA…", text: $publicKey, axis: .vertical)
+                        .font(.system(size: 13, design: .monospaced))
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .lineLimit(3...6)
+                    if looksPrivate {
+                        Text("That is a private key. Paste the public key (the .pub file) and keep the private one to yourself.")
+                            .font(.system(size: 12)).foregroundColor(Theme.statusError)
+                    }
+                }
+                if let error { Text(error).font(.system(size: 12)).foregroundColor(Theme.statusError) }
+            }
+            .navigationTitle("Add a key").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(busy ? "Adding…" : "Add") { Task { await add() } }.disabled(!valid || busy)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func add() async {
+        busy = true; defer { busy = false }
+        do {
+            try await ACIComputersClient.shared.addSSHKey(
+                id: computer.id, label: label.trimmingCharacters(in: .whitespaces),
+                publicKey: publicKey.trimmingCharacters(in: .whitespacesAndNewlines))
+            onAdded(); dismiss()
+        } catch { error = consoleFailureText(error) }
+    }
+}
+
+// MARK: Backups
+
+private struct ACIConsoleBackupsTab: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    @State private var state: ACIConsoleLoad<[ACIComputersClient.CloudBackup]> = .loading
+    @State private var attempt = 0
+    @State private var confirming: ACIComputersClient.CloudBackup? = nil
+    @State private var busy = false
+    @State private var message: String? = nil
+    @State private var showPoints = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if computer.kind == "cloud" { cloudBody } else {
+                consoleCard {
+                    Text("Change records only").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                    Text("Allternit does not copy the disk of a paired computer. Every fix writes a change record before it runs, so you can see what changed and undo it from Health.")
+                        .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                }
+            }
+            consoleCard {
+                Text("Snapshots on demand").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                Text("Taking a snapshot yourself isn't supported yet. Daily backups and change records are what protect a fix.")
+                    .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            }
+        }
+        .sheet(isPresented: $showPoints) { NavigationStack { CloudComputerBackupsView() } }
+        .confirmationDialog("Restore this backup?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+                            titleVisibility: .visible, presenting: confirming) { backup in
+            Button("Restore \(consoleWhen(backup.createdAt))", role: .destructive) { Task { await restore(backup) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in Text("The computer goes back to this point and restarts. Changes made after it are lost.") }
+    }
+
+    @ViewBuilder private var cloudBody: some View {
+        consoleCard {
+            Text("Daily backups").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+            switch state {
+            case .loading: consoleNote("Loading…")
+            case .unavailable: consoleNote("Backups aren't available for this computer yet.")
+            case .asleep: consoleNote("Asleep, not woken. Backups show when it is awake.")
+            case .failed(let m):
+                VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
+            case .ready(let list):
+                if list.isEmpty { consoleNote("No backups yet. The first one is made within a day.") }
+                ForEach(list) { b in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(consoleWhen(b.createdAt)).font(.system(size: 14)).foregroundColor(Color("TextPrimary"))
+                            Text([consoleAgo(b.createdAt), b.sizeBytes.map(consoleBytes)].compactMap { $0 }.joined(separator: " · "))
+                                .font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+                        }
+                        Spacer()
+                        ACIPillButton(title: "Restore", accessibilityLabel: "Restore backup from \(consoleWhen(b.createdAt))") { confirming = b }
+                            .disabled(busy)
+                    }
+                }
+            }
+            consoleStatusLine(message)
+        }
+        .task(id: attempt) { state = .loading; state = await .run { try await ACIComputersClient.shared.cloudBackups(id: computer.id) } }
+        consoleCard {
+            Text("Restore points and copies").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+            Text("Your existing restore points and \"Download a copy\" stay here.")
+                .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            ACIPillButton(title: "Open") { showPoints = true }
+        }
+    }
+
+    private func restore(_ backup: ACIComputersClient.CloudBackup) async {
+        busy = true; defer { busy = false }
+        do {
+            try await ACIComputersClient.shared.restoreCloudBackup(id: computer.id, backupId: backup.id)
+            message = "Restoring from \(consoleWhen(backup.createdAt)). The computer restarts."
+        } catch { message = consoleFailureText(error) }
+    }
+}
+
+// MARK: Health
+
+private struct ACIConsoleHealthTab: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    @State private var state: ACIConsoleLoad<[ACIComputersClient.HostFinding]> = .loading
+    @State private var attempt = 0
+    @State private var fixing: ACIComputersClient.HostFinding? = nil
+
+    var body: some View {
+        Group {
+            switch state {
+            case .loading: consoleNote("Loading…")
+            case .unavailable: consoleNote("Health checks aren't available for this computer yet.")
+            case .asleep: consoleNote("Asleep, not woken. Health shows when it is awake.")
+            case .failed(let m):
+                VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
+            case .ready(let findings):
+                if findings.isEmpty {
+                    consoleNote("Nothing needs a look. Disk, services, updates and open ports are all fine.")
+                } else {
+                    ForEach(findings) { f in
+                        consoleCard {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Circle().fill(tint(f.severity)).frame(width: 8, height: 8)
+                                Text(f.title).font(.system(size: 14, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                            }
+                            Text(f.detail).font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                            if f.suggestedAction != nil {
+                                ACIPillButton(title: "Fix", accessibilityLabel: "Fix: \(f.title)") { fixing = f }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .task(id: attempt) { state = .loading; state = await .run { try await ACIComputersClient.shared.hostFindings(id: computer.id) } }
+        .sheet(item: $fixing) { f in ACIConsoleFixSheet(computer: computer, finding: f) { attempt += 1 } }
+    }
+
+    private func tint(_ severity: String) -> Color {
+        switch severity {
+        case "critical": return Theme.statusError
+        case "warning": return Theme.statusWarning
+        default: return Color("TextTertiary")
+        }
+    }
+}
+
+/// The approval sheet: the exact action, the restore point status, then Hold to approve.
+private struct ACIConsoleFixSheet: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    let finding: ACIComputersClient.HostFinding
+    let onChanged: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private enum Phase: Equatable {
+        case review
+        case running
+        case done(changeId: String, undo: ACIComputersClient.HostAction?)
+        case undone(changeId: String)
+        case needsElevation
+        case failed(String)
+    }
+    @State private var phase: Phase = .review
+    @State private var restore: ACIConsoleLoad<[ACIComputersClient.CloudBackup]> = .loading
+
+    private var action: ACIComputersClient.HostAction? { finding.suggestedAction }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    consoleCard {
+                        Text("What is wrong").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                        Text(finding.title).font(.system(size: 15, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                        Text(finding.detail).font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                    }
+                    if let action {
+                        consoleCard {
+                            Text("This will run on \(computer.name)").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                            if let label = action.label, !label.isEmpty {
+                                Text(label).font(.system(size: 14)).foregroundColor(Color("TextPrimary"))
+                            }
+                            Text("\(action.type) \(action.target)")
+                                .font(.system(size: 13, design: .monospaced)).foregroundColor(Color("TextPrimary"))
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color("TextPrimary").opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .textSelection(.enabled)
+                        }
+                        consoleCard {
+                            Text("Restore point").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                            restoreStatus
+                        }
+                        footer(action)
+                    } else {
+                        consoleNote("There is no one-tap fix for this one.")
+                    }
+                }
+                .padding(16)
+            }
+            .background(Color("BgPrimary"))
+            .navigationTitle("Approve a fix").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Close") { dismiss() } } }
+        }
+        .task {
+            guard computer.kind == "cloud" else { return }
+            restore = await .run { try await ACIComputersClient.shared.cloudBackups(id: computer.id) }
+        }
+    }
+
+    @ViewBuilder private var restoreStatus: some View {
+        if computer.kind != "cloud" {
+            Text("A change record is written first, so you can see exactly what changed and undo it.")
+                .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+        } else {
+            switch restore {
+            case .loading: Text("Checking backups…").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            case .ready(let list):
+                if let fresh = consoleFreshBackup(list) {
+                    Label("Backup from \(consoleAgo(fresh.createdAt)). A change record is written too.", systemImage: "checkmark.circle")
+                        .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                } else {
+                    Label("No backup newer than 24 hours. You can still approve, but this change could not be rolled back from a backup.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13)).foregroundColor(Theme.statusWarning)
+                }
+            case .asleep:
+                Text("Asleep, not woken. Backups can't be checked right now.").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            case .unavailable, .failed:
+                Label("Couldn't check backups. A change record is still written first.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13)).foregroundColor(Theme.statusWarning)
+            }
+        }
+    }
+
+    @ViewBuilder private func footer(_ action: ACIComputersClient.HostAction) -> some View {
+        switch phase {
+        case .review:
+            VStack(spacing: 10) {
+                ACIHoldButton(title: "Hold to approve") { Task { await run(action, undoing: false) } }
+                Button("Not now") { dismiss() }.font(.system(size: 14)).foregroundColor(Color("TextSecondary")).frame(minHeight: 44)
+            }
+        case .running:
+            HStack(spacing: 8) { ProgressView(); Text("Running…").font(.system(size: 14)).foregroundColor(Color("TextSecondary")) }
+        case .done(let changeId, let undo):
+            consoleCard {
+                Label("Approved by you. It ran.", systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 14, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                consoleRow("Change", changeId)
+                if let undo {
+                    Text("You can undo this. Undo needs its own approval.").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+                    ACIHoldButton(title: "Hold to undo") { Task { await run(undo, undoing: true) } }
+                }
+            }
+        case .undone(let changeId):
+            consoleCard {
+                Label("Undone.", systemImage: "arrow.uturn.backward.circle.fill")
+                    .font(.system(size: 14, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                consoleRow("Change", changeId)
+            }
+        case .needsElevation:
+            consoleCard {
+                Label("One-time setup needed", systemImage: "lock.shield").font(.system(size: 14, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                Text("This change needs administrator rights, and the helper that grants them isn't set up on \(computer.name). You set it up once, on that computer. It asks for the admin password one time and never stores it. Nothing was changed. Come back and approve again after the setup.")
+                    .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            }
+        case .failed(let message):
+            consoleCard {
+                Label(message, systemImage: "exclamationmark.triangle.fill").font(.system(size: 13)).foregroundColor(Theme.statusError)
+                ACIPillButton(title: "Try again") { phase = .review }
+            }
+        }
+    }
+
+    private func run(_ action: ACIComputersClient.HostAction, undoing: Bool) async {
+        phase = .running
+        do {
+            let approval = try await ACIComputersClient.shared.requestApproval(id: computer.id, type: action.type, target: action.target)
+            let result = try await ACIComputersClient.shared.runHostAction(id: computer.id, type: action.type, target: action.target, approvalId: approval)
+            phase = undoing ? .undone(changeId: result.changeId) : .done(changeId: result.changeId, undo: result.undo)
+            onChanged()
+        } catch ACIComputersClient.Failure.needsElevation {
+            phase = .needsElevation
+        } catch is CancellationError {
+            phase = .review
+        } catch { phase = .failed(consoleFailureText(error)) }
+    }
+}
+
+// MARK: Settings
+
+private struct ACIConsoleSettingsTab: View {
+    let computer: ACIComputersClient.ConsoleComputer
+    @Environment(\.dismiss) private var dismiss
+    @State private var message: String? = nil
+    @State private var isError = false
+    @State private var busy = false
+
+    // cloud
+    private static let locations: [(String, String)] = [("nyc", "New York"), ("chi", "Chicago"), ("lon", "London"), ("syd", "Sydney")]
+    @State private var location = ""
+    @State private var confirmRestart = false
+    @State private var confirmMove = false
+    @State private var backups: ACIConsoleLoad<[ACIComputersClient.CloudBackup]> = .loading
+
+    // paired
+    @State private var name = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            switch computer.kind {
+            case "cloud": cloudBody
+            case "paired": pairedBody
+            default:
+                consoleNote("This is the computer you are holding. Manage it from Allternit Desktop.")
+            }
+            consoleStatusLine(message, error: isError)
+        }
+    }
+
+    // MARK: cloud
+
+    @ViewBuilder private var cloudBody: some View {
+        consoleCard {
+            Text("Location").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+            Picker("Location", selection: $location) {
+                ForEach(Self.locations, id: \.0) { Text($0.1).tag($0.0) }
+            }
+            .pickerStyle(.menu)
+            Text("Moving restarts the computer and takes a few minutes.").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+            ACIPillButton(title: "Move") { confirmMove = true }
+                .disabled(busy || location.isEmpty || location == currentLocation)
+        }
+        .onAppear { if location.isEmpty { location = currentLocation ?? "" } }
+        .confirmationDialog("Move this computer?", isPresented: $confirmMove, titleVisibility: .visible) {
+            Button("Move to \(Self.locations.first { $0.0 == location }?.1 ?? location)") {
+                Task { await perform("Moving. The computer restarts.") { try await ACIComputersClient.shared.moveCloud(id: computer.id, location: location) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("It restarts, and anything running stops.") }
+
+        consoleCard {
+            Text("Restart").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+            Text("Running work stops. Saved files stay.").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+            ACIPillButton(title: "Restart") { confirmRestart = true }.disabled(busy)
+        }
+        .confirmationDialog("Restart this computer?", isPresented: $confirmRestart, titleVisibility: .visible) {
+            Button("Restart", role: .destructive) {
+                Task { await perform("Restarting.") { try await ACIComputersClient.shared.restartCloud(id: computer.id) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+
+        consoleCard {
+            Text("Rebuild").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+            Text("Rebuild erases the disk and sets the computer up again from the Ubuntu image, in the same location. Your Files drive copy stays.")
+                .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            rebuildGate
+        }
+        .task {
+            backups = await .run { try await ACIComputersClient.shared.cloudBackups(id: computer.id) }
+        }
+
+        consoleCard {
+            Text("Coming soon").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+            ForEach(["Resize", "Grow disk", "Clone"], id: \.self) { item in
+                HStack {
+                    Text(item).font(.system(size: 14)).foregroundColor(Color("TextTertiary"))
+                    Spacer()
+                    Text("Coming soon").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isStaticText)
+                .accessibilityHint("Not available yet")
+            }
+            Text("Prices show before you confirm, once they are set.").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+        }
+    }
+
+    @ViewBuilder private var rebuildGate: some View {
+        switch backups {
+        case .loading:
+            Text("Checking backups…").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+        case .ready(let list):
+            if let fresh = consoleFreshBackup(list) {
+                Label("Backup from \(consoleAgo(fresh.createdAt)).", systemImage: "checkmark.circle")
+                    .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                ACIHoldButton(title: "Hold to rebuild", danger: true, disabled: busy) {
+                    Task { await perform("Rebuilding. This takes a few minutes.") { try await ACIComputersClient.shared.rebuildCloud(id: computer.id) } }
+                }
+            } else {
+                Label("Rebuild is held. There is no backup newer than 24 hours, and a rebuild erases the only copy of the disk.",
+                      systemImage: "exclamationmark.triangle.fill").font(.system(size: 13)).foregroundColor(Theme.statusWarning)
+                ACIHoldButton(title: "Hold to rebuild", danger: true, disabled: true) {}
+            }
+        case .asleep:
+            Text("Asleep, not woken. Rebuild is held until the backup check can run.").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            ACIHoldButton(title: "Hold to rebuild", danger: true, disabled: true) {}
+        case .unavailable:
+            Text("Rebuild isn't available for this computer yet.").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+        case .failed(let m):
+            Text("\(m) Rebuild is held until the backup check works.").font(.system(size: 13)).foregroundColor(Theme.statusWarning)
+        }
+    }
+
+    private var currentLocation: String? {
+        let region = (computer.region ?? "").lowercased()
+        return Self.locations.first { $0.0 == region || $0.1.lowercased() == region }?.0
+    }
+
+    // MARK: paired
+
+    @ViewBuilder private var pairedBody: some View {
+        consoleCard {
+            Text("Name").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .onAppear { if name.isEmpty { name = computer.name } }
+            ACIPillButton(title: "Save") {
+                Task { await perform("Renamed.") { try await ACIComputersClient.shared.renamePaired(id: computer.id, name: name.trimmingCharacters(in: .whitespaces)) } }
+            }
+            .disabled(busy || name.trimmingCharacters(in: .whitespaces).isEmpty || name == computer.name)
+        }
+        consoleCard {
+            Text("Remove").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+            Text("Unpair to take it off your account and away from every agent. The computer itself keeps running at \(computer.provider).")
+                .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            ACIHoldButton(title: "Hold to unpair", danger: true, disabled: busy) {
+                Task {
+                    await perform("Unpaired.") { try await ACIComputersClient.shared.removePaired(id: computer.id) }
+                    if !isError { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func perform(_ success: String, _ work: () async throws -> Void) async {
+        busy = true; defer { busy = false }
+        do { try await work(); message = success; isError = false }
+        catch { message = consoleFailureText(error); isError = true }
     }
 }
