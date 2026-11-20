@@ -54,6 +54,7 @@ pub mod mailboxes;
 pub mod model_keys;
 pub mod model_messages;
 pub mod numbers;
+pub mod oauth_apps;
 pub mod page;
 pub mod phones;
 pub mod project_billing;
@@ -287,6 +288,7 @@ pub fn router_with_agency(state: &Arc<ApiState>, gate: Gate, agency: Arc<crate::
         .merge(console_playground::routes())
         .merge(console_pricing::routes())
         .merge(console_governance::routes())
+        .merge(oauth_apps::routes())
         .layer(axum::middleware::from_fn_with_state(ps, console_gate));
 
     Router::new().merge(v1).merge(console)

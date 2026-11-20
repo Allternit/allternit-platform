@@ -554,6 +554,43 @@ pub async fn list_apps(db: &PgPool, project_id: &str) -> Result<Vec<OAuthApp>, A
     .await?)
 }
 
+/// An app with its redirect URIs: what the console and the admin review list
+/// return. The secret hash never serializes (see [`OAuthApp`]).
+#[derive(Debug, Clone, Serialize)]
+pub struct AppView {
+    #[serde(flatten)]
+    pub app: OAuthApp,
+    pub redirect_uris: Vec<String>,
+}
+
+pub async fn app_view(db: &PgPool, app: OAuthApp) -> Result<AppView, ApiError> {
+    let redirect_uris = list_redirect_uris(db, app.id).await?;
+    Ok(AppView { app, redirect_uris })
+}
+
+/// An app by id, in any project (the grant routes and the admin routes).
+pub async fn get_app_by_id<'e, E>(db: E, app_id: Uuid) -> Result<OAuthApp, ApiError>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
+    sqlx::query_as::<_, OAuthApp>(&format!("SELECT {APP_COLUMNS} FROM oauth_apps WHERE id = $1"))
+        .bind(app_id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(not_found)
+}
+
+/// Apps in any project, oldest change first, for the admin review queue.
+/// `None` lists every state. At most 200.
+pub async fn list_apps_by_state(db: &PgPool, state: Option<AppState>) -> Result<Vec<OAuthApp>, ApiError> {
+    Ok(sqlx::query_as::<_, OAuthApp>(&format!(
+        "SELECT {APP_COLUMNS} FROM oauth_apps WHERE ($1::text IS NULL OR state = $1) ORDER BY updated_at, id LIMIT 200"
+    ))
+    .bind(state.map(AppState::as_str))
+    .fetch_all(db)
+    .await?)
+}
+
 pub async fn update_app(
     db: &PgPool,
     project_id: &str,
