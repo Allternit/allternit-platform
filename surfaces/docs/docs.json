@@ -480,6 +480,7 @@
               "cli/context",
               "cli/code-intelligence",
               "cli/usage",
+              "cli/autopilot",
               "cli/keyboard-shortcuts",
               "cli/plan",
               "cli/ci-mode",
