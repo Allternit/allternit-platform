@@ -4,14 +4,17 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -84,6 +87,7 @@ internal fun ReplyVoiceSection() {
         return
     }
     SNote("Bots answer in Kokoro, a natural voice that runs on this phone. It downloads once ($megabytes, on Wi-Fi unless you tap Download). Until then, and if this phone runs low on memory, the built-in voice reads replies.")
+    SNote("Kokoro reads text through espeak-ng, which is free software under the GNU GPL version 3 or later. Its source is at github.com/espeak-ng/espeak-ng.")
     val state = pack.state
     SCard {
         SRow(
@@ -115,27 +119,35 @@ internal fun ReplyVoiceSection() {
     }
     (state as? VoicePackState.Failed)?.let { SError(it.message) }
     SNote("Voice for bots that don't have their own:")
-    FlowRow(
-        Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        KokoroVoices.all.forEach { id ->
-            val on = id == voiceId
-            Box(
-                Modifier.width(104.dp).heightIn(min = 36.dp)
-                    .border(if (on) 2.dp else 1.dp, if (on) c.accentPrimary else c.borderSubtle, RoundedCornerShape(10.dp))
-                    .clickable(role = Role.Button) { VoicePrefs.setKokoroVoice(context, id) }
-                    .semantics { selected = on }
-                    .testTag("voice_kokoroChip_$id"),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    KokoroVoices.label(id), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (on) c.accentPrimary else c.textPrimary,
-                    modifier = Modifier.padding(horizontal = 6.dp),
-                )
+    // iOS ReplyVoiceSection: LazyVGrid(.adaptive(minimum: 104), spacing 8) — chips fill the row,
+    // and a long label shrinks to 80% (minimumScaleFactor 0.8) before it is cut off.
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 2.dp)) {
+        val columns = maxOf(1, ((maxWidth + 8.dp) / (104.dp + 8.dp)).toInt())
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            KokoroVoices.all.chunked(columns).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    row.forEach { id ->
+                        val on = id == voiceId
+                        Box(
+                            Modifier.weight(1f).heightIn(min = 36.dp)
+                                .border(if (on) 2.dp else 1.dp, if (on) c.accentPrimary else c.borderSubtle, RoundedCornerShape(10.dp))
+                                .clickable(role = Role.Button) { VoicePrefs.setKokoroVoice(context, id) }
+                                .semantics { selected = on }
+                                .testTag("voice_kokoroChip_$id"),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                KokoroVoices.label(id), maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+                                autoSize = TextAutoSize.StepBased(minFontSize = 10.5.sp, maxFontSize = 13.sp, stepSize = 0.5.sp),
+                                fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (on) c.accentPrimary else c.textPrimary,
+                                modifier = Modifier.padding(horizontal = 6.dp),
+                            )
+                        }
+                    }
+                    // Keep the last row's chips the same width as the rows above.
+                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                }
             }
         }
     }

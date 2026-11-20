@@ -3,7 +3,7 @@ import SwiftUI
 // MARK: - Chat surface (Home)
 
 /// Home chrome (allternit-ai src/fabric-session/phone/screens/ChatsScreen.tsx):
-/// the phone header — ☰, the open chat's name (else "Allternit"), the chat
+/// the phone header — ☰, the open chat's name (blank on a new chat), the chat
 /// ⋯ menu and New chat — above the shared chat content.
 /// The Code tab hosts the same `ChatContentView` inside its own navigation
 /// chrome (CodeModeView), so code threads reuse the chat UI.
@@ -34,11 +34,12 @@ struct ChatView: View {
         ))
     }
 
-    /// The open chat's name, else "Allternit" (ChatsScreen `activeChat?.name`).
+    /// The open chat's name, else no title (ChatsScreen `activeChat?.name`).
+    /// Home has no header title (Eoj 2026-11-20): the A:// mark on the page is the brand.
     private var title: String {
         let id = viewModel.currentSessionId ?? selectedSessionId
         if let name = sessions.session(id: id)?.name, !name.isEmpty { return name }
-        return "Allternit"
+        return ""
     }
 
     var body: some View {
@@ -75,7 +76,7 @@ struct ChatView: View {
         }
         .background(Color("BgPrimary"))
         .sheet(isPresented: $isShareLinkPresented) {
-            ThreadShareSheet(sessionId: viewModel.currentSessionId, title: title, messages: viewModel.messages)
+            ThreadShareSheet(sessionId: viewModel.currentSessionId, title: title.isEmpty ? "Allternit" : title, messages: viewModel.messages)
         }
         .sheet(isPresented: $isBrainCapturePresented) {
             BrainCaptureSheet()

@@ -366,9 +366,10 @@ internal fun VoicePage(back: () -> Unit) {
         }
         sync.error?.let { SError(it) }
         SNote("Disconnect removes a key from this phone only. To cut a key off everywhere, revoke it in your OpenAI or ElevenLabs account.")
-        // iOS order: own provider, speech to text, reply voice (VoicePackSections.kt).
+        // iOS order: own provider, speech to text, reply voice (VoicePackSections.kt), then the live mode look.
         SpeechToTextSection()
         ReplyVoiceSection()
+        com.allternit.feature.chat.voice.LiveModeLookSection(modifier = Modifier.padding(top = 18.dp), inset = 6.dp)
     }
 
     pasting?.let { v ->

@@ -112,6 +112,9 @@ The generator is `core/design/tools/gen-icons.mjs`.
 | `gearshape` | `gear` | `ph_gear` |
 | `globe` | `globe` | `ph_globe` |
 | `graduationcap` | `graduation-cap` | `ph_graduation_cap` |
+| `hand.point.up.left` | `hand-pointing` | `ph_hand_pointing` |
+| `scroll` | `scroll` | `ph_scroll` |
+| `square.split.diagonal.2x2` | `squares-four` | `ph_squares_four` |
 | `hand.raised` | `hand` | `ph_hand` |
 | `hand.raised.fill` | `hand-fill` | `ph_hand_fill` |
 | `hand.tap` | `hand-tap` | `ph_hand_tap` |
@@ -316,3 +319,26 @@ reference now points at the Phosphor drawable.
 | `rfb_hand` | `ph_hand` |
 | `rfb_eye` | `ph_eye` |
 | `rfb_corners_out` | `ph_corners_out` |
+
+## Settings page icons (iOS SettingsPageKit `icon`)
+
+iOS returns these symbols as strings, so the `sf.txt` grep above does not see them. `SettingsRoot.kt` `SPageInfo` uses the same mapping. The drawables marked * were generated on 2026-11-20 in the format above.
+
+| SF Symbol (iOS) | Android drawable |
+|---|---|
+| `person.crop.circle` / `person` | `ph_user_circle` / `ph_user`* |
+| `gearshape` / `gearshape.2` | `ph_gear` / `ph_gear_six`* |
+| `building.2`, `lock`, `lock.open` | `ph_buildings`, `ph_lock`, `ph_lock_open`* |
+| `point.3.connected.trianglepath.dotted` | `ph_graph` |
+| `creditcard`, `gauge.with.dots.needle.33percent` | `ph_credit_card`, `ph_gauge`* |
+| `checklist`, `bell`, `heart.text.square` | `ph_list_checks`, `ph_bell`, `ph_heartbeat` |
+| `mic`, `brain`, `text.bubble` | `ph_microphone`, `ph_brain`, `ph_chat_text`* |
+| `chevron.left.forwardslash.chevron.right`, `briefcase` | `ph_code`*, `ph_briefcase`* |
+| `laptopcomputer.and.iphone`, `desktopcomputer`, `iphone` | `ph_devices`*, `ph_desktop`, `ph_device_mobile` |
+| `pawprint`, `puzzlepiece.extension`, `waveform.path.ecg` | `ph_paw_print`*, `ph_puzzle_piece`, `ph_pulse`* |
+| `checkmark.shield`, `shield`, `sparkles` | `ph_shield_check`, `ph_shield`*, `ph_sparkle` |
+| `rectangle.connected.to.line.below`, `powerplug`, `person.3` | `ph_tree_structure`*, `ph_plug`, `ph_users_three`* |
+| `shippingbox`, `cylinder.split.1x2`, `cpu` | `ph_package`*, `ph_database`*, `ph_cpu` |
+| `photo`, `film`, `cable.connector`, `key` | `ph_image`, `ph_film_strip`*, `ph_plugs`, `ph_key`* |
+| `cloud`, `arrow.triangle.branch`, `info.circle` | `ph_cloud`, `ph_git_branch`, `ph_info` |
+| `hand.raised`, `server.rack` | `ph_hand`, `ph_hard_drives`* |

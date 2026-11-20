@@ -107,7 +107,8 @@ internal fun PhoneHeader(
     ) {
         Box(Modifier.width(side), contentAlignment = Alignment.CenterStart) { leading() }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (titleContent != null) Box(Modifier.semantics { heading(); contentDescription = title }) { titleContent() } else Text(
+            // A blank title draws nothing (iOS PhoneHeader `if let title, !title.isEmpty`).
+            if (titleContent != null) Box(Modifier.semantics { heading(); contentDescription = title }) { titleContent() } else if (title.isNotBlank()) Text(
                 text = title,
                 color = c.textPrimary,
                 fontSize = 16.sp,
@@ -166,14 +167,17 @@ internal fun ShellHome(
     codeHome: (@Composable () -> Unit)? = null,
     /** Code mode's header button: the Code sessions view (iOS CodeSessionsButton → CodeOverview). */
     onCodeSessions: (() -> Unit)? = null,
-    /** Code mode's composer deck row (iOS CodeDeckRow): terminal, files, computer. */
+    /** Code mode's composer deck row (iOS CodeDeckRow): environment, folder, branch, worktree, permission, usage, view menu. */
     codeActions: CodeComposerActions? = null,
+    /** The home composer's voice button (iOS ComposerView onVoiceMode on the home chat): a new chat in voice mode. */
+    onVoiceMode: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var phoneArmed by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         PhoneHeader(
-            title = if (mode == ShellMode.Home) "Allternit" else mode.label,
+            // Home has no header title (Eoj 2026-11-20): the A:// mark on the page is the brand.
+            title = if (mode == ShellMode.Home) "" else mode.label,
             wideSides = mode == ShellMode.Home,
             leading = menuButton,
             trailing = {
@@ -202,7 +206,16 @@ internal fun ShellHome(
             titleContent = if (mode == ShellMode.Code && onCodeSessions != null) ({ GizziCodeWordmark(height = 15.dp) }) else null,
         )
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            if (mode == ShellMode.Home) LaunchGreeting() else if (codeHome != null && mode == ShellMode.Code) codeHome() else ModeArrives(mode)
+            if (mode == ShellMode.Home) LaunchGreeting()
+            else if (codeHome != null && mode == ShellMode.Code) {
+                Column(Modifier.fillMaxSize()) {
+                    // iOS CodeModeView: What's new sits right under the sessions button.
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp).padding(top = 2.dp), horizontalArrangement = Arrangement.End) {
+                        com.allternit.feature.code.CodeWhatsNewButton()
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth()) { codeHome() }
+                }
+            } else ModeArrives(mode)
         }
         if (mode == ShellMode.Code && codeHome != null && codeActions != null) {
             CodeLaunchComposer(models = models, noComputer = store.noComputer, actions = codeActions, onSend = onNewChat, onOpenSection = onOpenSection)
@@ -214,6 +227,7 @@ internal fun ShellHome(
                 onClearPhone = { phoneArmed = false },
                 onSend = onNewChat,
                 onOpenSection = onOpenSection,
+                onVoiceMode = if (mode == ShellMode.Home) onVoiceMode else null,
             )
         } else {
             Spacer(Modifier.navigationBarsPadding())

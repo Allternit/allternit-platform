@@ -47,7 +47,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import com.allternit.core.design.AllternitRadii
+import com.allternit.core.design.AllternitSerif
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.R as DesignR
 import kotlinx.coroutines.delay
@@ -235,14 +241,23 @@ private fun LanguageOption(label: String, selected: Boolean, onClick: () -> Unit
     }
 }
 
-/** iOS VoiceSettingsSheet: the phone's voices, language, speed and mode. */
+/**
+ * iOS VoiceSettingsSheet: the live mode look (the bot's own first when voice mode is with a bot, then the defaults),
+ * then the Voice carousel, language, speed and mode.
+ *
+ * The carousel lists the phone's voices by readable name ([phoneVoiceOptions]). When the on-phone Kokoro voice reads
+ * the replies ([kokoro]: the "On this device" engine with the Kokoro pack installed), the phone's voices don't speak,
+ * so the carousel lists Kokoro's voices instead, the same pick as Settings › Voice › Reply voice, and says when the
+ * bot answers in its own voice. iOS's sheet always lists the system voices; this keeps the sheet true to what speaks.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VoiceSettingsSheet(speaker: Speaker, onDismiss: () -> Unit) {
+fun VoiceSettingsSheet(speaker: Speaker, bot: VoiceBot? = null, kokoro: Boolean = false, onDismiss: () -> Unit) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
-    var voices by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
-    LaunchedEffect(VoicePrefs.speechLanguage) {
+    var voices by remember { mutableStateOf<List<PhoneVoice>>(emptyList()) }
+    LaunchedEffect(VoicePrefs.speechLanguage, kokoro) {
+        if (kokoro) return@LaunchedEffect
         // TextToSpeech binds asynchronously; retry briefly until it reports its voices.
         repeat(20) {
             voices = speaker.voices()
@@ -257,27 +272,38 @@ fun VoiceSettingsSheet(speaker: Speaker, onDismiss: () -> Unit) {
                 Text("Voice settings", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 Text("Done", color = c.accentPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable(onClick = onDismiss).padding(8.dp).testTag("voiceSettingsDone"))
             }
+            if (bot != null) LiveModeLookSection(bot = bot)
+            LiveModeLookSection()
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Voice", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                if (voices.isEmpty()) {
+                if (kokoro) {
+                    val own = bot?.voiceId?.takeIf { it in KokoroVoices.all }
+                    Text(
+                        if (bot != null && own != null) "${bot.name} answers in its own voice, ${KokoroVoices.label(own)}. This voice is for chats without their own."
+                        else "Replies use Kokoro, a natural voice that runs on this phone.",
+                        color = c.textSecondary, fontSize = 12.sp,
+                    )
+                    val picked = KokoroVoices.resolve(null, VoicePrefs.kokoroVoice)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        KokoroVoices.all.forEach { id ->
+                            VoiceCard(
+                                name = id.substringAfterLast('_').replaceFirstChar { it.uppercase() },
+                                detail = "${if (id.startsWith("b")) "British" else "American"} · Kokoro",
+                                selected = picked == id, tag = "voiceKokoroCard-$id",
+                            ) { VoicePrefs.setKokoroVoice(context, id) }
+                        }
+                    }
+                    Text("A new pick speaks from your next voice chat.", color = c.textSecondary, fontSize = 11.sp)
+                } else if (voices.isEmpty()) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = c.textSecondary)
                         Text("Loading voices…", color = c.textSecondary, fontSize = 13.sp)
                     }
                 } else {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        voices.forEachIndexed { i, (id, detail) ->
-                            val selected = VoicePrefs.voiceIdentifier == id || (VoicePrefs.voiceIdentifier == null && i == 0)
-                            Column(
-                                Modifier.width(140.dp).height(110.dp).clip(RoundedCornerShape(AllternitRadii.MD)).background(c.fillNeutral)
-                                    .border(if (selected) 2.dp else 1.dp, if (selected) c.accentPrimary else c.borderSubtle, RoundedCornerShape(AllternitRadii.MD))
-                                    .clickable { VoicePrefs.setVoice(context, id) }.padding(12.dp).testTag("voiceCard-$i"),
-                            ) {
-                                Icon(painterResource(com.allternit.core.design.R.drawable.ph_waveform), null, tint = c.textSecondary, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.weight(1f))
-                                Text(id.substringBefore('#').take(22), color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                Text(detail, color = c.textSecondary, fontSize = 11.sp, maxLines = 1)
-                            }
+                        voices.forEachIndexed { i, v ->
+                            val selected = VoicePrefs.voiceIdentifier == v.id || (VoicePrefs.voiceIdentifier == null && i == 0)
+                            VoiceCard(v.name, v.detail, selected, "voiceCard-$i") { VoicePrefs.setVoice(context, v.id) }
                         }
                     }
                 }
@@ -290,6 +316,27 @@ fun VoiceSettingsSheet(speaker: Speaker, onDismiss: () -> Unit) {
             ChoiceRow("Mode", "Hands free listens after each reply; push to talk records while you hold the mic",
                 VoiceInteractionMode.entries.map { m -> m.label to { VoicePrefs.setMode(context, m) } }, VoicePrefs.interactionMode.label)
         }
+    }
+}
+
+/** iOS voiceCard: a 120 pt card, the waveform (accent when picked), the name in serif and a caption. */
+@Composable
+private fun VoiceCard(name: String, detail: String, selected: Boolean, tag: String, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    val shape = RoundedCornerShape(AllternitRadii.MD)
+    Column(
+        Modifier.width(120.dp).height(120.dp).clip(shape).background(c.bgSecondary)
+            // iOS: AccentPrimary at 2 when picked, else Theme.borderWarmDefault (TextPrimary at 11%).
+            .border(if (selected) 2.dp else 1.dp, if (selected) c.accentPrimary else c.textPrimary.copy(alpha = 0.11f), shape)
+            .clickable(role = Role.Button, onClickLabel = name) { onClick() }
+            .semantics { contentDescription = "$name, $detail"; this.selected = selected }
+            .padding(12.dp).testTag(tag),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_waveform), null, tint = if (selected) c.accentPrimary else c.textSecondary, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.weight(1f))
+        Text(name, color = c.textPrimary, fontSize = 15.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, fontFamily = AllternitSerif, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(detail, color = c.textSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

@@ -10,6 +10,7 @@ import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -79,8 +80,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -211,6 +214,8 @@ internal fun Composer(
     onVoiceMode: (() -> Unit)? = null,
     /** iOS ComposerView `deck`: Full (Home, rotating hints), Compact (a chat, "Reply…"), None (Bots). */
     deck: ComposerDeck = ComposerDeck.Full,
+    /** iOS ComposerView `playGamesAnytime`: Play shows from the start (Bots, Code threads), not only after 5 s of work. */
+    playGamesAnytime: Boolean = false,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -453,6 +458,8 @@ internal fun Composer(
                 }
                 Spacer(Modifier.weight(1f))
                 ModelChip(models = models, open = pickerOpen) { pickerOpen = true }
+                // Play (the waiting games) sits beside Stop; it stays composed so it can tell an open game the reply is ready.
+                com.allternit.feature.chat.games.WaitingGamesPlayButton(busy = isStreaming, anytime = playGamesAnytime, hidden = hasDraft)
                 if (isStreaming) {
                     StreamingBars()
                     // Stop while a reply runs (iOS: square.fill on the neutral circle, label "Stop").
@@ -506,11 +513,15 @@ internal fun Composer(
             }
         }
 
-        if (deck != ComposerDeck.None) {
-            ToolsTab(folded = deckFolded) { setDeckFolded(!deckFolded) }
+        // iOS ComposerView: the tab shows only while the band is folded. An open band joins the
+        // card directly (no tab between them); a swipe down on the card folds it.
+        // It leaves at once (no fade) so the opening band is joined to the card from the first frame.
+        AnimatedVisibility(visible = deck != ComposerDeck.None && !deckOpen, enter = fadeIn(), exit = ExitTransition.None) {
+            ToolsTab { setDeckFolded(false) }
         }
         AnimatedVisibility(visible = deckOpen, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             DeckBand(
+                onHide = { setDeckFolded(true) },
                 compact = deck == ComposerDeck.Compact,
                 onMention = { tag -> if (!text.contains(tag)) text = tag + text },
                 onAt = { text += if (text.isEmpty() || text.endsWith(" ")) "@" else " @" },
@@ -713,6 +724,8 @@ private val DeckPluginExtensions = listOf("Allternit for Word", "Allternit for E
  */
 @Composable
 private fun DeckBand(
+    /** With no tab while open, TalkBack folds the band from here (iOS accessibilityAction "Hide tools"). */
+    onHide: () -> Unit,
     compact: Boolean,
     armed: DeckMode?,
     onPickMode: (DeckMode?) -> Unit,
@@ -737,6 +750,7 @@ private fun DeckBand(
             .horizontalScroll(rememberScrollState())
             .heightIn(min = if (compact) 48.dp else 60.dp)
             .padding(start = if (compact) 12.dp else 16.dp, end = if (compact) 12.dp else 16.dp, top = if (compact) 20.dp else 22.dp, bottom = if (compact) 6.dp else 8.dp)
+            .semantics { customActions = listOf(CustomAccessibilityAction("Hide tools") { onHide(); true }) }
             .testTag("composerDeck"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -814,9 +828,13 @@ private fun Modifier.drawBehindOutline(color: Color): Modifier = this.then(
     },
 )
 
-/** The grey "tools" pull tab under the card's bottom-left edge (iOS ComposerToolsTab): the only deck toggle. */
+/**
+ * The grey "tools" pull tab under the card's bottom-left edge (iOS ComposerToolsTab): flat top
+ * joined to the card, rounded bottom corners. It shows only while the deck is folded and unfolds
+ * it; the open band has no tab (swipe down on the card folds it).
+ */
 @Composable
-private fun ToolsTab(folded: Boolean, onClick: () -> Unit) {
+private fun ToolsTab(onClick: () -> Unit) {
     val c = AllternitTheme.colors
     Row(
         modifier = Modifier
@@ -825,15 +843,15 @@ private fun ToolsTab(folded: Boolean, onClick: () -> Unit) {
             .clip(RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp))
             .background(c.fillNeutral)
             .testTag("composerToolsTab")
-            .clickable(role = Role.Button, onClickLabel = if (folded) "Show tools" else "Hide tools", onClick = onClick)
-            .semantics { contentDescription = if (folded) "Show tools" else "Hide tools" }
+            .clickable(role = Role.Button, onClickLabel = "Show tools", onClick = onClick)
+            .semantics { contentDescription = "Show tools" }
             .heightIn(min = 24.dp)
             .widthIn(min = 44.dp)
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
     ) {
-        Icon(painterResource(if (folded) DesignR.drawable.ph_caret_down else DesignR.drawable.ph_caret_up), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(9.dp))
+        Icon(painterResource(DesignR.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(9.dp))
         Text("tools", color = c.textSecondary.copy(alpha = 0.8f), fontSize = 10.sp)
     }
 }
@@ -881,8 +899,14 @@ private fun DeckTrigger(icon: Int?, label: String, testTag: String, iconSize: In
 }
 
 
-/** What the Code composer's deck row opens (iOS CodeDeckRow): the computer, the folder, the shell. */
-internal class CodeComposerActions(val onTerminal: () -> Unit, val onFiles: () -> Unit, val onComputer: () -> Unit)
+/** What the Code composer's deck row opens (iOS CodeDeckRow): the computer, the usage screen, the shell, the file attach. */
+internal class CodeComposerActions(
+    val host: com.allternit.feature.code.CodeHost,
+    val onTerminal: () -> Unit,
+    val onFiles: () -> Unit,
+    val onComputer: () -> Unit,
+    val onUsage: () -> Unit,
+)
 
 private val CodeCoral = Color(0xFFD97757)
 private val CodeIdle = Color(0xFF8EAB84)
@@ -909,6 +933,13 @@ internal fun CodeLaunchComposer(
     var chipDismissed by rememberSaveable { mutableStateOf(false) }
     val trimmed = text.trim()
     LaunchedEffect(Unit) { models.load() }
+    // The plan window the deck's usage meter fills from (iOS UsageStore, `GET /api/v1/me/usage`).
+    var planFraction by remember { mutableStateOf<Double?>(null) }
+    LaunchedEffect(Unit) {
+        com.allternit.feature.billing.StoreBillingClient.usage()?.let { u ->
+            planFraction = if (u.weeklyLimit > 0) u.weeklyUsed / u.weeklyLimit else 0.0
+        }
+    }
     val dictation = remember { com.allternit.feature.chat.voice.Dictation(context) }
     var dictationBase by remember { mutableStateOf("") }
     androidx.compose.runtime.DisposableEffect(dictation) { onDispose { dictation.stop() } }
@@ -1006,6 +1037,8 @@ internal fun CodeLaunchComposer(
                     Modifier.size(40.dp).testTag("codeVoice").clickable(role = Role.Button, onClickLabel = if (dictation.isRecording) "Stop voice input" else "Start voice mode") { toggleDictation() },
                     contentAlignment = Alignment.Center,
                 ) { Icon(painterResource(DesignR.drawable.ph_waveform), contentDescription = null, tint = if (dictation.isRecording) CodeCoral else c.textSecondary, modifier = Modifier.size(16.dp)) }
+                // Play shows before typing starts, never over a draft (iOS CodeLaunchComposer). Nothing runs on the launch screen.
+                com.allternit.feature.chat.games.WaitingGamesPlayButton(busy = false, anytime = true, hidden = trimmed.isNotEmpty())
                 if (trimmed.isNotEmpty()) {
                     // A terminal runs on Enter: the run key is the Return key.
                     Box(
@@ -1017,26 +1050,18 @@ internal fun CodeLaunchComposer(
             }
         }
         DashedRule(border, Modifier.fillMaxWidth())
-        // The deck row: environment · folder · (spacer) · terminal.
-        Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            CodeDeckIcon(DesignR.drawable.ph_desktop, "Environment: This computer", "codeEnvironment", onClick = actions.onComputer)
-            CodeDeckIcon(DesignR.drawable.ph_folder, "Working folder", "codeFolder", onClick = actions.onFiles)
-            Spacer(Modifier.weight(1f))
-            CodeDeckIcon(DesignR.drawable.ph_terminal_window, "Open terminal", "codeOpenTerminal", onClick = actions.onTerminal)
-        }
+        // The deck row (iOS CodeDeckRow): environment · folder · branch · worktree · permission · (spacer) · usage · view menu.
+        com.allternit.feature.code.CodeDeckRow(
+            host = actions.host,
+            planFraction = planFraction,
+            onOpenTerminal = actions.onTerminal,
+            onOpenUsage = actions.onUsage,
+            onConnect = actions.onComputer,
+        )
     }
     if (pickerOpen) {
         ModelPickerSheet(models = models, onOpenSection = { row -> pickerOpen = false; onOpenSection(row) }, onDismiss = { pickerOpen = false })
     }
-}
-
-@Composable
-private fun CodeDeckIcon(icon: Int, label: String, testTag: String, onClick: () -> Unit) {
-    val c = AllternitTheme.colors
-    Box(
-        Modifier.width(36.dp).height(40.dp).testTag(testTag).clickable(role = Role.Button, onClickLabel = label, onClick = onClick).semantics { contentDescription = label },
-        contentAlignment = Alignment.Center,
-    ) { Icon(painterResource(icon), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(16.dp)) }
 }
 
 /** A 1dp dashed rule, 3 on 3 off (iOS DashedHairline). */

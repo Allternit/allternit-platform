@@ -1,28 +1,73 @@
 package com.allternit.feature.settings
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiResult
 import com.allternit.core.auth.AllternitAuth
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.Haptics
+import com.allternit.feature.artifacts.LibraryNet
 import com.allternit.feature.artifacts.bool
 import com.allternit.feature.artifacts.child
 import com.allternit.feature.artifacts.friendly
 import com.allternit.feature.artifacts.listUnder
+import com.allternit.feature.artifacts.long
 import com.allternit.feature.artifacts.obj
 import com.allternit.feature.artifacts.str
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -167,9 +212,9 @@ internal fun OrganizationPage(host: SettingsHost, back: () -> Unit) {
     }
 }
 
-/** iOS PrivacySettingsView: the model toggle, bulk archive and delete of chats, export, privacy policy. */
+/** iOS PrivacySettingsView: the model toggle, Connected apps, bulk archive and delete of chats, export, privacy policy. */
 @Composable
-internal fun PrivacyPage(host: SettingsHost, back: () -> Unit) {
+internal fun PrivacyPage(host: SettingsHost, back: () -> Unit, push: (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val openLink = rememberLinkOpener()
@@ -183,6 +228,10 @@ internal fun PrivacyPage(host: SettingsHost, back: () -> Unit) {
             SToggleRow("Improve the model for everyone", "privacy_improve", improve, detail = "Allow your chats to be used to improve Allternit's models. Saved on this device.",
                 onChange = { improve = it; SettingsPrefs.setImproveModel(context, it) })
         }
+        SCard(Modifier.padding(top = 12.dp)) {
+            SRow("Connected apps", "privacyConnectedApps", icon = DesignR.drawable.ph_app_window, onClick = { push("connected-apps") })
+        }
+        SNote("Outside apps you approved to use your Allternit credits.")
         SLabel("Your data")
         SCard {
             SRow("Archive all chats", "privacy_archive", enabled = !working && host.account != null, onClick = { confirm = "archive" })
@@ -231,6 +280,291 @@ private suspend fun bulkChats(verb: String): String {
     }
     val noun = if (ok == 1) "chat" else "chats"
     return if (ok == targets.size) "Done. ${if (verb == "archive") "Archived" else "Deleted"} $ok $noun." else "Couldn't $verb all chats. $ok of ${targets.size} succeeded. First error: $firstError"
+}
+
+// Connected apps (iOS ConnectedAppsView + OAuthGrantsClient; CONTRACT-oauth-linked-billing-2026-11 "As built" A).
+// cloud-api with the account token, the same routes iOS and web call: GET api/v1/oauth/grants,
+// PATCH api/v1/oauth/grants/<id> {monthly_cap_cents}, DELETE api/v1/oauth/grants/<id>.
+
+/** One outside app the person approved to use their Allternit account (iOS OAuthGrant). */
+private data class OAuthGrant(
+    val id: String,
+    val appName: String,
+    val appLogoUrl: String?,
+    /** `testing | in_review | live | suspended`. */
+    val appState: String,
+    val monthlyCapCents: Long,
+    /** Null once the app is live: the person's own cap is then the only limit. */
+    val maxCapCents: Long?,
+    val spentCents: Long,
+) {
+    /** An app that is not live yet is a developer's test app. */
+    val isTesting: Boolean get() = appState != "live"
+
+    companion object {
+        fun parse(o: JsonObject?): OAuthGrant? {
+            val id = o.str("id") ?: return null
+            return OAuthGrant(
+                id = id,
+                appName = o.str("app_name")?.takeIf { it.isNotBlank() } ?: "An app",
+                appLogoUrl = o.str("app_logo_url"),
+                appState = o.str("app_state") ?: "live",
+                monthlyCapCents = o.long("monthly_cap_cents") ?: 0L,
+                maxCapCents = o.long("max_cap_cents"),
+                spentCents = o.long("spent_cents") ?: 0L,
+            )
+        }
+    }
+}
+
+/** Money for a cap or spend line: whole dollars when there are no cents (iOS GrantMoney). */
+private object GrantMoney {
+    fun text(cents: Long): String = if (cents % 100 == 0L) "\$${cents / 100}" else String.format(Locale.US, "\$%.2f", cents / 100.0)
+
+    /** "Spent $1.23 of $10 this month". */
+    fun spentLine(g: OAuthGrant): String = "Spent ${text(g.spentCents)} of ${text(g.monthlyCapCents)} this month"
+}
+
+/** iOS OAuthGrantsError: the server's own words for a refused call (a bad cap is a 400), else a plain sentence. */
+private fun grantError(r: ApiResult<*>, doing: String): String {
+    val http = r as? ApiResult.HttpError ?: return r.friendly(doing)
+    return when (http.status) {
+        401, 403 -> "Sign in to Allternit on this phone, then try again."
+        404 -> "This app no longer has access."
+        else -> http.message?.takeIf { it.isNotBlank() } ?: r.friendly(doing)
+    }
+}
+
+/** Settings › Privacy › Connected apps: outside apps that use your Allternit account and credits, each with a monthly cap you can change or end. */
+@Composable
+internal fun ConnectedAppsPage(back: () -> Unit) {
+    // Saves and revokes run on the page's scope, so closing the sheet mid-call doesn't drop the result.
+    val scope = rememberCoroutineScope()
+    val (load, reload) = rememberLoad("oauth-grants") { Net.cloud("GET", "api/v1/oauth/grants").toLoad("load your connected apps") }
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    SPage("Connected apps", tag = "connected-apps-page", onBack = back) {
+        SNote("Apps you approved to use your Allternit credits. Each one stops at its monthly cap, and you can end access at any time.")
+        LoadView(load, reload, "load your connected apps") { body ->
+            var grants by remember(body) { mutableStateOf(body.listUnder("data").mapNotNull { OAuthGrant.parse(it) }) }
+            if (grants.isEmpty()) {
+                Text(
+                    "No apps have access to your account.", color = AllternitTheme.colors.textSecondary, fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().padding(start = 6.dp, top = 8.dp).testTag("connected-apps-empty"),
+                )
+            } else {
+                SCard {
+                    grants.forEachIndexed { i, g ->
+                        if (i > 0) SDivider()
+                        ConnectedAppRow(g) { selectedId = g.id }
+                    }
+                }
+            }
+            grants.firstOrNull { it.id == selectedId }?.let { g ->
+                ConnectedAppSheet(
+                    grant = g,
+                    scope = scope,
+                    onSaved = { updated -> grants = grants.map { if (it.id == updated.id) updated else it } },
+                    onRevoked = { grants = grants.filterNot { it.id == g.id }; selectedId = null },
+                    onDismiss = { selectedId = null },
+                )
+            }
+        }
+    }
+}
+
+/** The app's logo from `app_logo_url` on a white tile, or its initial on a neutral tile (iOS ConnectedAppLogo). */
+@Composable
+private fun GrantLogo(g: OAuthGrant, size: Dp) {
+    val c = AllternitTheme.colors
+    var image by remember(g.appLogoUrl) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(g.appLogoUrl) {
+        val url = g.appLogoUrl?.takeIf { it.startsWith("https://") } ?: return@LaunchedEffect
+        image = withContext(Dispatchers.IO) {
+            runCatching {
+                java.net.URL(url).openConnection().apply { connectTimeout = 10_000; readTimeout = 10_000 }
+                    .getInputStream().use { BitmapFactory.decodeStream(it) }
+            }.getOrNull()
+        }
+    }
+    val shape = RoundedCornerShape(maxOf(6f, size.value / 4f).dp)
+    val bmp = image
+    Box(Modifier.size(size).clip(shape).background(if (bmp != null) Color.White else c.fillNeutral), contentAlignment = Alignment.Center) {
+        if (bmp != null) Image(bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.size(size * 0.7f), contentScale = ContentScale.Fit)
+        else Text(g.appName.take(1).uppercase(), color = c.textPrimary, fontSize = (size.value * 0.45f).sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun TestingTag() {
+    val c = AllternitTheme.colors
+    Text(
+        "Testing app", color = c.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium,
+        modifier = Modifier.clip(CircleShape).background(c.fillNeutral).padding(horizontal = 6.dp, vertical = 1.dp),
+    )
+}
+
+@Composable
+private fun ConnectedAppRow(g: OAuthGrant, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    val view = LocalView.current
+    val label = "${g.appName}${if (g.isTesting) ", testing app" else ""}. ${GrantMoney.spentLine(g)}"
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 58.dp).testTag("connected-app-${g.id}")
+            .clickable(role = Role.Button, onClickLabel = "Open ${g.appName}") { Haptics.perform(view, Haptics.Kind.Tap); onClick() }
+            .semantics(mergeDescendants = true) { contentDescription = label }
+            .padding(horizontal = 16.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        GrantLogo(g, 36.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(g.appName, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (g.isTesting) TestingTag()
+            }
+            Text(GrantMoney.spentLine(g), color = c.textSecondary, fontSize = 13.sp, lineHeight = 18.sp)
+        }
+        Icon(painterResource(DesignR.drawable.ph_caret_right), contentDescription = null, tint = c.textTertiary, modifier = Modifier.size(14.dp))
+    }
+}
+
+/** A round − or + for the monthly cap (iOS Stepper). */
+@Composable
+private fun CapStepButton(glyph: String, label: String, tag: String, enabled: Boolean, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    Box(
+        Modifier.size(40.dp).clip(CircleShape).background(c.bgPrimary).testTag(tag)
+            .clickable(enabled = enabled, role = Role.Button, onClickLabel = label, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) { Text(glyph, color = if (enabled) c.textPrimary else c.textTertiary, fontSize = 20.sp, fontWeight = FontWeight.Medium) }
+}
+
+/** The app's detail: its monthly cap and Revoke, which asks first (iOS ConnectedAppDetailSheet). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConnectedAppSheet(grant: OAuthGrant, scope: CoroutineScope, onSaved: (OAuthGrant) -> Unit, onRevoked: () -> Unit, onDismiss: () -> Unit) {
+    val c = AllternitTheme.colors
+    val view = LocalView.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var capDollars by remember(grant.id) { mutableIntStateOf(maxOf(1L, grant.monthlyCapCents / 100).toInt()) }
+    var saving by remember { mutableStateOf(false) }
+    var revoking by remember { mutableStateOf(false) }
+    var confirmRevoke by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    // While testing the server limits the cap; once live only the person does.
+    val maxDollars = grant.maxCapCents?.let { maxOf(1L, it / 100).toInt() } ?: 1000
+    val changed = capDollars.toLong() * 100 != grant.monthlyCapCents
+    val busy = saving || revoking
+    val path = "api/v1/oauth/grants/${LibraryNet.escape(grant.id)}"
+
+    fun step(by: Int) {
+        val next = (capDollars + by).coerceIn(1, maxDollars)
+        if (next != capDollars) {
+            capDollars = next
+            Haptics.perform(view, Haptics.Kind.Tap)
+        }
+    }
+
+    fun save() {
+        error = null
+        saving = true
+        val cents = capDollars.toLong() * 100
+        scope.launch {
+            val r = Net.cloud("PATCH", path, buildJsonObject { put("monthly_cap_cents", cents) })
+            if (r is ApiResult.Ok) {
+                onSaved(OAuthGrant.parse(r.value.obj) ?: grant.copy(monthlyCapCents = cents))
+                Haptics.perform(view, Haptics.Kind.Success)
+            } else {
+                error = grantError(r, "save the cap")
+                Haptics.perform(view, Haptics.Kind.Warning)
+            }
+            saving = false
+        }
+    }
+
+    fun revoke() {
+        error = null
+        revoking = true
+        scope.launch {
+            val r = Net.cloud("DELETE", path)
+            // DELETE answers 204. A 404 means the grant is already gone, which is the goal (iOS OAuthGrantsClient.revoke).
+            if (r is ApiResult.Ok || (r as? ApiResult.HttpError)?.status == 404) {
+                Haptics.perform(view, Haptics.Kind.Warning)
+                onRevoked()
+            } else {
+                error = "Couldn't revoke ${grant.appName}. ${grantError(r, "revoke access")}"
+            }
+            revoking = false
+        }
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.bgPrimary) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 24.dp).navigationBarsPadding().testTag("connected-app-sheet"),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                GrantLogo(grant, 44.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(grant.appName, color = c.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        if (grant.isTesting) TestingTag()
+                    }
+                    Text(GrantMoney.spentLine(grant), color = c.textSecondary, fontSize = 13.sp)
+                }
+            }
+            if (grant.isTesting) {
+                Text(
+                    "This app is still being tested by its developer. Its cap can't go above ${GrantMoney.text(grant.maxCapCents ?: 0L)} until it is approved.",
+                    color = c.textSecondary, fontSize = 13.sp, lineHeight = 18.sp,
+                )
+            }
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f).semantics(mergeDescendants = true) { stateDescription = "$capDollars dollars a month" }) {
+                        Text("Monthly cap", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Text("\$$capDollars a month", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("connected-app-cap"))
+                    }
+                    CapStepButton("−", "Lower the cap", "connected-app-cap-down", enabled = !busy && capDollars > 1) { step(-1) }
+                    CapStepButton("+", "Raise the cap", "connected-app-cap-up", enabled = !busy && capDollars < maxDollars) { step(1) }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SButton(if (saving) "Saving…" else "Save cap", "connected-app-save", enabled = changed && !busy) { save() }
+                    if (saving) CircularProgressIndicator(Modifier.size(16.dp), color = c.textSecondary, strokeWidth = 2.dp)
+                }
+            }
+            SError(error)
+            Box(
+                Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(14.dp)).background(Danger.copy(alpha = 0.1f))
+                    .testTag("connected-app-revoke")
+                    .clickable(enabled = !busy, role = Role.Button) { Haptics.perform(view, Haptics.Kind.Tap); confirmRevoke = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (revoking) CircularProgressIndicator(Modifier.size(14.dp), color = Danger, strokeWidth = 2.dp)
+                    Text("Revoke access", color = Danger, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+
+    if (confirmRevoke) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmRevoke = false },
+            title = { Text("Revoke ${grant.appName}?") },
+            text = { Text("${grant.appName} stops working with your account right away. You can approve it again later.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmRevoke = false; revoke() }, modifier = Modifier.testTag("connected-app-revoke-confirm")) {
+                    Text("Revoke access", color = Danger)
+                }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { confirmRevoke = false }) { Text("Cancel") } },
+        )
+    }
 }
 
 /** iOS NotificationsSettingsView: per-event choices, quiet hours, and critical-alert texts, all on cloud-api. */

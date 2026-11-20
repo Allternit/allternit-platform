@@ -232,7 +232,7 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                             }
                         }
                         item(key = "g-${group.key}") {
-                            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral.copy(alpha = 0.5f))) {
+                            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral.copy(alpha = c.fillNeutral.alpha * 0.5f))) {
                                 group.rows.forEachIndexed { i, m ->
                                     ModelRow(m, models) { creditsRequest = it }
                                     if (i < group.rows.lastIndex) Box(Modifier.fillMaxWidth().padding(start = 44.dp).height(1.dp).background(c.borderSubtle))
@@ -391,7 +391,7 @@ private fun CurrentModel(m: PickerModel, models: ModelStore) {
             .fillMaxWidth()
             .padding(top = 10.dp, bottom = 6.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(c.fillNeutral.copy(alpha = 0.5f))
+            .background(c.fillNeutral.copy(alpha = c.fillNeutral.alpha * 0.5f))
             .border(1.dp, c.borderSubtle, RoundedCornerShape(18.dp))
             .padding(12.dp)
             .testTag("modelPickerCurrent"),
