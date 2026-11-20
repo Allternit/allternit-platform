@@ -1,0 +1,13 @@
+[package]
+name = "host-probe"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Read-only host collector for the Computers console: CPU, memory, disks, network, OS (GET /v1/host/snapshot)."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+sysinfo = "0.30"
