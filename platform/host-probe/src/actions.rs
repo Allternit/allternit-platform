@@ -18,9 +18,11 @@
 //!    host itself reported reach a command line. `snippet.run` is the one
 //!    exception: it runs the saved snippet's script, which the user wrote and
 //!    approved.
-//! 4. An action that needs root/admin on a probe without it is
-//!    [`ActionError::NeedsElevation`] before anything runs (the elevation
-//!    helper is a separate step). The approval stays unused.
+//! 4. An action that needs root/admin on a probe without it goes through the
+//!    admin helper when the one-time setup is installed ([`crate::helper`],
+//!    [`crate::elevation`]); otherwise it is [`ActionError::NeedsElevation`]
+//!    before anything runs and the approval stays unused. The helper never
+//!    runs snippets.
 //! 5. The approval id is claimed (single use) and the change record is
 //!    written with status `pending` **before** any command runs.
 //! 6. The commands run; the record gets the result, masked output, the state
@@ -41,6 +43,7 @@ use serde_json::{json, Value};
 
 use crate::changes::{safe_file_name, ChangeRecord, ChangeStatus, ChangeStore};
 use crate::cmd::{run, CmdOutput, RunError};
+use crate::helper::HelperRequest;
 use crate::logs::{valid_name, valid_provider};
 use crate::mask::{mask_line, MaskOptions};
 use crate::ports::HostPort;
@@ -48,10 +51,10 @@ use crate::services::{HostService, ServiceProvider, ServiceState};
 use crate::updates::{HostUpdate, UpdateSource};
 use crate::OsFamily;
 
-const SERVICE_TIMEOUT: Duration = Duration::from_secs(120);
-const KILL_TIMEOUT: Duration = Duration::from_secs(15);
-const UPDATE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
-const CLEAN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+pub(crate) const SERVICE_TIMEOUT: Duration = Duration::from_secs(120);
+pub(crate) const KILL_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const UPDATE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+pub(crate) const CLEAN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const SNIPPET_DEFAULT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const SNIPPET_MAX_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const SNIPPET_MAX_LEN: usize = 64 * 1024;
@@ -250,6 +253,16 @@ pub trait Executor: Send + Sync {
     fn services(&self) -> crate::Result<Vec<HostService>>;
     fn ports(&self) -> crate::Result<Vec<HostPort>>;
     fn updates(&self) -> crate::Result<Vec<HostUpdate>>;
+    /// The admin helper is installed and answers the current version
+    /// ([`crate::elevation::status`]). Default: no helper.
+    fn helper_ready(&self) -> bool {
+        false
+    }
+    /// Send one allow-listed request to the installed admin helper.
+    fn run_helper(&self, req: &HelperRequest, timeout: Duration) -> Result<CmdOutput, RunError> {
+        let _ = (req, timeout);
+        Err(RunError::NotFound)
+    }
 }
 
 /// Runs real commands through [`crate::cmd::run`] and reads the host through
@@ -281,6 +294,16 @@ impl Executor for SystemExecutor {
 
     fn updates(&self) -> crate::Result<Vec<HostUpdate>> {
         crate::updates::updates()
+    }
+
+    fn helper_ready(&self) -> bool {
+        !self.elevated()
+            && crate::elevation::status(&crate::elevation::SystemHost).state
+                == crate::elevation::ElevationState::Installed
+    }
+
+    fn run_helper(&self, req: &HelperRequest, timeout: Duration) -> Result<CmdOutput, RunError> {
+        crate::elevation::send_to_helper(req, timeout)
     }
 }
 
@@ -431,10 +454,10 @@ enum OkCheck {
 }
 
 #[derive(Debug, Clone)]
-struct Step {
-    program: String,
-    args: Vec<String>,
-    timeout: Duration,
+pub(crate) struct Step {
+    pub(crate) program: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) timeout: Duration,
     ok: OkCheck,
 }
 
@@ -476,6 +499,9 @@ struct Plan {
     undo: Option<UndoAction>,
     note: Option<String>,
     after: After,
+    /// The same work as allow-listed admin helper requests. Empty = the
+    /// helper cannot do it (snippets).
+    helper: Vec<HelperRequest>,
 }
 
 impl Plan {
@@ -488,6 +514,7 @@ impl Plan {
             undo: None,
             note: None,
             after: After::Nothing,
+            helper: Vec::new(),
         }
     }
 }
@@ -535,11 +562,27 @@ impl<E: Executor> ActionEngine<E> {
         })?;
 
         let plan = self.plan(action, target, os)?;
+        let mut via_helper = false;
         if plan.needs_elevation && !self.exec.elevated() {
-            return Err(ActionError::NeedsElevation {
-                reason: plan.elevation_reason.clone(),
-                change_id: None,
-            });
+            if plan.helper.is_empty() {
+                return Err(ActionError::NeedsElevation {
+                    reason: format!(
+                        "{} (the admin helper does not run this; run the runtime as root/admin)",
+                        plan.elevation_reason
+                    ),
+                    change_id: None,
+                });
+            }
+            if !self.exec.helper_ready() {
+                return Err(ActionError::NeedsElevation {
+                    reason: format!(
+                        "{}; set up admin access for this computer first",
+                        plan.elevation_reason
+                    ),
+                    change_id: None,
+                });
+            }
+            via_helper = true;
         }
 
         let change_id = new_change_id();
@@ -565,7 +608,11 @@ impl<E: Executor> ActionEngine<E> {
             restore_point: req.restore_point.clone().filter(|r| !r.trim().is_empty()),
             before: plan.before.clone(),
             after: None,
-            commands: plan.steps.iter().map(Step::display).collect(),
+            commands: if via_helper {
+                plan.helper.iter().map(HelperRequest::display).collect()
+            } else {
+                plan.steps.iter().map(Step::display).collect()
+            },
             output: None,
             error: None,
             undo: None,
@@ -576,7 +623,28 @@ impl<E: Executor> ActionEngine<E> {
             return Err(ActionError::Store(e));
         }
 
-        let outcome = self.execute(&plan.steps);
+        let mut outcome = if via_helper {
+            self.execute_helper(&plan.helper)
+        } else {
+            self.execute(&plan.steps)
+        };
+        // Tried without root (supervisord, Docker, launchd, kill) and the OS
+        // refused before changing anything: retry once through the helper.
+        if !via_helper
+            && matches!(outcome.failure, Some(Failure::Permission(_)))
+            && !plan.helper.is_empty()
+            && !self.exec.elevated()
+            && self.exec.helper_ready()
+        {
+            rec.commands
+                .extend(plan.helper.iter().map(HelperRequest::display));
+            let first = outcome.output.take();
+            outcome = self.execute_helper(&plan.helper);
+            outcome.output = match (first, outcome.output) {
+                (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
+                (a, b) => a.or(b),
+            };
+        }
         rec.finished_at = Some(now_iso());
         rec.output = outcome.output;
         let result = match outcome.failure {
@@ -703,6 +771,11 @@ impl<E: Executor> ActionEngine<E> {
         let (steps, needs_elevation) = service_steps(&svc, op)?;
         plan.steps = steps;
         plan.needs_elevation = needs_elevation;
+        plan.helper = vec![HelperRequest::Service {
+            op,
+            provider: svc.provider,
+            unit: svc.unit.clone(),
+        }];
         plan.elevation_reason = format!(
             "{} services need admin rights to {}",
             provider_name(svc.provider),
@@ -762,10 +835,18 @@ impl<E: Executor> ActionEngine<E> {
                     "the process on port {port} could not be identified"
                 )));
             }
-            return Err(ActionError::NeedsElevation {
-                reason: format!("the process on port {port} belongs to another user"),
-                change_id: None,
-            });
+            // Another user's process: only the admin helper can see and stop
+            // it. The helper looks the listeners up again itself.
+            let mut plan = Plan::new(Vec::new());
+            plan.needs_elevation = true;
+            plan.elevation_reason = format!("the process on port {port} belongs to another user");
+            plan.helper = vec![HelperRequest::PortFree { port }];
+            plan.before = Some(json!({ "port": port, "pids": [], "process": null }));
+            plan.after = After::Port(port);
+            plan.note = Some(format!(
+                "Not undoable: the process that held port {port} was stopped. Start it again yourself if you need it."
+            ));
+            return Ok(plan);
         }
         if pids.iter().any(|p| *p == self.exec.own_pid()) {
             return Err(ActionError::Refused(format!(
@@ -790,6 +871,11 @@ impl<E: Executor> ActionEngine<E> {
             let (steps, needs_elevation) = service_steps(svc, ServiceOp::Stop)?;
             let mut plan = Plan::new(steps);
             plan.needs_elevation = needs_elevation;
+            plan.helper = vec![HelperRequest::Service {
+                op: ServiceOp::Stop,
+                provider: svc.provider,
+                unit: svc.unit.clone(),
+            }];
             plan.elevation_reason = format!(
                 "{} services need admin rights to stop",
                 provider_name(svc.provider)
@@ -823,6 +909,7 @@ impl<E: Executor> ActionEngine<E> {
             })
             .collect();
         let mut plan = Plan::new(steps);
+        plan.helper = vec![HelperRequest::PortFree { port }];
         plan.before = Some(before);
         plan.after = After::Port(port);
         plan.note = Some(format!(
@@ -869,10 +956,16 @@ impl<E: Executor> ActionEngine<E> {
                 .push(u.id.as_str());
         }
         let mut steps = Vec::new();
+        let mut helper = Vec::new();
         for (source, ids) in by_source.values() {
             steps.push(update_step(*source, ids)?);
+            helper.push(HelperRequest::UpdatesInstall {
+                source: *source,
+                ids: ids.iter().map(|s| s.to_string()).collect(),
+            });
         }
         let mut plan = Plan::new(steps);
+        plan.helper = helper;
         plan.needs_elevation = true;
         plan.elevation_reason = "installing updates needs admin rights".into();
         plan.before = Some(json!({
@@ -999,6 +1092,76 @@ impl<E: Executor> ActionEngine<E> {
         }
     }
 
+    /// Run the plan through the admin helper (it re-validates each request).
+    fn execute_helper(&self, reqs: &[HelperRequest]) -> Outcome {
+        let mut combined = String::new();
+        for req in reqs {
+            let name = crate::helper::HELPER_BIN;
+            match self.exec.run_helper(req, req.timeout()) {
+                Ok(out) => {
+                    let text = format!("{}{}", out.stdout, out.stderr);
+                    combined.push_str(&text);
+                    if out.code == Some(0) {
+                        continue;
+                    }
+                    let reason = cmd_first_line(&out);
+                    let lower = text.to_lowercase();
+                    let failure = if lower.contains("password is required")
+                        || lower.contains("no tty present")
+                        || out.code == Some(crate::helper::EXIT_NOT_ROOT)
+                    {
+                        // sudo asked for a password: the setup is gone or broken.
+                        Failure::Permission(format!(
+                            "the admin helper is not set up on this computer: {reason}"
+                        ))
+                    } else if out.code == Some(crate::helper::EXIT_REFUSED)
+                        || out.code == Some(crate::helper::EXIT_NOT_FOUND)
+                    {
+                        Failure::Other(format!("{name} refused the request: {reason}"))
+                    } else {
+                        Failure::Other(format!(
+                            "{} exited with {}: {reason}",
+                            req.display(),
+                            out.code
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| "a signal".into())
+                        ))
+                    };
+                    return Outcome {
+                        output: mask_output(&combined),
+                        failure: Some(failure),
+                    };
+                }
+                Err(RunError::NotFound) => {
+                    return Outcome {
+                        output: mask_output(&combined),
+                        failure: Some(Failure::Permission(
+                            "the admin helper is not reachable; set up admin access again".into(),
+                        )),
+                    }
+                }
+                Err(e) => {
+                    let msg = match e {
+                        RunError::Timeout => format!(
+                            "{} timed out after {}s; it may have partly run",
+                            req.display(),
+                            req.timeout().as_secs()
+                        ),
+                        other => other.reason(name),
+                    };
+                    return Outcome {
+                        output: mask_output(&combined),
+                        failure: Some(Failure::Other(msg)),
+                    };
+                }
+            }
+        }
+        Outcome {
+            output: mask_output(&combined),
+            failure: None,
+        }
+    }
+
     fn read_after(&self, after: &After) -> Option<Value> {
         match after {
             After::Nothing => None,
@@ -1015,15 +1178,16 @@ impl<E: Executor> ActionEngine<E> {
     }
 }
 
+/// A service operation (also the helper's `service <op>` argument).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ServiceOp {
+pub enum ServiceOp {
     Start,
     Stop,
     Restart,
 }
 
 impl ServiceOp {
-    fn verb(self) -> &'static str {
+    pub fn verb(self) -> &'static str {
         match self {
             ServiceOp::Start => "start",
             ServiceOp::Stop => "stop",
@@ -1045,7 +1209,10 @@ fn provider_name(p: ServiceProvider) -> &'static str {
 /// Commands for one service operation, and whether they need elevation up
 /// front. Supervisord, Docker and launchd user jobs are tried as is; a
 /// permission error at run time becomes [`ActionError::NeedsElevation`].
-fn service_steps(svc: &HostService, op: ServiceOp) -> Result<(Vec<Step>, bool), ActionError> {
+pub(crate) fn service_steps(
+    svc: &HostService,
+    op: ServiceOp,
+) -> Result<(Vec<Step>, bool), ActionError> {
     let unit = svc.unit.as_str();
     let ok = match svc.provider {
         ServiceProvider::Scm => valid_provider(unit),
@@ -1101,7 +1268,7 @@ fn source_rank(s: UpdateSource) -> u8 {
     }
 }
 
-fn update_step(source: UpdateSource, ids: &[&str]) -> Result<Step, ActionError> {
+pub(crate) fn update_step(source: UpdateSource, ids: &[&str]) -> Result<Step, ActionError> {
     let t = UPDATE_TIMEOUT;
     Ok(match source {
         UpdateSource::Apt => {
@@ -1192,6 +1359,11 @@ fn plan_clean(target: &str, os: OsFamily) -> Result<Plan, ActionError> {
     }
     let mut plan = Plan::new(vec![Step::new(item.program, item.args, CLEAN_TIMEOUT)]);
     plan.needs_elevation = item.needs_elevation;
+    if item.needs_elevation {
+        plan.helper = vec![HelperRequest::Clean {
+            item: item.id.to_string(),
+        }];
+    }
     plan.elevation_reason = format!("cleaning {} needs admin rights", item.label.to_lowercase());
     plan.before = Some(json!({ "item": item.id, "label": item.label }));
     plan.note = Some("Not undoable: the cleaned files are deleted.".into());
@@ -1305,6 +1477,9 @@ mod tests {
         /// Store root, to check the record is `pending` when a command runs.
         root: PathBuf,
         pending_seen: Mutex<Vec<bool>>,
+        helper_ready: bool,
+        helper_replies: Mutex<VecDeque<Result<CmdOutput, RunError>>>,
+        helper_calls: Mutex<Vec<Vec<String>>>,
     }
 
     impl Fake {
@@ -1320,7 +1495,20 @@ mod tests {
                 calls: Mutex::new(Vec::new()),
                 root: root.to_path_buf(),
                 pending_seen: Mutex::new(Vec::new()),
+                helper_ready: false,
+                helper_replies: Mutex::new(VecDeque::new()),
+                helper_calls: Mutex::new(Vec::new()),
             }
+        }
+        fn helper_reply(&self, code: i32, stdout: &str, stderr: &str) {
+            self.helper_replies.lock().unwrap().push_back(Ok(CmdOutput {
+                code: Some(code),
+                stdout: stdout.into(),
+                stderr: stderr.into(),
+            }));
+        }
+        fn helper_calls(&self) -> Vec<Vec<String>> {
+            self.helper_calls.lock().unwrap().clone()
         }
         fn reply(&self, code: i32, stdout: &str, stderr: &str) {
             self.replies.lock().unwrap().push_back(Ok(CmdOutput {
@@ -1380,6 +1568,28 @@ mod tests {
         }
         fn updates(&self) -> crate::Result<Vec<HostUpdate>> {
             Ok(self.updates.clone())
+        }
+        fn helper_ready(&self) -> bool {
+            self.helper_ready
+        }
+        fn run_helper(
+            &self,
+            req: &HelperRequest,
+            _timeout: Duration,
+        ) -> Result<CmdOutput, RunError> {
+            // What the real helper would accept: the argv must parse.
+            let argv = req.to_argv();
+            assert_eq!(&HelperRequest::parse(argv.as_slice()).unwrap(), req);
+            self.helper_calls.lock().unwrap().push(argv);
+            self.helper_replies
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(CmdOutput {
+                    code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }))
         }
     }
 
@@ -1572,6 +1782,180 @@ mod tests {
             e.store().claim_approval("ap-elev", "x").unwrap(),
             "approval still unused"
         );
+        cleanup(&e);
+    }
+
+    #[test]
+    fn systemd_without_root_goes_through_the_installed_helper() {
+        let root = temp_root("helper-svc");
+        let mut f = Fake::new(OsFamily::Linux, &root);
+        f.elevated = false;
+        f.helper_ready = true;
+        f.services.lock().unwrap().push(svc(
+            ServiceProvider::Systemd,
+            "nginx",
+            "nginx.service",
+            ServiceState::Running,
+            Some(900),
+        ));
+        let e = engine(f);
+        let res = e
+            .run(&req("service.stop", "nginx.service", Some("ap-h1")))
+            .unwrap();
+        assert!(
+            e.exec.calls().is_empty(),
+            "no direct systemctl without root"
+        );
+        assert_eq!(
+            e.exec.helper_calls(),
+            vec![vec!["service", "stop", "systemd", "nginx.service"]]
+        );
+        let undo = res.undo.expect("stop of a running service has an undo");
+        assert_eq!(undo.action_type, ActionType::ServiceStart);
+        let rec = e.store().get(&res.change_id).unwrap().unwrap();
+        assert_eq!(rec.status, ChangeStatus::Succeeded);
+        assert_eq!(
+            rec.commands,
+            vec!["allternit-host-helper service stop systemd nginx.service"]
+        );
+        assert!(
+            !e.store().claim_approval("ap-h1", "x").unwrap(),
+            "approval was used"
+        );
+        cleanup(&e);
+    }
+
+    #[test]
+    fn helper_never_runs_snippets() {
+        let root = temp_root("helper-snip");
+        let mut f = Fake::new(OsFamily::Linux, &root);
+        f.elevated = false;
+        f.helper_ready = true;
+        let e = engine(f);
+        std::fs::create_dir_all(e.store().snippets_dir()).unwrap();
+        std::fs::write(
+            e.store().snippets_dir().join("s1.json"),
+            r#"{"id":"s1","name":"wipe","script":"rm -rf /var/tmp/x","elevated":true}"#,
+        )
+        .unwrap();
+        let err = e.run(&req("snippet.run", "s1", Some("ap-h2"))).unwrap_err();
+        assert_eq!(err.code(), "needs_elevation");
+        assert!(e.exec.calls().is_empty());
+        assert!(e.exec.helper_calls().is_empty(), "helper got nothing");
+        assert!(e.store().claim_approval("ap-h2", "x").unwrap());
+        cleanup(&e);
+    }
+
+    #[test]
+    fn run_time_permission_error_retries_through_the_helper() {
+        let root = temp_root("helper-docker");
+        let mut f = Fake::new(OsFamily::Linux, &root);
+        f.elevated = false;
+        f.helper_ready = true;
+        f.services.lock().unwrap().push(svc(
+            ServiceProvider::Docker,
+            "web",
+            "abc123",
+            ServiceState::Running,
+            None,
+        ));
+        f.reply(
+            1,
+            "",
+            "permission denied while trying to connect to the Docker daemon socket",
+        );
+        let e = engine(f);
+        let res = e
+            .run(&req("service.stop", "abc123", Some("ap-h3")))
+            .unwrap();
+        assert_eq!(e.exec.calls(), vec!["docker stop abc123"]);
+        assert_eq!(
+            e.exec.helper_calls(),
+            vec![vec!["service", "stop", "docker", "abc123"]]
+        );
+        let rec = e.store().get(&res.change_id).unwrap().unwrap();
+        assert_eq!(rec.status, ChangeStatus::Succeeded);
+        assert_eq!(rec.commands.len(), 2, "both attempts are on the record");
+        cleanup(&e);
+    }
+
+    #[test]
+    fn helper_asking_for_a_password_is_needs_elevation_and_frees_the_approval() {
+        let root = temp_root("helper-pw");
+        let mut f = Fake::new(OsFamily::Linux, &root);
+        f.elevated = false;
+        f.helper_ready = true;
+        f.helper_reply(1, "", "sudo: a password is required");
+        let e = engine(f);
+        let err = e
+            .run(&req("space.clean", "apt-cache", Some("ap-h4")))
+            .unwrap_err();
+        let ActionError::NeedsElevation {
+            change_id: Some(id),
+            ..
+        } = &err
+        else {
+            panic!("{err:?}")
+        };
+        assert_eq!(e.exec.helper_calls(), vec![vec!["clean", "apt-cache"]]);
+        assert_eq!(
+            e.store().get(id).unwrap().unwrap().status,
+            ChangeStatus::NeedsElevation
+        );
+        assert!(e.store().claim_approval("ap-h4", "x").unwrap());
+        cleanup(&e);
+    }
+
+    #[test]
+    fn helper_refusal_is_a_failed_change() {
+        let root = temp_root("helper-refuse");
+        let mut f = Fake::new(OsFamily::Linux, &root);
+        f.elevated = false;
+        f.helper_ready = true;
+        f.helper_reply(
+            crate::helper::EXIT_NOT_FOUND,
+            "",
+            "not found: \"openssl\" is not a waiting apt update",
+        );
+        f.updates = vec![update(UpdateSource::Apt, "openssl", true)];
+        let e = engine(f);
+        let err = e
+            .run(&req("updates.install", "openssl", Some("ap-h5")))
+            .unwrap_err();
+        assert_eq!(err.code(), "action_failed", "{err:?}");
+        assert!(err.to_string().contains("refused"), "{err}");
+        assert_eq!(
+            e.exec.helper_calls(),
+            vec![vec!["updates", "apt", "openssl"]]
+        );
+        cleanup(&e);
+    }
+
+    #[test]
+    fn port_of_another_user_is_freed_by_the_helper() {
+        let root = temp_root("helper-port");
+        let mut f = Fake::new(OsFamily::Linux, &root);
+        f.elevated = false;
+        f.ports = vec![port(5432, None, None)];
+        let no_helper = engine(f);
+        assert_eq!(
+            no_helper
+                .run(&req("port.free", "5432", Some("ap-h6")))
+                .unwrap_err()
+                .code(),
+            "needs_elevation"
+        );
+        cleanup(&no_helper);
+
+        let root = temp_root("helper-port2");
+        let mut f = Fake::new(OsFamily::Linux, &root);
+        f.elevated = false;
+        f.helper_ready = true;
+        f.ports = vec![port(5432, None, None)];
+        let e = engine(f);
+        let res = e.run(&req("port.free", "5432", Some("ap-h7"))).unwrap();
+        assert!(res.undo.is_none());
+        assert_eq!(e.exec.helper_calls(), vec![vec!["port-free", "5432"]]);
         cleanup(&e);
     }
 

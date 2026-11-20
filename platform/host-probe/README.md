@@ -212,3 +212,21 @@ Change records are JSON files under `~/.allternit/host-probe/changes/`
 feeds the Activity tab. `ApprovalVerifier` lets the mounting runtime add a
 signature check; the default accepts any well-formed id. Tests use a fake
 `Executor`; no real command runs in tests.
+
+## Admin access (one-time setup, contract D5)
+
+The probe never runs as root. Actions that need root (systemd services,
+updates, admin clean-up items, ports held by another user) go through one
+helper binary, `allternit-host-helper` (`src/bin/`), after a setup the user
+approves once:
+
+| OS | Installed | Reached by |
+|---|---|---|
+| Linux | `/usr/local/libexec/allternit/allternit-host-helper` + `/etc/sudoers.d/allternit-host-probe` (checked with `visudo -cf` before it goes live) | `sudo -n <helper> <request>` |
+| macOS | `/Library/PrivilegedHelperTools/com.allternit.host-helper` + LaunchDaemon `com.allternit.host-helper` | socket `/var/run/com.allternit.host-helper.sock` (user-owned, 0600) |
+| Windows | helper under `%ProgramFiles%\Allternit\HostHelper` + SYSTEM task `AllternitHostHelper` | `127.0.0.1:47613` + token file readable by the user and admins |
+| Root / Orgo | nothing | the engine runs the commands itself |
+
+- `elevation::plan` lists every file (with contents) and every privileged step before approval; `install` shows one OS admin prompt (pkexec, the macOS admin dialog, UAC; headless Linux gets the exact `sudo` command); `status` is installed / outdated / missing / notNeeded; `uninstall` removes everything install wrote.
+- `helper` is the allow-list: `version`, `service start|stop|restart <provider> <unit>`, `updates <source> <id>...`, `clean <admin item>`, `port-free <port>`. The helper parses the exact argv shape and looks the target up on the host again before building a command. It never runs a shell, a script or a snippet.
+- `ActionEngine` uses the helper when it is installed instead of returning `needs_elevation`, and retries once through it when a non-root attempt hits a permission error. Every action still needs its own approval id.

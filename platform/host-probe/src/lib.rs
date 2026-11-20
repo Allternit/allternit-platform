@@ -12,6 +12,10 @@
 //! action list, an approval id per action, and a change record written to
 //! the runtime home before anything runs ([`changes`]).
 //!
+//! Actions that need root run through one allow-listed admin helper
+//! ([`helper`]) after a one-time setup the user approves ([`elevation`]);
+//! the probe itself never runs as root.
+//!
 //! Everything else here is read-only and needs no root. Platform code sits behind
 //! `cfg(target_os = ...)`; a host this crate does not know returns
 //! [`ProbeError::Unsupported`] instead of panicking.
@@ -21,6 +25,8 @@ use serde::{Deserialize, Serialize};
 pub mod actions;
 pub mod changes;
 pub mod cmd;
+pub mod elevation;
+pub mod helper;
 pub mod logs;
 pub mod mask;
 pub mod os;
@@ -30,23 +36,32 @@ pub mod snapshot;
 pub mod updates;
 
 pub use actions::{
-    clean_items, run_action, ActionEngine, ActionError, ActionRequest, ActionResult, ActionType, ApprovalVerifier,
-    CleanItem, Executor, Snippet, SystemExecutor, UndoAction, WellFormedApproval,
+    clean_items, run_action, ActionEngine, ActionError, ActionRequest, ActionResult, ActionType,
+    ApprovalVerifier, CleanItem, Executor, ServiceOp, Snippet, SystemExecutor, UndoAction,
+    WellFormedApproval,
 };
 pub use changes::{ChangeRecord, ChangeStatus, ChangeStore};
 pub use cmd::SourceStatus;
+pub use elevation::{
+    ApprovalMethod, ElevationError, ElevationState, ElevationStatus, HelperKind, SetupPlan,
+};
+pub use helper::{HelperError, HelperRequest, HELPER_VERSION};
 pub use logs::{
-    stream as stream_logs, tail as tail_logs, tail_with as tail_logs_with, LogError, LogLevel, LogLine, LogOptions,
-    LogStream, LogTarget,
+    stream as stream_logs, tail as tail_logs, tail_with as tail_logs_with, LogError, LogLevel,
+    LogLine, LogOptions, LogStream, LogTarget,
 };
 pub use mask::{mask_line, MaskOptions, Masker};
-pub use ports::{ports, ports_report, services_with_ports, Exposure, HostPort, PortsReport, Protocol};
+pub use ports::{
+    ports, ports_report, services_with_ports, Exposure, HostPort, PortsReport, Protocol,
+};
 pub use services::{
-    services, services_report, HostService, ProviderStatus, ServiceOptions, ServiceProvider, ServiceState,
-    ServicesReport,
+    services, services_report, HostService, ProviderStatus, ServiceOptions, ServiceProvider,
+    ServiceState, ServicesReport,
 };
 pub use snapshot::{snapshot, Sampler, SNAPSHOT_INTERVAL};
-pub use updates::{updates, updates_report, HostUpdate, UpdateKind, UpdateOptions, UpdateSource, UpdatesReport};
+pub use updates::{
+    updates, updates_report, HostUpdate, UpdateKind, UpdateOptions, UpdateSource, UpdatesReport,
+};
 
 /// Errors from the probe.
 #[derive(Debug, thiserror::Error)]
