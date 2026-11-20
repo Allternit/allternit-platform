@@ -65,6 +65,7 @@ import com.allternit.feature.artifacts.LibrarySearchField
 import com.allternit.feature.artifacts.LibrarySheet
 import com.allternit.feature.artifacts.LibrarySheetAction
 import com.allternit.feature.artifacts.PillRow
+import com.allternit.feature.artifacts.glassSurface
 import com.allternit.feature.chat.ArtifactRecord
 import com.allternit.feature.chat.ChatBackend
 import com.allternit.feature.chat.ChatSendRequest
@@ -218,15 +219,18 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
         LibraryHeader(
             title = "Bots", onBack = null, leading = host.menuButton,
             trailing = {
-                // iOS BotsDrawerRail "Office" button: one tap to the floor, not only a row inside Bots options.
-                if (host.officeFloor != null) LibraryIconButton(DesignR.drawable.ph_desktop, "Office: your bots at their desks", "botsOffice") { nav.open(BotRoute.Office) }
-                LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search bots", "botsSearch") { searching = !searching }
-                Box {
-                    LibraryIconButton(
-                        DesignR.drawable.ph_sliders_horizontal,
-                        if (store.waitingCount > 0) "Bots options · ${store.waitingCount} waiting on you" else "Bots options", "botsOptions",
-                    ) { optionsOpen = true }
-                    if (store.waitingCount > 0) Box(Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp)) { Dot(AllternitStatic.StatusWarning, 7.dp) }
+                // iOS ProjectsPill: one glass capsule with Search bots and Bots options (Office, Threads,
+                // Pause and the rest live in the options sheet, as in iOS BotsOptionsPopover).
+                Row(Modifier.glassSurface(CircleShape).padding(horizontal = 2.dp)) {
+                    LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search bots", "botsSearch", iconSize = 19) { searching = !searching }
+                    Box {
+                        LibraryIconButton(
+                            DesignR.drawable.ph_sliders_horizontal,
+                            if (store.waitingCount > 0) "Bots options · ${store.waitingCount} waiting on you" else "Bots options", "botsOptions",
+                            iconSize = 19,
+                        ) { optionsOpen = true }
+                        if (store.waitingCount > 0) Box(Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp)) { Dot(AllternitStatic.StatusWarning, 7.dp) }
+                    }
                 }
             },
         )

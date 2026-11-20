@@ -81,7 +81,9 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | LoginArrivalView | Onboarding | ios/Features/Onboarding/SignInStage/LoginArrivalView.swift | — | feature/onboarding/LoginArrival.kt | built (#2596) | — |
 | SignInStageView | Onboarding | ios/Features/Onboarding/SignInStage/SignInStageView.swift | — | feature/onboarding/SignInScreen.kt | built (#2596) | — |
 | InboxSheet | Shell | ios/Features/Shell/InboxSheet.swift | — | feature/shell/Inbox.kt | built (#2626) | — |
-| ModeDialView | Shell | ios/Features/Shell/ModeDialView.swift | — | feature/shell/ModeFan.kt | built (#2600) | — |
+| ModeDialView | Shell | ios/Features/Shell/ModeDialView.swift | — | feature/shell/ModeFan.kt | built (#2600); MenuHoldMachine + BotShelfView + drawer ModeDialButton ported exactly (#2718) | — |
+| MenuHoldMachine | Shell | ios/Features/Shell/MenuHoldMachine.swift | — | feature/shell/ModeFan.kt (reduceMenuHold, MenuHoldState) | built (#2718) | — |
+| BotShelfView | Shell | ios/Features/Shell/BotShelfView.swift | — | feature/shell/ModeFan.kt (BotShelf) | built (#2718) | — |
 | NativeSessionPickerSheet | Shell | ios/Features/Shell/NativeSessionPickerSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |
 | QuickTaskSheet | Shell | ios/Features/Shell/QuickTaskSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |
 | SessionOverviewView | Shell | ios/Features/Shell/SessionOverviewView.swift | src/fabric-session/phone/screens/PhoneOverviewOverlay.tsx | feature/shell/SessionOverview.kt | built (#2626) | — |

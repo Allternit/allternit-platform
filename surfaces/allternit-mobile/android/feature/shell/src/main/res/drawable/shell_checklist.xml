@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- iOS SF "checklist" (Code sessions button), drawn as 1.6 strokes on a 24 grid like the other shell glyphs. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M3,6.2L4.6,7.8L7.6,4.6M3,12.2L4.6,13.8L7.6,10.6M3,18.2L4.6,19.8L7.6,16.6M11,6.2H21M11,12.2H21M11,18.2H21" />
+</vector>

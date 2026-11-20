@@ -72,6 +72,8 @@ internal fun ShellDrawer(
     account: Account?,
     store: ShellSessionsStore,
     onModeDial: () -> Unit,
+    /** Bots' waiting count on the mode dial (iOS ModeDialButton badge). */
+    botsWaiting: Int = 0,
     onRow: (RailRow) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onNew: () -> Unit,
@@ -103,7 +105,7 @@ internal fun ShellDrawer(
     val rows = railRows(mode)
     Box(modifier.fillMaxSize().statusBarsPadding()) {
         Column(Modifier.fillMaxSize()) {
-            DrawerHeader(mode = mode, onModeDial = onModeDial, onInbox = onInbox, inboxCount = inboxCount, onSearch = onSearch)
+            DrawerHeader(mode = mode, onModeDial = onModeDial, botsWaiting = botsWaiting, onInbox = onInbox, inboxCount = inboxCount, onSearch = onSearch)
             LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 items(rows.filter { it.id !in hidden }, key = { "rail-${it.id}" }) { row -> DrawerNavRow(row.label, row.icon, "drawerRow${row.id}") { onRow(row) } }
                 item(key = "rail-more") {
@@ -179,7 +181,7 @@ internal fun ShellDrawer(
 
 /** `phone-drawer-top-modes`: the mode dial, the wordmark, Inbox and Search (iOS header). */
 @Composable
-private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, onInbox: () -> Unit, inboxCount: Int, onSearch: () -> Unit) {
+private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, botsWaiting: Int, onInbox: () -> Unit, inboxCount: Int, onSearch: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     Row(
@@ -187,23 +189,8 @@ private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, onInbox: () ->
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // ModeDialButton: the active mode as a round filled icon; tap closes the drawer and fans the modes.
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .testTag("modeDial")
-                .clickable(role = Role.Button, onClickLabel = "Switch mode") {
-                    Haptics.perform(view, Haptics.Kind.Tap)
-                    onModeDial()
-                }
-                .semantics { contentDescription = "${mode.label} mode. Switch mode" },
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(Modifier.size(40.dp).clip(CircleShape).background(c.textPrimary), contentAlignment = Alignment.Center) {
-                Icon(painter = painterResource(mode.icon), contentDescription = null, tint = c.bgPrimary, modifier = Modifier.size(20.dp))
-            }
-        }
+        // D4: tap closes the drawer, then the mode fan opens out of ☰ (iOS ModeDialButton).
+        ModeDialButton(mode = mode, botsWaiting = botsWaiting, onOpenFan = onModeDial)
         // ShellWordmark: the pixel mark; suffixed marks run smaller to fit beside the buttons.
         Box(
             modifier = Modifier.padding(start = 6.dp).weight(1f).heightIn(min = 44.dp).testTag("shellWordmark${mode.raw}"),
