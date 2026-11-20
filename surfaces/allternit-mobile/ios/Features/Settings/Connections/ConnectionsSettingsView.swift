@@ -3,7 +3,7 @@ import UIKit
 
 /// A settings page a row opens (the existing flow for that kind of connection).
 enum ConnPage: String, Identifiable, Hashable {
-    case voice, phoneControl, androidScreen, pairComputer, cloudComputer, billing, gizzi
+    case voice, phoneControl, androidScreen, pairComputer, cloudComputer, billing, gizzi, browse
     var id: String { rawValue }
 }
 
@@ -64,6 +64,9 @@ struct ConnectionsSettingsView: View {
     @State private var sheet: ConnSheet?
     @State private var page: ConnPage?
     @State private var showConnectors = false
+    @StateObject private var moreRouter = ConnMoreRouter()
+    /// The group whose More panel is open (one at a time).
+    @State private var moreGroup: ConnGroup?
     @State private var showChannels = false
     @State private var status: ConnStatusFilter = .all
     @State private var query = ""
@@ -95,9 +98,10 @@ struct ConnectionsSettingsView: View {
         .sheet(item: $sheet, onDismiss: { Task { await store.load() } }) { s in
             ConnectSheetView(sheet: s, store: store, onFallback: { f in handleFallback(f) })
         }
-        .sheet(isPresented: $showConnectors, onDismiss: { Task { await store.load() } }) { ConnectorsListView() }
+        .sheet(isPresented: $showConnectors, onDismiss: { Task { await store.load(); await store.refreshPromotedApps() } }) { ConnectorsListView() }
         .sheet(isPresented: $showChannels, onDismiss: { Task { await store.load() } }) { GiveBotPhoneSheet(botId: nil) }
         .navigationDestination(item: $page) { p in ConnPageView(page: p) }
+        .connMoreRouting(moreRouter, store: store)
         .confirmationDialog("Unlink your Claude organization?", isPresented: $confirmUnlink, titleVisibility: .visible) {
             Button("Unlink", role: .destructive) {
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
@@ -132,7 +136,7 @@ struct ConnectionsSettingsView: View {
                         layoutRaw: $layoutRaw,
                         status: $status,
                         counts: ConnStatusCounts(states: listed.map { store.state($0.id) }),
-                        onFindMore: { showConnectors = true }
+                        onFindMore: { page = .browse }
                     )
                 }
             }
@@ -244,9 +248,9 @@ struct ConnectionsSettingsView: View {
                 } else {
                     switch layout {
                     case .grid:
-                        cardLayout(flatRows(group, rows), deck: false)
+                        cardLayout(flatRows(group, rows), deck: false, more: group)
                     case .deck:
-                        cardLayout(flatRows(group, rows), deck: true)
+                        cardLayout(flatRows(group, rows), deck: true, more: group)
                     case .list:
                     PhoneSettingsCard {
                         if group == .brains {
@@ -266,8 +270,16 @@ struct ConnectionsSettingsView: View {
                         } else {
                             rowList(rows)
                         }
+                        if showsMore(group) {
+                            PhoneCardDivider()
+                            moreTile(group, card: false)
+                        }
                     }
                     }
+                }
+                if showsMore(group) && moreGroup == group {
+                    ConnMorePanel(group: group, layout: layout, store: store, router: moreRouter) { page = .browse }
+                        .transition(reduceMotion ? .identity : .opacity)
                 }
             }
             .animation(reduceMotion ? nil : Motion.fade, value: layoutRaw)
@@ -286,7 +298,7 @@ struct ConnectionsSettingsView: View {
     /// Cards for Grid or Deck. The Claude organization link needs room for its
     /// note, so it stays a full-width row under the cards.
     @ViewBuilder
-    private func cardLayout(_ rows: [ConnEntry], deck: Bool) -> some View {
+    private func cardLayout(_ rows: [ConnEntry], deck: Bool, more: ConnGroup? = nil) -> some View {
         let cards = rows.filter { $0.id != "claude-org" }
         let wide = rows.filter { $0.id == "claude-org" }
         VStack(alignment: .leading, spacing: 12) {
@@ -298,6 +310,10 @@ struct ConnectionsSettingsView: View {
                                 ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e)) { act(e, $0) }
                                     .containerRelativeFrame(.horizontal) { w, _ in w * 0.78 }
                             }
+                            if let more, showsMore(more) {
+                                moreTile(more, card: true)
+                                    .containerRelativeFrame(.horizontal) { w, _ in w * 0.5 }
+                            }
                         }
                         .scrollTargetLayout()
                     }
@@ -307,12 +323,25 @@ struct ConnectionsSettingsView: View {
                         ForEach(cards) { e in
                             ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e)) { act(e, $0) }
                         }
+                        if let more, showsMore(more) { moreTile(more, card: true) }
                     }
                 }
             }
             if !wide.isEmpty {
                 PhoneSettingsCard { rowList(wide) }
             }
+        }
+    }
+
+    /// The More tile shows only while the list is unfiltered and the server
+    /// counted extras for the group (hidden silently when the count call failed).
+    private func showsMore(_ group: ConnGroup) -> Bool {
+        status == .all && query.isEmpty && store.hasMore(group)
+    }
+
+    private func moreTile(_ group: ConnGroup, card: Bool) -> some View {
+        ConnMoreTile(group: group, count: store.catalogCounts?[group.rawValue] ?? 0, expanded: moreGroup == group, card: card) {
+            withAnimation(reduceMotion ? nil : Motion.fade) { moreGroup = moreGroup == group ? nil : group }
         }
     }
 
@@ -412,6 +441,7 @@ struct ConnPageView: View {
         case .cloudComputer: CloudInstancesManagerView()
         case .billing: ComputeBillingView(title: "Billing")
         case .gizzi: ProductsSettingsView(part: .gizziCode)
+        case .browse: ConnectionsBrowseView()
         }
     }
 }
