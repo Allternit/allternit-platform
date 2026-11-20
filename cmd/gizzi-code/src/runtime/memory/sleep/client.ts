@@ -90,7 +90,9 @@ export function interpretSleepResponse<T = any>(status: number, body: any): Slee
     const message =
       body.reason === "sleep_disabled"
         ? "Sleep is off. Turn it on with `gizzi memory sleep on`."
-        : `Not built yet: ${body.stage ?? body.reason ?? "this stage"}.`
+        : body.reason === "already_settled"
+          ? "Already settled."
+          : `Not built yet: ${body.stage ?? body.reason ?? "this stage"}.`
     return { kind: "refused", message }
   }
   if (status >= 200 && status < 300) return { kind: "ok", body: body as T }
@@ -125,7 +127,8 @@ export const sleepApi = {
   run: (kind?: string) => sleepCall("POST", "sleep/run", kind ? { kind } : {}),
   setEnabled: (enabled: boolean) => sleepCall("PUT", "sleep/settings", { enabled }),
   disputes: () => sleepCall("GET", "disputes"),
-  resolve: (id: string, choice: string) => sleepCall("POST", `disputes/${encodeURIComponent(id)}/resolve`, { choice }),
+  resolve: (id: string, choice: string, reason?: string) =>
+    sleepCall("POST", `disputes/${encodeURIComponent(id)}/resolve`, reason ? { choice, reason } : { choice }),
   pages: () => sleepCall("GET", "sleep/pages"),
   page: (topic: string) => sleepCall("GET", `sleep/pages/${encodeURIComponent(topic)}`),
 }

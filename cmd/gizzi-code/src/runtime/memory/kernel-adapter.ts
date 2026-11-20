@@ -23,6 +23,8 @@ export interface KernelHit {
   score: number
   source: string | null
   external_id: string | null
+  /** Sleep `disputes` stage: set when this memory is a side of a dispute. Absent on older servers. */
+  dispute?: unknown
 }
 
 export namespace MemoryKernelAdapter {
