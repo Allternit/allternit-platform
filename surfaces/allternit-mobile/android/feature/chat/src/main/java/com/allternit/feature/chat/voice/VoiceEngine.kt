@@ -54,6 +54,14 @@ object VoicePrefs {
         private set
     var interactionMode by mutableStateOf(VoiceInteractionMode.HandsFree)
         private set
+    /** iOS SettingsStore.listening: [LISTENING_AUTOMATIC] or [LISTENING_ALLTERNIT] (Moonshine on this phone). */
+    var listening by mutableStateOf(LISTENING_AUTOMATIC)
+        private set
+    /** iOS KokoroVoices.settingKey: the Kokoro voice for bots without their own. */
+    var kokoroVoice by mutableStateOf<String?>(null)
+        private set
+    const val LISTENING_AUTOMATIC = "automatic"
+    const val LISTENING_ALLTERNIT = "allternit"
     private var loaded = false
 
     fun load(context: Context) {
@@ -64,6 +72,8 @@ object VoicePrefs {
         speechSpeed = p.getFloat("speechSpeed", 1.0f)
         voiceIdentifier = p.getString("voiceIdentifier", null)
         interactionMode = VoiceInteractionMode.entries.firstOrNull { it.raw == p.getString("voiceInteractionMode", null) } ?: VoiceInteractionMode.HandsFree
+        listening = p.getString("listening", null)?.takeIf { it == LISTENING_ALLTERNIT } ?: LISTENING_AUTOMATIC
+        kokoroVoice = p.getString("allternit-settings-voice-kokoro", null)
     }
 
     private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -83,6 +93,16 @@ object VoicePrefs {
         prefs(context).edit().putString("voiceIdentifier", value).apply()
     }
 
+    fun setListening(context: Context, value: String) {
+        listening = value
+        prefs(context).edit().putString("listening", value).apply()
+    }
+
+    fun setKokoroVoice(context: Context, value: String) {
+        kokoroVoice = value
+        prefs(context).edit().putString("allternit-settings-voice-kokoro", value).apply()
+    }
+
     fun setMode(context: Context, value: VoiceInteractionMode) {
         interactionMode = value
         prefs(context).edit().putString("voiceInteractionMode", value.raw).apply()
@@ -100,7 +120,11 @@ fun hasMicPermission(context: Context): Boolean =
  * the platform recognizer too, not a server route). Live partial results into [transcript], a 2.5 s
  * silence stop, and the same in-place error copy. Main thread only (SpeechRecognizer requires it).
  */
-class Dictation(private val context: Context) : VoiceListener {
+class Dictation(
+    private val context: Context,
+    /** On this phone's on-device recognizer only (voice mode's "Speech to text: Automatic", API 31+). */
+    private val onDevice: Boolean = false,
+) : VoiceListener {
     override var transcript by mutableStateOf("")
         private set
     override var isRecording by mutableStateOf(false)
@@ -127,11 +151,14 @@ class Dictation(private val context: Context) : VoiceListener {
             errorMessage = "Microphone access is off. Enable it in Settings to dictate messages."
             return
         }
-        if (!isAvailable) {
+        if (!onDevice && !isAvailable) {
             errorMessage = "Speech recognition isn't available right now."
             return
         }
-        val r = runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
+        val r = runCatching {
+            if (onDevice && Build.VERSION.SDK_INT >= 31) SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            else SpeechRecognizer.createSpeechRecognizer(context)
+        }.getOrNull()
         if (r == null) {
             errorMessage = "Couldn't start dictation: no speech service on this phone."
             return

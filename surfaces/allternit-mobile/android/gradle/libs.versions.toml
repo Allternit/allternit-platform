@@ -44,6 +44,13 @@ camerax = "1.4.2"
 mlkitBarcode = "17.3.0"
 # ML Kit Document Scanner (Google Play services): the Android counterpart of iOS VisionKit VNDocumentCamera.
 mlkitDocScanner = "16.0.0-beta1"
+# sherpa-onnx (Apache-2.0, k2-fsa) for on-phone voice: Silero VAD + Moonshine listening and Kokoro replies, the same
+# release iOS (Frameworks/fetch-sherpa-onnx.sh) and the native voice engine (services/voice) pin. k2-fsa publishes the
+# Android AAR only as a GitHub release asset, so settings.gradle.kts declares that release as an ivy repository and
+# :feature:chat checks the AAR's sha256 before every build. Gradle caches it; nothing is committed.
+sherpaOnnx = "1.13.8"
+# Apache Commons Compress (Apache-2.0): unpacks the .tar.bz2 voice packs (iOS Core/Voice/Bz2Tar).
+commonsCompress = "1.27.1"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -69,6 +76,7 @@ camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", vers
 camerax-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
 mlkit-barcode = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcode" }
 mlkit-document-scanner = { group = "com.google.android.gms", name = "play-services-mlkit-document-scanner", version.ref = "mlkitDocScanner" }
+commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
