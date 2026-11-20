@@ -101,7 +101,7 @@ fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit) {
     val sessions = host.sessions()
     Column(Modifier.fillMaxSize().testTag("codeHome"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         when (val f = folder) {
-            is CodeResult.Ok -> Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            is CodeResult.Ok -> if (f.value.directory.trim('/').isNotEmpty()) Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(f.value.name, color = c.textPrimary, fontSize = 15.sp, fontFamily = CodeMono, modifier = Modifier.testTag("codeFolderName"))
                 f.value.branch?.let { Text("on $it", color = c.textSecondary, fontSize = 13.sp, fontFamily = CodeMono) }
             }
