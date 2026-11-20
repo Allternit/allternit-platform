@@ -432,7 +432,7 @@ private fun TopBar(reduceMotion: Boolean) {
                     Icon(painterResource(DesignR.drawable.ph_caret_down), contentDescription = null, tint = Color.White, modifier = Modifier.size(10.dp))
                 }
             }
-            DropdownMenu(expanded = menu && store.open, onDismissRequest = { menu = false }) {
+            DropdownMenu(expanded = menu && store.open, onDismissRequest = { menu = false }, containerColor = com.allternit.core.design.AllternitTheme.colors.bgPrimary, shape = RoundedCornerShape(16.dp)) {
                 for (g in WaitingGameId.entries) {
                     DropdownMenuItem(
                         text = { Text(g.title) },
