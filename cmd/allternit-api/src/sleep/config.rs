@@ -98,6 +98,7 @@ pub const DEFS: &[Def] = &[
         about: "Most Sleep may spend per day on your own quota, in USD. 0 = none.",
     },
     int("idle_ttl_s", 300, 60.0, 86_400.0, "Idle seconds before a nap; the runtime sends its real cache TTL."),
+    num("nap_after_ttl_multiple", 1.0, 0.5, 100.0, "An idle signal starts a nap once the session has been idle this many times the cache TTL; below that it starts a daydream."),
     int("unit_max_attempts", 3, 1.0, 10.0, "Attempts before a unit moves to the next cycle."),
     int("unit_lease_s", 900, 30.0, 86_400.0, "Lease length for a running unit."),
     num("page_budget_share", 0.05, 0.0, 0.5, "Share of the model's context window for pages per message."),

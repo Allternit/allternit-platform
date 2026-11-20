@@ -10,6 +10,7 @@
 //! - [`config`]: code defaults overlaid with `sleep_config` rows.
 //! - [`fit`]: fits decay parameters from labelled recalls (3.4).
 //! - [`strength`]: two strengths per memory behind the `strengths` stage (3.2).
+//! - [`trigger`]: runtime signals to queued `sleep_units` (5.2).
 //! - [`routes`]: `/api/v1/memory/sleep/...` and `/api/v1/memory/disputes...`.
 //!
 //! The module stays self-contained (D1) so it can become its own crate when
@@ -20,5 +21,6 @@ pub mod config;
 pub mod fit;
 pub mod routes;
 pub mod strength;
+pub mod trigger;
 pub mod score;
 pub mod types;
