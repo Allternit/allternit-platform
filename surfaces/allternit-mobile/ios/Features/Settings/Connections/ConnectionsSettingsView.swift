@@ -74,8 +74,10 @@ struct ConnectionsSettingsView: View {
     @State private var confirmUnlink = false
     @Environment(\.openURL) private var openURL
 
-    /// The chosen layout. Grid and Deck cards arrive in step 15; until then
-    /// every layout renders the list.
+    @ReducedMotion private var reduceMotion
+
+    /// The chosen layout: List rows, Grid cards (two columns) or Deck cards
+    /// (one horizontal strip). Brains keep their sub-sections only in List.
     private var layout: OverviewLayout { OverviewLayout(stored: layoutRaw) ?? .list }
 
     var body: some View {
@@ -240,6 +242,12 @@ struct ConnectionsSettingsView: View {
                 if group != .brains, rows.count > 1, rows.allSatisfy({ !store.isAvailable($0.id) && store.row($0.id).fallbacks.first == "this-mac" }) {
                     collapsedNeedsComputer(rows)
                 } else {
+                    switch layout {
+                    case .grid:
+                        cardLayout(flatRows(group, rows), deck: false)
+                    case .deck:
+                        cardLayout(flatRows(group, rows), deck: true)
+                    case .list:
                     PhoneSettingsCard {
                         if group == .brains {
                             let sections = brainSections(rows)
@@ -259,7 +267,51 @@ struct ConnectionsSettingsView: View {
                             rowList(rows)
                         }
                     }
+                    }
                 }
+            }
+            .animation(reduceMotion ? nil : Motion.fade, value: layoutRaw)
+        }
+    }
+
+    /// Grid and Deck show Brains flat, in the order of the List sub-sections.
+    private func flatRows(_ group: ConnGroup, _ rows: [ConnEntry]) -> [ConnEntry] {
+        group == .brains ? brainSections(rows).flatMap { $0.1 } : rows
+    }
+
+    private func isOpensPage(_ e: ConnEntry) -> Bool {
+        ConnRoute.opensPage(e, store: store) && store.isAvailable(e.id)
+    }
+
+    /// Cards for Grid or Deck. The Claude organization link needs room for its
+    /// note, so it stays a full-width row under the cards.
+    @ViewBuilder
+    private func cardLayout(_ rows: [ConnEntry], deck: Bool) -> some View {
+        let cards = rows.filter { $0.id != "claude-org" }
+        let wide = rows.filter { $0.id == "claude-org" }
+        VStack(alignment: .leading, spacing: 12) {
+            if !cards.isEmpty {
+                if deck {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(alignment: .top, spacing: 12) {
+                            ForEach(cards) { e in
+                                ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e)) { act(e, $0) }
+                                    .containerRelativeFrame(.horizontal) { w, _ in w * 0.78 }
+                            }
+                        }
+                        .scrollTargetLayout()
+                    }
+                    .scrollTargetBehavior(.viewAligned)
+                } else {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12, alignment: .top), GridItem(.flexible(), spacing: 12, alignment: .top)], alignment: .center, spacing: 12) {
+                        ForEach(cards) { e in
+                            ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e)) { act(e, $0) }
+                        }
+                    }
+                }
+            }
+            if !wide.isEmpty {
+                PhoneSettingsCard { rowList(wide) }
             }
         }
     }
