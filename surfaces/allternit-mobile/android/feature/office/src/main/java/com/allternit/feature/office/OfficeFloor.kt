@@ -7,6 +7,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -22,6 +23,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -80,14 +82,28 @@ internal fun workspaceComputers(list: List<com.allternit.feature.bots.ComputerRo
     return kept.sortedByDescending { it.isRunning }.take(12).map { Triple(it.id, it.name, state(it.status)!!) }
 }
 
-internal fun workspaceFeed(entries: List<BotFloorEntry>, projects: List<com.allternit.feature.bots.BotFloorProject>, signedIn: Boolean, computers: List<Triple<String, String, String>> = emptyList()): String {
+internal fun workspaceFeed(entries: List<BotFloorEntry>, projects: List<com.allternit.feature.bots.BotFloorProject>, signedIn: Boolean, computers: List<Triple<String, String, String>> = emptyList(), floor: FloorState? = null, v2: Boolean = false, now: Long = System.currentTimeMillis()): String {
+    // Feed v2 only when the frame said v:2 and the server's floor state is v2.
+    val f = if (v2) floor else null
     val obj = buildJsonObject {
         put("type", "allternit:workspace")
+        if (f != null) put("v", 2)
         put("bots", buildJsonArray {
             entries.forEach { b ->
                 add(buildJsonObject {
                     put("id", b.id); put("name", b.name); put("role", b.role); put("color", b.colorHex)
-                    put("status", b.status); put("task", b.task); put("chief", b.chief)
+                    put("status", b.status); put("task", b.task); put("chief", if (f?.mainBotId != null) b.id == f.mainBotId else b.chief)
+                    f?.bots?.get(b.id)?.let { fb ->
+                        fb.pod?.let { put("pod", it) }
+                        // One need per bot: approval, then question, then suggestion.
+                        val (kind, count) = when {
+                            fb.approval > 0 -> "approval" to fb.approval
+                            fb.question > 0 -> "question" to fb.question
+                            fb.suggestion > 0 -> "suggestion" to fb.suggestion
+                            else -> "" to 0
+                        }
+                        if (count > 0) put("needs", buildJsonObject { put("kind", kind); put("count", count) })
+                    }
                     b.question?.let { put("question", it) }
                     b.avatarSheet?.let { sheet ->
                         put("avatar", buildJsonObject { put("sheet", sheet); if (b.avatarStill) put("layout", "still") })
@@ -95,6 +111,19 @@ internal fun workspaceFeed(entries: List<BotFloorEntry>, projects: List<com.allt
                 })
             }
         })
+        if (f != null) {
+            put("pods", buildJsonArray { f.pods.forEach { p -> add(buildJsonObject { put("id", p.id); put("name", p.name); put("color", p.color); put("kind", p.kind) }) } })
+            val ids = entries.map { it.id }.toSet()
+            put("bubbles", buildJsonArray {
+                f.bots.entries.asSequence()
+                    .filter { (id, b) -> id in ids && !b.resultText.isNullOrBlank() && now - b.resultAt in 0..600_000L }
+                    .sortedByDescending { it.value.resultAt }.take(8)
+                    .forEach { (id, b) -> add(buildJsonObject { put("id", "res-$id-${b.resultAt}"); put("botId", id); put("kind", "result"); put("text", b.resultText!!.trim().take(120)); put("at", b.resultAt) }) }
+            })
+            if (f.handoffs.isNotEmpty()) put("handoffs", buildJsonArray {
+                f.handoffs.filter { it.from in ids && it.to in ids }.forEach { h -> add(buildJsonObject { put("id", h.id); put("from", h.from); put("to", h.to); put("label", h.label) }) }
+            })
+        }
         if (signedIn && projects.isNotEmpty()) {
             put("projects", buildJsonArray { projects.forEach { p -> add(buildJsonObject { put("id", p.id); put("name", p.name); put("updatedAt", p.updatedAt) }) } })
         }
@@ -186,8 +215,48 @@ private class OfficePanelThread(private val store: BotModeStore, private val bac
     }
 }
 
-private fun hostPage(dark: Boolean): String {
-    val src = "$FACILITY_ORIGIN/?embed=facility&actions=chat${if (dark) "&theme=dark" else ""}"
+/** Where one bot sits in the frame, in frame CSS px (`allternit:workspace:anchors`, iOS WorkspaceLink). */
+data class WorkspaceAnchor(val botId: String, val x: Double, val y: Double, val w: Double, val h: Double, val visible: Boolean)
+
+/**
+ * The native side of the Workspace frame (v2): the latest bot anchors the frame reported, the pod it last picked, and a
+ * focus sender. Names match iOS: focus, anchors, pods.
+ */
+class WorkspaceLink {
+    var anchors by mutableStateOf<List<WorkspaceAnchor>>(emptyList())
+        internal set
+    /** The pod last tapped in the frame (`action: "pod"`), or null. */
+    var selectedPodId by mutableStateOf<String?>(null)
+        internal set
+    internal var send: (String) -> Unit = {}
+
+    /** Asks the frame to frame a bot or a pod (both null clears). [inset] is what native UI covers, in CSS px. */
+    fun focus(botId: String?, podId: String? = null, top: Int = 0, right: Int = 0, bottom: Int = 0, left: Int = 0) {
+        send(buildJsonObject {
+            put("type", "allternit:workspace:focus")
+            put("botId", botId?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("podId", podId?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("inset", buildJsonObject { put("top", top); put("right", right); put("bottom", bottom); put("left", left) })
+        }.toString())
+    }
+
+    internal fun parseAnchors(body: JsonObject) {
+        anchors = (body["items"] as? JsonArray).orEmpty().mapNotNull { e ->
+            val o = e as? JsonObject ?: return@mapNotNull null
+            fun n(k: String) = (o[k] as? JsonPrimitive)?.content?.toDoubleOrNull()
+            WorkspaceAnchor(
+                (o["botId"] as? JsonPrimitive)?.content ?: return@mapNotNull null,
+                n("x") ?: return@mapNotNull null, n("y") ?: return@mapNotNull null, n("w") ?: 0.0, n("h") ?: 0.0,
+                (o["visible"] as? JsonPrimitive)?.content != "false",
+            )
+        }.take(80)
+    }
+}
+
+private fun hostPage(dark: Boolean, full: Boolean): String {
+    // The Workspace floor is the default; the full facility is the same frame in its other view.
+    val view = if (full) "embed=facility&actions=chat" else "embed=workspace&chrome=none"
+    val src = "$FACILITY_ORIGIN/?$view${if (dark) "&theme=dark" else ""}"
     // The facility only talks to a parent frame, so this host page (served as ai.allternit.com, an origin the facility
     // accepts) frames it and relays: the app -> feed(json) -> the frame; the frame's actions -> the `office` handler.
     return """
@@ -200,9 +269,11 @@ let connected = false;
 addEventListener('message', (e) => {
   if (e.origin !== O || e.source !== f.contentWindow || !e.data) return;
   const d = e.data;
-  if (d.type === 'allternit:facility:ready' && d.version === 1 && !connected) { connected = true; office.postMessage(JSON.stringify({ type: 'ready' })); }
+  if (d.type === 'allternit:facility:ready' && d.version === 1 && !connected) { connected = true; office.postMessage(JSON.stringify({ type: 'ready', v: 1 })); }
+  else if (d.type === 'allternit:workspace:ready' && !connected) { connected = true; office.postMessage(JSON.stringify({ type: 'ready', v: d.v === 2 ? 2 : 1, caps: Array.isArray(d.caps) ? d.caps.filter((c) => typeof c === 'string').slice(0, 16) : [] })); }
+  else if (d.type === 'allternit:workspace:anchors' && Array.isArray(d.items)) office.postMessage(JSON.stringify({ type: 'anchors', items: d.items.slice(0, 80) }));
   else if (d.type === 'allternit:facility:visitor' && d.version === 1) office.postMessage(JSON.stringify({ type: 'visitor', visitor: d.visitor }));
-  else if (d.type === 'allternit:workspace:action') office.postMessage(JSON.stringify({ type: 'action', action: String(d.action || ''), botId: typeof d.botId === 'string' ? d.botId : null, text: typeof d.text === 'string' ? d.text.slice(0, 4000) : null }));
+  else if (d.type === 'allternit:workspace:action') office.postMessage(JSON.stringify({ type: 'action', action: String(d.action || ''), botId: typeof d.botId === 'string' ? d.botId : null, podId: typeof d.pod === 'string' ? d.pod : (d.pod && typeof d.pod.podId === 'string' ? d.pod.podId : null), text: typeof d.text === 'string' ? d.text.slice(0, 4000) : null }));
 });
 </script></body></html>
 """.trimIndent()
@@ -216,7 +287,7 @@ addEventListener('message', (e) => {
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (String) -> Unit) {
+fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (String) -> Unit, link: WorkspaceLink = remember { WorkspaceLink() }) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val state by AllternitAuth.state.collectAsState()
@@ -225,10 +296,14 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
     var ready by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     var attempt by remember { mutableIntStateOf(0) }
+    // Workspace floor by default; "Open the full facility" switches the frame to the facility view.
+    var full by rememberSaveable { mutableStateOf(false) }
+    var floor by remember { mutableStateOf<FloorState?>(null) }
+    var frameV2 by remember(attempt, full) { mutableStateOf(false) }
     val thread = remember(store, backend) { OfficePanelThread(store, backend, context.applicationContext) }
     DisposableEffect(thread) { onDispose { thread.dispose() } }
     val webRef = remember { arrayOfNulls<WebView>(1) }
-    var frameReady by remember(attempt) { mutableStateOf(false) }
+    var frameReady by remember(attempt, full) { mutableStateOf(false) }
     val visitorKey = "allternit.facility.visitor.${userId ?: "local"}"
     val prefs = remember { context.getSharedPreferences("allternit_office", Context.MODE_PRIVATE) }
     val currentOpenBot by androidx.compose.runtime.rememberUpdatedState(openBot)
@@ -247,13 +322,21 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
             delay(15_000)
         }
     }
+    // Floor state v2 (pods, needs, results, handoffs), only worth fetching once the frame speaks v2.
+    LaunchedEffect(userId, frameV2) {
+        if (userId == null || !frameV2) { floor = null; return@LaunchedEffect }
+        while (true) {
+            floor = FloorClient.state()
+            delay(15_000)
+        }
+    }
     // A cold 3D load on a slow phone can take a while (web: 25 s).
-    LaunchedEffect(attempt) { delay(25_000); if (!ready) failed = true }
+    LaunchedEffect(attempt, full) { delay(25_000); if (!ready) failed = true }
     // Push the roster whenever it changes, once the frame is up.
-    LaunchedEffect(frameReady, attempt) {
+    LaunchedEffect(frameReady, attempt, full) {
         if (!frameReady) return@LaunchedEffect
         var last: String? = null
-        snapshotFlow { workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null, computers) }.collectLatest { feed ->
+        snapshotFlow { workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null, computers, floor, frameV2) }.collectLatest { feed ->
             if (feed != last) { last = feed; webRef[0]?.evaluateJavascript("window.feed($feed)", null) }
         }
     }
@@ -265,7 +348,7 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
                 actionTitle = "Try again", onAction = { failed = false; ready = false; attempt += 1 },
             ) { Icon(painterResource(DesignR.drawable.ph_warning), null, tint = c.textSecondary) }
         } else {
-            androidx.compose.runtime.key(attempt, userId) {
+            androidx.compose.runtime.key(attempt, userId, full) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
@@ -281,6 +364,7 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
                             webViewClient = WebViewClient()
                             webRef[0] = this
                             thread.post = { json -> if (frameReady) evaluateJavascript("window.feed($json)", null) }
+                            link.send = { json -> if (frameReady) evaluateJavascript("window.feed($json)", null) }
                             if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
                                 WebViewCompat.addWebMessageListener(this, "office", setOf(HOST_ORIGIN)) { _, msg: WebMessageCompat, _, isMainFrame, _ ->
                                     // Only the validated top-level relay may reach native actions or persistence.
@@ -295,14 +379,22 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
                                             if (frameReady && name != null && text != null && text.length < 3_200_000) prefs.edit().putString(visitorKey, text).apply()
                                         }
                                         "ready" -> {
-                                            // Identity state is owned by the app, never the frame's partitioned storage.
-                                            val visitor = prefs.getString(visitorKey, null) ?: "null"
-                                            evaluateJavascript("window.feed({type:'allternit:facility:init',version:1,visitor:$visitor})", null)
+                                            val v2 = (body["v"] as? JsonPrimitive)?.content == "2"
+                                            if (full) {
+                                                // Identity state is owned by the app, never the frame's partitioned storage.
+                                                val visitor = prefs.getString(visitorKey, null) ?: "null"
+                                                evaluateJavascript("window.feed({type:'allternit:facility:init',version:1,visitor:$visitor})", null)
+                                            }
+                                            frameV2 = v2
                                             frameReady = true
                                             ready = true
-                                            evaluateJavascript("window.feed(${workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null, computers)})", null)
+                                            // Replay the feed (v2 fields join as soon as the floor state lands, via the watcher).
+                                            evaluateJavascript("window.feed(${workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null, computers, floor, v2)})", null)
                                         }
-                                        "action" -> {
+                                        "anchors" -> link.parseAnchors(body)
+                                        "action" -> if (str("action") == "pod") {
+                                            link.selectedPodId = str("podId")
+                                        } else {
                                             val id = str("botId")
                                             if (id != null && store.bot(id) != null) when (str("action")) {
                                                 // The full facility opens real native bot work, then returns to the same world.
@@ -314,12 +406,17 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
                                     }
                                 }
                             }
-                            loadDataWithBaseURL("$HOST_ORIGIN/office-host", hostPage(dark), "text/html", "utf-8", null)
+                            loadDataWithBaseURL("$HOST_ORIGIN/office-host", hostPage(dark, full), "text/html", "utf-8", null)
                         }
                     },
                     onRelease = { webRef[0] = null; it.removeAllViews(); it.destroy() },
                 )
             }
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(12.dp).clip(RoundedCornerShape(20.dp)).background(c.bgSecondary)
+                    .clickable { full = !full; ready = false; link.anchors = emptyList(); link.selectedPodId = null }
+                    .padding(horizontal = 14.dp, vertical = 8.dp).testTag("officeViewSwitch"),
+            ) { Text(if (full) "Back to Workspace" else "Open the full facility", color = c.textPrimary) }
             if (!ready) {
                 Box(Modifier.align(Alignment.Center).clip(RoundedCornerShape(12.dp)).background(c.bgSecondary).padding(16.dp)) { LibrarySpinner("Opening the office…") }
             }
