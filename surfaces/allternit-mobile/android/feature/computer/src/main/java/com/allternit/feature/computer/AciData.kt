@@ -262,26 +262,57 @@ object AciApi {
      * 404/501 = not available yet. Mirrors iOS ACIComputersClient.check().
      */
     internal suspend fun consoleRead(id: String, tail: String, query: Map<String, String> = emptyMap()): HostRead<JsonElement> {
-        val request = ApiCall.request("GET", consoleUrl(id, tail, query), null)
-        val raw = suspendCancellableCoroutine<Pair<Int, String>?> { cont ->
-            val call = okHttp.newCall(request)
-            cont.invokeOnCancellation { call.cancel() }
-            call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) { if (cont.isActive) cont.resume(null) }
-                override fun onResponse(call: Call, response: Response) {
-                    val out = try { response.use { it.code to it.body?.string().orEmpty() } } catch (e: IOException) { null }
-                    if (cont.isActive) cont.resume(out)
-                }
-            })
-        } ?: return HostRead.Failed("You're offline. Check your connection and try again.")
-        val (status, body) = raw
+        val (status, body) = rawCall(ApiCall.request("GET", consoleUrl(id, tail, query), null))
+            ?: return HostRead.Failed("You're offline. Check your connection and try again.")
         return when {
             status in 200..299 -> runCatching { ApiJson.default.parseToJsonElement(body) }
                 .fold({ HostRead.Ok(it) }, { HostRead.Failed("Couldn't read this. Try again.") })
-            status == 409 -> HostRead.Asleep(runCatching { ConsoleSnapshot.parse((ApiJson.default.parseToJsonElement(body) as? JsonObject).child("lastSample")) }.getOrNull())
-            status == 404 || status == 501 -> HostRead.Unavailable
+            status == 409 && isAsleepBody(body) -> HostRead.Asleep(runCatching { ConsoleSnapshot.parse((ApiJson.default.parseToJsonElement(body) as? JsonObject).child("lastSample")) }.getOrNull())
+            status == 404 || status == 405 || status == 501 -> HostRead.Unavailable
             status == 401 -> HostRead.Failed("Sign in to Allternit to see this computer.")
             else -> HostRead.Failed(ApiCall.httpError(status, body).message?.takeIf { it.isNotBlank() } ?: "Couldn't load this. Try again.")
+        }
+    }
+
+    /** A 409 is "asleep" only when the body says error:"asleep" (or says nothing); another reason is a plain error. */
+    private fun isAsleepBody(body: String): Boolean {
+        val error = runCatching { ((ApiJson.default.parseToJsonElement(body) as? JsonObject)?.get("error") as? JsonPrimitive)?.content }.getOrNull()
+        return error == null || error == "asleep"
+    }
+
+    private suspend fun rawCall(request: okhttp3.Request): Pair<Int, String>? = suspendCancellableCoroutine { cont ->
+        val call = okHttp.newCall(request)
+        cont.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) { if (cont.isActive) cont.resume(null) }
+            override fun onResponse(call: Call, response: Response) {
+                val out = try { response.use { it.code to it.body?.string().orEmpty() } } catch (e: IOException) { null }
+                if (cont.isActive) cont.resume(out)
+            }
+        })
+    }
+
+    /** One write to `POST|DELETE api/v1/computers/:id/<tail>`. Never wakes a computer; nothing is retried. */
+    internal suspend fun consoleWrite(method: String, id: String, tail: String, body: JsonObject?): ConsoleWrite =
+        write(ApiCall.request(method, consoleUrl(id, tail, emptyMap()), writeBody(method, body)))
+
+    /** `PATCH|DELETE api/v1/computers/paired/:id` (rename / unpair). */
+    internal suspend fun consolePairedWrite(method: String, id: String, body: JsonObject?): ConsoleWrite =
+        write(ApiCall.request(method, config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/computers/paired").addPathSegment(id).build(), writeBody(method, body)))
+
+    private fun writeBody(method: String, body: JsonObject?): String? = body?.toString() ?: if (method == "DELETE" || method == "GET") null else "{}"
+
+    private suspend fun write(request: okhttp3.Request): ConsoleWrite {
+        val (status, body) = rawCall(request) ?: return ConsoleWrite.Failed("You're offline. Nothing was changed.")
+        val json = runCatching { ApiJson.default.parseToJsonElement(body) }.getOrNull()
+        val error = ((json as? JsonObject)?.get("error") as? JsonPrimitive)?.content
+        return when {
+            status in 200..299 -> ConsoleWrite.Ok(json)
+            status == 403 && error == "needs_elevation" -> ConsoleWrite.NeedsElevation((json as? JsonObject).str("message").orEmpty())
+            status == 409 && (error == null || error == "asleep") -> ConsoleWrite.Asleep
+            status == 404 || status == 405 || status == 501 -> ConsoleWrite.Unavailable
+            status == 401 -> ConsoleWrite.Failed("Sign in to Allternit to do this. Nothing was changed.")
+            else -> ConsoleWrite.Failed(ApiCall.httpError(status, body).message?.takeIf { it.isNotBlank() } ?: "That didn't work. Nothing was changed.")
         }
     }
 

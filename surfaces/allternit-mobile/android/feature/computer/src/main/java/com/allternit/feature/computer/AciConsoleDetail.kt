@@ -3,6 +3,7 @@ package com.allternit.feature.computer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -174,16 +175,16 @@ internal fun consoleBytes(bytes: Double): String {
 
 // ---- Detail sheet ----
 
-private enum class DetailTab(val title: String) { Overview("Overview"), Services("Services"), Usage("Usage"), Ports("Ports") }
+private enum class DetailTab(val title: String) { Overview("Overview"), Services("Services"), Usage("Usage"), Ports("Ports"), Access("Access"), Backups("Backups"), Health("Health"), Settings("Settings") }
 
 /**
- * One computer's detail (iOS ACIConsoleDetailView): Overview, Services (+ live logs), Usage, Ports. Read-only, no
- * actions. A 409 means asleep: last sample + "Asleep, not woken", nothing retried, never woken. 404/501 = not
+ * One computer's detail (iOS ACIConsoleDetailView): Overview, Services (+ live logs), Usage, Ports, then Access,
+ * Backups, Health, Settings (AciConsoleManage.kt). A 409 means asleep: last sample + "Asleep, not woken", nothing retried, never woken. 404/501 = not
  * available per tab.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AciConsoleDetail(computer: ConsoleComputer, onDone: () -> Unit) {
+internal fun AciConsoleDetail(computer: ConsoleComputer, restorePoints: (@Composable (onDone: () -> Unit) -> Unit)? = null, onChanged: () -> Unit = {}, onDone: () -> Unit) {
     val c = AllternitTheme.colors
     var tab by remember { mutableStateOf(DetailTab.Overview) }
     ModalBottomSheet(onDismissRequest = onDone, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = c.bgPrimary) {
@@ -192,12 +193,13 @@ internal fun AciConsoleDetail(computer: ConsoleComputer, onDone: () -> Unit) {
                 Text(computer.name, color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Box(Modifier.heightIn(min = 44.dp).clickable { onDone() }.padding(start = 12.dp).testTag("aciConsoleDone"), contentAlignment = Alignment.Center) { Text("Done", color = c.textPrimary, fontSize = 15.sp) }
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).clip(RoundedCornerShape(10.dp)).background(c.fillNeutral).padding(2.dp)) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DetailTab.entries.forEach { t ->
                     val on = t == tab
-                    Box(Modifier.weight(1f).heightIn(min = 36.dp).clip(RoundedCornerShape(8.dp)).background(if (on) c.bgPrimary else Color.Transparent)
-                        .selectable(selected = on, role = Role.Tab, onClick = { tab = t }).testTag("aciConsoleTab${t.title}"), contentAlignment = Alignment.Center) {
-                        Text(t.title, color = if (on) c.textPrimary else c.textSecondary, fontSize = 13.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
+                    Box(Modifier.heightIn(min = 44.dp).clip(CircleShape).background(if (on) c.textPrimary.copy(alpha = 0.12f) else c.fillNeutral)
+                        .border(1.dp, if (on) c.textPrimary else c.borderSubtle, CircleShape)
+                        .selectable(selected = on, role = Role.Tab, onClick = { tab = t }).padding(horizontal = 16.dp).testTag("aciConsoleTab${t.title}"), contentAlignment = Alignment.Center) {
+                        Text(t.title, color = if (on) c.textPrimary else c.textSecondary, fontSize = 14.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
                     }
                 }
             }
@@ -207,6 +209,10 @@ internal fun AciConsoleDetail(computer: ConsoleComputer, onDone: () -> Unit) {
                     DetailTab.Services -> ServicesTab(computer)
                     DetailTab.Usage -> UsageTab(computer)
                     DetailTab.Ports -> PortsTab(computer)
+                    DetailTab.Access -> AccessTab(computer)
+                    DetailTab.Backups -> BackupsTab(computer, restorePoints)
+                    DetailTab.Health -> HealthTab(computer)
+                    DetailTab.Settings -> SettingsTab(computer, onChanged, onDone)
                 }
             }
         }
@@ -214,19 +220,19 @@ internal fun AciConsoleDetail(computer: ConsoleComputer, onDone: () -> Unit) {
 }
 
 @Composable
-private fun CNote(text: String) {
+internal fun CNote(text: String) {
     Text(text, color = AllternitTheme.colors.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp))
 }
 
 @Composable
-private fun CCard(content: @Composable ColumnScope.() -> Unit) {
+internal fun CCard(content: @Composable ColumnScope.() -> Unit) {
     val c = AllternitTheme.colors
     val shape = RoundedCornerShape(16.dp)
     Column(Modifier.fillMaxWidth().clip(shape).background(c.fillNeutral).border(1.dp, c.borderSubtle, shape).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
 }
 
 @Composable
-private fun CRow(k: String, v: String) {
+internal fun CRow(k: String, v: String) {
     val c = AllternitTheme.colors
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(k, color = c.textSecondary, fontSize = 13.sp)

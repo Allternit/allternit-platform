@@ -309,6 +309,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         backend = chatBackend,
         menuButton = shellMenuButton,
         openSignIn = { page = ShellPage.Settings },
+        restorePoints = { done -> com.allternit.feature.settings.CloudBackupsPage(done) },
     )
     val projectsNav = remember {
         ProjectsNav(

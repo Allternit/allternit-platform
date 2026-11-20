@@ -318,7 +318,7 @@ internal val BYOC = ResourceSpec(
 
 /** Restore points for one cloud computer: list, make one now, restore, delete. Each of the last three asks first. */
 @Composable
-internal fun CloudBackupsPage(back: () -> Unit) {
+fun CloudBackupsPage(back: () -> Unit) {
     var computer by remember { mutableStateOf<JsonObject?>(null) }
     val c = computer
     if (c == null) { ResourcePicker(CLOUD_BACKUPS, back) { computer = it }; return }

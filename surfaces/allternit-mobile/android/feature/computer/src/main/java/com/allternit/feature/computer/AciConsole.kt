@@ -63,6 +63,8 @@ internal data class ConsoleSnapshot(val cpuPercent: Double, val memoryPercent: D
 internal data class ConsoleComputer(
     val id: String, val name: String, val provider: String, val region: String?, val os: String,
     val status: String, val lastSample: ConsoleSnapshot?, val servicesCount: Int?, val address: String? = null,
+    /** cloud | paired | desktop */ val kind: String = "", /** "Allternit Cloud", "On your desk", "Your servers", "Shared with you" */ val group: String = "",
+    val lastBackupAt: String? = null,
 ) {
     // online, offline, asleep, starting, stopped, suspended, error
     val isOnline: Boolean get() = status.lowercase() !in setOf("offline", "asleep", "stopped")
@@ -86,7 +88,8 @@ internal data class ConsoleComputer(
             val name = o.str("name") ?: return null
             val status = o.str("status") ?: return null
             val sample = ConsoleSnapshot.parse(o.child("lastSample"))
-            return ConsoleComputer(id, name, o.str("provider").orEmpty(), o.str("region"), o.str("os").orEmpty(), status, sample, o.num("servicesCount")?.toInt(), o.str("address"))
+            return ConsoleComputer(id, name, o.str("provider").orEmpty(), o.str("region"), o.str("os").orEmpty(), status, sample, o.num("servicesCount")?.toInt(), o.str("address"),
+                o.str("kind").orEmpty(), o.str("group").orEmpty(), o.str("lastBackupAt"))
         }
     }
 }
@@ -104,7 +107,7 @@ private sealed interface ConsolePhase {
  * their last sample and are never woken. Neutral grey meters; amber at 85% or more.
  */
 @Composable
-internal fun AciConsoleSection() {
+internal fun AciConsoleSection(restorePoints: (@Composable (onDone: () -> Unit) -> Unit)? = null) {
     var phase by remember { mutableStateOf<ConsolePhase>(ConsolePhase.Loading) }
     var attempt by remember { mutableIntStateOf(0) }
     var selected by remember { mutableStateOf<ConsoleComputer?>(null) }
@@ -115,7 +118,7 @@ internal fun AciConsoleSection() {
             is AciApi.Result.Failed -> if (r.message == CONSOLE_UNAVAILABLE) ConsolePhase.Unavailable else ConsolePhase.Failed(r.message)
         }
     }
-    selected?.let { AciConsoleDetail(it) { selected = null } }
+    selected?.let { AciConsoleDetail(it, restorePoints, onChanged = { attempt++ }) { selected = null } }
     val c = AllternitTheme.colors
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).testTag("aciConsole"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when (val p = phase) {

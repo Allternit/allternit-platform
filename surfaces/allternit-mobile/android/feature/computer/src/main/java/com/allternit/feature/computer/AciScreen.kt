@@ -77,6 +77,8 @@ data class AciHost(
     val openSignIn: () -> Unit,
     /** Opens a linked phone's live view (iOS ACIComputersPane fullScreenCover PhoneLiveView); wave F4a. */
     val openPhoneLive: ((CloudPhone) -> Unit)? = null,
+    /** The existing cloud restore points page (feature:settings), opened from the console Backups tab. */
+    val restorePoints: (@Composable (onDone: () -> Unit) -> Unit)? = null,
 )
 
 private sealed interface AciDestination {
