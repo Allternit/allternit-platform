@@ -146,7 +146,7 @@ internal fun EditWithChatPanel(bot: BotRecord, file: WorkspaceFileInfo, backend:
             }
             val canSend = instruction.isNotBlank()
             Icon(
-                painterResource(if (assisting) R.drawable.bots_stop else DesignR.drawable.ph_arrow_up),
+                painterResource(if (assisting) com.allternit.core.design.R.drawable.ph_stop_fill else DesignR.drawable.ph_arrow_up),
                 if (assisting) "Stop" else "Send",
                 tint = Color.White,
                 modifier = Modifier.size(36.dp).clip(CircleShape).background(if (assisting || canSend) c.accentPrimary else c.textTertiary)

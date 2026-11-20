@@ -54,10 +54,10 @@ import kotlinx.coroutines.delay
 
 /** iOS AppPermission: what the priming sheet explains before the system dialog. Shown once per install. */
 enum class AppPermission(val icon: Int, val title: String, val message: String) {
-    Photos(DesignR.drawable.vc_photo, "Access your photos?", "Pick photos to attach to your chat, and see recent ones right in the composer."),
-    Camera(DesignR.drawable.vc_camera, "Use your camera?", "Take a photo and attach it straight to your chat."),
-    Microphone(DesignR.drawable.vc_mic, "Dictate messages?", "Allternit transcribes what you say into the message field. Audio is only used while you dictate."),
-    Notifications(DesignR.drawable.vc_bell, "Let your bots reach you?", "Know when a task finishes or a bot needs your approval. No marketing messages. Change this in Settings.");
+    Photos(com.allternit.core.design.R.drawable.ph_image, "Access your photos?", "Pick photos to attach to your chat, and see recent ones right in the composer."),
+    Camera(com.allternit.core.design.R.drawable.ph_camera, "Use your camera?", "Take a photo and attach it straight to your chat."),
+    Microphone(com.allternit.core.design.R.drawable.ph_microphone, "Dictate messages?", "Allternit transcribes what you say into the message field. Audio is only used while you dictate."),
+    Notifications(com.allternit.core.design.R.drawable.ph_bell, "Let your bots reach you?", "Know when a task finishes or a bot needs your approval. No marketing messages. Change this in Settings.");
 
     private val key: String get() = "allternit-priming-shown-${name.lowercase()}"
     fun hasPrimed(context: Context): Boolean = prefs(context).getBoolean(key, false)
@@ -152,7 +152,7 @@ private fun ExampleRow(tint: Color, title: String, detail: String) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color.White).border(1.dp, Color.Black.copy(alpha = 0.06f), RoundedCornerShape(14.dp)).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(tint), contentAlignment = Alignment.Center) {
-            Icon(painterResource(DesignR.drawable.vc_bell), null, tint = Color.Black.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_bell), null, tint = Color.Black.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
         }
         Column {
             Text(title, color = Color.Black.copy(alpha = 0.88f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
@@ -180,13 +180,13 @@ fun DictationOnboardingSheet(onDismiss: () -> Unit, onContinue: () -> Unit) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 24.dp).padding(bottom = 16.dp).testTag("dictationOnboarding")) {
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 Box(Modifier.size(64.dp).clip(CircleShape).background(c.accentPrimary.copy(alpha = 0.12f)).border(1.dp, c.accentPrimary.copy(alpha = 0.28f), CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(painterResource(DesignR.drawable.vc_mic), null, tint = c.accentPrimary, modifier = Modifier.size(28.dp))
+                    Icon(painterResource(com.allternit.core.design.R.drawable.ph_microphone), null, tint = c.accentPrimary, modifier = Modifier.size(28.dp))
                 }
                 Text("Send messages to Allternit using your voice.", color = c.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Bullet(DesignR.drawable.ph_globe, "Choose a language to speak in")
-                    Bullet(DesignR.drawable.vc_clock, "Dictate for up to 10 minutes")
-                    Bullet(DesignR.drawable.vc_chat, "Chat more quickly and naturally")
+                    Bullet(com.allternit.core.design.R.drawable.ph_clock, "Dictate for up to 10 minutes")
+                    Bullet(com.allternit.core.design.R.drawable.ph_chat_circle, "Chat more quickly and naturally")
                 }
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(AllternitRadii.MD)).border(1.dp, c.borderSubtle, RoundedCornerShape(AllternitRadii.MD))) {
                     Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(14.dp).testTag("dictationLanguage"), verticalAlignment = Alignment.CenterVertically) {
@@ -273,7 +273,7 @@ fun VoiceSettingsSheet(speaker: Speaker, onDismiss: () -> Unit) {
                                     .border(if (selected) 2.dp else 1.dp, if (selected) c.accentPrimary else c.borderSubtle, RoundedCornerShape(AllternitRadii.MD))
                                     .clickable { VoicePrefs.setVoice(context, id) }.padding(12.dp).testTag("voiceCard-$i"),
                             ) {
-                                Icon(painterResource(DesignR.drawable.vc_waveform), null, tint = c.textSecondary, modifier = Modifier.size(16.dp))
+                                Icon(painterResource(com.allternit.core.design.R.drawable.ph_waveform), null, tint = c.textSecondary, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.weight(1f))
                                 Text(id.substringBefore('#').take(22), color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                                 Text(detail, color = c.textSecondary, fontSize = 11.sp, maxLines = 1)

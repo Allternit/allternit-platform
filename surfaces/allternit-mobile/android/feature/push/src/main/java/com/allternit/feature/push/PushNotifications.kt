@@ -95,7 +95,7 @@ object PushNotifications {
         val title = data["title"].orEmpty().ifBlank { "Allternit" }
         val body = data["body"].orEmpty()
         val builder = Notification.Builder(context, channelFor(category, data["type"]))
-            .setSmallIcon(DesignR.drawable.vc_bell)
+            .setSmallIcon(com.allternit.core.design.R.drawable.ph_bell)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
@@ -138,14 +138,14 @@ object PushNotifications {
             // A reply needs a mutable PendingIntent (the system adds the typed text); the rest stay immutable.
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (reply != null) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE)
             val pending = PendingIntent.getBroadcast(context, (tag + action).hashCode(), intent, flags)
-            val builder = Notification.Action.Builder(Icon.createWithResource(context, DesignR.drawable.vc_bell), label, pending)
+            val builder = Notification.Action.Builder(Icon.createWithResource(context, com.allternit.core.design.R.drawable.ph_bell), label, pending)
             if (reply != null) builder.addRemoteInput(RemoteInput.Builder(KEY_REPLY_TEXT).setLabel(reply).build())
             if (Build.VERSION.SDK_INT >= 31) builder.setAuthenticationRequired(true)
             return builder.build()
         }
         fun foreground(action: String, label: String): Notification.Action? {
             val pending = openIntent(context, tag + action, data) ?: return null
-            return Notification.Action.Builder(Icon.createWithResource(context, DesignR.drawable.vc_bell), label, pending).build()
+            return Notification.Action.Builder(Icon.createWithResource(context, com.allternit.core.design.R.drawable.ph_bell), label, pending).build()
         }
         return when (category) {
             APPROVAL_INLINE -> listOf(background(ACTION_APPROVE, "Approve"), background(ACTION_DENY, "Deny"), background(ACTION_REPLY, "Reply", "Message the bot"))
@@ -183,7 +183,7 @@ object PushNotifications {
         if (!AllternitPush.notificationsAllowed(context)) return
         val tag = "followup-" + (data["inboxId"]?.takeIf { it.isNotBlank() } ?: System.currentTimeMillis().toString())
         val builder = Notification.Builder(context, CHANNEL_GENERAL)
-            .setSmallIcon(DesignR.drawable.vc_bell)
+            .setSmallIcon(com.allternit.core.design.R.drawable.ph_bell)
             .setContentTitle(title.ifBlank { "Allternit" })
             .setContentText(line)
             .setAutoCancel(true)

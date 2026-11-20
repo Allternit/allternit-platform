@@ -340,7 +340,7 @@ internal fun DecisionsScreen(host: BotsHost, store: BotModeStore, nav: BotNaviga
                     if (items.size > 1) {
                         Text("${at + 1} of ${items.size}", color = c.textTertiary, fontSize = 12.sp)
                         LibraryIconButton(DesignR.drawable.ph_caret_left, "Previous decision", "decisionsPrev", enabled = at > 0, iconSize = 16) { index = at - 1 }
-                        LibraryIconButton(R.drawable.bots_caret_right, "Next decision", "decisionsNext", enabled = at < items.lastIndex, iconSize = 16) { index = at + 1 }
+                        LibraryIconButton(com.allternit.core.design.R.drawable.ph_caret_right, "Next decision", "decisionsNext", enabled = at < items.lastIndex, iconSize = 16) { index = at + 1 }
                     }
                 }
                 sid?.let { names[it] }?.let { Text("From $it", color = c.textTertiary, fontSize = 12.sp) }
@@ -381,7 +381,7 @@ internal fun DecisionsScreen(host: BotsHost, store: BotModeStore, nav: BotNaviga
                 } else LibrarySpinner("Loading decisions")
             }
             // Phone approval holds are reviewed in the Inbox (iOS PhoneHoldReviewView, wave C).
-            Pill("Phone approvals in Inbox", "decisionsInbox", icon = R.drawable.bots_tray) { host.openInbox() }
+            Pill("Phone approvals in Inbox", "decisionsInbox", icon = com.allternit.core.design.R.drawable.ph_tray) { host.openInbox() }
         }
     }
 }
@@ -478,7 +478,7 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
     val bots = project.botIds.mapNotNull(store::bot).ifEmpty { threads.map { it.botId }.distinct().mapNotNull(store::bot) }
     Column(Modifier.fillMaxSize().statusBarsPadding().testTag("botProjectPage")) {
         LibraryHeader(title = "Project", onBack = nav::back, backTag = "botsBack", trailing = {
-            LibraryIconButton(R.drawable.bots_dots, "Project actions", "botProjectActions") { actionsOpen = true }
+            LibraryIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Project actions", "botProjectActions") { actionsOpen = true }
         })
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.padding(horizontal = 20.dp)) {
@@ -552,10 +552,10 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
     }
     if (actionsOpen) LibrarySheet(title = title, testTag = "botProjectActionsSheet", onDismiss = { actionsOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { actionsOpen = false }) {
         RowGroup(Modifier.padding(vertical = 8.dp)) {
-            NavRow("Edit details", R.drawable.bots_pencil, null, "botProjectEdit", last = false) { actionsOpen = false; editOpen = true }
-            NavRow("Project settings", R.drawable.bots_gear, null, "botProjectSettings", last = false) { actionsOpen = false; host.openProjectInLibrary(project.id) }
-            NavRow(if (favorite) "Remove from favorites" else "Add to favorites", R.drawable.bots_star, null, "botProjectFavorite", last = false) { favorite = !favorite; scope.launch { setFlag("favorite", favorite) } }
-            NavRow(if (archived) "Unarchive" else "Archive", R.drawable.bots_tray, null, "botProjectArchive", last = false) { archived = !archived; scope.launch { setFlag("archived", archived) } }
+            NavRow("Edit details", com.allternit.core.design.R.drawable.ph_pencil_simple, null, "botProjectEdit", last = false) { actionsOpen = false; editOpen = true }
+            NavRow("Project settings", com.allternit.core.design.R.drawable.ph_gear, null, "botProjectSettings", last = false) { actionsOpen = false; host.openProjectInLibrary(project.id) }
+            NavRow(if (favorite) "Remove from favorites" else "Add to favorites", com.allternit.core.design.R.drawable.ph_star, null, "botProjectFavorite", last = false) { favorite = !favorite; scope.launch { setFlag("favorite", favorite) } }
+            NavRow(if (archived) "Unarchive" else "Archive", com.allternit.core.design.R.drawable.ph_tray, null, "botProjectArchive", last = false) { archived = !archived; scope.launch { setFlag("archived", archived) } }
             NavRow("Delete", DesignR.drawable.ph_trash, null, "botProjectDelete", destructive = true) { actionsOpen = false; deleteOpen = true }
         }
         Gap(12.dp)

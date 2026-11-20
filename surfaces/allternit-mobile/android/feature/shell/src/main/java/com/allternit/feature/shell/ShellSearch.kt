@@ -109,7 +109,7 @@ internal fun ShellSearchScreen(
 
     Column(Modifier.fillMaxSize().statusBarsPadding().testTag("shellSearch")) {
         PhoneHeader(title = "Search", leading = {
-            PhoneIconButton(R.drawable.shell_x, "Close", testTag = "shellSearchClose", iconSize = 18, onClick = onBack)
+            PhoneIconButton(com.allternit.core.design.R.drawable.ph_x, "Close", testTag = "shellSearchClose", iconSize = 18, onClick = onBack)
         })
         SearchField(query, "Search chats and projects", "shellSearchField", focus = focus) { query = it }
         when {
@@ -136,7 +136,7 @@ internal fun ShellSearchScreen(
                 if (projectHits.isNotEmpty()) {
                     item(key = "h-projects") { SearchSectionHeader("Projects") }
                     items(projectHits, key = { "p-${it.id}" }) { p ->
-                        SearchRow(R.drawable.shell_folder, p.title, null, "searchProject${p.id}") { onOpenProject(p) }
+                        SearchRow(com.allternit.core.design.R.drawable.ph_folder, p.title, null, "searchProject${p.id}") { onOpenProject(p) }
                     }
                 }
                 if (botHits.isNotEmpty()) {

@@ -221,7 +221,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                LibraryIconButton(R.drawable.bots_dots, "Thread options", "botThreadMenu", enabled = !acting) { menuOpen = true }
+                LibraryIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Thread options", "botThreadMenu", enabled = !acting) { menuOpen = true }
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (deck) {
@@ -251,7 +251,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                                 )
                             }
                             resolveError != null -> FriendlyState(FriendlyStyle.Error, "Couldn't open ${bot.displayName}", resolveError ?: "", actionTitle = "Try again", onAction = { scope.launch { resolve() } }) {
-                                Icon(painterResource(R.drawable.bots_chat), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp))
+                                Icon(painterResource(com.allternit.core.design.R.drawable.ph_chat_circle), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp))
                             }
                             else -> Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)) {
                                 BotAvatar(bot, 72.dp, live = true)
@@ -279,21 +279,21 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
 
     if (menuOpen) LibrarySheet(title = bot.displayName, testTag = "botThreadMenuSheet", onDismiss = { menuOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { menuOpen = false }) {
         RowGroup(Modifier.padding(vertical = 8.dp)) {
-            NavRow("Computer", R.drawable.bots_desktop, null, "botMenuComputer", last = false) { menuOpen = false; nav.open(BotRoute.Computer(bot.id)) }
-            NavRow("Live stage", R.drawable.bots_tray, null, "botMenuStage", last = false) { menuOpen = false; nav.open(BotRoute.Stage(bot.id)) }
-            NavRow("Switch thread", R.drawable.bots_list, null, "botMenuThreads", last = false) { menuOpen = false; deck = DeckTab.Threads }
-            NavRow("Show ${bot.displayName}", R.drawable.bots_eye, null, "botMenuShow", last = false) { menuOpen = false; deck = DeckTab.Thread; docked = false }
+            NavRow("Computer", com.allternit.core.design.R.drawable.ph_desktop, null, "botMenuComputer", last = false) { menuOpen = false; nav.open(BotRoute.Computer(bot.id)) }
+            NavRow("Live stage", com.allternit.core.design.R.drawable.ph_tray, null, "botMenuStage", last = false) { menuOpen = false; nav.open(BotRoute.Stage(bot.id)) }
+            NavRow("Switch thread", com.allternit.core.design.R.drawable.ph_list, null, "botMenuThreads", last = false) { menuOpen = false; deck = DeckTab.Threads }
+            NavRow("Show ${bot.displayName}", com.allternit.core.design.R.drawable.ph_eye, null, "botMenuShow", last = false) { menuOpen = false; deck = DeckTab.Thread; docked = false }
             thread?.let { t ->
                 if (t.status == "proposed") {
                     NavRow("Go ahead", DesignR.drawable.ph_play_fill, null, "botMenuApprove", last = false) { menuOpen = false; act(t, "approve") }
-                    NavRow("Not now", R.drawable.bots_x, null, "botMenuDecline", last = false) { menuOpen = false; act(t, "decline") }
+                    NavRow("Not now", com.allternit.core.design.R.drawable.ph_x, null, "botMenuDecline", last = false) { menuOpen = false; act(t, "decline") }
                 } else if (t.kind == "task" && t.group != "resolved") {
                     NavRow("Resolve", DesignR.drawable.ph_check_circle_fill, null, "botMenuResolve", last = false) { menuOpen = false; act(t, "resolve") }
                 }
             }
-            NavRow(if (store.isPinned(bot.id)) "Unpin" else "Pin", R.drawable.bots_star, null, "botMenuPin", last = false) { store.togglePin(bot.id); menuOpen = false }
-            NavRow("Edit bot", R.drawable.bots_pencil, null, "botMenuEdit", last = false) { menuOpen = false; editOpen = true }
-            NavRow("Bot settings", R.drawable.bots_gear, null, "botMenuSettings", last = bot.isPrimaryTemplateBot) { menuOpen = false; nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Config)) }
+            NavRow(if (store.isPinned(bot.id)) "Unpin" else "Pin", com.allternit.core.design.R.drawable.ph_star, null, "botMenuPin", last = false) { store.togglePin(bot.id); menuOpen = false }
+            NavRow("Edit bot", com.allternit.core.design.R.drawable.ph_pencil_simple, null, "botMenuEdit", last = false) { menuOpen = false; editOpen = true }
+            NavRow("Bot settings", com.allternit.core.design.R.drawable.ph_gear, null, "botMenuSettings", last = bot.isPrimaryTemplateBot) { menuOpen = false; nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Config)) }
             if (!bot.isPrimaryTemplateBot) NavRow("Delete bot", DesignR.drawable.ph_trash, null, "botMenuDelete", destructive = true) { menuOpen = false; deleteOpen = true }
         }
         Gap(12.dp)
@@ -474,7 +474,7 @@ internal fun BotLiveStageScreen(bot: BotRecord, host: BotsHost, store: BotModeSt
     val line = thread?.statusLine ?: if (vm.isStreaming) "Working…" else "Ready when you are"
     Column(Modifier.fillMaxSize().statusBarsPadding().testTag("botLiveStage")) {
         LibraryHeader(title = bot.displayName, onBack = nav::back, backTag = "botsBack", trailing = {
-            LibraryIconButton(R.drawable.bots_desktop, "Computer", "botStageComputer") { nav.open(BotRoute.Computer(bot.id)) }
+            LibraryIconButton(com.allternit.core.design.R.drawable.ph_desktop, "Computer", "botStageComputer") { nav.open(BotRoute.Computer(bot.id)) }
         })
         Column(
             Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(c.accentPrimary.copy(alpha = 0.12f), Color.Transparent))).padding(vertical = 14.dp),
@@ -482,12 +482,12 @@ internal fun BotLiveStageScreen(bot: BotRecord, host: BotsHost, store: BotModeSt
         ) {
             BotAvatar(bot, 96.dp, live = true, working = vm.isStreaming)
             Text(line, color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
-            Pill(if (trayOpen) "Close" else "Hand it something", "botStageTray", icon = if (trayOpen) R.drawable.bots_x else R.drawable.bots_tray) { trayOpen = !trayOpen }
+            Pill(if (trayOpen) "Close" else "Hand it something", "botStageTray", icon = if (trayOpen) com.allternit.core.design.R.drawable.ph_x else com.allternit.core.design.R.drawable.ph_tray) { trayOpen = !trayOpen }
         }
         if (trayOpen) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Pill("Files", "botStageFiles", icon = R.drawable.bots_file_plus) { pickFiles.launch(arrayOf("*/*")) }
-                Pill("Photos", "botStagePhotos", icon = R.drawable.bots_photo) { pickPhotos.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                Pill("Files", "botStageFiles", icon = com.allternit.core.design.R.drawable.ph_file_plus) { pickFiles.launch(arrayOf("*/*")) }
+                Pill("Photos", "botStagePhotos", icon = com.allternit.core.design.R.drawable.ph_image) { pickPhotos.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
@@ -524,7 +524,7 @@ internal fun BotLiveStageScreen(bot: BotRecord, host: BotsHost, store: BotModeSt
                     composer = { host.composer(BotComposerSpec(placeholder = "Message ${bot.displayName}…", isStreaming = vm.isStreaming, onSend = vm::send, onStop = vm::stopStreaming)) },
                 )
                 resolveError != null -> FriendlyState(FriendlyStyle.Error, "Couldn't open the stage", resolveError ?: "", actionTitle = "Try again", onAction = { scope.launch { resolve() } }) {
-                    Icon(painterResource(R.drawable.bots_chat), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp))
+                    Icon(painterResource(com.allternit.core.design.R.drawable.ph_chat_circle), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp))
                 }
                 else -> LibrarySpinnerBox()
             }
@@ -537,6 +537,6 @@ private fun Chip(title: String, onRemove: () -> Unit) {
     val c = AllternitTheme.colors
     Row(Modifier.clip(CircleShape).background(c.fillNeutral).padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, color = c.textPrimary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
-        LibraryIconButton(R.drawable.bots_x, "Remove $title", iconSize = 12, onClick = onRemove)
+        LibraryIconButton(com.allternit.core.design.R.drawable.ph_x, "Remove $title", iconSize = 12, onClick = onRemove)
     }
 }

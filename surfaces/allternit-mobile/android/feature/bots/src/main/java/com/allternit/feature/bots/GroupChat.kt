@@ -548,7 +548,7 @@ internal fun GroupsListScreen(store: BotModeStore, nav: BotNavigator) {
     LaunchedEffect(Unit) { load() }
     val shown = query.trim().lowercase().let { q -> if (q.isEmpty()) store.groups else store.groups.filter { it.name.lowercase().contains(q) } }
     BotScreen("Group chats", nav, testTag = "groupsListScreen", trailing = {
-        Icon(painterResource(R.drawable.bots_plus), "New group chat", tint = c.textPrimary, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { creating = true }.padding(10.dp).testTag("groupsNew"))
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), "New group chat", tint = c.textPrimary, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { creating = true }.padding(10.dp).testTag("groupsNew"))
     }) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
             if (store.groups.isNotEmpty()) {
@@ -752,7 +752,7 @@ internal fun GroupRoomScreen(groupId: String, host: BotsHost, store: BotModeStor
     val count = room.members.size
     Column(Modifier.fillMaxSize().testTag("botGroupScreen")) {
         BotScreen("# ${room.name}", nav, testTag = "botGroupHeader", trailing = {
-            Icon(painterResource(R.drawable.bots_plus), "Add members", tint = if (running) c.textTertiary else c.textPrimary, modifier = Modifier.size(40.dp).clip(CircleShape).clickable(enabled = !running) { adding = true }.padding(10.dp).testTag("groupAddMembers"))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), "Add members", tint = if (running) c.textTertiary else c.textPrimary, modifier = Modifier.size(40.dp).clip(CircleShape).clickable(enabled = !running) { adding = true }.padding(10.dp).testTag("groupAddMembers"))
         }) {
             Column(Modifier.fillMaxSize()) {
                 // The members pill: N bots · you; docked, their faces, and a tap brings the stage back.

@@ -240,7 +240,7 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
             FriendlyState(
                 FriendlyStyle.Empty, "Sign in to meet your bots", "Your bots, their threads and group chats live in your account.",
                 actionTitle = "Sign in", onAction = host.openSignIn,
-            ) { Icon(painterResource(R.drawable.bots_house), null, tint = c.accentPrimary, modifier = Modifier.size(28.dp)) }
+            ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_house), null, tint = c.accentPrimary, modifier = Modifier.size(28.dp)) }
         } else {
             BotLaunchpad(host, store, nav, query, Modifier.weight(1f))
         }
@@ -287,13 +287,13 @@ private fun BotsOptionsSheet(
             saveRosterLayout(context, it)
         }
         RowGroup(Modifier.padding(vertical = 8.dp)) {
-            NavRow("Threads", R.drawable.bots_list, if (waiting > 0) "$waiting waiting" else null, "botsOptionsThreads", last = false, onClick = onThreads)
-            if (onOffice != null) NavRow("Office", R.drawable.bots_house, null, "botsOptionsOffice", last = false, onClick = onOffice)
-            NavRow("Agent hub", R.drawable.bots_grid, null, "botsOptionsHub", last = false, onClick = onHub)
-            NavRow("Decisions", R.drawable.bots_question, null, "botsOptionsDecisions", last = false, onClick = onDecisions)
-            NavRow("Agent activity", R.drawable.bots_chat, null, "botsOptionsActivity", last = false, onClick = onActivity)
-            NavRow("Group chats", R.drawable.bots_chat, null, "botsOptionsGroups", last = false, onClick = onGroups)
-            NavRow(if (paused) "Resume all bots" else "Pause all bots", if (paused) DesignR.drawable.ph_play_fill else R.drawable.bots_stop, null, "botsOptionsPause", last = false, onClick = onTogglePause)
+            NavRow("Threads", com.allternit.core.design.R.drawable.ph_list, if (waiting > 0) "$waiting waiting" else null, "botsOptionsThreads", last = false, onClick = onThreads)
+            if (onOffice != null) NavRow("Office", com.allternit.core.design.R.drawable.ph_house, null, "botsOptionsOffice", last = false, onClick = onOffice)
+            NavRow("Agent hub", com.allternit.core.design.R.drawable.ph_squares_four, null, "botsOptionsHub", last = false, onClick = onHub)
+            NavRow("Decisions", com.allternit.core.design.R.drawable.ph_question, null, "botsOptionsDecisions", last = false, onClick = onDecisions)
+            NavRow("Agent activity", com.allternit.core.design.R.drawable.ph_chat_circle, null, "botsOptionsActivity", last = false, onClick = onActivity)
+            NavRow("Group chats", com.allternit.core.design.R.drawable.ph_chat_circle, null, "botsOptionsGroups", last = false, onClick = onGroups)
+            NavRow(if (paused) "Resume all bots" else "Pause all bots", if (paused) DesignR.drawable.ph_play_fill else com.allternit.core.design.R.drawable.ph_stop_fill, null, "botsOptionsPause", last = false, onClick = onTogglePause)
             NavRow("Connections", DesignR.drawable.ph_plugs_connected, null, "botsOptionsConnections", onClick = onConnections)
         }
         Gap(16.dp)
@@ -476,7 +476,7 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
                         Text(selected.displayName, color = c.textSecondary, fontSize = 12.5.sp, maxLines = 1)
                         Text("· ${statusOf(selected).word}", color = statusOf(selected).tone(), fontSize = 12.5.sp)
                     } else Text("$mainName · new project", color = c.textSecondary, fontSize = 12.5.sp)
-                    Icon(painterResource(R.drawable.bots_caret_down), null, tint = c.textTertiary, modifier = Modifier.size(12.dp))
+                    Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_down), null, tint = c.textTertiary, modifier = Modifier.size(12.dp))
                 }
                 if (selected != null) Text("×", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.clip(CircleShape).testTag("botsLaunchToClear").clickable { selectedBotId = null }.padding(4.dp))
             }
@@ -545,7 +545,7 @@ private fun RosterFace(e: RosterEntry, size: androidx.compose.ui.unit.Dp) {
         }
         if (e.status == RosterStatus.Working) Box(Modifier.size(size).border(2.dp, c.textPrimary.copy(alpha = 0.75f), CircleShape))
         if (e.status == RosterStatus.Waiting) Box(Modifier.align(Alignment.TopEnd)) { Dot(AllternitStatic.StatusWarning, size * 0.22f) }
-        if ((e as? RosterEntry.Bot)?.pinned == true) Icon(painterResource(R.drawable.bots_star_fill), "Pinned", tint = AllternitStatic.StatusWarning, modifier = Modifier.align(Alignment.BottomStart).size(size * 0.24f))
+        if ((e as? RosterEntry.Bot)?.pinned == true) Icon(painterResource(com.allternit.core.design.R.drawable.ph_star_fill), "Pinned", tint = AllternitStatic.StatusWarning, modifier = Modifier.align(Alignment.BottomStart).size(size * 0.24f))
     }
 }
 
@@ -674,7 +674,7 @@ private fun BotRouteDestination(route: BotRoute, host: BotsHost, store: BotModeS
             store.agentsLoading -> BotScreen("", nav, testTag = "botsLoading") { LibrarySpinnerBox() }
             else -> BotScreen("", nav, testTag = "botsNotFound") {
                 FriendlyState(FriendlyStyle.Empty, "Bot not found", "This bot was removed or isn't shared with you.") {
-                    Icon(painterResource(R.drawable.bots_question), null, tint = AllternitTheme.colors.accentPrimary, modifier = Modifier.size(28.dp))
+                    Icon(painterResource(com.allternit.core.design.R.drawable.ph_question), null, tint = AllternitTheme.colors.accentPrimary, modifier = Modifier.size(28.dp))
                 }
             }
         }

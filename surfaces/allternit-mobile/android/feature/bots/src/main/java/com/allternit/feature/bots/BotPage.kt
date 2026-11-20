@@ -96,20 +96,20 @@ internal fun BotPageView(bot: BotRecord, store: BotModeStore, nav: BotNavigator,
             val role = listOfNotNull(bot.tagline, bot.modelShort).filter { it.isNotEmpty() }.joinToString(" · ")
             if (role.isNotEmpty()) Text(role, color = c.textSecondary, fontSize = 13.sp, textAlign = TextAlign.Center)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
-                Pill("Edit bot", "botPageEdit", icon = R.drawable.bots_pencil) { editOpen = true }
-                Pill("Workspace", "botPageWorkspace", icon = R.drawable.bots_file_text) { nav.open(BotRoute.Settings(bot.id)) }
+                Pill("Edit bot", "botPageEdit", icon = com.allternit.core.design.R.drawable.ph_pencil_simple) { editOpen = true }
+                Pill("Workspace", "botPageWorkspace", icon = com.allternit.core.design.R.drawable.ph_file_text) { nav.open(BotRoute.Settings(bot.id)) }
             }
         }
         BotSummaryTiles(summary)
         RowGroup {
             NavRow("Model", DesignR.drawable.ph_cpu, summary?.model?.split("/")?.lastOrNull()?.takeIf { it.isNotBlank() } ?: bot.modelShort, "botPageModel", last = false) { nav.open(BotRoute.Settings(bot.id)) }
-            NavRow("Threads", R.drawable.bots_chat, "${store.openThreadCount(bot.id)} open", "botPageThreads", last = false) { onOpenThreads?.invoke() ?: nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Threads)) }
-            NavRow("Tasks", R.drawable.bots_list, if (waiting > 0) "$working working · $waiting need you" else "$working working", "botPageTasks", last = false) { onOpenTasks?.invoke() ?: nav.open(BotRoute.Tasks(bot.id)) }
-            NavRow("Routines", R.drawable.bots_clock, routinesOn?.let { "$it on" }, "botPageRoutines", last = false) { nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Routines)) }
-            NavRow("Artifacts", R.drawable.bots_grid, null, "botPageArtifacts", last = false) { nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Artifacts)) }
-            NavRow("Memory", R.drawable.bots_brain, null, "botPageMemory", last = false) { nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Memory)) }
-            NavRow("Computer", R.drawable.bots_desktop, if (computerRunning) "Running" else "Idle", "botPageComputer", last = false) { nav.open(BotRoute.Computer(bot.id)) }
-            NavRow("Channels", R.drawable.bots_link, channelNames?.let { if (it.isEmpty()) "None" else it.joinToString(", ") }, "botPageChannels") { nav.open(BotRoute.Channels(bot.id)) }
+            NavRow("Threads", com.allternit.core.design.R.drawable.ph_chat_circle, "${store.openThreadCount(bot.id)} open", "botPageThreads", last = false) { onOpenThreads?.invoke() ?: nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Threads)) }
+            NavRow("Tasks", com.allternit.core.design.R.drawable.ph_list, if (waiting > 0) "$working working · $waiting need you" else "$working working", "botPageTasks", last = false) { onOpenTasks?.invoke() ?: nav.open(BotRoute.Tasks(bot.id)) }
+            NavRow("Routines", com.allternit.core.design.R.drawable.ph_clock, routinesOn?.let { "$it on" }, "botPageRoutines", last = false) { nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Routines)) }
+            NavRow("Artifacts", com.allternit.core.design.R.drawable.ph_squares_four, null, "botPageArtifacts", last = false) { nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Artifacts)) }
+            NavRow("Memory", com.allternit.core.design.R.drawable.ph_brain, null, "botPageMemory", last = false) { nav.open(BotRoute.BotHome(bot.id, BotHomeTab.Memory)) }
+            NavRow("Computer", com.allternit.core.design.R.drawable.ph_desktop, if (computerRunning) "Running" else "Idle", "botPageComputer", last = false) { nav.open(BotRoute.Computer(bot.id)) }
+            NavRow("Channels", com.allternit.core.design.R.drawable.ph_link, channelNames?.let { if (it.isEmpty()) "None" else it.joinToString(", ") }, "botPageChannels") { nav.open(BotRoute.Channels(bot.id)) }
         }
     }
     if (editOpen) EditBotSheet(bot.id, onDismiss = { editOpen = false }) { editOpen = false; scope.launch { store.refreshAll() } }
@@ -156,7 +156,7 @@ internal fun BotHomeTabsScreen(bot: BotRecord, initial: BotHomeTab, host: BotsHo
                             Text("Main chat", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                             Text(bot.tagline, color = c.textSecondary, fontSize = 12.5.sp, maxLines = 1)
                         }
-                        Icon(painterResource(R.drawable.bots_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(14.dp))
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(14.dp))
                     }
                     BotThreadsOverview(store, bot.id) { nav.openThread(it) }
                 }
@@ -201,7 +201,7 @@ internal fun BotArtifactsList(bot: BotRecord, host: BotsHost) {
         if (!ListState(loading, error, artifacts.isEmpty(), "Couldn't load artifacts", "Artifacts ${bot.displayName} makes in its chats show here.") { scope.launch { load() } }) {
             RowGroup(Modifier.padding(vertical = 8.dp)) {
                 artifacts.forEachIndexed { i, a ->
-                    NavRow(a.title, R.drawable.bots_file_text, a.kind.uppercase(), "botArtifact${a.id}", last = i == artifacts.lastIndex) { host.openArtifact(a) }
+                    NavRow(a.title, com.allternit.core.design.R.drawable.ph_file_text, a.kind.uppercase(), "botArtifact${a.id}", last = i == artifacts.lastIndex) { host.openArtifact(a) }
                 }
             }
         }
@@ -382,7 +382,7 @@ internal fun BotChannelsView(bot: BotRecord) {
         }
         bot.email?.let { email ->
             SectionHeader("Identity")
-            RowGroup { NavRow(email, R.drawable.bots_link, null, "botChannelEmail") {} }
+            RowGroup { NavRow(email, com.allternit.core.design.R.drawable.ph_link, null, "botChannelEmail") {} }
         }
         Gap(12.dp)
         // Giving a bot a phone number (iOS GiveBotPhoneSheet) is wave F's Phone work; Connections covers the rest.

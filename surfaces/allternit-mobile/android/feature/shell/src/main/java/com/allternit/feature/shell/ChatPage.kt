@@ -83,7 +83,7 @@ internal fun ChatPage(
                 prefill = ChatViewModel.strippedText(m.content)
             },
             onOpenSettings = onOpenSettings,
-            onConnectConnector = { onOpenSection(RailRow("connectors", "Connectors", R.drawable.shell_bolt)) },
+            onConnectConnector = { onOpenSection(RailRow("connectors", "Connectors", com.allternit.core.design.R.drawable.ph_lightning)) },
             onShareLink = { shareOpen = true },
             onOpenArtifact = onOpenArtifact,
         )
@@ -103,12 +103,12 @@ internal fun ChatPage(
             leading = menuButton,
             trailing = {
                 Box {
-                    PhoneIconButton(R.drawable.shell_dots, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
+                    PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
                         if (chat.currentSessionId == null) {
                             Text("Send a message to start this chat.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
                         } else {
-                            MenuRow(icon = R.drawable.shell_link, title = "Share link", testTag = "chatMenushareLink") {
+                            MenuRow(icon = com.allternit.core.design.R.drawable.ph_link, title = "Share link", testTag = "chatMenushareLink") {
                                 menuOpen = false
                                 shareOpen = true
                             }
@@ -119,7 +119,7 @@ internal fun ChatPage(
                         }
                     }
                 }
-                PhoneIconButton(R.drawable.shell_note_pencil, "New chat", testTag = "chatNewChat", onClick = onNewChat)
+                PhoneIconButton(com.allternit.core.design.R.drawable.ph_note_pencil, "New chat", testTag = "chatNewChat", onClick = onNewChat)
             },
         )
         ChatScreen(

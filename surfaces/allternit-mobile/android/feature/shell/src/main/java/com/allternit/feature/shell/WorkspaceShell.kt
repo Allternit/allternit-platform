@@ -388,9 +388,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
 
     /** iOS newOptions: press and hold the New pill. */
     fun newOptions(): List<NewOption> {
-        val quick = NewOption("quick-task", "Quick task", R.drawable.shell_bolt) { quickTaskOpen = true }
-        val scheduled = NewOption("scheduled", "New scheduled task", R.drawable.shell_clock) {
-            openPage(ShellPage.Section(RailRow(if (mode == ShellMode.Code) "code-automations" else "automation-tasks", "Automation Tasks", R.drawable.shell_clock)))
+        val quick = NewOption("quick-task", "Quick task", com.allternit.core.design.R.drawable.ph_lightning) { quickTaskOpen = true }
+        val scheduled = NewOption("scheduled", "New scheduled task", com.allternit.core.design.R.drawable.ph_clock) {
+            openPage(ShellPage.Section(RailRow(if (mode == ShellMode.Code) "code-automations" else "automation-tasks", "Automation Tasks", com.allternit.core.design.R.drawable.ph_clock)))
         }
         fun continueCli(surface: String) = NewOption("continue-cli", "Continue CLI session", DesignR.drawable.ph_terminal) { cliPickerSurface = surface }
         return when (mode) {

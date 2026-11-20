@@ -130,7 +130,7 @@ internal fun ComputeGateCard(reason: ComputeGateReason, backend: ChatBackend, on
                                 copyToClipboard(context, DOWNLOAD_URL)
                                 copied = true
                             }
-                            CapsuleButton("Share", icon = R.drawable.chat_share) { shareText(context, DOWNLOAD_URL) }
+                            CapsuleButton("Share", icon = com.allternit.core.design.R.drawable.ph_export) { shareText(context, DOWNLOAD_URL) }
                         }
                         Text("2. Open Allternit and approve the link it opens in your browser.", color = c.textPrimary, fontSize = 13.sp)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -232,7 +232,7 @@ internal fun BotThreadsPanel(store: BotModeStore, threads: List<BotThread>, botI
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Icon(painterResource(R.drawable.bots_caret_down), null, tint = c.textTertiary, modifier = Modifier.size(12.dp).rotate(if (folded) -90f else 0f))
+                Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_down), null, tint = c.textTertiary, modifier = Modifier.size(12.dp).rotate(if (folded) -90f else 0f))
                 Text(g.title, color = groupColor(g), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 Text("${items.size}", color = c.textTertiary, fontSize = 12.sp)
             }
@@ -265,22 +265,22 @@ internal fun BotThreadTasks(store: BotModeStore, bot: BotRecord, currentSessionI
             val g = BotThreadGroup.of(t.group)
             Column(Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.bgPanel).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(14.dp))) {
                 Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LibraryIconButton(R.drawable.bots_caret_down, if (isFolded) "Show steps" else "Hide steps", "botTaskFold${t.id}", iconSize = 12) {
+                    LibraryIconButton(com.allternit.core.design.R.drawable.ph_caret_down, if (isFolded) "Show steps" else "Hide steps", "botTaskFold${t.id}", iconSize = 12) {
                         folded = if (isFolded) folded - t.id else folded + t.id
                     }
                     Row(Modifier.weight(1f).clickable { onOpen(t) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Dot(groupColor(g), 7.dp)
                         Text(t.displayTitle, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                         Text("$done/${t.todo.size}", color = c.textSecondary, fontSize = 12.sp)
-                        Icon(painterResource(R.drawable.bots_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(12.dp))
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_right), null, tint = c.textTertiary, modifier = Modifier.size(12.dp))
                     }
                 }
                 if (!isFolded) t.todo.forEach { (text, state) ->
                     Row(Modifier.fillMaxWidth().clickable { onOpen(t) }.padding(start = 44.dp, end = 12.dp, top = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         val (icon, tint) = when (state) {
                             "done" -> DesignR.drawable.ph_check_circle_fill to AllternitStatic.StatusSuccess
-                            "active" -> R.drawable.bots_clock to AllternitStatic.StatusInfo
-                            else -> R.drawable.bots_x to c.textTertiary
+                            "active" -> com.allternit.core.design.R.drawable.ph_clock to AllternitStatic.StatusInfo
+                            else -> com.allternit.core.design.R.drawable.ph_x to c.textTertiary
                         }
                         if (state == "pending" || (state != "done" && state != "active")) Box(Modifier.size(14.dp).border(1.5.dp, tint, androidx.compose.foundation.shape.CircleShape))
                         else Icon(painterResource(icon), null, tint = tint, modifier = Modifier.size(14.dp))

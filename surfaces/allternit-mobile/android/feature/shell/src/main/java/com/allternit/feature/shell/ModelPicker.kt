@@ -158,10 +158,10 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                 }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     OverviewCard("All", "${offered.size} models", pick == PickerScope.All, "modelPickerAll", {
-                        Icon(painterResource(R.drawable.shell_grid), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_squares_four), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
                     }) { pick = PickerScope.All }
                     OverviewCard("Favorites", "${models.favorites.size}", pick == PickerScope.Favorites, "modelPickerFavorites", {
-                        Icon(painterResource(R.drawable.shell_star_fill), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_star_fill), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
                     }) { pick = PickerScope.Favorites }
                     providerIds.forEach { pid ->
                         val count = offered.count { it.provider == pid }
@@ -180,8 +180,8 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                         }) { pick = PickerScope.Provider(pid) }
                     }
                     OverviewCard("Connect", "account", false, "modelPickerConnect", {
-                        Icon(painterResource(R.drawable.shell_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
-                    }) { onOpenSection(RailRow("models", "Models", R.drawable.shell_brain)) }
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
+                    }) { onOpenSection(RailRow("models", "Models", com.allternit.core.design.R.drawable.ph_brain)) }
                 }
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
@@ -206,7 +206,7 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                             onAction = { scope.launch { models.load(force = true) } },
                             modifier = Modifier.padding(top = 16.dp).testTag("modelPickerError"),
                         ) {
-                            Icon(painterResource(R.drawable.shell_wifi_slash), contentDescription = null, tint = c.textSecondary)
+                            Icon(painterResource(com.allternit.core.design.R.drawable.ph_wifi_slash), contentDescription = null, tint = c.textSecondary)
                         }
                     }
                     groups.isEmpty() -> item(key = "empty") {
@@ -357,7 +357,7 @@ private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allterni
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                painterResource(if (favorite) R.drawable.shell_star_fill else R.drawable.shell_star),
+                painterResource(if (favorite) com.allternit.core.design.R.drawable.ph_star_fill else com.allternit.core.design.R.drawable.ph_star),
                 contentDescription = null,
                 tint = if (favorite) c.accentPrimary else c.textTertiary,
                 modifier = Modifier.size(18.dp),

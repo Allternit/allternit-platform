@@ -170,8 +170,8 @@ internal fun ShellDrawer(
             mode = mode,
             account = account,
             onSettings = onSettings,
-            onPhones = { onRow(RailRow("phones", "Phones", R.drawable.shell_device_mobile)) },
-            onMeetings = { onRow(RailRow("meetings", "Meetings", com.allternit.core.design.R.drawable.vc_video)) },
+            onPhones = { onRow(RailRow("phones", "Phones", com.allternit.core.design.R.drawable.ph_device_mobile)) },
+            onMeetings = { onRow(RailRow("meetings", "Meetings", com.allternit.core.design.com.allternit.core.design.R.drawable.ph_video_camera)) },
             onNew = onNew,
             newOptions = newOptions,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -203,7 +203,7 @@ private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, botsWaiting: I
             }
         }
         Box {
-            RoundButton(R.drawable.shell_tray, if (inboxCount > 0) "Needs you, $inboxCount waiting" else "Needs you", "drawerInbox", onInbox)
+            RoundButton(com.allternit.core.design.R.drawable.ph_tray, if (inboxCount > 0) "Needs you, $inboxCount waiting" else "Needs you", "drawerInbox", onInbox)
             if (inboxCount > 0) {
                 // The waiting count (iOS inbox badge on the drawer's Inbox button).
                 Text(
@@ -280,7 +280,7 @@ private fun MoreRow(rows: List<RailRow>, hidden: Set<String>, onToggle: (String)
     val c = AllternitTheme.colors
     var open by remember { mutableStateOf(false) }
     Box {
-        DrawerNavRow("More", R.drawable.shell_dots, "drawerRowmore", dot = rows.any { it.id in hidden }) { open = true }
+        DrawerNavRow("More", com.allternit.core.design.R.drawable.ph_dots_three, "drawerRowmore", dot = rows.any { it.id in hidden }) { open = true }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
             Text("Show in rail", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
             rows.forEach { row ->
@@ -332,7 +332,7 @@ private fun RecentsLabel(
             horizontalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text("View all", color = c.textSecondary, fontSize = 14.sp)
-            Icon(painterResource(R.drawable.shell_caret_right), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(11.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_right), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(11.dp))
         }
         Box {
             Box(
@@ -367,7 +367,7 @@ private fun InlineError(title: String, message: String, onRetry: () -> Unit) {
                 Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AllternitStatic.StatusWarning.copy(alpha = 0.16f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(painterResource(R.drawable.shell_wifi_slash), contentDescription = null, tint = AllternitStatic.StatusWarning, modifier = Modifier.size(18.dp))
+                Icon(painterResource(com.allternit.core.design.R.drawable.ph_wifi_slash), contentDescription = null, tint = AllternitStatic.StatusWarning, modifier = Modifier.size(18.dp))
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(title, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -404,7 +404,7 @@ private fun DrawerEmpty(title: String, message: String, newLabel: String, onNew:
             Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).border(1.dp, c.borderSubtle, RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(painterResource(R.drawable.shell_chat), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_chat_circle), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
         }
         Text(title, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 20.dp))
         Text(message, color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
@@ -419,7 +419,7 @@ private fun DrawerEmpty(title: String, message: String, newLabel: String, onNew:
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Icon(painterResource(R.drawable.shell_note_pencil), contentDescription = null, tint = c.onAccent, modifier = Modifier.size(13.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_note_pencil), contentDescription = null, tint = c.onAccent, modifier = Modifier.size(13.dp))
             Text(newLabel, color = c.onAccent, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         }
     }
@@ -446,7 +446,7 @@ internal fun RecentRow(session: AgentSession, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Icon(
-            painter = painterResource(R.drawable.shell_chat),
+            painter = painterResource(com.allternit.core.design.R.drawable.ph_chat_circle),
             contentDescription = null,
             tint = c.textSecondary,
             modifier = Modifier.size(18.dp),
@@ -577,7 +577,7 @@ private fun DrawerFooter(
                     .semantics { contentDescription = if (inCall) "Meetings, Gizzi is in a call" else "Meetings" },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(painterResource(com.allternit.core.design.R.drawable.vc_video), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
+                Icon(painterResource(com.allternit.core.design.com.allternit.core.design.R.drawable.ph_video_camera), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
                 if (inCall) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(8.dp).clip(CircleShape).background(Color(0xFF16A34A)))
             }
         }
@@ -608,7 +608,7 @@ private fun DrawerFooter(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(painterResource(R.drawable.shell_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
             Text(mode.newLabel, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
         }
         DropdownMenu(

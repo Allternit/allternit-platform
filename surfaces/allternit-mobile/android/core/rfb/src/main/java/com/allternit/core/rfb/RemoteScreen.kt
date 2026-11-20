@@ -254,7 +254,7 @@ fun RfbStateOverlay(session: RfbSession, connectingText: String = "Connecting to
                 actionTitle = "Retry",
                 onAction = { session.retry() },
                 modifier = Modifier.testTag("rfbFailed"),
-            ) { Icon(painterResource(R.drawable.rfb_x), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp)) }
+            ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp)) }
         }
         is RfbSession.State.NeedsCredentials -> Cover {
             RfbCredentialsForm(s.needsUsername, s.message) { u, p -> session.submitCredentials(u, p) }

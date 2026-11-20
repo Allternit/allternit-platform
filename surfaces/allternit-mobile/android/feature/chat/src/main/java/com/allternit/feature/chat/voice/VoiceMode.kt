@@ -432,9 +432,9 @@ fun VoiceModeView(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
                 Text(it, color = Color(0xFFD97706), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp).padding(bottom = 6.dp))
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 36.dp).padding(bottom = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                RoundControl(DesignR.drawable.vc_gear, "Voice settings", "voiceSettings") { settingsOpen = true }
+                RoundControl(com.allternit.core.design.R.drawable.ph_gear, "Voice settings", "voiceSettings") { settingsOpen = true }
                 Spacer(Modifier.size(12.dp))
-                RoundControl(DesignR.drawable.vc_minimize, "Minimize to voice bar", "voiceMinimize") { host.presentation = VoiceHost.Presentation.Bar }
+                RoundControl(com.allternit.core.design.R.drawable.ph_arrows_in, "Minimize to voice bar", "voiceMinimize") { host.presentation = VoiceHost.Presentation.Bar }
                 Spacer(Modifier.weight(1f))
                 MicButton(viewModel)
                 Spacer(Modifier.weight(1f))
@@ -469,7 +469,7 @@ private fun MicButton(vm: VoiceModeViewModel) {
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(painterResource(if (vm.isMuted) DesignR.drawable.vc_mic_off else DesignR.drawable.vc_mic), null,
+        Icon(painterResource(if (vm.isMuted) com.allternit.core.design.R.drawable.ph_microphone_slash else com.allternit.core.design.R.drawable.ph_microphone), null,
             tint = if (vm.isMuted) c.textSecondary else Color.Black, modifier = Modifier.size(26.dp))
     }
 }
@@ -550,9 +550,9 @@ fun VoiceQuickBar(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
             Text(status, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             (viewModel.statusLine ?: viewModel.engineLabel)?.let { Text(it, color = c.textSecondary, fontSize = 11.sp, maxLines = 1) }
         }
-        RoundControl(if (viewModel.isMuted) DesignR.drawable.vc_mic_off else DesignR.drawable.vc_mic,
+        RoundControl(if (viewModel.isMuted) com.allternit.core.design.R.drawable.ph_microphone_slash else com.allternit.core.design.R.drawable.ph_microphone,
             if (viewModel.isMuted) "Unmute microphone" else "Mute microphone", "voiceBarMute") { viewModel.toggleMute() }
-        RoundControl(DesignR.drawable.vc_expand, "Open full-screen voice", "voiceBarExpand") { host.presentation = VoiceHost.Presentation.Full }
+        RoundControl(com.allternit.core.design.R.drawable.ph_arrows_out, "Open full-screen voice", "voiceBarExpand") { host.presentation = VoiceHost.Presentation.Full }
         RoundControl(DesignR.drawable.ph_x, "End voice chat", "voiceBarEnd") { host.end()?.let(onEnd) }
     }
 }
@@ -569,15 +569,15 @@ fun VoiceSummaryCard(summary: VoiceSummary) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(Modifier.size(36.dp).clip(CircleShape).background(c.accentPrimary.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
-            Icon(painterResource(DesignR.drawable.vc_waveform), null, tint = c.accentPrimary, modifier = Modifier.size(16.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_waveform), null, tint = c.accentPrimary, modifier = Modifier.size(16.dp))
         }
         Column(Modifier.weight(1f)) {
             Text("Voice chat ended · ${summary.formattedDuration}", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             Text("The conversation continues below", color = c.textSecondary, fontSize = 11.sp)
         }
-        Icon(painterResource(DesignR.drawable.vc_thumb_up), "Good session", tint = if (feedback == 1) c.textPrimary else c.textTertiary,
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_thumbs_up), "Good session", tint = if (feedback == 1) c.textPrimary else c.textTertiary,
             modifier = Modifier.size(30.dp).clip(CircleShape).clickable { feedback = if (feedback == 1) 0 else 1 }.padding(7.dp))
-        Icon(painterResource(DesignR.drawable.vc_thumb_down), "Bad session", tint = if (feedback == -1) c.textPrimary else c.textTertiary,
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_thumbs_down), "Bad session", tint = if (feedback == -1) c.textPrimary else c.textTertiary,
             modifier = Modifier.size(30.dp).clip(CircleShape).clickable { feedback = if (feedback == -1) 0 else -1 }.padding(7.dp))
     }
 }

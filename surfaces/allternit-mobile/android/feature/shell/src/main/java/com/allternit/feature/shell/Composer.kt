@@ -327,7 +327,7 @@ internal fun Composer(
         }
         AnimatedVisibility(visible = chipVisible, enter = fadeIn(), exit = fadeOut()) {
             NoticeCard(
-                icon = R.drawable.shell_desktop,
+                icon = com.allternit.core.design.R.drawable.ph_desktop,
                 title = NoComputerCopy.TITLE,
                 detail = NoComputerCopy.DETAIL,
                 testTag = "composerComputerChip",
@@ -337,7 +337,7 @@ internal fun Composer(
         }
         AnimatedVisibility(visible = showsTip, enter = fadeIn(), exit = fadeOut()) {
             NoticeCard(
-                icon = R.drawable.shell_caret_up,
+                icon = com.allternit.core.design.R.drawable.ph_caret_up,
                 title = SwipeTip.TEXT,
                 detail = null,
                 testTag = "composerSwipeTip",
@@ -422,7 +422,7 @@ internal fun Composer(
                         .semantics { contentDescription = "Add to chat" },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(painterResource(R.drawable.shell_plus), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(22.dp).rotate(plusTurn))
+                    Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(22.dp).rotate(plusTurn))
                 }
                 Spacer(Modifier.weight(1f))
                 ModelChip(models = models, open = pickerOpen) { pickerOpen = true }
@@ -460,10 +460,10 @@ internal fun Composer(
                 } else {
                     Row {
                         if (dictationAvailable) {
-                            ControlGlyph(R.drawable.shell_mic, if (dictation.isRecording) "Stop dictation" else "Dictate", "composerMic") { toggleDictation() }
+                            ControlGlyph(com.allternit.core.design.R.drawable.ph_microphone, if (dictation.isRecording) "Stop dictation" else "Dictate", "composerMic") { toggleDictation() }
                         }
                         // iOS draws the voice button at 0.4, disabled, where voice mode has no chat to talk to.
-                        ControlGlyph(R.drawable.shell_waveform, "Start voice mode", "composerVoice", enabled = onVoiceMode != null) {
+                        ControlGlyph(com.allternit.core.design.R.drawable.ph_waveform, "Start voice mode", "composerVoice", enabled = onVoiceMode != null) {
                             Haptics.perform(view, Haptics.Kind.Tap)
                             startVoice()
                         }
@@ -480,7 +480,7 @@ internal fun Composer(
                     agentMode = m?.id
                 },
                 onPlugins = { onOpenSection(RailRow("plugins", "Plugins", DesignR.drawable.ph_puzzle_piece)) },
-                onArtifacts = { onOpenSection(RailRow("artifacts-library", "Artifacts", R.drawable.shell_file_text)) },
+                onArtifacts = { onOpenSection(RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)) },
             )
         }
     }
@@ -569,7 +569,7 @@ private fun ModelChip(models: ModelStore, open: Boolean, onClick: () -> Unit) {
             ) { MatrixLogo(size = 18.dp) }
             Text(label, color = c.textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp))
         }
-        Icon(painterResource(R.drawable.shell_caret_down), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(11.dp).rotate(turn))
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(11.dp).rotate(turn))
     }
 }
 
@@ -601,7 +601,7 @@ private fun NoticeCard(icon: Int, title: String, detail: String?, testTag: Strin
                 .semantics { contentDescription = dismissLabel },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(painterResource(R.drawable.shell_x), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
         }
     }
 }
@@ -619,10 +619,10 @@ private fun PhoneArmedChip(onClear: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Icon(painterResource(R.drawable.shell_device_mobile), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(12.dp))
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_device_mobile), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(12.dp))
         Text("On this phone", color = c.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Box(Modifier.size(32.dp).clickable(role = Role.Button, onClickLabel = "Don't run on this phone", onClick = onClear), contentAlignment = Alignment.Center) {
-            Icon(painterResource(R.drawable.shell_x), contentDescription = "Don't run on this phone", tint = c.textPrimary, modifier = Modifier.size(10.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), contentDescription = "Don't run on this phone", tint = c.textPrimary, modifier = Modifier.size(10.dp))
         }
     }
 }
@@ -642,15 +642,15 @@ internal fun AttachmentChip(a: ComposerAttachment, onRemove: (() -> Unit)?) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         val icon = when (a.kind) {
-            "photo", "camera" -> R.drawable.shell_photo
-            "github" -> R.drawable.shell_link
-            else -> R.drawable.shell_file_text
+            "photo", "camera" -> com.allternit.core.design.R.drawable.ph_image
+            "github" -> com.allternit.core.design.R.drawable.ph_link
+            else -> com.allternit.core.design.R.drawable.ph_file_text
         }
         Icon(painterResource(icon), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
         Text(a.name, color = c.textPrimary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp).padding(vertical = 8.dp))
         if (onRemove != null) {
             Box(Modifier.size(32.dp).clickable(role = Role.Button, onClickLabel = "Remove ${a.name}", onClick = onRemove), contentAlignment = Alignment.Center) {
-                Icon(painterResource(R.drawable.shell_x), contentDescription = "Remove ${a.name}", tint = c.textSecondary, modifier = Modifier.size(10.dp))
+                Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), contentDescription = "Remove ${a.name}", tint = c.textSecondary, modifier = Modifier.size(10.dp))
             }
         }
     }
@@ -700,7 +700,7 @@ private fun DeckBand(armed: DeckMode?, onPickMode: (DeckMode?) -> Unit, onPlugin
         DeckSeparator()
         DeckTrigger(DesignR.drawable.ph_puzzle_piece, "Plugins", "deckPlugins", onClick = onPlugins)
         DeckSeparator()
-        DeckTrigger(R.drawable.shell_stack, "Artifacts", "deckArtifacts", chevron = false, onClick = onArtifacts)
+        DeckTrigger(com.allternit.core.design.R.drawable.ph_stack, "Artifacts", "deckArtifacts", chevron = false, onClick = onArtifacts)
     }
 }
 
@@ -724,7 +724,7 @@ private fun DeckTrigger(icon: Int, label: String, testTag: String, chevron: Bool
     ) {
         Icon(painterResource(icon), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
         Text(label, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        if (chevron) Icon(painterResource(R.drawable.shell_caret_up), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.6f), modifier = Modifier.size(9.dp))
+        if (chevron) Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_up), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.6f), modifier = Modifier.size(9.dp))
     }
 }
 

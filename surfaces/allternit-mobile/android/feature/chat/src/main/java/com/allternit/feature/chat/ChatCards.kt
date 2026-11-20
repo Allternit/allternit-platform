@@ -183,7 +183,7 @@ internal fun ChatErrorCard(error: ChatError, onChooseModel: () -> Unit, onRetry:
         Text(error.detail, color = c.textSecondary, fontSize = 12.sp, lineHeight = 16.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (error.isModelError) CapsuleButton("Choose a model", icon = DesignR.drawable.ph_cpu, onClick = onChooseModel)
-            CapsuleButton("Retry", icon = R.drawable.chat_retry, primary = !error.isModelError, onClick = onRetry)
+            CapsuleButton("Retry", icon = com.allternit.core.design.R.drawable.ph_arrow_clockwise, primary = !error.isModelError, onClick = onRetry)
         }
         Row(
             Modifier.clickable(role = Role.Button) { details = !details },
@@ -191,7 +191,7 @@ internal fun ChatErrorCard(error: ChatError, onChooseModel: () -> Unit, onRetry:
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text("Details", color = c.textSecondary, fontSize = 11.sp)
-            Icon(painterResource(if (details) R.drawable.chat_caret_up else R.drawable.chat_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
+            Icon(painterResource(if (details) com.allternit.core.design.R.drawable.ph_caret_up else com.allternit.core.design.R.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
         }
         if (details) Text(error.raw, color = c.textSecondary, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
     }
@@ -207,7 +207,7 @@ fun PermissionAskCard(ask: PermissionAsk, onReply: (String, (String) -> Unit) ->
     if (ask.answered != null) return
     CardChrome {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(painterResource(R.drawable.chat_hand), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(12.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_hand), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(12.dp))
             Text("Waiting for approval", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
         Text(ask.title, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -240,7 +240,7 @@ fun QuestionCard(ask: QuestionAsk, onAnswer: (List<List<String>>, (String) -> Un
     val picks = remember(ask.id) { mutableStateListOf<Set<String>>().apply { repeat(ask.questions.size) { add(emptySet()) } } }
     var problem by remember(ask.id) { mutableStateOf<String?>(null) }
     CardChrome {
-        CardHeader(R.drawable.chat_question, "Your agent is asking")
+        CardHeader(com.allternit.core.design.R.drawable.ph_question, "Your agent is asking")
         ask.questions.forEachIndexed { index, q ->
             q.header?.takeIf { it.isNotBlank() }?.let { Text(it, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
             Text(q.question, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -343,7 +343,7 @@ internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, wait
         ) {
             if (streaming) com.allternit.core.design.ThinkingOrb(size = com.allternit.core.design.ThinkingOrbSize.Inline, state = com.allternit.core.design.ThinkingOrbState.forToolName(calls.lastOrNull()?.toolName ?: ""))
             Text(header, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Icon(painterResource(if (open) R.drawable.chat_caret_up else R.drawable.chat_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
+            Icon(painterResource(if (open) com.allternit.core.design.R.drawable.ph_caret_up else com.allternit.core.design.R.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
             if (agentSteps > 0) Text(
                 "· $agentSteps ${if (agentSteps == 1) "agent" else "agents"}", color = c.accentPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.testTag("toolRailAgents").clickable(role = Role.Button, onClickLabel = "Show the agents") { treeOpen = true },
@@ -432,7 +432,7 @@ internal object SettingsChanges {
 internal fun SettingsChangeCard(changes: List<SettingsChange>, onOpenSettings: () -> Unit) {
     val c = AllternitTheme.colors
     CardChrome(Modifier.semantics(mergeDescendants = true) { contentDescription = "Settings changes" }) {
-        CardHeader(R.drawable.chat_gear, if (changes.size == 1) "Settings change" else "Settings changes")
+        CardHeader(com.allternit.core.design.R.drawable.ph_gear, if (changes.size == 1) "Settings change" else "Settings changes")
         changes.forEachIndexed { index, ch ->
             if (index > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -459,7 +459,7 @@ internal fun SettingsChangeCard(changes: List<SettingsChange>, onOpenSettings: (
             }
             note?.let { Text(it, color = c.textSecondary, fontSize = 12.sp) }
             if (ch.outcome == "locked" || ch.outcome == "needs_confirmation" || (ch.outcome == "apply_on_device" && ch.scope != "runtime")) {
-                CapsuleButton("Open Settings", icon = R.drawable.chat_gear, label = "Open Settings for ${ch.label}", onClick = onOpenSettings)
+                CapsuleButton("Open Settings", icon = com.allternit.core.design.R.drawable.ph_gear, label = "Open Settings for ${ch.label}", onClick = onOpenSettings)
             }
         }
     }
@@ -497,7 +497,7 @@ internal fun ConnectSuggestCard(s: ConnectorSuggestion, onConnect: (String) -> U
     val c = AllternitTheme.colors
     val title = if (s.connectors.size == 1) "Suggested connection" else "Suggested connections"
     CardChrome(Modifier.semantics(mergeDescendants = false) { contentDescription = listOfNotNull("Suggested connections", s.reason).joinToString(". ") }) {
-        CardHeader(R.drawable.chat_plugs, title)
+        CardHeader(com.allternit.core.design.R.drawable.ph_plugs, title)
         s.reason?.let { Text(it, color = c.textPrimary, fontSize = 15.sp) }
         s.connectors.forEachIndexed { index, (id, name, group) ->
             if (index > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
@@ -626,7 +626,7 @@ internal fun UploadFileCard(f: RunFile, backend: ChatBackend) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(painterResource(R.drawable.chat_file), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_file), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
         Column(Modifier.weight(1f)) {
             Text(f.name, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(

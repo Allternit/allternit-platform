@@ -239,16 +239,16 @@ fun ComputerDriveScreen(computer: ComputerRecord, backTitle: String, onBack: () 
     Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().testTag("computerDrive")) {
         DriveTopBar(backTitle = backTitle, title = computer.name, onBack = onBack, trailing = {
             if (holdsControl && wsPath != null) {
-                BarIcon(R.drawable.rfb_keyboard, if (keyboard) "Hide keyboard" else "Show keyboard", "computerKeyboard") { keyboard = !keyboard }
+                BarIcon(com.allternit.core.design.R.drawable.ph_keyboard, if (keyboard) "Hide keyboard" else "Show keyboard", "computerKeyboard") { keyboard = !keyboard }
             }
-            BarIcon(R.drawable.rfb_corners_out, "Full screen", "computerFullScreen", enabled = wsPath != null) { fullScreen = true }
+            BarIcon(com.allternit.core.design.R.drawable.ph_corners_out, "Full screen", "computerFullScreen", enabled = wsPath != null) { fullScreen = true }
         })
         Row(
             Modifier.fillMaxWidth().background(c.bgSecondary).padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Icon(painterResource(if (holdsControl) R.drawable.rfb_hand else R.drawable.rfb_eye), null,
+            Icon(painterResource(if (holdsControl) com.allternit.core.design.R.drawable.ph_hand else com.allternit.core.design.R.drawable.ph_eye), null,
                 tint = if (holdsControl) c.accentPrimary else c.textSecondary, modifier = Modifier.size(18.dp))
             Text(controlLabel, color = c.textSecondary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (running) {
@@ -296,7 +296,7 @@ fun ComputerDriveScreen(computer: ComputerRecord, backTitle: String, onBack: () 
                         }
                     }),
                     modifier = Modifier.testTag("computerOff"),
-                ) { Icon(painterResource(R.drawable.rfb_x), null, tint = c.textSecondary, modifier = Modifier.size(28.dp)) }
+                ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), null, tint = c.textSecondary, modifier = Modifier.size(28.dp)) }
                 path != null && !fullScreen -> key(path) { ScreenFor(path, holdsControl, keyboard) }
                 error != null -> FriendlyState(
                     style = FriendlyStyle.Error,
@@ -304,7 +304,7 @@ fun ComputerDriveScreen(computer: ComputerRecord, backTitle: String, onBack: () 
                     message = error.orEmpty(),
                     actionTitle = "Try again",
                     onAction = { scope.launch { connect() } },
-                ) { Icon(painterResource(R.drawable.rfb_x), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp)) }
+                ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp)) }
                 path == null -> CircularProgressIndicator(color = Color.White, modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
             }
         }
