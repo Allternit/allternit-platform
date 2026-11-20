@@ -495,6 +495,16 @@ class ChatViewModel(
     }
 
     /** The Stop button: cancel locally and abort the server-side run (`POST .../abort`). */
+    /** iOS appendVoiceSummary: the "Voice chat ended · Ns" card after a voice session. */
+    fun appendVoiceSummary(durationSeconds: Int) {
+        messages = messages + MessageRecord(
+            id = java.util.UUID.randomUUID().toString(),
+            role = "system",
+            content = "",
+            voiceSummary = com.allternit.feature.chat.voice.VoiceSummary(durationSeconds),
+        )
+    }
+
     fun stopStreaming() {
         val sessionId = currentSessionId
         val wasStreaming = isStreaming

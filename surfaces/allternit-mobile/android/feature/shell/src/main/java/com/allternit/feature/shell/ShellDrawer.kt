@@ -165,6 +165,7 @@ internal fun ShellDrawer(
             account = account,
             onSettings = onSettings,
             onPhones = { onRow(RailRow("phones", "Phones", R.drawable.shell_device_mobile)) },
+            onMeetings = { onRow(RailRow("meetings", "Meetings", com.allternit.core.design.R.drawable.vc_video)) },
             onNew = onNew,
             newOptions = newOptions,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -491,6 +492,8 @@ private fun DrawerFooter(
     account: Account?,
     onSettings: () -> Unit,
     onPhones: () -> Unit,
+    /** Wave H2: iOS MeetingsDrawerButton, shown with the account's `meetings` flag. */
+    onMeetings: () -> Unit,
     onNew: () -> Unit,
     newOptions: List<NewOption>,
     modifier: Modifier = Modifier,
@@ -538,6 +541,27 @@ private fun DrawerFooter(
             contentAlignment = Alignment.Center,
         ) {
             MatrixLogo(size = 22.dp, ink = c.textPrimary)
+        }
+        val meetingsContext = androidx.compose.ui.platform.LocalContext.current
+        androidx.compose.runtime.LaunchedEffect(account) { com.allternit.feature.meetings.MeetingsStore.refreshFlag(meetingsContext, signedIn = account != null) }
+        if (com.allternit.feature.meetings.MeetingsStore.isEnabled) {
+            val inCall = com.allternit.feature.meetings.MeetingsStore.live.isNotEmpty()
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(c.fillNeutral)
+                    .testTag("drawerMeetings")
+                    .clickable(role = Role.Button, onClickLabel = "Meetings") {
+                        Haptics.perform(view, Haptics.Kind.Tap)
+                        onMeetings()
+                    }
+                    .semantics { contentDescription = if (inCall) "Meetings, Gizzi is in a call" else "Meetings" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(painterResource(com.allternit.core.design.R.drawable.vc_video), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
+                if (inCall) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(8.dp).clip(CircleShape).background(Color(0xFF16A34A)))
+            }
         }
         Spacer(Modifier.weight(1f))
         Box {

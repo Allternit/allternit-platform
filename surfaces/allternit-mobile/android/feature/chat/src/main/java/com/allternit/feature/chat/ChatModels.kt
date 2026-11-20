@@ -147,6 +147,8 @@ data class MessageRecord(
     /** Names of the files sent with a user turn (shown as chips under the bubble). */
     val attachmentNames: List<String> = emptyList(),
     val createdAt: Long = System.currentTimeMillis(),
+    /** Wave H2: the feed's "Voice chat ended" card (iOS MessageRecord.voiceSummary); a local system row. */
+    val voiceSummary: com.allternit.feature.chat.voice.VoiceSummary? = null,
 ) {
     /** Inserts or updates one tool call from a stream frame (iOS upsertToolCall). */
     fun upsertToolCall(call: ToolCallRecord): MessageRecord {
