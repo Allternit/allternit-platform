@@ -40,7 +40,7 @@ Each wave-1 step adds a module and keeps this crate a library:
 
 | Module | Route | Notes |
 |---|---|---|
-| `services` | `GET /v1/host/services` | systemd, supervisord, docker, launchd, Windows SCM |
+| `services` | `GET /v1/host/services` | systemd, supervisord, docker, launchd, Windows SCM (built, see below) |
 | `ports` | `GET /v1/host/ports` | listening sockets, owning process, exposure |
 | `updates` | `GET /v1/host/updates` | apt, dnf, softwareupdate, Windows Update |
 | `logs` | `GET /v1/host/logs/stream` | log lines masked before they leave the machine |
@@ -48,3 +48,33 @@ Each wave-1 step adds a module and keeps this crate a library:
 | `findings` | `GET /v1/host/findings` | rules over the above (disk, failed service, security updates, exposed port) |
 
 allternit-api mounts the routes; this crate holds no HTTP code.
+
+## Services (`services` module)
+
+```rust
+let list = host_probe::services()?;                       // Vec<HostService>
+let report = host_probe::services_report(&ServiceOptions::default())?; // + provider status
+```
+
+Providers, each behind `cfg` plus runtime detection:
+
+| Provider | OS | Command (fixed args, 3 s timeout, no shell) |
+|---|---|---|
+| `systemd` | Linux, when `/run/systemd/system` exists | `systemctl list-units --type=service --all --output=json` (text `--no-legend --plain` on systemd older than 246), then `systemctl show -p Id,MainPID,ActiveEnterTimestamp,UnitFileState` |
+| `supervisord` | Linux, macOS (Orgo cloud computers) | `supervisorctl status` |
+| `docker` | any | `docker ps -a --format '{{json .}}'` |
+| `launchd` | macOS | `launchctl list`; `com.apple.*` and anonymous app jobs hidden unless `ServiceOptions::include_apple` |
+| `scm` | Windows | `Get-Service` through `powershell -NoProfile`, `sc queryex` as fallback |
+
+A provider that is missing, denied (for example Docker without socket access) or
+slow shows up in `ServicesReport.providers` as `available: false` with a reason.
+It is not an error. `services()` fails with `ProbeError::Unsupported` only when
+no provider can run on the OS.
+
+JSON follows the contract (`name`, `unit`, `state`, `enabled`, `description`,
+`pid`, `memoryBytes`) plus additive `provider`, `cpuPercent` and `since`.
+`state` is `running` | `stopped` | `failed` | `unknown`; a restart loop,
+a non-zero exit (Docker, Windows) and a launchd job with a non-zero exit
+status count as `failed`. `memoryBytes` and `cpuPercent` come from sysinfo for
+the service's PID. Ports are filled by the `ports` step, so services carry none.
+Parsers are pure and tested against `fixtures/services/`.

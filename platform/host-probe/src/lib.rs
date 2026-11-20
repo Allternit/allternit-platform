@@ -15,8 +15,13 @@
 use serde::{Deserialize, Serialize};
 
 pub mod os;
+pub mod services;
 pub mod snapshot;
 
+pub use services::{
+    services, services_report, HostService, ProviderStatus, ServiceOptions, ServiceProvider, ServiceState,
+    ServicesReport,
+};
 pub use snapshot::{snapshot, Sampler, SNAPSHOT_INTERVAL};
 
 /// Errors from the probe.
