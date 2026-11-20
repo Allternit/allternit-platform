@@ -191,6 +191,8 @@ fun V2ArtifactScreen(
     var commentsOpen by remember { mutableStateOf(false) }
     var exportOpen by remember { mutableStateOf(false) }
     var pdfOpen by remember { mutableStateOf(false) }
+    var signBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var legacyOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
@@ -215,6 +217,16 @@ fun V2ArtifactScreen(
     if (editing && ready != null) {
         V2ArtifactEditorScreen(ready, onDone = { saved -> editing = false; if (saved != null) state = V2State.Ready(saved) })
         return
+    }
+
+    // iOS: the PDF's Sign sheet (PDFSignView) and the sectioned Office record's interactive screen (OfficeDocumentView).
+    ArtifactOfficeHooks.signPdf?.let { sign ->
+        val bytes = signBytes
+        if (bytes != null) { sign(ready?.title ?: "Document", bytes, { signBytes = null }); return }
+    }
+    ArtifactOfficeHooks.legacyDocument?.let { legacy ->
+        val legacyId = ready?.summary?.origin?.legacyId
+        if (legacyOpen && legacyId != null) { legacy(legacyId, { legacyOpen = false }); return }
     }
 
     Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().testTag("v2ArtifactView")) {
@@ -265,6 +277,20 @@ fun V2ArtifactScreen(
                 LibraryRowButton("View comments", DesignR.drawable.ph_identification_card, "v2ArtifactViewComments") { moreOpen = false; commentsOpen = true }
                 if (ready.canEdit && ArtifactKinds.editable(ready.kind)) {
                     LibraryRowButton("Edit", DesignR.drawable.ph_sliders_horizontal, "v2ArtifactEdit") { moreOpen = false; editing = true }
+                }
+                if (ready.kind == "pdf" && ArtifactOfficeHooks.signPdf != null) {
+                    LibraryRowButton("Sign PDF", DesignR.drawable.ph_identification_card, "v2ArtifactSignPdf") {
+                        moreOpen = false
+                        scope.launch {
+                            val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pdfBytes(ready) }
+                            if (bytes == null) actionError = "The PDF couldn't be read. Try again." else signBytes = bytes
+                        }
+                    }
+                }
+                if (ready.summary.origin?.legacySource == "sectioned" && ready.summary.origin?.legacyId != null &&
+                    ready.kind in setOf("doc", "sheet", "slides", "pdf") && ArtifactOfficeHooks.legacyDocument != null
+                ) {
+                    LibraryRowButton("Open in Office", DesignR.drawable.ph_arrow_right, "v2ArtifactLegacyEditor") { moreOpen = false; legacyOpen = true }
                 }
                 LibraryRowButton("Export", DesignR.drawable.ph_arrow_down, "v2ArtifactExport") { moreOpen = false; exportOpen = true }
                 LibraryRowButton("Archive", DesignR.drawable.ph_floppy_disk, "v2ArtifactArchive") {
@@ -449,7 +475,7 @@ private fun ExportSheet(a: ArtifactV2, onPdf: () -> Unit, onDismiss: () -> Unit)
 }
 
 /** Reads a file body: https (no bearer), `/api/...` paths (with the bearer), or a data: URL. */
-private fun fetchBytes(ref: String): ByteArray? = runCatching {
+internal fun fetchBytes(ref: String): ByteArray? = runCatching {
     when {
         ref.startsWith("data:") -> android.util.Base64.decode(ref.substringAfter(','), android.util.Base64.DEFAULT)
         ref.startsWith("https://") -> okhttp3.OkHttpClient().newCall(okhttp3.Request.Builder().url(ref).build()).execute().use { if (it.isSuccessful) it.body?.bytes() else null }
@@ -457,3 +483,12 @@ private fun fetchBytes(ref: String): ByteArray? = runCatching {
         else -> null
     }
 }.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= 512 * 1024 * 1024 }
+
+/** The PDF's bytes: a base64 body (`application/pdf`) or an https / `/api/` / data: reference. */
+internal fun pdfBytes(a: ArtifactV2): ByteArray? {
+    val b = a.body.trim()
+    return runCatching {
+        if (b.startsWith("data:") || b.startsWith("https://") || b.startsWith("/api/")) fetchBytes(b)
+        else android.util.Base64.decode(b, android.util.Base64.DEFAULT)
+    }.getOrNull()?.takeIf { it.isNotEmpty() }
+}

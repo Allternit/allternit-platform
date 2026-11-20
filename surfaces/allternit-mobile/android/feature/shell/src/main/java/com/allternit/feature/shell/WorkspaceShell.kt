@@ -299,6 +299,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         )
     }
 
+    remember { com.allternit.feature.office.OfficeFeature.install() }
     val botsHost = com.allternit.feature.bots.BotsHost(
         signedIn = account != null,
         backend = chatBackend,
@@ -327,6 +328,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         openArtifact = { a -> page = ShellPage.Artifact(com.allternit.feature.artifacts.ArtifactRecordInput(a.id, a.kind, a.title, a.url, a.content), back = page) },
         openProjectInLibrary = { id -> page = ShellPage.Project(id) },
         openInbox = { inboxOpen = true },
+        officeFloor = com.allternit.feature.office.OfficeFeature.floor,
     )
 
     /** iOS newOptions: press and hold the New pill. */

@@ -106,6 +106,8 @@ class BotsHost(
     val openProjectInLibrary: (projectId: String) -> Unit,
     /** The Inbox phone-hold Review (wave C), reused by the decisions deck. */
     val openInbox: () -> Unit,
+    /** The bots' Office floor (iOS OfficeFloorView), from :feature:office, which depends on this module: the store, the chat backend, open a bot's chat, back. Null hides the entry. */
+    val officeFloor: (@Composable (store: BotModeStore, backend: ChatBackend, openBot: (String) -> Unit, onBack: () -> Unit) -> Unit)? = null,
 )
 
 /** Every screen Bots mode can push (iOS BotRoute, cut to the wave E screens). */
@@ -134,6 +136,8 @@ sealed interface BotRoute {
     data object Activity : BotRoute
     data class ActivityDetail(val thread: AgentActivityThread) : BotRoute
     data object Decisions : BotRoute
+    /** The bots' Office floor (iOS BotRoute.office). */
+    data object Office : BotRoute
 }
 
 /** Bots mode's back stack (iOS BotNavigator). */
@@ -234,6 +238,7 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
         waiting = store.waitingCount, paused = pause.paused,
         onDismiss = { optionsOpen = false },
         onThreads = { optionsOpen = false; threadsOpen = true },
+        onOffice = if (host.officeFloor != null) ({ optionsOpen = false; nav.open(BotRoute.Office) }) else null,
         onHub = { optionsOpen = false; nav.open(BotRoute.Hub) },
         onDecisions = { optionsOpen = false; nav.open(BotRoute.Decisions) },
         onActivity = { optionsOpen = false; nav.open(BotRoute.Activity) },
@@ -259,7 +264,7 @@ private fun PausedBanner() {
 /** iOS BotsOptionsPopover as a sheet (no menus): layout, Threads, Agent hub, Decisions, Activity, Pause, Connections. */
 @Composable
 private fun BotsOptionsSheet(
-    waiting: Int, paused: Boolean, onDismiss: () -> Unit, onThreads: () -> Unit, onHub: () -> Unit, onDecisions: () -> Unit,
+    waiting: Int, paused: Boolean, onDismiss: () -> Unit, onThreads: () -> Unit, onOffice: (() -> Unit)?, onHub: () -> Unit, onDecisions: () -> Unit,
     onActivity: () -> Unit, onGroups: () -> Unit, onTogglePause: () -> Unit, onConnections: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -271,6 +276,7 @@ private fun BotsOptionsSheet(
         }
         RowGroup(Modifier.padding(vertical = 8.dp)) {
             NavRow("Threads", R.drawable.bots_list, if (waiting > 0) "$waiting waiting" else null, "botsOptionsThreads", last = false, onClick = onThreads)
+            if (onOffice != null) NavRow("Office", R.drawable.bots_house, null, "botsOptionsOffice", last = false, onClick = onOffice)
             NavRow("Agent hub", R.drawable.bots_grid, null, "botsOptionsHub", last = false, onClick = onHub)
             NavRow("Decisions", R.drawable.bots_question, null, "botsOptionsDecisions", last = false, onClick = onDecisions)
             NavRow("Agent activity", R.drawable.bots_chat, null, "botsOptionsActivity", last = false, onClick = onActivity)
@@ -678,6 +684,14 @@ private fun BotRouteDestination(route: BotRoute, host: BotsHost, store: BotModeS
         is BotRoute.BotHome -> withBot(route.botId) { BotHomeTabsScreen(it, route.tab, host, store, nav) }
         is BotRoute.Group -> GroupRoomScreen(route.groupId, host, store, nav)
         BotRoute.Groups -> GroupsListScreen(store, nav)
+        BotRoute.Office -> host.officeFloor?.let { floor ->
+            Column(Modifier.fillMaxSize().statusBarsPadding().testTag("officeFloorScreen")) {
+                LibraryHeader(title = "Office", onBack = nav::back, backTag = "botsBack")
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    floor(store, host.backend, { id -> nav.open(BotRoute.Chat(id, null)) }, nav::back)
+                }
+            }
+        }
         BotRoute.Hub -> AgentHubScreen(host, store, nav)
         BotRoute.Marketplace -> MarketplaceScreen(nav)
         is BotRoute.Listing -> MarketplaceListingScreen(route.id, store, nav)

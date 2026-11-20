@@ -66,6 +66,8 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     /** Debug "Continue without signing in" (iOS skipAuth): the home without a session. */
     private var skippedAuth by mutableStateOf(false)
+    /** A document opened with Allternit from another app (iOS onOpenURL, LocalDocumentView). */
+    private var openedDocument by mutableStateOf<android.net.Uri?>(null)
 
     /** Debug launch extras for the workspace (iOS `-open-tab`, `-sidebar`, …); default in release. */
     private var shellLaunch by mutableStateOf(ShellLaunch())
@@ -151,6 +153,9 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     }
+                    openedDocument?.let { uri ->
+                        com.allternit.feature.office.LocalDocumentScreen(uri, onClose = { openedDocument = null })
+                    }
                     // Over setup and then over the freshly mounted workspace (iOS runs it in its own window).
                     handoff?.let { spec ->
                         SetupHandoffOverlay(spec, dark = !signedIn, onDone = { handoff = null })
@@ -160,6 +165,13 @@ class MainActivity : ComponentActivity() {
         }
         if (BuildConfig.DEBUG) readDebugLaunch(intent)
         handleDebugTicket(intent)
+        readOpenedDocument(intent)
+    }
+
+    /** An ACTION_VIEW on a content or file Uri (a PDF, text, Word or Excel file) opens in the local document viewer. */
+    private fun readOpenedDocument(intent: Intent) {
+        val uri = intent.data
+        if (intent.action == Intent.ACTION_VIEW && uri != null && (uri.scheme == "content" || uri.scheme == "file")) openedDocument = uri
     }
 
     /**
@@ -181,6 +193,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleDebugTicket(intent)
+        readOpenedDocument(intent)
     }
 
     /**

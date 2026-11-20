@@ -51,3 +51,6 @@ include(":feature:computer")
 include(":feature:cowork")
 include(":feature:models")
 include(":feature:phones")
+// Wave F4b: Allternit Office (the floor, documents, the editor web view, PDF signing, local documents). :feature:shell
+// depends on it (nativeapp flavor only); it reuses :feature:bots (the roster), :feature:chat and :feature:artifacts.
+include(":feature:office")

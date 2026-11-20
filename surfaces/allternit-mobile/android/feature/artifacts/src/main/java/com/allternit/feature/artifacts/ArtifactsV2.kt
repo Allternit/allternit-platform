@@ -20,7 +20,14 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 data class ArtifactOwner(val id: String, val name: String?, val imageUrl: String?)
 
-data class ArtifactOrigin(val surface: String?, val sessionId: String?, val messageId: String?)
+data class ArtifactOrigin(
+    val surface: String?,
+    val sessionId: String?,
+    val messageId: String?,
+    /** `origin.legacy_source` ("sectioned" for Office records imported from the old store) and `legacy_id` (that record's id). */
+    val legacySource: String? = null,
+    val legacyId: String? = null,
+)
 
 /** One row of `GET api/v2/artifacts` (iOS ArtifactV2Summary). */
 data class ArtifactSummary(
@@ -213,7 +220,7 @@ object ArtifactsV2Client {
             currentVersion = o.num("current_version")?.toInt() ?: 1,
             visibility = o.str("visibility") ?: "private",
             myAccess = o.str("my_access") ?: "view",
-            origin = origin?.let { ArtifactOrigin(it.str("surface"), it.str("session_id"), it.str("message_id")) },
+            origin = origin?.let { ArtifactOrigin(it.str("surface"), it.str("session_id"), it.str("message_id"), it.str("legacy_source"), it.str("legacy_id")) },
             thumbnailUrl = o.str("thumbnail_url"),
         )
     }

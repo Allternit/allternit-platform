@@ -226,6 +226,7 @@ fun ArtifactsLibraryScreen(
     var searching by remember { mutableStateOf(false) }
     var filterOpen by remember { mutableStateOf(false) }
     var openId by remember { mutableStateOf(initialArtifactId) }
+    var officeOpen by remember { mutableStateOf(false) }
     var actionsFor by remember { mutableStateOf<ArtifactSummary?>(null) }
     var confirmDelete by remember { mutableStateOf<ArtifactSummary?>(null) }
     var studio by remember { mutableStateOf<StudioSession?>(null) }
@@ -243,6 +244,9 @@ fun ArtifactsLibraryScreen(
     }
 
     // Full-screen covers, like iOS fullScreenCover.
+    ArtifactOfficeHooks.documents?.let { office ->
+        if (officeOpen) { office({ officeOpen = false; reload() }); return }
+    }
     openId?.let { id ->
         V2ArtifactScreen(artifactId = id, onClose = { openId = null; reload() }, onOpenChat = onOpenChat, onSignIn = onSignIn)
         return
@@ -331,6 +335,16 @@ fun ArtifactsLibraryScreen(
                     ) {
                         Icon(painterResource(DesignR.drawable.ph_plugs_connected), null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
                         Text("Connect your tools", color = c.textPrimary, fontSize = 13.sp)
+                    }
+                    if (ArtifactOfficeHooks.documents != null) {
+                        Row(
+                            Modifier.clip(CircleShape).border(BorderStroke(1.dp, c.borderStrong), CircleShape).testTag("artifactsOfficeDocuments")
+                                .clickable(role = Role.Button, onClick = { officeOpen = true }).padding(horizontal = 14.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(painterResource(DesignR.drawable.deck_docs), null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
+                            Text("Allternit Office", color = c.textPrimary, fontSize = 13.sp)
+                        }
                     }
                 }
             }
