@@ -20,10 +20,10 @@ function pct(used: number, total: number): number {
   return total > 0 ? (used / total) * 100 : 0
 }
 
-/** Why a computer needs attention, from its status and last sample. Empty = fine. */
+/** Why a computer needs attention. Same rule as web, iOS and Android: status offline or error, or CPU, memory or disk at 90% or more from the last sample. Asleep is never flagged. Empty = fine. */
 export function attentionReasons(row: ConsoleRow): string[] {
   const out: string[] = []
-  if (/error|fail|unreach|degraded|offline/i.test(row.status ?? "")) out.push(`status ${row.status}`)
+  if (/^(offline|error)$/i.test((row.status ?? "").trim())) out.push(`status ${row.status}`)
   const s = row.lastSample
   if (s && !isAsleep(row)) {
     const worstDisk = s.disk.reduce<{ mount: string; p: number } | undefined>((w, d) => {
@@ -33,7 +33,7 @@ export function attentionReasons(row: ConsoleRow): string[] {
     if (worstDisk && worstDisk.p >= 90) out.push(`disk ${worstDisk.mount} ${Math.round(worstDisk.p)}% full`)
     const mem = pct(s.memory.usedBytes, s.memory.totalBytes)
     if (mem >= 90) out.push(`memory ${Math.round(mem)}% used`)
-    if (s.cpu.percent >= 95) out.push(`cpu ${Math.round(s.cpu.percent)}%`)
+    if (s.cpu.percent >= 90) out.push(`cpu ${Math.round(s.cpu.percent)}%`)
   }
   return out
 }

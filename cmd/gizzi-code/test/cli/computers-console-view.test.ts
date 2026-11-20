@@ -19,6 +19,10 @@ describe("console view", () => {
     expect(attentionReasons(row("b", { status: "error" }))).toEqual(["status error"])
     expect(attentionReasons(row("c", { status: "asleep", lastSample: sample(99, 9.9, 99) }))).toEqual([])
     expect(attentionReasons(row("d", { lastSample: sample(10, 2, 10) }))).toEqual([])
+    expect(attentionReasons(row("e", { status: "offline" }))).toEqual(["status offline"])
+    expect(attentionReasons(row("f", { lastSample: sample(90, 2, 10) }))).toEqual(["cpu 90%"])
+    expect(attentionReasons(row("g", { lastSample: sample(89, 9, 10) }))).toEqual(["memory 90% used"])
+    expect(attentionReasons(row("h", { status: "degraded", lastSample: sample(89, 8, 89) }))).toEqual([])
   })
 
   test("groups: attention first, then named groups, kind as fallback", () => {
