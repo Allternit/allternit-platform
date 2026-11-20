@@ -349,17 +349,24 @@ fn answered_line(ev: &Evaluated, what: &str) -> String {
 /// Suggestions: called once a bot opened a new suggestion (thread `proposed`). Answer runs
 /// the same go-ahead a person gives; Draft leaves it proposed with a note; Wait does nothing.
 pub async fn after_suggestion<R: RouteRuntime>(db: &DbHandle, rt: Arc<R>, owner: &str, thread_id: &str) {
-    let row: Option<(String, String, Option<String>, Option<String>, Option<String>)> = db.connect().ok().and_then(|c| {
+    let row: Option<(String, String, Option<String>, Option<String>, Option<String>, bool)> = db.connect().ok().and_then(|c| {
         c.query_row(
-            "SELECT bot_id, title, objective, parent_thread_id, current_session_id FROM bot_threads WHERE id = ?1 AND user_id = ?2 AND status = 'proposed'",
+            "SELECT bot_id, title, objective, parent_thread_id, current_session_id,
+                    json_extract(CASE WHEN json_valid(origin) THEN origin ELSE '{}' END, '$.schedule') IS NOT NULL
+             FROM bot_threads WHERE id = ?1 AND user_id = ?2 AND status = 'proposed'",
             params![thread_id, owner],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
         )
         .optional()
         .ok()
         .flatten()
     });
-    let Some((bot_id, title, objective, parent, session)) = row else { return };
+    let Some((bot_id, title, objective, parent, session, scheduled)) = row else { return };
+    // A scheduled suggestion creates a recurring routine on approve: that always waits for the
+    // person, whatever the rules say (same spirit as the hard floor).
+    if scheduled {
+        return;
+    }
     let need = NeedIn {
         kind: "suggestion",
         bot_id,
