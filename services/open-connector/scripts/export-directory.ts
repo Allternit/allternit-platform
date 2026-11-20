@@ -7,7 +7,7 @@ import { loadProviderSources } from "./provider-source.ts";
 
 const repoRoot = resolve(process.cwd(), "../..");
 const curatedPath = join(repoRoot, "cmd/allternit-api/assets/open-design/connectors.json");
-const outputPath = join(repoRoot, "cmd/allternit-cloud-api/assets/connections-catalog-apps.json");
+const outputPath = join(repoRoot, "cmd/allternit-cloud-api/src/services/connections_catalog_apps.json");
 
 interface Row {
   id: string;
@@ -62,10 +62,10 @@ if (process.argv.includes("--check")) {
     current = await readFile(outputPath, "utf8");
   } catch {}
   if (current !== next) {
-    console.error("connections-catalog-apps.json is stale: run `npm run export:directory` in services/open-connector.");
+    console.error("connections_catalog_apps.json is stale: run `npm run export:directory` in services/open-connector.");
     process.exit(1);
   }
-  console.log("connections-catalog-apps.json is up to date.");
+  console.log("connections_catalog_apps.json is up to date.");
 } else {
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, next);
