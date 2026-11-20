@@ -62,6 +62,7 @@ fn counts(stage: &str, d: &Value) -> Value {
         "consolidation" => pick(d, &["scanned", "candidates", "merged", "decayed", "shadow_decisions"]),
         "fit" => pick(d, &["events", "fitted", "kept_owner"]),
         "dream" => d.get("summary").cloned().unwrap_or_else(|| json!({})),
+        "rem" => pick(d, &["seeds", "links_proposed", "links_kept", "links_rejected", "lessons_kept", "lessons_rejected", "keep_rate"]),
         "curation" => pick(d, &["bots"]),
         _ => json!({}),
     }
@@ -559,7 +560,7 @@ mod tests {
             .map(|x| (x["stage"].as_str().unwrap().to_string(), x["outcome"].as_str().unwrap().to_string())).collect();
         let want: Vec<(String, String)> = [
             ("capture", "ran"), ("consolidation", "ran"), ("fit", "skipped"), ("dream", "ran"),
-            ("curation", "skipped"), ("pages", "not_run"), ("checks", "not_run"), ("sign", "not_run"),
+            ("rem", "not_run"), ("curation", "skipped"), ("pages", "not_run"), ("checks", "not_run"), ("sign", "not_run"),
         ].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
         assert_eq!(stages, want);
         assert_eq!(rep["stages"][0]["counts"]["captured"], json!(2));

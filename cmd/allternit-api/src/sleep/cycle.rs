@@ -54,6 +54,7 @@ pub enum Step {
     Consolidation,
     Fit,
     Dream,
+    Rem,
     Curation,
     Pages,
     Checks,
@@ -67,6 +68,7 @@ impl Step {
             Step::Consolidation => "consolidation",
             Step::Fit => "fit",
             Step::Dream => "dream",
+            Step::Rem => "rem",
             Step::Curation => "curation",
             Step::Pages => "pages",
             Step::Checks => "checks",
@@ -76,11 +78,12 @@ impl Step {
 }
 
 /// A nap's fixed stage order.
-pub const NAP: [Step; 8] = [
+pub const NAP: [Step; 9] = [
     Step::Capture,
     Step::Consolidation,
     Step::Fit,
     Step::Dream,
+    Step::Rem,
     Step::Curation,
     Step::Pages,
     Step::Checks,
@@ -322,6 +325,14 @@ async fn run_step(db: &DbHandle, jobs: &dyn Jobs, cfg: &Resolved, unit: &Unit, c
             // the usage ledger by `run_once` once the stage returns (see
             // [`ledger_spend_usd`]).
             Ok(StepRecord::done(step, jobs.dream(user, date).await?))
+        }
+        Step::Rem => {
+            let conn = db.connect().map_err(sql)?;
+            match super::rem::run_stage(&conn, user, cycle_id, now).map_err(sql)? {
+                super::rem::Outcome::Off => Ok(StepRecord::skipped(step, "stage_off: rem")),
+                super::rem::Outcome::AutoOff => Ok(StepRecord::skipped(step, "rem_auto_off")),
+                super::rem::Outcome::Ran(detail) => Ok(StepRecord::done(step, detail)),
+            }
         }
         Step::Curation => {
             let bots = {
@@ -592,9 +603,9 @@ mod tests {
         assert_eq!(r.state, "finished", "{r:?}");
         assert_eq!(steps(&r), vec![
             ("capture", "done"), ("consolidation", "done"), ("fit", "done"), ("dream", "done"),
-            ("curation", "done"), ("pages", "skipped"), ("checks", "skipped"), ("sign", "skipped"),
+            ("rem", "skipped"), ("curation", "done"), ("pages", "skipped"), ("checks", "skipped"), ("sign", "skipped"),
         ]);
-        assert_eq!(r.steps[5].note.as_deref(), Some("waits for G1/4.2"));
+        assert_eq!(r.steps[6].note.as_deref(), Some("waits for G1/4.2"));
         assert_eq!(*stub.calls.lock().unwrap(), vec!["consolidate", "dream", "curate"]);
         let conn = db.connect().unwrap();
         let (state, stage, spend): (String, String, f64) = conn
@@ -604,7 +615,7 @@ mod tests {
         // The real cost from the usage ledger (Dream wrote 0.04; curation wrote
         // nothing); the 0.05 estimates only gate the cap.
         assert!((spend - 0.04).abs() < 1e-9, "dream's ledger cost: {spend}");
-        assert!((r.steps[3].spend_usd - 0.04).abs() < 1e-9 && r.steps[4].spend_usd == 0.0);
+        assert!((r.steps[3].spend_usd - 0.04).abs() < 1e-9 && r.steps[5].spend_usd == 0.0);
         assert_eq!(unit_state(&db, &unit).0, "done");
         // Nothing else to run.
         assert!(run_once(&db, &stub, "w1", &clock()).await.unwrap().is_none());
@@ -659,7 +670,7 @@ mod tests {
         let r = run_once(&db, &stub, "w1", &clock()).await.unwrap().unwrap();
         assert_eq!(r.unit_id, held);
         assert_eq!(r.state, "finished");
-        assert_eq!(steps(&r).iter().map(|s| s.0).collect::<Vec<_>>(), vec!["fit", "dream", "curation", "pages", "checks", "sign"]);
+        assert_eq!(steps(&r).iter().map(|s| s.0).collect::<Vec<_>>(), vec!["fit", "dream", "rem", "curation", "pages", "checks", "sign"]);
         assert_eq!(*stub.calls.lock().unwrap(), vec!["consolidate", "dream", "curate"]);
     }
 
@@ -675,7 +686,7 @@ mod tests {
         let by: Vec<_> = r.steps.iter().map(|s| (s.step.as_str(), s.status, s.note.clone())).collect();
         assert_eq!(by[1], ("consolidation", "done", None));
         assert_eq!(by[3], ("dream", "skipped", Some("spend_cap".to_string())));
-        assert_eq!(by[4], ("curation", "skipped", Some("spend_cap".to_string())));
+        assert_eq!(by[5], ("curation", "skipped", Some("spend_cap".to_string())));
         assert_eq!(*stub.calls.lock().unwrap(), vec!["consolidate"]);
         assert_eq!(r.spend_usd, 0.0);
 
@@ -685,7 +696,7 @@ mod tests {
         let stub = Stub::default();
         *stub.dream_spend.lock().unwrap() = Some((db.clone(), "u2".into(), 50_000));
         let r = run_once(&db, &stub, "w1", &clock()).await.unwrap().unwrap();
-        assert_eq!((r.steps[3].status, r.steps[4].note.as_deref()), ("done", Some("spend_cap")));
+        assert_eq!((r.steps[3].status, r.steps[5].note.as_deref()), ("done", Some("spend_cap")));
         assert_eq!(*stub.calls.lock().unwrap(), vec!["consolidate", "dream"]);
     }
 
