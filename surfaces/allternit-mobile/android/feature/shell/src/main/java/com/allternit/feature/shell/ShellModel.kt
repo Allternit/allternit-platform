@@ -153,6 +153,8 @@ internal val AgentSession.originSurface: String get() = metaString("originSurfac
 internal val AgentSession.agentId: String? get() = metaString("agent_id")?.takeIf { it.isNotEmpty() }
 /** The cowork project the session belongs to (`metadata.project_id`, iOS AgentSession.projectId). */
 internal val AgentSession.projectId: String? get() = metaString("project_id")?.takeIf { it.isNotEmpty() }
+/** The agent or bot the session runs as (`metadata.agentName`, iOS AgentSession.agentName): the Code usage Models tab groups by it. */
+internal val AgentSession.agentName: String? get() = metaString("agentName")?.takeIf { it.isNotEmpty() }
 internal val AgentSession.archived: Boolean get() = metaBool("archived")
 internal val AgentSession.ephemeral: Boolean get() = metaBool("ephemeral")
 /** Code thread status flags the server owns (iOS AgentSession.needsInput / readyForReview), read best-effort from the metadata bag. */

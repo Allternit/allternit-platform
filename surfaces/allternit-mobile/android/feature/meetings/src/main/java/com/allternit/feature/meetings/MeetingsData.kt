@@ -259,6 +259,45 @@ object MeetingsStore {
 
     fun session(m: Meeting): MeetingSession? = sessions[m.id]
 
+    /** iOS MeetingNotifier.post: the four banners, posted whether or not the Meetings screen is open. */
+    fun installNotifier(context: Context) {
+        val app = context.applicationContext
+        notifier = { key, m ->
+            val (title, body) = when (key) {
+                "joining" -> "Gizzi is joining" to "${m.displayTitle} · ${m.platformName}"
+                "waiting_admit" -> "Let Gizzi in" to "Gizzi (Allternit) is waiting in the lobby of ${m.displayTitle}."
+                "not_admitted" -> "Gizzi wasn't let in" to "Nobody admitted Gizzi to ${m.displayTitle}."
+                else -> "Recap ready" to "${m.displayTitle}: summary, decisions and action items."
+            }
+            com.allternit.feature.push.PushNotifications.show(app, mapOf("title" to title, "body" to body, "tag" to "meeting-${m.id}-$key", "type" to "meeting.$key", "url" to "/meetings/${m.id}"))
+        }
+    }
+
+    /** A call that just ended and has no recap yet (iOS awaitingRecap): keep polling for the "Recap ready" banner. */
+    private fun awaitingRecap(): Boolean = past.take(12).any { m ->
+        m.status == GizziStatus.Ended && sessions[m.id]?.summary == null &&
+            (m.startDate?.let { java.time.Duration.between(it, Instant.now()).toHours() < 3 } ?: false)
+    }
+
+    /**
+     * iOS MeetingsStore.ensureWatching, run from the shell for the signed-in session: loads once, then polls every 20 s while
+     * a call is live or a recap is due, and every few minutes otherwise, so banners post with the Meetings screen closed.
+     */
+    suspend fun watch(context: Context, signedIn: Boolean) {
+        installNotifier(context)
+        if (!signedIn) return
+        refreshFlag(context, signedIn = true)
+        if (!isEnabled) return
+        load(true, quiet = true)
+        var idle = 0
+        while (true) {
+            delay(20_000)
+            if (!isEnabled) continue
+            if (live.isNotEmpty() || awaitingRecap()) { idle = 0; load(true, quiet = true) }
+            else if (++idle >= 9) { idle = 0; load(true, quiet = true) }
+        }
+    }
+
     suspend fun load(signedIn: Boolean, quiet: Boolean = false) {
         if (!signedIn) { phase = Phase.SignedOut; clear(); return }
         if (!quiet || phase != Phase.Loaded) phase = Phase.Loading

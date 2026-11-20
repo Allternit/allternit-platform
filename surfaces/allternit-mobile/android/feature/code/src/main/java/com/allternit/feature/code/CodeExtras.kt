@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
@@ -52,6 +54,8 @@ data class CodeUsageMetrics(
     val sessions: Int, val activeDays: Int, val peakHour: Int?, val currentStreak: Int, val longestStreak: Int, val last7: Int,
     /** Thread count per local day number (epoch days in the local zone). */
     val perDay: Map<Long, Int>,
+    /** iOS CodeUsageDashboard: messages, the web's token estimate, and the top six models by message weight. */
+    val messages: Int = 0, val estTokens: Int = 0, val models: List<Pair<String, Int>> = emptyList(),
 )
 
 internal fun localDay(millis: Long): Long {
@@ -64,7 +68,15 @@ internal fun codeUsageMetrics(rows: List<CodeSessionRow>, rangeDays: Int?, now: 
     val filtered = rows.filter { it.updatedMillis > 0 && (rangeDays == null || localDay(it.updatedMillis) > today - rangeDays) }
     val perDay = HashMap<Long, Int>()
     val hours = IntArray(24)
+    val modelWeight = HashMap<String, Int>()
+    var messages = 0
+    var tokens = 0
     for (r in filtered) {
+        val weight = maxOf(r.messages, 1)
+        r.model?.takeIf { it.isNotEmpty() }?.let { modelWeight[it] = (modelWeight[it] ?: 0) + weight }
+        messages += r.messages
+        // No message bodies on the list: the web's estimate, name length / 3.7 per weighted message.
+        tokens += Math.ceil(r.title.length / 3.7).toInt() * weight
         perDay[localDay(r.updatedMillis)] = (perDay[localDay(r.updatedMillis)] ?: 0) + 1
         hours[Calendar.getInstance().apply { timeInMillis = r.updatedMillis }.get(Calendar.HOUR_OF_DAY)]++
     }
@@ -78,7 +90,19 @@ internal fun codeUsageMetrics(rows: List<CodeSessionRow>, rangeDays: Int?, now: 
     var d = if (perDay.containsKey(today)) today else today - 1
     while (perDay.containsKey(d)) { cur++; d-- }
     val peak = if (filtered.isEmpty()) null else hours.indices.maxByOrNull { hours[it] }
-    return CodeUsageMetrics(filtered.size, perDay.size, peak, cur, longest, filtered.count { localDay(it.updatedMillis) > today - 7 }, perDay)
+    return CodeUsageMetrics(filtered.size, perDay.size, peak, cur, longest, filtered.count { localDay(it.updatedMillis) > today - 7 }, perDay, messages, tokens, modelWeight.entries.sortedByDescending { it.value }.take(6).map { it.key to it.value })
+}
+
+private fun modelDisplayName(model: String): String {
+    var n = model.substringAfterLast('/')
+    for (p in listOf("claude-", "kimi-")) if (n.startsWith(p)) n = n.removePrefix(p)
+    return n.ifEmpty { model }
+}
+
+private fun compactCount(n: Int): String = when {
+    n >= 1_000_000 -> String.format(java.util.Locale.US, "%.1fM", n / 1_000_000.0)
+    n >= 1_000 -> String.format(java.util.Locale.US, "%.1fK", n / 1_000.0)
+    else -> n.toString()
 }
 
 private fun hourLabel(h: Int?): String = when {
@@ -94,6 +118,7 @@ private fun hourLabel(h: Int?): String = when {
 internal fun CodeUsageScreen(host: CodeHost, onBack: () -> Unit) {
     val c = AllternitTheme.colors
     var range by remember { mutableStateOf<Int?>(null) }
+    var tab by remember { mutableStateOf("Overview") }
     androidx.compose.runtime.LaunchedEffect(Unit) { host.reloadSessions() }
     val rows = host.sessions()
     val m = codeUsageMetrics(rows, range)
@@ -109,12 +134,39 @@ internal fun CodeUsageScreen(host: CodeHost, onBack: () -> Unit) {
                     )
                 }
             }
+            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Overview", "Models").forEach { label ->
+                    Text(
+                        label, color = if (tab == label) c.textPrimary else c.textTertiary, fontSize = 13.sp,
+                        modifier = Modifier.testTag("codeUsageTab-$label").clip(RoundedCornerShape(10.dp))
+                            .background(if (tab == label) c.fillNeutral else androidx.compose.ui.graphics.Color.Transparent)
+                            .clickable { tab = label }.padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
+            }
             if (rows.isEmpty()) {
                 EmptyState("No usage yet", "Start a Code thread and your activity shows up here.")
+            } else if (tab == "Models") {
+                if (m.models.isEmpty()) {
+                    Text("No model usage in this period.", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(16.dp).testTag("codeUsageModelsEmpty"))
+                } else {
+                    val maxCount = maxOf(1, m.models.maxOf { it.second })
+                    m.models.forEach { (model, count) ->
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("codeUsageModel-$model"), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(modelDisplayName(model), color = c.textPrimary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.width(120.dp))
+                            Box(Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(c.fillNeutral)) {
+                                Box(Modifier.fillMaxWidth(maxOf(0.04f, count.toFloat() / maxCount)).height(6.dp).clip(RoundedCornerShape(3.dp)).background(c.textPrimary))
+                            }
+                            Text("${compactCount(count)} msgs", color = c.textTertiary, fontSize = 11.sp, maxLines = 1)
+                        }
+                    }
+                }
             } else {
                 val tiles = listOf(
                     "Sessions" to m.sessions.toString(), "Active days" to m.activeDays.toString(), "Last 7 days" to m.last7.toString(),
                     "Current streak" to "${m.currentStreak}d", "Longest streak" to "${m.longestStreak}d", "Peak hour" to hourLabel(m.peakHour),
+                    "Messages" to m.messages.toString(), "Est. tokens" to compactCount(m.estTokens),
+                    "Favorite model" to (m.models.firstOrNull()?.first?.let { modelDisplayName(it) } ?: "-"),
                 )
                 tiles.chunked(2).forEach { pair ->
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

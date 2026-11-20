@@ -23,7 +23,20 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitTheme
+import com.allternit.feature.artifacts.listUnder
+import com.allternit.feature.artifacts.str
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import com.allternit.feature.billing.AccountPlan
 import com.allternit.feature.billing.PlayPurchases
 import com.allternit.feature.billing.StoreBilledByView
@@ -210,6 +223,8 @@ internal fun UsagePage(host: SettingsHost, back: () -> Unit) {
         SLabel("Allternit Cloud")
         if (host.account == null) SNote("Sign in to see your plan usage.")
         else SCard { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { PlanUsageRows(showCredits = false) } }
+        SLabel("Connected accounts")
+        ConnectedAccounts(signedIn = host.account != null)
         if (host.account != null) {
             SLabel("Credits")
             SCard {
@@ -226,5 +241,71 @@ internal fun UsagePage(host: SettingsHost, back: () -> Unit) {
             if (PlayPurchases.showsStoreButtons(StoreKind.Pack)) { SLabel("Buy credits"); StorePackGrid() }
         }
         SNote("Bars turn amber as you near a limit and red once it is reached.", Modifier.padding(top = 14.dp))
+    }
+}
+
+private data class QuotaWindow(val label: String, val ratio: Double, val reset: String?)
+private data class AccountCard(val provider: String, val plan: String?, val windows: List<QuotaWindow>)
+
+private fun windowTitle(id: String, label: String): String {
+    val text = "$id $label".lowercase()
+    val base = if (id == "5h") "5-hour" else if (id.startsWith("7d")) "Weekly" else if (id.startsWith("month")) "Monthly" else label
+    for (family in listOf("opus", "sonnet", "haiku", "fable")) if (text.contains(family)) return "$base · ${family.replaceFirstChar { it.uppercase() }}"
+    return base
+}
+
+private fun parseQuota(provider: String, v: JsonElement): AccountCard? {
+    val quota = (v as? JsonObject)?.get("quota") as? JsonObject ?: return null
+    val plan = (quota["plan"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }
+    val windows = (quota["windows"] as? JsonArray).orEmpty().mapNotNull { w ->
+        val o = w as? JsonObject ?: return@mapNotNull null
+        val id = (o["id"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        val label = (o["label"] as? JsonPrimitive)?.contentOrNull ?: id
+        val ratio = ((o["usedRatio"] ?: o["used_ratio"]) as? JsonPrimitive)?.doubleOrNull ?: return@mapNotNull null
+        val reset = ((o["resetAt"] ?: o["reset_at"]) as? JsonPrimitive)?.contentOrNull?.let(::shortDate)?.let { "Resets $it" }
+        QuotaWindow(windowTitle(id, label), ratio.coerceIn(0.0, 1.0), reset)
+    }.sortedBy { if (it.label.startsWith("5-hour")) 0 else if (it.label.startsWith("Weekly")) 1 else 2 }
+    return if (plan == null && windows.isEmpty()) null else AccountCard(provider, plan, windows)
+}
+
+/**
+ * iOS AccountUsageCardsView: the Allternit Cloud card, then one card per connected account that reports a plan or limit
+ * windows (`GET providers/:id/quota`), closest to a limit first. A read that fails (no computer, gate refusal) leaves that
+ * provider out; with no card at all the section says so in one line.
+ */
+@Composable
+private fun ConnectedAccounts(signedIn: Boolean) {
+    val c = AllternitTheme.colors
+    var cards by remember { mutableStateOf<List<AccountCard>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(signedIn) {
+        loading = true
+        val ids = linkedSetOf<String>()
+        val models = Net.get("models")
+        if (models is ApiResult.Ok) models.value.listUnder("models", "items").forEach { m ->
+            val id = m.str("provider") ?: m.str("providerId") ?: return@forEach
+            if (id != "allternit" && id != "local" && id != "ollama") ids.add(id)
+        }
+        val found = ids.mapNotNull { id -> (Net.get("providers/$id/quota") as? ApiResult.Ok)?.value?.let { parseQuota(id, it) } }
+        cards = found.sortedByDescending { it.windows.maxOfOrNull { w -> w.ratio } ?: -1.0 }
+        loading = false
+    }
+    val cloudPlan = AccountPlan.usage?.let { u -> if (u.weeklyLimit > 0 && u.weeklyUsed.isFinite()) (u.weeklyUsed / u.weeklyLimit).coerceIn(0.0, 1.0) else null }
+    val all = (if (signedIn) listOf(AccountCard("Allternit Cloud", null, listOfNotNull(cloudPlan?.let { QuotaWindow("Monthly", it, AccountPlan.usage?.resetsAt?.let(::shortDate)?.let { r -> "Resets $r" }) }))) else emptyList()) + cards
+    Column(Modifier.testTag("usage_connectedAccounts"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (all.isEmpty()) {
+            if (loading) Text("Loading connected accounts…", color = c.textSecondary, fontSize = 13.sp)
+            else SNote("No connected account reports usage. Subscriptions and API keys you connect show their limits here.")
+        }
+        all.forEach { card ->
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.bgSecondary).padding(12.dp).testTag("usage_account_${card.provider}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(card.provider.replaceFirstChar { it.uppercase() }, color = c.textPrimary, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold)
+                    card.plan?.let { Text(it, color = c.textSecondary, fontSize = 10.5.sp, modifier = Modifier.clip(RoundedCornerShape(50)).background(c.fillNeutral).padding(horizontal = 7.dp, vertical = 1.dp)) }
+                }
+                if (card.windows.isEmpty()) Text("This account doesn't report limits.", color = c.textTertiary, fontSize = 12.sp)
+                card.windows.forEach { w -> UsageBar(w.label, "${(w.ratio * 100).toInt()}%", w.ratio, w.reset) }
+            }
+        }
     }
 }

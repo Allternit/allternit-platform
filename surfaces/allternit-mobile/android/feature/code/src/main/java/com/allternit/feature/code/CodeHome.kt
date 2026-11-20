@@ -57,7 +57,7 @@ enum class CodeSessionStatus(val label: String) {
 }
 
 /** A Code thread as the shell knows it. */
-data class CodeSessionRow(val id: String, val title: String, val updatedMillis: Long, val status: CodeSessionStatus)
+data class CodeSessionRow(val id: String, val title: String, val updatedMillis: Long, val status: CodeSessionStatus, val model: String? = null, val messages: Int = 0)
 
 /** What Code mode needs from the shell. */
 class CodeHost(
