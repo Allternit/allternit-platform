@@ -14,6 +14,8 @@ struct ACIComputersPane: View {
     /// A computer with the Files drive on opens its detail (design 4A).
     @State private var detailComputer: RelayRuntimeDevice? = nil
     @State private var toast: ACIToast.Message? = nil
+    /// Account flag `computers_console`: off = today's screen, unchanged.
+    @State private var consoleOn = false
 
     private var loading: Bool { relay.availability == .unknown }
 
@@ -28,6 +30,7 @@ struct ACIComputersPane: View {
                 ACIViewHeader(title: "Computers")
                 ACIWideButton(systemName: "plus", title: "Add a computer") { isPairOpen = true }
                 ACIWideButton(systemName: "display", title: "View a computer's screen") { isScreenPickerOpen = true }
+                if consoleOn { ACIConsoleSection() }
                 machines
                 ACILinkedPhonesSection()
                     .padding(.top, 24)
@@ -41,6 +44,7 @@ struct ACIComputersPane: View {
         }
         .refreshable { await relay.refresh() }
         .task { await relay.refresh() }
+        .task { consoleOn = ((try? await AccountFlagsClient.shared.string("computers_console")) ?? nil) != nil }
         .overlay(alignment: .bottom) { ACIToast(message: $toast) }
         .sheet(isPresented: $isPairOpen) { ACIPairComputerSheet() }
         .sheet(isPresented: $isScreenPickerOpen) { ACIComputerScreenSheet() }
@@ -756,6 +760,141 @@ struct ACIWorkflowsSection: View {
             specs = []
             let message = error.localizedDescription
             self.error = message.isEmpty ? "Could not load workflow specs." : message
+        }
+    }
+}
+
+
+// MARK: - Computers console (flag `computers_console`)
+
+/// Console list from `GET /api/v1/computers/console`: a status strip, a
+/// "Needs attention" group, then one card per computer with CPU / memory /
+/// disk meters. States: loading, empty, error (Try again), and "not
+/// available on your account yet" (route missing). Asleep cloud computers
+/// show their last sample and are never woken. Neutral grey meters; a
+/// meter turns amber at 85% or more.
+struct ACIConsoleSection: View {
+    private enum Phase { case loading, ready([ACIComputersClient.ConsoleComputer]), unavailable, failed(String) }
+    @State private var phase: Phase = .loading
+    @State private var attempt = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            content
+        }
+        .padding(.bottom, 8)
+        .task(id: attempt) { await load() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch phase {
+        case .loading:
+            Text("Loading computers…")
+                .font(.system(size: 14)).foregroundColor(Color("TextSecondary"))
+                .frame(maxWidth: .infinity).padding(.vertical, 32)
+        case .unavailable:
+            note("Computers console isn't available on your account yet.")
+        case .failed(let message):
+            VStack(spacing: 8) {
+                note(message)
+                ACIPillButton(title: "Try again") { attempt += 1 }
+            }
+        case .ready(let rows) where rows.isEmpty:
+            note("No computers yet. Add one above and it shows its health here.")
+        case .ready(let rows):
+            let online = rows.filter(\.isOnline).count
+            Text("\(rows.count) computers · \(online) online")
+                .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            let flagged = rows.filter { !$0.attention.isEmpty }
+            if !flagged.isEmpty {
+                Text("Needs attention")
+                    .font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                ForEach(flagged) { row in
+                    HStack(spacing: 8) {
+                        Circle().fill(Theme.statusWarning).frame(width: 8, height: 8)
+                        Text("\(row.name): \(row.attention.joined(separator: ", "))")
+                            .font(.system(size: 14)).foregroundColor(Color("TextPrimary"))
+                        Spacer(minLength: 0)
+                    }
+                    .padding(12)
+                    .background(Color("FillNeutral"))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            ForEach(rows) { card($0) }
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 14)).foregroundColor(Color("TextSecondary"))
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity).padding(.vertical, 24)
+    }
+
+    private func card(_ c: ACIComputersClient.ConsoleComputer) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Circle().fill(c.isOnline ? Theme.statusSuccess : Color("TextTertiary")).frame(width: 8, height: 8)
+                Text(c.name).font(.system(size: 16, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                Spacer(minLength: 0)
+                Text(c.isAsleep ? "Asleep" : (c.isOnline ? "Online" : "Offline"))
+                    .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            }
+            Text([c.provider, c.region, c.os].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            if let s = c.lastSample {
+                meter("CPU", s.cpu.percent)
+                meter("Memory", s.memoryPercent)
+                meter("Disk", s.diskPercent)
+                if c.isAsleep {
+                    Text("Last sample while awake. We never wake it to read it.")
+                        .font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+                }
+            } else {
+                Text("No health sample yet")
+                    .font(.system(size: 13)).foregroundColor(Color("TextTertiary"))
+            }
+            if let n = c.servicesCount {
+                Text("\(n) services").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("FillNeutral"))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color("BorderSubtle"), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func meter(_ label: String, _ percent: Double) -> some View {
+        let p = min(max(percent, 0), 100)
+        return HStack(spacing: 10) {
+            Text(label).font(.system(size: 13)).foregroundColor(Color("TextSecondary")).frame(width: 56, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color("TextPrimary").opacity(0.1))
+                    Capsule().fill(p >= 85 ? Theme.statusWarning : Color("TextPrimary").opacity(0.5))
+                        .frame(width: geo.size.width * p / 100)
+                }
+            }
+            .frame(height: 6)
+            Text("\(Int(p))%").font(.system(size: 13)).foregroundColor(Color("TextPrimary")).frame(width: 40, alignment: .trailing)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label) \(Int(p)) percent")
+    }
+
+    private func load() async {
+        phase = .loading
+        do {
+            phase = .ready(try await ACIComputersClient.shared.listConsole())
+        } catch ACIComputersClient.Failure.notAvailable {
+            phase = .unavailable
+        } catch {
+            phase = .failed((error as? LocalizedError)?.errorDescription ?? "Couldn't load computers. Try again.")
         }
     }
 }
