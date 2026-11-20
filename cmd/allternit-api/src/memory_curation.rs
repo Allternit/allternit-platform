@@ -376,35 +376,40 @@ fn mark_curated(db: &DbHandle, bot_id: &str) {
 }
 
 /// Weekly curation (P7.4): bots with at least 20 saved entries whose memory
-/// wasn't tidied in the last 7 days. Checked every 6 hours.
+/// wasn't tidied in the last 7 days. Checked every 6 hours. Bots of users
+/// whose Sleep `orchestrator` stage is on are left to the Sleep cycle (a nap
+/// is queued for them instead).
 pub fn spawn_weekly(state: Arc<AppState>) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
         loop {
             tick.tick().await;
-            let due: Vec<(String, String)> = state
-                .db
-                .connect()
-                .ok()
-                .and_then(|conn| {
-                    conn.prepare(
-                        "SELECT a.id, a.user_id FROM agents a
-                         WHERE COALESCE(json_extract(a.config, '$.memoryCuratedAt'), '') < ?1
-                           AND (SELECT COUNT(*) FROM cowork_memory_entries m
-                                WHERE m.user_id = a.user_id AND m.owner_principal IN
-                                  (COALESCE(a.principal_id, ''), 'a://local/bot/' || a.id)) >= 20",
-                    )
-                    .and_then(|mut st| {
-                        let week_ago = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
-                        st.query_map(params![week_ago], |r| Ok((r.get(0)?, r.get(1)?))).map(|rows| rows.filter_map(Result::ok).collect())
-                    })
-                    .ok()
-                })
-                .unwrap_or_default();
+            let due = state.db.connect().map(|conn| due_bots(&conn, None, chrono::Utc::now())).unwrap_or_default();
+            let due: Vec<(String, String)> = due
+                .into_iter()
+                .filter(|(_, user)| !crate::sleep::queue::clock_feeds_queue(&state.db, user, "curation"))
+                .collect();
             let provider = crate::internal_batch::enabled().then(|| crate::internal_batch::provider_from_config(&state.config));
             curate_due(&state.db, due, provider.as_deref()).await;
         }
     });
+}
+
+/// (bot, user) pairs due for weekly curation: at least 20 saved entries and
+/// not tidied since a week before `now`. `user` narrows it to one user (the
+/// Sleep cycle's curation stage).
+pub fn due_bots(conn: &rusqlite::Connection, user: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Vec<(String, String)> {
+    let week_ago = (now - chrono::Duration::days(7)).to_rfc3339();
+    conn.prepare(
+        "SELECT a.id, a.user_id FROM agents a
+         WHERE COALESCE(json_extract(a.config, '$.memoryCuratedAt'), '') < ?1
+           AND (?2 IS NULL OR a.user_id = ?2)
+           AND (SELECT COUNT(*) FROM cowork_memory_entries m
+                WHERE m.user_id = a.user_id AND m.owner_principal IN
+                  (COALESCE(a.principal_id, ''), 'a://local/bot/' || a.id)) >= 20",
+    )
+    .and_then(|mut st| st.query_map(params![week_ago, user], |r| Ok((r.get(0)?, r.get(1)?))).map(|rows| rows.filter_map(Result::ok).collect()))
+    .unwrap_or_default()
 }
 
 /// Curate every due (bot, user). With a batch provider (O11,

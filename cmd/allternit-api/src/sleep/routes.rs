@@ -7,7 +7,8 @@
 //! `{"accepted": false, "reason": ...}`: `sleep_disabled` when Sleep or the
 //! stage's flag is off, `stage_not_built` when the flags are on but that stage
 //! has not landed yet. User actions (`run`, `undo`, `resolve`, `pages/load`)
-//! refuse with 409; `signal` answers 200, because the runtime sends it on every
+//! refuse with 409 (`run` queues a manual nap or daydream with 202 once the
+//! `orchestrator` stage is on, step 5.1); `signal` answers 200, because the runtime sends it on every
 //! idle, compaction and session end whether Sleep is on or not.
 //! `PUT settings` and `PUT config` really write `sleep_config` rows (owner).
 
@@ -199,8 +200,7 @@ fn build_status(conn: &Connection, cfg: &Resolved, user: &str) -> rusqlite::Resu
         available: true,
         enabled: cfg.enabled(),
         stages: cfg.stage_flags(),
-        // Sleep debt is computed by the orchestrator (step 5.1).
-        debt: 0.0,
+        debt: super::cycle::debt(conn, cfg, user, chrono::Utc::now())?,
         last_cycle,
         spend_today_usd,
         daily_spend_cap_usd: cfg.daily_spend_cap_usd(),
@@ -290,8 +290,23 @@ async fn run(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Optio
             return err(StatusCode::BAD_REQUEST, "kind must be daydream, nap, deep or rem");
         }
     }
-    let (_conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
-    refused(&cfg, Stage::Orchestrator, StatusCode::CONFLICT)
+    let (conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
+    if !cfg.stage_on(Stage::Orchestrator) {
+        return refused(&cfg, Stage::Orchestrator, StatusCode::CONFLICT);
+    }
+    // The orchestrator runs naps and daydreams; deep and REM come later (5.4).
+    let kind = req.kind.as_deref().unwrap_or("nap");
+    if !matches!(kind, "nap" | "daydream") {
+        return (StatusCode::CONFLICT, Json(json!({
+            "accepted": false, "reason": "stage_not_built", "stage": kind,
+            "error": format!("A `{kind}` run is not available in this version yet."),
+        })));
+    }
+    match super::queue::queue_manual(&conn, &user, kind) {
+        // None: a manual run of this kind is already queued or running.
+        Ok(id) => (StatusCode::ACCEPTED, Json(json!({ "accepted": true, "kind": kind, "queued": id.into_iter().collect::<Vec<_>>() }))),
+        Err(e) => db_err(e),
+    }
 }
 
 async fn signal(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(req): Json<SignalRequest>) -> Reply {
@@ -694,5 +709,12 @@ mod tests {
         assert_eq!((s, v["queued"].as_array().unwrap().len()), (StatusCode::OK, 2), "{v}");
         assert_eq!(units("user-b"), vec![
             ("capture".to_string(), "queued".to_string()), ("nap".to_string(), "queued".to_string())]);
+
+        // With the orchestrator on, a manual run queues a nap (202); deep/REM are not built.
+        let (s, v) = call(&app, "POST", "/api/v1/memory/sleep/run", "user-b", Some(json!({}))).await;
+        assert_eq!((s, v["accepted"].clone(), v["kind"].clone()), (StatusCode::ACCEPTED, json!(true), json!("nap")), "{v}");
+        assert_eq!(units("user-b").len(), 3);
+        let (s, v) = call(&app, "POST", "/api/v1/memory/sleep/run", "user-b", Some(json!({ "kind": "rem" }))).await;
+        assert_eq!((s, v["reason"].clone()), (StatusCode::CONFLICT, json!("stage_not_built")));
     }
 }

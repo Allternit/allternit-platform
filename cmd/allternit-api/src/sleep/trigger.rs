@@ -7,7 +7,8 @@
 //! scratch values and unsaved high-attention items must be captured first).
 //!
 //! States used: `queued`, `cancelled` (this module); `leased` units are never
-//! touched except for the stop mark. Stop mark: `payload_json.stop_requested`
+//! touched except for the stop mark; `held` units (5.1) go back to `queued`
+//! on the session's next signal, so that signal continues the stopped cycle. Stop mark: `payload_json.stop_requested`
 //! is set to `true` on a leased daydream/nap unit by `resume`; the cycle that
 //! holds the lease checks it between steps and stops cleanly.
 //!
@@ -51,8 +52,36 @@ fn open_unit(conn: &Connection, user: &str, session: &str, kind: &str) -> rusqli
     }
 }
 
-/// Queue one unit unless one is already open. Returns the new id, if any.
-fn queue(conn: &Connection, user: &str, session: &str, kind: &str, extra: Value) -> rusqlite::Result<Option<String>> {
+/// Units the orchestrator held back (state `held`, step 5.1: the rest of a
+/// cycle stopped by `resume` or the per-cycle stop rule) go back to `queued`
+/// on the session's next signal. Returns (id, kind) of each released unit.
+fn release_held(conn: &Connection, user: &str, session: &str) -> rusqlite::Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, stage FROM sleep_units WHERE user_id = ?1 AND state = 'held'
+           AND json_extract(payload_json, '$.session_id') = ?2",
+    )?;
+    let held: Vec<(String, String)> = stmt
+        .query_map(params![user, session], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (id, _) in &held {
+        conn.execute(
+            "UPDATE sleep_units SET state = 'queued', updated_at = CURRENT_TIMESTAMP,
+               payload_json = json_set(COALESCE(payload_json, '{}'), '$.last_signal_at', ?2)
+             WHERE id = ?1 AND state = 'held'",
+            params![id, chrono::Utc::now().to_rfc3339()],
+        )?;
+    }
+    Ok(held)
+}
+
+/// Queue one unit unless one is already open. A held unit of the same kind
+/// is continued instead of adding a new one. Returns the id now queued, if
+/// any. The old clocks (consolidation, Dream, curation) and the manual
+/// `POST sleep/run` queue through this too (session `clock` / `manual`).
+pub fn queue(conn: &Connection, user: &str, session: &str, kind: &str, extra: Value) -> rusqlite::Result<Option<String>> {
+    if let Some((id, _)) = release_held(conn, user, session)?.into_iter().find(|(_, k)| k == kind) {
+        return Ok(Some(id));
+    }
     if open_unit(conn, user, session, kind)?.is_some() {
         return Ok(None);
     }
@@ -100,17 +129,17 @@ fn apply(conn: &Connection, cfg: &Resolved, user: &str, session: &str, event: Si
     match event {
         SignalEvent::Idle => {
             let kind = idle_kind(cfg.number("nap_after_ttl_multiple"));
-            out.queued.extend(queue(conn, user, session, kind, json!({}))?);
+            out.queued.extend(queue(conn, user, session, kind, json!({ "event": "idle" }))?);
         }
         SignalEvent::PreCompact => {
             out.queued.extend(queue(
                 conn, user, session, KIND_CAPTURE,
                 json!({ "capture": ["scratch_values", "unsaved_high_attention"] }),
             )?);
-            out.queued.extend(queue(conn, user, session, KIND_NAP, json!({}))?);
+            out.queued.extend(queue(conn, user, session, KIND_NAP, json!({ "event": "pre_compact" }))?);
         }
         SignalEvent::SessionEnd => {
-            out.queued.extend(queue(conn, user, session, KIND_NAP, json!({}))?);
+            out.queued.extend(queue(conn, user, session, KIND_NAP, json!({ "event": "session_end" }))?);
         }
         SignalEvent::Resume => out.cancelled = resume(conn, user, session)?,
     }

@@ -1619,6 +1619,9 @@ async fn main() {
     allternit_api::memory_consolidation::spawn(state.clone());
     // Memory Drive nightly Dream (one commit + report per drive per night).
     allternit_api::memory_dream::spawn(state.clone());
+    // Allternit Sleep (step 5.1): runs queued sleep units as cycles. For users
+    // with the `orchestrator` stage on, the three clocks above only queue naps.
+    allternit_api::sleep::cycle::spawn(state.clone());
     allternit_api::memory_capture::spawn(state.db.clone());
     // Memory Drive: read saved memories and new chats from the person's own
     // assistant logins on their Sessions computer (read-only, every 6 h).
