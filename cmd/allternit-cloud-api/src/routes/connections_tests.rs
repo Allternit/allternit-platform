@@ -74,7 +74,7 @@ async fn catalog_needs_a_session_refuses_api_tokens_and_caches() {
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!((body["version"].as_u64(), body["group"].as_str()), (Some(1), Some("brains")));
     let entries = body["entries"].as_array().unwrap();
-    assert_eq!(entries.len(), conn::KEY_ROWS.len());
+    assert_eq!(entries.len(), crate::services::connections_catalog::brain_key_count());
     assert!(entries.iter().all(|e| e["group"] == "brains" && e["ways"] == serde_json::json!(["paste"])));
     assert_eq!(body["next_cursor"], Value::Null);
 
