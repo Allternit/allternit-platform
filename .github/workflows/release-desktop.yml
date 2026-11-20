@@ -1199,6 +1199,10 @@ jobs:
         # either name; build/linux/after-install.sh rewrites it on install.
         shell: bash
         working-directory: surfaces/allternit-desktop
+        env:
+          # Through env, not ${{ }} in the script: the arm64 patterns hold
+          # "(a|b)", which bash parses as syntax when templated into `for … in`.
+          FEED_PATTERNS: ${{ matrix.files }}
         run: |
           set -euo pipefail
           res=release/${{ matrix.unpacked }}/resources
@@ -1207,7 +1211,7 @@ jobs:
           grep -q 'PACKAGE_TYPE=rpm' build/linux/after-install.sh || { echo "::error::after-install.sh no longer corrects package-type"; exit 1; }
           grep -q 'repo: desktop' "$res/app-update.yml" || { echo "::error::$res/app-update.yml does not point at Allternit/desktop"; cat "$res/app-update.yml"; exit 1; }
           set -f  # the patterns are regexes, not globs
-          for pat in ${{ matrix.files }}; do
+          for pat in $FEED_PATTERNS; do
             grep -Eq "url: $pat" "$feed" || { echo "::error::$feed does not list $pat"; cat "$feed"; exit 1; }
           done
           # One leg = one arch: the feed must not point at the other arch's files.
