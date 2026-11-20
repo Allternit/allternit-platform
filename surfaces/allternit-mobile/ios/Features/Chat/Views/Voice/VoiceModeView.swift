@@ -67,6 +67,17 @@ struct VoiceModeView: View {
         }
     }
 
+    /// The plain stage's phase: `Phase` is nested in the generic view, so each face type has its own.
+    private var markPhase: VoiceSpeakerView<VoiceMarkFace>.Phase {
+        if viewModel.isConnecting { return .connecting }
+        switch viewModel.state {
+        case .idle: return .idle
+        case .listening: return .listening
+        case .thinking: return .thinking
+        case .speaking: return .speaking
+        }
+    }
+
     private func botStage(_ bot: AgentRecord) -> some View {
         let look = looks.look(for: bot.id)
         let _ = looks.botRevision
@@ -121,12 +132,22 @@ struct VoiceModeView: View {
 
     // MARK: - Plain chat stage
 
+    /// The Allternit thinking mark as the speaker's face, in the default live
+    /// mode look and colour (Eoj 2026-11-20: the Settings pick shows in every
+    /// voice chat; with no bot, "Bot's colour" keeps the spectrum), then the
+    /// reply or the state in serif under it.
     private var plainStage: some View {
         ZStack {
             ambientBackground
 
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
+                VoiceSpeakerView(phase: markPhase, muted: viewModel.isMuted, style: looks.style, palette: looks.palette, botColor: nil, size: 148) {
+                    VoiceMarkFace(state: viewModel.state, size: 148)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { viewModel.interrupt() }
+                .padding(.bottom, 8)
                 centerContent
                 Spacer(minLength: 0)
 
@@ -353,5 +374,28 @@ struct VoiceModeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+    }
+}
+
+/// A plain chat's speaker face: the Allternit thinking mark (the web's brand
+/// orb) at `size`. ThinkingOrb has two tuned sizes, so it draws at `.avatar`
+/// and scales. Used by full voice mode and the quick bar.
+struct VoiceMarkFace: View {
+    let state: VoiceModeViewModel.TurnState
+    let size: CGFloat
+
+    var body: some View {
+        ThinkingOrb(state: orbState, size: .avatar, paused: state == .idle)
+            .scaleEffect(size / ThinkingOrbSize.avatar.rawValue)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+
+    private var orbState: ThinkingOrbState {
+        switch state {
+        case .idle, .listening: return .listening
+        case .thinking: return .breathing
+        case .speaking: return .composing
+        }
     }
 }
