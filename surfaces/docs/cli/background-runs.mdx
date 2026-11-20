@@ -1,0 +1,40 @@
+---
+title: 'Background runs'
+description: 'Code runs that no one is watching: the run-kind flag, the GitHub action, and the branch rule'
+---
+
+## What counts as a background run
+
+A background code run is a code task that has no person watching it live. Three kinds count:
+
+- the GitHub action;
+- a headless Gizzi run started with the run-kind flag;
+- code tasks the API dispatches with no one watching.
+
+## Start one from the terminal
+
+```bash
+gizzi run --run-kind background_code "fix the failing test"
+```
+
+The flag loads the background code block, which tells the assistant that nobody can answer questions mid-run. It plans for that: it makes the safe choice, notes assumptions, and reports what it did.
+
+## The GitHub action
+
+The action sends a `run_kind` turn hint of `background_code` with its request, so the same block loads. The turn hint is also accepted on API turns that start a code task.
+
+## The branch rule
+
+A background run may push small commits to its named branch only.
+
+- It never pushes to the default branch.
+- It never merges.
+- It never force pushes.
+
+A person reviews the branch and merges it.
+
+## Related
+
+- [Headless execution](/cli/headless-execution)
+- [Autonomy modes](/guides/autonomy-modes)
+- [System prompts](/core/system-prompts)

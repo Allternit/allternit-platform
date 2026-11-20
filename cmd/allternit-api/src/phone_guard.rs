@@ -58,7 +58,7 @@ pub const RETRY_WINDOW_SECS: i64 = 600;
 
 // ─── Caller context ────────────────────────────────────────────────────────
 
-/// Who a phone action runs for. `source`: chat|sms|imessage_ext|intent|voice|api|routine|skill.
+/// Who a phone action runs for. `source`: chat|sms|imessage_ext|intent|voice|api|routine|skill|explore.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TaskCtx {
     #[serde(default)]
@@ -73,7 +73,12 @@ pub struct TaskCtx {
     pub source: String,
 }
 
-pub const SOURCES: [&str; 8] = ["chat", "sms", "imessage_ext", "intent", "voice", "api", "routine", "skill"];
+pub const SOURCES: [&str; 9] = ["chat", "sms", "imessage_ext", "intent", "voice", "api", "routine", "skill", "explore"];
+
+/// App Map Explore (`phone_map`): nobody is there to approve, so anything
+/// that would hold is refused outright with this reason.
+pub const EXPLORE_SOURCE: &str = "explore";
+pub const EXPLORE_DENIES: &str = "explore_denies";
 
 impl TaskCtx {
     /// A context for the runtime's paired owner (callers that have no signed-in user).
@@ -428,6 +433,9 @@ pub enum Decision {
     Hold { approval_id: String, inbox_id: String, effect: String, expires_at: String },
     /// The owner denied this hold.
     Denied { approval_id: String },
+    /// Refused with no hold: source `explore` never waits for a person, so a
+    /// step that would hold is denied (`reason` = [`EXPLORE_DENIES`]).
+    Refused { effect: String, reason: String },
     /// [`check_with_pass`] only: the request's pass was redeemed.
     Passed,
     /// [`check_with_pass`] only: the request carried a pass that is wrong, used or expired.
@@ -442,6 +450,7 @@ impl Decision {
                 json!({ "decision": "hold", "approvalId": approval_id, "inboxId": inbox_id, "effect": effect, "expiresAt": expires_at })
             }
             Decision::Denied { approval_id } => json!({ "decision": "denied", "approvalId": approval_id }),
+            Decision::Refused { effect, reason } => json!({ "decision": "denied", "reason": reason, "effect": effect }),
             Decision::Passed => json!({ "decision": "allow", "pass": true }),
             Decision::BadPass => json!({ "decision": "bad_pass" }),
         }
@@ -597,6 +606,11 @@ pub fn check(db: &DbHandle, data_dir: Option<&FsPath>, req: &CheckIn) -> Result<
     let action = Action { tool: &req.tool, args: &req.args, el: req.el.as_ref(), app: req.app.as_deref().filter(|a| !a.is_empty()) };
     let model = model_flag(req.sensitive.unwrap_or(false), req.effect.as_deref());
     let Some(effect) = classify(&action, model) else { return Ok(Decision::Allow { hold_id: None }) };
+    // Explore never waits for a person and never uses a grant or an earlier
+    // approval: anything sensitive is refused before a hold could exist.
+    if req.ctx.source == EXPLORE_SOURCE {
+        return Ok(Decision::Refused { effect: effect.to_string(), reason: EXPLORE_DENIES.to_string() });
+    }
     let owner = req.ctx.owner.trim();
     if owner.is_empty() {
         return Err("this phone action needs the owner's approval, and the caller has no owner to ask".into());
@@ -917,6 +931,7 @@ where
                 set_hold_state(holds, &approval_id, "denied");
                 return Gate::Denied("the owner denied this step".into());
             }
+            Ok(Decision::Refused { effect, reason }) => return Gate::Denied(format!("{reason}: explore never takes a step that needs approval ({effect})")),
             Ok(Decision::Hold { approval_id, effect, .. }) => (approval_id, effect),
             Ok(Decision::Passed | Decision::BadPass) => return Gate::Failed("unexpected pass answer from the guard".into()),
         };
@@ -1268,6 +1283,31 @@ mod tests {
         let mut ok = pay_tap("task-1", "OK");
         ok.el = Some(el("Button", "OK", ""));
         assert_eq!(check(&st.db, None, &ok).unwrap(), Decision::Allow { hold_id: None });
+    }
+
+    #[tokio::test]
+    async fn explore_source_turns_a_hold_into_a_deny() {
+        let st = setup("explore").await;
+        assert_eq!(clean_source(Some("Explore")), "explore");
+        let mut req = pay_tap("explore-1", "Pay now");
+        req.ctx.source = "explore".into();
+        let d = check(&st.db, Some(st.data_dir.as_path()), &req).unwrap();
+        assert_eq!(d, Decision::Refused { effect: "pay".into(), reason: EXPLORE_DENIES.into() });
+        assert_eq!(d.to_json(), json!({ "decision": "denied", "reason": "explore_denies", "effect": "pay" }));
+        // No hold row: nobody is asked.
+        let holds: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM gateway_approvals", [], |r| r.get(0)).unwrap();
+        assert_eq!(holds, 0);
+        // The loop gate denies at once, without waiting and without a pass.
+        let (mut holds, mut held) = (Vec::new(), Duration::ZERO);
+        let out = gate(&st.db, None, &mut req, |_| async { Reread::Same }, &mut holds, &mut held).await;
+        assert!(matches!(&out, Gate::Denied(m) if m.starts_with("explore_denies")), "{out:?}");
+        assert!(holds.is_empty() && held.is_zero());
+        // A harmless tap still goes ahead under explore.
+        let mut ok = req.clone();
+        ok.el = Some(el("Button", "OK", ""));
+        assert_eq!(check(&st.db, None, &ok).unwrap(), Decision::Allow { hold_id: None });
+        // Other sources are unchanged: the same tap still holds for the owner.
+        assert!(matches!(check(&st.db, Some(st.data_dir.as_path()), &pay_tap("explore-2", "Pay now")).unwrap(), Decision::Hold { .. }));
     }
 
     #[tokio::test]

@@ -3,6 +3,7 @@ import * as BotTurn from "@/runtime/bots/bot-turn"
 import { RESULT_INSTRUCTION, subagentResult } from "./subagent-result"
 import DESCRIPTION from "@/runtime/tools/builtins/task.txt"
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import { Session } from "@/runtime/session"
 import { MessageV2 } from "@/runtime/session/message-v2"
 import { Identifier } from "@/shared/id/id"
@@ -30,6 +31,7 @@ import { TASK_EFFORT_VALUES, TASK_FORK_VALUES } from "@/runtime/primitives/wave-
 const log = Log.create({ service: "tool.task" })
 
 const parameters = z.object({
+  ...LabelField,
   description: z.string().describe("A short (3-5 words) description of the task"),
   prompt: z.string().describe("The task for the agent to perform"),
   subagent_type: z.string().describe("The type of specialized agent to use for this task"),

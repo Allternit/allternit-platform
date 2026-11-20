@@ -331,7 +331,7 @@ fn brain_runner_turn_messages_are_chat_only() {
         vec![wire("system", json!("B")), wire("user", json!([{"type": "text", "text": "Hi"}]))],
     )
     .unwrap();
-    assert_eq!(system, "A\n\nB");
+    assert_eq!(system, format!("A\n\nB\n\n{}", vendors::HARD_LIMITS));
     assert_eq!(history, vec![Msg { user: true, content: "Hi".into() }]);
     assert!(normalize(None, vec![wire("user", json!("Hi")), wire("tool", json!("ls output"))]).is_err());
     assert!(normalize(None, vec![wire("user", json!([{"type": "image_url", "image_url": {"url": "x"}}]))]).is_err());
@@ -385,6 +385,8 @@ for a in "$@"; do
   if [ "$prev" = --system-prompt ]; then sys="$a"; fi
   prev="$a"
 done
+# The system text has blank lines (the hard limits follow it): newlines as \n keep the JSON line valid.
+sys=$(printf '%s' "$sys" | awk '{ printf "%s%s", (NR > 1 ? "\\n" : ""), $0 }')
 [ "$tools_off" = yes ] || { echo 'tools were not turned off' >&2; exit 4; }
 [ "$BROWSER" = true ] && [ "$DISABLE_AUTOUPDATER" = 1 ] || { echo 'runner env missing' >&2; exit 5; }
 input=$(cat)
@@ -398,7 +400,7 @@ lines=$(printf '%s\n' "$input" | grep -c '"type"')
 echo '{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}'
 echo '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"O"}}}'
 echo '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"K"}}}'
-echo "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" ($lines lines, $model, $sys)\"}}}"
+printf '%s\n' "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" ($lines lines, $model, $sys)\"}}}"
 echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]}}'
 echo '{"type":"result","subtype":"success","is_error":false,"result":"OK","usage":{"input_tokens":12,"cache_read_input_tokens":3,"output_tokens":2}}'
 "#;
@@ -514,7 +516,7 @@ async fn brain_runner_fake_socket_drives_login_and_a_streamed_turn() {
         {"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}, {"role": "user", "content": "Reply with the single word OK."}]});
     send(&mut ws, turn).await;
     let (text, end) = collect_turn(&mut ws, "t1").await;
-    assert_eq!(text, "OK (3 lines, sonnet, Be brief)");
+    assert_eq!(text, format!("OK (3 lines, sonnet, Be brief\n\n{})", vendors::HARD_LIMITS));
     assert_eq!(end, json!({"type": "turn_done", "id": "t1", "input_tokens": 15, "output_tokens": 2}));
 
     // Signed out → login_expired.
@@ -534,7 +536,7 @@ async fn brain_runner_fake_socket_drives_login_and_a_streamed_turn() {
     send(&mut ws, json!({"type": "turn", "id": "t5", "vendor": "claude", "messages": [{"role": "user", "content": "Hi"}]})).await;
     let (text, end) = collect_turn(&mut ws, "t5").await;
     assert_eq!(end["type"], "turn_done", "the cancelled turn sent nothing and freed the slot: {end}");
-    assert_eq!(text, "OK (1 lines, sonnet, You are a helpful assistant. Answer in plain text.)");
+    assert_eq!(text, format!("OK (1 lines, sonnet, {})", vendors::DEFAULT_SYSTEM));
 
     // Vendors off the list and tool messages are refused.
     send(&mut ws, json!({"type": "turn", "id": "t6", "vendor": "grok", "messages": [{"role": "user", "content": "Hi"}]})).await;

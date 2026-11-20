@@ -87,6 +87,13 @@ struct AgentSession: Decodable, Sendable, Identifiable {
     /// `metadata.completed` — the session was marked finished (web
     /// code-session-state.ts; the Code sessions view's Done, C6). Missing = false.
     let completed: Bool
+    /// `metadata.ended` {at, reason}: the chat was ended (end_conversation). It
+    /// refuses new prompts; the composer shows "Start a new chat". nil = open.
+    let ended: EndedInfo?
+    /// `metadata.worktree.branch` / `.path` — the session runs in a git
+    /// worktree (agent_session_routes.rs). nil when not in one.
+    let worktreeBranch: String?
+    let worktreePath: String?
     // The rest of `metadata` (directory, version, permission, …) stays
     // skipped — not rendered anywhere on iOS.
 
@@ -120,12 +127,16 @@ struct AgentSession: Decodable, Sendable, Identifiable {
         case readyForReview
         case readyForReviewAt
         case completed
+        case ended
+        case worktree
     }
 
+    struct EndedInfo: Decodable, Sendable, Equatable { let at: String?; let reason: String? }
     private struct ArtifactSessionTag: Decodable { let kind: String? }
     private struct SourceRefTag: Decodable { let harness: String? }
     private struct MissionTag: Decodable { let label: String? }
     private struct GlanceTag: Decodable { let text: String? }
+    private struct WorktreeTag: Decodable { let path: String?; let branch: String? }
 
     private static func clean(_ text: String?) -> String? {
         let t = text?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -158,12 +169,16 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             isTerminal = ((try? metadata.decodeIfPresent(SourceRefTag.self, forKey: .sourceRef)) ?? nil)?.harness == "gizzi-tui"
             missionLabel = Self.clean(((try? metadata.decodeIfPresent(MissionTag.self, forKey: .mission)) ?? nil)?.label)
             glanceText = Self.clean(((try? metadata.decodeIfPresent(GlanceTag.self, forKey: .glance)) ?? nil)?.text)
+            let worktree = ((try? metadata.decodeIfPresent(WorktreeTag.self, forKey: .worktree)) ?? nil)
+            worktreeBranch = Self.clean(worktree?.branch)
+            worktreePath = Self.clean(worktree?.path)
             needsInput = ((try? metadata.decodeIfPresent(Bool.self, forKey: .needsInput)) ?? nil) ?? false
             needsInputKind = needsInput ? Self.clean((try? metadata.decodeIfPresent(String.self, forKey: .needsInputKind)) ?? nil) : nil
             needsInputAt = needsInput ? ((try? metadata.decodeIfPresent(String.self, forKey: .needsInputAt)) ?? nil) : nil
             readyForReview = ((try? metadata.decodeIfPresent(Bool.self, forKey: .readyForReview)) ?? nil) ?? false
             readyForReviewAt = readyForReview ? ((try? metadata.decodeIfPresent(String.self, forKey: .readyForReviewAt)) ?? nil) : nil
             completed = ((try? metadata.decodeIfPresent(Bool.self, forKey: .completed)) ?? nil) ?? false
+            ended = ((try? metadata.decodeIfPresent(EndedInfo.self, forKey: .ended)) ?? nil)
             // The backend emits a bool; the create path carries the flag as
             // the string "true" inside the metadata bag.
             if let flag = try metadata.decodeIfPresent(Bool.self, forKey: .ephemeral) {
@@ -187,6 +202,9 @@ struct AgentSession: Decodable, Sendable, Identifiable {
             readyForReview = false
             readyForReviewAt = nil
             completed = false
+            ended = nil
+            worktreeBranch = nil
+            worktreePath = nil
             ephemeral = false
         }
     }
@@ -428,10 +446,21 @@ struct AgentSessionMessage: Decodable, Sendable, Identifiable {
         }
     }
 
-    /// `metadata: { agent, model, parts, error }` — only `parts` is decoded;
-    /// `agent`/`model`/`error` are `unknown`-typed in TS and skipped.
+    /// `metadata: { agent, model, parts, error, memoryRefs }` — `parts` and
+    /// `memoryRefs` are decoded; `agent`/`model`/`error` are `unknown`-typed
+    /// in TS and skipped. A bad `memoryRefs` entry is dropped, never the parts.
     struct Metadata: Decodable, Sendable {
         let parts: [Part]?
+        /// Memories the reply used or changed (≤ 10, from memory tool results).
+        let memoryRefs: [MemoryRef]?
+
+        private enum CodingKeys: String, CodingKey { case parts, memoryRefs }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            parts = try c.decodeIfPresent([Part].self, forKey: .parts)
+            memoryRefs = (try? c.decodeIfPresent(LossyArray<MemoryRef>.self, forKey: .memoryRefs))??.elements
+        }
     }
 
     let id: String
@@ -440,4 +469,32 @@ struct AgentSessionMessage: Decodable, Sendable, Identifiable {
     let thinking: String?
     let timestamp: String
     let metadata: Metadata?
+}
+
+/// One memory a reply used or changed: `metadata.memoryRefs[]` on a stored
+/// message (`info.memory_refs` on the runtime message).
+struct MemoryRef: Decodable, Equatable, Hashable, Sendable {
+    enum Action: String, Sendable { case recalled, saved, updated, deleted }
+
+    let id: String
+    let title: String?
+    /// The raw action; `kind` reads it, unknown values count as recalled.
+    let action: String
+
+    var kind: Action { Action(rawValue: action) ?? .recalled }
+
+    private enum CodingKeys: String, CodingKey { case id, title, action }
+
+    init(id: String, title: String? = nil, action: String) {
+        self.id = id
+        self.title = title
+        self.action = action
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? nil
+        action = (try? c.decodeIfPresent(String.self, forKey: .action)) ?? "recalled"
+    }
 }

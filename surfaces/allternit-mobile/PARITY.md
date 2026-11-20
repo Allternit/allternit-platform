@@ -61,16 +61,16 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: artifacts | — | src/fabric-session/phone/phone-nav.ts (PhoneSection artifacts) | — | todo | — |
-| ArtifactDetailsView | ios/Features/Artifacts/Views/ArtifactDetailsView.swift | — | — | todo | — |
-| ArtifactLiveWebView | ios/Features/Artifacts/Views/ArtifactLiveWebView.swift | — | — | todo | — |
-| ArtifactPageWebView | ios/Features/Artifacts/Views/ArtifactPageWebView.swift | — | — | todo | — |
-| ArtifactsLibraryView | ios/Features/Artifacts/Views/ArtifactsLibraryView.swift | — | — | todo | — |
-| ArtifactStudioView | ios/Features/Artifacts/Views/ArtifactStudioView.swift | — | — | todo | — |
-| PDFTemplateSheet | ios/Features/Artifacts/Views/PDFTemplateSheet.swift | — | — | todo | — |
-| SandboxedArtifactWebView | ios/Features/Artifacts/Views/SandboxedArtifactWebView.swift | — | — | todo | — |
-| V2ArtifactEditorView | ios/Features/Artifacts/Views/V2ArtifactEditorView.swift | — | — | todo | — |
-| V2ArtifactView | ios/Features/Artifacts/Views/V2ArtifactView.swift | — | — | todo | — |
+| section: artifacts | — | src/fabric-session/phone/phone-nav.ts (PhoneSection artifacts) | feature/shell/WorkspaceShell.kt (Section artifacts-library) | built (#2629) | — |
+| ArtifactDetailsView | ios/Features/Artifacts/Views/ArtifactDetailsView.swift | — | feature/artifacts/ArtifactSheets.kt (ArtifactDetailsScreen) | built (#2629: Preview / Code, Share, Open in browser, Copy; art_ ids open the V2 viewer) | — |
+| ArtifactLiveWebView | ios/Features/Artifacts/Views/ArtifactLiveWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (ArtifactLiveWebView) | built (#2629: app pages only; Clerk, editor and download bridges answer only the web origin's main frame via androidx.webkit; Android WebView keeps one storage per app) | — |
+| ArtifactPageWebView | ios/Features/Artifacts/Views/ArtifactPageWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (ArtifactPageWebView) | built (#2629: tapped links open outside; later main-frame navigations refused) | — |
+| ArtifactsLibraryView | ios/Features/Artifacts/Views/ArtifactsLibraryView.swift | — | feature/artifacts/ArtifactsLibrary.kt | built (#2629: List / Grid / Deck, filters, studio tiles, card previews for every kind (paper, sheet, slide, code, dashboard, HTML / mermaid / poster snapshots, image, PDF page, video frame), New artifact sheet with Upload PDF / Image / Video, archive / delete; Allternit Office entry waits on wave F) | — |
+| ArtifactStudioView | ios/Features/Artifacts/Views/ArtifactStudioView.swift | — | feature/artifacts/ArtifactStudio.kt | built (#2629: Chat / Edit panes; the mode contract, artifact-session note and own-tools note go out as agent-chat systemPrompt on every turn) | — |
+| PDFTemplateSheet | ios/Features/Artifacts/Views/PDFTemplateSheet.swift | — | feature/artifacts/ArtifactSheets.kt (PDFTemplateSheet) + assets/pdf-templates.js | built (#2629: same layout JS in an offscreen WebView; Android print dialog saves the PDF) | — |
+| SandboxedArtifactWebView | ios/Features/Artifacts/Views/SandboxedArtifactWebView.swift | — | feature/artifacts/ArtifactWebViews.kt (SandboxedArtifactWebView) | built (#2629: deny-all CSP + base-uri / form-action, every navigation and sub-request refused, no DOM storage) | — |
+| V2ArtifactEditorView | ios/Features/Artifacts/Views/V2ArtifactEditorView.swift | — | feature/artifacts/V2ArtifactEditor.kt | built (#2629: markdown, doc blocks incl. table cells and image descriptions, tabbed docs with docAddTab / rename / delete, workbook sheets (formulas, Add row / column), simple and block decks) | — |
+| V2ArtifactView | ios/Features/Artifacts/Views/V2ArtifactView.swift | — | feature/artifacts/V2Artifact.kt | built (#2629: render by kind, comments, share link, export; Sign this PDF is wave F (Office, PDFSignView); PDF and video open in the web viewer) | — |
 
 ## Automation
 
@@ -130,24 +130,24 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: chats | — | src/fabric-session/phone/phone-nav.ts (PhoneSection chats) | — | todo | — |
-| ChatsScreen | — | src/fabric-session/phone/screens/ChatsScreen.tsx | — | todo | — |
-| ComposerView | ios/Features/Chat/Composer/ComposerView.swift | — | — | todo | — |
-| AgentSelectionSheet | ios/Features/Chat/Views/AgentSelectionSheet.swift | — | — | todo | — |
-| AnswerCardView | ios/Features/Chat/Views/AnswerCards/AnswerCardView.swift | — | — | todo | — |
-| ChatErrorCardView | ios/Features/Chat/Views/ChatErrorCardView.swift | — | — | todo | — |
-| ChatView | ios/Features/Chat/Views/ChatView.swift | — | — | todo | — |
-| ComposerPlusSheet | ios/Features/Chat/Views/ComposerPlusSheet.swift | — | — | todo | — |
-| ConnectSuggestCardView | ios/Features/Chat/Views/ConnectSuggestCardView.swift | — | — | todo | — |
+| section: chats | — | src/fabric-session/phone/phone-nav.ts (PhoneSection chats) | feature/shell/ShellScreens.kt (AllChatsScreen) | built (#2614) | — |
+| ChatsScreen | — | src/fabric-session/phone/screens/ChatsScreen.tsx | feature/shell/ShellScreens.kt (AllChatsScreen) → ChatPage.kt | built (#2614) | — |
+| ComposerView | ios/Features/Chat/Composer/ComposerView.swift | — | feature/shell/Composer.kt | built (#2614: send, stop, edit, no-brain pick) | — |
+| AgentSelectionSheet | ios/Features/Chat/Views/AgentSelectionSheet.swift | — | — | N/A: no caller on iOS (dead code) | — |
+| AnswerCardView | ios/Features/Chat/Views/AnswerCards/AnswerCardView.swift | — | feature/chat/ChatCards.kt (AnswerCard, WritingDraftCard) | built (#2614) | — |
+| ChatErrorCardView | ios/Features/Chat/Views/ChatErrorCardView.swift | — | feature/chat/ChatCards.kt (ChatErrorCard) | built (#2614) | — |
+| ChatView | ios/Features/Chat/Views/ChatView.swift | — | feature/chat/ChatScreen.kt + feature/shell/ChatPage.kt | built (#2614) | — |
+| ComposerPlusSheet | ios/Features/Chat/Views/ComposerPlusSheet.swift | — | feature/shell/PlusSheet.kt | built (#2614: photos, camera, files, GitHub upload on send) | — |
+| ConnectSuggestCardView | ios/Features/Chat/Views/ConnectSuggestCardView.swift | — | feature/chat/ChatCards.kt (ConnectSuggestCard) | built (#2614) | — |
 | DictationOnboardingSheet | ios/Features/Chat/Views/DictationOnboardingSheet.swift | — | — | todo | — |
-| FormSurfacesView | ios/Features/Chat/Views/FormSurfacesView.swift | — | — | todo | — |
-| ModelPickerSheet | ios/Features/Chat/Views/ModelPickerSheet.swift | — | — | todo | — |
-| PermissionPrimingSheet | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | — | todo | — |
-| RunCodeFilesView | ios/Features/Chat/Views/RunCodeFilesView.swift | — | — | todo | — |
-| SettingsChangeCardView | ios/Features/Chat/Views/SettingsChangeCardView.swift | — | — | todo | — |
-| SketchSheet | ios/Features/Chat/Views/SketchSheet.swift | — | — | todo | — |
-| ThinkingSliderView | ios/Features/Chat/Views/ThinkingSliderView.swift | — | — | todo | — |
-| ThreadShareSheet | ios/Features/Chat/Views/ThreadShareSheet.swift | — | — | todo | — |
+| FormSurfacesView | ios/Features/Chat/Views/FormSurfacesView.swift | — | — | N/A: no caller on iOS (dead code) | — |
+| ModelPickerSheet | ios/Features/Chat/Views/ModelPickerSheet.swift | — | feature/shell/ModelPicker.kt | built (#2614: the pick drives the send) | — |
+| PermissionPrimingSheet | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | — | todo (wave H): priming before the RECORD_AUDIO / POST_NOTIFICATIONS system dialog | — |
+| RunCodeFilesView | ios/Features/Chat/Views/RunCodeFilesView.swift | — | feature/chat/ChatCards.kt (RunCodeFilesView, UploadFileCard) | built (#2614) | — |
+| SettingsChangeCardView | ios/Features/Chat/Views/SettingsChangeCardView.swift | — | feature/chat/ChatCards.kt (SettingsChangeCard) | built (#2614: status + Open Settings; Apply/Undo on this phone with wave G) | — |
+| SketchSheet | ios/Features/Chat/Views/SketchSheet.swift | — | feature/shell/SketchSheet.kt (from PlusSheet.kt) | built (#2614) | — |
+| ThinkingSliderView | ios/Features/Chat/Views/ThinkingSliderView.swift | — | feature/shell/ThinkingSlider.kt | built (#2626) | — |
+| ThreadShareSheet | ios/Features/Chat/Views/ThreadShareSheet.swift | — | feature/chat/ThreadShare.kt (chat ⋯ menu, reply Share menu) | built (#2614) | — |
 | VoiceCaptionsView | ios/Features/Chat/Views/Voice/VoiceCaptionsView.swift | — | — | todo | — |
 | VoiceModeView | ios/Features/Chat/Views/Voice/VoiceModeView.swift | — | — | todo | — |
 | VoiceSettingsSheet | ios/Features/Chat/Views/Voice/VoiceSettingsSheet.swift | — | — | todo | — |
@@ -220,7 +220,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| HistorySidebarView | ios/Features/History/Views/HistorySidebarView.swift | — | — | todo | — |
+| HistorySidebarView | ios/Features/History/Views/HistorySidebarView.swift | — | feature/shell/ShellDrawer.kt | built (#2614: Recents open the chat) | — |
 
 ## Models
 
@@ -246,11 +246,11 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| MeetYourBotsView | ios/Features/Onboarding/MeetYourBotsView.swift | — | — | todo | — |
-| OnboardingView | ios/Features/Onboarding/OnboardingView.swift | — | — | todo | — |
-| ConnectedView | ios/Features/Onboarding/Setup/ConnectedView.swift | — | — | todo | — |
-| FirstRunSetupView | ios/Features/Onboarding/Setup/FirstRunSetupView.swift | — | — | todo | — |
-| SetupGraphView | ios/Features/Onboarding/Setup/SetupGraphView.swift | — | — | todo | — |
+| MeetYourBotsView | ios/Features/Onboarding/MeetYourBotsView.swift | — | feature/shell/firstrun/MeetYourBotsScreen.kt (+ MeetFinish.kt, MeetVisuals.kt) | built (#2621; vendor bots, New bot, Import and the routine time editor not yet) | — |
+| OnboardingView | ios/Features/Onboarding/OnboardingView.swift | — | feature/shell/firstrun/FirstRunGate.kt (+ FirstRunStore.kt) | built (#2621) | — |
+| ConnectedView | ios/Features/Onboarding/Setup/ConnectedView.swift | — | feature/shell/firstrun/ConnectedScreen.kt (+ SetupHandoff.kt) | built (#2621) | — |
+| FirstRunSetupView | ios/Features/Onboarding/Setup/FirstRunSetupView.swift | — | feature/shell/firstrun/FirstRunSetupScreen.kt (+ SetupModel.kt, SetupApi.kt, ConnectSheets.kt) | built (#2621) | — |
+| SetupGraphView | ios/Features/Onboarding/Setup/SetupGraphView.swift | — | feature/shell/firstrun/SetupArt.kt (SetupGraph) | built (#2621) | — |
 | LoginArrivalView | ios/Features/Onboarding/SignInStage/LoginArrivalView.swift | — | — | todo | — |
 | SignInStageView | ios/Features/Onboarding/SignInStage/SignInStageView.swift | — | — | todo | — |
 
@@ -268,17 +268,17 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: projects | — | src/fabric-session/phone/phone-nav.ts (PhoneSection projects) | — | todo | — |
-| ProjectsScreen | — | src/fabric-session/phone/screens/ProjectsScreen.tsx | — | todo | — |
-| CodeProjectDetailView | ios/Features/Projects/Views/CodeProjectDetailView.swift | — | — | todo | — |
-| DesignProjectCanvasView | ios/Features/Projects/Views/DesignProjectCanvasView.swift | — | — | todo | — |
-| FolderCoverView | ios/Features/Projects/Views/FolderCoverView.swift | — | — | todo | — |
-| FolderLookSheet | ios/Features/Projects/Views/FolderLookSheet.swift | — | — | todo | — |
-| NewProjectSheet | ios/Features/Projects/Views/NewProjectSheet.swift | — | — | todo | — |
-| PadEditSheet | ios/Features/Projects/Views/PadEditSheet.swift | — | — | todo | — |
-| ProjectDetailView | ios/Features/Projects/Views/ProjectDetailView.swift | — | — | todo | — |
-| ProjectPadView | ios/Features/Projects/Views/ProjectPadView.swift | — | — | todo | — |
-| ProjectsListView | ios/Features/Projects/Views/ProjectsListView.swift | — | — | todo | — |
+| section: projects | — | src/fabric-session/phone/phone-nav.ts (PhoneSection projects) | feature/shell/WorkspaceShell.kt (Section projects) | built (#2629) | — |
+| ProjectsScreen | — | src/fabric-session/phone/screens/ProjectsScreen.tsx | feature/projects/ProjectsList.kt (ProjectsListScreen) | built (#2629) | — |
+| CodeProjectDetailView | ios/Features/Projects/Views/CodeProjectDetailView.swift | — | feature/projects/ProjectDetail.kt (CodeProjectDetailScreen) | built (#2629: folder picked by browsing the computer (v1/path, v1/file/tree through the runtime relay) or typed, like iOS) | — |
+| DesignProjectCanvasView | ios/Features/Projects/Views/DesignProjectCanvasView.swift | — | feature/projects/ProjectDetail.kt (DesignProjectCanvasScreen) | built (#2629: Close does not flush a pending canvas save first; the canvas saves itself) | — |
+| FolderCoverView | ios/Features/Projects/Views/FolderCoverView.swift | — | feature/projects/FolderCover.kt (FolderCover) | built (#2629: symbols drawn as glyphs, not SF Symbols) | — |
+| FolderLookSheet | ios/Features/Projects/Views/FolderLookSheet.swift | — | feature/projects/FolderCover.kt (FolderLookSheet) | built (#2629: colour picker with Grid, Spectrum and hex, matching the iOS ColorPicker sheet) | — |
+| NewProjectSheet | ios/Features/Projects/Views/NewProjectSheet.swift | — | feature/projects/ProjectsList.kt (NewProjectSheet) | built (#2629: bot projects save to the account; NewBotSheet and the bot project page are wave E) | — |
+| PadEditSheet | ios/Features/Projects/Views/PadEditSheet.swift | — | feature/projects/ProjectPad.kt (PadEditSheet) | built (#2629: move up / down for reorder, Your colors with Main / Accent pickers; Your templates (saved account pad templates) not built yet) | — |
+| ProjectDetailView | ios/Features/Projects/Views/ProjectDetailView.swift | — | feature/projects/ProjectDetail.kt (ProjectDetailScreen) | built (#2629: Overview with coordinator conversation and composer, Delegate pane, Board pane, Details with status, Memory, Add files (Photos / Files), instructions, files and Folder) | — |
+| ProjectPadView | ios/Features/Projects/Views/ProjectPadView.swift | — | feature/projects/ProjectPad.kt (ProjectPadCard) | built (#2629: notes, links, checklist, quick actions, threads; Style tiles drawn like iOS ProjectDashboard Bento with the palette slots) | — |
+| ProjectsListView | ios/Features/Projects/Views/ProjectsListView.swift | — | feature/projects/ProjectsList.kt (ProjectsListScreen) | built (#2629: bot projects open the project detail until the wave E bot project page) | — |
 
 ## RunTree
 
@@ -341,8 +341,8 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
 | CloudCreditsSheet | ios/Features/Shared/CloudCreditsSheet.swift | — | — | todo | — |
-| ComputeGateView | ios/Features/Shared/ComputeGateView.swift | — | — | todo | — |
-| ConnectComputerView | ios/Features/Shared/ConnectComputerView.swift | — | — | todo | — |
+| ComputeGateView | ios/Features/Shared/ComputeGateView.swift | — | feature/chat/ComputeGate.kt (ComputeGateCard) | built (#2614) | — |
+| ConnectComputerView | ios/Features/Shared/ConnectComputerView.swift | — | feature/chat/ComputeGate.kt (ConnectComputerSheet) | built (#2614) | — |
 | ImpactMapView | ios/Features/Shared/ImpactMapView.swift | — | — | todo | — |
 
 ## Shell
@@ -353,14 +353,14 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | mode: bots | — | src/fabric-session/phone/phone-nav.ts (PhoneMode bots) | — | todo | — |
 | mode: code | — | src/fabric-session/phone/phone-nav.ts (PhoneMode code) | — | todo | — |
 | mode: home | — | src/fabric-session/phone/phone-nav.ts (PhoneMode home) | — | todo | — |
-| StageBackdropView | ios/Features/Shell/Backdrop/StageBackdropView.swift | — | — | todo | — |
-| InboxSheet | ios/Features/Shell/InboxSheet.swift | — | — | todo | — |
+| StageBackdropView | ios/Features/Shell/Backdrop/StageBackdropView.swift | — | feature/shell/backdrop/StageBackdrop.kt (drawn from waves D–F: iOS draws it only on bot, group, project and Code screens, and in the drawer while one of those publishes it) | built (#2626) | — |
+| InboxSheet | ios/Features/Shell/InboxSheet.swift | — | feature/shell/Inbox.kt | built (#2626) | — |
 | ModeDialView | ios/Features/Shell/ModeDialView.swift | — | — | todo | — |
-| NativeSessionPickerSheet | ios/Features/Shell/NativeSessionPickerSheet.swift | — | — | todo | — |
+| NativeSessionPickerSheet | ios/Features/Shell/NativeSessionPickerSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |
 | PhonesSheet | ios/Features/Shell/PhonesSheet.swift | — | — | todo | — |
-| QuickTaskSheet | ios/Features/Shell/QuickTaskSheet.swift | — | — | todo | — |
-| SessionOverviewView | ios/Features/Shell/SessionOverviewView.swift | src/fabric-session/phone/screens/PhoneOverviewOverlay.tsx | — | todo | — |
-| ShellSearchView | ios/Features/Shell/ShellSearchView.swift | src/fabric-session/phone/screens/PhoneSearchOverlay.tsx | — | todo | — |
+| QuickTaskSheet | ios/Features/Shell/QuickTaskSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |
+| SessionOverviewView | ios/Features/Shell/SessionOverviewView.swift | src/fabric-session/phone/screens/PhoneOverviewOverlay.tsx | feature/shell/SessionOverview.kt | built (#2626) | — |
+| ShellSearchView | ios/Features/Shell/ShellSearchView.swift | src/fabric-session/phone/screens/PhoneSearchOverlay.tsx | feature/shell/ShellSearch.kt | built (#2626) | — |
 
 ## Unmatched web
 

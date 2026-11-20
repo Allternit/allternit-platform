@@ -93,15 +93,17 @@ The `linux` block in `package.json` defines:
 
 ## Auto-updates
 
-Desktop auto-updates use `update-electron-app`, which reads from the public
-Electron update feed backed by GitHub Releases. The feed repository is
-configured in `src/main/unified-main.ts` as:
+Desktop auto-updates use electron-updater on every OS (`src/main/app-updater.ts`).
+It reads the GitHub releases of the repo set in
+`src/main/app-updater-logic.ts`:
 
 ```ts
-repo: 'Allternit/desktop'
+export const DESKTOP_RELEASE_OWNER = 'Allternit';
+export const DESKTOP_RELEASE_REPO = 'desktop';
 ```
 
-and in `package.json` `build.publish` as:
+which must match `package.json` `build.publish` (`scripts/release-preflight.mjs`
+checks it):
 
 ```json
 {
@@ -111,10 +113,18 @@ and in `package.json` `build.publish` as:
 }
 ```
 
-Release artifacts must include `latest-mac.yml` (macOS), `latest.yml`
-(Windows), and `latest-linux.yml` (Linux AppImage) for `electron-updater` to
-find them. electron-builder emits these metadata files when publishing is
-enabled.
+Release artifacts must include `latest-mac.yml` with both Mac zips (macOS),
+`latest.yml` with the NSIS installer (Windows) and `latest-linux.yml` (Linux
+.deb). electron-builder emits these files when publishing is configured, and
+`release-desktop.yml` refuses to release when one is missing or names a file
+that is not attached.
+
+Signing and updates: macOS updates do not go through Squirrel.Mac, which
+refuses ad-hoc signed builds. `src/main/mac-app-swap.ts` checks the new bundle
+(`codesign --verify --deep --strict`, bundle id, version, and the team when the
+running app has a Developer ID) and swaps it in. Windows updates skip the
+publisher check while `win.verifyUpdateCodeSignature` is `false` (no
+certificate yet); turn it on with the first signed Windows build.
 
 ## Staging resources before packaging
 

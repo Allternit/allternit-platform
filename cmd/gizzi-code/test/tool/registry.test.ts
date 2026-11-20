@@ -9,6 +9,9 @@ import { Flag } from "../../src/runtime/context/flag/flag"
 import { WORKER_BOT_TOOL_IDS } from "../../src/runtime/tools/builtins/worker-bot-tools"
 import { PROJECT_SEND_TOOL_IDS } from "../../src/runtime/tools/builtins/project-send"
 import { WAVE_B_TOOL_IDS } from "../../src/runtime/primitives/wave-b-types"
+import { GAP_CARD_TOOL_IDS, GAP_TOOL_IDS } from "../../src/runtime/primitives/gap-types"
+import { CliBridge } from "../../src/runtime/integrations/cli-bridge"
+import { CliBridgeResults } from "../../src/runtime/integrations/cli-bridge/results"
 
 describe("tool.registry", () => {
   test("loads tools from .gizzi/tool (singular)", async () => {
@@ -228,7 +231,7 @@ describe("tool.registry", () => {
   })
 
   test("Wave B tools reach every client; select_tools is gone (tool_search replaces it)", async () => {
-    const botOnly = new Set<string>([...THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
+    const botOnly = new Set<string>([...ToolRegistry.BOT_THREAD_TOOL_IDS, ...WORKER_BOT_TOOL_IDS, ...PROJECT_SEND_TOOL_IDS, "message_agent", "suggest_task", "grant_task_permission"])
     const prev = process.env.GIZZI_CLIENT
     await using tmp = await tmpdir()
     try {
@@ -297,6 +300,38 @@ describe("tool.registry", () => {
               expect(ids).toContain(id)
               expect(botOnly.has(id)).toBe(false)
             }
+          },
+        })
+      }
+    } finally {
+      if (prev === undefined) delete process.env.GIZZI_CLIENT
+      else process.env.GIZZI_CLIENT = prev
+    }
+  })
+
+  test("prompt-gap tools: every id has one gated stub, and none is offered while its module says available = false", async () => {
+    // G3 contract: a stub module exports `available`; the registry and the CLI
+    // bridge list the tool only once its lane sets it to true.
+    expect(ToolRegistry.GAP_TOOLS.map((g) => g.tool.id).sort()).toEqual([...GAP_TOOL_IDS].sort())
+    const hidden = ToolRegistry.GAP_TOOLS.filter((g) => !g.module.available).map((g) => g.tool.id)
+    const bridged = CliBridge.TOOLS.map((t) => t.id)
+    for (const id of hidden) expect(bridged).not.toContain(id)
+    // Every gap tool draws a card, and the bridge merges each one's metadata.
+    expect([...GAP_CARD_TOOL_IDS].sort()).toEqual([...GAP_TOOL_IDS].sort())
+    for (const id of GAP_CARD_TOOL_IDS) expect(CliBridgeResults.isCanonical(id)).toBe(true)
+    const prev = process.env.GIZZI_CLIENT
+    await using tmp = await tmpdir()
+    try {
+      for (const client of ["app", "cli", "desktop"]) {
+        process.env.GIZZI_CLIENT = client
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const ids = await ToolRegistry.ids()
+            for (const id of hidden) expect(ids).not.toContain(id)
+            // user_location needs an app client even once it is available.
+            const location = ToolRegistry.GAP_TOOLS.find((g) => g.tool.id === "user_location")!
+            if (client === "cli" || !location.module.available) expect(ids).not.toContain("user_location")
           },
         })
       }

@@ -23,6 +23,7 @@ import {
   keepWorktree,
   killTmuxSession,
 } from '../../utils/worktree.js'
+import { available as worktreeExitAvailable } from '@/runtime/tools/builtins/worktree-exit'
 import { EXIT_WORKTREE_TOOL_NAME } from './constants.js'
 import { getExitWorktreeToolPrompt } from './prompt.js'
 import { renderToolResultMessage, renderToolUseMessage } from './UI.js'
@@ -149,6 +150,10 @@ export const ExitWorktreeTool: Tool<InputSchema, Output> = buildTool({
   name: EXIT_WORKTREE_TOOL_NAME,
   searchHint: 'exit a worktree session and return to the original directory',
   maxResultSizeChars: 100_000,
+  isEnabled() {
+    // Superseded by WorktreeExitTool (aliases: ExitWorktree) once that is available.
+    return !worktreeExitAvailable
+  },
   async description() {
     return 'Exits a worktree session created by EnterWorktree and restores the original working directory'
   },

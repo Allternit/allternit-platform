@@ -15,6 +15,7 @@ OUT_BASE="../../../cmd/gizzi-code/vendor/mesh-node"
 TARGETS=(
   "darwin arm64 darwin-arm64"
   "linux amd64 linux-x64"
+  "linux arm64 linux-arm64"
 )
 
 for entry in "${TARGETS[@]}"; do

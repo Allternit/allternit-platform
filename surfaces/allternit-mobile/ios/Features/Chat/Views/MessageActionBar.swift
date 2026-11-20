@@ -36,7 +36,7 @@ final class SpeechSpeaker: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             return
         }
         synthesizer.stopSpeaking(at: .immediate)
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = FileCitation.plainText(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         speakingMessageId = messageId
         isSpeaking = true
@@ -47,7 +47,7 @@ final class SpeechSpeaker: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     /// Unlike `toggle`, chunks QUEUE on the synthesizer instead of replacing
     /// each other, so a multi-sentence reply is read end-to-end.
     func speakChunk(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = FileCitation.plainText(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         isSpeaking = true
         synthesizer.speak(makeUtterance(trimmed))
@@ -127,7 +127,7 @@ struct MessageActionBar: View {
     var body: some View {
         HStack(spacing: 4) {
             actionButton("doc.on.doc", label: "Copy") {
-                UIPasteboard.general.string = message.content
+                UIPasteboard.general.string = FileCitation.plainText(message.content)
             }
             if let onShareLink {
                 Menu {
@@ -166,7 +166,7 @@ struct MessageActionBar: View {
         }
         .padding(.leading, 8)
         .sheet(isPresented: $isSharePresented) {
-            ActivityView(text: message.content)
+            ActivityView(text: FileCitation.plainText(message.content))
         }
     }
 

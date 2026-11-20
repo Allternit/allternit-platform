@@ -77,6 +77,13 @@ gizzi phone list                  # your phones, their platform, screen state an
 gizzi phone task "open Settings and turn on Do Not Disturb"
 gizzi phone task "order my usual" --phone "Joe's Pixel"
 gizzi phone runs                  # recent runs and their status
+gizzi phone task "open Settings" --vision always  # a screenshot with every model call (default: auto)
+gizzi phone maps                  # App Maps: one line per app
+gizzi phone maps --app com.android.settings  # one app's screens and routes (add --json)
+gizzi phone explore com.android.settings --minutes 5 --max-screens 40
+gizzi phone explore com.android.settings --stop <run_id>
+gizzi phone stop <run_id>         # stop a task, a skill or an Explore run
+gizzi phone forget-map com.android.settings  # delete a map (--yes skips the question)
 ```
 
 `task` sends your goal to a linked phone and prints each step as the run moves. `--phone` takes a serial or a name; with one phone linked, or only one online, you can leave it out. Inside a session, `$GIZZI_THREAD_ID` and `$GIZZI_SESSION_ID` (or `--thread` and `--session`) tie the task to that conversation, so its card shows there.
@@ -95,6 +102,8 @@ When the run reaches a sensitive step (a payment, a delete, a text, a call, a pa
 - `d` denies.
 
 Approving is the same act as in the app, by you, signed in. Nothing in the terminal approves for you: with no terminal to ask (a pipe or a script), the hold is left for the app, and the run ends as timed out if nobody answers. API keys can't approve.
+
+`maps`, `explore`, `stop` and `forget-map` work with [App Maps](/guides/phone-app-maps). `explore` is Android only, starts a run and prints its `run_id`, and prints why it stopped early when it did. `--minutes` is 1 to 30 (default 10) and `--max-screens` 1 to 300 (default 60). Banking and payment apps are refused, a phone busy with a task is refused, and so is a second Explore on the same phone. The task's last line adds how many steps came from the map and how many tokens it used, when the runtime reports them.
 
 A refusal is printed as it comes: your bots are paused, or the conversation's latest message didn't come from you. With no phone linked, an offline phone or a signed-out terminal you get one plain line saying so. See [Phone approval holds](/api/phone-holds).
 

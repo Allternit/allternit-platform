@@ -41,6 +41,8 @@ export class AllternitClient {
       messages,
       max_tokens: this.config.maxTokens,
       temperature: 0.3,
+      // Turn hint read by the API (VALUED_TURN_HINTS): nobody watches this run.
+      metadata: { run_kind: "background_code" },
     };
 
     const response = await fetch(`${this.config.apiUrl}/v1/chat/completions`, {

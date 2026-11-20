@@ -24,6 +24,7 @@ export const BACKGROUND_BASH_SUMMARY_PREFIX = 'Background command ';
 const STALL_CHECK_INTERVAL_MS = 5_000;
 const STALL_THRESHOLD_MS = 45_000;
 const STALL_TAIL_BYTES = 1024;
+const QUIET_THRESHOLD_MS = 10 * 60_000;
 
 // Last-line patterns that suggest a command is blocked waiting for keyboard
 // input. Used to gate the stall notification — we stay silent on commands that
@@ -48,12 +49,45 @@ function startStallWatchdog(taskId: string, description: string, kind: BashTaskK
   const outputPath = getTaskOutputPath(taskId);
   let lastSize = 0;
   let lastGrowth = Date.now();
+  let lastRealGrowth = lastGrowth;
+  let lastQuietNotified = 0;
   let cancelled = false;
   const timer = setInterval(() => {
     void stat(outputPath).then(s => {
       if (s.size > lastSize) {
         lastSize = s.size;
         lastGrowth = Date.now();
+        lastRealGrowth = lastGrowth;
+        return;
+      }
+      // Quiet check-in: separate from the prompt check. lastGrowth is reset
+      // every 45s when the tail is not a prompt, so lastRealGrowth tracks true
+      // output growth. One notice per quiet period; the watcher keeps running.
+      if (Date.now() - lastRealGrowth >= QUIET_THRESHOLD_MS && lastQuietNotified < lastRealGrowth) {
+        lastQuietNotified = Date.now();
+        void tailFile(outputPath, STALL_TAIL_BYTES).then(({
+          content
+        }) => {
+          if (cancelled || looksLikePrompt(content)) return;
+          const toolUseIdLine = toolUseId ? `\n<${TOOL_USE_ID_TAG}>${toolUseId}</${TOOL_USE_ID_TAG}>` : '';
+          const summary = `${BACKGROUND_BASH_SUMMARY_PREFIX}"${description}" has been quiet for 10 minutes`;
+          // No <status> tag, same rule as the prompt notice above.
+          const message = `<${TASK_NOTIFICATION_TAG}>
+<${TASK_ID_TAG}>${taskId}</${TASK_ID_TAG}>${toolUseIdLine}
+<${OUTPUT_FILE_TAG}>${outputPath}</${OUTPUT_FILE_TAG}>
+<${SUMMARY_TAG}>${escapeXml(summary)}</${SUMMARY_TAG}>
+</${TASK_NOTIFICATION_TAG}>
+Last output:
+${content.trimEnd()}
+
+The command is still running but has printed nothing for 10 minutes. Check its output file, or stop the task if it is stuck.`;
+          enqueuePendingNotification({
+            value: message,
+            mode: 'task-notification',
+            priority: 'next',
+            agentId
+          });
+        }, () => {});
         return;
       }
       if (Date.now() - lastGrowth < STALL_THRESHOLD_MS) return;

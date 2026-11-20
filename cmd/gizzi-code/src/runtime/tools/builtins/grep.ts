@@ -16,6 +16,12 @@ export const GrepTool = Tool.define("grep", {
     pattern: z.string().describe("The regex pattern to search for in file contents"),
     path: z.string().optional().describe("The directory to search in. Defaults to the current working directory."),
     include: z.string().optional().describe('File pattern to include in the search (e.g. "*.js", "*.{ts,tsx}")'),
+    output_mode: z
+      .enum(["content", "files_with_matches", "count"])
+      .optional()
+      .describe(
+        'What to return. "content" (default) lists matching lines with line numbers. "files_with_matches" lists only file paths. "count" gives the number of matching lines per file.',
+      ),
   }),
   async execute(params, ctx) {
     if (!params.pattern) {
@@ -30,6 +36,7 @@ export const GrepTool = Tool.define("grep", {
         pattern: params.pattern,
         path: params.path,
         include: params.include,
+        output_mode: params.output_mode,
       },
     })
 
@@ -96,6 +103,26 @@ export const GrepTool = Tool.define("grep", {
     }
 
     matches.sort((a, b) => b.modTime - a.modTime)
+
+    const mode = params.output_mode ?? "content"
+    if (mode !== "content" && matches.length > 0) {
+      const counts = new Map<string, number>()
+      for (const match of matches) counts.set(match.path, (counts.get(match.path) ?? 0) + 1)
+      const files = [...counts.entries()]
+      const body =
+        mode === "count" ? files.map(([file, n]) => `${file}: ${n}`) : files.map(([file]) => file)
+      const header =
+        mode === "count"
+          ? `Found ${matches.length} matches in ${files.length} files`
+          : `Found ${files.length} files`
+      const outLines = [header, ...body]
+      if (hasErrors) outLines.push("", "(Some paths were inaccessible and skipped)")
+      return {
+        title: params.pattern,
+        metadata: { matches: matches.length, truncated: false },
+        output: outLines.join("\n"),
+      }
+    }
 
     const limit = 100
     const truncated = matches.length > limit

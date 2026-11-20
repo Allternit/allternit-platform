@@ -143,6 +143,8 @@ export namespace Server {
             if (err instanceof NotFoundError) status = 404
             else if (Provider.ModelNotFoundError.isInstance(err)) status = 400
             else if (err.name.startsWith("Worktree")) status = 400
+            // An ended chat refuses new prompts: a conflict with its state, not a server failure.
+            else if (err.name === "SessionEndedError") status = 409
             else status = 500
             return c.json(err.toObject(), { status })
           }

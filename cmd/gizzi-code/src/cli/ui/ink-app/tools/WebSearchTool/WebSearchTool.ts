@@ -15,6 +15,7 @@ import { createUserMessage } from '../../utils/messages.js'
 import { getMainLoopModel, getSmallFastModel } from '../../utils/model/model.js'
 import { jsonParse, jsonStringify } from '../../utils/slowOperations.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
+import { fenceUntrusted } from '../../../../../runtime/tools/guard/untrusted.js'
 import { getWebSearchPrompt, WEB_SEARCH_TOOL_NAME } from './prompt.js'
 import {
   getToolUseSummary,
@@ -519,7 +520,7 @@ async function fetchExaFallback(query: string, signal?: AbortSignal): Promise<Se
     return {
       tool_use_id: toolUseID,
       type: 'tool_result',
-      content: formattedOutput.trim(),
+      content: fenceUntrusted(formattedOutput.trim(), 'web'),
     }
   },
 } satisfies ToolDef<InputSchema, Output, WebSearchProgress>)

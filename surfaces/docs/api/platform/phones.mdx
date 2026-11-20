@@ -105,7 +105,7 @@ The owner approves in the app. API keys cannot approve. Then repeat the same cal
 POST /v1/phones/{serial}/task
 ```
 
-`{ "goal": "Open Settings and turn on Wi-Fi", "max_steps": 15, "bot_id": "…", "brain": "provider/model", "thread_id": "…", "session_id": "…", "source": "chat" }`. `thread_id`, `session_id` and `source` (`chat`, `imessage_ext`, `intent`, `voice`) are optional and tie the run to a conversation. If the Desktop refuses to start the task (for example `owner_only`, or your bots are paused), the call answers `403` with `error.reason` set to the refusal reason and `error.status` set to `refused`. `goal` is required (up to 2000 characters). `max_steps` is 1 to 40 (default 15). The model is `bot_id`'s brain, else `brain`, else the default.
+`{ "goal": "Open Settings and turn on Wi-Fi", "max_steps": 15, "bot_id": "…", "brain": "provider/model", "thread_id": "…", "session_id": "…", "source": "chat" }`. `thread_id`, `session_id` and `source` (`chat`, `imessage_ext`, `intent`, `voice`) are optional and tie the run to a conversation. If the Desktop refuses to start the task (for example `owner_only`, or your bots are paused), the call answers `403` with `error.reason` set to the refusal reason and `error.status` set to `refused`. `goal` is required (up to 2000 characters). Optional `vision` is `auto` (default) or `always`: `always` sends a screenshot with every model call. `max_steps` is 1 to 40 (default 15). The model is `bot_id`'s brain, else `brain`, else the default.
 
 The task runs on the Desktop: it reads the screen, takes one action, and repeats until the goal is met, it fails, it runs out of steps, or 5 minutes pass. The call answers `202` at once:
 
@@ -200,11 +200,12 @@ The same operations are MCP tools on the Allternit MCP server (`https://mcp.allt
 | `phone_type` | Type `text` |
 | `phone_open_app` | Open `app` |
 | `phone_tool` | Any phone tool by `name`, with `arguments` |
-| `phone_task` | Start a task (`goal`); returns the `run_id` |
+| `phone_task` | Start a task (`goal`, optional `vision`); returns the `run_id` |
 | `phone_run_status` | A run's status and latest steps (`serial`, `run_id`) |
 | `phone_skill_run` | Replay a saved `skill`; returns the `run_id` |
 | `phone_history` | A phone's recent steps and runs |
 | `phone_live_url` | A view-only live view, as above |
+| `phone_maps` | Read only. The owner's App Map summaries, or with `app` one app's screen names and edge count (`serial`, `app`) |
 
 Each tool takes `serial` (or `-` for the only connected phone). `phone.sms.send`, `phone.sms.read` and `phone.call.dial` through `phone_tool` behave exactly as on `/v1`: texts and calls wait for the owner to approve on their Desktop. Tool calls and runs are metered the same way.
 
@@ -216,6 +217,15 @@ Each tool takes `serial` (or `-` for the only connected phone). `phone.sms.send`
 | `linked_phone` | Each phone a live project drives in a calendar month | $5 a phone a month |
 
 Growth includes 3,000 phone minutes and 25 linked phones each month. See [Pricing](/api/platform/pricing) and [Usage](/api/platform/usage).
+
+## App Maps
+
+```http
+GET /v1/phones/maps?serial=&platform=
+GET /v1/phones/maps/{app}?serial=&platform=
+```
+
+Read only. Both relay to the owner's Desktop. The list returns `{ ok: true, maps: [{ app, platform, app_version, name, screens, edges, routable_edges, stale_edges, truncated, last_seen }] }`. The single map returns the whole map file, so a key with `phones` scope sees screen labels. `serial` picks the Desktop; `platform` is `android` or `ios`. Banking and payment apps have no map (`403 money_app`). Explore and Forget are not in this API or over MCP: the owner runs them from Desktop, the app or Gizzi Code. Task and run reports and `phone.run.completed` carry `tokens_in`, `tokens_out`, `map_steps`, `screenshots_sent` and `fallbacks`. User guide: [Phone App Maps](/guides/phone-app-maps). The Desktop's own routes are in [Phone runs and skills](/guides/phone-skills#for-developers).
 
 ## Phone skills
 

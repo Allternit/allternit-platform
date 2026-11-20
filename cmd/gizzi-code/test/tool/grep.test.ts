@@ -61,6 +61,25 @@ describe("tool.grep", () => {
     })
   })
 
+  test("count mode returns match counts per file", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "a.txt"), "foo\nbar\nfoo\nfoo")
+        await Bun.write(path.join(dir, "b.txt"), "foo\nbaz")
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const grep = await GrepTool.init()
+        const result = await grep.execute({ pattern: "foo", path: tmp.path, output_mode: "count" }, ctx)
+        expect(result.metadata.matches).toBe(4)
+        expect(result.output).toContain(`${path.join(tmp.path, "a.txt")}: 3`)
+        expect(result.output).toContain(`${path.join(tmp.path, "b.txt")}: 1`)
+      },
+    })
+  })
+
   test("handles CRLF line endings in output", async () => {
     // This test verifies the regex split handles both \n and \r\n
     await using tmp = await tmpdir({

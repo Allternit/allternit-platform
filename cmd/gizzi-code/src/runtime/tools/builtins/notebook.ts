@@ -8,6 +8,7 @@ import { FileTime } from "@/shared/file/time"
 import { Filesystem } from "@/shared/util/filesystem"
 import { Instance } from "@/runtime/context/project/instance"
 import { assertExternalDirectory } from "@/runtime/tools/builtins/external-directory"
+import DESCRIPTION from "@/runtime/tools/builtins/notebook-edit.txt"
 
 interface NotebookCell {
   cell_type: string
@@ -43,14 +44,6 @@ function cellSourceString(cell: NotebookCell): string {
   return cell.source
 }
 
-const DESCRIPTION = `Edits Jupyter notebook (.ipynb) files by inserting, replacing, or deleting cells.
-
-Operations:
-- "insert": Insert a new cell at the given cellIndex. Requires cellType and source.
-- "replace": Replace the source (and optionally cellType) of an existing cell. Requires source.
-- "delete": Delete the cell at the given cellIndex.
-
-The cellIndex is 0-based. For insert, the new cell is placed before the existing cell at that index (use cells.length to append).`
 
 export const NotebookEditTool = Tool.define("notebook_edit", {
   description: DESCRIPTION,

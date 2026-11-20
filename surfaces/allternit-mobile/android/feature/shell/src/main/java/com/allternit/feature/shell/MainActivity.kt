@@ -1,6 +1,7 @@
 package com.allternit.feature.shell
 
 import android.content.Intent
+import android.provider.Settings
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -16,9 +17,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -35,6 +38,13 @@ import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.ThemeMode
 import com.allternit.feature.onboarding.SignInScreen
+import androidx.compose.runtime.CompositionLocalProvider
+import com.allternit.feature.shell.firstrun.FirstRunGate
+import com.allternit.feature.shell.firstrun.FirstRunStore
+import com.allternit.feature.shell.firstrun.LocalSetupHandoff
+import com.allternit.feature.shell.firstrun.SetupHandoffHost
+import com.allternit.feature.shell.firstrun.SetupHandoffOverlay
+import com.allternit.feature.shell.firstrun.SetupHandoffSpec
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -42,16 +52,32 @@ import kotlinx.coroutines.launch
  * The native app's only activity (PLAN.md section 2: single MainActivity). Launcher of the
  * `nativeapp` flavor; the play and phonelink builds keep the TWA launcher.
  *
- * Signed out → [SignInScreen]. Signed in → [HomePlaceholder] until step 7c brings the drawer,
- * mode dial, search and overview.
+ * Signed out → [SignInScreen]. Signed in → the first-run setup ([FirstRunGate], iOS OnboardingView)
+ * until it is done on this phone, then [WorkspaceShell]: home, drawer and mode fan. Like iOS, the
+ * setup is a root swap after sign-in and never covers the sign-in screen; the debug "Continue
+ * without signing in" path skips it.
  *
  * Debug builds only: `adb shell am start -n com.allternit.app.ondevice/com.allternit.feature.shell.MainActivity
  * --es ticket <sign_in_token>` signs in with a Clerk sign-in token (Maestro, emulator checks).
- * Release builds compile the check out (BuildConfig.DEBUG is a constant).
+ * The iOS launch arguments work as extras too ([readDebugLaunch]): `skip-auth`, `open-tab <id>`,
+ * `sidebar`, `shell-mode <home|bots|code|aci>`, `open-inbox`, `open-quick-task`,
+ * `open-continue-cli`. Release builds compile the checks out (BuildConfig.DEBUG is a constant).
  */
 class MainActivity : ComponentActivity() {
     /** Debug "Continue without signing in" (iOS skipAuth): the home without a session. */
     private var skippedAuth by mutableStateOf(false)
+
+    /** Debug launch extras for the workspace (iOS `-open-tab`, `-sidebar`, …); default in release. */
+    private var shellLaunch by mutableStateOf(ShellLaunch())
+
+    /** A Settings section a setup checklist fix asked for, opened once the workspace is up. */
+    private var openSettingsOnStart by mutableStateOf(false)
+
+    /** The branded setup hand-off, drawn above everything so it outlives the swap to the workspace. */
+    private var handoff by mutableStateOf<SetupHandoffSpec?>(null)
+    private val handoffHost = SetupHandoffHost { sources, name, finish ->
+        if (handoff != null) false else { handoff = SetupHandoffSpec(sources, name, finish); true }
+    }
 
     private fun applySystemBars(darkContent: Boolean) {
         val style = if (darkContent) {
@@ -71,6 +97,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             val state by AllternitAuth.state.collectAsState()
             val signedIn = state is AuthState.SignedIn || skippedAuth
+            val firstRun = remember { FirstRunStore(applicationContext) }
+            LaunchedEffect(firstRun) { firstRun.load() }
             // Sign-in is always dark, like iOS LoginGateView; the workspace is light by default.
             // System bar icons follow the screen: light icons on the dark sign-in, dark icons on
             // the light workspace. Bars stay transparent (no grey 3-button nav scrim).
@@ -87,10 +115,15 @@ class MainActivity : ComponentActivity() {
                         .semantics { testTagsAsResourceId = true },
                     contentAlignment = Alignment.Center,
                 ) {
+                    CompositionLocalProvider(LocalSetupHandoff provides handoffHost) {
                     when (val s = state) {
-                        is AuthState.SignedIn -> HomePlaceholder(account = s.account, onOpenWeb = ::openWebVersion)
+                        is AuthState.SignedIn -> when {
+                            !firstRun.loaded -> Unit
+                            !firstRun.isComplete -> FirstRunGate(firstRun, s.account.firstName, onDone = ::openSetupFix)
+                            else -> WorkspaceShell(account = s.account, openSettingsOnStart = openSettingsOnStart, launch = shellLaunch)
+                        }
                         else -> if (skippedAuth) {
-                            HomePlaceholder(account = null, onOpenWeb = ::openWebVersion)
+                            WorkspaceShell(account = null, launch = shellLaunch)
                         } else {
                             when (s) {
                                 AuthState.Starting, AuthState.Finishing -> CircularProgressIndicator(
@@ -117,10 +150,31 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                    }
+                    // Over setup and then over the freshly mounted workspace (iOS runs it in its own window).
+                    handoff?.let { spec ->
+                        SetupHandoffOverlay(spec, dark = !signedIn, onDone = { handoff = null })
+                    }
                 }
             }
         }
+        if (BuildConfig.DEBUG) readDebugLaunch(intent)
         handleDebugTicket(intent)
+    }
+
+    /**
+     * iOS opens the fix's Settings page through DeepLinkRouter once the workspace is up. The
+     * notifications fix opens Android's own notification settings for the app; every other
+     * section opens the workspace's Settings page.
+     */
+    private fun openSetupFix(fix: String?) {
+        when (fix) {
+            null -> Unit
+            "notifications" -> runCatching {
+                startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+            }
+            else -> openSettingsOnStart = true
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -130,14 +184,50 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * "Use web version" (PLAN.md section 3 rollback switch, first cut): the retained TWA
-     * launcher in the same package opens m.allternit.com.
+     * iOS LaunchArguments for Maestro and screenshots, as intent extras. Maestro sends
+     * `launchApp: arguments:` as extras; keys may carry leading dashes and values may be
+     * strings or booleans, so both are read loosely (iOS launchArgumentEnabled / Value).
      */
-    private fun openWebVersion() {
-        // NEW_TASK is required: without it androidbrowserhelper's LauncherActivity restarts
-        // itself in a new task, the second copy sees the first still alive
-        // (sLauncherActivitiesAlive > 1) and finishes, so nothing opens (Moto, 2026-11-18).
-        startActivity(Intent().setClassName(packageName, TWA_LAUNCHER).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    private fun readDebugLaunch(intent: Intent) {
+        if (!BuildConfig.DEBUG) return
+        val extras = intent.extras ?: return
+        val values = extras.keySet().associate { key ->
+            @Suppress("DEPRECATION")
+            key.trimStart('-') to extras.get(key)?.toString()
+        }
+        fun enabled(key: String) = values.containsKey(key) && values[key]?.lowercase() != "false"
+        fun value(key: String) = values[key]?.takeIf { it.isNotBlank() && it != "true" }
+        if (enabled("skip-auth")) skippedAuth = true
+        val mode = value("shell-mode")?.let { ShellMode.fromRaw(it) } ?: when {
+            enabled("chat") -> ShellMode.Home
+            enabled("code") -> ShellMode.Code
+            enabled("browser") || enabled("open-aci") -> ShellMode.Aci
+            enabled("bots") || enabled("open-bots") -> ShellMode.Bots
+            else -> null
+        }
+        val tab = value("open-tab") ?: when {
+            enabled("open-settings") || enabled("calm-settings") -> "settings"
+            enabled("calm-search") -> "search"
+            enabled("open-projects") -> "projects"
+            enabled("open-artifacts") -> "artifacts-library"
+            enabled("open-automation") -> "automation-tasks"
+            enabled("open-customize") -> "customize"
+            enabled("open-models") -> "models"
+            else -> null
+        }
+        val sheet = when {
+            enabled("open-inbox") -> "inbox"
+            enabled("open-quick-task") -> "quick-task"
+            enabled("open-continue-cli") -> "continue-cli"
+            else -> null
+        }
+        shellLaunch = ShellLaunch(
+            tab = tab,
+            sidebar = enabled("sidebar") || enabled("calm-drawer-open"),
+            mode = mode,
+            sheet = sheet,
+            inboxItem = value("inbox-item"),
+        )
     }
 
     private fun handleDebugTicket(intent: Intent) {
@@ -158,6 +248,5 @@ class MainActivity : ComponentActivity() {
     private companion object {
         const val TAG = "AllternitMain"
         const val EXTRA_TICKET = "ticket"
-        const val TWA_LAUNCHER = "com.google.androidbrowserhelper.trusted.LauncherActivity"
     }
 }

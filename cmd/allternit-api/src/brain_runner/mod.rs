@@ -371,7 +371,7 @@ fn normalize(system: Option<String>, messages: Vec<protocol::WireMessage>) -> Re
         Some(last) if last.user && !last.content.trim().is_empty() => {}
         _ => return Err("The last message must be a user message".into()),
     }
-    let system = if system_parts.is_empty() { vendors::DEFAULT_SYSTEM.to_string() } else { system_parts.join("\n\n") };
+    let system = if system_parts.is_empty() { vendors::DEFAULT_SYSTEM.to_string() } else { format!("{}\n\n{}", system_parts.join("\n\n"), vendors::HARD_LIMITS) };
     Ok((system, history))
 }
 

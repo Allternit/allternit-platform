@@ -20,16 +20,21 @@ export interface ConnectionState {
   mode: 'bundled' | 'remote' | 'development';
   url: string;
   status?: string;
+  /** Round trip of the /health check, when it answered. */
+  latencyMs?: number;
   lastError?: string;
 }
 
 export interface BackendConfig {
   mode: 'bundled' | 'remote';
   remoteUrl?: string;
+  /** Relaunch the app after saving. */
+  restart?: boolean;
 }
 
 export interface ConnectionAPI {
-  test(): Promise<ConnectionState>;
+  /** Checks the active engine, or `target.remoteUrl` before it is saved. */
+  test(target?: { remoteUrl?: string }): Promise<ConnectionState>;
   getBackend(): Promise<{ mode: 'bundled' | 'remote' | 'development'; url: string }>;
   setBackend(config: BackendConfig): Promise<void>;
   onStateChange(callback: (state: unknown) => void): () => void;
@@ -633,6 +638,12 @@ export interface PhonesAPI {
   forget(id: string): Promise<void>;
   startScrcpy(serial: string): Promise<{ ok: boolean; error?: string }>;
   stopScrcpy(serial: string): Promise<void>;
+  /** App maps and Explore. Results are { ok:true, … } or { ok:false, error, message } with the contract's codes. */
+  mapsList(args?: { platform?: 'android' | 'ios' }): Promise<Record<string, unknown>>;
+  mapsGet(args: { app: string; platform?: 'android' | 'ios' }): Promise<Record<string, unknown>>;
+  mapsForget(args: { app: string; platform?: 'android' | 'ios' }): Promise<Record<string, unknown>>;
+  mapsExplore(args: { app: string; serial: string; minutes?: number; max_screens?: number }): Promise<Record<string, unknown>>;
+  mapsStop(args: { run_id: string }): Promise<Record<string, unknown>>;
   /** iPhones connected with the Allternit app (serial "app:…", route "iphone-app-store"). */
   appPhones(): Promise<Array<{ serial: string; platform: 'ios'; via: 'allternit-app'; route: 'iphone-app-store'; name: string; screen: boolean; note: string }>>;
   /** Approve or deny an Allternit app pairing request (phone_app.pair_request). */

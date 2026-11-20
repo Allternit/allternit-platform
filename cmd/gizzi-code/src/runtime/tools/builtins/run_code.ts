@@ -17,6 +17,7 @@
  * `add_run_code_fields`).
  */
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import path from "path"
 import { fileURLToPath } from "url"
 import fs from "fs/promises"
@@ -336,6 +337,7 @@ function capped(cap: number) {
 }
 
 const parameters = z.object({
+  ...LabelField,
   language: z.literal("python").describe("Only python is supported"),
   code: z.string().min(1).max(MAX_CODE_CHARS).describe("The Python script. Read inputs from in/, save files to out/."),
   files: z

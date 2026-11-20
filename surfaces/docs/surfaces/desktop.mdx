@@ -4,7 +4,7 @@ description: The packaged Electron app, the primary distribution surface for All
 ---
 
 <Note>
-**Status:** Implementation IMPLEMENTED × Exposure PUBLIC (macOS builds). Windows and Linux targets exist in the electron-builder config but macOS is the shipped target.
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC (macOS builds). Windows and Linux targets exist in the electron-builder config but macOS is the shipped target. For Linux (.deb) install, pairing and troubleshooting, see the [Desktop on Linux guide](/surfaces/desktop-linux).
 </Note>
 
 ## Overview
@@ -39,7 +39,7 @@ If another app already owns one of these chords, Allternit can't register it and
 
 ## Menu bar icon
 
-The A mark (the A from the app icon, drawn as square blocks on whole pixels in a 19 pt square) sits in the macOS menu bar, beside the other status icons. Click it to open the HUD, the same as `Cmd/Ctrl+Shift+H`. Right-click or Control-click it for the status menu: backend status and mode, Connection Settings, permissions, Show Window, the desktop pet, Allternit Office, Quick Chat, Toggle HUD and Quit. With **menu bar mode** on, a click shows or hides the main window instead. On Windows and Linux the tray shows the colour app icon instead, since a black mark would vanish on a dark taskbar. A click opens the HUD and right-click opens the same menu.
+The A mark (the A from the app icon, drawn as square blocks on whole pixels in a 19 pt square) sits in the macOS menu bar, beside the other status icons. Click it to open the HUD, the same as `Cmd/Ctrl+Shift+H`. Right-click or Control-click it for the status menu: backend status and mode, Connection Settings (opens **Settings › Computers** in the app; see [Pairing this computer](#pairing-this-computer)), permissions, Show Window, the desktop pet, Allternit Office, Quick Chat, Toggle HUD and Quit. With **menu bar mode** on, a click shows or hides the main window instead. On Windows and Linux the tray shows the colour app icon instead, since a black mark would vanish on a dark taskbar. A click opens the HUD and right-click opens the same menu.
 
 The icon is a template image (`surfaces/allternit-desktop/build/trayTemplate.png` and `@2x`), so macOS draws it white on a dark menu bar. Code: `createTray` in `src/main/unified-main.ts`.
 
@@ -89,7 +89,7 @@ Menus open in full. When you open the model picker, the context meter or a menu 
 
 Long drafts show in full. When a draft makes the message box taller than the HUD, the window grows upward with its bottom edge fixed, up to the 520 px limit; the message box takes at most 40% of that, and a longer draft scrolls inside it. As the draft gets shorter it shrinks back, never below the size it had before. If you resize the HUD by hand, that size becomes the new base. For developers: `useHudComposerFit` (`src/shell/hud/composer-fit.ts`) watches the composer (`[data-hud-composer]` on `ChatBottomBar`) and sets the window with `shell.hud.setBounds`. It pauses while a menu has grown the window or a resize handle is dragged.
 
-Drag the dotted handle to move the HUD, or drag its edges to resize it. On Linux with native Wayland the compositor places windows, so the HUD opens where the compositor puts it and you move it by dragging its top strip (the compositor does the move). Launch with `--ozone-platform=x11` to get app-placed positions back.
+Drag the dotted handle to move the HUD, or drag its edges to resize it. On Linux with native Wayland the compositor places windows, so the HUD opens where the compositor puts it and you move it by dragging its top strip (the compositor does the move). Launch with `--ozone-platform=x11` to get app-placed positions back. More Linux help is in the [Desktop on Linux guide](/surfaces/desktop-linux).
 
 The HUD floats above other windows on every desktop and over full-screen apps. On Windows and Linux it sits below system menus and notifications.
 
@@ -171,6 +171,29 @@ npm run build:electron:dmg   # same, DMG target
 
 `build:electron` runs `prepare:*` steps first (platform static, computer-use driver, ACU gateway, Lima, Lume, mux, mesh node, office engine, API binary, connector catalog and sidecar, and on macOS the Files File Provider) and `verify:packaged-resources`.
 
+### Linux .deb install
+
+`apt install ./Allternit-Desktop-<version>-amd64.deb` installs the app in `/opt/Allternit Desktop` and links `/usr/bin/allternit`. The package depends on `bubblewrap` and `lsof` (the app uses both), on `libgbm1` and `libasound2` (Electron's graphics buffer and audio libraries), and on `python3` (the phone remote's input helper; it also uses `xdotool` when present), so apt installs them with it. Without `python3` the phone remote still shows the screen but takes no input, and logs `[input] helper could not start` once in `phone-remote.log`; it no longer crashes and restarts in a loop. Without `libgbm1` the app does not start (`libgbm.so.1: cannot open shared object file`); minimal installs and containers often lack it.
+
+### Linux .rpm and AppImage
+
+`sudo dnf install ./Allternit-Desktop-<version>-x86_64.rpm` (Fedora, RHEL/Alma/Rocky; `sudo zypper install` on openSUSE) installs the same app in the same place with the same post-install script: `build/linux/after-install.sh` serves as both the deb postinst and the rpm `%post` (it tells them apart by its first argument), so the `chrome-sandbox` test, the `/usr/bin/allternit` link (through `alternatives`/`update-alternatives`, else `ln -sf`) and the desktop database update are the same. The AppArmor block is skipped where AppArmor is off (Fedora uses SELinux). The rpm uses rich dependencies so one package fits Fedora and openSUSE names, for example `(mesa-libgbm or libgbm1)`, `(nss or mozilla-nss)` and `(alsa-lib or libasound2)`, plus `python3` like the `.deb` (needs rpm 4.13+: Fedora, RHEL 8+, openSUSE Leap 15+). `build/linux/after-remove.sh` does nothing during an upgrade, because rpm runs the old package's `%postun` after the new `%post`.
+
+The AppImage (`Allternit-Desktop-<version>-x86_64.AppImage`) is for every other distro: `chmod +x` it and run it. It needs FUSE 2 to mount itself (`libfuse2`, `fuse2` or `fuse-libs`); without it, run it with `--appimage-extract-and-run`. An AppImage cannot carry a setuid `chrome-sandbox`, so where normal users cannot create user namespaces, its launcher starts the app with `--no-sandbox` instead of crashing. Desktop then checks why before it opens a window (`src/main/appimage-sandbox.ts`, decisions in `appimage-sandbox-logic.ts`):
+
+- **AppArmor is the cause** (Ubuntu 23.10 and later) and `pkexec` exists: one dialog offers to add an AppArmor rule for this AppImage (`/etc/apparmor.d/allternit-appimage`, the same `userns,` profile the `.deb` installs, attached to the AppImage's path). It asks for your password, then restarts Desktop with the sandbox on. Move the AppImage and it asks again.
+- **You decline, or the cause is something else** (Debian or a hardened kernel with `unprivileged_userns_clone=0`, `max_user_namespaces=0`, no `unshare`): Desktop runs without the sandbox, logs it as `[appimageSandbox]` in `main.log`, and shows one notification recommending the `.deb` or `.rpm`.
+
+`ALLTERNIT_APPIMAGE_SANDBOX_PROMPT=0` turns the dialog off (labs and CI).
+
+### Linux on arm64
+
+Every Linux package also ships for arm64: `Allternit-Desktop-<version>-arm64.deb`, `Allternit-Desktop-<version>-aarch64.rpm` and `Allternit-Desktop-<version>-arm64.AppImage`. They are for Raspberry Pi 4 and 5 with a 64-bit OS (Raspberry Pi OS 64-bit, Ubuntu for Raspberry Pi), ARM laptops, and Linux VMs on Apple Silicon Macs (UTM, Parallels, VMware Fusion, Lima). A 32-bit Raspberry Pi OS cannot run them; `uname -m` must print `aarch64`. The glibc floor is the same 2.27, and the Meeting bot needs 2.28 on arm64 too.
+
+For developers: `release-desktop.yml` builds Linux as an x64/arm64 matrix. The arm64 leg runs on GitHub's `ubuntu-24.04-arm` runner (free for this public repo), so every prepare script stages its own arch: python-build-standalone `aarch64-unknown-linux-gnu`, ACU `manylinux_2_17_aarch64` wheels, `@livekit/rtc-ffi-bindings-linux-arm64-gnu`, system-one and mesh-node. gizzi-code is `bun --target=linux-arm64`, ripgrep comes from `vendor/ripgrep/arm64-linux`, and `scripts/build-linux-sidecars.sh --arch arm64` builds allternit-api and files-mount (cargo-zigbuild `aarch64-unknown-linux-gnu.2.17`), cua-driver (`.2.27`) and voice (an arm64 ubuntu:18.04 container with the toolchain PPA's g++ and static libstdc++, using sherpa-onnx's `linux-aarch64-static-lib`). `check-elf-floor.mjs --arch arm64` fails any ELF that is not aarch64 (`e_machine` 183), so an x64 sidecar cannot slip into the arm64 package. The arm64 smoke legs run the same install, engine-health and startup-window checks on `ubuntu-24.04-arm` with the arm64 distro images.
+
+The install script (`build/linux/after-install.sh`) sets up Chromium's sandbox for the machine. It tests whether a normal, unprivileged user can create a user namespace, as the user `nobody` through `setpriv` (or `su` when `setpriv` is missing). If it can, `chrome-sandbox` stays mode `0755` and the app uses user namespaces. If it can't (Debian with `kernel.unprivileged_userns_clone=0`, hardened kernels, or a tool that is missing so the test can't run), the script makes `chrome-sandbox` `root:root` mode `4755` so the app uses the setuid sandbox. Without this, the app stops at launch with `FATAL credentials.cc:131`. On Ubuntu 24.04 and later the package also installs the AppArmor profile `/etc/apparmor.d/allternit`, which allows user namespaces for the app. The test runs once, at install time, so after you change the user-namespace setting, reinstall the package. The desktop entry sets `StartupWMClass=allternit-desktop`, which is the window class the app reports, so the dock groups the window under the right icon.
+
 ### macOS signing
 
 A Mac without a signing certificate (and CI without one) builds ad-hoc signed (`mac.identity: "-"` in `package.json`), not notarized. `scripts/build-local.cjs` signs with a **Developer ID Application** identity when the keychain has one, else with an **Apple Development** identity. Only `build-desktop.sh --release` or `ALLTERNIT_NOTARIZE=1` notarizes. Don't set the identity back to `null`. A `null` identity skips signing, so only the main binary keeps the linker's signature and the bundle has no sealed resources. macOS then reports a downloaded copy as **damaged** and offers only Move to Trash, which is what 1.1.8 and earlier did. An ad-hoc build gets the normal "Apple could not verify" prompt with **Open Anyway** instead (see [Installing on a Mac](/quickstart#installing-allternit-desktop-on-a-mac)).
@@ -183,9 +206,22 @@ Two rules keep the seal valid:
 
 **Keychain prompt after each update.** macOS ties a Keychain item's **Always Allow** to the app's exact code, and every ad-hoc build has new code. So after an app update, the first launch can ask for the Mac password to use the Keychain item `@allternit/desktop Safe Storage` (account `@allternit/desktop Key`). On Mac, Desktop now reads that key off the main thread with a small native addon (`native/keychain`), so the app keeps working while the prompt is open. The startup window says "macOS is asking for permission. Click Always Allow." The prompt can open behind other windows. **Allow** works for that launch. **Always Allow** stops the prompt on later launches of the same build. **Deny** shows **Try again** and **Quit** ("Allternit needs access to the macOS Keychain") when there is a saved sign-in or key to protect, and leaves them untouched. On a first launch with nothing saved yet, Desktop starts without OS encryption instead. Desktop no longer discards them when the Keychain is slow or denied. Windows and Linux are unchanged. A stable signing identity would end the prompt after each update.
 
-**No in-app app updates.** `update-electron-app` (update.electronjs.org) cannot update these builds. On macOS, Squirrel.Mac needs the new app's signature to match the old one, which ad-hoc signing never does. On Windows, the service serves Squirrel.Windows packages, and Desktop ships an NSIS installer. New app versions come from Homebrew (`brew upgrade --cask allternit`) or a fresh download. Runtime packages (below) still update the parts inside the app.
+**App updates and signing.** Squirrel.Mac (Electron's built-in Mac updater) only installs a new app whose signature meets the old one's requirement, and an ad-hoc signature's requirement is its exact code hash, so it refuses every new ad-hoc build. Desktop's updater therefore does not use it: it downloads the new zip, checks its signature and bundle id itself and swaps the app (see [App updates](#app-updates)). Homebrew (`brew upgrade --cask allternit`) and a fresh download still work too. Runtime packages (below) update the parts inside the app separately.
 
 Check a build with `codesign --verify --deep --strict "Allternit Desktop.app"`. Proper notarization needs a Developer ID certificate and the `APPLE_ID`, `APPLE_ID_PASSWORD` and `APPLE_TEAM_ID` secrets (`scripts/notarize.cjs`).
+
+## Linux release smoke test
+
+Every Linux Desktop release is gated by `.github/workflows/linux-desktop-smoke.yml`. `release-desktop.yml` calls it on the built `.deb`, and the release job waits for it. For each of Ubuntu 18.04, Debian 10, Debian 12, Debian 13, Ubuntu 22.04 and Ubuntu 24.04 it (Debian 10 uses `archive.debian.org`, since it is end of life):
+
+1. runs `apt-get install ./deb`, which must work with the package's own `Depends`;
+2. runs `scripts/check-elf-floor.mjs` on the whole extracted app, the Electron shell included, when that script exists on the ref (every ELF must need glibc 2.27 or older; only the LiveKit Meeting bot binding is allowlisted);
+3. starts the bundled `allternit-api` and waits up to 30 seconds for `/health/live`, which fails on a `GLIBC ... not found` error;
+4. starts the app as a normal user under Xvfb with `--no-sandbox` (a container cannot run Chromium's sandbox), connects over CDP, and checks that the startup window (`#btn-get-started`) rendered and that `main.log` has no "Initialization Error".
+
+The same workflow also installs the `.rpm` in Fedora 41 with `dnf install` (checking that the post-install wrote `package-type=rpm` and that `/usr/bin/allternit` survives a reinstall) and runs the AppImage on Ubuntu 24.04 with `--appimage-extract-and-run` (docker has no FUSE); both legs run the same engine-health and startup-window checks.
+
+The workflow has no secrets and does not sign in. To test an existing release, run it with `workflow_dispatch` and a `deb_url`. The scripts, and the manual steps for sign-in and pairing with a one-time ticket, are in `scripts/linux-desktop-lab/README.md`.
 
 ## Files drive in Finder (File Provider)
 
@@ -238,13 +274,38 @@ allternit-desktop/
 
 The main process registers many other channels (for example `miniApps:*`); see `src/main/unified-main.ts`.
 
+## Linux notes
+
+- **Start at login.** The toggle writes `autostart/allternit.desktop` in `$XDG_CONFIG_HOME` (default `~/.config`), with `Exec` set to the installed binary (for the `.deb`, `/opt/Allternit Desktop/allternit`). Turning it off deletes the file. The toggle shows whether the file exists, so deleting it by hand turns the setting off.
+- **Keyring.** Allternit stores your sign-in with the system keyring. Without one (the Electron backend is `basic_text`), tokens get only weak encryption, so Desktop logs a warning and shows one notice: install `gnome-keyring` or KWallet. The app keeps working.
+- **Global shortcuts.** If a shortcut cannot be registered, Desktop logs it and shows one notice per session naming it. On Wayland, apps often cannot grab global keys; set the shortcut in your desktop's own keyboard settings instead. On X11 it usually means another app holds the key.
+- **Mini-app zip releases.** Zip archives are unpacked by Desktop itself (GNU tar cannot read zip). Paths that leave the install folder, symbolic links and oversize archives are refused.
+
+Developer notes: `src/main/linux-autostart.ts`, `shortcut-notice.ts`, `keyring-notice.ts`, `zip-extract.ts`.
+
+## Pairing this computer
+
+The first time Desktop opens, or after you sign out, it shows the pairing window. It has the same "Allternit ⇄ computer" header as the in-app **Connect a computer** sheet, this computer's name and system, and three steps: **Sign in to your Allternit account**, **Approve this computer** and **Start Allternit**. Press **Sign in to pair**. A sign-in window opens. Signing in pairs the computer, so there is no code to type.
+
+The window shows each step as it happens: **Signing in** while the sign-in window is open, **Approving** while Allternit checks the computer with your account, then **Connected** with the account email, and the workspace opens. **Cancel**, or closing the sign-in window, goes back to the start. If pairing fails, a card says what happened in plain words and what to do next: **Try again**, **Sign in again** when the sign-in was not accepted, **Manage your computers** when the plan's computer limit is reached, or **Check Allternit status** when the problem is on Allternit's side. The raw error code goes to the app log (`~/Library/Logs/@allternit/desktop/main.log` on Mac, `~/.config/@allternit/desktop/logs/main.log` on Linux), not on screen.
+
+The window is app white and follows the system's dark mode (graphite).
+
+**Connection Settings (tray).** Once the workspace is open, the tray's **Connection Settings** opens **Settings › Computers** in the main window, the same connect kit every Allternit surface uses. The separate **Where Allternit runs** page shows only when the app can't load the workspace (Desktop opens it by itself when the workspace fails to load). It offers **On this computer** (the engine built into Desktop) or **On my Allternit server or cloud computer** (an address you enter). **Check** tests the choice without saving it and says **Works** with the response time or **Can't reach**. **Save and restart** saves it and restarts the app.
+
+For developers:
+- The pairing window is `src/main/startup-window.ts`; its page is built by `src/main/startup-page.ts` (`buildStartupHtml`, `renderPairingCard`). The primary button keeps the id `btn-get-started`, which the Linux lab driver clicks.
+- `src/main/auth-manager.ts` sends the re-rendered card on `pairing:render` at each change. Phases, steps and the error cards are in `src/main/pairing-state.ts` (`pairingStepAt`, `pairingErrorView`; failures are `PairingFailure` with a kind and status). The startup preload adds `cancelLogin` (`auth:cancel-login`), `openApp` (`startup:open-app`) and `onPairing`.
+- The tray decision is `connectionSettingsTarget` in `src/main/window-chrome.ts`. It opens Settings › Computers by dispatching the workspace's `allternit:open-settings` event with `{ section: 'computers' }`.
+- `static/connect.html` uses `window.allternit.connection`: `test({ remoteUrl })` checks a typed address before saving (trusted senders only), and `setBackend({ ..., restart: true })` saves and relaunches.
+
 ## Cloud sign-in
 
-Desktop holds two sign-ins. The **device pairing** (a runtime token) keeps the computer linked to your account. The **cloud sign-in** (a Clerk session) is what cloud features such as artifacts use. Desktop renews the cloud sign-in in the background from a hidden sign-in window. When the Clerk session itself has ended, the background renewal can't work, and cloud views show **Sign in to see your artifacts**.
+Desktop holds two sign-ins. The **device pairing** (a runtime token) keeps the computer linked to your account. The **cloud sign-in** (a Clerk session) is what cloud features such as artifacts use. Desktop renews the cloud sign-in in the background with one request to Clerk (the 60-second session token is renewed about every 50 seconds), using the sign-in cookie it already holds; no window opens. Only if that request fails does it load the sign-in page in a hidden window, and that window is destroyed as soon as it has the token. The sign-in window from pairing is destroyed (not just hidden) once you are signed in. When the Clerk session itself has ended, the background renewal can't work, and cloud views show **Sign in to see your artifacts**.
 
 Press **Sign in** there. A sign-in window opens; sign in with the account this device is paired to and the list loads. The device stays paired, so nothing has to be set up again. Signing in with a different account is refused and names the right one.
 
-For developers: the renderer calls `window.allternit.auth.reconnectCloud()` (IPC `auth:reconnect-cloud`, `AuthManager.reconnectCloud` in `src/main/auth-manager.ts`). It returns `{ ok: true }` or `{ ok: false, error }`. The account check is `cloudAccountMismatch` in `src/main/cloud-account.ts`. On the web and in older Desktop builds, `signInToCloud()` (`allternit-ai/src/lib/cloud-sign-in.ts`) falls back to `/sign-in` or the full device sign-in.
+For developers: the background renewal is `refreshClerkTokenDirect` in `src/main/auth-manager.ts` (`POST https://<frontend-api>/v1/client/sessions/<sid>/tokens` with the `persist:allternit-auth` cookies, the same call clerk-js makes; request and response checks in `src/main/clerk-session-refresh.ts`). `[Auth] Clerk token refresh without a window failed` in `main.log` means it fell back to the hidden window. The renderer calls `window.allternit.auth.reconnectCloud()` (IPC `auth:reconnect-cloud`, `AuthManager.reconnectCloud` in `src/main/auth-manager.ts`). It returns `{ ok: true }` or `{ ok: false, error }`. The account check is `cloudAccountMismatch` in `src/main/cloud-account.ts`. On the web and in older Desktop builds, `signInToCloud()` (`allternit-ai/src/lib/cloud-sign-in.ts`) falls back to `/sign-in` or the full device sign-in.
 
 Cloud calls carry only the Clerk bearer (and `X-Allternit-Tenant-Id`). `buildAuthHeaders(targetUrl)` adds the Desktop identity headers (`X-Allternit-User-Id`, `X-Allternit-User-Email`) only for the app's own origin and the loopback runtime: api.allternit.com reads identity from the JWT, and its CORS preflight refuses those headers, which made every direct cloud call fail as if offline. Pass the request URL when calling it for a cloud route.
 
@@ -346,13 +407,48 @@ The "Messages on your Mac" tool lets a bot search your Messages history and prep
 
 Both rows show a check mark once macOS has granted access. This is macOS only.
 
+## App updates
+
+Desktop updates itself on macOS, Windows and Linux, starting with the first version after 1.1.15. It checks when it starts and every hour (also from **Check for Updates…** in the app menu and in Settings), downloads the new version in the background, and then shows a restart prompt. Nothing installs until you click **Restart**, except on Windows, where a downloaded update also installs when you quit.
+
+- **macOS:** on **Restart**, Desktop puts the new app in place of the old one (same folder, same name) and reopens. The old copy is deleted on the next start. The app must be able to replace itself: if it runs straight from a disk image or from Downloads (macOS then runs a hidden copy), or macOS blocks the change (System Settings > Privacy & Security > **App Management**), Desktop keeps running and shows a notification that opens the download page. After an update, macOS can ask once for the Keychain (see [macOS signing](#macos-signing)).
+- **Windows:** on **Restart**, the downloaded installer runs silently in the folder Desktop is already installed in and reopens Desktop.
+- **Linux:** see [Updates on Linux](#updates-on-linux).
+- **On 1.1.15 or older?** Those versions used an updater that never worked for these builds. Install the next version by hand once (download it from the [releases page](https://github.com/Allternit/desktop/releases/latest), or `brew upgrade --cask allternit`). Every version after that updates itself.
+
+For developers: `src/main/app-updater.ts` is the only app updater. It runs electron-updater against the latest [Allternit/desktop](https://github.com/Allternit/desktop/releases) release on every OS and sends `app:update-status` events (`checking`, `available`, `up-to-date`, `downloaded`, `error`) to every window; Settings and the restart prompt call `app:check-for-updates` and `app:install-update`. Per OS:
+
+| OS | Class | Feed | Install |
+|---|---|---|---|
+| macOS | `MacUpdater` | `latest-mac.yml`, the `-arm64.zip` or `-x64.zip` for this Mac | `src/main/mac-app-swap.ts`: after the download, `ditto -x -k` into the updater cache, `codesign --verify --deep --strict`, same `CFBundleIdentifier`, the promised `CFBundleShortVersionString`, and the same team when the running app has a Developer ID. On Restart it renames the running bundle to a hidden `.<name>.app.old-<tag>` sibling and moves the new one in (putting the old one back on failure), then relaunches. Squirrel.Mac is bypassed. |
+| Windows | `NsisUpdater` | `latest.yml`, `Allternit-Setup-<version>.exe` | `quitAndInstall(true, true)`: silent NSIS install, then relaunch. Also installs on quit. |
+| Linux | `DebUpdater`, `RpmUpdater`, `AppImageUpdater` | `latest-linux.yml` on x64, `latest-linux-arm64.yml` on arm64 (each lists the `.deb`, `.rpm` and AppImage) | `pkexec dpkg -i` / `pkexec dnf` etc., or the AppImage file swapped in place; see below. |
+
+The pure decisions (mode, elevation, feed, fallback text, bundle checks) are in `app-updater-logic.ts`. `release-desktop.yml` checks that each feed and every file it names is attached before the release is created. `ALLTERNIT_UPDATE_FEED=http://host:port/` points a build at a generic feed that serves the `latest*.yml` files and the packages (lab). Logs are tagged `[appUpdater]` (`[appUpdater:mac]` for the swap) in `main.log`.
+
+Old clients cannot be bridged: 1.1.15 and older ask update.electronjs.org, which serves only zips named `-mac-` or `-darwin-` to Squirrel.Mac. Attaching copies with those names would make every old Mac download about 900 MB each hour and then refuse it (ad-hoc signature), so the release does not attach them.
+
+## Updates on Linux
+
+Every Linux install updates itself, starting with the first version after 1.1.15: the `.deb` (Ubuntu, Debian, Mint), the `.rpm` (Fedora, RHEL/Alma/Rocky, openSUSE) and the AppImage. Desktop checks when it starts and every hour, downloads the new version in the background, and shows the same restart prompt as on Mac and Windows. When you click **Restart**:
+
+- **.deb or .rpm:** your desktop asks for your password (the polkit prompt GNOME and KDE show), installs the package and reopens Desktop.
+- **AppImage:** Desktop replaces the AppImage file with the new one and reopens. No password is needed, but the AppImage's folder must be writable by you (for example `~/Applications`).
+
+- **On 1.1.15 or older?** Those versions have no Linux updater. Install the next version by hand once: download `Allternit-Desktop-<version>-amd64.deb` from the [releases page](https://github.com/Allternit/desktop/releases/latest) and run `sudo apt install ./Allternit-Desktop-<version>-amd64.deb`. Every version after that updates itself.
+- **No password prompt on this computer** (no `pkexec`, for example a minimal or headless install), or you cancel it: Desktop keeps running and shows a notification. Click it to open the release page, then install by hand: `sudo apt install ./<file>.deb`, `sudo dnf install ./<file>.rpm`, or `sudo zypper install ./<file>.rpm`.
+- An unpacked build does not update itself.
+
+For developers: `src/main/app-updater.ts` runs electron-updater on Linux (see [App updates](#app-updates) for macOS and Windows) with the class that matches the install: `AppImageUpdater` when `APPIMAGE` is set, else `DebUpdater` or `RpmUpdater` from `resources/package-type` (the post-install script writes the right value). All three read `latest-linux.yml` from the latest [Allternit/desktop](https://github.com/Allternit/desktop/releases) release; it lists the `.deb`, the `.rpm` and the AppImage, and each class takes the file with its own extension. On arm64 they read `latest-linux-arm64.yml` instead (electron-updater adds `-<arch>` for every Linux arch except x64), which lists only the arm64 packages. `release-desktop.yml` builds and attaches both next to `latest.yml` and `latest-mac.yml`. The deb install runs `pkexec /bin/bash -c 'dpkg -i <deb>'` (then `apt-get install -f -y` if dependencies are missing); the rpm install runs `zypper`, `dnf`, `yum` or `rpm` through `pkexec`. The pure decisions (mode, elevation, feed, fallback text) are in `app-updater-logic.ts`. For a lab test, `ALLTERNIT_UPDATE_FEED` (or the older `ALLTERNIT_LINUX_UPDATE_FEED`) `=http://host:port/` points a build at a generic feed that serves `latest-linux.yml` and the packages. Logs are tagged `[appUpdater]` in `main.log`.
+
 ## Runtime updates
 
-The app itself updates by installing a new version (Homebrew or a download, see [macOS signing](#macos-signing)). The parts inside it (the local API, Gizzi, the factory and the screens) update separately and more often, as a signed **runtime package** from runtime.allternit.com. Desktop checks a minute after it starts, then every 6 hours. **Check for updates** in the app menu also checks the runtime. A downloaded update is installed the next time Desktop starts.
+The app itself updates as a whole new version (see [App updates](#app-updates)). The parts inside it (the local API, Gizzi, the factory and the screens) update separately and more often, as a signed **runtime package** from runtime.allternit.com. Desktop checks a minute after it starts, then every 6 hours. **Check for updates** in the app menu also checks the runtime. A downloaded update is installed the next time Desktop starts.
 
 - Only files that changed are downloaded, and the rest are copied from what is already installed.
 - If a download stops partway (a slow connection, quitting the app), the next check carries on from where it stopped instead of starting over.
 - A failed check tries again after 1, 5, 15 and then 60 minutes.
+- **Linux glibc stamp.** The publisher reads the highest GLIBC that the package's ELF files need (`scripts/check-elf-floor.mjs`) and writes it as `minGlibc` into the manifest and the feed entry. It refuses to publish above `GLIBC_FLOOR` (2.27, Ubuntu 18.04) unless `ALLTERNIT_RUNTIME_ALLOW_GLIBC_ABOVE_FLOOR=1`. ELFs on `scripts/elf-floor-allowlist.json` (the LiveKit Meeting bot binding, glibc 2.28) do not raise the stamp, so Ubuntu 18.04 still gets engine updates and only the Meeting bot stays unavailable there, as in the bundled app. Desktop skips a package whose `minGlibc` is above the machine's glibc, and drops an installed one, so the bundled binaries run instead. A package with no stamp counts as GLIBC 2.39 (every package published before the stamp was built on Ubuntu 24.04). A host that reports no glibc (musl) takes no runtime package. macOS and Windows are not affected.
 - It also checks when the local API fails to start, because an update may be the fix.
 
 For developers (`surfaces/allternit-desktop/src/main/runtime-package.ts`, scheduling in `unified-main.ts`):

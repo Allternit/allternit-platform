@@ -210,6 +210,10 @@ The Memory Drive appears as a protected root in the [Files drive](/guides/files-
 | `procedural_memory` | Structured procedures (triggers, steps, use counts). |
 | `beta_memory_stores` | Developer API key/value stores for API clients. |
 
+## Used memory under replies
+
+A reply that ran memory tools records them as `memory_refs`. ai and iOS show a "Used memory (n)" chip; the TUI shows a dim "used memory (n)" line. The count is taken from the tools the turn ran, never from what the model says. See [Memory tools](/tools/memory#used-memory-chip).
+
 ## gizzi-code
 
 Gizzi keeps a checkout of the personal drive (and any mounts) and writes with the same

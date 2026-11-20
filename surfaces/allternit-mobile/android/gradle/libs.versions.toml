@@ -23,6 +23,9 @@ junit = "4.13.2"
 clerk = "1.4.1"
 # setContent for the native MainActivity; the version the step 7a spike ran with.
 activityCompose = "1.10.1"
+# androidx.webkit (Apache-2.0): origin-scoped web message listeners and document-start scripts for
+# the wave D artifact web views (the iOS WKScriptMessageHandler / WKUserScript equivalents).
+webkit = "1.12.1"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -38,6 +41,7 @@ kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 clerk-android-api = { group = "com.clerk", name = "clerk-android-api", version.ref = "clerk" }
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

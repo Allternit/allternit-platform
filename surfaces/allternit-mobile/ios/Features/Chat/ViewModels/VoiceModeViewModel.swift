@@ -44,6 +44,15 @@ final class VoiceModeViewModel: ObservableObject {
     @Published private(set) var modelProgress: Double? = nil
 
     private let chatViewModel: ChatViewModel
+    /// voice_control state: replies stay text (not spoken) after reply_mode "text";
+    /// end_call waits for the current speech, then ends the session.
+    @Published private(set) var repliesAreText: Bool = false
+    private var pendingEndCall = false
+    private var appliedControlParts: Set<String> = []
+    private var sessionOptions = VoiceSessionOptions()
+    /// Called when a voice_control end_call finishes its speech. The host
+    /// (VoiceHost) should run its normal end flow; when nil the model ends itself.
+    var onEndCall: (() -> Void)?
     private let runtimeModelId: String?
     private let effort: String?
     // Owned by the view (its @StateObjects); weak so teardown can't keep
@@ -217,6 +226,7 @@ final class VoiceModeViewModel: ObservableObject {
         case .legacy:
             return
         }
+        sessionOptions = options
         let client = VoiceSessionClient(factory: factory)
         client.onEvent = { [weak self] event in self?.handleSession(event) }
         sessionClient = client
@@ -376,6 +386,7 @@ final class VoiceModeViewModel: ObservableObject {
         guard state == .thinking || state == .speaking else { return }
 
         replyText = reply.content
+        applyVoiceControlParts(of: reply)
 
         if inSession {
             sessionReplyUpdated(reply)
@@ -463,6 +474,7 @@ final class VoiceModeViewModel: ObservableObject {
             // The reply may still be streaming more sentences; only go back
             // to listening once it is complete.
             if replyMessageId == nil, state == .speaking { state = .listening }
+            if replyMessageId == nil { finishPendingEndCall() }
         case .speakInterrupted:
             // Barge-in: the engine stopped; stop the agent's turn too.
             abortTurn()
@@ -471,6 +483,43 @@ final class VoiceModeViewModel: ObservableObject {
             if fatal { statusLine = message } else if code != "bad_message" { statusLine = message }
         case .ready, .speechStopped:
             break
+        }
+    }
+
+    // MARK: - voice_control
+
+    /// Applies `{language?, speed?, reply_mode?, end_call?}` from a `control`
+    /// stream event or a completed `voice_control` tool part.
+    func applyControl(_ control: AgentChatEvent.VoiceControl) {
+        guard isActive else { return }
+        if let language = control.language?.trimmingCharacters(in: .whitespacesAndNewlines), !language.isEmpty {
+            if let known = SpeechLanguage(rawValue: language) { SettingsStore.shared.speechLanguage = known }
+            sessionOptions.language = language
+            sessionClient?.updateOptions(sessionOptions)
+        }
+        if let speed = control.speed, speed > 0 {
+            // New utterances read this; the engine's live rate follows on the next session.
+            SettingsStore.shared.speechSpeed = min(max(speed, 0.5), 2.0)
+        }
+        if let mode = control.replyMode {
+            repliesAreText = (mode == "text")
+        }
+        if control.endCall { pendingEndCall = true }
+    }
+
+    /// Ends the call after the current speech, when `end_call` asked for it.
+    private func finishPendingEndCall() {
+        guard pendingEndCall, isActive else { return }
+        pendingEndCall = false
+        if let onEndCall { onEndCall() } else { _ = endSession() }
+    }
+
+    private func applyVoiceControlParts(of reply: MessageRecord) {
+        for call in reply.toolCalls where call.toolName == GapToolMetadata.voiceControl {
+            guard let gap = call.gap, gap.ok != false, !appliedControlParts.contains(call.id) else { continue }
+            appliedControlParts.insert(call.id)
+            applyControl(.init(language: gap.language, speed: gap.speed, replyMode: gap.replyMode,
+                               endCall: gap.action == "end_call"))
         }
     }
 
@@ -485,6 +534,7 @@ final class VoiceModeViewModel: ObservableObject {
 
     /// Streams the reply's new text to the engine as it arrives.
     private func sessionReplyUpdated(_ reply: MessageRecord) {
+        applyVoiceControlParts(of: reply)
         if let error = reply.error {
             statusLine = error.title
             sessionClient?.cancelSpeech(id: currentSpeakId)
@@ -493,15 +543,16 @@ final class VoiceModeViewModel: ObservableObject {
             return
         }
         let content = reply.content
-        if !isMuted, content.count > spokenLength {
+        if !isMuted, !repliesAreText, content.count > spokenLength {
             let delta = String(content.dropFirst(spokenLength))
             spokenLength = content.count
             sessionClient?.speakDelta(id: utteranceId, text: delta)
         }
         guard !reply.isStreaming else { return }
         replyMessageId = nil
-        if isMuted || content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if isMuted || repliesAreText || content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             state = isMuted ? .idle : .listening
+            finishPendingEndCall()
             return
         }
         sessionClient?.speakDone(id: utteranceId)

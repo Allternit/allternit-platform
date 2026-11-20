@@ -29,6 +29,7 @@ import com.allternit.phonelink.core.AppInfo
 import com.allternit.phonelink.core.Bounds
 import com.allternit.phonelink.core.DeviceOps
 import com.allternit.phonelink.core.GlobalAction
+import com.allternit.phonelink.core.PetNotice
 import com.allternit.phonelink.core.RpcException
 import com.allternit.phonelink.core.Screenshot
 import com.allternit.phonelink.core.UiNode
@@ -49,6 +50,8 @@ import java.util.concurrent.atomic.AtomicReference
 class PhoneLinkAccessibilityService : AccessibilityService(), DeviceOps {
     @Volatile private var lastEventAt = SystemClock.uptimeMillis()
     @Volatile private var lastWindowPackage: String? = null
+    /** Last Activity-like window class per package (TYPE_WINDOW_STATE_CHANGED). Package names only; no screen text. */
+    private val lastActivityByPackage = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val main = Handler(Looper.getMainLooper())
     private val shotExecutor = Executors.newSingleThreadExecutor()
     /**
@@ -76,7 +79,10 @@ class PhoneLinkAccessibilityService : AccessibilityService(), DeviceOps {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         lastEventAt = SystemClock.uptimeMillis()
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            event.packageName?.toString()?.let { lastWindowPackage = it }
+            event.packageName?.toString()?.let { pkg ->
+                lastWindowPackage = pkg
+                event.className?.toString()?.takeIf { isActivityClass(it) }?.let { lastActivityByPackage[pkg] = it }
+            }
             try { flavor.onWindowStateChanged(event) } catch (_: Exception) {}
         }
     }
@@ -109,6 +115,16 @@ class PhoneLinkAccessibilityService : AccessibilityService(), DeviceOps {
             ?: wins.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }
         return app?.root?.packageName?.toString() ?: rootInActiveWindow?.packageName?.toString() ?: lastWindowPackage
     }
+
+    override fun foregroundActivity(): String? = foregroundPackage()?.let { lastActivityByPackage[it] }
+
+    /** True for a plausible Activity class; false for framework views, dialogs and the IME. */
+    private fun isActivityClass(c: String): Boolean =
+        c.contains('.') &&
+            !c.startsWith("android.widget.") && !c.startsWith("android.view.") &&
+            !c.startsWith("android.inputmethodservice.") &&
+            !PetNotice.isDialogClass(c) && !c.endsWith("Dialog") && !c.contains("Dialog\$") &&
+            !c.contains("PopupWindow")
 
     // ── Tree ────────────────────────────────────────────────────────────────
 

@@ -2699,7 +2699,7 @@
       "label": "Sign-in screen",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Shared dark sign-in with the offline wordmark/Gizzi/cast loop and real Clerk authentication on web, Desktop and native iPhone.",
+      "description": "Shared dark sign-in with the offline wordmark/Gizzi/cast loop and real Clerk authentication on web, Desktop, native iPhone and the native Android app (nativeapp flavor).",
       "touches": [
         "allternit-ai/src/components/auth",
         "allternit-ai/src/pages",
@@ -2709,7 +2709,8 @@
         "surface:pwa",
         "surface:desktop",
         "allternit/surfaces/allternit-mobile/ios/App/AllternitApp.swift",
-        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding/SignInStage/LoginArrivalView.swift"
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding/SignInStage/LoginArrivalView.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/onboarding"
       ],
       "decisions": [
         {
@@ -2719,6 +2720,10 @@
         {
           "on": "2026-11-02",
           "note": "Eoj approved the full wordmark assembly, Gizzi arrival, website cast joining/leaving, Gizzi spark catch and dissolve loop. Replace sign-in product-demo scenes on iOS and shared web/PWA. Ship byte-identical self-contained network-free illustration assets; keep native/web Clerk authentication and a usable static fallback."
+        },
+        {
+          "on": "2026-11-18",
+          "note": "Native Android sign-in (nativeapp flavor) plays the same shared login-arrival.html (copied into :feature:onboarding assets at build time, WebView with network and navigation blocked) above Google, GitHub and Apple buttons with logos. All three use Clerk OAuth in a Custom Tab through the allternit.com/__clerk proxy; Google leads on Android the way Apple leads on iOS."
         }
       ],
       "evidence": [
@@ -5098,6 +5103,53 @@
       "evidence": [
         "allternit/surfaces/docs/tools/agent-batch.mdx",
         "allternit/surfaces/docs/tools/sleep.mdx"
+      ]
+    },
+    {
+      "id": "feature:system-prompt-stack",
+      "label": "System prompt stack: base, safety, care, conditional blocks",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "system.ts picks base-chat+capabilities+safety+care (chat, bot turns) or base-code+safety (code), then one family addendum (gpt, gemini, open, on-device), mode-auto/mode-ask from the permission mode, unattended (automation_run), background-code (run_kind), memory-use (memory on), voice/voice-tags/phone. Byte caps and a vendor-name scan over prompts and tool text live in test/session/system-prompt-selection.test.ts. Hard limits also reach the brain_runner and the runtime route. Learning is an answer style composed by allternit-api answer_shapes.rs.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/session/system.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/prompt",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/constants/prompts.ts",
+        "allternit/cmd/allternit-api/src/answer_shapes.rs",
+        "allternit/cmd/allternit-api/src/brain_runner/vendors.rs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-19",
+          "note": "Fix and build all 70 rows of the vendor prompt gap review (handoffs/system-prompts-2026-11-17/PLAN-gaps-2026-11-19.md)"
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/core/system-prompts.mdx",
+        "allternit/surfaces/docs/guides/learning-mode.mdx",
+        "allternit/surfaces/docs/guides/autonomy-modes.mdx"
+      ]
+    },
+    {
+      "id": "feature:gap-primitives",
+      "label": "Gap primitives: worktree, second opinion, PR comments, status, feedback note, location, voice control, end conversation, untrusted fences",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Typed contracts in runtime/primitives/gap-types.ts with gated stubs (available=false until each feature PR). Cards on ai (components/chat/gap-cards) and iOS (Features/Chat/Views/GapCards); TUI adapters per tool. fenceUntrusted (runtime/tools/guard/untrusted.ts) fences web, search, lookup, connector, past-chat, resource and MCP results on the model-facing text; the TUI WebFetch/WebSearch/MCP tools use it too. run_kind/voice_tags turn hints in allternit-api VALUED_TURN_HINTS; gizzi run --run-kind background_code and the GitHub action send run_kind.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/primitives/gap-types.ts",
+        "allternit/cmd/gizzi-code/src/runtime/tools/guard/untrusted.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/message-v2.ts",
+        "allternit/cmd/allternit-api/src/v1_routes.rs",
+        "allternit/surfaces/gizzi-github-action/src",
+        "allternit-ai/src/components/chat/gap-cards",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/GapCards"
+      ],
+      "decisions": [],
+      "evidence": [
+        "allternit/surfaces/docs/tools/untrusted-content.mdx",
+        "allternit/surfaces/docs/cli/background-runs.mdx",
+        "allternit/surfaces/docs/tools/worktree.mdx"
       ]
     },
     {

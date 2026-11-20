@@ -155,7 +155,7 @@ describe('PhoneLinkBackend lane mapping', () => {
     });
     expect(client.calls.at(-1)).toEqual({
       method: 'page_source',
-      params: { format: 'text', filter: { label: 'sign' }, visible_only: true, max_elements: 20 },
+      params: { format: 'text', filter: { label: 'sign' }, visible_only: true, max_elements: 20, structured: true },
     });
     expect(await b.call('phone.screen_text', 'link:dev-1', {})).toEqual({ ok: true, text: 'Sign in\nEmail' });
     expect(client.calls.at(-1)?.method).toBe('screen_text');
@@ -510,6 +510,36 @@ describe('screen text shapes', () => {
     const b = backend(client);
     expect(await b.call('phone.read_ui', 'link:dev-1', {})).toEqual({ ok: true, text: "StaticText, value: 'Allternit iphone tree works', {{16, 229}, {361, 24}}" });
     expect(await b.call('phone.screen_text', 'link:dev-1', {})).toEqual({ ok: true, text: 'Menu @ (38, 81)\nLog in @ (622, 139)' });
+  });
+});
+
+describe('read_ui structured result (one page_source call)', () => {
+  it('returns text, app, activity and nodes[] from the single structured page_source', async () => {
+    const client = fakeClient({
+      page_source: () => ({
+        format: 'text',
+        source: 'HELPER TEXT',
+        foreground_app: 'com.android.settings',
+        activity: 'com.android.settings.Settings$WifiSettingsActivity',
+        nodes: [
+          { class: 'android.widget.TextView', label: 'Wi-Fi', resource_id: 'android:id/title', bounds: { x: 0, y: 210, width: 1080, height: 120 }, clickable: true, focused: false },
+          { class: 'android.widget.EditText', text: 'pw', bounds: { x: 0, y: 400, width: 100, height: 50 }, password: true, checkable: true },
+          { class: 'bad', bounds: { x: 'a' } },
+        ],
+      }),
+    });
+    const res = (await backend(client).call('phone.read_ui', 'link:dev-1', {})) as unknown as Record<string, unknown>;
+    expect(res).toMatchObject({ ok: true, text: 'HELPER TEXT', app: 'com.android.settings', activity: 'com.android.settings.Settings$WifiSettingsActivity' });
+    expect(res.nodes).toEqual([
+      { index: 0, class: 'android.widget.TextView', label: 'Wi-Fi', resource_id: 'android:id/title', bounds: [0, 210, 1080, 330], clickable: true, scrollable: false, checkable: false, editable: false, password: false, focused: false },
+      { index: 1, class: 'android.widget.EditText', label: 'pw', resource_id: '', bounds: [0, 400, 100, 450], clickable: false, scrollable: false, checkable: true, editable: true, password: true, focused: false },
+    ]);
+    expect(client.calls.filter((c) => c.method === 'page_source')).toHaveLength(1);
+  });
+
+  it('keeps the plain {ok, text} when the helper sends no nodes', async () => {
+    const client = fakeClient({ page_source: () => ({ source: 'T' }) });
+    expect(await backend(client).call('phone.read_ui', 'link:dev-1', {})).toEqual({ ok: true, text: 'T' });
   });
 });
 

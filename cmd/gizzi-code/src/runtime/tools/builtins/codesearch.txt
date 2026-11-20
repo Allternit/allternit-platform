@@ -10,3 +10,4 @@ Usage notes:
   - Use lower values for specific questions, higher values for comprehensive documentation
   - Supports queries about frameworks, libraries, APIs, and programming concepts
   - Examples: 'React useState hook examples', 'Python pandas dataframe filtering', 'Express.js middleware'
+label: optional, 3-8 words saying what this call does.

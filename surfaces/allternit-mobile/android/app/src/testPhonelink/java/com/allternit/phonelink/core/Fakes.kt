@@ -7,6 +7,7 @@ class FakeDeviceOps : DeviceOps {
     var screenOn = true
     var locked = false
     var foreground: String? = "com.openai.chatgpt"
+    var activity: String? = "com.openai.chatgpt.MainActivity"
     var nodes: List<UiNode> = defaultTree()
     var focused: UiNode? = null
     var setTextWorks = true
@@ -18,6 +19,7 @@ class FakeDeviceOps : DeviceOps {
     override fun isScreenOn() = screenOn
     override fun isScreenLocked() = locked
     override fun foregroundPackage() = foreground
+    override fun foregroundActivity() = activity
     override fun snapshot() = nodes
     override fun tap(x: Float, y: Float): Boolean { actions.add("tap ${x.toInt()},${y.toInt()}"); return true }
     override fun doubleTap(x: Float, y: Float): Boolean { actions.add("double_tap ${x.toInt()},${y.toInt()}"); return true }

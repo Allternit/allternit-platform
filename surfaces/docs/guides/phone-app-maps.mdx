@@ -1,0 +1,82 @@
+---
+title: "Phone App Maps"
+description: "Your bot learns each app's screens as it works on your phone, and reaches known screens with no model call. Learn how maps grow, what Explore does and never does, and how to forget a map."
+---
+
+An **App Map** is a list of the screens your bot has seen in one app, and the taps that lead from one screen to the next. The more your bot works in an app, the more of it the bot knows. A screen the bot already knows is reached by replaying known taps, with no model call. The bot's brain is only used on a screen it has not seen before.
+
+Maps work with [phone runs and skills](/guides/phone-skills) and [approvals](/guides/phone-approvals). They need Allternit Desktop running on the computer the phone is connected to. Maps are planned for the same release as the phone's apps sheet, so the screens described below may not be in your build yet.
+
+## How a map grows
+
+- **From runs.** Each phone task and each skill replay adds the screens it passes through and the taps between them. You do nothing.
+- **From Explore (Android only, optional).** You can ask the bot to walk through one app on its own and learn its screens. See below.
+
+A map is kept per app. Each app gets its own map.
+
+## How the bot uses a map
+
+When your bot starts a task in an app with a map, it is told the names of the screens it knows. It can then ask to go to one, for example "Wi-Fi". Allternit finds the shortest known route and replays it. After each tap it checks the phone landed on the screen it expected. If it did not, the replay stops and the bot's brain takes over from the real screen, as it does without a map.
+
+Every replayed tap goes through the same [approval rules](/guides/phone-approvals) as any other tap. A map never skips an approval. A tap that could pay, send, delete or sign out is kept in the map so screens stay connected, but it is never replayed.
+
+## Explore
+
+Explore is a button for one app on an Android phone. The bot opens the app and taps through it, one screen at a time, to learn it. It never does these things:
+
+- Switch anything on or off, or tick a box.
+- Type into a text field, or touch a password field.
+- Tap anything that pays, sends, deletes or signs out.
+- Wait for your approval. If a tap would need approval, Explore skips it and goes on.
+- Run in a banking or payment app. Money apps are refused before the first tap.
+- Leave the app. If the phone ends up in another app, Explore goes back. After three times it stops.
+
+Explore stops by itself after 10 minutes or 60 screens, whichever comes first. You can change both when you start it (up to 30 minutes and 300 screens). It also stops if a step takes more than 15 seconds twice in a row. A run that stopped early marks its map as incomplete, with the reason. Press **Stop** at any time. Only one Explore runs on a phone at a time, and Explore will not start while a task or skill is running on that phone.
+
+When Explore finishes, it names the new screens with your own bot's brain in one call. With no brain, screens get a plain name from the app's own screen title.
+
+## Where you see it
+
+- **The run's steps.** Steps that came from the map fold into one card that shows the route.
+- **The chat task card.** It says how many steps came from the map.
+- **The phone's apps sheet.** Each app shows its map, with **Explore**, **Explore again** and **Check**. This screen is planned in the same release.
+
+## Privacy
+
+- Maps stay on your computer, in Desktop's data folder. They are never synced to Allternit's cloud.
+- Text your bot typed is never saved in a map. A screen with a password field is never recorded.
+- Screen labels, like "Wi-Fi", are saved. **Forget** deletes the whole map for that app.
+- Banking and payment apps never get a map.
+
+## When a map goes stale
+
+Apps change. When a replayed tap fails twice in a row, that route is dropped and the bot goes back to using its brain on that part. Nothing is deleted. Press **Explore again** to relearn the app, or just keep using it: a tap that works again is switched back on. A new version of an app does not break its map. Only taps that fail are dropped.
+
+## Screenshots: auto or always
+
+`phone.task` takes a `vision` setting. With `auto` (the default), the bot sends a screenshot only when the screen's text is thin, after a step that failed, when it asks to look, or when you are asked to approve. With `always`, every model call includes a screenshot. Use `always` if a task keeps misreading an app.
+
+## iPhone
+
+On an iPhone, maps grow from runs only. There is no Explore. iPhone screens are read from the picture, so the bot matches them with lower confidence and only when they look exactly the same. If you type on an iPhone screen, the picture can still contain your text, so avoid using maps for apps that show private text at the top or bottom of the screen.
+
+## Limits
+
+- 300 screens per app. When a map is full, the screen seen least recently is dropped.
+- A replayed route is at most 12 taps. If it is longer, the bot continues with its brain.
+- Maps cover taps and back. They never include typing, swiping or key presses.
+- Maps work on Android phones over adb or Phone Link, and on iPhones (from runs only). A phone must be online in Desktop when the run starts, so Allternit knows if it is Android or iPhone. If it is not, that run works as before, without the map.
+
+## Stop
+
+**Stop** in the app, on the web or in Gizzi Code now stops a phone task, a skill replay and an Explore run.
+
+## For developers
+
+See [Phones API](/api/platform/phones#app-maps) and [Gizzi phone commands](/cli/work#phone-tasks).
+
+## See also
+
+- [Phone runs and phone skills](/guides/phone-skills)
+- [Approvals for sensitive phone actions](/guides/phone-approvals)
+- [Phone Link](/guides/phone-link)

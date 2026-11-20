@@ -1,0 +1,31 @@
+---
+title: 'voice_control'
+description: 'Change language, speed or reply mode in a voice session, or end the call'
+---
+
+## Overview
+
+`voice_control` changes how a voice session behaves. It is mounted on voice turns only.
+
+## Parameters
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `action` | `set_language`, `set_speed`, `set_reply_mode` or `end_call` | What to change |
+| `language` | string, optional | BCP 47 tag such as `es` or `pt-BR` (set_language) |
+| `speed` | number, optional | Speaking rate from 0.5 to 2 (set_speed) |
+| `reply_mode` | `voice`, `text` or `both`, optional | How replies come back (set_reply_mode) |
+
+## Result
+
+The action and the new value. `end_call` is used after a spoken goodbye.
+
+It is available on voice turns only. App voice streams carry the change as a `control` event (`language`, `speed`, `reply_mode` or `end_call`). Phone calls carry it as `call.control`. Style tags such as `[tag]` are stripped from speech for now.
+
+## Permission
+
+It changes only the voice session you are in, so it is allowed in every mode.
+
+## Surfaces
+
+Web, phone layout, PWA, iOS and Desktop show the controls. Android follows the PWA. In the terminal only `end_call` applies: language and speed are not available there. See [Voice calls](/tools/voice-calls). Family: `voice`.

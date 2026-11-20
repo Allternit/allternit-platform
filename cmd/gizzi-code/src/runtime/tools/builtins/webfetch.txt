@@ -5,9 +5,12 @@
 - Use this tool when you need to retrieve and analyze web content
 
 Usage notes:
-  - IMPORTANT: if another tool is present that offers better web fetching capabilities, is more targeted to the task, or has fewer restrictions, prefer using that tool instead of this one.
+  - IMPORTANT: if another tool is present that offers better web fetching capabilities or is more targeted to the task, prefer using that tool instead of this one.
+  - Pages that need a sign-in fail here. Check for a connector tool that can read the page with the user's access.
+  - If a fetch is refused or blocked, never get the page another way (shell, mirrors, caches). Say the page isn't reachable.
   - The URL must be a fully-formed valid URL
   - HTTP URLs will be automatically upgraded to HTTPS
   - Format options: "markdown" (default), "text", or "html"
   - This tool is read-only and does not modify any files
   - Results may be summarized if the content is very large
+label: optional, 3-8 words saying what this call does.

@@ -22,6 +22,7 @@ export class InputBridge extends EventEmitter {
     this.dryRun = dryRun;
     this.log = log;
     this.child = null;
+    this.unavailable = null; // why the helper could not start (e.g. 'python3 not found')
     this.pending = [];       // FIFO: helper answers one line per command, in order
     this.ready = null;       // { accessibilityTrusted, dryRun }
     this.display = null;     // { width, height } in screen points
@@ -31,9 +32,23 @@ export class InputBridge extends EventEmitter {
   start() {
     const args = [this.helperPath];
     if (this.dryRun) args.push('--dry-run');
-    this.child = spawn(this.python, args);
+    const child = spawn(this.python, args);
+    this.child = child;
+    // Without this listener a missing python3 (minimal Linux installs) is an
+    // uncaught 'error' that kills the whole server, and the desktop then
+    // respawned it forever. Input turns off; screen viewing keeps working.
+    child.on('error', (err) => {
+      if (this.child === child) this.child = null;
+      this.unavailable = err.code === 'ENOENT' ? `${this.python} not found` : err.message;
+      this.log(`[input] helper could not start (${this.unavailable}): phone input is off, screen viewing still works`);
+      const fail = { ok: false, error: `input helper unavailable: ${this.unavailable}` };
+      while (this.pending.length) this.pending.shift()(fail);
+      this.emit('unavailable', this.unavailable);
+    });
+    // A write to a helper that never started (or died) must not crash either.
+    child.stdin.on('error', (err) => this.log(`[input] helper stdin: ${err.message}`));
     let buf = '';
-    this.child.stdout.on('data', (d) => {
+    child.stdout.on('data', (d) => {
       buf += d;
       let idx;
       while ((idx = buf.indexOf('\n')) >= 0) {
@@ -54,8 +69,8 @@ export class InputBridge extends EventEmitter {
         }
       }
     });
-    this.child.stderr.on('data', (d) => this.log(`[input] helper stderr: ${d}`));
-    this.child.on('exit', (code) => {
+    child.stderr.on('data', (d) => this.log(`[input] helper stderr: ${d}`));
+    child.on('exit', (code) => {
       this.log(`[input] helper exited (${code})`);
       this.emit('exit', code);
       const err = { ok: false, error: 'input helper exited' };

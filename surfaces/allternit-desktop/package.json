@@ -1,6 +1,6 @@
 {
   "name": "@allternit/desktop",
-  "version": "1.1.16",
+  "version": "1.1.17",
   "description": "Allternit Desktop: your bots, chats, projects and code, with this computer paired to your Allternit account.",
   "main": "dist/main/unified-main.js",
   "type": "module",
@@ -61,11 +61,11 @@
     "@modelcontextprotocol/client": "catalog:",
     "electron-log": "^5.2.0",
     "electron-store": "^8.2.0",
+    "electron-updater": "6.8.11",
     "fix-path": "^4.0.0",
     "livekit-client": "2.22.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "update-electron-app": "^3.0.0",
     "ws": "^8.18.3",
     "zod": "^3.22.4"
   },
@@ -471,8 +471,27 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "icon": "build/icon.png",
       "category": "Utility",
@@ -485,7 +504,8 @@
       "desktop": {
         "entry": {
           "Name": "Allternit Desktop",
-          "Comment": "Fully offline AI platform with local VM execution",
+          "StartupWMClass": "allternit-desktop",
+          "Comment": "Your bots, chats, projects and code, paired with your Allternit account",
           "Keywords": "AI;Agents;Chat;Productivity;"
         }
       },
@@ -498,17 +518,6 @@
           ]
         },
         {
-          "from": "resources/lima/linux/",
-          "to": "lima/",
-          "filter": [
-            "limactl"
-          ]
-        },
-        {
-          "from": "resources/lima/README.md",
-          "to": "lima/README.md"
-        },
-        {
           "from": "resources/computer-use/driver/",
           "to": "computer-use/driver/"
         },
@@ -517,7 +526,7 @@
           "to": "decision-runtime/"
         },
         {
-          "from": "resources/computer-use/driver-python/linux-x64/",
+          "from": "resources/computer-use/driver-python/linux-${arch}/",
           "to": "computer-use/driver/python/"
         },
         {
@@ -541,17 +550,20 @@
           "to": "computer-use/acu/"
         },
         {
-          "from": "resources/computer-use/acu-site/linux-x64/",
+          "from": "resources/computer-use/acu-site/linux-${arch}/",
           "to": "computer-use/acu/site-packages/"
         }
       ]
     },
     "appImage": {
-      "artifactName": "Allternit-${version}${env.ALLTERNIT_BUILD_SUFFIX}.AppImage"
+      "artifactName": "Allternit-Desktop-${version}${env.ALLTERNIT_BUILD_SUFFIX}-${arch}.AppImage"
     },
     "deb": {
+      "afterInstall": "build/linux/after-install.sh",
       "depends": [
         "git",
+        "bubblewrap",
+        "lsof",
         "libgtk-3-0",
         "libnotify4",
         "libnss3",
@@ -561,11 +573,42 @@
         "libatspi2.0-0",
         "libuuid1",
         "libsecret-1-0",
-        "libasound2t64 | libasound2"
+        "libgbm1",
+        "libasound2t64 | libasound2",
+        "python3"
       ],
       "packageCategory": "utils",
       "priority": "optional",
-      "compression": "xz"
+      "compression": "xz",
+      "afterRemove": "build/linux/after-remove.sh"
+    },
+    "rpm": {
+      "packageName": "allternit-desktop",
+      "afterInstall": "build/linux/after-install.sh",
+      "afterRemove": "build/linux/after-remove.sh",
+      "depends": [
+        "git",
+        "bubblewrap",
+        "lsof",
+        "(gtk3 or libgtk-3-0)",
+        "(libnotify or libnotify4)",
+        "(nss or mozilla-nss)",
+        "(libXScrnSaver or libXss1)",
+        "(libXtst or libXtst6)",
+        "xdg-utils",
+        "at-spi2-core",
+        "(libuuid or libuuid1)",
+        "(libsecret or libsecret-1-0)",
+        "(mesa-libgbm or libgbm1)",
+        "(alsa-lib or libasound2)",
+        "python3"
+      ],
+      "packageCategory": "Utility",
+      "compression": "xz",
+      "fpm": [
+        "--rpm-rpmbuild-define",
+        "_build_id_links none"
+      ]
     },
     "win": {
       "target": [

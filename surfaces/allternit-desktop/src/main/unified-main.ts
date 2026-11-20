@@ -7,7 +7,10 @@
  * - Version-locked: Desktop 1.2.3 = Backend 1.2.3
  */
 
-import { app, shell, autoUpdater, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
+import { setLinuxAutostart, isLinuxAutostartEnabled } from './linux-autostart.js';
+import { noteShortcutResult } from './shortcut-notice.js';
+import { warnIfNoKeyring } from './keyring-notice.js';
+import { app, shell, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, Notification, session, Tray, webContents, Menu, dialog, globalShortcut, screen, protocol, nativeImage, type WebContents } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { openPrivacySettings as openPrivacySettingsHelper, messagesAccessHint as messagesAccessHintHelper } from './messages-permissions.js';
 import { dirname, join, resolve, basename } from 'node:path';
@@ -21,7 +24,8 @@ import { execFile } from 'node:child_process';
 import { createMotionRender } from './motion-render.js';
 import Store from 'electron-store';
 import log from 'electron-log';
-import { updateElectronApp } from 'update-electron-app';
+import { startAppUpdater } from './app-updater.js';
+import { passAppImageSandboxGate } from './appimage-sandbox.js';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
 import type { SystemTab } from './system-summary.js';
@@ -86,6 +90,8 @@ import { OfficeAddinManager, type OfficeProductId } from './office-addin-manager
 
 import { tunnelManager } from './tunnel-manager.js';
 import { authManager, FULL_CLERK_REFRESH_WAIT_MS } from './auth-manager.js';
+import { APP_WINDOW_TITLE, hidesMenuBarBeforePairing, isPrePairingPage, mayOpenHud } from './window-chrome.js';
+import { connectionSettingsTarget, isWorkspaceLoadFailure, OPEN_COMPUTERS_SETTINGS_SCRIPT } from './window-chrome.js';
 // Side-effect import: constructing the manager registers the device-pairing:*
 // IPC handlers. A named import that is never read gets elided by tsc, which
 // left Settings → Devices failing with "No handler registered".
@@ -312,45 +318,18 @@ app.on('render-process-gone', (_event, webContents, details) => {
   }
 });
 
-// Auto-updater
-// Defaults read package.json repository, but we make the feed explicit so
-// local/self-hosted builds never accidentally phone home to the wrong repo.
-updateElectronApp({
-  repo: 'Allternit/desktop',
-  updateInterval: '1 hour',
-  logger: log,
-  notifyUser: false, // renderer will observe app:update-status and prompt
-});
-
-// Forward updater events to any renderer window so the platform UI can show
-// status and a restart prompt. These are Electron's built-in autoUpdater
-// events (the same channel used by update-electron-app); they carry less
-// detail than electron-updater's events, but they are sufficient for status
-// UI.
-autoUpdater.on('checking-for-update', () => {
-  broadcastUpdateStatus({ state: 'checking' });
-});
-autoUpdater.on('update-available', () => {
-  broadcastUpdateStatus({ state: 'available' });
-});
-autoUpdater.on('update-not-available', () => {
-  broadcastUpdateStatus({ state: 'up-to-date' });
-});
-autoUpdater.on('update-downloaded', (_event, releaseNotes, releaseName, _releaseDate, updateURL) => {
-  appUpdateDownloaded = true;
-  broadcastUpdateStatus({
-    state: 'downloaded',
-    version: releaseName,
-    releaseNotes: typeof releaseNotes === 'string' ? releaseNotes : undefined,
-    updateURL,
-  });
-});
-autoUpdater.on('error', (error) => {
-  log.error('[autoUpdater]', error);
-  broadcastUpdateStatus({ state: 'error', message: error?.message ?? String(error) });
-});
-
 let appUpdateDownloaded = false;
+
+// App updates: electron-updater on macOS, Windows and Linux (.deb), reading
+// the Allternit/desktop GitHub releases (app-updater.ts). It checks at start
+// and hourly, downloads in the background and reports on app:update-status,
+// which the renderer turns into the restart prompt. null in dev builds and on
+// Linux installs that cannot update themselves.
+const appUpdater = startAppUpdater({
+  logger: log,
+  broadcast: (status) => broadcastUpdateStatus(status),
+  onDownloaded: () => { appUpdateDownloaded = true; },
+});
 let runtimeUpdateTimer: NodeJS.Timeout | null = null;
 
 /**
@@ -518,6 +497,8 @@ let activePlatformUrl: string = isDev ? URLS.DEV_UI : URLS.PRODUCTION_UI;
 // is only its default (the hosted ai.allternit.com), which the desktop shell
 // must never load: its CSP blocks the local API and its chunks go stale on deploy.
 let platformUiResolved = false;
+/** The main window's last workspace load failed (the Connect page is showing). */
+let workspaceLoadFailed = false;
 
 /** Bundled Connect screen (choose local or VPS backend). */
 const CONNECT_PAGE_PATH = join(__dirname, '../../static/connect.html');
@@ -1102,7 +1083,7 @@ function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow 
     y: secondary && bounds.y !== undefined ? bounds.y + 28 * listMainWindows().length : bounds.y,
     minWidth,
     minHeight,
-    title: 'Allternit Desktop',
+    title: APP_WINDOW_TITLE,
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 16 },
     show: true, // Show immediately
@@ -1146,7 +1127,21 @@ function createMainWindow(options: { secondary?: boolean } = {}): BrowserWindow 
     mainWindow = window;
     noteMainWindowFocused(window);
   });
-  window.webContents.on('page-title-updated', () => installAppMenu());
+  window.webContents.on('page-title-updated', (event) => {
+    // The Connect page keeps the product title; its <title> is not for the title bar.
+    if (isPrePairingPage(window.webContents.getURL())) event.preventDefault();
+    installAppMenu();
+  });
+  // Connect page and pairing error screens: no File/Edit/View bar on Linux and
+  // Windows. The workspace keeps its menu (accelerators work either way).
+  if (hidesMenuBarBeforePairing(process.platform)) {
+    const syncMenuBar = () => {
+      if (window.isDestroyed()) return;
+      window.setMenuBarVisibility(!isPrePairingPage(window.webContents.getURL()));
+    };
+    window.webContents.on('did-navigate', syncMenuBar);
+    window.webContents.on('did-finish-load', syncMenuBar);
+  }
 
   // Route operator + cloud-api calls through the allternit-api custom protocol.
   // Local `/api/*` gets the paired device token. Cloud host `cloud` is a
@@ -1876,6 +1871,7 @@ async function initializeBundledMode(): Promise<void> {
       log.info('[Main] Window started loading');
     });
     mainWindow.webContents.on('did-finish-load', () => {
+      if (mainWindow && !isPrePairingPage(mainWindow.webContents.getURL())) workspaceLoadFailed = false;
       prewarmHudWindowSoon();
       mainWindowLoaded = true;
       log.info('[Main] Window finished loading');
@@ -1884,8 +1880,13 @@ async function initializeBundledMode(): Promise<void> {
       sessionLinkReady = true;
       flushSessionLink();
     });
-    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       log.error(`[Main] Window failed to load: ${errorDescription} (${errorCode}) at ${validatedURL}`);
+      // The workspace can't open: show "Where Allternit runs" instead of a blank window.
+      if (isWorkspaceLoadFailure(errorCode, isMainFrame, validatedURL) && mainWindow && !mainWindow.isDestroyed()) {
+        workspaceLoadFailed = true;
+        void mainWindow.loadFile(CONNECT_PAGE_PATH, { query: { reason: 'load-failed' } });
+      }
     });
     mainWindow.webContents.on('did-navigate', (_event, url) => {
       log.info(`[Main] Window did-navigate: ${url}`);
@@ -2357,6 +2358,10 @@ function createMiniWindow(): BrowserWindow {
 }
 
 function toggleMiniWindow(): void {
+  if (!mayOpenHud(authManager.hasSession())) {
+    log.info('[QuickChat] Not opening before pairing');
+    return;
+  }
   if (!miniWindow || miniWindow.isDestroyed()) {
     miniWindow = createMiniWindow();
     miniWindow.once('ready-to-show', () => {
@@ -2378,7 +2383,23 @@ function toggleMiniWindow(): void {
 // ============================================================================
 
 function showConnectionSettings(): void {
-  if (!mainWindow) {
+  const currentUrl = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.getURL() : '';
+  if (connectionSettingsTarget({ platformUiResolved, workspaceLoadFailed, currentUrl }) === 'computers-settings') {
+    // Settings › Computers in the app: the one connect kit every surface uses.
+    showOrReopenMainWindow();
+    const win = mainWindow;
+    if (!win || win.isDestroyed()) return;
+    const open = () => {
+      win.webContents.executeJavaScript(OPEN_COMPUTERS_SETTINGS_SCRIPT).catch((error) => {
+        log.warn('[Tray] Could not open Settings › Computers:', error);
+      });
+    };
+    // A window that is still loading mounts the shell after did-finish-load.
+    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', () => setTimeout(open, 1500));
+    else open();
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createMainWindow();
   }
   mainWindow.show();
@@ -2401,11 +2422,7 @@ function installAppMenu(): void {
     toggleHud: () => toggleHudWindow(),
     checkForUpdates: () => {
       if (!app.isPackaged) return;
-      try {
-        autoUpdater.checkForUpdates();
-      } catch (error) {
-        log.warn('[Menu] Update check failed:', error);
-      }
+      appUpdater?.check(true);
       void checkRuntimeNow();
     },
     openUrl: (url) => openExternalAllowlisted(url),
@@ -2920,6 +2937,11 @@ async function passKeychainGate(): Promise<boolean> {
 app.whenReady().then(async () => {
   console.log('[Main] App is ready...');
 
+  // Linux AppImage started without the Chromium sandbox (user namespaces
+  // blocked): offer the AppArmor fix and relaunch, or keep going with one
+  // notice. Before any window, so a relaunch never shows a half-started app.
+  if (!(await passAppImageSandboxGate(log))) return;
+
   // Phase 0 convenience hook: open the Allternit Docs editor on startup
   // when explicitly requested (e.g. dev smoke test). Delivered to the main
   // window (queued until it has loaded).
@@ -3130,7 +3152,10 @@ app.whenReady().then(async () => {
   if (isMac) {
     app.setLoginItemSettings({ openAtLogin: prefs.startupOnLogin });
     if (prefs.menuBarMode) app.dock?.hide();
+  } else if (process.platform === 'linux' && prefs.startupOnLogin) {
+    setLinuxAutostart(true); // refresh Exec after an update; never delete on launch
   }
+  void warnIfNoKeyring(log);
 
   // Initialize MCP host if enabled
   if (featureFlagManager.get<boolean>('mcp.enabled')) {
@@ -3184,6 +3209,7 @@ app.whenReady().then(async () => {
   } else {
     log.warn(`[Main] Failed to register fallback global HUD hotkey: ${HUD_HOTKEY_FALLBACK} (another app may own it)`);
   }
+  for (const [accel, ok] of hudHotkeyStatus) noteShortcutResult(accel, ok);
   // Settings and the tray show which chords are taken by another app.
   void updateTrayMenu();
 
@@ -3404,6 +3430,16 @@ fabricWorkerManager.onStateChange((state: FabricWorkerState) => {
 });
 
 // Folder-grant wizard bridges (startup window preload → main).
+// Paired pairing card "Open Allternit": bring the workspace forward now; the
+// startup window would otherwise close by itself once the workspace loads.
+ipcMain.on('startup:open-app', () => {
+  if (!mainWindow || mainWindow.isDestroyed() || folderGrantsPending) return;
+  mainWindow.show();
+  mainWindow.focus();
+  if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+  splashWindow = null;
+});
+
 ipcMain.handle('startup:pick-folder', async () => {
   if (!splashWindow || splashWindow.isDestroyed()) return null;
   const result = await dialog.showOpenDialog(splashWindow, {
@@ -3517,24 +3553,32 @@ ipcMain.handle('app:get-info', () => ({
 // Auto-update control plane (renderer observes status via app:update-status)
 ipcMain.handle('app:check-for-updates', async () => {
   if (!app.isPackaged) {
-    log.info('[autoUpdater] Skipping update check in unpackaged dev build');
+    log.info('[appUpdater] Skipping update check in unpackaged dev build');
     return { ok: false, reason: 'dev-build' } as const;
   }
   try {
-    autoUpdater.checkForUpdates();
+    appUpdater?.check(true);
     // The runtime (API, gizzi, screens) updates separately: check it too.
     void checkRuntimeNow();
     return { ok: true } as const;
   } catch (error) {
-    log.error('[autoUpdater] Manual check failed:', error);
+    log.error('[appUpdater] Manual check failed:', error);
     return { ok: false, reason: 'check-failed', message: String(error) } as const;
   }
 });
 handleGuarded('app:install-update', async () => {
+  const updater = appUpdateDownloaded ? appUpdater : null;
+  if (updater) {
+    // Install BEFORE cleanup: a refused macOS bundle swap, a cancelled Linux
+    // password prompt or a missing Windows installer leaves the app running,
+    // and a notification opens the release page.
+    if (!(await updater.install())) return;
+  }
   // Clean up first so before-quit does not cancel the updater's own quit.
   await runQuitCleanup();
-  if (!appUpdateDownloaded && runtimePackages().hasPendingUpdate()) {
-    // Only the runtime changed: a restart promotes the staged package.
+  if (!updater) {
+    // Only the runtime changed (or nothing did): a restart promotes any
+    // staged runtime package.
     app.relaunch();
     app.exit(0);
     return;
@@ -3543,7 +3587,9 @@ handleGuarded('app:install-update', async () => {
   // that hide on close (HUD, Quick Chat) must already see a quit or they
   // cancel the close and the install never happens.
   (app as unknown as { isQuitting?: boolean }).isQuitting = true;
-  autoUpdater.quitAndInstall();
+  // macOS: bundle swapped; Linux: .deb installed (relaunch scheduled by both).
+  // Windows: runs the downloaded installer silently, then relaunches.
+  updater.finish();
 });
 // Preload uses sendSync at module load; handle() only answers invoke().
 ipcMain.on('app:get-platform-url', (event) => {
@@ -3935,6 +3981,7 @@ function hudUrl(): string {
  * (attachPetToHud puts the pet at the HUD's top-right corner).
  */
 function openHudForCompanion(agentId: string | null, anchor?: Electron.Rectangle): void {
+  if (!mayOpenHud(authManager.hasSession())) return;
   if (!anchor && hudCompanionAgentId === agentId && isHudAlive() && hudWindow!.isVisible()) {
     hideHudWindow();
     return;
@@ -4047,6 +4094,7 @@ function createHudWindow({ show }: { show: boolean }): BrowserWindow {
 /** Create the HUD window and wire its handlers. `show:false` pre-warms it. */
 function ensureHudWindow({ show }: { show: boolean }): BrowserWindow {
   if (isHudAlive()) return hudWindow!;
+  if (!mayOpenHud(authManager.hasSession())) throw new Error('HUD is unavailable until this computer is paired');
   log.info('[HUD] Creating floating HUD window', { show });
   const win = createHudWindow({ show });
   hudWindow = win;
@@ -4097,6 +4145,10 @@ function ensureHudWindow({ show }: { show: boolean }): BrowserWindow {
 }
 
 function openHudWindow({ place = true }: { place?: boolean } = {}): void {
+  if (!mayOpenHud(authManager.hasSession())) {
+    log.info('[HUD] Not opening before pairing');
+    return;
+  }
   if (isHudAlive()) {
     showHudWindow({ place });
     return;
@@ -4108,7 +4160,7 @@ function openHudWindow({ place = true }: { place?: boolean } = {}): void {
 /** Pre-create the HUD hidden once the main window is up, so the first summon is instant. */
 let hudPrewarmTimer: ReturnType<typeof setTimeout> | null = null;
 function prewarmHudWindowSoon(): void {
-  if (HEADLESS || hudPrewarmTimer || isHudAlive()) return;
+  if (HEADLESS || !mayOpenHud(authManager.hasSession()) || hudPrewarmTimer || isHudAlive()) return;
   hudPrewarmTimer = setTimeout(() => {
     if (isHudAlive() || (app as unknown as { isQuitting?: boolean }).isQuitting) return;
     try {
@@ -4120,6 +4172,10 @@ function prewarmHudWindowSoon(): void {
 }
 
 function toggleHudWindow(): void {
+  if (!mayOpenHud(authManager.hasSession())) {
+    log.info('[HUD] Not opening before pairing');
+    return;
+  }
   if (isHudAlive()) {
     if (hudWindow!.isVisible() && hudWindow!.isFocused()) {
       hideHudWindow();
@@ -4938,15 +4994,33 @@ handleGuarded('sidecar:restart', async () => {
 // IPC: Connection settings
 // ============================================================================
 
-ipcMain.handle('connection:test', async () => {
+ipcMain.handle('connection:test', async (event, target?: { remoteUrl?: string }) => {
   const backend = store.get('backend');
+  let url = activeBackendUrl;
+  let mode: string = backend.mode;
+  // The Connect page checks a typed server address before it is saved.
+  if (target?.remoteUrl) {
+    assertTrustedSender(event, 'connection:test');
+    let parsed: URL;
+    try {
+      parsed = new URL(target.remoteUrl);
+    } catch {
+      return { mode: 'remote', url: target.remoteUrl, status: 'invalid' };
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return { mode: 'remote', url: target.remoteUrl, status: 'invalid' };
+    }
+    url = parsed.origin;
+    mode = 'remote';
+  }
+  const started = Date.now();
   try {
-    const res = await fetch(`${activeBackendUrl}/health`, {
+    const res = await fetch(`${url}/health`, {
       signal: AbortSignal.timeout(3000),
     });
-    return { mode: backend.mode, url: activeBackendUrl, status: res.ok ? 'connected' : 'error' };
+    return { mode, url, status: res.ok ? 'connected' : 'error', latencyMs: Date.now() - started };
   } catch {
-    return { mode: backend.mode, url: activeBackendUrl, status: 'disconnected' };
+    return { mode, url, status: 'disconnected' };
   }
 });
 
@@ -4955,7 +5029,8 @@ ipcMain.handle('connection:get-backend', () => {
   return { mode: backend.mode, url: activeBackendUrl };
 });
 
-handleGuarded('connection:set-backend', async (_event, config: { mode: 'bundled' | 'remote' | 'development'; remoteUrl?: string }) => {
+handleGuarded('connection:set-backend', async (_event, input: { mode: 'bundled' | 'remote' | 'development'; remoteUrl?: string; restart?: boolean }) => {
+  const { restart, ...config } = input;
   const nextBackend = { ...store.get('backend'), ...config };
   store.set('backend', nextBackend);
   void authManager.updateBackendProfile({
@@ -4974,6 +5049,13 @@ handleGuarded('connection:set-backend', async (_event, config: { mode: 'bundled'
   }
 
   broadcastToMainWindows('connection:state', { mode: nextBackend.mode, url: activeBackendUrl });
+  // Connect page "Save and restart": the engine choice applies on the next launch.
+  if (restart) {
+    setTimeout(() => {
+      app.relaunch();
+      app.quit();
+    }, 300);
+  }
 });
 
 // ============================================================================
@@ -5250,11 +5332,12 @@ handleGuarded('menuBar:setMode', (_event, enabled: boolean) => {
   return true;
 });
 
-ipcMain.handle('startup:getOnLogin', () => persistedState.get('prefs').startupOnLogin);
+ipcMain.handle('startup:getOnLogin', () => (process.platform === 'linux' ? isLinuxAutostartEnabled() : persistedState.get('prefs').startupOnLogin));
 
 handleGuarded('startup:setOnLogin', (_event, enabled: boolean) => {
   persistedState.patch('prefs', { startupOnLogin: enabled });
   if (isMac) app.setLoginItemSettings({ openAtLogin: enabled });
+  else if (process.platform === 'linux') setLinuxAutostart(enabled);
   return true;
 });
 

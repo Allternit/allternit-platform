@@ -3,388 +3,290 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Connect to Allternit - Allternit Desktop</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg width='64' height='64' viewBox='0 0 64 64' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='64' height='64' rx='16' fill='%230F0C0A'/%3E%3Cpath d='M13 46.5V24.5L21.5 16L30 24.5V33H21.5V46.5H13Z' fill='%23D7B493'/%3E%3Cpath d='M24 46.5V35.5H32.5V27L41 35.5V46.5H24Z' fill='%23B89573'/%3E%3Cpath d='M35 24.5L43.5 16L52 24.5V46.5H43.5V33H35V24.5Z' fill='%238C6A4D'/%3E%3C/svg%3E" />
+  <meta name="color-scheme" content="light dark">
+  <title>Allternit</title>
+  <!--
+    Where Allternit runs: the fallback shown only when the app can't load the
+    workspace (main-window load failure, or tray > Connection Settings before
+    the workspace is up). Otherwise the tray opens Settings > Computers in the
+    app. Design: "Desktop pairing screens redesign" (2026-11-18).
+    IPC: window.allternit.connection.{getBackend,test,setBackend}. This page is
+    trusted by its file URL (security.ts getAppFileUrls).
+  -->
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
+    :root {
+      --bg: #FFFFFF;
+      --elev: #FFFFFF;
+      --text: #1F1E1D;
+      --text-2: #6B6A68;
+      --text-3: #8F8D8A;
+      --fill: color-mix(in srgb, var(--text) 5%, transparent);
+      --fill-strong: color-mix(in srgb, var(--text) 9%, transparent);
+      --hair: color-mix(in srgb, var(--text) 12%, transparent);
+      --success: #22c55e;
+      --error: #ef4444;
     }
-
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #232322;
+        --elev: #2C2C2B;
+        --text: #ECECEB;
+        --text-2: #A3A29F;
+        --text-3: #7C7B78;
+        --success: #4ade80;
+        --error: #f87171;
+      }
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       font-family: 'Allternit Sans', Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #fff;
+      -webkit-font-smoothing: antialiased;
     }
-
-    .container {
-      background: rgba(255, 255, 255, 0.05);
-      backdrop-filter: blur(10px);
-      border-radius: 20px;
-      padding: 48px;
-      width: 100%;
-      max-width: 480px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-
-    .logo {
-      text-align: center;
-      margin-bottom: 32px;
-    }
-
-    .logo h1 {
-      font-size: 32px;
-      font-weight: 700;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .logo p {
-      color: rgba(255, 255, 255, 0.6);
-      margin-top: 8px;
-    }
-
-    .mode-selector {
+    .panel {
+      width: 440px;
+      max-width: 100%;
+      height: min(590px, 100vh);
       display: flex;
+      flex-direction: column;
       gap: 12px;
-      margin-bottom: 24px;
+      padding: 28px 32px 24px;
     }
-
-    .mode-btn {
-      flex: 1;
-      padding: 16px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      background: rgba(255, 255, 255, 0.05);
-      border-radius: 12px;
-      color: #fff;
-      cursor: pointer;
-      transition: all 0.2s;
-      text-align: center;
+    .brand { display: flex; justify-content: center; margin-bottom: 16px; }
+    .wordmark { width: 120px; height: auto; }
+    .wordmark rect:not([fill="#D97757"]) { fill: var(--text); }
+    .title { font-size: 15px; font-weight: 600; line-height: 1.4; }
+    .hint { font-size: 12px; line-height: 1.5; color: var(--text-2); }
+    .choice {
+      display: flex; flex-direction: column; gap: 4px; width: 100%;
+      border-radius: 12px; padding: 14px; cursor: pointer;
+      background: var(--fill); border: 1.5px solid transparent;
     }
-
-    .mode-btn:hover {
-      background: rgba(255, 255, 255, 0.1);
+    .choice.on { background: var(--elev); border-color: var(--text); }
+    .choice:has(.sr-only:focus-visible) { outline: 2px solid color-mix(in srgb, var(--text) 30%, transparent); outline-offset: 2px; }
+    .choice-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; line-height: 1.4; }
+    .radio { width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%; border: 1.5px solid var(--hair); display: flex; align-items: center; justify-content: center; }
+    .choice.on .radio { border-color: var(--text); }
+    .choice.on .radio::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--text); }
+    .choice-body { padding-left: 24px; font-size: 12px; line-height: 1.625; color: var(--text-2); }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .server-url {
+      display: none; margin: 4px 0 0 24px; height: 36px; border-radius: 8px; padding: 0 12px;
+      background: var(--elev); color: var(--text); border: 1px solid var(--hair);
+      font: inherit; font-size: 13px; outline: none;
     }
-
-    .mode-btn.active {
-      border-color: #667eea;
-      background: rgba(102, 126, 234, 0.2);
+    .server-url:focus { border-color: var(--text-3); }
+    .choice.on .server-url { display: block; }
+    .result { font-size: 12px; line-height: 1.5; }
+    .result[hidden] { display: none; }
+    .result.checking { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
+    .result.ok { display: flex; align-items: center; gap: 8px; border-radius: 8px; background: var(--fill); padding: 8px 12px; }
+    .result.fail {
+      border-radius: 8px; padding: 8px 12px;
+      background: color-mix(in srgb, var(--error) 7%, transparent);
+      border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
     }
-
-    .mode-btn .icon {
-      font-size: 24px;
-      margin-bottom: 8px;
-    }
-
-    .mode-btn .label {
-      font-size: 14px;
-      font-weight: 500;
-    }
-
-    .input-group {
-      margin-bottom: 20px;
-    }
-
-    .input-group label {
-      display: block;
-      margin-bottom: 8px;
-      font-size: 14px;
-      color: rgba(255, 255, 255, 0.8);
-    }
-
-    .input-group input {
-      width: 100%;
-      padding: 14px 16px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      background: rgba(0, 0, 0, 0.3);
-      border-radius: 10px;
-      color: #fff;
-      font-size: 15px;
-      transition: border-color 0.2s;
-    }
-
-    .input-group input:focus {
-      outline: none;
-      border-color: #667eea;
-    }
-
-    .input-group input::placeholder {
-      color: rgba(255, 255, 255, 0.3);
-    }
-
-    .status {
-      padding: 12px 16px;
-      border-radius: 10px;
-      margin-bottom: 20px;
-      font-size: 14px;
-      display: none;
-    }
-
-    .status.show {
-      display: block;
-    }
-
-    .status.success {
-      background: rgba(34, 197, 94, 0.2);
-      border: 1px solid rgba(34, 197, 94, 0.3);
-      color: #4ade80;
-    }
-
-    .status.error {
-      background: rgba(239, 68, 68, 0.2);
-      border: 1px solid rgba(239, 68, 68, 0.3);
-      color: #f87171;
-    }
-
-    .status.loading {
-      background: rgba(251, 191, 36, 0.2);
-      border: 1px solid rgba(251, 191, 36, 0.3);
-      color: #fbbf24;
-    }
-
-    .actions {
-      display: flex;
-      gap: 12px;
-    }
-
+    .spinner { width: 12px; height: 12px; flex-shrink: 0; border-radius: 50%; border: 2px solid var(--text-3); border-top-color: var(--text); animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+    .ok-dot { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--success); }
+    .actions { margin-top: auto; display: flex; gap: 8px; }
     .btn {
-      flex: 1;
-      padding: 14px 24px;
-      border: none;
-      border-radius: 10px;
-      font-size: 15px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.2s;
+      flex: 1; display: inline-flex; align-items: center; justify-content: center;
+      height: 36px; border-radius: 9999px; border: 0; padding: 0 16px;
+      font: inherit; font-size: 13px; cursor: pointer; transition: opacity 0.15s ease, background-color 0.15s ease;
     }
-
-    .btn-primary {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: #fff;
-    }
-
-    .btn-primary:hover {
-      opacity: 0.9;
-      transform: translateY(-1px);
-    }
-
-    .btn-secondary {
-      background: rgba(255, 255, 255, 0.1);
-      color: #fff;
-    }
-
-    .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.15);
-    }
-
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .help {
-      margin-top: 24px;
-      padding-top: 24px;
-      border-top: 1px solid rgba(255, 255, 255, 0.1);
-    }
-
-    .help h3 {
-      font-size: 14px;
-      margin-bottom: 12px;
-      color: rgba(255, 255, 255, 0.8);
-    }
-
-    .help p {
-      font-size: 13px;
-      color: rgba(255, 255, 255, 0.5);
-      line-height: 1.6;
-    }
-
-    .help a {
-      color: #667eea;
-      text-decoration: none;
-    }
-
-    .help a:hover {
-      text-decoration: underline;
-    }
+    .btn.primary { background: var(--text); color: var(--elev); font-weight: 500; }
+    .btn.primary:hover { opacity: 0.9; }
+    .btn.quiet { background: var(--fill); color: var(--text); padding: 0 14px; }
+    .btn.quiet:hover { background: var(--fill-strong); }
+    .btn:disabled, .btn:disabled:hover { cursor: default; opacity: 0.6; }
+    .btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+    .footer { text-align: center; font-size: 11px; color: var(--text-3); }
+    .footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="logo">
-      <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-bottom: 16px;">
-        <rect width="64" height="64" rx="16" fill="#0F0C0A"/>
-        <path d="M13 46.5V24.5L21.5 16L30 24.5V33H21.5V46.5H13Z" fill="#D7B493"/>
-        <path d="M24 46.5V35.5H32.5V27L41 35.5V46.5H24Z" fill="#B89573"/>
-        <path d="M35 24.5L43.5 16L52 24.5V46.5H43.5V33H35V24.5Z" fill="#8C6A4D"/>
-      </svg>
-      <h1>Allternit Desktop</h1>
-      <p>Connect to your Allternit instance</p>
+  <main class="panel">
+    <div class="brand"><svg class="wordmark" width="120" height="12" role="img" aria-label="Allternit" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 510 50" shape-rendering="geometricPrecision"><rect x="20.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#D97757"/><rect x="20.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="10.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="30.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="0.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="10.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="30.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="40.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="0.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="40.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="0.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="40.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="60.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="60.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="80.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="80.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="90.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="100.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="100.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="120.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="120.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="130.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="140.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="140.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="160.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="170.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="180.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="190.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="200.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="180.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="180.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="180.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="180.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="220.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="230.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="240.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="250.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="260.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="220.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="220.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="230.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="240.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="250.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="220.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="220.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="230.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="240.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="250.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="260.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="280.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="290.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="300.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="310.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="280.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="320.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="280.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="290.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="300.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="310.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="280.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="300.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="280.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="310.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="320.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="340.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="380.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="340.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="350.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="380.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="340.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="360.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="380.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="340.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="370.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="380.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="340.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="380.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="410.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="420.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="430.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="420.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="420.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="420.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="410.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="420.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="430.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="460.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="470.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="480.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="490.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="500.75" y="0.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="480.75" y="10.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="480.75" y="20.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="480.75" y="30.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/><rect x="480.75" y="40.75" width="8.5" height="8.5" rx="1.5" fill="#141413"/></svg></div>
+    <p class="title">Where Allternit runs</p>
+    <p class="hint">Pick where this app gets its engine. Most people keep "On this computer".</p>
+    <div role="radiogroup" aria-label="Where Allternit runs" style="display:flex;flex-direction:column;gap:12px">
+      <label class="choice on" id="choice-here">
+        <input class="sr-only" type="radio" name="mode" value="here" checked>
+        <span class="choice-head"><span class="radio"></span>On this computer</span>
+        <span class="choice-body">Uses the engine built into Allternit Desktop. Nothing to set up.</span>
+      </label>
+      <label class="choice" id="choice-server">
+        <input class="sr-only" type="radio" name="mode" value="server">
+        <span class="choice-head"><span class="radio"></span>On my Allternit server or cloud computer</span>
+        <span class="choice-body">For an Allternit engine on a server you run, or on your Allternit cloud computer.</span>
+        <input class="server-url" id="server-url" type="url" inputmode="url" spellcheck="false" autocomplete="off" placeholder="https://allternit.example.com" aria-label="Server address">
+      </label>
     </div>
-
-    <div class="mode-selector">
-      <button class="mode-btn active" data-mode="local">
-        <div class="icon">💻</div>
-        <div class="label">Local</div>
-      </button>
-      <button class="mode-btn" data-mode="vps">
-        <div class="icon">☁️</div>
-        <div class="label">VPS</div>
-      </button>
-    </div>
-
-    <div id="local-inputs">
-      <div class="input-group">
-        <label>Local Port</label>
-        <input type="number" id="local-port" value="4096" placeholder="4096">
-      </div>
-    </div>
-
-    <div id="vps-inputs" style="display: none;">
-      <div class="input-group">
-        <label>VPS URL</label>
-        <input type="url" id="vps-url" placeholder="https://allternit.yourdomain.com">
-      </div>
-    </div>
-
-    <div id="status" class="status"></div>
-
+    <p class="result" id="result" hidden></p>
     <div class="actions">
-      <button class="btn btn-secondary" id="test-btn">Test</button>
-      <button class="btn btn-primary" id="connect-btn">Connect</button>
+      <button type="button" class="btn quiet" id="check-btn">Check</button>
+      <button type="button" class="btn primary" id="save-btn">Save and restart</button>
     </div>
-
-    <div class="help">
-      <h3>Don't have Allternit running?</h3>
-      <p>
-        Install the Allternit backend on your VPS or locally:<br>
-        <code>curl -fsSL https://allternit.com/install.sh | bash</code><br><br>
-        <a href="#" id="docs-link">View Documentation →</a>
-      </p>
-    </div>
-  </div>
+    <p class="footer"><a href="#" id="docs-link">How to run your own server</a></p>
+  </main>
 
   <script>
-    let currentMode = 'local';
-    let isConnecting = false;
+    (function () {
+      var connection = window.allternit && window.allternit.connection;
+      var shell = window.allternit && window.allternit.shell;
+      var mode = 'here';
+      var busy = false;
+      var hereChoice = document.getElementById('choice-here');
+      var serverChoice = document.getElementById('choice-server');
+      var urlInput = document.getElementById('server-url');
+      var result = document.getElementById('result');
+      var checkBtn = document.getElementById('check-btn');
+      var saveBtn = document.getElementById('save-btn');
 
-    const modeBtns = document.querySelectorAll('.mode-btn');
-    const localInputs = document.getElementById('local-inputs');
-    const vpsInputs = document.getElementById('vps-inputs');
-    const testBtn = document.getElementById('test-btn');
-    const connectBtn = document.getElementById('connect-btn');
-    const statusEl = document.getElementById('status');
-
-    if (!window.allternit) {
-      showStatus('Desktop API not available. Please restart the app.', 'error');
-    }
-
-    // Mode switching
-    modeBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        modeBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentMode = btn.dataset.mode;
-
-        if (currentMode === 'local') {
-          localInputs.style.display = 'block';
-          vpsInputs.style.display = 'none';
-        } else {
-          localInputs.style.display = 'none';
-          vpsInputs.style.display = 'block';
-        }
+      function setMode(next) {
+        mode = next;
+        hereChoice.classList.toggle('on', mode === 'here');
+        serverChoice.classList.toggle('on', mode === 'server');
+        hereChoice.querySelector('input').checked = mode === 'here';
+        serverChoice.querySelector('input[type=radio]').checked = mode === 'server';
+        if (mode === 'server') urlInput.focus();
+      }
+      document.querySelectorAll('input[name=mode]').forEach(function (input) {
+        input.addEventListener('change', function () { if (input.checked) setMode(input.value); });
       });
-    });
 
-    function showStatus(message, type) {
-      statusEl.textContent = message;
-      statusEl.className = `status ${type} show`;
-    }
-
-    function hideStatus() {
-      statusEl.className = 'status';
-    }
-
-    async function testConnection() {
-      showStatus('Testing connection...', 'loading');
-      testBtn.disabled = true;
-
-      try {
-        const result = await window.allternit.connection.test();
-
-        if (result.status === 'connected') {
-          showStatus(`✓ Connected to ${result.url}`, 'success');
-        } else {
-          showStatus(`✗ Could not connect to ${result.url}`, 'error');
-        }
-      } catch (err) {
-        showStatus(`✗ Error: ${err.message}`, 'error');
-      } finally {
-        testBtn.disabled = false;
+      function text(node, value) { node.textContent = value; return node; }
+      function show(kind, build) {
+        result.hidden = false;
+        result.className = 'result ' + kind;
+        result.setAttribute('role', kind === 'fail' ? 'alert' : 'status');
+        result.textContent = '';
+        build(result);
       }
-    }
-
-    async function connect() {
-      if (isConnecting) return;
-      isConnecting = true;
-      connectBtn.disabled = true;
-      showStatus('Connecting...', 'loading');
-
-      try {
-        // Map UI modes to backend config modes.
-        const config = currentMode === 'local'
-          ? { mode: 'bundled' }
-          : { mode: 'remote', remoteUrl: document.getElementById('vps-url').value.trim() };
-
-        await window.allternit.connection.setBackend(config);
-        const result = await window.allternit.connection.test();
-
-        if (result.status === 'connected') {
-          showStatus('Connected! Loading Allternit...', 'success');
-          // Main process will reload the window to the platform UI.
-        } else {
-          showStatus(`Failed to connect: ${result.lastError || 'Unknown error'}`, 'error');
-          isConnecting = false;
-          connectBtn.disabled = false;
-        }
-      } catch (err) {
-        showStatus(`Error: ${err.message}`, 'error');
-        isConnecting = false;
-        connectBtn.disabled = false;
+      function showChecking() {
+        show('checking', function (node) {
+          var spin = document.createElement('span');
+          spin.className = 'spinner';
+          node.appendChild(spin);
+          node.appendChild(document.createTextNode('Checking the engine…'));
+        });
       }
-    }
-
-    testBtn.addEventListener('click', testConnection);
-    connectBtn.addEventListener('click', connect);
-    document.getElementById('docs-link').addEventListener('click', (e) => {
-      e.preventDefault();
-      window.allternit.shell.openExternal('https://docs.allternit.com/setup');
-    });
-
-    // Load saved config
-    async function loadConfig() {
-      try {
-        const backend = await window.allternit.connection.getBackend();
-        if (backend.mode === 'remote' && backend.url) {
-          modeBtns[1].click();
-          document.getElementById('vps-url').value = backend.url;
-        } else {
-          // Local/bundled/development mode defaults to local UI.
-          document.getElementById('local-port').value = '4096';
-        }
-      } catch (err) {
-        console.error('Failed to load config:', err);
+      function showOk(label, ms) {
+        show('ok', function (node) {
+          var dot = document.createElement('span');
+          dot.className = 'ok-dot';
+          node.appendChild(dot);
+          node.appendChild(document.createTextNode('Works · ' + label + (typeof ms === 'number' ? ' answered in ' + ms + ' ms' : ' answered')));
+        });
       }
-    }
+      function showFail(lead, rest) {
+        show('fail', function (node) {
+          node.appendChild(text(document.createElement('b'), lead));
+          if (rest) node.appendChild(document.createTextNode(' ' + rest));
+        });
+      }
+      function hostOf(url) {
+        try { return new URL(url).host; } catch (e) { return url; }
+      }
+      function serverUrl() {
+        var raw = urlInput.value.trim();
+        if (!raw) return null;
+        if (!/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
+        try {
+          var parsed = new URL(raw);
+          return parsed.hostname ? parsed.origin : null;
+        } catch (e) { return null; }
+      }
+      function needsAddress() {
+        showFail('Enter the server address.', 'Use the full address, like https://allternit.example.com.');
+        urlInput.focus();
+      }
+      function cantReach(url) {
+        if (mode === 'server') showFail("Can't reach " + hostOf(url) + '.', 'Check the address, and check that the server is on.');
+        else showFail("Can't reach the engine on this computer.", 'Save and restart to start it again.');
+      }
+      function setBusy(value) {
+        busy = value;
+        checkBtn.disabled = value;
+        saveBtn.disabled = value;
+      }
 
-    loadConfig();
+      async function check() {
+        if (busy || !connection) return;
+        var url = null;
+        if (mode === 'server') {
+          url = serverUrl();
+          if (!url) return needsAddress();
+        }
+        setBusy(true);
+        showChecking();
+        try {
+          var res = await connection.test(url ? { remoteUrl: url } : undefined);
+          if (res && res.status === 'connected') showOk(mode === 'here' ? 'this computer' : hostOf(res.url || url), res.latencyMs);
+          else cantReach((res && res.url) || url || '');
+        } catch (err) {
+          console.error('[Connect] check failed', err);
+          cantReach(url || '');
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function save() {
+        if (busy || !connection) return;
+        var config = { mode: 'bundled', restart: true };
+        if (mode === 'server') {
+          var url = serverUrl();
+          if (!url) return needsAddress();
+          config = { mode: 'remote', remoteUrl: url, restart: true };
+        }
+        setBusy(true);
+        try {
+          await connection.setBackend(config);
+          show('checking', function (node) {
+            var spin = document.createElement('span');
+            spin.className = 'spinner';
+            node.appendChild(spin);
+            node.appendChild(document.createTextNode('Restarting Allternit…'));
+          });
+        } catch (err) {
+          console.error('[Connect] save failed', err);
+          showFail("Couldn't save this choice.", 'Restart Allternit and try again.');
+          setBusy(false);
+        }
+      }
+
+      checkBtn.addEventListener('click', check);
+      saveBtn.addEventListener('click', save);
+      urlInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') check(); });
+      document.getElementById('docs-link').addEventListener('click', function (e) {
+        e.preventDefault();
+        if (shell) shell.openExternal('https://docs.allternit.com/self-hosted/quickstart');
+      });
+
+      if (!connection) {
+        showFail('Allternit needs a restart.', 'Quit Allternit and open it again.');
+        setBusy(true);
+        return;
+      }
+      if (new URLSearchParams(location.search).get('reason') === 'load-failed') {
+        showFail("Allternit couldn't open your workspace.", 'Check where it runs, then save and restart.');
+      }
+      connection.getBackend().then(function (backend) {
+        if (backend && backend.mode === 'remote' && backend.url) {
+          urlInput.value = backend.url;
+          setMode('server');
+          urlInput.blur();
+        }
+      }).catch(function (err) { console.error('[Connect] could not read the saved choice', err); });
+    })();
   </script>
 </body>
 </html>
