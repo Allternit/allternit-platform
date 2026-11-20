@@ -26,6 +26,10 @@ activityCompose = "1.10.1"
 # androidx.webkit (Apache-2.0): origin-scoped web message listeners and document-start scripts for
 # the wave D artifact web views (the iOS WKScriptMessageHandler / WKUserScript equivalents).
 webkit = "1.12.1"
+# Google Play Billing Library (Apache-2.0) for the native app's plans and credit packs (wave H1, store purchases
+# D15). 8.3.0 is the version the play flavor already ships through androidbrowserhelper billing:1.2.0; new apps and
+# updates need PBL 8+. Only :feature:billing uses it, so only the nativeapp flavor carries it.
+playBilling = "8.3.0"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -43,6 +47,7 @@ clerk-android-api = { group = "com.clerk", name = "clerk-android-api", version.r
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-browser = { group = "androidx.browser", name = "browser", version = "1.8.0" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
+play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "playBilling" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

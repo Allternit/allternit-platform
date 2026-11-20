@@ -99,6 +99,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             val state by AllternitAuth.state.collectAsState()
             val signedIn = state is AuthState.SignedIn || skippedAuth
+            // Wave H1 (iOS StorePurchaseManager.start at launch): load the store catalog and post every open Play purchase,
+            // again after each sign-in. Nothing is bought here.
+            LaunchedEffect(state is AuthState.SignedIn) {
+                if (state is AuthState.SignedIn) com.allternit.feature.billing.PlayPurchases.start(applicationContext)
+            }
             val firstRun = remember { FirstRunStore(applicationContext) }
             LaunchedEffect(firstRun) { firstRun.load() }
             // Sign-in is always dark, like iOS LoginGateView; the workspace is light by default.

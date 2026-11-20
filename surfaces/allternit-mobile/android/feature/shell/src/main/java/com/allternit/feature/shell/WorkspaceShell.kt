@@ -613,6 +613,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 },
                                 openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
                                 openModels = { page = ShellPage.Section(RailRow("models", "Models", DesignR.drawable.ph_cpu)) },
+                                // Files & devices → Open Cowork workspace (iOS sets the mode to Cowork; Android opens the Cowork section).
+                                openCowork = { page = ShellPage.Section(RailRow("cowork", "Cowork", DesignR.drawable.ph_desktop)) },
                             ),
                         )
                         ShellPage.AllChats -> SessionOverviewScreen(

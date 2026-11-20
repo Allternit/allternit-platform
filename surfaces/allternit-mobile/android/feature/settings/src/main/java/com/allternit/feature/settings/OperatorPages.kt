@@ -112,39 +112,12 @@ internal fun PlatformPage(back: () -> Unit) {
     }
 }
 
-/** iOS RuntimeOperationsView: the credit budget, with its hourly limit. */
+/** iOS RuntimeOperationsView: the runtime budget dashboard (iOS BudgetDashboardView), then Prewarm and Replay. */
 @Composable
 internal fun RuntimeOpsPage(back: () -> Unit, push: (String) -> Unit) {
-    val scope = rememberCoroutineScope()
-    val (load, reload) = rememberLoad("runtimeBudget") { Net.get("runtime/budget").toLoad("load the budget") }
-    var quota by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    var saved by remember { mutableStateOf(false) }
     SPage("Runtime operations", tag = "settingsRuntimeOps", onBack = back) {
         SNote("How many credits your bots may use each hour, and the tools that keep the runtime fast.")
-        LoadView(load, reload, "load the budget") { body ->
-            val o = body.obj
-            SCard {
-                val facts = o?.facts(emptySet()).orEmpty()
-                if (facts.isEmpty()) SRow("Budget", "runtime_budget", value = "No limit set", chevron = false)
-                facts.forEachIndexed { i, (k, v) ->
-                    if (i > 0) SDivider()
-                    SRow(k, "runtime_fact_$i", value = v, chevron = false)
-                }
-            }
-        }
-        SLabel("Hourly limit")
-        SField("Credits per hour", quota, "runtime_quota", { quota = it.filter { c -> c.isDigit() || c == '.' }; saved = false })
-        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SButton(if (saved) "Saved" else "Set limit", "runtime_setQuota", enabled = quota.toDoubleOrNull() != null) {
-                scope.launch {
-                    error = null
-                    val r = Net.send("POST", "runtime/budget/quota", buildJsonObject { put("credits_per_hour", quota.toDouble()) })
-                    if (r is ApiResult.Ok) { saved = true; reload() } else error = r.friendly("set the limit")
-                }
-            }
-        }
-        SError(error)
+        BudgetDashboard()
         SCard(Modifier.padding(top = 18.dp)) {
             SRow("Prewarm", "runtime_prewarm", onClick = { push("prewarm") })
             SDivider()

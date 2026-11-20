@@ -57,6 +57,8 @@ class SettingsHost(
     val openPhoneControl: () -> Unit,
     /** Models: browse open models (the Models section). */
     val openModels: () -> Unit,
+    /** Files & devices → "Open Cowork workspace" (iOS sets the mode to Cowork). */
+    val openCowork: () -> Unit = {},
 )
 
 /** One page in Settings (iOS SettingsPageID + `phone: {section, order}`). */
@@ -153,7 +155,7 @@ private const val STATUS_URL = "https://status.allternit.com"
 /**
  * Settings (iOS SettingsView, phone calm I13): the root with the Accounts card, Account, Assistant, Bots and
  * computers, App, Appearance, one Advanced row and Log out; Advanced lists every other page. Each row pushes its
- * page with a ‹ back. Pages not built yet (Billing, Usage, the provider pages) show a placeholder that names the screen.
+ * page with a ‹ back. Pages not built yet (Usage, the provider pages) show a placeholder that names the screen.
  */
 @Composable
 fun SettingsRoot(host: SettingsHost) {
@@ -207,6 +209,10 @@ fun SettingsRoot(host: SettingsHost) {
             "self-hosted-session" -> SelfHostedSessionPage(back)
             "brain" -> BrainPage(back, push)
             "brain-capture" -> BrainCapturePage(back)
+            "billing" -> BillingPage(host, back)
+            "gizziio-code" -> ProductsPage(ProductsPart.GizziCode, host, back)
+            "cowork" -> ProductsPage(ProductsPart.Cowork, host, back)
+            "extensions" -> ProductsPage(ProductsPart.Extensions, host, back)
             else -> SPlaceholder(pageLabel(top), back)
         }
     }
