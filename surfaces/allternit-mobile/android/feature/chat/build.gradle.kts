@@ -2,6 +2,8 @@
 // ChatScreen + ChatViewModel, a port of iOS Features/Chat: send and stream a turn, history,
 // abort, edit-resend, the message cards, permission asks and the no-computer state.
 // :feature:shell depends on it; only :app's nativeapp flavor ships it.
+import java.security.MessageDigest
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
@@ -71,12 +73,12 @@ val verifySherpaOnnx by tasks.registering {
     val aar = sherpaOnnxFiles
     doLast {
         val file = aar.singleFile
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
             val buf = ByteArray(1 shl 20)
             while (true) { val n = input.read(buf); if (n < 0) break; digest.update(buf, 0, n) }
         }
-        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        val actual = digest.digest().joinToString("") { b -> "%02x".format(b) }
         check(actual == expected) { "sherpa-onnx AAR ${file.name}: sha256 $actual, expected $expected" }
     }
 }
