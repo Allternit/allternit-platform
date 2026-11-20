@@ -256,7 +256,7 @@ internal class WaitingGamesEngine(racers: List<WaitingGameRacer>, private val pr
         prefs.edit().putString(WaitingGamesStore.BEST_KEY, out.toString()).apply()
     }
 
-    fun setHud(items: List<String>) {
+    fun updateHud(items: List<String>) {
         if (items == hudSent) return
         hudSent = items
         main.post { hud = items }
@@ -274,7 +274,7 @@ internal class WaitingGamesEngine(racers: List<WaitingGameRacer>, private val pr
     fun pick(id: WaitingGameId) {
         game = games[id]
         hideBanner()
-        setHud(emptyList())
+        updateHud(emptyList())
         if (W > 0) game?.initGame() else needsInit = true
     }
 
@@ -287,7 +287,7 @@ internal class WaitingGamesEngine(racers: List<WaitingGameRacer>, private val pr
     /** A key the game took ("ArrowUp", "Enter", "Backspace", " " or a letter). */
     fun key(key: String): Boolean = if (playing && !needsInit) game?.key(key) ?: false else false
 
-    fun setPlaying(on: Boolean) {
+    fun updatePlaying(on: Boolean) {
         if (on == playing) return
         playing = on
         last = null
@@ -491,7 +491,7 @@ private class FishGame(e: WaitingGamesEngine) : WaitingGame(e) {
         pops.removeAll { t - it.t >= 0.7 }
         npc.removeAll { it.dead || it.x <= -16 || it.x >= C + 16 }
         while (npc.size < 14) spawn(false)
-        e.setHud(listOf("Score $score", "Size ${me.size} / 7", "Best ${max(best ?: 0.0, score.toDouble()).toInt()}"))
+        e.updateHud(listOf("Score $score", "Size ${me.size} / 7", "Best ${max(best ?: 0.0, score.toDouble()).toInt()}"))
     }
 
     override fun draw(p: WaitingGamesPainter, t: Double) {
@@ -618,7 +618,7 @@ private class RaceGame(e: WaitingGamesEngine, bots: List<WaitingGameRacer>) : Wa
             if (r.pos >= 1) finish(i)
         }
         val secs = e.now - t0
-        e.setHud(listOf("Word ${min(idx + 1, GOAL)} / $GOAL", "${(chars / 5.0 / max(0.1, secs / 60)).toIntRounded()} wpm"))
+        e.updateHud(listOf("Word ${min(idx + 1, GOAL)} / $GOAL", "${(chars / 5.0 / max(0.1, secs / 60)).toIntRounded()} wpm"))
     }
 
     override fun draw(p: WaitingGamesPainter, t: Double) {
@@ -714,7 +714,7 @@ private class CatchGame(e: WaitingGamesEngine) : WaitingGame(e) {
             }
         }
         items.removeAll { it.gone || it.y >= R + 1 }
-        e.setHud(listOf("Tokens $score", "♥".repeat(max(0, lives)) + "♡".repeat(3 - max(0, lives))))
+        e.updateHud(listOf("Tokens $score", "♥".repeat(max(0, lives)) + "♡".repeat(3 - max(0, lives))))
     }
 
     override fun draw(p: WaitingGamesPainter, t: Double) {
@@ -777,7 +777,7 @@ private class DodgeGame(e: WaitingGamesEngine) : WaitingGame(e) {
             }
         }
         m.removeAll { it.y >= R + 3 || it.x <= -8 }
-        e.setHud(listOf(String.format(Locale.ROOT, "%.1f s", time), String.format(Locale.ROOT, "Best %.1f s", max(best ?: 0.0, if (over) 0.0 else time))))
+        e.updateHud(listOf(String.format(Locale.ROOT, "%.1f s", time), String.format(Locale.ROOT, "Best %.1f s", max(best ?: 0.0, if (over) 0.0 else time))))
     }
 
     override fun draw(p: WaitingGamesPainter, t: Double) {
@@ -875,7 +875,7 @@ private class BugBashGame(e: WaitingGamesEngine) : WaitingGame(e) {
             }
         }
         splat.removeAll { t - it.t >= 0.7 }
-        e.setHud(listOf("Squashed $score", "${ceil(left).toInt()} s", "Best ${(best ?: 0.0).toInt()}"))
+        e.updateHud(listOf("Squashed $score", "${ceil(left).toInt()} s", "Best ${(best ?: 0.0).toInt()}"))
     }
 
     override fun draw(p: WaitingGamesPainter, t: Double) {
@@ -989,7 +989,7 @@ private class StackGame(e: WaitingGamesEngine) : WaitingGame(e) {
         }
         for (d in debris) { d.vy += 900 * dt; d.y += d.vy * dt }
         debris.removeAll { it.y >= H + 60 }
-        e.setHud(listOf("Shipped ${blocks.size - 1}", "Best ${max(best ?: 0.0, (blocks.size - 1).toDouble()).toInt()}"))
+        e.updateHud(listOf("Shipped ${blocks.size - 1}", "Best ${max(best ?: 0.0, (blocks.size - 1).toDouble()).toInt()}"))
     }
 
     override fun draw(p: WaitingGamesPainter, t: Double) {
@@ -1094,7 +1094,7 @@ private class SnakeGame(e: WaitingGamesEngine) : WaitingGame(e) {
             s.add(0, n)
             if (n == food) { score += 1; food = place() } else s.removeAt(s.lastIndex)
         }
-        e.setHud(listOf("Context ${s.size * 4}k / 200k", "Tokens $score"))
+        e.updateHud(listOf("Context ${s.size * 4}k / 200k", "Tokens $score"))
     }
 
     override fun draw(p: WaitingGamesPainter, t: Double) {
@@ -1181,7 +1181,7 @@ private class MemoryGame(e: WaitingGamesEngine) : WaitingGame(e) {
             open = mutableListOf(); lock = 0.0
         }
         for (k in cards) k.flip += ((if (k.up || k.done) 1.0 else 0.0) - k.flip) * min(1.0, dt * 12)
-        e.setHud(listOf("Moves $moves", "Pairs ${cards.count { it.done } / 2} / 8"))
+        e.updateHud(listOf("Moves $moves", "Pairs ${cards.count { it.done } / 2} / 8"))
     }
 
     override fun draw(p: WaitingGamesPainter, t: Double) {

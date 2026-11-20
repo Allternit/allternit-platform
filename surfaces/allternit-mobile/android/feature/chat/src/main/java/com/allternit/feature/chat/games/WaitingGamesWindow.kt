@@ -199,9 +199,9 @@ private fun WaitingGamesWindow(racers: () -> List<WaitingGameRacer>) {
         if (store.game.site != null && store.game !in visited) visited.add(store.game)
         focusAsk += 1
     }
-    LaunchedEffect(live) { engine.setPlaying(live) }
+    LaunchedEffect(live) { engine.updatePlaying(live) }
     LaunchedEffect(store.work) { if (store.work == WaitingGamesStore.Work.Working) readyDismissed = false }
-    DisposableEffect(engine) { onDispose { engine.setPlaying(false) } }
+    DisposableEffect(engine) { onDispose { engine.updatePlaying(false) } }
 
     // The frame clock: runs only while the game plays (iOS TimelineView paused: !playing).
     var frame by remember { mutableLongStateOf(0L) }
@@ -439,7 +439,7 @@ private fun TopBar(reduceMotion: Boolean) {
                         leadingIcon = if (g == store.game) ({ Icon(painterResource(DesignR.drawable.ph_check), contentDescription = null, modifier = Modifier.size(16.dp)) }) else null,
                         onClick = {
                             menu = false
-                            store.setGame(g)
+                            store.selectGame(g)
                         },
                         modifier = Modifier.testTag("waitingGame_${g.raw}"),
                     )

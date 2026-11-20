@@ -101,7 +101,7 @@ object WaitingGamesStore {
         work = null
     }
 
-    fun setGame(game: WaitingGameId) {
+    fun selectGame(game: WaitingGameId) {
         prefs?.edit()?.putString(GAME_KEY, game.raw)?.apply()
         this.game = game
     }
