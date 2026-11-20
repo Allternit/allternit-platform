@@ -523,6 +523,20 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 ),
                                 initialTasks = current.row.id == "cowork-tasks",
                             )
+                            // Wave G2: Customize (iOS CustomizeScreen) and Connectors (iOS ConnectorsListView), from the drawer and the + sheet.
+                            "customize" -> com.allternit.feature.settings.CustomizeRoot(
+                                com.allternit.feature.settings.SettingsHost(
+                                    account = account,
+                                    backend = chatBackend,
+                                    versionName = "",
+                                    onClose = { page = ShellPage.Settings },
+                                    connections = { _ -> },
+                                    openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
+                                    openModels = { page = ShellPage.Section(RailRow("models", "Models", DesignR.drawable.ph_cpu)) },
+                                ),
+                                onBack = { page = ShellPage.Home },
+                            )
+                            "connectors" -> com.allternit.feature.settings.ConnectorsRoot(onBack = { page = ShellPage.Home })
                             "models" -> com.allternit.feature.models.ModelsRoot(
                                 com.allternit.feature.models.ModelsHost(
                                     signedIn = account != null,

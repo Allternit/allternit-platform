@@ -119,7 +119,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| BrainCaptureSheet | ios/Features/Brain/BrainCaptureSheet.swift | — | — | todo | — |
+| BrainCaptureSheet | ios/Features/Brain/BrainCaptureSheet.swift | — | feature/settings/OperatorPages.kt (BrainCapturePage) | built (#2655) | Saved on this phone; the git push to the brain remote is not on Android |
 
 ## Calls
 
@@ -190,7 +190,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| ConnectorsListView | ios/Features/Connectors/ConnectorsListView.swift | — | — | todo | — |
+| ConnectorsListView | ios/Features/Connectors/ConnectorsListView.swift | — | feature/settings/CustomizePages.kt (ConnectorsRoot) | built (#2655) | — |
 
 ## Cowork
 
@@ -207,8 +207,8 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: customize | — | src/fabric-session/phone/phone-nav.ts (PhoneSection customize) | — | todo | — |
-| CustomizeScreen | ios/Features/Customize/CustomizeScreen.swift | — | — | todo | — |
+| section: customize | — | src/fabric-session/phone/phone-nav.ts (PhoneSection customize) | feature/shell/WorkspaceShell.kt (customize section) + feature/settings/CustomizePages.kt | built (#2655) | — |
+| CustomizeScreen | ios/Features/Customize/CustomizeScreen.swift | — | feature/settings/CustomizePages.kt (CustomizeRoot) | built (#2655) | Plugin marketplace Sources and Publish pages not built |
 
 ## Decisions
 
@@ -297,12 +297,12 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | section: settings | — | src/fabric-session/phone/phone-nav.ts (PhoneSection settings) | feature/shell WorkspaceShell.kt (ShellPage.Settings -> SettingsRoot) | built (#2653) | drawer avatar and the first-run fix open it |
 | SettingsScreen | — | src/fabric-session/phone/screens/SettingsScreen.tsx | feature/settings/SettingsRoot.kt | built (#2653) | part 2 replaces the placeholders |
 | AccountProfileView | ios/Features/Settings/AccountProfileView.swift | — | feature/settings/AccountPages.kt (ProfilePage) | built (#2653) | org switching not built |
-| BrainSpikeView | ios/Features/Settings/BrainSpike/BrainSpikeView.swift | — | — | todo | — |
+| BrainSpikeView | ios/Features/Settings/BrainSpike/BrainSpikeView.swift | — | feature/settings/OperatorPages.kt (BrainPage) | built (#2655) | The git proof run is not on Android; shows the capture queue |
 | BudgetDashboardView | ios/Features/Settings/BudgetDashboardView.swift | — | — | todo | — |
-| CapabilitiesSettingsView | ios/Features/Settings/CapabilitiesSettingsView.swift | — | — | todo | — |
-| CloudComputerBackupsView | ios/Features/Settings/CloudComputerBackupsView.swift | — | — | todo | — |
-| CloudDeployManagerView | ios/Features/Settings/CloudDeployManagerView.swift | — | — | todo | — |
-| CloudInstancesManagerView | ios/Features/Settings/CloudInstancesManagerView.swift | — | — | todo | — |
+| CapabilitiesSettingsView | ios/Features/Settings/CapabilitiesSettingsView.swift | — | feature/settings/CustomizePages.kt (CapabilitiesPage) | built (#2655) | — |
+| CloudComputerBackupsView | ios/Features/Settings/CloudComputerBackupsView.swift | — | feature/settings/ResourcePages.kt (CloudBackupsPage) | built (#2655) | Computer export (zip) not built |
+| CloudDeployManagerView | ios/Features/Settings/CloudDeployManagerView.swift | — | feature/settings/ResourcePages.kt (CLOUD_DEPLOY) | built (#2655) | Live status polling after create is a manual Refresh |
+| CloudInstancesManagerView | ios/Features/Settings/CloudInstancesManagerView.swift | — | feature/settings/ResourcePages.kt (CLOUD_INSTANCES) | built (#2655) | — |
 | ComputeBillingView | ios/Features/Settings/ComputeBillingView.swift | — | — | todo | — |
 | ConnectionRowView | ios/Features/Settings/Connections/ConnectionRowView.swift | — | feature/shell/firstrun/FirstRunSetupScreen.kt (ConnectionRow, now internal) | built (#2653) | — |
 | ConnectionsSettingsView | ios/Features/Settings/Connections/ConnectionsSettingsView.swift | — | feature/shell/firstrun/SettingsConnections.kt (ConnectionsSettingsScreen) | built (#2653) | seven groups on the setup connect kit; voice keys wait for Voice (part 2) |
@@ -310,33 +310,33 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | DeleteAccountView | ios/Features/Settings/DeleteAccountView.swift | — | feature/settings/AccountPages.kt (DeleteAccountPage), core/auth AllternitAuth.deleteAccount | built (#2653) | same Clerk user.delete() as iOS; never run while building |
 | DeviceAccessSettingsView | ios/Features/Settings/DeviceAccessSettingsView.swift | — | feature/settings/DevicePages.kt (DeviceAccessPage) | built (#2653) | Android permissions per kind; no Shortcuts or keyboard sections |
 | DevicePairingView | ios/Features/Settings/DevicePairingView.swift | — | feature/settings/DevicePages.kt (DevicePairingPage) | built (#2653) | — |
-| EnterpriseBYOCPanelView | ios/Features/Settings/EnterpriseBYOCPanelView.swift | — | — | todo | — |
-| FilesDashboardView | ios/Features/Settings/FilesDashboardView.swift | — | — | todo | — |
-| FilesKeysView | ios/Features/Settings/FilesKeysView.swift | — | — | todo | — |
-| InfrastructureSettingsView | ios/Features/Settings/InfrastructureSettingsView.swift | — | — | todo | — |
+| EnterpriseBYOCPanelView | ios/Features/Settings/EnterpriseBYOCPanelView.swift | — | feature/settings/ResourcePages.kt (BYOC) | built (#2655) | Usage tab and credential test not built |
+| FilesDashboardView | ios/Features/Settings/FilesDashboardView.swift | — | feature/settings/OperatorPages.kt (FilesPage) | built (#2655) | Shares, guests and kept-offline need the Files engine |
+| FilesKeysView | ios/Features/Settings/FilesKeysView.swift | — | feature/settings/OperatorPages.kt (FilesKeysPage) | built (#2655) | Approve, decline and rotate need the Files crypto engine |
+| InfrastructureSettingsView | ios/Features/Settings/InfrastructureSettingsView.swift | — | feature/settings/OperatorPages.kt (InfrastructurePage) | built (#2655) | — |
 | McpServersSettingsView | ios/Features/Settings/McpServersSettingsView.swift | — | feature/settings/ManagePages.kt (McpPage) | built (#2653) | list, connect, disconnect; adding a server is not built |
-| MeetingsSettingsView | ios/Features/Settings/MeetingsSettingsView.swift | — | — | todo | — |
+| MeetingsSettingsView | ios/Features/Settings/MeetingsSettingsView.swift | — | feature/settings/OperatorPages.kt (MeetingsPage) | built (#2655) | Per-calendar disconnect not built |
 | MemoryDriveHistoryView | ios/Features/Settings/MemoryDriveHistoryView.swift | — | feature/settings/MemoryPages.kt (MemoryHistoryPage) | built (#2653) | diff view and restore are not built |
 | MemoryDriveView | ios/Features/Settings/MemoryDriveView.swift | — | feature/settings/MemoryPages.kt (MemoryDrivePage) | built (#2653) | purge and write are not built |
 | MemorySettingsView | ios/Features/Settings/MemorySettingsView.swift | — | feature/settings/MemoryPages.kt (MemoryPage) | built (#2653) | memories can be forgotten; editing a memory and About you are not built |
 | ModelManagementView | ios/Features/Settings/ModelManagementView.swift | — | feature/settings/ManagePages.kt (ModelsPage) | built (#2653) | provider keys are managed on Connections |
-| NodesManagerView | ios/Features/Settings/NodesManagerView.swift | — | — | todo | — |
+| NodesManagerView | ios/Features/Settings/NodesManagerView.swift | — | feature/settings/ResourcePages.kt (NODES) | built (#2655) | Join token screen not built |
 | NotificationsSettingsView | ios/Features/Settings/NotificationsSettingsView.swift | — | feature/settings/AccountPages.kt (NotificationsPage) | built (#2653) | event choices, critical-alert texts and quiet hours; the system permission and Live Activities rows are iOS-only |
 | OrganizationAccessView | ios/Features/Settings/OrganizationAccessView.swift | — | feature/settings/AccountPages.kt (OrganizationPage) | built (#2653) | — |
-| PlatformSettingsView | ios/Features/Settings/PlatformSettingsView.swift | — | — | todo | — |
-| PrewarmManagerView | ios/Features/Settings/PrewarmManagerView.swift | — | — | todo | — |
+| PlatformSettingsView | ios/Features/Settings/PlatformSettingsView.swift | — | feature/settings/OperatorPages.kt (PlatformPage) | built (#2655) | — |
+| PrewarmManagerView | ios/Features/Settings/PrewarmManagerView.swift | — | feature/settings/OperatorPages.kt (PrewarmPage) | built (#2655) | — |
 | PrivacySettingsView | ios/Features/Settings/PrivacySettingsView.swift | — | feature/settings/AccountPages.kt (PrivacyPage) | built (#2653) | Face ID lock row not built (needs the biometric library) |
 | ProductsSettingsView | ios/Features/Settings/ProductsSettingsView.swift | — | — | todo | — |
-| ReplayManagerView | ios/Features/Settings/ReplayManagerView.swift | — | — | todo | — |
-| RuntimeOperationsView | ios/Features/Settings/RuntimeOperationsView.swift | — | — | todo | — |
+| ReplayManagerView | ios/Features/Settings/ReplayManagerView.swift | — | feature/settings/OperatorPages.kt (REPLAY) | built (#2655) | — |
+| RuntimeOperationsView | ios/Features/Settings/RuntimeOperationsView.swift | — | feature/settings/OperatorPages.kt (RuntimeOpsPage) | built (#2655) | Execution mode switch not built |
 | SafariView | ios/Features/Settings/SafariView.swift | — | feature/settings/SettingsKit.kt (openLink: Custom Tab) | built (#2653) | honours Open links in |
-| SelfHostedSessionView | ios/Features/Settings/SelfHosted/SelfHostedSessionView.swift | — | — | todo | — |
-| SelfHostedSettingsView | ios/Features/Settings/SelfHosted/SelfHostedSettingsView.swift | — | — | todo | — |
+| SelfHostedSessionView | ios/Features/Settings/SelfHosted/SelfHostedSessionView.swift | — | feature/settings/OperatorPages.kt (SelfHostedSessionPage) | built (#2655) | Live event stream not built |
+| SelfHostedSettingsView | ios/Features/Settings/SelfHosted/SelfHostedSettingsView.swift | — | feature/settings/OperatorPages.kt (SelfHostedPage) | built (#2655) | — |
 | SettingsView | ios/Features/Settings/SettingsView.swift | — | feature/settings/SettingsRoot.kt (SettingsRoot, RootList, AdvancedPage) | built (#2653) | Accounts card shows the person and organization; switching organizations and other remembered accounts is not built. Customize and part-2 pages show a placeholder naming the screen |
 | SubagentsSettingsView | ios/Features/Settings/SubagentsSettingsView.swift | — | feature/settings/ManagePages.kt (SubagentsPage) | built (#2653) | — |
-| TwinSettingsView | ios/Features/Settings/TwinSettingsView.swift | — | — | todo | — |
+| TwinSettingsView | ios/Features/Settings/TwinSettingsView.swift | — | feature/settings/OperatorPages.kt (TwinPage) | built (#2655) | — |
 | VoiceKeyScannerView | ios/Features/Settings/VoiceKeyScannerView.swift | — | — | todo | — |
-| VPSServersManagerView | ios/Features/Settings/VPSServersManagerView.swift | — | — | todo | — |
+| VPSServersManagerView | ios/Features/Settings/VPSServersManagerView.swift | — | feature/settings/ResourcePages.kt (VPS_SERVERS) | built (#2655) | Connection test not built |
 | WebhooksSettingsView | ios/Features/Settings/WebhooksSettingsView.swift | — | feature/settings/ManagePages.kt (WebhooksPage) | built (#2653) | — |
 
 ## Shared
