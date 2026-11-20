@@ -348,6 +348,8 @@ pub mod studio;
 pub mod memory_notes_routes;
 pub mod memory_reconstruction_routes;
 pub mod memory_routes;
+/// Allternit Sleep: `/api/v1/memory/sleep` and `/api/v1/memory/disputes` (contract, all stages off).
+pub mod sleep;
 pub mod memory_kernel_service;
 pub mod memory_drive;
 pub mod memory_drive_service;

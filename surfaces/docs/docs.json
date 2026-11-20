@@ -823,6 +823,7 @@
                   "api/memory-stores",
                   "api/memory",
                   "api/memory-drive",
+                  "api/memory-sleep",
                   "api/bot-hub",
                   "api/page-agents",
                   "api/local-brains",

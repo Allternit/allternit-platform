@@ -1,0 +1,634 @@
+//! Sleep routes under `/api/v1/memory/...` (contract: PLAN section 4, docs:
+//! `surfaces/docs/api/memory-sleep.mdx`).
+//!
+//! Reads answer from the real tables, so on a new database they return real
+//! empty states (`available: true, enabled: false`, empty lists, nulls).
+//! Writes that need a later stage validate their input, then refuse with
+//! `{"accepted": false, "reason": ...}`: `sleep_disabled` when Sleep or the
+//! stage's flag is off, `stage_not_built` when the flags are on but that stage
+//! has not landed yet. User actions (`run`, `undo`, `resolve`, `pages/load`)
+//! refuse with 409; `signal` answers 200, because the runtime sends it on every
+//! idle, compaction and session end whether Sleep is on or not.
+//! `PUT settings` and `PUT config` really write `sleep_config` rows (owner).
+
+use std::sync::Arc;
+
+use axum::{
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::Json,
+    routing::{get, post},
+    Router,
+};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::{json, Value};
+
+use super::config::{self, ConfigError, Group, Resolved};
+use super::types::{
+    ConfigUpdate, ContextQuery, CycleSummary, DisputeSide, DisputeView, ListQuery,
+    LoadPageRequest, PageSummary, ResolveDisputeRequest, RunRequest, SettingsUpdate,
+    SignalRequest, SleepStatus, Stage, Tracks, ClaimView,
+};
+use crate::auth::get_user;
+use crate::AppState;
+
+type Reply = (StatusCode, Json<Value>);
+
+pub fn sleep_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/memory/sleep/status", get(status))
+        .route("/memory/sleep/cycles", get(list_cycles))
+        .route("/memory/sleep/cycles/:id", get(get_cycle))
+        .route("/memory/sleep/cycles/:id/undo", post(undo_cycle))
+        .route("/memory/sleep/run", post(run))
+        .route("/memory/sleep/signal", post(signal))
+        .route("/memory/sleep/context", get(context))
+        .route("/memory/sleep/pages/load", post(load_page))
+        .route("/memory/sleep/pages", get(list_pages))
+        .route("/memory/sleep/pages/:topic", get(get_topic_pages))
+        .route("/memory/disputes", get(list_disputes))
+        .route("/memory/disputes/:id/resolve", post(resolve_dispute))
+        .route("/memory/sleep/settings", get(get_settings).put(put_settings))
+        .route("/memory/sleep/config", get(get_config).put(put_config))
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+fn err(status: StatusCode, msg: impl Into<String>) -> Reply {
+    (status, Json(json!({ "error": msg.into() })))
+}
+
+fn db_err(e: impl std::fmt::Display) -> Reply {
+    tracing::warn!("sleep route database error: {e}");
+    err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+/// Same identity as the other `/memory` handlers. An empty id would address
+/// the global `sleep_config` row, so it is refused too.
+fn user_id(headers: &HeaderMap) -> Result<String, Reply> {
+    match get_user(headers) {
+        Some(u) if !u.user_id.is_empty() => Ok(u.user_id),
+        _ => Err(err(StatusCode::UNAUTHORIZED, "Unauthorized")),
+    }
+}
+
+fn open(state: &AppState, user: &str) -> Result<(Connection, Resolved), Reply> {
+    let conn = state.db.connect().map_err(db_err)?;
+    let cfg = config::load(&conn, user).map_err(db_err)?;
+    Ok((conn, cfg))
+}
+
+fn limit(q: &ListQuery) -> i64 {
+    q.limit.unwrap_or(50).clamp(1, 200)
+}
+
+/// The refusal for a write whose stage is not live. No stage is built in this
+/// step, so with the flags on the answer is `stage_not_built`.
+fn refused(cfg: &Resolved, stage: Stage, status: StatusCode) -> Reply {
+    let reason = if cfg.stage_on(stage) { "stage_not_built" } else { "sleep_disabled" };
+    let msg = if reason == "sleep_disabled" {
+        format!("Sleep is off (stage `{}`). Turn it on in Memory settings.", stage.as_str())
+    } else {
+        format!("The `{}` stage is not available in this version yet.", stage.as_str())
+    };
+    (status, Json(json!({ "accepted": false, "reason": reason, "stage": stage.as_str(), "error": msg })))
+}
+
+const CYCLE_COLS: &str = "id, trigger, kind, state, stage, session_id, spend_usd, manifest_before,
+     manifest_after, started_at, finished_at, undone_at";
+
+fn cycle_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<CycleSummary> {
+    Ok(CycleSummary {
+        id: r.get(0)?,
+        trigger: r.get(1)?,
+        kind: r.get(2)?,
+        state: r.get(3)?,
+        stage: r.get(4)?,
+        session_id: r.get(5)?,
+        spend_usd: r.get(6)?,
+        manifest_before: r.get(7)?,
+        manifest_after: r.get(8)?,
+        started_at: r.get(9)?,
+        finished_at: r.get(10)?,
+        undone_at: r.get(11)?,
+    })
+}
+
+fn latest_manifest(conn: &Connection, user: &str) -> rusqlite::Result<Option<(String, Option<String>)>> {
+    conn.query_row(
+        "SELECT id, signature FROM memory_manifests WHERE user_id = ?1
+         ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        params![user],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+}
+
+fn disputes(conn: &Connection, user: &str, state: Option<&str>, limit: i64) -> rusqlite::Result<Vec<DisputeView>> {
+    let filter = if state.is_some() { "AND state = ?2" } else { "" };
+    let sql = format!(
+        "SELECT id, topic_id, side_a_kind, side_a_id, side_b_kind, side_b_id, scope, stakes,
+                margin, pick, reason, state, created_at
+         FROM memory_disputes WHERE user_id = ?1 {filter}
+         ORDER BY created_at DESC LIMIT {limit}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<DisputeView> {
+        Ok(DisputeView {
+            id: r.get(0)?,
+            topic_id: r.get(1)?,
+            side_a: DisputeSide { kind: r.get(2)?, id: r.get(3)? },
+            side_b: DisputeSide { kind: r.get(4)?, id: r.get(5)? },
+            scope: r.get(6)?,
+            stakes: r.get(7)?,
+            margin: r.get(8)?,
+            pick: r.get(9)?,
+            reason: r.get(10)?,
+            state: r.get(11)?,
+            created_at: r.get(12)?,
+        })
+    };
+    let rows = match state {
+        Some(s) => stmt.query_map(params![user, s], map)?.collect::<rusqlite::Result<Vec<_>>>()?,
+        None => stmt.query_map(params![user], map)?.collect::<rusqlite::Result<Vec<_>>>()?,
+    };
+    Ok(rows)
+}
+
+fn page_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<PageSummary> {
+    Ok(PageSummary {
+        id: r.get(0)?,
+        topic_id: r.get(1)?,
+        version: r.get(2)?,
+        sha256: r.get(3)?,
+        manifest_id: r.get(4)?,
+        provenance_tier: r.get(5)?,
+        tokens: r.get(6)?,
+        created_at: r.get(7)?,
+    })
+}
+
+const PAGE_COLS: &str = "id, topic_id, version, sha256, manifest_id, provenance_tier, tokens, created_at";
+
+// ── Status ──────────────────────────────────────────────────────────────────
+
+fn build_status(conn: &Connection, cfg: &Resolved, user: &str) -> rusqlite::Result<SleepStatus> {
+    let last_cycle = conn
+        .query_row(
+            &format!(
+                "SELECT {CYCLE_COLS} FROM sleep_cycles WHERE user_id = ?1
+                 ORDER BY started_at DESC, rowid DESC LIMIT 1"
+            ),
+            params![user],
+            cycle_row,
+        )
+        .optional()?;
+    let spend_today_usd: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(spend_usd), 0.0) FROM sleep_cycles
+         WHERE user_id = ?1 AND started_at >= date('now')",
+        params![user],
+        |r| r.get(0),
+    )?;
+    let open_disputes: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_disputes WHERE user_id = ?1 AND state != 'resolved'",
+        params![user],
+        |r| r.get(0),
+    )?;
+    let manifest_id = latest_manifest(conn, user)?.map(|(id, _)| id);
+    Ok(SleepStatus {
+        available: true,
+        enabled: cfg.enabled(),
+        stages: cfg.stage_flags(),
+        // Sleep debt is computed by the orchestrator (step 5.1).
+        debt: 0.0,
+        last_cycle,
+        spend_today_usd,
+        daily_spend_cap_usd: cfg.daily_spend_cap_usd(),
+        manifest_id,
+        open_disputes,
+        tracks: Tracks {
+            track1: if cfg.stage_on(Stage::Track1) { "on" } else { "off" },
+            track2: if cfg.stage_on(Stage::Pages) { "on" } else { "off" },
+        },
+    })
+}
+
+async fn status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let (conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
+    match build_status(&conn, &cfg, &user) {
+        Ok(s) => (StatusCode::OK, Json(json!(s))),
+        Err(e) => db_err(e),
+    }
+}
+
+// ── Cycles ──────────────────────────────────────────────────────────────────
+
+async fn list_cycles(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<ListQuery>,
+) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let conn = match state.db.connect() { Ok(c) => c, Err(e) => return db_err(e) };
+    let rows = conn
+        .prepare(&format!(
+            "SELECT {CYCLE_COLS} FROM sleep_cycles WHERE user_id = ?1
+             ORDER BY started_at DESC, rowid DESC LIMIT ?2"
+        ))
+        .and_then(|mut s| {
+            let rows = s.query_map(params![user, limit(&q)], cycle_row)?.collect::<rusqlite::Result<Vec<_>>>();
+            rows
+        });
+    match rows {
+        Ok(cycles) => (StatusCode::OK, Json(json!({ "cycles": cycles, "count": cycles.len() }))),
+        Err(e) => db_err(e),
+    }
+}
+
+fn find_cycle(conn: &Connection, user: &str, id: &str) -> rusqlite::Result<Option<(CycleSummary, Option<String>)>> {
+    conn.query_row(
+        &format!("SELECT {CYCLE_COLS}, report_json FROM sleep_cycles WHERE user_id = ?1 AND id = ?2"),
+        params![user, id],
+        |r| Ok((cycle_row(r)?, r.get::<_, Option<String>>(12)?)),
+    )
+    .optional()
+}
+
+async fn get_cycle(State(state): State<Arc<AppState>>, headers: HeaderMap, Path(id): Path<String>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let conn = match state.db.connect() { Ok(c) => c, Err(e) => return db_err(e) };
+    match find_cycle(&conn, &user, &id) {
+        Ok(Some((cycle, report))) => {
+            let report = report.and_then(|r| serde_json::from_str::<Value>(&r).ok());
+            (StatusCode::OK, Json(json!({ "cycle": cycle, "report": report })))
+        }
+        Ok(None) => err(StatusCode::NOT_FOUND, "Cycle not found"),
+        Err(e) => db_err(e),
+    }
+}
+
+async fn undo_cycle(State(state): State<Arc<AppState>>, headers: HeaderMap, Path(id): Path<String>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let (conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
+    match find_cycle(&conn, &user, &id) {
+        Ok(Some(_)) => refused(&cfg, Stage::Orchestrator, StatusCode::CONFLICT),
+        Ok(None) => err(StatusCode::NOT_FOUND, "Cycle not found"),
+        Err(e) => db_err(e),
+    }
+}
+
+// ── Run and signal ──────────────────────────────────────────────────────────
+
+const RUN_KINDS: [&str; 4] = ["daydream", "nap", "deep", "rem"];
+
+async fn run(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Option<Json<RunRequest>>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let req = body.map(|Json(b)| b).unwrap_or_default();
+    if let Some(kind) = req.kind.as_deref() {
+        if !RUN_KINDS.contains(&kind) {
+            return err(StatusCode::BAD_REQUEST, "kind must be daydream, nap, deep or rem");
+        }
+    }
+    let (_conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
+    refused(&cfg, Stage::Orchestrator, StatusCode::CONFLICT)
+}
+
+async fn signal(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(req): Json<SignalRequest>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    if req.session_id.trim().is_empty() {
+        return err(StatusCode::BAD_REQUEST, "session_id is required");
+    }
+    if matches!(req.cache_ttl_s, Some(0)) {
+        return err(StatusCode::BAD_REQUEST, "cache_ttl_s must be above 0");
+    }
+    let (_conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
+    refused(&cfg, Stage::Orchestrator, StatusCode::OK)
+}
+
+// ── Context and pages ───────────────────────────────────────────────────────
+
+fn build_context(conn: &Connection, cfg: &Resolved, user: &str) -> rusqlite::Result<Value> {
+    let manifest = latest_manifest(conn, user)?;
+    let open: Vec<DisputeView> = disputes(conn, user, None, 50)?
+        .into_iter()
+        .filter(|d| d.state != "resolved")
+        .collect();
+    let mut stmt = conn.prepare(
+        "SELECT id, content, cue_kind, cue, due_at FROM memory_intentions
+         WHERE user_id = ?1 AND state = 'open' ORDER BY created_at DESC LIMIT 50",
+    )?;
+    let intentions = stmt
+        .query_map(params![user], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "content": r.get::<_, String>(1)?,
+                "cue_kind": r.get::<_, String>(2)?,
+                "cue": r.get::<_, Option<String>>(3)?,
+                "due_at": r.get::<_, Option<String>>(4)?,
+            }))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, topic_id, claim_id, correction, as_of FROM memory_overlays
+         WHERE user_id = ?1 AND applied_at IS NULL ORDER BY created_at ASC LIMIT 200",
+    )?;
+    let overlay = stmt
+        .query_map(params![user], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "topic_id": r.get::<_, Option<String>>(1)?,
+                "claim_id": r.get::<_, Option<String>>(2)?,
+                "correction": r.get::<_, String>(3)?,
+                "as_of": r.get::<_, String>(4)?,
+            }))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let (manifest_id, signature) = match manifest {
+        Some((id, sig)) => (Some(id), sig),
+        None => (None, None),
+    };
+    // Core, index and preloaded pages come with the router (step 4.4).
+    Ok(json!({
+        "available": true,
+        "enabled": cfg.stage_on(Stage::Router),
+        "core": null,
+        "index": [],
+        "pages": [],
+        "overlay": overlay,
+        "disputes": open,
+        "intentions": intentions,
+        "budget": { "share": cfg.number("page_budget_share"), "tokens": null },
+        "manifest_id": manifest_id,
+        "signature": signature,
+    }))
+}
+
+async fn context(State(state): State<Arc<AppState>>, headers: HeaderMap, Query(_q): Query<ContextQuery>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let (conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
+    match build_context(&conn, &cfg, &user) {
+        Ok(v) => (StatusCode::OK, Json(v)),
+        Err(e) => db_err(e),
+    }
+}
+
+async fn load_page(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(req): Json<LoadPageRequest>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    if req.topic_id.trim().is_empty() {
+        return err(StatusCode::BAD_REQUEST, "topic_id is required");
+    }
+    let (_conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
+    refused(&cfg, Stage::Router, StatusCode::CONFLICT)
+}
+
+async fn list_pages(State(state): State<Arc<AppState>>, headers: HeaderMap, Query(q): Query<ListQuery>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let conn = match state.db.connect() { Ok(c) => c, Err(e) => return db_err(e) };
+    let pages = conn
+        .prepare(&format!(
+            "SELECT {PAGE_COLS} FROM memory_pages WHERE user_id = ?1
+             ORDER BY created_at DESC, rowid DESC LIMIT ?2"
+        ))
+        .and_then(|mut s| {
+            let rows = s.query_map(params![user, limit(&q)], page_row)?.collect::<rusqlite::Result<Vec<_>>>();
+            rows
+        });
+    let manifest = latest_manifest(&conn, &user);
+    match (pages, manifest) {
+        (Ok(pages), Ok(m)) => (
+            StatusCode::OK,
+            Json(json!({ "pages": pages, "count": pages.len(), "manifest_id": m.map(|(id, _)| id) })),
+        ),
+        (Err(e), _) | (_, Err(e)) => db_err(e),
+    }
+}
+
+fn topic_pages(conn: &Connection, user: &str, topic: &str) -> rusqlite::Result<Option<Value>> {
+    let Some((id, name, state)) = conn
+        .query_row(
+            "SELECT id, name, state FROM memory_topics WHERE user_id = ?1 AND id = ?2",
+            params![user, topic],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    let versions = conn
+        .prepare(&format!(
+            "SELECT {PAGE_COLS} FROM memory_pages WHERE user_id = ?1 AND topic_id = ?2 ORDER BY version DESC"
+        ))?
+        .query_map(params![user, topic], page_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let claims = conn
+        .prepare(
+            "SELECT id, claim, source_type, observation_id, fact_id, as_of, superseded_by
+             FROM memory_page_claims WHERE user_id = ?1 AND topic_id = ?2 ORDER BY as_of DESC",
+        )?
+        .query_map(params![user, topic], |r| {
+            Ok(ClaimView {
+                id: r.get(0)?,
+                claim: r.get(1)?,
+                source_type: r.get(2)?,
+                observation_id: r.get(3)?,
+                fact_id: r.get(4)?,
+                as_of: r.get(5)?,
+                superseded_by: r.get(6)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(Some(json!({
+        "topic": { "id": id, "name": name, "state": state },
+        "versions": versions,
+        "claims": claims,
+    })))
+}
+
+async fn get_topic_pages(State(state): State<Arc<AppState>>, headers: HeaderMap, Path(topic): Path<String>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let conn = match state.db.connect() { Ok(c) => c, Err(e) => return db_err(e) };
+    match topic_pages(&conn, &user, &topic) {
+        Ok(Some(v)) => (StatusCode::OK, Json(v)),
+        Ok(None) => err(StatusCode::NOT_FOUND, "Topic not found"),
+        Err(e) => db_err(e),
+    }
+}
+
+// ── Disputes ────────────────────────────────────────────────────────────────
+
+const DISPUTE_STATES: [&str; 3] = ["open", "needs_user", "resolved"];
+
+async fn list_disputes(State(state): State<Arc<AppState>>, headers: HeaderMap, Query(q): Query<ListQuery>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    if let Some(s) = q.state.as_deref() {
+        if !DISPUTE_STATES.contains(&s) {
+            return err(StatusCode::BAD_REQUEST, "state must be open, needs_user or resolved");
+        }
+    }
+    let conn = match state.db.connect() { Ok(c) => c, Err(e) => return db_err(e) };
+    match disputes(&conn, &user, q.state.as_deref(), limit(&q)) {
+        Ok(list) => (StatusCode::OK, Json(json!({ "disputes": list, "count": list.len() }))),
+        Err(e) => db_err(e),
+    }
+}
+
+async fn resolve_dispute(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(_req): Json<ResolveDisputeRequest>,
+) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let (conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
+    let found = conn
+        .query_row(
+            "SELECT 1 FROM memory_disputes WHERE user_id = ?1 AND id = ?2",
+            params![user, id],
+            |_| Ok(()),
+        )
+        .optional();
+    match found {
+        Ok(Some(())) => refused(&cfg, Stage::Disputes, StatusCode::CONFLICT),
+        Ok(None) => err(StatusCode::NOT_FOUND, "Dispute not found"),
+        Err(e) => db_err(e),
+    }
+}
+
+// ── Settings and config ─────────────────────────────────────────────────────
+
+fn settings_body(cfg: &Resolved) -> Value {
+    json!({
+        "enabled": cfg.enabled(),
+        "stages": cfg.stage_flags(),
+        "daily_spend_cap_usd": cfg.daily_spend_cap_usd(),
+        "entries": cfg.group(Group::Setting),
+    })
+}
+
+fn config_err(e: ConfigError) -> Reply {
+    match e {
+        ConfigError::Db(e) => db_err(e),
+        other => err(StatusCode::BAD_REQUEST, other.to_string()),
+    }
+}
+
+async fn get_settings(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    match open(&state, &user) {
+        Ok((_, cfg)) => (StatusCode::OK, Json(settings_body(&cfg))),
+        Err(e) => e,
+    }
+}
+
+async fn put_settings(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(req): Json<SettingsUpdate>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let mut values: Vec<(String, Value)> = Vec::new();
+    if let Some(on) = req.enabled {
+        values.push((config::KEY_ENABLED.to_string(), Value::Bool(on)));
+    }
+    for (name, on) in req.stages.unwrap_or_default() {
+        let Some(stage) = Stage::parse(&name) else {
+            return err(StatusCode::BAD_REQUEST, format!("unknown stage: {name}"));
+        };
+        values.push((config::stage_key(stage), Value::Bool(on)));
+    }
+    if let Some(cap) = req.daily_spend_cap_usd {
+        values.push((config::KEY_DAILY_SPEND_CAP.to_string(), json!(cap)));
+    }
+    let conn = match state.db.connect() { Ok(c) => c, Err(e) => return db_err(e) };
+    if let Err(e) = config::set_owner(&conn, &user, Group::Setting, &values) {
+        return config_err(e);
+    }
+    match config::load(&conn, &user) {
+        Ok(cfg) => (StatusCode::OK, Json(settings_body(&cfg))),
+        Err(e) => db_err(e),
+    }
+}
+
+async fn get_config(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    match open(&state, &user) {
+        Ok((_, cfg)) => (StatusCode::OK, Json(json!({ "values": cfg.group(Group::Threshold) }))),
+        Err(e) => e,
+    }
+}
+
+async fn put_config(State(state): State<Arc<AppState>>, headers: HeaderMap, Json(req): Json<ConfigUpdate>) -> Reply {
+    let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
+    let values: Vec<(String, Value)> = req.values.into_iter().collect();
+    let conn = match state.db.connect() { Ok(c) => c, Err(e) => return db_err(e) };
+    if let Err(e) = config::set_owner(&conn, &user, Group::Threshold, &values) {
+        return config_err(e);
+    }
+    match config::load(&conn, &user) {
+        Ok(cfg) => (StatusCode::OK, Json(json!({ "values": cfg.group(Group::Threshold) }))),
+        Err(e) => db_err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    async fn call(app: &Router, method: &str, uri: &str, who: &str, body: Option<Value>) -> (StatusCode, Value) {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("x-allternit-user-id", who)
+            .body(body.map_or(Body::empty(), |b| Body::from(b.to_string())))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    #[tokio::test]
+    async fn status_is_available_and_off_on_a_fresh_db_and_settings_flip_it() {
+        let dir = std::env::temp_dir().join(format!("allternit-sleep-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        // Mounted the way main.rs mounts the v1 routes.
+        let app: Router = Router::new().nest("/api/v1", sleep_router()).with_state(st);
+        const STATUS: &str = "/api/v1/memory/sleep/status";
+
+        let (s, v) = call(&app, "GET", STATUS, "user-a", None).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!((v["available"].clone(), v["enabled"].clone()), (json!(true), json!(false)));
+        assert!(v["stages"].as_object().unwrap().values().all(|f| f == &json!(false)), "{v}");
+        assert_eq!(v["stages"].as_object().unwrap().len(), Stage::ALL.len());
+        assert_eq!((v["last_cycle"].clone(), v["manifest_id"].clone()), (Value::Null, Value::Null));
+        assert_eq!((v["spend_today_usd"].as_f64(), v["daily_spend_cap_usd"].as_f64()), (Some(0.0), Some(0.0)));
+
+        // Signed out is refused.
+        let req = Request::builder().uri(STATUS).body(Body::empty()).unwrap();
+        assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+
+        // The owner turns Sleep and one stage on; status shows it, for this user only.
+        let (s, v) = call(&app, "PUT", "/api/v1/memory/sleep/settings", "user-a",
+            Some(json!({ "enabled": true, "stages": { "pages": true } }))).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!(v["entries"]["stage.pages"]["source"], json!("owner"));
+        let (_, v) = call(&app, "GET", STATUS, "user-a", None).await;
+        assert_eq!((v["enabled"].clone(), v["stages"]["pages"].clone(), v["stages"]["router"].clone()),
+            (json!(true), json!(true), json!(false)));
+        assert_eq!(v["tracks"]["track2"], json!("on"));
+        assert_eq!(call(&app, "GET", STATUS, "user-b", None).await.1["enabled"], json!(false));
+
+        // An unknown stage is refused and writes nothing.
+        let (s, _) = call(&app, "PUT", "/api/v1/memory/sleep/settings", "user-a",
+            Some(json!({ "enabled": false, "stages": { "nope": true } }))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert_eq!(call(&app, "GET", STATUS, "user-a", None).await.1["enabled"], json!(true));
+
+        // A run before the orchestrator exists is refused, not a panic or a 501.
+        let (s, v) = call(&app, "POST", "/api/v1/memory/sleep/run", "user-b", Some(json!({}))).await;
+        assert_eq!((s, v["accepted"].clone(), v["reason"].clone()),
+            (StatusCode::CONFLICT, json!(false), json!("sleep_disabled")));
+    }
+}

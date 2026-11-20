@@ -1,0 +1,328 @@
+---
+title: Memory Sleep API
+description: "Routes for Allternit Sleep: status, cycles, runtime signals, topic pages, disputes, settings and thresholds. Contract stage: every stage is off."
+---
+
+Allternit Sleep is memory consolidation that runs on your own computer while you are
+not using it. When a session goes idle, before a conversation is compacted, or when a
+session ends, the runtime tells Sleep. Sleep then sorts new memories, keeps
+contradicting memories as disputes instead of silently picking one, and builds short
+topic pages the model can load at the start of a chat. Every page claim keeps a pointer
+back to where it came from. Sleep uses your own model quota, up to a daily cap you set,
+and you can undo a cycle.
+
+These routes are served by the Allternit API under `/api/v1`, next to the
+[Memory API](/api/memory) and the [Memory Drive API](/api/memory-drive). They use the
+normal signed-in session; a request with no user gets `401`.
+
+<Note>
+This is the contract release. The routes, tables and settings exist, but every stage is
+off by default and none of them runs yet. Read routes return real empty states, never
+`501`. Write routes that need a later stage check their input, then refuse (see
+[Refused writes](#refused-writes)). The status column below says which stage makes each
+route live.
+</Note>
+
+## Routes
+
+| Route | Status | What it does |
+| --- | --- | --- |
+| `GET /memory/sleep/status` | Live | Master switch, stage flags, debt, last cycle, spend today, manifest, open disputes. |
+| `GET /memory/sleep/cycles` | Live (empty until the orchestrator) | Recent cycles, newest first. |
+| `GET /memory/sleep/cycles/:id` | Live (empty until the orchestrator) | One cycle and its report. |
+| `POST /memory/sleep/cycles/:id/undo` | Refuses until the orchestrator | Undo a cycle. |
+| `POST /memory/sleep/run` | Refuses until the orchestrator | Start a cycle now. |
+| `POST /memory/sleep/signal` | Refuses until the orchestrator | Runtime trigger: idle, pre-compact, session end, resume. |
+| `GET /memory/sleep/context` | Live (empty until the router) | What the runtime puts in front of the model at session start. |
+| `POST /memory/sleep/pages/load` | Refuses until the router | Load one topic page mid-session. |
+| `GET /memory/sleep/pages` | Live (empty until pages) | Page versions. |
+| `GET /memory/sleep/pages/:topic` | Live (empty until pages) | One topic's versions and claims with their sources. |
+| `GET /memory/disputes` | Live (empty until disputes) | Contradicting memories. |
+| `POST /memory/disputes/:id/resolve` | Refuses until disputes | Pick a side. |
+| `GET /memory/sleep/settings`, `PUT /memory/sleep/settings` | Live | Master switch, stage flags and the daily spend cap. |
+| `GET /memory/sleep/config`, `PUT /memory/sleep/config` | Live | Thresholds, each with its source. |
+
+## Errors
+
+| Status | Meaning |
+| --- | --- |
+| 400 | Invalid input, for example an unknown stage, an unknown config key, or a value out of range. Nothing is written. |
+| 401 | Not signed in. |
+| 404 | No such cycle, topic or dispute for you. |
+| 409 | A refused write: the stage it needs is off or not built yet. |
+| 422 | The JSON body has the wrong shape or an unknown field. |
+
+### Refused writes
+
+`run`, `cycles/:id/undo`, `pages/load` and `disputes/:id/resolve` answer `409`.
+`signal` answers `200`, because the runtime sends it on every idle, compaction and
+session end, whether Sleep is on or not.
+
+```json
+{ "accepted": false, "reason": "sleep_disabled", "stage": "orchestrator",
+  "error": "Sleep is off (stage `orchestrator`). Turn it on in Memory settings." }
+```
+
+| `reason` | Meaning |
+| --- | --- |
+| `sleep_disabled` | The master switch or that stage's flag is off. |
+| `stage_not_built` | The flags are on, but this version does not have that stage yet. |
+
+## Status
+
+### `GET /memory/sleep/status`
+
+```json
+{
+  "available": true,
+  "enabled": false,
+  "stages": {
+    "checks": false, "disputes": false, "intentions": false, "labels_live": false,
+    "orchestrator": false, "pages": false, "rem": false, "router": false,
+    "strengths": false, "track1": false
+  },
+  "debt": 0,
+  "last_cycle": null,
+  "spend_today_usd": 0,
+  "daily_spend_cap_usd": 0,
+  "manifest_id": null,
+  "open_disputes": 0,
+  "tracks": { "track1": "off", "track2": "off" }
+}
+```
+
+- `enabled` is the master switch. A stage runs only when `enabled` and its own flag are both `true`.
+- `stages` holds each stage's own flag.
+- `debt` is how much consolidation is waiting. It stays `0` until the orchestrator lands.
+- `tracks.track2` (pages) is `on` when `enabled` and `stages.pages` are both on. `tracks.track1` (personal adapters) is the same for `stages.track1`.
+
+## Cycles
+
+### `GET /memory/sleep/cycles?limit=`
+
+`limit` is 1 to 200, default 50.
+
+```json
+{ "cycles": [
+  { "id": "cyc_1", "trigger": "idle", "kind": "nap", "state": "finished", "stage": null,
+    "session_id": "s_123", "spend_usd": 0.04, "manifest_before": "man_0", "manifest_after": "man_1",
+    "started_at": "2026-11-20 03:10:00", "finished_at": "2026-11-20 03:12:41", "undone_at": null }
+], "count": 1 }
+```
+
+| Field | Values |
+| --- | --- |
+| `trigger` | `idle`, `pre_compact`, `session_end`, `manual`, `clock` |
+| `kind` | `daydream`, `nap`, `deep`, `rem` |
+| `state` | `running`, `finished`, `stopped`, `failed`, `undone` |
+
+### `GET /memory/sleep/cycles/:id`
+
+`{ "cycle": { ... }, "report": { ... } | null }`, with the same cycle fields as the list.
+
+### `POST /memory/sleep/cycles/:id/undo`
+
+No body. Returns `404` for an unknown cycle. Once live, undo restores the manifest from
+before the cycle.
+
+### `POST /memory/sleep/run`
+
+Optional body `{ "kind": "nap" }`, where `kind` is `daydream`, `nap`, `deep` or `rem`.
+Leave it out and Sleep picks the kind.
+
+### `POST /memory/sleep/signal`
+
+Sent by the runtime, never by a person.
+
+```json
+{ "session_id": "s_123", "event": "idle", "cache_ttl_s": 300 }
+```
+
+| `event` | When the runtime sends it |
+| --- | --- |
+| `idle` | The session has been idle for the provider's cache time, so the prompt cache has already expired. |
+| `pre_compact` | Just before the conversation is compacted. |
+| `session_end` | The session ended. It only queues work. |
+| `resume` | You came back. Any running cycle stops cleanly. |
+
+`session_id` is required. `cache_ttl_s` is optional and must be above 0.
+
+## Context and pages
+
+### `GET /memory/sleep/context?session_id=&model=`
+
+```json
+{
+  "available": true, "enabled": false,
+  "core": null, "index": [], "pages": [],
+  "overlay": [], "disputes": [], "intentions": [],
+  "budget": { "share": 0.05, "tokens": null },
+  "manifest_id": null, "signature": null
+}
+```
+
+- `enabled` is the router stage.
+- `overlay` holds your corrections that are not applied to a page yet. Each one is `{ id, topic_id, claim_id, correction, as_of }`.
+- `disputes` holds the open disputes, in the same shape as `GET /memory/disputes`.
+- `intentions` holds open reminders: `{ id, content, cue_kind, cue, due_at }`.
+- `budget.share` is the share of the model's context window pages may use.
+
+### `POST /memory/sleep/pages/load`
+
+```json
+{ "topic_id": "top_42", "session_id": "s_123", "model": "claude-sonnet" }
+```
+
+`topic_id` is required. Once live, it returns the page and records a router miss.
+
+### `GET /memory/sleep/pages?limit=`
+
+```json
+{ "pages": [
+  { "id": "pg_1", "topic_id": "top_42", "version": 3, "sha256": "9f2c…", "manifest_id": "man_1",
+    "provenance_tier": "user", "tokens": 410, "created_at": "2026-11-20 03:12:40" }
+], "count": 1, "manifest_id": "man_1" }
+```
+
+A page's text is stored once per `sha256`. The manifest is signed, and the runtime
+checks the hash and the signature every time it loads a page.
+
+### `GET /memory/sleep/pages/:topic`
+
+```json
+{
+  "topic": { "id": "top_42", "name": "Acme launch", "state": "active" },
+  "versions": [ { "id": "pg_1", "version": 3, "sha256": "9f2c…" } ],
+  "claims": [
+    { "id": "cl_7", "claim": "Launch moved to March 3.", "source_type": "user_said",
+      "observation_id": "obs_88", "fact_id": null, "as_of": "2026-11-18", "superseded_by": null }
+  ]
+}
+```
+
+Topic `state` is `active`, `weak`, `gist` or `untethered`. An untethered topic is
+left out of the index but can still be loaded directly.
+
+### Source types
+
+Every claim, and every fact Sleep scores, carries a `source_type`:
+
+| `source_type` | Meaning |
+| --- | --- |
+| `user_said` | You said it. |
+| `tool_observed` | A tool or web result showed it. It never goes into a page without your confirmation. |
+| `model_inferred` | The model concluded it. |
+| `dream_generated` | A Sleep cycle proposed it. It is kept only if it improves a score. |
+| `imported` | It came from an import. |
+
+A claim must point back to an observation or a fact. A claim without that pointer is refused.
+
+## Disputes
+
+### `GET /memory/disputes?state=&limit=`
+
+`state` is `open`, `needs_user` or `resolved`. Leave it out to get all of them.
+
+```json
+{ "disputes": [
+  { "id": "dsp_3", "topic_id": "top_42",
+    "side_a": { "kind": "fact", "id": "f_1" }, "side_b": { "kind": "fact", "id": "f_9" },
+    "scope": "work", "stakes": 0.8, "margin": 0.05, "pick": null, "reason": null,
+    "state": "needs_user", "created_at": "2026-11-20 03:11:02" }
+], "count": 1 }
+```
+
+`needs_user` means the two sides were close and the stakes were high, so Sleep asks
+you instead of picking.
+
+### `POST /memory/disputes/:id/resolve`
+
+```json
+{ "choice": "both_scoped", "reason": "Home address vs. office address" }
+```
+
+`choice` is `a`, `b`, `both_scoped` (both are true in different scopes) or `neither`.
+Returns `404` for an unknown dispute.
+
+## Settings and thresholds
+
+Every value has a default in code. Your own value overrides it. Each value reports its
+`source`:
+
+| `source` | Set by |
+| --- | --- |
+| `default` | The code default. |
+| `fitted` | Fitted from your own recall logs. |
+| `owner` | You, through `PUT /memory/sleep/settings` or `PUT /memory/sleep/config`. |
+
+### `GET /memory/sleep/settings`
+
+```json
+{
+  "enabled": false,
+  "stages": { "pages": false, "router": false, "...": false },
+  "daily_spend_cap_usd": 0,
+  "entries": {
+    "enabled": { "value": false, "source": "default", "default": false, "updated_at": null,
+                 "group": "setting", "about": "Master switch for Sleep." },
+    "stage.pages": { "value": false, "source": "default", "...": "..." },
+    "daily_spend_cap_usd": { "value": 0, "source": "default", "...": "..." }
+  }
+}
+```
+
+The daily spend cap defaults to `0`, which means Sleep spends nothing.
+
+### `PUT /memory/sleep/settings`
+
+Send only the fields you change. Returns the same object as `GET`.
+
+```json
+{ "enabled": true, "stages": { "pages": true }, "daily_spend_cap_usd": 0.5 }
+```
+
+Stage names are `labels_live`, `strengths`, `pages`, `router`, `orchestrator`,
+`disputes`, `checks`, `intentions`, `rem` and `track1`. An unknown stage or a cap outside
+0 to 1000 returns `400`, and nothing is written.
+
+### `GET /memory/sleep/config`
+
+`{ "values": { "<key>": { "value", "source", "default", "updated_at", "group", "about" } } }`
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `idle_ttl_s` | 300 | Idle seconds before a nap. The runtime sends its real cache time. |
+| `unit_max_attempts` | 3 | Attempts before a unit of work moves to the next cycle. |
+| `unit_lease_s` | 900 | Lease length for a running unit. |
+| `page_budget_share` | 0.05 | Share of the model's context window for pages per message. |
+| `router_min_confidence` | 0.5 | Below this, the router falls back to embedding search. |
+| `pull_cost_multiple_max` | 2 | Most a mid-session page load may cost, as a multiple of a preload. |
+| `dispute_ask_margin` | 0.15 | Margin under which a high-stakes dispute asks you. |
+| `dispute_ask_stakes` | 0.7 | Stakes at or above which a close dispute asks you. |
+| `rem_min_keep_rate` | 0.25 | REM turns itself off under this keep rate. |
+| `fit_min_labeled_events` | 200 | Labelled events needed before fitted values replace defaults. |
+| `check_router_sample` | 200 | Fixed router sample size in the bounded check. |
+| `check_neighbours` | 5 | Neighbours checked for each changed memory. |
+
+### `PUT /memory/sleep/config`
+
+```json
+{ "values": { "router_min_confidence": 0.6, "unit_max_attempts": 4 } }
+```
+
+Every key must be one of the keys above, and its value must be in range. Whole-number
+keys refuse fractions. One bad key returns `400`, and nothing is written.
+
+## Events
+
+These events go on the memory activity stream. They are declared now and emitted once
+the orchestrator and disputes land.
+
+| Event | When |
+| --- | --- |
+| `sleep.cycle.started` | A cycle begins. |
+| `sleep.cycle.stage` | A cycle moves to its next stage. |
+| `sleep.cycle.finished` | A cycle ends: finished, stopped or failed. |
+| `sleep.dispute.opened` | Two memories contradict each other. |
+| `sleep.dispute.needs_user` | A dispute needs you to pick. |
+| `sleep.debt.changed` | The amount of waiting consolidation changed. |
