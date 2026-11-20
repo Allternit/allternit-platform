@@ -155,6 +155,10 @@ internal val AgentSession.agentId: String? get() = metaString("agent_id")?.takeI
 internal val AgentSession.projectId: String? get() = metaString("project_id")?.takeIf { it.isNotEmpty() }
 internal val AgentSession.archived: Boolean get() = metaBool("archived")
 internal val AgentSession.ephemeral: Boolean get() = metaBool("ephemeral")
+/** Code thread status flags the server owns (iOS AgentSession.needsInput / readyForReview), read best-effort from the metadata bag. */
+internal val AgentSession.needsInput: Boolean get() = metaBool("needsInput") || metaBool("needs_input")
+internal val AgentSession.readyForReview: Boolean get() = metaBool("readyForReview") || metaBool("ready_for_review")
+internal val AgentSession.completed: Boolean get() = metaBool("completed")
 internal val AgentSession.isTerminal: Boolean
     get() = ((meta("sourceRef") as? JsonObject)?.get("harness") as? JsonPrimitive)?.contentOrNull == "gizzi-tui"
 internal val AgentSession.title: String get() = displayName(name)?.takeIf { it.isNotEmpty() } ?: "Untitled"

@@ -157,6 +157,8 @@ internal fun ShellHome(
     onNewChat: (ComposerDraft) -> Unit,
     onNew: () -> Unit,
     onOpenSection: (RailRow) -> Unit,
+    /** Wave F1: Code mode's home (folder, tools, recent threads) replaces the placeholder and the composer starts a thread. */
+    codeHome: (@Composable () -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var phoneArmed by remember { mutableStateOf(false) }
@@ -184,9 +186,9 @@ internal fun ShellHome(
             },
         )
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            if (mode == ShellMode.Home) LaunchGreeting() else ModeArrives(mode)
+            if (mode == ShellMode.Home) LaunchGreeting() else if (codeHome != null && mode == ShellMode.Code) codeHome() else ModeArrives(mode)
         }
-        if (mode == ShellMode.Home) {
+        if (mode == ShellMode.Home || (mode == ShellMode.Code && codeHome != null)) {
             Composer(
                 models = models,
                 noComputer = store.noComputer,

@@ -190,23 +190,23 @@ Rules: one builder at a time; each wave = one stacked PR, train-ready at the end
 | TasksBoardScreen | Automation | ios/Features/Automation/Views/TasksBoardScreen.swift | — | — | todo | — |
 | section: automation | Automation | — | src/fabric-session/phone/phone-nav.ts (PhoneSection automation) | — | todo | — |
 | section: tasks | Automation | — | src/fabric-session/phone/phone-nav.ts (PhoneSection tasks) | — | todo | — |
-| ChangesetReviewSheet | Code | ios/Features/Code/ChangesetReviewSheet.swift | — | — | todo | — |
-| CodeEditorView | Code | ios/Features/Code/CodeEditor/CodeEditorView.swift | — | — | todo | — |
-| CodeModeView | Code | ios/Features/Code/CodeModeView.swift | — | — | todo | — |
-| CodeOverviewSheet | Code | ios/Features/Code/CodeOverviewSheet.swift | — | — | todo | — |
-| CodeRuntimePairingView | Code | ios/Features/Code/CodeRuntimePairingView.swift | — | — | todo | — |
-| CodeThreadView | Code | ios/Features/Code/CodeThreadView.swift | — | — | todo | — |
-| DevServerPortsView | Code | ios/Features/Code/DevPreview/DevServerPortsView.swift | — | — | todo | — |
-| DevServerPreviewView | Code | ios/Features/Code/DevPreview/DevServerPreviewView.swift | — | — | todo | — |
-| FileBrowserDirectoryView | Code | ios/Features/Code/FileBrowser/FileBrowserDirectoryView.swift | — | — | todo | — |
-| FileBrowserView | Code | ios/Features/Code/FileBrowser/FileBrowserView.swift | — | — | todo | — |
-| FileDetailView | Code | ios/Features/Code/FileBrowser/FileDetailView.swift | — | — | todo | — |
-| FileDiffDetailView | Code | ios/Features/Code/DiffViewer/FileDiffDetailView.swift | — | — | todo | — |
-| PhoneCodeSessionsView | Code | — | src/fabric-session/phone/screens/PhoneCodeSessionsView.tsx | — | todo | — |
-| PhoneCodeTerminal | Code | — | src/fabric-session/phone/screens/PhoneCodeTerminal.tsx | — | todo | — |
-| SessionDiffListView | Code | ios/Features/Code/DiffViewer/SessionDiffListView.swift | — | — | todo | — |
-| TerminalSessionView | Code | ios/Features/Code/TerminalSessionView.swift | — | — | todo | — |
-| section: code | Code | — | src/fabric-session/phone/phone-nav.ts (PhoneSection code) | — | todo | — |
+| ChangesetReviewSheet | Code | ios/Features/Code/ChangesetReviewSheet.swift | — | feature/code/CodeDiffs.kt (ChangesetReviewSheet, PendingChangesBanner) | built (#2640) | — |
+| CodeEditorView | Code | ios/Features/Code/CodeEditor/CodeEditorView.swift | — | feature/code/CodeFiles.kt (CodeEditorScreen: line numbers, highlight, Save through files/write) | built (#2640) | — |
+| CodeModeView | Code | ios/Features/Code/CodeModeView.swift | — | feature/code/CodeHome.kt (CodeHome, CodeRouteScreen, CodeThreadTools) + feature/shell/WorkspaceShell.kt (Code card in the mode fan opens it) | built (#2640) | — |
+| CodeOverviewSheet | Code | ios/Features/Code/CodeOverviewSheet.swift | — | feature/code/CodeHome.kt (CodeOverviewScreen, ThreadActionsSheet, PermissionsScreen) | built (#2640) | — |
+| CodeRuntimePairingView | Code | ios/Features/Code/CodeRuntimePairingView.swift | — | feature/code/CodeHome.kt (CodeComputerScreen) | built (#2640) | — |
+| CodeThreadView | Code | ios/Features/Code/CodeThreadView.swift | — | feature/shell/ChatPage.kt on a code session + feature/code/CodeDiffs.kt (PendingChangesBanner) | built (#2640) | — |
+| DevServerPortsView | Code | ios/Features/Code/DevPreview/DevServerPortsView.swift | — | feature/code/CodeDevServer.kt (DevServerPortsScreen) | built (#2640) | — |
+| DevServerPreviewView | Code | ios/Features/Code/DevPreview/DevServerPreviewView.swift | — | feature/code/CodeDevServer.kt (DevServerPreviewScreen: WebView, requests fetched through the relay) | built (#2640) | — |
+| FileBrowserDirectoryView | Code | ios/Features/Code/FileBrowser/FileBrowserDirectoryView.swift | — | feature/code/CodeFiles.kt (FileBrowserDirectory) | built (#2640) | — |
+| FileBrowserView | Code | ios/Features/Code/FileBrowser/FileBrowserView.swift | — | feature/code/CodeFiles.kt (FileBrowserScreen) | built (#2640) | — |
+| FileDetailView | Code | ios/Features/Code/FileBrowser/FileDetailView.swift | — | feature/code/CodeFiles.kt (FileDetailScreen) | built (#2640) | — |
+| FileDiffDetailView | Code | ios/Features/Code/DiffViewer/FileDiffDetailView.swift | — | feature/code/CodeDiffs.kt (FileDiffDetailScreen) | built (#2640) | — |
+| PhoneCodeSessionsView | Code | — | src/fabric-session/phone/screens/PhoneCodeSessionsView.tsx | feature/code/CodeHome.kt (CodeOverviewScreen) | built (#2640) | — |
+| PhoneCodeTerminal | Code | — | src/fabric-session/phone/screens/PhoneCodeTerminal.tsx | feature/code/CodeTerminal.kt (TerminalScreen, PtySession, PaneMirror) | built (#2640) | — |
+| SessionDiffListView | Code | ios/Features/Code/DiffViewer/SessionDiffListView.swift | — | feature/code/CodeDiffs.kt (SessionDiffScreen) | built (#2640) | — |
+| TerminalSessionView | Code | ios/Features/Code/TerminalSessionView.swift | — | feature/code/CodeTerminal.kt (TerminalScreen: native VT screen like SwiftTerm, no WebView) | built (#2640) | — |
+| section: code | Code | — | src/fabric-session/phone/phone-nav.ts (PhoneSection code) | feature/shell/WorkspaceShell.kt (mode code: CodeHome under the composer) | built (#2640) | — |
 | ConnectWizardView | Connect | ios/Features/Connect/ConnectWizardView.swift | — | — | todo | — |
 | VendorConnectView | Connect | ios/Features/Connect/VendorConnectView.swift | — | — | todo | — |
 | CoworkSessionWorkspaceView | Cowork | ios/Features/Cowork/Views/CoworkSessionWorkspaceView.swift | — | — | todo | — |
