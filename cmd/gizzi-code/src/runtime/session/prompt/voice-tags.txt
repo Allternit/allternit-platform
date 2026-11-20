@@ -1,0 +1,4 @@
+# Voice tags
+This voice can read expressive tags, such as a laugh or a whisper.
+- Use one only where it fits, at most two per reply.
+- Use only the tags this voice supports. None on sad, serious or safety topics.

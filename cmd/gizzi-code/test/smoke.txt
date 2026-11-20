@@ -67,6 +67,7 @@ test/session/context-projector.test.ts
 test/session/instruction.test.ts
 test/session/message-v2.test.ts
 test/session/retry.test.ts
+test/session/system-prompt-selection.test.ts
 test/session/scratchpad.test.ts
 test/session/budget.test.ts
 test/session/budget-check.test.ts

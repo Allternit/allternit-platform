@@ -11,6 +11,10 @@ description: 'How a bot works the page in your browser pane by element ref: read
 
 `pane_browser` acts on the page you have open in the session's browser pane. It is the same page you see, in your own browser session with your own logins and cookies. It works only while the pane is open. If the pane does not answer, the bot asks you to open it, or uses a separate automation browser. iOS has no browser pane. For hidden parallel lookups see [Browser tasks](/tools/browser-tasks).
 
+## Checking a dev server
+
+After the assistant starts a dev server, it opens that server's URL in the preview pane with `goto` and checks the page there, using `read_page`, `get_page_text` and `read_console`.
+
 ## Reading (never asks)
 
 | Action | What it returns |

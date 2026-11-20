@@ -6,14 +6,30 @@
  * allternit-api ingests (gizzi_chat_stream.rs keys on `part.tool == "run_code"`
  * and `state.metadata.files`); lookup's is its answer card (`metadata.card`,
  * which allternit-api's METADATA_CARD_TOOLS, the clients and the answer guard
- * read from a part named "lookup"). The bridge stashes it here when the call
- * returns and the processor merges it into the observed tool part.
+ * read from a part named "lookup"). The prompt-gap card tools (G3 contract,
+ * GAP_CARD_TOOL_IDS in primitives/gap-types.ts) draw their cards from part
+ * metadata the same way; they are bridged only once their module sets
+ * `available`, so until then no CLI reports them. The bridge stashes it here
+ * when the call returns and the processor merges it into the observed tool part.
  *
  * Kept free of runtime imports: processor.ts reads it on every observed tool event.
  */
 export namespace CliBridgeResults {
   /** The bridged tools whose result metadata the processor merges. */
-  const CANONICAL = ["run_code", "lookup"] as const
+  // The gap ids are literals (same as GAP_CARD_TOOL_IDS) so this file keeps no imports.
+  const CANONICAL = [
+    "run_code",
+    "lookup",
+    "second_opinion",
+    "pr_comments",
+    "status_update",
+    "feedback_note",
+    "user_location",
+    "voice_control",
+    "end_conversation",
+    "worktree_enter",
+    "worktree_exit",
+  ] as const
   export type Canonical = (typeof CANONICAL)[number]
 
   /**
@@ -31,7 +47,7 @@ export namespace CliBridgeResults {
 
   /**
    * gizzi's own id for a bridged tool the CLI reported under its vendor name.
-   * Covers run_code and lookup only: every other name comes back unchanged
+   * Covers run_code, lookup and the gap card tools only: every other name comes back unchanged
    * (the web keys on `mcp__allternit__artifact_*` as the CLI reports them).
    */
   export function canonicalTool(name: string): string {

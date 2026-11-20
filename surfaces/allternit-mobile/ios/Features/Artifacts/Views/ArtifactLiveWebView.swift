@@ -649,7 +649,7 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         var onChat: ((String) -> Void)?
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any] else { return }
+            guard isAppMainFrame(message), let body = message.body as? [String: Any] else { return }
             switch body["type"] as? String {
             case "close": onClose?()
             case "chat": onChat?(body["text"] as? String ?? "")
@@ -676,7 +676,8 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         @MainActor
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) async -> (Any?, String?) {
-            (await ArtifactsV2Client.bearerToken(), nil)
+            guard isAppMainFrame(message) else { return (nil, nil) }
+            return (await ArtifactsV2Client.bearerToken(), nil)
         }
     }
 
@@ -688,6 +689,7 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
         @MainActor
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) async -> (Any?, String?) {
+            guard isAppMainFrame(message) else { return (nil, nil) }
             let token: String? = (try? await AuthManager.shared.getToken()) ?? nil
             let value: Any? = (token?.isEmpty == false) ? token : nil
             return (value, nil)
@@ -920,4 +922,14 @@ private struct ArtifactLiveWebContainer: UIViewRepresentable {
             onPhase(.failed(FriendlyErrorMessage.from(error.localizedDescription)))
         }
     }
+}
+
+/// The sign-in and editor bridges answer only the web app's own top frame. A
+/// frame inside the page (the artifact runtime's sandbox, an embed) can post to
+/// the same handler names, and must not get the Clerk token or close the editor.
+@MainActor
+private func isAppMainFrame(_ message: WKScriptMessage) -> Bool {
+    let origin = message.frameInfo.securityOrigin
+    let web = ArtifactLiveWebView.webOrigin
+    return message.frameInfo.isMainFrame && origin.protocol == web.scheme && origin.host == web.host
 }

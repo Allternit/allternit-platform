@@ -1,0 +1,37 @@
+---
+title: 'worktree_enter and worktree_exit'
+description: 'Work in a separate git worktree and keep or remove it when done'
+---
+
+## Overview
+
+`worktree_enter` creates a separate git worktree and branch and moves the session into it. `worktree_exit` leaves it, keeping or removing it.
+
+The assistant enters a worktree only when you ask, or when the project's instructions say to. The session that creates a worktree is recorded, and only that session can remove it. Exit keeps any tree with uncommitted or unpushed work, and a session never removes a tree it did not create.
+
+## Parameters
+
+`worktree_enter`
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `name` | string, optional | Short name for the worktree and its branch. Generated when left out |
+| `base` | string, optional | Branch or commit to start from. The current HEAD when left out |
+
+`worktree_exit`
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `action` | `keep` or `remove` | Keep the worktree on disk, or remove it. Remove works only on one this session created and with no unpushed work |
+
+## Result
+
+Enter returns the path, branch, base and the session that created it. Exit returns the action and what happened: `kept`, `removed` or `refused`. A refusal gives a reason: `unpushed_work`, `uncommitted_changes`, `not_created_here` or `not_in_worktree`. A remove that would lose work is kept instead.
+
+## Permission
+
+Both change files on disk, so they follow the session's permission mode and ask in Ask before actions. They do not run in Read-only. See [Autonomy modes](/guides/autonomy-modes).
+
+## Surfaces
+
+Session info carries `worktree {path, branch}`. The ai and iOS Code headers show a branch chip from it. On ai, Leave offers Keep or Remove. The Gizzi Code terminal uses the same core. Android follows the PWA. Delivered by the code-session PR (PR1). Family: `code-review`.

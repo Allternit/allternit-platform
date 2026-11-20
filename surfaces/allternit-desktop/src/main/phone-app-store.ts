@@ -531,11 +531,14 @@ export const isWebTool = (name: string): boolean => name in WEB_METHODS;
 const DEVICE_METHODS: Record<string, string> = {
   'phone.calendar.list': 'device.calendar.list',
   'phone.calendar.create': 'device.calendar.create',
+  'phone.calendar.delete': 'device.calendar.delete',
   'phone.reminders.list': 'device.reminders.list',
   'phone.reminders.create': 'device.reminders.create',
+  'phone.reminders.update': 'device.reminders.update',
+  'phone.location.get': 'device.location.get',
   'phone.contacts.search': 'device.contacts.search',
 };
-const DEVICE_WRITES = new Set(['device.calendar.create', 'device.reminders.create']);
+const DEVICE_WRITES = new Set(['device.calendar.create', 'device.reminders.create', 'device.calendar.delete', 'device.reminders.update']);
 const MAX_RANGE_MS = 62 * 86_400_000;
 
 export const isDeviceTool = (name: string): boolean => name in DEVICE_METHODS;
@@ -576,6 +579,28 @@ export function deviceRpc(name: string, a: Record<string, unknown>): { method: s
       if (location === null || notes === null || (a.allDay !== undefined && typeof a.allDay !== 'boolean')) return bad('location, notes or allDay is malformed.');
       const params = { title, start: new Date(start).toISOString(), end: new Date(end).toISOString(), allDay: a.allDay === true, ...(location ? { location } : {}), ...(notes ? { notes } : {}) };
       return { method, params, write: true, summary: `Add calendar event "${title}" starting ${params.start}${location ? ` at ${location}` : ''}` };
+    }
+    case 'device.calendar.delete': {
+      const id = typeof a.id === 'string' ? a.id.trim() : '';
+      if (!id || id.length > 200) return bad('id is required (up to 200 characters).');
+      return { method, params: { id }, write: true, summary: `Delete calendar event ${id}` };
+    }
+    case 'device.reminders.update': {
+      const id = typeof a.id === 'string' ? a.id.trim() : '';
+      if (!id || id.length > 200) return bad('id is required (up to 200 characters).');
+      const title = a.title === undefined ? undefined : typeof a.title === 'string' ? a.title.trim() : null;
+      const due = a.due === undefined ? undefined : isoMs(a.due);
+      const notes = optText(a.notes, 2000);
+      if (title === null || (title !== undefined && (!title || title.length > 200))) return bad('title must be 1-200 characters.');
+      if (due === null || notes === null) return bad('due must be an ISO 8601 time and notes up to 2000 characters.');
+      if (a.completed !== undefined && typeof a.completed !== 'boolean') return bad('completed must be a boolean.');
+      if (title === undefined && due === undefined && notes === undefined && a.completed === undefined) return bad('Give at least one of title, due, completed or notes to change.');
+      const params = { id, ...(title !== undefined ? { title } : {}), ...(due !== undefined ? { due: new Date(due).toISOString() } : {}), ...(a.completed !== undefined ? { completed: a.completed } : {}), ...(notes !== undefined ? { notes } : {}) };
+      return { method, params, write: true, summary: `Update reminder ${id}${title ? ` (title "${title}")` : ''}${a.completed !== undefined ? (a.completed ? ', mark done' : ', mark open') : ''}` };
+    }
+    case 'device.location.get': {
+      if (a.precision !== undefined && a.precision !== 'approximate' && a.precision !== 'precise') return bad('precision must be "approximate" or "precise".');
+      return { method, params: { precision: a.precision === 'precise' ? 'precise' : 'approximate' }, write: false, summary: '' };
     }
     case 'device.reminders.list': {
       const limit = optLimit(a.limit, 200);

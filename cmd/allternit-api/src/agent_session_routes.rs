@@ -370,6 +370,14 @@ struct GizziSessionInfo {
     /// `{ id, goal, milestone, total, status, label: "Mission · M2/5", at }`.
     #[serde(default)]
     mission: Option<serde_json::Value>,
+    /// The git worktree the session entered (`worktree_enter` tool):
+    /// `{ path, branch }`. Passed through unchanged; absent outside a worktree.
+    #[serde(default)]
+    worktree: Option<serde_json::Value>,
+    /// Set once the chat ended (`end_conversation` tool): `{ at, reason }`.
+    /// The session then refuses new prompts; clients offer a new chat.
+    #[serde(default)]
+    ended: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -414,6 +422,9 @@ struct GizziMessageInfo {
     /// Open-lane refusal handoff `{from, to}` (gizzi MessageV2.Assistant).
     #[serde(default)]
     handoff: Option<serde_json::Value>,
+    /// Memory entries this turn's memory tools recalled or changed (gizzi MessageV2.Assistant.memory_refs).
+    #[serde(default)]
+    memory_refs: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -549,6 +560,8 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
     metadata.insert("environment".to_string(), json!(info.environment));
     metadata.insert("glance".to_string(), json!(info.glance));
     metadata.insert("mission".to_string(), json!(info.mission));
+    metadata.insert("worktree".to_string(), json!(info.worktree));
+    metadata.insert("ended".to_string(), json!(info.ended));
     for (key, value) in stored_metadata {
         metadata.insert(key, value);
     }
@@ -693,6 +706,7 @@ fn transform_message_with(
             "telemetry": run_telemetry(&message),
             "handoff": handoff_of(&message.parts),
             "cloudContinue": part_meta(&message.parts, "cloudContinue"),
+            "memoryRefs": message.info.memory_refs,
             "parts": message.parts,
             "error": message.info.error.as_ref().and_then(|e| e.data.clone()),
         }
@@ -2549,6 +2563,8 @@ async fn transform_bus_event(
                         "environment": info.environment,
                         "glance": info.glance,
                         "mission": info.mission,
+                        "worktree": info.worktree,
+                        "ended": info.ended,
                     },
                     "environment": info.environment,
                 })
@@ -2718,6 +2734,13 @@ async fn transform_bus_event(
                 .filter(|v| v.is_array())
                 .cloned()
                 .unwrap_or_else(|| json!([])),
+        })),
+        // G4: runtime status (busy/idle/retry + status_update's `phase` and
+        // `note`). The status object passes whole, so new fields ride along.
+        "session.status" => Some(json!({
+            "type": "session_status",
+            "session_id": props.get("sessionID"),
+            "status": props.get("status"),
         })),
         "message.part.updated" => Some(json!({
             "type": "part_updated",

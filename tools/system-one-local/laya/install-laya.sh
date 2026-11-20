@@ -21,7 +21,12 @@ fi
 
 UV_BIN="${UV:-$(command -v uv || true)}"
 if [ -z "$UV_BIN" ] || [ ! -x "$UV_BIN" ]; then
-  echo "needs uv: install it with 'brew install uv' or 'curl -LsSf https://astral.sh/uv/install.sh | sh'" >&2
+  case "$(uname -s)" in
+    Darwin) UV_HOW="brew install uv" ;;
+    MINGW*|MSYS*|CYGWIN*) UV_HOW='powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"' ;;
+    *) UV_HOW="curl -LsSf https://astral.sh/uv/install.sh | sh" ;;
+  esac
+  echo "needs uv: install it with '$UV_HOW'" >&2
   exit 3
 fi
 

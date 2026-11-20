@@ -21,7 +21,7 @@ import { PhoneDeviceManager, type StoredPhone } from './phone-device-manager.js'
 import { CloudPhoneAutoLink, fetchCloudPhones, syncCloudPhones, type CloudPhoneLinkStarter, type CloudPhonesDeps, type CloudPhonesSnapshot } from './cloud-phones.js';
 import { fileStore, readJson, writeJson } from './phone-store-file.js';
 import { newGatewayToken, startPhoneGateway, type PhoneGatewayHandover } from './phone-gateway.js';
-import { httpPhoneApi, PhoneRunRecorder } from './phone-runs.js';
+import { httpPhoneApi, PhoneRunRecorder, phoneMapsCall, type PhoneMapsOp } from './phone-runs.js';
 import { execFileSync } from 'node:child_process';
 import { handOver, handoverKey, handoverTargets, importHandover, openHandover, type HandoverClientDeps, type HandoverStores } from './phone-link-handover.js';
 import { findUxplay } from './phone-airplay.js';
@@ -1020,6 +1020,12 @@ class PhoneService {
       canTap: () => backend.row(serial)?.canTap === true,
       log: (message) => log.info('[PhoneStream]', message),
     });
+  }
+
+  /** phone:maps-*: app maps and Explore in the local allternit-api (phone-runs.ts phoneMapsCall). */
+  mapsCall(op: PhoneMapsOp, args: unknown): Promise<Record<string, unknown>> {
+    const api = httpPhoneApi(() => URLS.API, () => backendManager.getLocalAuthHeaders());
+    return phoneMapsCall(api, op, args && typeof args === 'object' ? (args as Record<string, unknown>) : {});
   }
 
   /** phone:app-phones: the account's iPhones with the Allternit app, for the phone list. */

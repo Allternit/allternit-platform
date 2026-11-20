@@ -10,6 +10,7 @@ import { errors } from "@/runtime/server/error"
 import { lazy } from "@/shared/util/lazy"
 import { streamSSE } from "hono/streaming"
 import { randomUUID } from "node:crypto"
+import PROMPT_SAFETY from "@/runtime/session/prompt/safety.txt"
 
 function runtimeAuthMiddleware(
   RuntimeService: Pick<typeof DefaultRuntimeService, "get">,
@@ -218,7 +219,12 @@ export function createRuntimeRoutes(deps: Partial<RuntimeRouteDeps> = {}): Hono 
           prompt: input.prompt,
           cwd: input.cwd,
           env: input.env,
-          systemPrompt: input.systemPrompt,
+          // The client string is the whole system text for this task, so the hard limits ride with it.
+          systemPrompt: input.systemPrompt?.includes(PROMPT_SAFETY.trim())
+            ? input.systemPrompt
+            : input.systemPrompt?.trim()
+              ? `${input.systemPrompt}\n\n${PROMPT_SAFETY.trim()}`
+              : PROMPT_SAFETY.trim(),
           attachments: input.attachments as AgentTask["attachments"],
         }
 

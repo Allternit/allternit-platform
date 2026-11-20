@@ -4,4 +4,6 @@ Use it before you assume a preference, convention or past correction, and before
 
 Each hit is one memory line with its drive, topic file, id, version, source and date. Pass the version as if_version when you change that entry. To see a whole topic, use memory_list.
 
+Write queries that stand alone. Use the user's exact names, terms and time window, and the topic's own nouns, not meta-words like "discussed" or "talked about". If the request has no content words ("what did I tell you?"), ask which thing instead of searching. Search for what was asked; do not widen to related preferences.
+
 A hit may carry a "Memory conflict" note: two memories disagree. It shows both sides and the one Sleep picked; mention the conflict only if it matters. When it says to ask the user, recall has already asked them; use their answer, and do not ask again.

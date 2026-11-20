@@ -30,6 +30,9 @@ struct ToolCallRecord: Identifiable, Equatable, Sendable {
     var automation: AgentAutomationResult? = nil
     /// lookup: the fact card (weather, time zones, conversion, …) drawn under the reply.
     var lookupCard: AnswerCardEnvelope? = nil
+    /// The nine gap tools' result metadata (worktree, second opinion, PR
+    /// comments, status, feedback, location, voice, end chat).
+    var gap: GapToolMetadata? = nil
     /// The tool part's `metadata` object as raw JSON text (nil when none).
     /// connector_suggest and settings read their cards from it.
     var metadata: String? = nil
@@ -96,6 +99,7 @@ extension ToolCallRecord {
                 userMessage: name == AgentUserMessage.toolName ? part.state?.userMessage : nil,
                 automation: name == AgentAutomationResult.toolName ? part.state?.automation : nil,
                 lookupCard: name == LookupToolMetadata.toolName ? part.state?.lookup?.card : nil,
+                gap: GapToolMetadata.decode(toolName: name, json: part.state?.metadata),
                 metadata: part.state?.metadata
             )
         }
@@ -121,6 +125,7 @@ extension MessageRecord {
                 if let message = detail.userMessage { call.userMessage = message }
                 if let automation = detail.automation { call.automation = automation }
                 if let card = detail.lookupCard { call.lookupCard = card }
+                if let gap = detail.gap { call.gap = gap }
                 if let metadata = detail.metadata { call.metadata = metadata }
             }
             if state != .running, call.finishedAt == nil { call.finishedAt = now }
@@ -141,6 +146,7 @@ extension MessageRecord {
                 userMessage: detail?.userMessage,
                 automation: detail?.automation,
                 lookupCard: detail?.lookupCard,
+                gap: detail?.gap,
                 metadata: detail?.metadata
             ))
         }
@@ -174,7 +180,22 @@ enum ToolDescriber {
         return ["delegate_task", "spawn_agent", "collab_spawn", "collab_agent_spawn"].contains(raw)
     }
 
+    /// The call's `label` input (a computer tool's `step`) names what it does for the person watching, so it wins over the generic verb. Agent steps keep their subagent title.
     static func describe(_ call: ToolCallRecord) -> ToolDescription {
+        var base = describeBase(call)
+        guard !isAgentTool(call.toolName) else { return base }
+        let isComputer = ["computer", "computerv2", "browser"].contains(normalized(call.toolName))
+        let keys = isComputer ? ["step", "label"] : ["label"]
+        for key in keys {
+            if let t = call.input[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+                base.verb = firstLine(t)
+                break
+            }
+        }
+        return base
+    }
+
+    private static func describeBase(_ call: ToolCallRecord) -> ToolDescription {
         let running = call.state == .running
         let name = normalized(call.toolName)
         let inp = call.input

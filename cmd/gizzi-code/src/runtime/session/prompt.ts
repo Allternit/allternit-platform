@@ -25,6 +25,7 @@ import { ContextNotice } from "@/runtime/primitives/context-notice"
 import { SteerSignal } from "@/runtime/primitives/steer-signal"
 import { SessionCompaction } from "@/runtime/session/compaction"
 import { Instance } from "@/runtime/context/project/instance"
+import { SessionWorktree } from "@/runtime/primitives/worktree"
 import { Bus } from "@/shared/bus"
 import { ProviderTransform } from "@/runtime/providers/adapters/transform"
 import { SystemPrompt } from "@/runtime/session/system"
@@ -91,6 +92,7 @@ import { WORKER_BOT_TOOL_IDS } from "@/runtime/tools/builtins/worker-bot-tools"
 import { isAppBotMainChat, isAppBotSession } from "@/runtime/bots/app-bot-routing"
 import { PROJECT_SEND_TOOL_IDS } from "@/runtime/tools/builtins/project-send"
 import { SessionHandoff } from "@/runtime/session/handoff"
+import { END_CONVERSATION_TOOL_ID } from "@/runtime/primitives/gap-types"
 import { SessionPause } from "@/runtime/session/pause"
 import { SessionLimit } from "@/runtime/session/limit"
 import type { QuotaWindow } from "@/runtime/providers/quota"
@@ -295,8 +297,13 @@ export namespace SessionPrompt {
     // lineage head, and a switch to a model whose window can't hold this one
     // hands off first. Every entry point (HTTP, CLI, bots, routines) goes
     // through here, so no client can talk to a closed window.
+    // An ended chat (end_conversation) takes no new prompts; clients show the
+    // message and offer a new chat. Checked on the lineage head before a
+    // model-switch handoff could open a fresh window from it.
+    assertNotEnded(await Session.get(await SessionHandoff.head(input.sessionID)).catch(() => undefined))
     input.sessionID = await beforeTurnHandoff(input)
     const session = await Session.get(input.sessionID)
+    assertNotEnded(session)
     // Self-hosted: refuse the turn before anything is stored when the agent's
     // custom tools are malformed or shadow a built-in or MCP tool of this
     // session (resolveTools registers them again each step).
@@ -539,6 +546,14 @@ const message = await createUserMessage(input)
     return true
   }
 
+  function assertNotEnded(session: Session.Info | undefined) {
+    if (!session?.ended) return
+    throw new Session.EndedError(
+      { sessionID: session.id, at: session.ended.at, reason: session.ended.reason },
+      { message: Session.ENDED_MESSAGE },
+    )
+  }
+
   async function beforeTurnHandoff(input: PromptInput): Promise<string> {
     await SessionHandoff.settled(input.sessionID)
     const head = await SessionHandoff.head(input.sessionID)
@@ -728,8 +743,10 @@ const message = await createUserMessage(input)
   }
 
   export const loop = fn(LoopInput, async (input) => {
-    const dir = workdirs.get(input.sessionID)
-    return dir ? Instance.withWorkdir(dir, () => runLoop(input)) : runLoop(input)
+    // A worktree the session entered wins over the folder the client sends each turn.
+    // Always provide the folder, so worktree_enter / worktree_exit can move the running turn.
+    const dir = (await SessionWorktree.active(input.sessionID))?.path ?? workdirs.get(input.sessionID) ?? Instance.workdir
+    return Instance.withWorkdir(dir, () => runLoop(input))
   })
 
   async function runLoop(input: z.infer<typeof LoopInput>) {
@@ -2053,6 +2070,15 @@ const message = await createUserMessage(input)
     if (PROJECT_SEND_TOOL_IDS.some((id) => id in tools)) {
       const allowed = await isAppBotMainChat(input.session.id).catch(() => false)
       if (!allowed) for (const id of PROJECT_SEND_TOOL_IDS) delete tools[id]
+    }
+
+    // end_conversation (D5): Gizzi's own chats only. Never a bot turn (a
+    // person's bot, bots on customer channels included), never a child
+    // session (the parent's chat is not its to end), never an ended chat.
+    if (END_CONVERSATION_TOOL_ID in tools) {
+      if (BotTurn.get(input.session.id) || input.session.parentID || input.session.ended) {
+        delete tools[END_CONVERSATION_TOOL_ID]
+      }
     }
 
     // Session rules (deny `*`, then allow a few) only gate execution elsewhere; drop the

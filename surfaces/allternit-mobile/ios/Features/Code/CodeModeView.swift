@@ -294,6 +294,19 @@ struct CodeModeView: View {
                         .foregroundColor(ink)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    if let branch = activeWorktreeBranch {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.triangle.branch")
+                            Text(branch).lineLimit(1).truncationMode(.middle)
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(ink.opacity(0.75))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(ink.opacity(0.1)))
+                        .frame(maxWidth: 110)
+                        .accessibilityLabel("Worktree branch \(branch)")
+                    }
                     if activeSessionId != nil {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 10, weight: .bold))
@@ -307,6 +320,12 @@ struct CodeModeView: View {
             GizziCodeWordmark(height: 15)
                 .accessibilityAddTraits(.isHeader)
         }
+    }
+
+    /// The branch of the worktree this session runs in (`metadata.worktree`).
+    private var activeWorktreeBranch: String? {
+        guard let activeSessionId else { return nil }
+        return sessions.first(where: { $0.id == activeSessionId })?.worktreeBranch
     }
 
     /// The thread's name; a fresh thread shows its launch prompt until the

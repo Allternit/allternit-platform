@@ -17,6 +17,7 @@ import {
   hasWorktreeCreateHook,
   validateWorktreeSlug,
 } from '../../utils/worktree.js'
+import { available as worktreeEnterAvailable } from '@/runtime/tools/builtins/worktree-enter'
 import { ENTER_WORKTREE_TOOL_NAME } from './constants.js'
 import { getEnterWorktreeToolPrompt } from './prompt.js'
 import { renderToolResultMessage, renderToolUseMessage } from './UI.js'
@@ -55,6 +56,8 @@ export const EnterWorktreeTool: Tool<InputSchema, Output> = buildTool({
   searchHint: 'create an isolated git worktree and switch into it',
   maxResultSizeChars: 100_000,
   isEnabled() {
+    // Superseded by WorktreeEnterTool (aliases: EnterWorktree) once that is available.
+    if (worktreeEnterAvailable) return false
     return hasWorktreeCreateHook() || !!findCanonicalGitRoot(getCwd())
   },
   async description() {

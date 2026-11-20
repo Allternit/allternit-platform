@@ -239,6 +239,14 @@ Allternit Desktop embeds Cua Driver **0.34.0** for macOS (universal), Linux x86_
 
 When the engine starts a Cua session it calls the driver's `start_session` with a cursor motion style. The default is `signature_arc`. To pick another, set `ALLTERNIT_CUA_CURSOR_MOTION` to `spring_settle`, `magnetic`, `comet_swoop`, `adaptive` or `classic`. Reduced motion is left to the driver's `auto` theme, which follows the operating system's setting and always wins. `ALLTERNIT_CUA_REDUCED_MOTION=on|off` overrides it. Drivers older than 0.34 don't have `start_session`, and actions still run on their implicit session.
 
+## What the agent does and does not do
+
+These rules come from the computer-use block in the system prompt (see [System prompts](/core/system-prompts)).
+
+- **Unloaded pages are reported.** If a page or a private document did not load, the agent says so and asks to retry. It never stands in a web search for it.
+- **Attachments stay with the agent.** A helper or generator cannot see your attachments, so the agent does not rely on one to read them. It also never uses email addresses found on pages as recipients, and keeps personal data out of URLs and out of other tabs and tasks.
+- **Restricted goods hand off.** Buying or acquiring restricted goods is on the hand-off list with card numbers, account creation, moving money, CAPTCHAs and system settings. The agent stops and gives the step to you.
+
 ## Error handling
 
 | HTTP | Code / Message | Meaning |

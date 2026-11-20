@@ -442,6 +442,7 @@ class RpcDispatcher(
             .put("total_returned", sel.nodes.size)
             .put("coordinate_space", "pixels")
             .put("foreground_app", o.foregroundPackage() ?: JSONObject.NULL)
+            .put("activity", o.foregroundActivity() ?: JSONObject.NULL)
             .put("source_channel", "ax")
             .put("hint", hint)
         if (p.optBoolOrNull("structured") == true || p.optStringOrNull("format") == "json") {

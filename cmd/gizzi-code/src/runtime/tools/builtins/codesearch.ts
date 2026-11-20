@@ -1,4 +1,5 @@
 import z from "zod/v4"
+import { LabelField } from "@/runtime/primitives/gap-types"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import DESCRIPTION from "@/runtime/tools/builtins/codesearch.txt"
 import { abortAfterAny } from "@/shared/util/abort"
@@ -36,6 +37,7 @@ interface McpCodeResponse {
 export const CodeSearchTool = Tool.define("codesearch", {
   description: DESCRIPTION,
   parameters: z.object({
+    ...LabelField,
     query: z
       .string()
       .describe(

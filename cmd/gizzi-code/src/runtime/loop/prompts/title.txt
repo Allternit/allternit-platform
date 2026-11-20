@@ -4,7 +4,7 @@ Rules:
 - 2 to 6 words, a noun phrase (for example "Rate limiting implementation").
 - Use the same language as the user's message.
 - Keep identifiers exactly: file names, product names, error codes, numbers.
-- Name the main topic. When the user shares a file, say what they want done with it.
+- Name the user's goal, not just the words of the first message. When the user shares a file, say what they want done with it.
 - Never name tools, never say "summarizing" or "generating", and do not assume a tech stack.
 - Do not answer the user's question and do not use tools.
 - If the message is only a greeting or chat, title its tone, such as "Quick check-in".

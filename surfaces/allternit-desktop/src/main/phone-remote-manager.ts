@@ -45,6 +45,16 @@ const KILL_GRACE_MS = 3_000;
 // 1s → 2s → 5s → 30s, then keep trying at 30s.
 const BACKOFF_STEPS_MS = [1000, 2000, 5000, 30000];
 
+/**
+ * Exit codes that mean a program the server needs is missing: 78 (EX_CONFIG,
+ * the server's own code for an ENOENT) and 127 (the shell's "command not
+ * found"). A restart cannot fix those, so the supervisor stops instead of
+ * respawning forever (seen on minimal Linux without python3, 2026-11-19).
+ */
+export function phoneRemoteExitIsPermanent(code: number | null): boolean {
+  return code === 78 || code === 127;
+}
+
 export class PhoneRemoteManager {
   private static instance: PhoneRemoteManager;
   private proc: ChildProcess | null = null;
@@ -55,6 +65,8 @@ export class PhoneRemoteManager {
   /** True when we adopted a foreign :8477 listener — we must not stop it. */
   private adoptedForeign = false;
   private resolvedScriptPath: string | null | undefined;
+  /** Set when the server cannot run on this machine; nothing respawns it until the app restarts. */
+  private gaveUp = false;
 
   static getInstance(): PhoneRemoteManager {
     if (!PhoneRemoteManager.instance) {
@@ -70,7 +82,7 @@ export class PhoneRemoteManager {
    * to surface, matching the other optional sidecars.
    */
   async ensureStarted(): Promise<void> {
-    if (this.proc || this.adoptedForeign) return;
+    if (this.proc || this.adoptedForeign || this.gaveUp) return;
 
     if (await this.probeHealthz()) {
       this.adoptForeign();
@@ -187,9 +199,28 @@ export class PhoneRemoteManager {
     fs.closeSync(out);
     this.proc = proc;
 
+    proc.on('error', (error: NodeJS.ErrnoException) => {
+      // Without a listener a failed spawn is an uncaught exception in main.
+      if (this.proc === proc) this.proc = null;
+      if (error.code === 'ENOENT') {
+        this.gaveUp = true;
+        log.warn(`[PhoneRemote] cannot start the phone-remote server (${error.message}); not retrying until the app restarts`);
+        return;
+      }
+      log.warn('[PhoneRemote] phone-remote server process error:', error);
+    });
+
     proc.on('exit', (code) => {
       if (this.proc === proc) this.proc = null;
       if (this.stopping) return;
+      if (phoneRemoteExitIsPermanent(code)) {
+        this.gaveUp = true;
+        log.warn(
+          `[PhoneRemote] phone-remote server stopped: a program it needs is missing (exit ${code}; see ${this.logFilePath()}). ` +
+            'Not restarting until the app restarts.',
+        );
+        return;
+      }
       const delay = BACKOFF_STEPS_MS[Math.min(this.respawnAttempts, BACKOFF_STEPS_MS.length - 1)];
       this.respawnAttempts += 1;
       log.info(

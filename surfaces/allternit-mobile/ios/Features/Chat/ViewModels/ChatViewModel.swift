@@ -52,6 +52,9 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     var reasoning: String = ""
     var isStreaming: Bool = false
     var toolStatus: ToolStatus? = nil
+    /// The run's one-line status ("phase - note") from `session_status`
+    /// frames. Set while busy, cleared on idle and when the stream ends.
+    var busyLine: String? = nil
     /// Every tool call of the reply, for the tool calls rail and the agent
     /// run tree (Features/RunTree).
     var toolCalls: [ToolCallRecord] = []
@@ -79,6 +82,9 @@ struct MessageRecord: Identifiable, Equatable, Sendable {
     /// When the message was written: the server's timestamp for history,
     /// creation time for messages made on this device (the Office panel's thread).
     var createdAt: Date = Date()
+    /// Memories the reply used or changed (`metadata.memoryRefs`), for the
+    /// "Used memory (n)" chip (MemoryRefsChip). Empty for user messages.
+    var memoryRefs: [MemoryRef] = []
 }
 
 /// Parameters for the NEXT session create, pushed from the view whenever
@@ -128,6 +134,19 @@ enum ChatSendError: LocalizedError {
         case .attachmentUploadFailed(let name):
             return "Couldn't upload \(name). Check the connection and try again."
         }
+    }
+}
+
+/// One location fix waiting for the next send (UserLocationCard sets it, the
+/// send path takes it). Expires after two minutes so a stale fix never rides a later turn.
+@MainActor
+enum PendingClientLocation {
+    private static var value: (loc: AgentChatClient.ClientLocation, at: Date)?
+    static func set(_ loc: AgentChatClient.ClientLocation) { value = (loc, Date()) }
+    static func take() -> AgentChatClient.ClientLocation? {
+        defer { value = nil }
+        guard let v = value, Date().timeIntervalSince(v.at) < 120 else { return nil }
+        return v.loc
     }
 }
 
@@ -299,17 +318,26 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// attachments survive history loads and foreground reconciles.
     nonisolated private static func mapRecord(_ record: AgentSessionMessage) -> MessageRecord {
         let parts = record.metadata?.parts ?? []
+        // File parts by index, so a reply's `file:msg:<id>:<n>` citation
+        // finds its attachment (FileCitationChip).
+        CitationAttachments.record(messageId: record.id, parts: parts)
         let artifacts = parts
             .filter { $0.type == "file" }
             .map { ArtifactRecord(part: $0, messageId: record.id) }
+        let tools = ToolCallRecord.fromHistory(parts)
+        // The gateway's `[Tool name]` placeholder lines duplicate the tool chips; drop them.
+        let content = tools.isEmpty ? record.content : record.content
+            .replacingOccurrences(of: #"(?m)^[ \t]*\[Tool [^\]\n]*\][ \t]*\r?\n?"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return MessageRecord(
             id: record.id,
             role: record.role,
-            content: record.content,
+            content: content,
             reasoning: record.thinking ?? "",
-            toolCalls: ToolCallRecord.fromHistory(parts),
+            toolCalls: tools,
             artifacts: artifacts,
-            createdAt: parseTimestamp(record.timestamp) ?? Date()
+            createdAt: parseTimestamp(record.timestamp) ?? Date(),
+            memoryRefs: Array((record.metadata?.memoryRefs ?? []).prefix(10))
         )
     }
 
@@ -480,7 +508,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// are the composer's staged files — each is uploaded
     /// (`POST /api/v1/uploads`) before the stream starts and referenced from
     /// the agent-chat body; an upload failure fails the send.
-    func sendMessage(_ text: String, attachments: [StagedAttachment] = [], runtimeModelId: String? = nil, effort: String? = nil, enrich: Bool = true) {
+    func sendMessage(_ text: String, attachments: [StagedAttachment] = [], runtimeModelId: String? = nil, effort: String? = nil, enrich: Bool = true, clientLocation: AgentChatClient.ClientLocation? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isStreaming, !isCreatingSession else { return }
 
@@ -490,8 +518,14 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         // The UI shows the user's original text; prefixes (web search, style)
         // are injected only into the stream payload (ChatComposer.tsx parity).
         let streamText = enrich ? ToolOptionsStore.shared.enrichedText(trimmed) : trimmed
-        startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId)
+        // A card's Share location parks the fix in PendingClientLocation, then sends a
+        // short message; this send picks it up (once, and only while it is fresh).
+        let location = clientLocation ?? PendingClientLocation.take()
+        startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId, clientLocation: location)
     }
+
+    /// The live voice session, if any (set by VoiceHost); `control` events go to it.
+    weak var voiceModel: VoiceModeViewModel?
 
     /// Error-card "Retry": drops the failed assistant placeholder and
     /// re-streams the last sent text WITHOUT re-appending the user bubble
@@ -620,7 +654,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// never-landed rollback removes it along with the placeholder.
     /// `stagedAttachments` are uploaded first; `preparedRefs` skips the
     /// upload step (retry of an already-uploaded send).
-    private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil) {
+    private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil, clientLocation: AgentChatClient.ClientLocation? = nil) {
         // A locked Allternit Cloud model (D9): nothing is sent; the text goes
         // back to the composer and the credits sheet opens. The 402 is the backstop.
         if let modelId = runtimeModelId, ModelStore.shared.isCloudLocked(modelId) {
@@ -698,7 +732,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     effort: effort,
                     attachments: attachmentRefs.isEmpty ? nil : attachmentRefs,
                     tools: ToolOptionsStore.shared.optionsForSend,
-                    workdir: self.threadProjectId.map { ProjectFolderStore.shared.folder(for: $0)?.path ?? "" }
+                    workdir: self.threadProjectId.map { ProjectFolderStore.shared.folder(for: $0)?.path ?? "" },
+                    clientLocation: clientLocation
                 ) {
                     try Task.checkCancellation()
                     if self.apply(event, to: assistantId) {
@@ -731,6 +766,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                         // No brain chosen: keep the draft and open the picker.
                         self.transientError = AgentChatClientError.noBrainMessage
                         self.needsBrainPick = true
+                    } else if isComputeGateRefusal(error) {
+                        // No computer (428 / relayed compute_required): AgentChatClient opened the
+                        // compute gate sheet; the draft is back in the composer, so no raw banner.
+                        self.transientError = nil
                     } else if ModelStore.cloudAlias(runtimeModelId) != nil,
                               let reason = CloudCreditsGate.reason(inRelayedError: error.localizedDescription) {
                         // The computer relayed cloud-api's 402: the credits sheet, not a banner.
@@ -914,7 +953,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             updateMessage(messageId) { message in
                 message.toolStatus = MessageRecord.ToolStatus(
                     toolName: payload.toolName,
-                    text: payload.toolName,
+                    text: payload.detail?.title ?? payload.toolName,
                     state: .running,
                     startedAt: Date()
                 )
@@ -923,7 +962,25 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
 
         case .toolResult(let payload):
             updateMessage(messageId) { message in
-                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .done, detail: payload.detail, runCode: payload.runCode)
+                var detail = payload.detail
+                // Rail title: metadata `label` (already in detail.title), else
+                // the call's input `label`; computer tools use input `step`.
+                if detail?.title == nil || detail?.title?.isEmpty == true {
+                    let input = detail?.input.isEmpty == false
+                        ? detail?.input
+                        : message.toolCalls.first(where: { $0.id == payload.toolCallId })?.input
+                    let computerTools: Set<String> = ["computer", "computer_v2", "browser"]
+                    let keys = computerTools.contains(payload.toolName) ? ["step", "label"] : ["label"]
+                    if let text = keys.compactMap({ input?[$0]?.trimmingCharacters(in: .whitespacesAndNewlines) }).first(where: { !$0.isEmpty }) {
+                        detail = detail ?? AgentChatEvent.ToolDetail()
+                        detail?.title = text
+                    }
+                }
+                if let title = detail?.title, !title.isEmpty { message.toolStatus?.text = title }
+                if GapToolMetadata.feedbackNote == payload.toolName, let gap = detail?.gap {
+                    SeenFeedbackNotes.shared.add(gap)
+                }
+                message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .done, detail: detail, runCode: payload.runCode)
                 message.toolStatus?.state = .done
                 if let startedAt = message.toolStatus?.startedAt {
                     message.toolStatus?.elapsed = Date().timeIntervalSince(startedAt)
@@ -956,6 +1013,9 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         case .finish(let payload):
             if let usage = payload.usage {
                 updateMessage(messageId) { $0.runUsage = usage }
+            }
+            if let refs = payload.metadata?.memoryRefs, !refs.isEmpty {
+                updateMessage(messageId) { $0.memoryRefs = Array(refs.prefix(10)) }
             }
             guard payload.status == "error" else { break }
             flushPendingDeltas()
@@ -1000,6 +1060,12 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     message.permissions.append(ask)
                 }
             }
+
+        case .sessionStatus(let status):
+            updateMessage(messageId) { $0.busyLine = status.busy ? status.line : nil }
+
+        case .control(let control):
+            voiceModel?.applyControl(control)
 
         case .messageStart, .done, .ignored:
             // messageStart carries only model labels (not rendered); done is
@@ -1134,6 +1200,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// Normal end of a stream: flush, clear streaming flags and bookkeeping.
     private func finishStreaming(messageId: String) {
         flushPendingDeltas()
+        updateMessage(messageId) { $0.busyLine = nil }
 
         // Perf stats need a request-start and a first-delta timestamp — both
         // absent for e.g. an error that failed before any text arrived, in

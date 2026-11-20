@@ -139,7 +139,7 @@ ${backgroundNote ? backgroundNote + '\n' : ''}\
   - Do NOT prefix commands with \`cd\` or \`Set-Location\` -- the working directory is already set to the correct project directory automatically.
 ${sleepGuidance ? sleepGuidance + '\n' : ''}\
   - For git commands:
-    - Prefer to create a new commit rather than amending an existing commit.
+    - Make a new commit rather than amending, unless the user asks for an amend. If a pre-commit hook fails, fix the cause and make a new commit. Stage files by name, never in bulk.
     - Before running destructive operations (e.g., git reset --hard, git push --force, git checkout --), consider whether there is a safer alternative that achieves the same goal. Only use destructive operations when they are truly the best approach.
     - Never skip hooks (--no-verify) or bypass signing (--no-gpg-sign, -c commit.gpgsign=false) unless the user has explicitly asked for it. If a hook fails, investigate and fix the underlying issue.`
 }

@@ -55,6 +55,9 @@ Identity = TypedDict('Identity', {'id': str, 'object': Literal['identity'], 'acc
 IdentityList = TypedDict('IdentityList', {'data': List["Identity"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 Phone = TypedDict('Phone', {'object': Literal['phone'], 'serial': str, 'name': Optional[str], 'model': Optional[str], 'online': bool, 'desktop_online': bool, 'last_seen_at': Optional[str], 'call_bridge': Optional[Dict[str, Any]]}, total=False)
 PhoneList = TypedDict('PhoneList', {'data': List["Phone"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+PhoneMapSummary = TypedDict('PhoneMapSummary', {'app': str, 'platform': Literal['android', 'ios'], 'app_version': str, 'name': str, 'screens': int, 'edges': int, 'routable_edges': int, 'stale_edges': int, 'truncated': Optional[Dict[str, Any]], 'last_seen': str}, total=False)
+PhoneMapList = TypedDict('PhoneMapList', {'ok': bool, 'maps': List["PhoneMapSummary"]}, total=False)
+PhoneMapResult = TypedDict('PhoneMapResult', {'ok': bool, 'map': Dict[str, Any]}, total=False)
 PhoneSkillList = TypedDict('PhoneSkillList', {'data': List[Dict[str, Any]], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 PhoneStep = TypedDict('PhoneStep', {'object': Literal['phone.step'], 'id': str, 'run_id': str, 'serial': str, 'at': str, 'tool': str, 'label': str, 'args': Dict[str, Any], 'ok': bool, 'error': Optional[str], 'duration_ms': int, 'source': Optional[str], 'snapshot': bool}, total=False)
 PhoneHistory = TypedDict('PhoneHistory', {'object': Literal['phone.history'], 'serial': str, 'steps': List["PhoneStep"], 'runs': List[Dict[str, Any]], 'retention_days': int, 'max_steps': int}, total=False)
@@ -1525,6 +1528,34 @@ class PhonesResource:
             _body['brain'] = brain
         return self._client.request("POST", f"/v1/phones/skills/{_q(name)}/run", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
+    def list_maps(self, *, serial: str = NOT_GIVEN, platform: Literal['android', 'ios'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneMapList":
+        """List learned App Maps
+
+        One summary per app Allternit has mapped on the owner's Desktop (read only; exploring and forgetting a map stay on the Desktop, web, app and Gizzi). Errors 503 `phone_desktop_offline` while the Desktop is offline, 404 `no_desktop` when none is paired.
+
+        ``GET /v1/phones/maps``
+        """
+        _query: Dict[str, Any] = {}
+        if serial is not NOT_GIVEN:
+            _query['serial'] = serial
+        if platform is not NOT_GIVEN:
+            _query['platform'] = platform
+        return self._client.request("GET", f"/v1/phones/maps", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_map(self, app: str, *, serial: str = NOT_GIVEN, platform: Literal['android', 'ios'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneMapResult":
+        """One app's map
+
+        The map file for one app. Errors 404 `map_not_found` (nothing learned yet), 403 `money_app` (money apps are never mapped), 503 `phone_desktop_offline`, 404 `no_desktop`.
+
+        ``GET /v1/phones/maps/{app}``
+        """
+        _query: Dict[str, Any] = {}
+        if serial is not NOT_GIVEN:
+            _query['serial'] = serial
+        if platform is not NOT_GIVEN:
+            _query['platform'] = platform
+        return self._client.request("GET", f"/v1/phones/maps/{_q(app)}", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
     def get_history(self, serial: str, *, run_id: str = NOT_GIVEN, limit: int = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneHistory":
         """A phone's run history
 
@@ -1559,7 +1590,7 @@ class PhonesResource:
             _body['hold_id'] = hold_id
         return self._client.request("POST", f"/v1/phones/{_q(serial)}/tool", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def run_task(self, serial: str, *, goal: str, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneRunStarted":
+    def run_task(self, serial: str, *, goal: str, max_steps: int = NOT_GIVEN, bot_id: str = NOT_GIVEN, brain: str = NOT_GIVEN, vision: Literal['auto', 'always'] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneRunStarted":
         """Give a phone a goal
 
         The phone task loop on the Desktop (read the screen, one action, repeat) with `bot_id`'s brain, `brain`, or the default. Answers 202 with the `run_id`; each step is a `phone.step` webhook and the end is `phone.run.completed`. Tasks never send texts or place calls. At most 5 minutes. A sensitive step waits up to 5 minutes for the owner's approval with the budget paused (status `waiting_approval`, `phone.approval.requested`); the run ends `denied`, `approval_timeout` or `phone_locked` when it can't go on. `duration_ms` and phone minutes leave out held time.
@@ -1575,6 +1606,8 @@ class PhonesResource:
             _body['bot_id'] = bot_id
         if brain is not NOT_GIVEN:
             _body['brain'] = brain
+        if vision is not NOT_GIVEN:
+            _body['vision'] = vision
         return self._client.request("POST", f"/v1/phones/{_q(serial)}/task", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def get_live_view(self, serial: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneLiveView":

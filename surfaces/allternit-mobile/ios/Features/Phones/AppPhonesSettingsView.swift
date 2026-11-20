@@ -18,6 +18,7 @@ struct AppPhonesSettingsView: View {
     @AppStorage("linkBoardsSeen") private var hasSeenBoards = false
     @State private var stopping: Set<String> = []
     @State private var stopNotes: [String: String] = [:]
+    @State private var mapsState: AppMapsOutcome = .unsupported
 
     private enum BoardsState: Equatable {
         case loading
@@ -32,6 +33,7 @@ struct AppPhonesSettingsView: View {
             if let credentials = phone.credentials {
                 pairedSection(credentials)
                 boardsSection(credentials)
+                appMapsSection
                 screenSection
                 unpairSection
             } else {
@@ -48,11 +50,11 @@ struct AppPhonesSettingsView: View {
         .navigationTitle("Phones")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            if phone.credentials == nil { await loadRuntimes() } else { await loadBoards() }
+            if phone.credentials == nil { await loadRuntimes() } else { await loadBoards(); await loadMaps() }
         }
         .refreshable {
             await loadRuntimes()
-            if phone.credentials != nil { await loadBoards() }
+            if phone.credentials != nil { await loadBoards(); await loadMaps() }
         }
         .confirmationDialog("Unpair this iPhone?", isPresented: $isUnpairConfirmPresented, titleVisibility: .visible) {
             Button("Unpair", role: .destructive) {
@@ -192,6 +194,39 @@ struct AppPhonesSettingsView: View {
         } footer: {
             Text("Bots reach this app only while it's open. They can use the ACI browser here; a banner shows when they do, with Stop.")
         }
+    }
+
+    // MARK: - App Maps
+
+    /// What your bots have learned about each app's screens, read from your computer. Explore, Check and
+    /// Forget run in Allternit on the computer (no cloud route), so this list is read only.
+    @ViewBuilder
+    private var appMapsSection: some View {
+        if case .maps(let maps) = mapsState, !maps.isEmpty {
+            Section {
+                ForEach(maps) { map in
+                    let money = AppMapCopy.isMoneyApp(map.app)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(map.title)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(Color("TextPrimary"))
+                        Text(AppMapCopy.stateLine(map, money: money))
+                            .font(.footnote)
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                }
+            } header: {
+                Text("App maps")
+            } footer: {
+                Text("Start Explore from Allternit on your computer. Maps stay there.")
+            }
+        }
+    }
+
+    private func loadMaps() async {
+        mapsState = await AppMapsClient.shared.maps()
     }
 
     // MARK: - Allternit Link boards

@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// Settings > Device Access: which parts of this iPhone your bots may reach.
-/// Calendar, Reminders, Contacts, Shortcuts and Home (no Health). Each switch
-/// is off until you turn it on, and shows what iOS itself says about access.
+/// Calendar, Reminders, Contacts, Shortcuts, Home and Location (no Health).
+/// Each switch is off until you turn it on, and shows what iOS itself says
+/// about access. Location is when-in-use and approximate; precise asks each time.
 /// The iPhone actions section below (PhoneActionsSettingsSection) adds the
 /// shortcuts and Home access.
 struct DeviceAccessSettingsView: View {
@@ -26,7 +27,7 @@ struct DeviceAccessSettingsView: View {
                 }
             }
 
-            SettingsDescription(text: "Bots reach your iPhone only while the Allternit app is open on it. If the app is in the background, a bot is told to ask you to open it. Adding an event or reminder, sending anything and changing a lock always need your approval on your computer first.")
+            SettingsDescription(text: "Bots reach your iPhone only while the Allternit app is open on it. If the app is in the background, a bot is told to ask you to open it. Adding or deleting an event, adding or changing a reminder, sending anything and changing a lock always need your approval on your computer first.")
 
             PhoneActionsSettingsSection()
 

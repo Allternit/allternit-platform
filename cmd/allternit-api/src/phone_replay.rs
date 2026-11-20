@@ -45,7 +45,8 @@ use std::{
 };
 
 use crate::phone_guard::{self, CheckIn, El, Gate, Reread, TaskCtx};
-use crate::phone_runs;
+use crate::phone_map::{self, Observation, UiRead};
+use crate::phone_runs::{self, RunTally};
 
 /// Tests answer phone tool calls with this instead of Desktop's gateway.
 #[cfg(test)]
@@ -217,6 +218,12 @@ pub fn screen_of(els: &[UiEl]) -> (f64, f64) {
     let w = els.iter().map(|e| e.rect[0] + e.rect[2]).fold(0.0, f64::max);
     let h = els.iter().map(|e| e.rect[1] + e.rect[3]).fold(0.0, f64::max);
     (w.max(1.0), h.max(1.0))
+}
+
+/// The replay locator of an element on a screen of `screen` size (no pixel
+/// hash). Skills and App Map edges store taps this way.
+pub fn locator_of(el: &UiEl, screen: (f64, f64)) -> Locator {
+    Locator { class: el.class.clone(), label: el.label.clone(), resource_id: el.id.clone(), rel: Some(rel(el, screen)), crop: None }
 }
 
 fn rel(e: &UiEl, screen: (f64, f64)) -> [f64; 4] {
@@ -547,7 +554,7 @@ pub fn from_run(data_dir: &FsPath, body: &SaveIn) -> Result<Skill, String> {
             let r = rel(&el, size);
             // The pixel hash from the last frame before this step in the run.
             let crop = all[..=i].iter().rev().find(|p| p.snapshot).and_then(|p| frame_image(data_dir, p)).and_then(|img| crop_hash(&img, r));
-            Some(Locator { class: el.class, label: el.label, resource_id: el.id, rel: Some(r), crop })
+            Some(Locator { crop, ..locator_of(&el, size) })
         });
         // The check: the screen read right after this step, against the one before it.
         let before = s.ui.as_deref().map(parse_ui).unwrap_or_default();
@@ -652,14 +659,14 @@ pub fn resolve(loc: &Locator, els: &[UiEl], screen: (f64, f64), crop_of: &dyn Fn
 struct Screen {
     els: Vec<UiEl>,
     size: (f64, f64),
+    /// The App Map part of the read; `None` from an old Desktop (no `nodes`).
+    read: Option<UiRead>,
 }
 
 async fn read_screen(serial: Option<&str>, run_id: &str, source: &str) -> Result<Screen, String> {
-    let mut a = Map::new();
-    a.insert("max_elements".into(), json!(1000));
-    let v = act("phone.read_ui", a, serial, run_id, source).await?;
+    let v = act("phone.read_ui", phone_map::read_args(1000, false), serial, run_id, source).await?;
     let els = parse_ui(v.get("text").and_then(Value::as_str).unwrap_or_default());
-    Ok(Screen { size: screen_of(&els), els })
+    Ok(Screen { size: screen_of(&els), els, read: phone_map::parse_read(&v) })
 }
 
 /// A screenshot as a decoded image and a data URL.
@@ -683,7 +690,7 @@ fn check_holds(check: &Value, els: &[UiEl], inputs: &[(String, String)]) -> bool
 
 /// The one re-decision: which element on this screen is the step's element.
 /// Ask the model (the bot's brain when given) with the screen outline and frame.
-async fn redecide(step: &PStep, screen: &Screen, image: Option<&str>, model: Option<&(String, String)>) -> Result<Option<UiEl>, String> {
+async fn redecide(step: &PStep, screen: &Screen, image: Option<&str>, model: Option<&(String, String)>, spent: &mut RunTally) -> Result<Option<UiEl>, String> {
     let options: Vec<&UiEl> = screen.els.iter().filter(|e| !e.label.is_empty() || !e.id.is_empty()).take(150).collect();
     if options.is_empty() {
         return Ok(None);
@@ -720,7 +727,10 @@ async fn redecide(step: &PStep, screen: &Screen, image: Option<&str>, model: Opt
         "additionalProperties": false,
     });
     let images: Vec<String> = image.map(|i| vec![i.to_string()]).unwrap_or_default();
-    let (text, _) = crate::gizzi_completion::complete_decision(
+    if !images.is_empty() {
+        spent.screenshots_sent += 1;
+    }
+    let (text, usage) = crate::gizzi_completion::complete_decision(
         &prompt,
         &images,
         Some("You place recorded phone steps on a changed screen. Pick exactly one of the given element ids. Never invent one."),
@@ -728,6 +738,7 @@ async fn redecide(step: &PStep, screen: &Screen, image: Option<&str>, model: Opt
         &schema,
     )
     .await?;
+    spent.add_usage(&usage);
     let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
     let choice = crate::agency_api::decisions::backends::parse_choice(&text, &refs);
     Ok(choice.and_then(|c| c.strip_prefix('e')).and_then(|n| n.parse::<usize>().ok()).and_then(|i| options.get(i).map(|e| (*e).clone())))
@@ -891,6 +902,8 @@ pub async fn run_skill(
         return Err(format!("this skill needs inputs: {}", missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
     }
     let run_id = run_id.unwrap_or_else(new_skill_run_id);
+    // Registered for the stop route and the busy check until the replay returns.
+    let _reg = crate::phone_runs::RunReg::enter(&run_id, serial, "skill", None);
     let started = Instant::now();
     let mut report = Vec::new();
     let mut model_calls = 0u32;
@@ -901,8 +914,18 @@ pub async fn run_skill(
     let (mut held, mut holds) = (Duration::ZERO, Vec::<Value>::new());
     let (mut last_el, mut app): (Option<El>, Option<String>) = (None, None);
     let goal = format!("run the phone skill \"{}\"", skill.name);
+    let mut spent = RunTally::default();
+    // App Maps: passive observation when the phone's platform is known (contract section 5).
+    let platform = phone_map::detect_platform(serial).await;
+    // The newest read of this replay, while it still shows the phone as it is.
+    let mut last_read: Option<UiRead> = None;
 
     for index in 0..skill.steps.len() {
+        if _reg.stopped() {
+            status = "cancelled";
+            error = Some(format!("stopped before step {}", index + 1));
+            break;
+        }
         let step = skill.steps[index].clone();
         let t = Instant::now();
         let mut args: Map<String, Value> = substitute_json(&step.args, inputs).as_object().cloned().unwrap_or_default();
@@ -912,6 +935,8 @@ pub async fn run_skill(
         let shown = PStep { args: Value::Object(args.clone()), locator: step.locator.clone().map(|l| Locator { label: substitute(&l.label, inputs), ..l }), ..step.clone() };
         let mut target = step_el(&shown, last_el.as_ref());
         let flag = step.sensitive.then(|| step.effect.clone().unwrap_or_default());
+        // The element a tap landed on and the screen size, for the App Map edge.
+        let mut tapped: Option<(UiEl, (f64, f64))> = None;
         // Taps with a locator: find the element again on the current screen.
         if let (Some(loc), true) = (step.locator.as_ref(), op == "phone.tap") {
             let loc = Locator { label: substitute(&loc.label, inputs), ..loc.clone() };
@@ -935,8 +960,10 @@ pub async fn run_skill(
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
+            last_read = last_screen.as_ref().and_then(|s| s.read.clone());
             match (found, last_screen) {
                 (Some((el, how)), Some(screen)) => {
+                    tapped = Some((el.clone(), screen.size));
                     via = Some(how.as_str());
                     target = Some(El::from(&el));
                     let (x, y) = el.center();
@@ -951,8 +978,9 @@ pub async fn run_skill(
                 (None, Some(screen)) => {
                     model_calls += 1;
                     let image = screenshot(serial, &run_id, source).await.map(|(_, url)| url);
-                    match redecide(&step, &screen, image.as_deref(), model.as_ref()).await {
+                    match redecide(&step, &screen, image.as_deref(), model.as_ref(), &mut spent).await {
                         Ok(Some(el)) => {
+                            tapped = Some((el.clone(), screen.size));
                             via = Some("model");
                             target = Some(El::from(&el));
                             let (x, y) = el.center();
@@ -985,6 +1013,16 @@ pub async fn run_skill(
             report.push(json!({ "index": index, "op": op, "label": step.label, "ok": false, "error": error, "duration_ms": t.elapsed().as_millis() as u64 }));
             break;
         }
+        // App Maps: the read before this step (a tap already read one to place its element).
+        let mut prev_read = if platform.is_some() && matches!(op.as_str(), "phone.tap" | "phone.back" | "phone.open_app") {
+            match last_read.take() {
+                Some(r) => Some(r),
+                None if op != "phone.tap" => read_screen(serial, &run_id, source).await.ok().and_then(|s| s.read),
+                None => None,
+            }
+        } else {
+            None
+        };
         // The phone guard: every acting step, flagged when saved or not.
         let at = (serial, run_id.as_str(), source);
         let acting = match guard_step(db, data_dir, ctx, at, (index, step.label.as_str(), goal.as_str()), &op, &args, target.as_ref(), app.as_deref(), flag.clone(), &mut holds, &mut held).await {
@@ -1004,7 +1042,7 @@ pub async fn run_skill(
             if let Ok(screen) = read_screen(serial, &run_id, source).await {
                 model_calls += 1;
                 let image = screenshot(serial, &run_id, source).await.map(|(_, url)| url);
-                if let Ok(Some(el)) = redecide(&step, &screen, image.as_deref(), model.as_ref()).await {
+                if let Ok(Some(el)) = redecide(&step, &screen, image.as_deref(), model.as_ref(), &mut spent).await {
                     let (x, y) = el.center();
                     let mut tap = Map::new();
                     tap.insert("x".into(), json!(x));
@@ -1013,6 +1051,10 @@ pub async fn run_skill(
                     match guard_step(db, data_dir, ctx, at, (index, step.label.as_str(), goal.as_str()), "phone.tap", &tap, target.as_ref(), app.as_deref(), flag.clone(), &mut holds, &mut held).await {
                         Ok(tap) => {
                             hold = tap.get("_hold").cloned().or(hold);
+                            tapped = Some((el.clone(), screen.size));
+                            if platform.is_some() {
+                                prev_read = screen.read.clone();
+                            }
                             op = "phone.tap".into();
                             via = Some("model");
                             outcome = act(&op, tap, serial, &run_id, source).await;
@@ -1046,11 +1088,16 @@ pub async fn run_skill(
         }
         // The step's check: what it changed on screen.
         let mut checked = None;
+        let mut after_read: Option<UiRead> = None;
         if let Some(check) = &step.check {
             let deadline = Instant::now() + STEP_TIMEOUT;
             let ok = loop {
                 let ok = match read_screen(serial, &run_id, source).await {
-                    Ok(screen) => check_holds(check, &screen.els, inputs),
+                    Ok(screen) => {
+                        let ok = check_holds(check, &screen.els, inputs);
+                        after_read = screen.read;
+                        ok
+                    }
                     // No screen read on this lane: nothing to check against.
                     Err(_) => true,
                 };
@@ -1066,7 +1113,21 @@ pub async fn run_skill(
             }
         } else {
             tokio::time::sleep(Duration::from_millis(350)).await;
+            if prev_read.is_some() {
+                after_read = read_screen(serial, &run_id, source).await.ok().and_then(|s| s.read);
+            }
         }
+        // App Maps: record `before --step--> after` (typed steps never; errors only logged).
+        if let (Some(platform), Some(prev), Some(new)) = (platform, prev_read.as_ref(), after_read.as_ref()) {
+            let locator = tapped.as_ref().map(|(el, size)| phone_map::edge_locator(el, *size, &prev.nodes));
+            let sensitive = flag.is_some() || hold.is_some();
+            phone_map::observe_logged(data_dir, &Observation { platform, prev, action: &op, locator: locator.as_ref(), sensitive, new });
+        }
+        // The guard judges later steps against the real foreground, not the app a step asked for.
+        if let Some(new) = after_read.as_ref().filter(|r| !r.app.is_empty()) {
+            app = Some(new.app.clone());
+        }
+        last_read = after_read;
         report.push(json!({ "index": index, "op": op, "label": step.label, "ok": checked != Some(false), "via": via, "checked": checked, "hold": hold, "duration_ms": t.elapsed().as_millis() as u64 }));
         if status != "succeeded" {
             break;
@@ -1091,7 +1152,7 @@ pub async fn run_skill(
     if let Err(e) = store(data_dir, &skill) {
         tracing::warn!("phone skill {} not updated: {e}", skill.name);
     }
-    Ok(json!({
+    let mut out = json!({
         "ok": status == "succeeded",
         "status": status,
         "skill": skill.name,
@@ -1105,7 +1166,9 @@ pub async fn run_skill(
         "duration_ms": started.elapsed().saturating_sub(held).as_millis() as u64,
         "held_ms": held.as_millis() as u64,
         "holds": holds,
-    }))
+    });
+    spent.write(&mut out);
+    Ok(out)
 }
 
 // ─── Routes ────────────────────────────────────────────────────────────────

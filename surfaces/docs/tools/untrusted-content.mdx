@@ -1,0 +1,38 @@
+---
+title: 'Untrusted content'
+description: 'How results from the web, mail, connectors, MCP, past chats and resources reach the model as fenced data'
+---
+
+## Overview
+
+Some tool results hold text written by someone else: a web page, an email, a calendar entry, an MCP server reply, a past chat or a resource. That text can contain instructions meant for the model. Allternit treats it as data, never as instructions from you.
+
+## What gets fenced
+
+Results from these sources are wrapped before the model reads them:
+
+- web fetch and web search
+- mail and other connectors
+- MCP tools
+- past chats
+- resources
+
+The fence carries a marker generated fresh for each result. The model is told that text inside the fence is data to read, not orders to follow.
+
+## Forged markers
+
+A page cannot guess the marker, because it changes every time. If content contains something that looks like a fence marker, the runtime ignores it. It does not close the fence early and it does not open a new one.
+
+## What you see
+
+The fence is for the model only. Cards and tool output in the web app, the phone layout, iOS, the desktop app and the terminal show the raw result, with no marker. The stored tool result is unchanged.
+
+## Where it applies
+
+One shared guard (`guard/untrusted.ts`) wraps the text the model reads. The Gizzi Code terminal applies it where it maps web, search and MCP results into model text.
+
+## Related
+
+- [System prompts](/core/system-prompts)
+- [MCP](/tools/mcp)
+- [Connectors](/tools/connectors)

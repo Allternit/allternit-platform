@@ -47,7 +47,7 @@ object Schema {
             P("max_elements", "number", false, "Max nodes returned (default 2000, cap 4000)"),
             P("visible_only", "boolean", false, "Only nodes on screen (plus ancestors)"),
             P("structured", "boolean", false, "Also return `nodes`: one object per node with class, text, content_desc, resource_id, bounds, flags"),
-        ), "{format:'text', source, truncated, total_returned, coordinate_space:'pixels', foreground_app, nodes?}"),
+        ), "{format:'text', source, truncated, total_returned, coordinate_space:'pixels', foreground_app, activity, nodes?}"),
         M("screen_text", "Every text on screen with its frame, read from the accessibility tree (no OCR on Android).", listOf(
             P("element_id", "string", false, "Only items containing this substring (case-insensitive)"),
             P("include_image", "boolean", false, "Also attach a JPEG screenshot (API 30+)"),

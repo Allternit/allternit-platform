@@ -22,6 +22,13 @@ serde = { workspace = true }
 tokio = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# reqwest's default TLS is native-tls, i.e. the build host's libssl (libssl.so.3 on
+# Ubuntu 24.04, absent on Ubuntu 18.04/20.04 and Debian 10/11). On Linux, vendored
+# OpenSSL links it statically, the same as allternit-api, so the binary runs on every
+# glibc >= 2.27 (scripts/build-linux-sidecars.sh builds it with cargo-zigbuild at 2.17).
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 # Tests moved from the engine crate that drive the binary end to end.

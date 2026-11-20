@@ -60,9 +60,11 @@ ARG ZIG_AARCH64_LINUX_SHA256=958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b
 WORKDIR /app
 
 # libssl-dev: openssl-sys. protobuf-compiler: the engine's build.rs compiles
-# proto/verification.proto with tonic-build, which needs protoc.
+# proto/verification.proto with tonic-build, which needs protoc. perl + make:
+# allternit-factory vendors OpenSSL (openssl-src, #2587), whose Configure needs the
+# full perl (FindBin, IPC::Cmd), not the perl-base in the slim image.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pkg-config libssl-dev protobuf-compiler ca-certificates curl xz-utils \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev protobuf-compiler ca-certificates curl xz-utils perl make \
     && rm -rf /var/lib/apt/lists/*
 
 RUN arch="$(uname -m)" \
@@ -80,6 +82,16 @@ RUN arch="$(uname -m)" \
     && zig version
 
 COPY . .
+
+# Fetch libghostty-vt's Zig packages (lazy ones too) before cargo runs build.rs, with
+# retries: one dropped download (HttpConnectionClosing on dcimgui, 2026-11-19) failed
+# the whole image. build.rs then finds them in the global Zig cache.
+RUN cd factory/pane/vendor/libghostty-vt \
+    && for i in 1 2 3 4 5; do \
+         zig build --fetch=all && break; \
+         [ "$i" = 5 ] && exit 1; \
+         echo "zig fetch failed (try $i), retrying" >&2; sleep $((i * 10)); \
+       done
 
 RUN cargo build --release -p allternit-factory
 

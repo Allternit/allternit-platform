@@ -7,6 +7,18 @@ description: 'Headless notebook engine for grounded research, RAG, and citations
 
 **Allternit Open Notebook** is a headless research backend that powers NotebookLM-style RAG without Docker. It stores notebooks, sources, and chat messages in SurrealDB, chunks and indexes sources, and provides grounded chat with citations.
 
+## Editing notebook files (`notebook_edit`)
+
+This section is about editing `.ipynb` files in a code session, which is separate from the research service below. The assistant reads the notebook first, then changes one cell at a time. Cell indexes start at 0.
+
+| Operation | Effect |
+|---|---|
+| `replace` | Replace the source of the cell at `cellIndex`. `cellType` is optional |
+| `insert` | Add a new cell before `cellIndex`. `cellType` and `source` are required. An index equal to the cell count appends |
+| `delete` | Remove the cell at `cellIndex` |
+
+An index out of range is refused. The edit is refused if the file changed since the assistant last read it.
+
 ## Base URL
 
 Local development:

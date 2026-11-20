@@ -4,6 +4,7 @@ import { lazySchema } from '../../utils/lazySchema.js'
 import type { PermissionResult } from '../../utils/permissions/PermissionResult.js'
 import { isOutputLineTruncated } from '../../utils/terminal.js'
 import { DESCRIPTION, PROMPT } from './prompt.js'
+import { fenceUntrusted } from '../../../../../runtime/tools/guard/untrusted.js'
 import {
   renderToolResultMessage,
   renderToolUseMessage,
@@ -72,7 +73,7 @@ export const MCPTool = buildTool({
     return {
       tool_use_id: toolUseID,
       type: 'tool_result',
-      content,
+      content: fenceUntrusted(content, 'mcp'),
     }
   },
 } satisfies ToolDef<InputSchema, Output>)

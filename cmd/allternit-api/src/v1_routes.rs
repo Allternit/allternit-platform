@@ -1007,12 +1007,14 @@ fn user_layers(profile: Option<&str>, writing_style: Option<&str>) -> Option<Str
 /// on the computer toolset for that turn only; the lease and confirm gates in
 /// computer_toolset.rs / computer_safety.rs still decide every call.
 ///
-/// Five prompt hints also pass. Four only with their one allowed value
-/// ([`VALUED_TURN_HINTS`]): `form_factor: "phone"` and `reply_mode: "voice"`,
+/// Seven prompt hints also pass. Six only with their one allowed value
+/// ([`VALUED_TURN_HINTS`]): `run_kind: "background_code"` (a code run nobody
+/// watches) and `voice_tags: "on"` (spoken-tag style), plus
+/// `form_factor: "phone"` and `reply_mode: "voice"`,
 /// which the runtime reads to add its small-screen and spoken-reply prompt
 /// blocks; `answer_cards: "widgets"` (sent by iOS and the Ink REPL), which adds
 /// the short `writing` card manual; and `screen_context: "available"`, sent by
-/// a client that answers `capture_screen_context` requests. The fifth is
+/// a client that answers `capture_screen_context` requests. The seventh is
 /// `time_zone`, the client's IANA zone (see `turn_time_zone`), which the
 /// runtime uses for the date in its environment section and the
 /// `current_time` tool. Anything else is dropped.
@@ -1033,14 +1035,16 @@ fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
 }
 
-/// Turn hints that pass only with their one allowed value (the fifth hint,
+/// Turn hints that pass only with their one allowed value (the other hint,
 /// `time_zone`, is checked by [`turn_time_zone`]). Shared by this route and
 /// agent_session_routes' message send.
-pub(crate) const VALUED_TURN_HINTS: [(&str, &str); 4] = [
+pub(crate) const VALUED_TURN_HINTS: [(&str, &str); 6] = [
     ("form_factor", "phone"),
     ("reply_mode", "voice"),
     ("answer_cards", "widgets"),
     ("screen_context", "available"),
+    ("run_kind", "background_code"),
+    ("voice_tags", "on"),
 ];
 
 /// The turn hint `metadata.time_zone`: the client's IANA zone name, at most
@@ -1216,7 +1220,7 @@ enum ToolFrameState {
 /// (send_user_message: text + files + push; automation: the saved automation;
 /// lookup: the validated answer card the client draws in place of a
 /// model-written one).
-const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "lookup", "agent_batch", "sleep", "connector_suggest", "settings"];
+const METADATA_CARD_TOOLS: &[&str] = &["send_user_message", "automation", "lookup", "agent_batch", "sleep", "connector_suggest", "settings", "second_opinion", "pr_comments", "status_update", "feedback_note", "user_location", "voice_control", "end_conversation", "worktree_enter", "worktree_exit"];
 
 /// SSE frames for a gizzi `tool` part: an Anthropic-style
 /// `content_block_start` (tool_use) when the call starts, then `tool_result`
@@ -1237,9 +1241,16 @@ fn tool_frames_for_part(
     let status = part.pointer("/state/status").and_then(|v| v.as_str()).unwrap_or("");
     let tool_name = part.get("tool").and_then(|v| v.as_str()).unwrap_or("tool");
     let settled = status == "completed" || status == "error";
+    // G4 label: the tool part's `metadata.label` (stripped from the args by
+    // Tool.define, saved on the part), passed through unchanged on every frame.
+    let label = part
+        .pointer("/metadata/label")
+        .or_else(|| part.pointer("/state/metadata/label"))
+        .filter(|v| v.is_string())
+        .cloned();
     let mut frames = Vec::new();
     if !sent.contains_key(call_id) && (settled || status == "pending" || status == "running") {
-        frames.push(json!({
+        let mut start = json!({
             "type": "content_block_start",
             "messageId": msg_id,
             "content_block": {
@@ -1248,7 +1259,12 @@ fn tool_frames_for_part(
                 "name": tool_name,
                 "input": part.pointer("/state/input").cloned().unwrap_or_else(|| json!({})),
             },
-        }));
+        });
+        if let Some(label) = &label {
+            start["label"] = label.clone();
+            start["content_block"]["label"] = label.clone();
+        }
+        frames.push(start);
         sent.insert(call_id.to_string(), ToolFrameState::Started);
     }
     if settled {
@@ -1270,15 +1286,22 @@ fn tool_frames_for_part(
                     frame["metadata"] = meta.clone();
                 }
             }
+            if let Some(label) = &label {
+                frame["label"] = label.clone();
+            }
             frame
         } else {
-            json!({
+            let mut frame = json!({
                 "type": "tool_error",
                 "messageId": msg_id,
                 "toolCallId": call_id,
                 "toolName": tool_name,
                 "error": part.pointer("/state/error").and_then(|v| v.as_str()).unwrap_or("Tool execution failed"),
-            })
+            });
+            if let Some(label) = &label {
+                frame["label"] = label.clone();
+            }
+            frame
         });
         sent.insert(call_id.to_string(), ToolFrameState::Ended);
     }
@@ -2359,6 +2382,9 @@ async fn agent_chat_bridge(
         // Newest assistant usage seen on the bus (message.updated carries the
         // full message info incl. tokens) — attached to the finish frame.
         let mut last_usage: Option<serde_json::Value> = None;
+        // Memory entries the turn's memory tools touched (gizzi `memory_refs`),
+        // attached to the finish frame's metadata for the "Used memory" chip.
+        let mut last_memory_refs: Option<serde_json::Value> = None;
         // Assistant messages whose open-lane handoff frame went out.
         let mut handoffs_sent = std::collections::HashSet::<String>::new();
         // Latest context report (session.context.updated) and whether the
@@ -2502,6 +2528,9 @@ async fn agent_chat_bridge(
                             }
                             if let Some(usage) = usage_from_message_info(info) {
                                 last_usage = Some(usage);
+                            }
+                            if let Some(refs) = info.get("memory_refs").filter(|r| r.as_array().is_some_and(|a| !a.is_empty())) {
+                                last_memory_refs = Some(refs.clone());
                             }
                             // Open lane: a refused turn answered by an open
                             // model (gizzi sets `handoff` on the message).
@@ -2747,6 +2776,16 @@ async fn agent_chat_bridge(
                             .and_then(|t| t.as_str())
                             .unwrap_or("");
 
+                        // G4: status_update's `phase` + `note` ride the status
+                        // object; forward it whole so they pass unchanged.
+                        if let Some(status) = props.get("status").filter(|s| s.get("phase").is_some() || s.get("note").is_some()) {
+                            yield Ok(sse_frame(trace_cursor).data(json!({
+                                "type": "session_status",
+                                "messageId": msg_id,
+                                "status": status,
+                            }).to_string()));
+                        }
+
                         if status_type == "busy" {
                             was_busy = true;
                         } else if status_type == "idle" && was_busy {
@@ -2979,9 +3018,11 @@ async fn agent_chat_bridge(
                 }
             }
         }
-        yield Ok(sse_frame(trace_cursor).data(
-            cowork_turn_finish_frame(&msg_id, &finish, last_usage.as_ref()).to_string(),
-        ));
+        let mut finish_frame = cowork_turn_finish_frame(&msg_id, &finish, last_usage.as_ref());
+        if let Some(refs) = last_memory_refs.take() {
+            finish_frame["metadata"]["memoryRefs"] = refs;
+        }
+        yield Ok(sse_frame(trace_cursor).data(finish_frame.to_string()));
     };
 
     Sse::new(stream)
@@ -3280,7 +3321,7 @@ mod tests {
     }
 
     #[test]
-    fn stored_turn_metadata_keeps_only_the_five_prompt_hints() {
+    fn stored_turn_metadata_keeps_only_the_prompt_hints() {
         let body = json!({ "metadata": {
             "form_factor": "phone", "reply_mode": "voice", "answer_cards": "widgets",
             "time_zone": "America/Chicago", "screen_context": "available", "x": 1
@@ -3294,7 +3335,7 @@ mod tests {
             })
         );
         assert_eq!(kept.as_object().unwrap().len(), 5);
-        assert_eq!(super::VALUED_TURN_HINTS.len() + 1, 5, "four valued hints plus time_zone");
+        assert_eq!(super::VALUED_TURN_HINTS.len() + 1, 7, "six valued hints plus time_zone");
         let body = json!({ "metadata": { "form_factor": "tablet", "reply_mode": "loud", "answer_cards": "all", "screen_context": "yes" } });
         assert_eq!(stored_turn_metadata(&body), None);
         let body = json!({ "metadata": { "answer_cards": true } });
@@ -3566,7 +3607,7 @@ mod tests {
 
     #[test]
     fn compose_sends_the_shapes_with_each_response_style() {
-        for style in ["concise", "balanced", "detailed", "custom"] {
+        for style in ["concise", "balanced", "detailed", "learning", "custom"] {
             let out = compose_system_instructions(None, None, None, None, style, "", None, None).unwrap();
             assert!(out.contains("## Answer shape\n"), "{style}");
             assert!(out.contains("Open with the bottom line"), "{style}");

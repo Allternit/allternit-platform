@@ -18,6 +18,9 @@ export namespace SessionStatus {
       }),
       z.object({
         type: z.literal("busy"),
+        /** Set by the status_update tool: short phase label and one-line note. */
+        phase: z.string().optional(),
+        note: z.string().optional(),
       }),
     ])
     
@@ -62,6 +65,11 @@ export namespace SessionStatus {
   }
 
   export function set(sessionID: string, status: Info) {
+    // Plain busy re-sets keep the phase the agent last reported.
+    if (status.type === "busy" && status.phase === undefined) {
+      const prev = state()[sessionID]
+      if (prev?.type === "busy" && prev.phase) status = { ...status, phase: prev.phase, note: prev.note }
+    }
     Bus.publish(Event.Status, {
       sessionID,
       status,

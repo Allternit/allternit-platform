@@ -44,6 +44,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(files: Arc<FilesV2>) -> Router<S
         .route("/roots/:root_id/changes", get(feed::changes))
         .route("/items/:item_id", get(stat))
         .route("/items/:item_id/content", get(content))
+        .route("/items/:item_id/range", get(super::range::range))
         .route("/items/:item_id/manifest", get(manifest))
         .route("/items/:item_id/versions", get(versions))
         .route("/items/:item_id/versions/restore", post(restore_version))

@@ -1,6 +1,9 @@
 import { type as osType, version as osVersion, release as osRelease } from 'os'
 import PROMPT_BASE_CODE from '@/runtime/session/prompt/base-code.txt'
 import PROMPT_SAFETY from '@/runtime/session/prompt/safety.txt'
+import PROMPT_MODE_AUTO from '@/runtime/session/prompt/mode-auto.txt'
+import PROMPT_MODE_ASK from '@/runtime/session/prompt/mode-ask.txt'
+import type { PermissionMode } from '../types/permissions.js'
 import { readGizziEnv } from '@/shared/utils/gizziEnv.js';
 import { env } from '../utils/env.js'
 import { getIsGit } from '../utils/git.js'
@@ -268,6 +271,34 @@ function getSystemRemindersSection(): string {
 - Earlier history is summarized automatically, so the conversation is not limited by the context window.`
 }
 
+/**
+ * The autonomy block for this terminal's permission mode, the same blocks the
+ * runtime picks (system.ts SystemPrompt.autonomy): acceptEdits, auto, dontAsk
+ * and bypassPermissions act on routine steps (mode-auto.txt); default asks
+ * first (mode-ask.txt). Plan has its own plan-mode attachments and bubble (a
+ * subagent asking its parent) follows the parent, so both get none. With no
+ * mode passed, the settings' defaultMode stands in.
+ */
+export function getPermissionModeSection(
+  mode: PermissionMode | undefined,
+): string | null {
+  const effective =
+    mode ??
+    (getInitialSettings().permissions?.defaultMode as PermissionMode | undefined) ??
+    'default'
+  switch (effective) {
+    case 'acceptEdits':
+    case 'auto':
+    case 'dontAsk':
+    case 'bypassPermissions':
+      return PROMPT_MODE_AUTO.trim()
+    case 'default':
+      return PROMPT_MODE_ASK.trim()
+    default:
+      return null
+  }
+}
+
 const SUMMARIZE_TOOL_RESULTS_SECTION = `Tool results may be cleared from context later. Write down in your reply anything from them you will need.`
 
 /**
@@ -280,6 +311,8 @@ export async function getSystemPrompt(
   model: string,
   additionalWorkingDirectories?: string[],
   mcpClients?: MCPServerConnection[],
+  /** The session's permission mode (toolPermissionContext.mode); picks mode-auto or mode-ask. */
+  permissionMode?: PermissionMode,
 ): Promise<string[]> {
   if (isEnvTruthy(readGizziEnv('SIMPLE'))) {
     return [
@@ -322,6 +355,13 @@ export async function getSystemPrompt(
   const dynamicSections = [
     systemPromptSection('session_guidance', () =>
       getSessionSpecificGuidanceSection(enabledTools, skillToolCommands),
+    ),
+    // Shift+Tab, /permissions and plan exits change the mode between turns,
+    // so it is read each turn; the text only changes when the mode does.
+    DANGEROUS_uncachedSystemPromptSection(
+      'permission_mode',
+      () => getPermissionModeSection(permissionMode),
+      'the permission mode changes between turns',
     ),
     systemPromptSection('memory', () => loadMemoryPrompt()),
     systemPromptSection('ant_model_override', () =>

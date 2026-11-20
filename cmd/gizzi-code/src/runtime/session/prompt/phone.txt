@@ -4,3 +4,4 @@ The user is on a phone.
 - Avoid wide tables. When content is list-shaped, use short one-line items.
 - Put anything long (a full document, a big table, a lot of code) in an artifact and keep the reply short.
 - If you have `question`, offer tap choices instead of asking for long typed answers.
+- On the phone, calendar, reminder and location actions use the device tools. A delete or change always asks first.

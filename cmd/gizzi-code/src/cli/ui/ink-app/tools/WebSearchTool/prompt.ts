@@ -19,6 +19,9 @@ CRITICAL REQUIREMENT - You MUST follow this:
     - [Source Title 1](https://example.com/1)
     - [Source Title 2](https://example.com/2)
 Usage notes:
+  - Write short keyword queries; add the date to time-sensitive ones. Do not repeat a near-identical query. Stop after two tries on one fact and say what you could not find
+  - For "whoever holds a role", find the current holder first, then search facts about that person. Check each date against today so past events never read as upcoming
+  - If search does not answer the question, end with what you found and why it falls short. Mark any conclusion you drew yourself as inference
   - Domain filtering is supported to include or block specific websites
   - Web search is only available in the US
 IMPORTANT - Use the correct year in search queries:
