@@ -37,6 +37,16 @@ The memory services described in [Memory Kernel](/core/memory-kernel) and [Memor
 
 Never write secrets or unverified model claims into memory as fact. Store artifacts and evidence references, and let verification decide what is trusted.
 
+## Memory evals (developers)
+
+Two harnesses live in `tools/memory-eval/`. `run.sh <fixture>` scores retrieval (recall@k, evidence precision, latency) on a LoCoMo-style fixture. The E1 answer eval scores the answers a model gives, per question category, with abstention (unanswerable questions count correct only when the model abstains):
+
+```bash
+tools/memory-eval/run.sh cmd/allternit-api/src/memory_retrieve/fixtures/tiny_locomo.json --arms none,raw,topk,pages
+```
+
+The arms are `none` (question only), `raw` (full conversation), `topk` (the incumbent recall top-k from the cargo eval report) and `pages` (a prototype page of dated atomic claims, one brain call per conversation, cached). The default brain is a deterministic offline one that answers only when the gold answer is in the arm's context, so it checks coverage. Real runs use a subscription CLI brain (`--brain cmd --brain-cmd 'claude -p'` or `ALLTERNIT_EVAL_BRAIN_CMD`), never a metered API. `--dry` prints the plan and the brain-call counts without calling anything. `longmemeval_to_fixture.py` and `locomo_to_fixture.py` convert the public sets; neither set is vendored.
+
 ## Related
 
 - [Context and memory](/architecture/context-memory/overview)
