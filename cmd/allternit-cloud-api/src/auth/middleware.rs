@@ -212,10 +212,10 @@ pub(crate) fn is_device_inference_path(path: &str) -> bool {
 pub const OAUTH_TOKEN_ID_PREFIX: &str = "oauth:";
 
 /// The one permission an `alt_oat_` caller's `AuthenticatedUser` carries. It is
-/// deliberately not `inference`: `chat_completions` must take the OAuth billing
+/// deliberately not `inference`: `chat_completions` takes the OAuth billing
 /// path (the `OAuthCaller` extension, user wallet under the grant cap), and
-/// until it does, `can_run_inference` refuses the call (403) instead of billing
-/// the person's wallet uncapped.
+/// `can_run_inference` refuses this permission everywhere else, so an app can
+/// never bill the person's wallet uncapped through a route that skips the cap.
 pub const OAUTH_INFERENCE_PERMISSION: &str = "oauth:inference";
 
 /// Prefixes of the "Sign in with Allternit" secrets: access token, refresh

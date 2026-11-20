@@ -1443,6 +1443,111 @@ impl CostService for CostServiceImpl {
     }
 }
 
+/// Why [`debit_wallet_strict`] refused. Nothing was written in either case.
+#[derive(Debug)]
+pub enum StrictDebitError {
+    /// The wallet holds less than the amount, or the person has no wallet row.
+    Insufficient { balance_usd: f64 },
+    Database(sqlx::Error),
+}
+
+impl From<sqlx::Error> for StrictDebitError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Database(error)
+    }
+}
+
+impl From<StrictDebitError> for ApiError {
+    fn from(error: StrictDebitError) -> Self {
+        match error {
+            StrictDebitError::Insufficient { balance_usd } => {
+                ApiError::Internal(format!("strict wallet debit refused: balance ${balance_usd:.6} is short"))
+            }
+            StrictDebitError::Database(error) => ApiError::DatabaseError(error),
+        }
+    }
+}
+
+/// Strict wallet debit for "Sign in with Allternit" calls
+/// (CONTRACT-oauth-linked-billing-2026-11, A8 "Strict debit", D5), run inside
+/// the caller's transaction (`&mut *tx`).
+///
+/// Unlike [`CostService::deduct_credits_for_usage`], which clamps at zero and
+/// never refuses, this takes exactly `amount_usd` or refuses with
+/// [`StrictDebitError::Insufficient`]: the balance never goes below zero, and
+/// it never starts an auto top-up (an outside app must not cause a card
+/// charge). The `credit_transactions` row keyed by `transaction_id` makes it
+/// idempotent: a replayed key debits nothing and returns the current balance.
+/// The work runs under a savepoint, so a refusal leaves the caller's
+/// transaction exactly as it was. Returns the new balance.
+///
+/// Existing callers of the clamping debit are unchanged; only the OAuth spend
+/// path (`services::oauth_spend::settle`) calls this.
+pub async fn debit_wallet_strict(
+    conn: &mut sqlx::PgConnection,
+    user_id: &str,
+    transaction_id: &str,
+    amount_usd: f64,
+    source: &str,
+) -> Result<f64, StrictDebitError> {
+    use sqlx::Connection;
+
+    async fn balance(conn: &mut sqlx::PgConnection, user_id: &str) -> Result<f64, sqlx::Error> {
+        let balance: Option<f64> =
+            sqlx::query_scalar("SELECT COALESCE(balance_usd, 0)::float8 FROM user_credits WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_optional(&mut *conn)
+                .await?;
+        Ok(balance.unwrap_or(0.0))
+    }
+
+    if !(amount_usd > 0.0) || !amount_usd.is_finite() {
+        return Ok(balance(conn, user_id).await?);
+    }
+
+    let mut savepoint = conn.begin().await?;
+    let ledger = sqlx::query(
+        r#"
+        INSERT INTO credit_transactions (id, user_id, amount_usd, transaction_id, source, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (transaction_id) DO NOTHING
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(user_id)
+    .bind(-amount_usd)
+    .bind(transaction_id)
+    .bind(source)
+    .bind(Utc::now())
+    .execute(&mut *savepoint)
+    .await?;
+    if ledger.rows_affected() == 0 {
+        // Already debited under this key.
+        let current = balance(&mut *savepoint, user_id).await?;
+        savepoint.commit().await?;
+        return Ok(current);
+    }
+
+    let debited: Option<f64> = sqlx::query_scalar(
+        "UPDATE user_credits SET balance_usd = balance_usd - $1 WHERE user_id = $2 AND balance_usd >= $1 RETURNING balance_usd::float8",
+    )
+    .bind(amount_usd)
+    .bind(user_id)
+    .fetch_optional(&mut *savepoint)
+    .await?;
+    let Some(new_balance) = debited else {
+        let current = balance(&mut *savepoint, user_id).await?;
+        savepoint.rollback().await?;
+        return Err(StrictDebitError::Insufficient { balance_usd: current });
+    };
+    savepoint.commit().await?;
+    info!(
+        "Strict debit ${:.6} from user {} for {} ({}); new balance ${:.6}",
+        amount_usd, user_id, source, transaction_id, new_balance
+    );
+    Ok(new_balance)
+}
+
 /// Emit `usage.threshold` into the event backbone for a crossed budget level,
 /// at most once per (user, month, level, budget): the source id makes the emit
 /// idempotent, so the minute-by-minute check never repeats it. `level` is the
