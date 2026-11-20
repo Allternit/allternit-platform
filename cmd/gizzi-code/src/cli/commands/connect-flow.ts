@@ -6,13 +6,14 @@ import {
   DisclosureRequired,
   copyToClipboard,
   disconnect,
+  fetchCatalog,
   listRows,
   pollLogin,
   startConnect,
   submit,
   type Login,
 } from "@/cli/commands/connect-run"
-import { DEFAULT_ROWS, findEntry, nameOf, renderHub, resolve, statusText, unavailableText, type Row } from "@/cli/commands/connect-model"
+import { DEFAULT_ROWS, GROUP_ORDER, findEntry, nameOf, matchesStatus, renderCatalog, renderHub, resolve, statusText, unavailableText, type Entry, type Row, type StatusFilter } from "@/cli/commands/connect-model"
 
 const say = (s = "") => process.stdout.write(s + "\n")
 
@@ -42,10 +43,33 @@ async function waitForDone(id: string, row: Row, login: Login) {
   throw new ConnectFailure(r.status === "expired" ? "The code expired. Run the command again." : "Could not connect. Try again.")
 }
 
+/**
+ * An id the built-in list does not know: look it up in the live catalog (§11).
+ * A `<provider>-key` entry runs the key flow; an app needs a computer, which
+ * Gizzi Code has no connector flow for, so it says where to connect it.
+ */
+async function entryFromCatalog(id: string): Promise<{ entry: Entry; row: Row } | "handled" | undefined> {
+  const res = await fetchCatalog({ q: id, limit: 60 })
+  const hit = res.entries.find((x) => x.id === id.toLowerCase())
+  if (!hit) return undefined
+  const entry: Entry = { id: hit.id, group: hit.group, name: hit.name, blurb: hit.blurb, runsOn: hit.runs_on }
+  if (hit.group === "brains" && hit.id.endsWith("-key")) return { entry, row: { id: hit.id, state: "off", runs_on: "server" } }
+  say(`${hit.name}: Runs on a computer. Open Settings \u203a Connections in Allternit to connect it.`)
+  process.exitCode = 1
+  return "handled"
+}
+
 async function connectOne(id: string, rows: Row[]) {
-  const entry = findEntry(id)
-  if (!entry) throw new ConnectFailure(`No connection called "${id}". Run \`gizzi connect\` to see the list.`)
-  const row = resolve(rows).find((x) => x.entry.id === entry.id)!.row
+  let entry = findEntry(id)
+  let row: Row | undefined
+  if (entry) row = resolve(rows).find((x) => x.entry.id === entry!.id)!.row
+  else {
+    const found = await entryFromCatalog(id)
+    if (found === "handled") return
+    if (!found) throw new ConnectFailure(`No connection called "${id}". Run \`gizzi connect\` to see the list, or \`gizzi connect more\` for more.`)
+    entry = found.entry
+    row = found.row
+  }
   if (row.available === false) {
     say(`${entry.name}: ${unavailableText(entry, row)}`)
     process.exitCode = 1
@@ -135,6 +159,8 @@ export async function runConnect(opts: {
   json: boolean
   acceptDisclosure?: string
   open?: boolean
+  search?: string
+  status?: string
 }) {
   // ChatGPT signs in on this computer (§9.9): `gizzi connect chatgpt`,
   // `gizzi connect status chatgpt`, `gizzi connect disconnect chatgpt` (all take --json).
@@ -153,11 +179,25 @@ export async function runConnect(opts: {
     return
   }
   if (verb === "disconnect") opts = { ...opts, id: subject, disconnect: true }
+  if (opts.status && opts.status !== "connected" && opts.status !== "needs") {
+    UI.error("--status takes connected or needs.")
+    process.exitCode = 1
+    return
+  }
+  const status = opts.status as StatusFilter | undefined
   try {
+    if (opts.id === "more") {
+      const group = opts.target?.toLowerCase()
+      const res = await fetchCatalog({ group, q: opts.search?.trim().slice(0, 64) || undefined })
+      if (opts.json) return say(JSON.stringify(res, null, 2))
+      say(renderCatalog(res).join("\n"))
+      if (!group) say(`Narrow to one group: gizzi connect more <${GROUP_ORDER.join("|")}>`)
+      return
+    }
     const rows = await listRows()
     if (!opts.id) {
-      if (opts.json) return say(JSON.stringify(rows, null, 2))
-      say(renderHub(rows).join("\n"))
+      if (opts.json) return say(JSON.stringify(status ? resolve(rows).filter((x) => matchesStatus(x.row, status)).map((x) => x.row) : rows, null, 2))
+      say(renderHub(rows, status).join("\n"))
       say("Connect one: gizzi connect <name>   Remove one: gizzi connect <name> --disconnect")
       return
     }

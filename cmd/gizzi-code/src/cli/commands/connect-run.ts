@@ -9,7 +9,7 @@ import * as path from "path"
 import { cloudInferenceToken, cloudOrigin } from "@/runtime/providers/discovery/allternit-cloud"
 import { Installation } from "@/shared/installation"
 import { ALLTERNIT_GATEWAY_BASE } from "@/shared/constants/allternitGateway"
-import type { Row } from "@/cli/commands/connect-model"
+import type { CatalogResponse, Row } from "@/cli/commands/connect-model"
 import { personToken } from "@/runtime/providers/person-plan/rules"
 
 export class ConnectFailure extends Error {}
@@ -110,6 +110,17 @@ export async function listRows(): Promise<Row[]> {
   if (device && i !== -1 && merged[i]!.source !== device.source && !merged[i]!.source?.startsWith("runtime:")) merged[i] = device
   if (device && i === -1) merged.push(device)
   return merged
+}
+
+/** `GET /api/v1/connections/catalog`: the live "More" list (contract §11). */
+export const fetchCatalog = (opts: { group?: string; q?: string; limit?: number; cursor?: string } = {}): Promise<CatalogResponse> => {
+  const qs = new URLSearchParams()
+  if (opts.group) qs.set("group", opts.group)
+  if (opts.q) qs.set("q", opts.q)
+  if (opts.limit !== undefined) qs.set("limit", String(opts.limit))
+  if (opts.cursor) qs.set("cursor", opts.cursor)
+  const s = qs.toString()
+  return call(cloudOrigin(), "GET", `/catalog${s ? `?${s}` : ""}`)
 }
 
 export const startConnect = (
