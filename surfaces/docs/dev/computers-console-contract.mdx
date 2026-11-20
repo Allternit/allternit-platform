@@ -5,7 +5,7 @@ description: "Node routes, cloud routes, JSON shapes, actions, approvals and clo
 
 This is the developer contract for the Computers console: one screen that shows every computer you own (cloud, paired, and this machine) with live health, services, ports, updates, findings and logs. It is the reference all surfaces build against (web, phone layout, PWA, Desktop, iOS, Android, Gizzi Code, `cmd/cli`).
 
-Status: contract agreed 2026-11-20 and not built yet. Migrations 153, 154 and 155 are named here; the SQL files do not exist yet.
+Status: contract agreed 2026-11-20. Routes are being built in lanes and are not compiled yet. A route marked "planned (step N)" has no code yet (N is the step in the build plan). Migrations 153, 154 and 155 are named here; the SQL files do not exist yet.
 
 ## Decisions (D1 to D10)
 
@@ -74,7 +74,7 @@ Logs are masked at the node (tokens, keys, passwords, and email local parts are 
 
 ### Actions
 
-`POST /v1/host/actions` body: `{ type, target, approval_id }`. Response: `{ change_id: string, undo?: { type: string, target: string, label: string } }` (the TypeScript names are camelCase: `changeId`).
+`POST /v1/host/actions` body: `{ type, target, approval_id }`. Response: `{ changeId: string, undo?: { type: string, target: string, label: string }, note?: string }`. `note` is a short plain message for the user, for example when nothing needed to change.
 
 The action list is fixed:
 
@@ -103,6 +103,130 @@ Rules:
 - An asleep cloud computer answers the relay with **409** `{ error: 'asleep', lastSample }`. The console never wakes a computer to read it.
 - The relay allow-list on the cloud side is `is_allowed_runtime_path` in `cmd/allternit-cloud-api/src/routes/runtime_relay.rs:1686-1709`. The prefix `/v1` is already allowed, so `/v1/host/*` needs no new entry. The capability strings at `relay.rs:42-47` in the node are capability names, not paths.
 - Offline, CPU and disk alert rules push to the phone and Desktop.
+
+## Console list (`GET /api/v1/computers/console`)
+
+Response: `{ "computers": [ConsoleComputer, ...] }`. Web, CLI and iOS accept this shape.
+
+| Field | Meaning |
+|---|---|
+| `id` | Console row id. Cloud = `provisioned_instances.id`, paired = `paired_computers.id`, desktop = `runtime_devices.id`. Every `/computers/:id/*` route takes this id. |
+| `runtimeId` | The `runtime_devices.id` the relay is keyed by. Always sent, null when there is none. Terminals use `row.runtimeId ?? row.id` for `allternit-relay://`. |
+| `kind` | `cloud`, `paired` or `desktop` |
+| `name`, `group`, `provider`, `region`, `os`, `address` | Display fields |
+| `status` | One of the values below |
+| `lastSample` | Newest `HostSnapshot`, or null |
+| `servicesCount`, `lastBackup` | Summary fields |
+
+Status values:
+
+| Status | Meaning |
+|---|---|
+| `online` | Live relay, recent heartbeat |
+| `offline` | No live relay |
+| `asleep` | Cloud computer sleeping (never woken by the console) |
+| `starting` | Cloud computer booting |
+| `stopped` | Cloud computer stopped |
+| `suspended` | Cloud computer suspended |
+| `error` | Provider or runtime error |
+
+Group names, in this order: `Allternit Cloud`, `On your desk`, `Your servers`, `Shared with you`.
+
+Provider labels: `Allternit Cloud` (Orgo), `Mac`, `Windows`, `Linux`, `Server`. Clients show the label the cloud sends and do not guess one.
+
+### Needs attention (one rule for every client)
+
+A computer needs attention when any of these is true. Every client uses this rule and no other.
+
+| Condition | Source |
+|---|---|
+| `status` is `offline` or `error` | Row status |
+| CPU percent at or above the alert threshold | `lastSample.cpu.percent` |
+| Any disk at or above the alert threshold | `lastSample.disk` |
+| A finding with severity `warning` or `critical` is open | `/host/findings` |
+
+`asleep`, `stopped` and `suspended` never need attention on their own: the user chose that state.
+
+## Metrics (`GET /api/v1/computers/:id/metrics?window=24h`)
+
+Response: `{ "series": MetricSeries[] }`. Each series is `{ metric, unit, points: [{ t, v }] }` with `t` an ISO 8601 string.
+
+| Metric | Unit |
+|---|---|
+| `cpu` | percent, 0 to 100 |
+| `memory` | percent, 0 to 100 |
+| `disk` | percent, 0 to 100 |
+| `net_rx`, `net_tx` | bytes per second |
+
+Windows: `1h`, `24h`, `7d`, `30d`. Retention: 48 hours of raw 60 second samples, then 5 minute rollups kept for 30 days. Each node sends a `hostSample` (the `/v1/host/snapshot` body) in its 60 second presence heartbeat, and paired computers send it in their report. Without it a series stays empty.
+
+## Approval flow (two steps, no shortcut)
+
+| Step | Route | Returns |
+|---|---|---|
+| 1 | `POST /api/v1/computers/:id/approvals` with `{ type, target }` | `{ approvalId, expiresAt }` |
+| 2 | `POST /api/v1/computers/:id/host/actions` with `{ type, target, approval_id }` | `{ changeId, undo?, note? }` |
+
+The action route never mints an approval. Minting does not touch the computer, so an asleep computer can be approved. `target` is 1 to 256 characters with no control characters.
+
+Approval id format: `ap1.<jti>.<exp>.<utag>.<sig>`, at most 129 characters, all `[a-z0-9.]`.
+
+| Part | Meaning |
+|---|---|
+| `jti` | 32 lowercase hex, random, single use |
+| `exp` | Unix seconds, issued plus 120 |
+| `utag` | First 16 hex characters of `sha256_hex(user_id)`. Only the cloud checks it. |
+| `sig` | Lowercase hex `HMAC-SHA256(key, "ap1\n<jti>\n<exp>\n<utag>\n<runtime_id>\n<type>\n<target>")` |
+
+The key is the per-runtime relay key (`runtime_devices.credential_hash`, lowercase `sha256_hex(device_token)`, used as ASCII bytes). The node already holds it. The node splits on `.`, recomputes `sig` with its own runtime id and the request type and target, compares in constant time, rejects an expired `exp`, then claims the whole id once. Full detail is in PR #2772.
+
+Errors:
+
+| Status | Body | Meaning |
+|---|---|---|
+| 400 | | Approval id missing |
+| 403 | `{ "error": "needs_elevation" }` | The change needs the one-time privileged helper (see below) |
+| 403 | `{ "error": "approval_invalid", "reason": "format\|signature\|expired\|binding" }` | Bad approval. Nothing is relayed. |
+| 409 | `{ "error": "asleep", "lastSample" }` | Computer is asleep or stopped. A 409 without `error: "asleep"` is the node refusing the action. |
+| 503 | `{ "error": "offline", "lastSample" }` | No live relay |
+| 404, 405, 501 | | Not available on this computer. Clients show "not available", not an error. |
+
+## Port forward
+
+`POST /api/v1/computers/:id/forward` with `{ remotePort }` returns `{ url, ticket, expiresInSeconds }` (30 seconds). Connect to `url?ticket=`. The ticket is single use. One WebSocket carries one raw TCP stream: binary frames both ways, no ready text frame. Mint one ticket per TCP connection. The node side is `/v1/host/forward?port=N` (1 to 65535): it dials `127.0.0.1:N`, replies `socket_ready` (or `socket_close` code 1011), then pumps bytes as base64 `socket_data`. The relay connection is the authentication and no approval is needed.
+
+## Further console routes
+
+| Route | Body and result | Status |
+|---|---|---|
+| `GET /api/v1/computers/:id/ssh-keys` | `{ keys: [...] }` | planned (step 2.7) |
+| `POST /api/v1/computers/:id/ssh-keys` | Add a key | planned (step 2.7) |
+| `DELETE /api/v1/computers/:id/ssh-keys/:keyId` | Remove a key | planned (step 2.7) |
+| `GET /api/v1/computers/snippets` | `{ snippets: [{ id, name, command, description? }] }` (a bare array is also accepted) | planned (step 2.9) |
+| `POST /api/v1/computers/snippets/:id/run` | `{ computers: [], approvalConfirmed }` returns `{ runs: [{ computerId, approvalId, changeId, status, error }] }` | planned (step 2.9) |
+| `POST /api/v1/computers/:id/restart` | Restart a cloud computer | planned (step 2.4) |
+| `POST /api/v1/computers/:id/move` | `{ location }` | planned (step 2.4) |
+| `POST /api/v1/computers/:id/rebuild` | Held until the backup check passes | planned (step 2.4) |
+| `GET /api/v1/computers/:id/backups` | `{ backups: [{ id, createdAt, sizeBytes? }] }` | planned (step 2.6) |
+| `POST /api/v1/computers/:id/backups/restore` | `{ backupId }` | planned (step 2.6) |
+| `GET /api/v1/computers/templates` | Starter templates | planned (step 2.5) |
+| `PATCH /api/v1/computers/paired/:id` | `{ name }` renames a paired computer | planned (step 2.10) |
+| `DELETE /api/v1/computers/paired/:id` | Remove a paired computer | exists |
+
+Snippet runs reuse the approval mint above, one approval per computer.
+
+## Alert push
+
+Offline, CPU and disk rules push to the phone and Desktop. iOS uses APNs category `COMPUTER_ALERT`. Android uses FCM with the same data keys.
+
+| Key | Value |
+|---|---|
+| `type` | `computer_alert` |
+| `computerId` | Console row id |
+| `rule` | `offline`, `cpu` or `disk` |
+| `value` | Percent for cpu and disk, minutes for offline |
+
+Rule thresholds live in `computer_alert_rules`. Planned (step 2.8).
 
 ## Approval, change record and undo
 
