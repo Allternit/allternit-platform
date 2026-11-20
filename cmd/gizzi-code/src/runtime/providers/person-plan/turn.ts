@@ -102,7 +102,7 @@ async function* cloudPlanTurn(input: TurnInput): AsyncGenerator<TurnEvent> {
   }
   if (!res.ok || !res.body) {
     const err = readErrorBody(await res.text().catch(() => ""))
-    yield { type: "error", code: err.code, message: planErrorText(err.code, res.status, err.message) }
+    yield { type: "error", code: err.code, message: planErrorText(err.code, res.status, err.message, err.fallbacks) }
     return
   }
   yield* parseChatCompletionsStream(res.body)

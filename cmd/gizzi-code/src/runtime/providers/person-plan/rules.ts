@@ -22,8 +22,10 @@ import path from "path"
 export const PLAN_PROVIDER = "plan"
 export const COPILOT_PROVIDER = "copilot-plan"
 export const CHATGPT_PROVIDER = "chatgpt"
+/** The person's linked Claude organization; wire ids are `linked/claude/<model>`. */
+export const CLAUDE_ORG_PROVIDER = "claude-org"
 
-const PERSON_ONLY = new Set([PLAN_PROVIDER, COPILOT_PROVIDER, CHATGPT_PROVIDER])
+const PERSON_ONLY = new Set([PLAN_PROVIDER, COPILOT_PROVIDER, CHATGPT_PROVIDER, CLAUDE_ORG_PROVIDER])
 
 /** Header cloud-api requires on a plan turn (D7). */
 export const PERSON_TURN_HEADER = "x-allternit-turn"
@@ -45,6 +47,7 @@ export function isPersonOnlyRef(ref: string | undefined | null): boolean {
 /** The id cloud-api expects for a local plan model: `plan/claude/sonnet`, `copilot/gpt-5`. */
 export function wireModelID(providerID: string, modelID: string): string {
   if (providerID === COPILOT_PROVIDER) return `copilot/${modelID}`
+  if (providerID === CLAUDE_ORG_PROVIDER) return `linked/claude/${modelID}`
   return `${providerID}/${modelID}`
 }
 
