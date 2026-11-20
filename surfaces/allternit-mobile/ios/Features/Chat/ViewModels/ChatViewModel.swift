@@ -540,6 +540,13 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     preparedRefs: last.attachmentRefs)
     }
 
+    /// Error-card "Use Allternit credits for this message": the same retry,
+    /// once, on the given Allternit Cloud model. Only runs on a tap.
+    func resendOnCloudModel(_ assistantId: String, cloudModelId: String, effort: String? = nil) {
+        guard ModelStore.cloudAlias(cloudModelId) != nil else { return }
+        retryFailedMessage(assistantId, runtimeModelId: cloudModelId, effort: effort)
+    }
+
     // MARK: - Regenerate & edit-resend (Phase 8)
 
     /// The most recent assistant/user message ids — drive the action bar's

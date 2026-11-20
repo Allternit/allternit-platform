@@ -53,6 +53,7 @@ struct PersonChatRefusal: Error, Equatable, Sendable {
         var error = ChatError(name: code, message: plainText, raw: message.map { "\(code): \($0)" } ?? code)
         error.title = "\(vendor) didn't answer"
         error.detail = plainText
+        error.actions = ChatErrorAction.forClaudeLink(code: code)
         return error
     }
 }

@@ -1,7 +1,7 @@
 //! Plan chat store (CONTRACT-connections-2026-11 section 9.10).
 //!
-//! Chats with plan (`plan/<vendor>/<model>`) and Copilot (`copilot/<model>`)
-//! models, and no-computer chats with Allternit Cloud models
+//! Chats with plan (`plan/<vendor>/<model>`), Copilot (`copilot/<model>`) and
+//! linked Claude organization (`linked/claude/<model>`) models, and no-computer chats with Allternit Cloud models
 //! (`allternit/<alias>`, CONTRACT-cloud-credits-2026-11-15 D7), are kept here
 //! so they sync across the person's devices with no
 //! computer (the agent-session relay needs one and answers 409
@@ -164,12 +164,20 @@ fn project_uuid(raw: &str) -> Result<String, ApiError> {
 /// alias the catalog resolves (hidden aliases included). Clients send the
 /// bare alias on the wire and store it with the `allternit/` prefix.
 fn storable_model(state: &ApiState, model: &str) -> bool {
-    if crate::routes::model_router::is_person_only_model(model) {
+    if crate::routes::model_router::is_person_only_model(model) || is_linked_claude_model(model) {
         return true;
     }
     model
         .strip_prefix("allternit/")
         .is_some_and(|alias| !alias.is_empty() && state.model_router.upstream_for_alias(alias).is_some())
+}
+
+/// `linked/claude/<model>`: the person's own Claude organization pays. Only the
+/// prefix and a non-empty model of safe characters are checked; nothing calls Anthropic here.
+fn is_linked_claude_model(model: &str) -> bool {
+    model.strip_prefix("linked/claude/").is_some_and(|name| {
+        !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+    })
 }
 
 /// Rows saved before the markers were stripped on write are cleaned on read.
@@ -195,7 +203,7 @@ async fn create(State(state): State<Arc<ApiState>>, headers: HeaderMap, body: By
         let model = body.model.trim().to_string();
         if !storable_model(&state, &model) {
             return Err(ApiError::BadRequest(
-                "model must be a plan/…, copilot/… or allternit/<catalog model> model.".to_string(),
+                "model must be a plan/…, copilot/…, linked/claude/… or allternit/<catalog model> model.".to_string(),
             ));
         }
         let title = body
@@ -482,6 +490,35 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let (_, listed) = send(&router, "GET", "/api/v1/plan-threads", "user_c", None).await;
         assert_eq!(listed["threads"].as_array().unwrap().len(), 2);
+    }
+
+    /// Chats on a linked Claude organization model (`linked/claude/<model>`) are stored.
+    #[tokio::test]
+    async fn plan_thread_accepts_linked_claude_model() {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        sqlx::raw_sql(include_str!("../../migrations_pg/141_plan_threads.sql")).execute(&state.db).await.expect("141 applies");
+        sqlx::raw_sql(include_str!("../../migrations_pg/149_account_projects.sql")).execute(&state.db).await.expect("149 applies");
+        let router = routes().with_state(state);
+        let model = "linked/claude/claude-sonnet-4-6";
+        let (status, thread) = send(&router, "POST", "/api/v1/plan-threads", "user_d", Some(json!({
+            "model": model, "messages": [{ "role": "user", "content": "Hi" }],
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{thread}");
+        assert_eq!(thread["model"], model);
+        let (_, listed) = send(&router, "GET", "/api/v1/plan-threads", "user_d", None).await;
+        assert_eq!(listed["threads"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn plan_thread_rejects_linked_without_model() {
+        let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        sqlx::raw_sql(include_str!("../../migrations_pg/141_plan_threads.sql")).execute(&state.db).await.expect("141 applies");
+        sqlx::raw_sql(include_str!("../../migrations_pg/149_account_projects.sql")).execute(&state.db).await.expect("149 applies");
+        let router = routes().with_state(state);
+        for model in ["linked/claude/", "linked/claude", "linked/", "linked/other/x", "linked/claude/a b", "linked/claude/../x?"] {
+            let (status, _) = send(&router, "POST", "/api/v1/plan-threads", "user_d", Some(json!({ "model": model }))).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{model}");
+        }
     }
 
     /// Chat-only bots: a thread may belong to the caller's own live account project, with no computer.
