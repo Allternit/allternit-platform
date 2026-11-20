@@ -1,0 +1,142 @@
+---
+title: "Claude organization linked billing (operations)"
+description: "Environment variables, the issuer and key URLs to register at Anthropic, the owner setup checklist, the on switch, and the migrations for Sign in with Allternit and Claude organization linking."
+---
+
+**Status: BUILDING (internal).** See [status labels](/architecture#status-labels). The user guides are [Bill Claude to your Claude organization](/guides/claude-organization) and [Apps with access to your account](/guides/apps-with-access). The developer guide is [Sign in with Allternit (OAuth apps)](/api/oauth-apps). This page covers what an operator sets up.
+
+Two features share this page:
+
+- **Sign in with Allternit.** cloud-api is an OAuth authorization server for outside apps. It needs migration 150 and one secret.
+- **Link your Claude organization.** A person links their Claude organization and requests to `linked/claude/<model>` bill it. It needs migration 151, a signing key, Anthropic setup and a switch.
+
+## Migrations
+
+| Migration | Adds |
+|---|---|
+| `150_oauth_apps.sql` | `oauth_apps`, `oauth_app_redirect_uris`, `oauth_app_test_users`, `oauth_auth_requests`, `oauth_grants`, `oauth_tokens`, `oauth_grant_spend`, `oauth_audit_log` |
+| `151_anthropic_links.sql` | `anthropic_link_profiles`, `anthropic_link_requests`, `anthropic_connections`, and the `billed_to`, `oauth_app_id` and `oauth_grant_id` columns on `inference_usage` |
+
+Both are additive. Production does not run sqlx migrations by itself, so apply them by hand as described in [Database migrations](/operations/database-migrations). Never edit a shipped migration file.
+
+### The `inference_usage.billed_to` column
+
+Every usage event now says who paid.
+
+| Value | Meaning |
+|---|---|
+| `allternit_credits` | The default. The person's or project's Allternit credits. |
+| `user_wallet` | An app token (`alt_oat_`). The person's wallet paid, under the grant limit. |
+| `claude_org` | A linked Claude organization paid. `cost_cents` is 0 and the wallet is not debited. |
+
+## Sign in with Allternit
+
+| Variable | Meaning |
+|---|---|
+| `ALLTERNIT_OAUTH_SUB_SECRET` | Secret for the per-app user id (`sub`). At least 32 characters. Shorter, or unset, counts as unset. |
+| `ALLTERNIT_ADMIN_USER_IDS` | The Allternit admins who can approve or suspend an app. |
+
+`sub` is `usr_` plus part of an HMAC of the app id and the user id, keyed by `ALLTERNIT_OAUTH_SUB_SECRET`. **Never change this secret after launch.** Changing it changes the `sub` of every user in every app, and apps that match people by `sub` will see them all as new.
+
+While the secret is unset, `GET /oauth2/userinfo` answers `503 oauth_not_configured`. Grants made in that time store an empty `sub`, and userinfo fills it in once the secret is set.
+
+App review is the policy in [Sign in with Allternit](/api/oauth-apps#app-states-and-review): testing apps are limited to test users and a $50 monthly limit until an admin approves them (`POST /api/v1/admin/oauth-apps/:id/approve`, or `suspend`). Admin lists are at `GET /api/v1/admin/oauth-apps?state=`, and the console shows them.
+
+## Claude organization linking
+
+### The switch
+
+`ALLTERNIT_CLAUDE_LINK=1` turns the feature on. The default is off. The feature is on only when all of these hold:
+
+1. `ALLTERNIT_CLAUDE_LINK=1`.
+2. The signing key parses.
+3. All eight required ids below are set.
+
+Otherwise the Connections row says **Not available yet** (`reason_code: not_available_yet`, `available: false`) and the model list has no linked models. A request to a linked model answers `claude_link_unavailable` with `reason: "not_available_yet"`.
+
+The JWKS and discovery routes need only the key. You can register the issuer at Anthropic before the switch is on.
+
+### Environment variables
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `ALLTERNIT_CLAUDE_LINK` | yes | `1` turns it on. |
+| `ALLTERNIT_ANTHROPIC_CLIENT_ES256_PEM` | yes | The ES256 private key (PEM). It never leaves cloud-api. The `kid` is its thumbprint. |
+| `ALLTERNIT_ANTHROPIC_FEDERATION_RULE_ID` | yes | Federation rule for the operator token exchange. |
+| `ALLTERNIT_ANTHROPIC_ORGANIZATION_ID` | yes | Allternit's Anthropic organization. |
+| `ALLTERNIT_ANTHROPIC_SERVICE_ACCOUNT_ID` | yes | Service account for the exchange. |
+| `ALLTERNIT_ANTHROPIC_WORKSPACE_ID` | yes | Workspace for the exchange. |
+| `ALLTERNIT_ANTHROPIC_OAUTH_CLIENT_ID` | yes | Client id of our OAuth app at platform.claude.com. |
+| `ALLTERNIT_ANTHROPIC_OAUTH_APP_ID` | yes | App id of the same OAuth app. |
+| `ALLTERNIT_ANTHROPIC_CLIENT_AUD` | yes | The single audience shown on the app's Client authentication tab. Used in client assertions. |
+| `ALLTERNIT_ANTHROPIC_WIF_AUD` | yes | Audience of the Workload Identity Federation token. Anthropic fixes none, so it matches what the federation rule sets. |
+| `ALLTERNIT_ANTHROPIC_CLIENT_ISSUER_BASE` | no | Issuer base. Default `https://api.allternit.com`. |
+| `ALLTERNIT_ANTHROPIC_API_BASE` | no | Default `https://api.anthropic.com`. Tests point it at a fake server. |
+| `ALLTERNIT_ANTHROPIC_AUTH_BASE` | no | Default `https://auth.claude.com`. Tests point it at a fake server. |
+| `ALLTERNIT_ANTHROPIC_VERSION` | no | Anthropic version header. Default `2026-10-21`. |
+| `ALLTERNIT_CREDENTIALS_KEY` | yes | Already in use. Seals each person's refresh token (AES-GCM). |
+
+The Workload Identity Federation token lives 1800 seconds. Client assertions live 300 seconds. The operator token is cached in memory, exchanged again 120 seconds before it expires, one exchange at a time, and never logged. The person's access token is not stored.
+
+### URLs to register at Anthropic
+
+| What | URL |
+|---|---|
+| Issuer | `https://api.allternit.com/oauth2/anthropic-client` |
+| JWKS | `https://api.allternit.com/oauth2/anthropic-client/jwks.json` |
+| Discovery | `https://api.allternit.com/oauth2/anthropic-client/.well-known/openid-configuration` |
+| OAuth app redirect (exact match) | `https://api.allternit.com/api/v1/claude-link/callback` |
+
+Fix the redirect before the first review. Editing a live app's redirects asks Anthropic to review it again. The client assertion subject is `allternit-cloud-api`. Register a subject pattern that matches it.
+
+### Owner setup checklist (by hand)
+
+These are owner steps. Until they are done, only the fake-server tests have run, and nothing is checked against the real Anthropic.
+
+1. **G1.** An Anthropic organization that Allternit pays directly. Without it no real linked traffic can be billed.
+2. **G2.** An Admin creates the OAuth app at platform.claude.com with the scopes `billing:attribution` and `offline_access`, and the redirect above.
+3. **G3.** Register our issuer, create a service account and a default workspace. If the code exchange answers `unauthorized_client`, the app has no default workspace. The PEM goes only in the cloud-api environment.
+4. **G4.** Add a DNS TXT record on allternit.com, then wait for Anthropic review. Until then only test users can link, and with a cap of $50 or less.
+5. **G5.** A second Claude organization for testing.
+6. **G6.** Ask the Anthropic account team about connection-token requests.
+7. **G7.** Go-ahead for the production migrations, the deploy and turning on `ALLTERNIT_CLAUDE_LINK`.
+
+Review of outside apps (policy: test users and a $50 cap until an admin approves) is a separate gate for Sign in with Allternit.
+
+### How a request is billed
+
+cloud-api calls `POST /v1/chat/completions` at Anthropic with the operator token, the header `anthropic-user-profile-id` (read from the database for the signed-in person, never from the request), the header `anthropic-beta: user-profiles-billing-2026-10-01`, and a body `billing_policy` of `bill_to: user_profile`. Anything in the incoming request that names a profile is dropped.
+
+- Only person-sent chat. Bots, routines, device-token callers without a person turn, open-lane, artifact runtimes and Platform responses are refused (`plan_person_only`).
+- Code-execution tools are dropped. Message Batches are not used.
+- Nothing refreshes on a timer. The refresh token is kept for re-linking and expires one year after the link. The status shows `relink_needed` 14 days before.
+- A refused request is never retried and never falls back to credits. The client offers the button and the person taps it.
+
+### Refusal codes
+
+Each body is `{"error": {"code", "message"}, "fallbacks": ["allternit-credits"]}`.
+
+| Code | HTTP | Cause |
+|---|---|---|
+| `claude_link_not_billable` | 403 | The organization does not pay Anthropic directly. |
+| `claude_link_spend_limit` | 402 | The limit on Claude's Linked platforms page is reached. |
+| `claude_link_billing_unavailable` | 402 | Billing on the organization is unavailable. |
+| `claude_link_disconnected` | 401 | The link is gone. The person links again. |
+| `claude_link_unavailable` | 403, or 500 when the fault is ours | Not configured, or an Allternit-side error. Alert ops. |
+| `claude_link_upstream` | 503 with `retry-after` | Claude is overloaded or erroring. |
+| `claude_link_rejected` | the Anthropic status | Another 4xx from Anthropic. |
+| `linked_tools_not_allowed` | 400 | The client insisted on code-execution tools. |
+| `plan_person_only` | 403 | The turn was not typed by a person. |
+
+A refusal that arrives in the middle of a stream keeps the text so far, then sends one `data:` line with the refusal body, then `data: [DONE]`.
+
+### Routes
+
+`POST /api/v1/claude-link/start`, `GET /api/v1/claude-link/callback`, `GET /api/v1/claude-link`, `PATCH /api/v1/claude-link` (answers `400 no_fields`), `DELETE /api/v1/claude-link`. All need a signed-in session except the callback. Platform keys and OAuth tokens get 403. `GET /api/v1/claude-link` returns `state` (`unlinked`, `linked`, `relink_needed`, `disconnected`), `linked_at`, `relink_by` and `spend_limit`. Anthropic does not send the organization name, so `org_name` is `null`. `spend_limit` comes from the last refusal and is kept in memory only.
+
+Erasing an account unlinks it the same way as the unlink button.
+
+## Related pages
+
+- [Upstream funding](/operations/upstream-funding)
+- [Database migrations](/operations/database-migrations)

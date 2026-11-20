@@ -1,0 +1,68 @@
+---
+title: "Bill Claude to your Claude organization"
+description: "Link your Claude organization so your own chats with Claude models are billed to it, not to your Allternit credits."
+---
+
+**Status: BUILDING.** This is rolling out. Until it is on for your account, the row shows **Not available yet**. See [status labels](/architecture#status-labels).
+
+When you link your Claude organization, your own chats with Claude models are billed to that organization, on its normal Claude Platform billing. They do not use your Allternit credits.
+
+## Who can link
+
+- You need the **Admin** or **Billing** role on the Claude organization.
+- The organization must **pay Anthropic directly**. Max or Team plan credits do not work. Organizations that buy Claude through a cloud marketplace do not work either.
+
+If your organization cannot be billed, Allternit tells you: "Your Claude organization can't be billed. It must pay Anthropic directly."
+
+## Link it
+
+| Where | How |
+|---|---|
+| ai.allternit.com, Allternit Desktop, the phone layout and the m.allternit.com app | **Settings › Connections**, row **Link your Claude organization** |
+| iPhone | **Settings › Connections**, row **Link your Claude organization** |
+| Android | Through the m.allternit.com app, same row |
+| Gizzi Code | `gizzi auth link claude-org` |
+
+The button opens Claude in your browser. Sign in, pick the organization, and approve. You come back to Allternit and the row shows it is linked. This row is separate from the Claude subscription row, which is about the Claude command-line app.
+
+If something goes wrong, Allternit shows a plain message: you said no, the exchange failed, your organization cannot be billed, or the profile is already linked to another account.
+
+## Use it
+
+Open the model picker. Linked models are in their own group, **Claude organization**, with the line "Billed to your Claude organization". They are separate from **Subscription sign-in**. Pick one the way you pick any model. Nothing switches to it by itself.
+
+## Set a spend limit
+
+Allternit does not set the limit. You set it on Claude's **Linked platforms** page: [platform.claude.com/linked-platforms](https://platform.claude.com/linked-platforms). When the limit is reached, Claude refuses the request and nobody is billed.
+
+## When a request is refused
+
+A refused request costs nothing. You see a message and these buttons:
+
+- **Use Allternit credits for this message.** Sends the same message once, with an Allternit model, on your Allternit credits. It only happens when you tap. It is never automatic.
+- **Manage Claude organization.** Opens the row in **Settings › Connections**.
+- **Link again**, if your organization is disconnected.
+
+Common reasons: the spend limit is reached (raise it on the Linked platforms page; linking again does not help), the organization cannot be billed, Claude is busy (try again), or the link was removed on Claude's side. If a reply is cut off partway, the text so far stays and an error card follows.
+
+## Unlink
+
+In **Settings › Connections**, open the row and choose **Unlink**. Allternit asks first, then removes the link and tells Claude. In Gizzi Code, run `gizzi auth unlink claude-org` (add `--yes` to skip the question).
+
+## Link again after a year
+
+A link lasts one year. Fourteen days before it ends, the row says **Link your Claude organization again**. Until then it keeps working.
+
+## Only your own chats
+
+The link is for chats you type yourself. Bots, routines, schedules, missions and sub-agents never use it, even if you pick the model for them. The picker keeps these models out of their pickers.
+
+Code-execution tools are not available on these requests. Allternit drops them.
+
+## What happens to your data
+
+Requests run under **Allternit's** Anthropic account, and only your organization pays. So Allternit's rate limits and data retention apply. Your organization's own zero data retention (ZDR) and business associate agreement (BAA) settings do not apply. Do not use this for data that needs them.
+
+## For developers
+
+How the link works and how to switch it on: [Claude organization linked billing (operations)](/operations/claude-linked-billing).

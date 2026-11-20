@@ -16,6 +16,10 @@ Authorization: Bearer alt_live_3f9c…
 
 Keys are created in the console at **platform.allternit.com → API Keys → Platform API**: create a project (sandbox or live), then **Create key**, pick its scopes and, optionally, one account. The console calls `POST /api/v1/platform/projects/{id}/keys` with your signed-in session. Creating a key asks you to accept the [Developer Terms](/legal/developer-terms) and [Acceptable Use Policy](/legal/acceptable-use-policy); a live key can't be created without it (`400 terms_not_accepted`), and the time and terms version are recorded on the key. The full key is shown once; only its hash is stored. A key can never create another key. Revoke a key with `DELETE /api/v1/platform/projects/{id}/keys/{key_id}`. Only the project owner, or an admin of the project's organization, can manage its keys.
 
+## App tokens (`alt_oat_`)
+
+A person can approve your app with [Sign in with Allternit](/api/oauth-apps). Your app then gets an access token that starts with `alt_oat_`. It is not a project key. It bills the person's own credits, under the monthly limit they set, and it reaches only `POST /v1/chat/completions` (scope `inference`), `GET /api/v1/oauth/usage` (scope `usage`) and `GET /oauth2/userinfo` (scope `profile`). Every other route answers `403`. See [Sign in with Allternit (OAuth apps)](/api/oauth-apps) for the flow, the scopes and the errors.
+
 ## The console
 
 The console at **platform.allternit.com → Platform API** has pages for Projects, Agents (with model keys), Conversations, Computers, Usage and Webhooks. Those pages call the same `/v1` endpoints described here, with your signed-in Clerk session instead of a key plus the header `X-Allternit-Project: proj_…`. The API then acts on that project as its owner: every scope, no account binding, and its requests are keyed as `console:<user id>` for rate limits, idempotency and usage. A project you can't manage, or an archived one, answers `404 project_not_found`. A project key in `Authorization` always wins over the header. This is for the console; servers should use project keys.

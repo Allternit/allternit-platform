@@ -106,6 +106,10 @@ Every field is optional. `balanceUsd` is the balance the provider's dashboard sh
 
 For OpenRouter, the balance comes from its API, so `balanceUsd` is only used when no OpenRouter key is set.
 
+## Who is not charged to the upstream balance
+
+Two paths change who pays for a model call. An outside app that uses [Sign in with Allternit](/api/oauth-apps) spends the signed-in person's own credits, under their monthly limit. A request to a `linked/claude/*` model is billed by Anthropic to the person's [linked Claude organization](/guides/claude-organization), and Allternit's wallet is not debited. Each usage event records this in `inference_usage.billed_to`: `allternit_credits`, `user_wallet` or `claude_org`. Setup is in [Claude organization linked billing](/operations/claude-linked-billing).
+
 ## Environment
 
 | Variable | Use |
