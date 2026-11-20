@@ -2057,7 +2057,9 @@ mod tests {
         for task in tasks {
             pairs.push(task.await.unwrap().expect("both requests get the pair"));
         }
-        assert_eq!(pairs[0], pairs[1]);
+        // Same pair for both; expires_in is computed per reply, so it may differ by a second.
+        assert_eq!((&pairs[0].access_token, &pairs[0].refresh_token, &pairs[0].scopes), (&pairs[1].access_token, &pairs[1].refresh_token, &pairs[1].scopes));
+        assert!(pairs[0].expires_in.abs_diff(pairs[1].expires_in) <= 1, "{pairs:?}");
         assert_eq!(count(&f.state.db, "SELECT count(*) FROM oauth_tokens WHERE kind = 'refresh'").await, 2);
         assert_eq!(count(&f.state.db, "SELECT count(*) FROM oauth_tokens WHERE kind = 'access'").await, 2);
         assert_eq!(audits(&f.state.db, "refresh_rotated").await, 1);
