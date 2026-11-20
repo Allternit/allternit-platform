@@ -117,7 +117,13 @@ export function fits(runtime: RuntimeEntry | string, providerId: string): boolea
 export function resolveRuntime<T extends BotBrainLike>(botBrain: T): T & { runtime: string } {
   if (botBrain.runtime) {
     const r = getRuntime(botBrain.runtime)
-    if (!r) return { ...botBrain, runtime: botBrain.runtime }
+    if (!r) {
+      // Same rules as the server (allternit-api bot_brain.rs): `custom` keeps the
+      // stored mode/harness; any other id this build does not know is treated as
+      // a native harness of that id (a newer client may know more runtimes).
+      if (botBrain.runtime === "custom") return { ...botBrain, runtime: "custom" }
+      return { ...botBrain, mode: "native_harness", harness: botBrain.runtime, runtime: botBrain.runtime }
+    }
     if (r.id === "allternit") {
       const { harness: _h, uhpHarnessId: _u, ...rest } = botBrain
       return { ...(rest as T), mode: "allternit_cloud", runtime: r.id }
