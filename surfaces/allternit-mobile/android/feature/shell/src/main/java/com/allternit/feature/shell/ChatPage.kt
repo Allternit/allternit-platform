@@ -56,6 +56,8 @@ internal fun ChatPage(
     onDeleted: () -> Unit,
     onOpenSection: (RailRow) -> Unit,
     onOpenSettings: () -> Unit,
+    /** Settings › Connections (the Claude organization row), from a refusal card. */
+    onOpenConnections: () -> Unit = onOpenSettings,
     /** Wave D: an artifact card opens the artifact screens. */
     onOpenArtifact: ((com.allternit.feature.chat.ArtifactRecord) -> Unit)? = null,
     /** Opened from the home composer's voice button: start voice mode once, then [onVoiceStarted]. */
@@ -88,6 +90,7 @@ internal fun ChatPage(
                 prefill = ChatViewModel.strippedText(m.content)
             },
             onOpenSettings = onOpenSettings,
+            onOpenConnections = onOpenConnections,
             creditsModelId = { models.cloudModels.let { cloud -> cloud.firstOrNull { it.id == models.selectedId } ?: cloud.firstOrNull() }?.id },
             onConnectConnector = { onOpenSection(RailRow("connectors", "Connectors", com.allternit.core.design.R.drawable.ph_lightning)) },
             onShareLink = { shareOpen = true },
