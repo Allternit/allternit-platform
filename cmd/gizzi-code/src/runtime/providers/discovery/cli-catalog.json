@@ -2498,7 +2498,7 @@
         "agy"
       ],
       "adapter": {
-        "kind": "text"
+        "kind": "acp"
       },
       "brains": "any",
       "access": [
@@ -2507,7 +2507,7 @@
       ],
       "more": false,
       "systemLayer": {
-        "via": "agents-md"
+        "via": "acp-session"
       },
       "look": {
         "default": "terminal",

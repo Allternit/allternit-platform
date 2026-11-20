@@ -173,7 +173,7 @@ export class LocalCliDriver implements RuntimeDriver {
       )
     }
 
-    const argv = adapter.buildArgv(baseCmd, message, {
+    const argvCtx = {
       cwd: task?.cwd,
       taskId: handle.taskId,
       systemPrompt: task?.systemPrompt,
@@ -186,7 +186,8 @@ export class LocalCliDriver implements RuntimeDriver {
       model: task?.model,
       effort: task?.effort,
       approval: task?.approveTool ? { mode: task.permissionMode ?? "default" } : undefined,
-    })
+    }
+    const argv = adapter.buildArgv(baseCmd, message, argvCtx)
 
     // CLIs whose records lack what they send: their provider calls pass through BrainRelay.
     const relay = task?.sessionID && adapter.relayEnv ? adapter.relayEnv(task.sessionID) : undefined
@@ -220,7 +221,20 @@ export class LocalCliDriver implements RuntimeDriver {
       } else if (adapter.mode === "openclaw-json") {
         yield* this.runOpenclawJson(handle, argv, message, task?.cwd, env)
       } else if (adapter.mode === "acp") {
-        yield* this.runAcp(handle, argv, task?.cwd, env, adapter.acpModelConfig)
+        if (adapter.printFallbackArgv) {
+          // Print mode has no system-prompt channel: fold the instructions into the message.
+          const printMessage = cliTurnMessage(prompt, task?.systemPrompt, this.cliName, "one-shot-text")
+          yield* this.runAcpWithPrintFallback(
+            handle,
+            argv,
+            adapter.printFallbackArgv(baseCmd, printMessage, argvCtx),
+            task?.cwd,
+            env,
+            adapter.acpModelConfig,
+          )
+        } else {
+          yield* this.runAcp(handle, argv, task?.cwd, env, adapter.acpModelConfig)
+        }
       } else if (adapter.mode === "codex-app-server") {
         for await (const event of this.runCodexAppServer(handle, argv, message, task?.cwd, task?.systemPrompt, env, sessionModel(task?.model, this.cliName))) {
           if (event.type === "error" || (event.type === "finish" && event.finishReason === "error")) failed = true
@@ -1027,6 +1041,49 @@ export class LocalCliDriver implements RuntimeDriver {
   // ---------------------------------------------------------------------------
   // ACP stdio execution (JSON-RPC over stdio via @agentclientprotocol/sdk)
   // ---------------------------------------------------------------------------
+
+  /**
+   * ACP first, then the CLI's one-shot print mode when the ACP handshake
+   * fails (initialize or session/new: agent too old, no `acp` subcommand,
+   * sign-in missing). runAcp reports a handshake failure as an error event
+   * with nothing before it. Once any real event has gone out (session id,
+   * text, tool step, a wrong-model error) the turn stays on ACP.
+   */
+  private async *runAcpWithPrintFallback(
+    handle: TaskHandle,
+    acpArgv: string[],
+    printArgv: string[],
+    cwd: string | undefined,
+    env: Record<string, string> | undefined,
+    modelConfig: boolean | undefined,
+  ): AsyncIterable<AgentEvent> {
+    const held: AgentEvent[] = []
+    let committed = false
+    for await (const event of this.runAcp(handle, acpArgv, cwd, env, modelConfig)) {
+      if (committed) {
+        yield event
+        continue
+      }
+      if (event.type === "error" || event.type === "finish") {
+        held.push(event)
+        continue
+      }
+      committed = true
+      for (const h of held) yield h
+      held.length = 0
+      yield event
+    }
+    if (committed || held.length === 0) {
+      for (const h of held) yield h
+      return
+    }
+    const reason = held.find((e) => e.type === "error") as { error?: unknown } | undefined
+    log.warn("acp handshake failed; falling back to print mode", {
+      cli: this.cliName,
+      error: reason?.error instanceof Error ? reason.error.message : String(reason?.error ?? ""),
+    })
+    yield* this.runOneShotText(handle, printArgv, { cwd, env })
+  }
 
   private async *runAcp(
     handle: TaskHandle,
@@ -1932,6 +1989,15 @@ interface CliAdapter {
    * model flag in ACP mode).
    */
   acpModelConfig?: boolean
+  /**
+   * ACP only: argv for the CLI's one-shot print mode, used when the ACP
+   * handshake fails (see runAcpWithPrintFallback).
+   */
+  printFallbackArgv?: (
+    baseCmd: string[],
+    message: string,
+    ctx: Parameters<CliAdapter["buildArgv"]>[2],
+  ) => string[]
   /** Build the final argv. */
   buildArgv(
     baseCmd: string[],
@@ -2254,11 +2320,18 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
     buildArgv: ([command], message) => [command, "-p", "--mode", "json", message],
   },
 
-  // Antigravity (agy) — one-shot text. Without --model agy runs its own
-  // default, whatever the picker chose.
+  // Antigravity (agy) — ACP (`agy acp`). Model and thinking level go over ACP
+  // session/set_config_option (session/new lists a `model` and a
+  // `thought_level` config option; acpModelConfig). If the ACP handshake
+  // fails, the turn reruns in the old `--print` mode (printFallbackArgv).
   antigravity: {
-    mode: "one-shot-text",
-    buildArgv: ([command], message, ctx) => [
+    mode: "acp",
+    supportsAttachments: true,
+    acpModelConfig: true,
+    // A browser sign-in must never open from a bot turn.
+    env: { BROWSER: "/usr/bin/true" },
+    buildArgv: ([command]) => [command, "acp"],
+    printFallbackArgv: ([command], message, ctx) => [
       command,
       ...modelFlag(sessionModel(ctx.model, "antigravity") ?? envModel("antigravity")),
       ...(ctx.effort && AGY_EFFORTS.has(ctx.effort) ? ["--effort", ctx.effort] : []),
