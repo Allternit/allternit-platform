@@ -675,6 +675,13 @@ pub fn label_incumbent(conn: &Connection, user_id: &str, session_id: &str, answe
          WHERE id = ?1 AND labeled_at IS NULL",
         params![label.recall_id, json!(label.used).to_string(), INCUMBENT_LABEL_SOURCE],
     )?;
+    // Sleep `rem` stage: a kept REM link whose endpoint the answer used is an insight;
+    // raise both ends (no-op with the stage off). Never fails the labelling.
+    for r in used.iter().filter(|r| r.item_type == "fact") {
+        if let Err(e) = crate::sleep::rem::note_link_used(conn, user_id, &r.id) {
+            tracing::debug!(fact = %r.id, "rem insight note skipped: {e}");
+        }
+    }
     Ok(Some(label))
 }
 
