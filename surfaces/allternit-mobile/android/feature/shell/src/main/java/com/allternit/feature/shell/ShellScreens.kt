@@ -146,7 +146,7 @@ internal fun PhoneIconButton(icon: Int, label: String, testTag: String? = null, 
 /**
  * The signed-in home (iOS ChatView in launch style): the header (☰ with the mode badge,
  * "Allternit", ••• and New chat), the pixel A:// mark over the serif headline, and the composer.
- * Recents live in the drawer, as on iOS. Bots / Code / ACI say plainly that their screens are next.
+ * Recents live in the drawer, as on iOS. Bots and ACI have their own roots (waves E, F3); Code adds its home.
  */
 @Composable
 internal fun ShellHome(

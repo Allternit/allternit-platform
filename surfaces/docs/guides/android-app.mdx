@@ -140,6 +140,7 @@ The native app is built to match the iPhone app screen for screen, in ten waves.
 | E. Bots | Bots mode (launchpad, bot chat, live stage, bot page, threads, tasks), bot form, agent hub, marketplace, workspace files, agent activity, decisions, run tree, bot projects | Built, in testing. The bot's live desktop comes with Computer in wave F. |
 | F1. Code | Code mode from the mode fan: the Code home (folder, tools, recent threads), threads in the chat screen, the pending-change review, Changes and file diffs, the file browser and editor, the terminal with Terminal bots, dev servers and preview, the thread overview with rename, archive and permission mode, the computer picker | Built, in testing |
 | F2. Automation | Automation Tasks from the drawer (both modes): goals, routines, loops and agent heartbeats as a list, a graph and a Day, Week and Month calendar; the task detail with run now, pause, change time and delete; the create wizard; the computer's own routines and loops; the Tasks board | Built, in testing |
+| F3. Computer (ACI) | ACI mode from the mode fan: the agent landing with the search bar, the Computer Agent toggle, shortcuts and the computer picker; the in-app browser with Extension Chat; a live agent run with screenshots, the action highlight, the trace log, Approve, Deny and Stop; Computers (add a computer, view any computer's screen, paired computers, phones, backups, workflows); the native VNC viewer for a computer's screen and a bot's desktop. MCP Apps, ACI Extensions and Teach come next | Built, in testing |
 | F. Modes (rest) | Cowork, Computer (remote desktop and the bot desktop, Teach, mini apps), Connect, Phones, Office, Models | Not started |
 | G. Settings | Settings and all sub-screens, Customize, Connectors, Skills, Plugins, Brain | Not started |
 | H. Money and voice | Google Play purchases, credits, voice mode, calls | Not started |
@@ -279,6 +280,19 @@ Pick **Code** on the mode fan. The home shows the folder and branch your compute
 - **Terminal.** Each shell is a pty on your computer, drawn natively on the phone (no web view). A key bar adds Esc, Tab, Ctrl, arrows and Ctrl-C. Terminal bots show as tabs and mirror their pane. Open **Dev servers** from a shell to preview a port.
 - **All threads.** Filter by Needs input, Working, Ready for review, Done or Archived; tap the dots on a row to rename, mark reviewed or archive. **Permissions** sets Manual, Auto-accept edits, Plan mode or Read only.
 - **No computer.** Every Code screen shows "Connect a computer or Allternit Cloud" until one is connected. **Computer** lets you pick which one runs your commands.
+
+#### ACI (Computer)
+
+Pick **ACI** on the mode fan (hold the menu button) to open ACI mode. The drawer's ACI rows pick the view: **MCP Apps**, **ACI Extensions**, **Computers** and **Teach**.
+
+- **Agent (the landing):** a dotted page with a title, the search bar and the **Allternit Computer Agent** toggle. With the agent off, the bar opens a site or a Google search in the in-app browser. With it on, the bar takes a task and starts an agent run. **Customize** lets you add (label, URL, emoji) or remove shortcut tiles; they stay on the phone. When you have computers, **Computer the agent uses** sits on top; tap it to pick one. Runs go to that computer through the relay.
+- **Pair a computer:** with no computers, a card suggests pairing. Dismiss it once and it stays away.
+- **In-app browser:** back, the address field, a progress line, back and forward, and **Extension Chat**. Extension Chat offers suggested tasks or your own, and starts an agent run.
+- **Agent run:** the COMPUTER USE strip shows the status, the last message, the step and the adapter. The page shows the computer's screenshots with a box on the element the agent acts on, and the trace log below. When the agent asks first, **Approve** and **Deny** appear. **Stop** ends the run. Leaving the screen stops a live run. With no computer, the run shows the no-computer message and **Retry**.
+- **Computers:** **Add a computer** (the three pairing steps), **View a computer's screen** (any computer on the account: cloud, a bot's or a paired Mac), your paired computers with online state and last seen, linked phones (with call audio for a cable-bridged phone), cloud computer backups and the workflow specs on a paired computer. Tap a computer to open its live screen.
+- **A computer's screen:** the native VNC viewer. The bar says who drives. **Take control** gives you the pointer and keyboard; **Release** hands it back. An off computer shows **Start**. Pinch to zoom, drag to pan when zoomed, tap to click, two-finger tap or long-press to right-click, drag to move with the button held. The keyboard button shows the keyboard while you drive. A Mac's screen sharing asks for that Mac's account name and password; other VNC servers ask for a password. The sign-in stays in memory only.
+- **A bot's desktop:** the bot's **Computer** page shows its desktop (running or not, and who controls it), **View desktop**, **Take over**, **Watch without pausing**, **Hand back** and **Start a desktop**, plus the computers assigned to the bot. The desktop viewer is the same VNC viewer; input only goes out while you control it.
+- **Not yet on Android:** MCP Apps, ACI Extensions, Teach, mini apps and the Files drive rows of a computer. Use Allternit Desktop, the web or the iPhone app for these for now.
 
 #### Automation
 

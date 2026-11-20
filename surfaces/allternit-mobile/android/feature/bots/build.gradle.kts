@@ -44,6 +44,8 @@ dependencies {
     // LibraryNet (the /api/v1 routes), the JSON helpers and the library chrome.
     implementation(project(":feature:artifacts"))
     implementation(project(":core:auth"))
+    // Wave F3: the native RFB viewer (BotDesktopView) and the computer drive screen, shared with ACI.
+    implementation(project(":core:rfb"))
     // rememberLauncherForActivityResult (Hand it something: files and photos).
     implementation(libs.activity.compose)
     testImplementation(libs.junit)

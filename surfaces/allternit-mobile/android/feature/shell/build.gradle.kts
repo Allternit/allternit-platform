@@ -45,6 +45,8 @@ dependencies {
     // Wave F1: Code mode replaces the Code placeholder.
     implementation(project(":feature:code"))
     implementation(project(":feature:automation"))
+    // Wave F3: ACI mode (the ACI tab, browser, agent run, Computers).
+    implementation(project(":feature:computer"))
     // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
     implementation(project(":core:api"))
     // Wave B: DataStore for the first-run "setup done" flag (iOS OnboardingStore, UserDefaults).
