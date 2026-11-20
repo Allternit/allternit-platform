@@ -10,7 +10,7 @@
 //! | 3 | `dream` | Dream is on for the drive and today's Dream is not finished | yes |
 //! | 4 | `curation` | a bot's weekly curation is due | yes |
 //! | 5 | `pages` | no-op slot: waits for gate G1 and step 4.2 | - |
-//! | 6 | `checks` | no-op slot: waits for step 6.3 | - |
+//! | 6 | `checks` | `checks` stage on (`sleep::checks::run_stage`) | no |
 //! | 7 | `sign` | no-op slot: waits for step 4.1 (manifest) | - |
 //!
 //! A daydream runs stages 1-2 only. `sleep_cycles.stage` follows the stage
@@ -338,7 +338,16 @@ async fn run_step(db: &DbHandle, jobs: &dyn Jobs, cfg: &Resolved, unit: &Unit, c
             Ok(StepRecord::done(step, jobs.curate(user, bots).await?))
         }
         Step::Pages => Ok(StepRecord::skipped(step, "waits for G1/4.2")),
-        Step::Checks => Ok(StepRecord::skipped(step, "waits for step 6.3")),
+        Step::Checks => {
+            if !cfg.stage_on(Stage::Checks) {
+                return Ok(StepRecord::skipped(step, "stage_off: checks"));
+            }
+            let conn = db.connect().map_err(sql)?;
+            match super::checks::run_stage(&conn, user, cycle_id, now).map_err(sql)? {
+                Some(detail) => Ok(StepRecord::done(step, detail)),
+                None => Ok(StepRecord::skipped(step, "stage_off: checks")),
+            }
+        }
         Step::Sign => Ok(StepRecord::skipped(step, "waits for step 4.1")),
     }
 }

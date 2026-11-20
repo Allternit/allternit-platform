@@ -19,6 +19,7 @@
 //!   monitor's notes and the user's resolve (6.1).
 //! - [`arbiter`]: the deterministic pick by scope, credence, recency, goal
 //!   and stakes, or `needs_user` (6.1).
+//! - [`checks`]: spaced checks, the bounded check set and the tether ladder (6.3).
 //! - [`routes`]: `/api/v1/memory/sleep/...` and `/api/v1/memory/disputes...`.
 //!
 //! The module stays self-contained (D1) so it can become its own crate when
@@ -26,6 +27,7 @@
 //! `surfaces/docs/api/memory-sleep.mdx`.
 
 pub mod arbiter;
+pub mod checks;
 pub mod config;
 pub mod cycle;
 pub mod disputes;
