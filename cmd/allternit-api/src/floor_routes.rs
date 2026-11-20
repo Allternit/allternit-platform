@@ -150,7 +150,8 @@ fn clip(s: &str, max: usize) -> String {
 
 /// Deterministic `#rrggbb` from an id (FNV-1a over a fixed palette).
 pub fn pod_color(id: &str) -> String {
-    const PALETTE: [&str; 10] = ["#2F80ED", "#27AE60", "#F2994A", "#9B51E0", "#EB5757", "#2D9CDB", "#BB6BD9", "#219653", "#E2B93B", "#56CCF2"];
+    // Cool colours only: no orange, gold or tan tints (Allternit no-tan rule).
+    const PALETTE: [&str; 10] = ["#2F80ED", "#27AE60", "#14B8A6", "#9B51E0", "#EB5757", "#2D9CDB", "#BB6BD9", "#219653", "#6366F1", "#56CCF2"];
     let mut h: u32 = 0x811c9dc5;
     for b in id.bytes() {
         h ^= b as u32;
