@@ -87,7 +87,7 @@ internal object MiniAppCatalog {
 
 /** iOS MiniAppsStoreView: search, category pills, a card per app with Open and Pin; Open runs it (MiniAppRuntimeView). */
 @Composable
-internal fun AciMiniAppsStore(onClose: () -> Unit) {
+fun AciMiniAppsStore(onClose: () -> Unit) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

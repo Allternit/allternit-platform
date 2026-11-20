@@ -132,7 +132,12 @@ sealed interface StoreResult<out T> {
 data class HostedEntitlement(val planDisplayName: String, val maxHoursMonthly: Int, val usedSecondsMonthly: Int)
 
 /** `GET /api/v1/billing/credits`. */
-data class BillingCredits(val balanceUsd: Double, val monthToDateUsageUsd: Double)
+data class BillingCredits(val balanceUsd: Double, val monthToDateUsageUsd: Double, val cloudModels: CloudModelsEntitlement? = null)
+
+/** iOS CloudModelsEntitlement: `cloud_models` on `/billing/credits`. Absent (older backend) means not locked. */
+data class CloudModelsEntitlement(val allowed: Boolean, val reason: String?, val byokProviders: List<String>) {
+    fun isLocked(provider: String?): Boolean = !allowed && (provider == null || provider !in byokProviders)
+}
 
 /** `GET /api/v1/me/usage`: the monthly Allternit Cloud allowance (iOS UsageSnapshot). */
 data class UsageSnapshot(val weeklyUsed: Double, val weeklyLimit: Double, val resetsAt: String?, val credits: Double?)
@@ -204,7 +209,17 @@ object StoreBillingClient {
     suspend fun subscription(): BillingSubscription? = (get("billing/subscription") as? StoreResult.Ok)?.value?.let { it as? JsonObject }?.let(::subscription)
 
     suspend fun credits(): BillingCredits? = ((get("billing/credits") as? StoreResult.Ok)?.value as? JsonObject)?.let {
-        BillingCredits(it.num("balance_usd") ?: 0.0, it.num("month_to_date_usage_usd") ?: 0.0)
+        val cm = it["cloud_models"] as? JsonObject
+        BillingCredits(
+            it.num("balance_usd") ?: 0.0, it.num("month_to_date_usage_usd") ?: 0.0,
+            cm?.let { o ->
+                CloudModelsEntitlement(
+                    allowed = o.bool("allowed") ?: true,
+                    reason = o.str("reason"),
+                    byokProviders = (o["byok_providers"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content } ?: emptyList(),
+                )
+            },
+        )
     }
 
     suspend fun entitlement(): HostedEntitlement? = ((get("hosted-runtimes/entitlement") as? StoreResult.Ok)?.value as? JsonObject)?.let {

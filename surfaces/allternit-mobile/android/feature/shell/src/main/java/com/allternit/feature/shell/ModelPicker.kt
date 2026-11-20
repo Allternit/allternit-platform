@@ -86,7 +86,9 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
     var pick by remember { mutableStateOf<PickerScope>(PickerScope.All) }
     var reasoning by remember { mutableStateOf(false) }
     var local by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { models.load() }
+    var creditsRequest by remember { mutableStateOf<com.allternit.feature.billing.CloudCreditsRequest?>(null) }
+    LaunchedEffect(Unit) { models.load(); com.allternit.feature.billing.AccountPlan.load() }
+    creditsRequest?.let { req -> com.allternit.feature.billing.CloudCreditsSheet(req) { creditsRequest = null } }
 
     val offered = models.chatModels.filter { !it.hidden || it.id == models.selectedId }
     val providerIds = offered.map { it.provider }.distinct()
@@ -231,7 +233,7 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                         item(key = "g-${group.key}") {
                             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral)) {
                                 group.rows.forEachIndexed { i, m ->
-                                    ModelRow(m, models)
+                                    ModelRow(m, models) { creditsRequest = it }
                                     if (i < group.rows.lastIndex) Box(Modifier.fillMaxWidth().padding(start = 44.dp).height(1.dp).background(c.borderSubtle))
                                 }
                             }
@@ -311,7 +313,7 @@ private fun RowBadge(text: String) {
 }
 
 @Composable
-private fun ModelRow(m: PickerModel, models: ModelStore) {
+private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allternit.feature.billing.CloudCreditsRequest) -> Unit = {}) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val selectedRow = models.selectedId == m.id
@@ -322,7 +324,11 @@ private fun ModelRow(m: PickerModel, models: ModelStore) {
             .testTag("modelRow${m.id}")
             .clickable(role = Role.Button) {
                 Haptics.perform(view, Haptics.Kind.Tap)
-                models.select(m.id)
+                // iOS ModelPickerSheet.choose: a locked Cloud row opens Cloud credits and keeps the old selection.
+                val locked = if (m.cloudProvider != null || m.id.startsWith(ModelStore.CLOUD_PREFIX)) {
+                    com.allternit.feature.billing.CloudCreditsGate.lockedRequest(m.name, m.cloudProvider, m.inputPer1mUsd, m.outputPer1mUsd)
+                } else null
+                if (locked != null) onLocked(locked) else models.select(m.id)
             }
             .semantics(mergeDescendants = true) {
                 selected = selectedRow

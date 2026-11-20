@@ -173,7 +173,7 @@ internal class BotPauseModel(private val backend: ChatBackend) {
 enum class RosterLayout(val raw: String, val label: String) { List("list", "List"), Grid("grid", "Grid"), Deck("deck", "Deck") }
 
 /** Where the shell asks Bots mode to go on open (iOS BotModeStore.pendingOpenBotId / pendingRoute). */
-class BotsLaunch(val openBotId: String? = null, val route: BotRoute? = null, val projectId: String? = null)
+class BotsLaunch(val openBotId: String? = null, val route: BotRoute? = null, val projectId: String? = null, val openMain: Boolean = false, val openSessionId: String? = null)
 
 /**
  * Bots mode root (iOS BotsModeRootView): header "Bots" with search and the options sheet, the
@@ -191,8 +191,13 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
     var threadsOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(launch) {
-        launch.openBotId?.let { nav.reset(BotRoute.Chat(it, null)) }
+        launch.openBotId?.let { nav.reset(BotRoute.Chat(it, launch.openSessionId)) }
         launch.route?.let { nav.reset(it) }
+        // allternit://call/main (iOS .callMain): the main bot's chat, or the bots list when there is none.
+        if (launch.openMain) {
+            store.refreshAgents()
+            store.agents.firstOrNull { it.isMainBot }?.let { nav.reset(BotRoute.Chat(it.id, null)) }
+        }
         // A bot project from Projects or search (iOS pendingRoute .project).
         launch.projectId?.let { id ->
             store.refreshProjects()

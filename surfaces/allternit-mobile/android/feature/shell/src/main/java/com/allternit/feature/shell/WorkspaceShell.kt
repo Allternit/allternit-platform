@@ -220,10 +220,15 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     LaunchedEffect(launch.nonce) {
         if (launch.nonce == 0L) return@LaunchedEffect
         val bot = launch.botId
-        if (bot != null) {
+        if (launch.openMain) {
             mode = ShellMode.Bots
             ShellModePrefs.save(context, ShellMode.Bots)
-            botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = bot)
+            botsLaunch = com.allternit.feature.bots.BotsLaunch(openMain = true)
+            page = ShellPage.Home
+        } else if (bot != null) {
+            mode = ShellMode.Bots
+            ShellModePrefs.save(context, ShellMode.Bots)
+            botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = bot, openSessionId = launch.sessionId)
             page = ShellPage.Home
         } else if (launch.tab != null && launch.tab != "settings") {
             launchSection(launch.tab)?.let { page = ShellPage.Section(it) }
@@ -507,6 +512,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 LaunchedEffect(Unit) { com.allternit.feature.computer.AciNav.open(com.allternit.feature.computer.AciTab.Agent); com.allternit.feature.computer.AciNav.openTeach() }
                                 com.allternit.feature.computer.AciRoot(aciHost)
                             }
+                            // The drawer's More menu opens Mini Apps (iOS HistorySidebarView MiniAppsStoreView).
+                            "mini-apps" -> com.allternit.feature.computer.AciMiniAppsStore(onClose = { page = ShellPage.Home })
                             "mcp-apps", "browser-extensions", "computers" -> {
                                 val aciTab = when (current.row.id) {
                                     "mcp-apps" -> com.allternit.feature.computer.AciTab.Apps
@@ -818,6 +825,10 @@ internal data class ShellLaunch(
     val nonce: Long = 0L,
     /** Open this bot's chat in Bots mode (a widget, tile or shortcut link, wave I2). */
     val botId: String? = null,
+    /** Open the main bot's chat (`allternit://call/main`, iOS .callMain). */
+    val openMain: Boolean = false,
+    /** With [botId]: the exact thread a push named (iOS PushNotificationManager.handleTap → bot thread). */
+    val sessionId: String? = null,
 )
 
 /** iOS ModeBarItem raw values and the web rail ids → the drawer row they open. */

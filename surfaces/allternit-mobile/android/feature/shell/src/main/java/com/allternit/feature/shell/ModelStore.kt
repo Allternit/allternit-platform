@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.contentOrNull
 
 /**
@@ -31,6 +32,10 @@ internal data class PickerModel(
     val hidden: Boolean,
     val rank: Long?,
     val thinking: ModelThinking?,
+    /** Cloud catalog rows only (iOS SetupModelRow): the serving provider and the per-1M prices. */
+    val cloudProvider: String? = null,
+    val inputPer1mUsd: Double? = null,
+    val outputPer1mUsd: Double? = null,
 )
 
 private fun RuntimeModel.toPicker() = PickerModel(
@@ -146,6 +151,9 @@ internal class ModelStore(context: Context) {
                 id = CLOUD_PREFIX + alias, name = name, provider = "allternit",
                 description = "Allternit Cloud · no computer needed", isDefault = bool("default"),
                 hidden = false, rank = null, thinking = null,
+                cloudProvider = str("provider"),
+                inputPer1mUsd = (o["pricing"] as? JsonObject)?.get("input_per_1m_usd")?.let { (it as? JsonPrimitive)?.doubleOrNull },
+                outputPer1mUsd = (o["pricing"] as? JsonObject)?.get("output_per_1m_usd")?.let { (it as? JsonPrimitive)?.doubleOrNull },
             )
         }
         if (rows.isNotEmpty()) cloudModels = rows

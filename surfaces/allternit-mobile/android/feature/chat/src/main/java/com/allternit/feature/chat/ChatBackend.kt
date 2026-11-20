@@ -189,8 +189,9 @@ class ChatBackend(
      * 503 `runtime_warming` waits and retries for up to about 45 s like iOS; an offline
      * computer is marked unreachable for the next pick.
      */
-    suspend fun runtimeJson(method: String, path: String, jsonBody: String? = null): RuntimeCall {
-        val runtimeId = when (val pick = relay.resolve()) {
+    suspend fun runtimeJson(method: String, path: String, jsonBody: String? = null, targetRuntimeId: String? = null): RuntimeCall {
+        // A notification action acts on the computer the push names (iOS NotificationActions runtimeId), not the picked one.
+        val runtimeId = if (!targetRuntimeId.isNullOrBlank()) targetRuntimeId else when (val pick = relay.resolve()) {
             is RelayPick.Computer -> pick.runtimeId
             RelayPick.NoComputer -> return RuntimeCall.NoComputer
             RelayPick.Unreachable -> return RuntimeCall.Failed(ChatErrors.UNREACHABLE)

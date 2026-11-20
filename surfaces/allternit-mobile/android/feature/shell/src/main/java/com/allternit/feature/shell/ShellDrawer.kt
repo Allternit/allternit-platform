@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -107,6 +109,8 @@ internal fun ShellDrawer(
                 item(key = "rail-more") {
                     MoreRow(rows = rows, hidden = hidden, onToggle = { id -> hidden = RailTabPrefs.toggle(context, mode, id) }, onApps = {
                         onRow(RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected))
+                    }, onMiniApps = {
+                        onRow(RailRow("mini-apps", "Mini Apps", DesignR.drawable.ph_puzzle_piece))
                     })
                 }
                 item(key = "recents-label") {
@@ -285,7 +289,7 @@ private fun DrawerNavRow(label: String, icon: Int, testTag: String, dot: Boolean
 
 /** More: choose which rows show (shared with desktop), and Apps & Extensions (iOS moreRow). */
 @Composable
-private fun MoreRow(rows: List<RailRow>, hidden: Set<String>, onToggle: (String) -> Unit, onApps: () -> Unit) {
+private fun MoreRow(rows: List<RailRow>, hidden: Set<String>, onToggle: (String) -> Unit, onApps: () -> Unit, onMiniApps: () -> Unit) {
     val c = AllternitTheme.colors
     var open by remember { mutableStateOf(false) }
     Box {
@@ -303,6 +307,10 @@ private fun MoreRow(rows: List<RailRow>, hidden: Set<String>, onToggle: (String)
             MenuRow(icon = DesignR.drawable.ph_plugs_connected, title = "Apps & Extensions", testTag = "railAppsExtensions") {
                 open = false
                 onApps()
+            }
+            MenuRow(icon = DesignR.drawable.ph_puzzle_piece, title = "Mini Apps", testTag = "railMiniApps") {
+                open = false
+                onMiniApps()
             }
         }
     }
@@ -537,10 +545,31 @@ private fun DrawerFooter(
                     Haptics.perform(view, Haptics.Kind.Tap)
                     onPhones()
                 }
-                .semantics { contentDescription = "Phones" },
+                .semantics { contentDescription = if (com.allternit.feature.phones.PhonesUnread.total > 0) "Phones, ${com.allternit.feature.phones.PhonesUnread.total} unread" else "Phones" },
             contentAlignment = Alignment.Center,
         ) {
             MatrixLogo(size = 22.dp, ink = c.textPrimary)
+            val unread = com.allternit.feature.phones.PhonesUnread.total
+            if (unread > 0) {
+                Text(
+                    if (unread > 99) "99+" else "$unread",
+                    color = androidx.compose.ui.graphics.Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 4.dp, y = (-4).dp)
+                        .clip(CircleShape)
+                        .background(com.allternit.core.design.AllternitStatic.StatusError)
+                        .padding(horizontal = 4.dp)
+                        .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                        .testTag("drawerPhonesBadge"),
+                )
+            }
+        }
+        androidx.compose.runtime.LaunchedEffect(account) {
+            if (account == null) { com.allternit.feature.phones.PhonesUnread.clear(); return@LaunchedEffect }
+            while (true) { com.allternit.feature.phones.PhonesUnread.refresh(); kotlinx.coroutines.delay(60_000) }
         }
         val meetingsContext = androidx.compose.ui.platform.LocalContext.current
         androidx.compose.runtime.LaunchedEffect(account) { com.allternit.feature.meetings.MeetingsStore.refreshFlag(meetingsContext, signedIn = account != null) }
