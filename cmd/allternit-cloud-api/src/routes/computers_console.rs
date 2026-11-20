@@ -22,6 +22,8 @@
 //! is the newest raw heartbeat sample of the machine (routes::computer_metrics,
 //! kept 48 hours): of the cloud computer's runtime device or self-paired row,
 //! of the paired row or its linked runtime device, or of the runtime device.
+//! `runtimeId` (step 2.3) is the runtime device the relay is keyed by, null
+//! when the machine has none; relay clients (terminal, host data) use it.
 //! `servicesCount` is left out until host data exists; `lastBackupAt` until
 //! Orgo daily backups (step 2.6).
 
@@ -73,6 +75,12 @@ pub struct ConsoleComputer {
     pub address: Option<String>,
     pub reach: &'static str,
     pub status: String,
+    /// The runtime device the relay is keyed by (`runtime_devices.id`): a
+    /// cloud computer's `device_id`, a paired computer's `runtime_device_id`
+    /// or name-matched device, a Desktop's own id. Always sent, null when
+    /// there is none. Terminal and other relay clients address the machine
+    /// by this, not by `id`.
+    pub runtime_id: Option<String>,
     /// `HostSnapshot`: the newest heartbeat sample, when one is kept.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_sample: Option<serde_json::Value>,
@@ -239,6 +247,7 @@ fn linked_device<'a>(pc: &PairedRow, devices: &'a [DeviceRow], taken: &HashSet<S
 
 fn cloud_computer(c: CloudRow, connected: &HashSet<String>) -> ConsoleComputer {
     let online = c.device_id.as_ref().is_some_and(|id| connected.contains(id));
+    let runtime_id = c.device_id.clone();
     let address = c.tailnet_ip.filter(|ip| is_mesh_ip(ip));
     ConsoleComputer {
         name: c.device_name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Cloud computer".to_string()),
@@ -254,6 +263,7 @@ fn cloud_computer(c: CloudRow, connected: &HashSet<String>) -> ConsoleComputer {
         reach: if address.is_some() { "mesh" } else { "relay" },
         address,
         status: cloud_status(&c.status, online).to_string(),
+        runtime_id,
         last_sample: c.last_sample,
         services_count: None,
         last_backup_at: None,
@@ -309,6 +319,9 @@ fn paired_computer(
     } else {
         GROUP_SERVERS
     };
+    // A shared row's linked device is not in the caller's own device list,
+    // but its stored link still names the runtime.
+    let runtime_id = device.map(|d| d.id.clone()).or_else(|| pc.runtime_device_id.clone());
     ConsoleComputer {
         id: pc.id,
         kind: if is_desktop { "desktop" } else { "paired" },
@@ -322,6 +335,7 @@ fn paired_computer(
         reach: if address.is_some() { "mesh" } else { "relay" },
         address,
         status: (if online { "online" } else { "offline" }).to_string(),
+        runtime_id,
         last_sample,
         services_count: None,
         last_backup_at: None,
@@ -361,6 +375,7 @@ fn device_computer(d: &DeviceRow, connected: &HashSet<String>, now: DateTime<Utc
         reach: if address.is_some() { "mesh" } else { "relay" },
         address,
         status: (if device_online(d, connected, now) { "online" } else { "offline" }).to_string(),
+        runtime_id: Some(d.id.clone()),
         last_sample: d.last_sample.clone(),
         services_count: None,
         last_backup_at: None,
