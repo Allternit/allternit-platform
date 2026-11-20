@@ -235,10 +235,13 @@ private fun LanguageOption(label: String, selected: Boolean, onClick: () -> Unit
     }
 }
 
-/** iOS VoiceSettingsSheet: the phone's voices, language, speed and mode. */
+/**
+ * iOS VoiceSettingsSheet: the live mode look (the bot's own first when voice mode is with a bot, then the defaults),
+ * then the phone's voices, language, speed and mode.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VoiceSettingsSheet(speaker: Speaker, onDismiss: () -> Unit) {
+fun VoiceSettingsSheet(speaker: Speaker, bot: VoiceBot? = null, onDismiss: () -> Unit) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     var voices by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
@@ -257,6 +260,8 @@ fun VoiceSettingsSheet(speaker: Speaker, onDismiss: () -> Unit) {
                 Text("Voice settings", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 Text("Done", color = c.accentPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable(onClick = onDismiss).padding(8.dp).testTag("voiceSettingsDone"))
             }
+            if (bot != null) LiveModeLookSection(bot = bot)
+            LiveModeLookSection()
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Voice", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 if (voices.isEmpty()) {
