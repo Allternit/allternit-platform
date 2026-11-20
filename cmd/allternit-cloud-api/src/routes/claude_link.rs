@@ -720,12 +720,15 @@ mod tests {
         let (status, body) = send(&c, "GET", "/api/v1/claude-link", Some(&a), None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!((body["state"].as_str(), body["org_name"].as_str()), (Some("linked"), Some("Acme Corp")));
-        assert_eq!(body["spend_limit"], json!({ "reached": false }));
+        // Anthropic states no spend limit: a remote field is ignored; only our
+        // own last linked request sets it (none yet here).
+        assert!(body["spend_limit"].is_null(), "{body}");
         assert!(body["linked_at"].is_string() && body["relink_by"].is_string(), "{body}");
         let reads = fake.requests("GET", "/v1/user_profiles/uprof_a");
         assert_eq!(reads.len(), 1);
         assert_eq!(reads[0].beta.as_deref(), Some("user-profiles-search-2026-08-30"));
-        assert_eq!(reads[0].query, "oauth_app_id=oapp_test");
+        // Anthropic's example passes the OAuth client id as `oauth_app_id`.
+        assert_eq!(reads[0].query, "oauth_app_id=client_test");
         assert!(reads[0].auth.as_deref().unwrap().starts_with("Bearer sk-ant-oat01-"));
         // Cached for 60 s.
         send(&c, "GET", "/api/v1/claude-link", Some(&a), None).await;

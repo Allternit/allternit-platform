@@ -16,8 +16,15 @@
 //!   token are stored. The access token is never stored. The browser always
 //!   gets a URL back: the return URL with `connected=claude-org` or
 //!   `error=<code>`.
-//! - **Status.** `GET {API}/v1/user_profiles/{id}?oauth_app_id=…` with
+//! - **Status.** `GET {API}/v1/user_profiles/{id}?oauth_app_id=<our OAuth
+//!   client id>` (Anthropic's example passes the client id there) with
 //!   `anthropic-beta: user-profiles-search-2026-08-30`, cached 60 s per user.
+//!   The answer is read from `connection_status.type` (`connected` /
+//!   `disconnected` / `not_connected`, with `last_revoked_reason.type` when
+//!   disconnected); older guesses at the shape stay as fallbacks. Anthropic
+//!   states no organization name or spend limit: `org_name` is kept only if a
+//!   field carries one, and `spend_limit` comes only from our own last linked
+//!   request ([`note_spend_limit`]).
 //! - **Unlink / erase.** Revoke at `POST {AUTH}/v1/oauth/revoke` by
 //!   `connection_id` (best effort), then the connection row goes; the profile
 //!   row stays so a re-link reuses it.
@@ -26,8 +33,13 @@
 //! token (contract B3). [`ClaudeLink::refresh_connection`] exists for later use
 //! only.
 //!
-//! Step 10 (billing) reads the link with [`linked_profile`], from the DB by the
-//! caller's user id.
+//! Billing (`routes::model_router::anthropic_linked`) reads the link with
+//! [`linked_profile`], from the DB by the caller's user id.
+//!
+//! Every API call sends `anthropic-version` from [`anthropic_version`]
+//! (`2026-10-21`, the version Anthropic's user profile and Linked billing
+//! examples use; env `ALLTERNIT_ANTHROPIC_VERSION` overrides it). Profile
+//! create sends no beta header and an empty body (no passthrough fields).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -58,7 +70,10 @@ pub const CONNECTED: &str = "claude-org";
 const RETURN_PREFIXES: [&str; 4] = ["https://ai.allternit.com/", "https://m.allternit.com/", "allternit://", "gizzi://"];
 pub const SCOPE: &str = "billing:attribution offline_access";
 pub const STATUS_BETA: &str = "user-profiles-search-2026-08-30";
-const ANTHROPIC_VERSION: &str = "2023-06-01";
+/// Overrides the `anthropic-version` header on every Anthropic API call.
+pub const ANTHROPIC_VERSION_ENV: &str = "ALLTERNIT_ANTHROPIC_VERSION";
+/// The `anthropic-version` Anthropic's user profile and Linked billing examples use.
+pub const DEFAULT_ANTHROPIC_VERSION: &str = "2026-10-21";
 const STATUS_TTL: StdDuration = StdDuration::from_secs(60);
 const RELINK_WINDOW_DAYS: i64 = 14;
 /// Anthropic's refresh token life when the reply does not say (contract B3: 1 year).
@@ -122,6 +137,16 @@ pub struct LinkedProfile {
     pub state: LinkState,
     pub linked_at: DateTime<Utc>,
     pub refresh_expires_at: DateTime<Utc>,
+}
+
+/// The `anthropic-version` header value: [`ANTHROPIC_VERSION_ENV`] when set,
+/// else [`DEFAULT_ANTHROPIC_VERSION`].
+pub fn anthropic_version() -> String {
+    std::env::var(ANTHROPIC_VERSION_ENV)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_ANTHROPIC_VERSION.to_string())
 }
 
 fn relink_due(refresh_expires_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
@@ -201,35 +226,73 @@ fn forget_status(user_id: &str) {
     }
 }
 
+/// Per user: when our last linked request was answered
+/// `linked_organization_spend_limit_reached` (`Some`), or that a linked
+/// request went through since (`None`). In memory only: Anthropic states no
+/// spend limit, so this is the only source, and a restart forgets it.
+fn spend_notes() -> &'static Mutex<HashMap<String, Option<DateTime<Utc>>>> {
+    static NOTES: OnceLock<Mutex<HashMap<String, Option<DateTime<Utc>>>>> = OnceLock::new();
+    NOTES.get_or_init(Default::default)
+}
+
+/// Record a linked request's outcome for the status `spend_limit` field:
+/// `reached` after a 402 spend-limit refusal, not reached after a request
+/// Anthropic billed. A change drops the cached status so the next read shows it.
+pub fn note_spend_limit(user_id: &str, reached: bool) {
+    let Ok(mut notes) = spend_notes().lock() else { return };
+    let changed = match (notes.get(user_id), reached) {
+        (Some(Some(_)), true) | (Some(None), false) => false,
+        _ => true,
+    };
+    if changed {
+        notes.insert(user_id.to_string(), reached.then(Utc::now));
+        drop(notes);
+        forget_status(user_id);
+    }
+}
+
+/// `Some(reached)` once a linked request of this user has been answered.
+fn spend_limit_note(user_id: &str) -> Option<bool> {
+    spend_notes().lock().ok()?.get(user_id).map(Option::is_some)
+}
+
 /// What Anthropic says about the profile's connection to our app. Anthropic
-/// documents the status words (`connected` / `disconnected` / `not_connected`)
-/// and `last_revoked_reason.type`, not the exact nesting, so the connection is
-/// read either from a `connections` / `oauth_connections` entry for our app or
-/// from the profile object itself.
+/// documents `connection_status.type` (`connected` / `disconnected` /
+/// `not_connected`), `connection_status.last_revoked_reason.type` and a list
+/// of connections under `oauth_connections.data`. `connection_status.type` is
+/// read first; the older guesses (a `status` word on the profile or on a
+/// connection entry) are fallbacks only.
 #[derive(Debug, Default, PartialEq)]
 struct RemoteStatus {
     status: Option<String>,
     org_name: Option<String>,
     revoked_reason: Option<String>,
-    spend_limit_reached: Option<bool>,
 }
 
-fn parse_remote(body: &Value, oauth_app_id: &str) -> RemoteStatus {
-    let entry = ["connections", "oauth_connections"].iter().find_map(|key| {
-        let list = body.get(*key)?.as_array()?;
-        list.iter().find(|c| c.get("oauth_app_id").and_then(Value::as_str) == Some(oauth_app_id)).or_else(|| (list.len() == 1).then(|| &list[0]))
+fn parse_remote(body: &Value, our_ids: &[&str]) -> RemoteStatus {
+    let lists = [body.pointer("/oauth_connections/data"), body.get("oauth_connections"), body.get("connections")];
+    let entry = lists.into_iter().flatten().filter_map(Value::as_array).find_map(|list| {
+        let ours = |c: &&Value| {
+            ["oauth_app_id", "oauth_client_id", "client_id"]
+                .iter()
+                .any(|key| c.get(*key).and_then(Value::as_str).is_some_and(|id| our_ids.contains(&id)))
+        };
+        list.iter().find(ours).or_else(|| (list.len() == 1).then(|| &list[0]))
     });
-    let read = |pointers: &[&str], as_str: bool| -> Option<Value> {
-        [entry, Some(body)].into_iter().flatten().find_map(|obj| {
-            pointers.iter().find_map(|p| obj.pointer(p).filter(|v| if as_str { v.as_str().is_some_and(|s| !s.is_empty()) } else { v.is_boolean() }).cloned())
+    let text = |pointers: &[&str]| -> Option<String> {
+        [Some(body), entry].into_iter().flatten().find_map(|obj| {
+            pointers.iter().find_map(|p| obj.pointer(p).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string))
         })
     };
-    let text = |pointers: &[&str]| read(pointers, true).and_then(|v| v.as_str().map(str::to_string));
+    let documented = text(&["/connection_status/type"]);
     RemoteStatus {
-        status: text(&["/status", "/connection_status", "/connection/status"]),
+        status: documented.or_else(|| text(&["/status", "/connection_status", "/connection/status"])),
         org_name: text(&["/organization/name", "/organization_name", "/org_name", "/connection/organization/name"]),
-        revoked_reason: text(&["/last_revoked_reason/type", "/connection/last_revoked_reason/type"]),
-        spend_limit_reached: read(&["/spend_limit/reached", "/spend_limit_reached"], false).and_then(|v| v.as_bool()),
+        revoked_reason: text(&[
+            "/connection_status/last_revoked_reason/type",
+            "/last_revoked_reason/type",
+            "/connection/last_revoked_reason/type",
+        ]),
     }
 }
 
@@ -386,7 +449,7 @@ impl ClaudeLink {
             .http
             .request(method, format!("{}{path}", self.client.api_base()))
             .bearer_auth(token.bearer())
-            .header("anthropic-version", ANTHROPIC_VERSION);
+            .header("anthropic-version", anthropic_version());
         if let Some(beta) = beta {
             request = request.header("anthropic-beta", beta);
         }
@@ -624,34 +687,41 @@ impl ClaudeLink {
         if let Some(status) = cached_status(user_id) {
             return Ok(status);
         }
+        // The spend limit is our own record (Anthropic states none), on a live link only.
+        let noted = |mut status: LinkStatus| {
+            if matches!(status.state, "linked" | "relink_needed") {
+                status.spend_limit_reached = spend_limit_note(user_id);
+            }
+            status
+        };
         let Some(row) = self.connection(user_id).await? else {
             let status = LinkStatus::unlinked();
             cache_status(user_id, &status);
             return Ok(status);
         };
+        // Anthropic's example names the OAuth client id here (`oauth_app_id=YOUR_CLIENT_ID`).
         let path = format!(
             "/v1/user_profiles/{}?oauth_app_id={}",
             urlencoding::encode(&row.user_profile_id),
-            urlencoding::encode(self.client.oauth_app_id())
+            urlencoding::encode(self.client.oauth_client_id())
         );
         let body = match self.api_request(reqwest::Method::GET, &path, None, Some(STATUS_BETA)).await {
             Ok((status, body)) if (200..300).contains(&status) => body,
             Ok((status, _)) => {
                 tracing::warn!(status, "claude link: status read refused; using the stored status");
-                return Ok(row.local_status());
+                return Ok(noted(row.local_status()));
             }
             Err(e) => {
                 tracing::warn!(error = %e, "claude link: status read did not complete; using the stored status");
-                return Ok(row.local_status());
+                return Ok(noted(row.local_status()));
             }
         };
-        let remote = parse_remote(&body, self.client.oauth_app_id());
+        let remote = parse_remote(&body, &[self.client.oauth_client_id(), self.client.oauth_app_id()]);
         let (status, db_status, last_error) = match remote.status.as_deref() {
             Some("connected") => {
                 let state = if relink_due(row.refresh_expires_at, Utc::now()) { "relink_needed" } else { "linked" };
-                let mut status = row.with_state(state);
-                status.org_name = remote.org_name.clone();
-                status.spend_limit_reached = remote.spend_limit_reached;
+                let mut status = noted(row.with_state(state));
+                status.org_name = remote.org_name.clone().or(row.org_name.clone());
                 (status, state, None)
             }
             Some("disconnected") => {
@@ -662,7 +732,7 @@ impl ClaudeLink {
             Some("not_connected") => (LinkStatus::unlinked(), "disconnected", Some("not_connected".to_string())),
             other => {
                 tracing::warn!(status = other.unwrap_or("-"), "claude link: unknown connection status; using the stored status");
-                return Ok(row.local_status());
+                return Ok(noted(row.local_status()));
             }
         };
         sqlx::query("UPDATE anthropic_connections SET status = $2, org_name = $3, last_error = $4, last_checked_at = now() WHERE user_id = $1")

@@ -297,6 +297,14 @@ impl ModelRouter {
         !self.providers.is_empty()
     }
 
+    /// The static catalog, unfiltered by provider health or funding. The
+    /// linked Claude organization rows of `GET /v1/models` are built from it:
+    /// they bill the person's own org, so Allternit's upstream funding does
+    /// not hide them.
+    pub fn catalog(&self) -> &catalog::ModelAliasMap {
+        &self.alias_map
+    }
+
     /// List the models clients may pick, starting with the static catalog.
     /// The default model (`default_alias`) comes first and every row carries
     /// `default: true|false`; unlisted aliases come last with `hidden: true` (listed
