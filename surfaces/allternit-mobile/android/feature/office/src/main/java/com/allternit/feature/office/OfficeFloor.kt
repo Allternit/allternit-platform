@@ -355,7 +355,8 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
     val mainBot = officeMainBot(store, floor)
     LaunchedEffect(autopilot) { if (userId != null && sheetOn) autopilot.load() }
     LaunchedEffect(userId, sheetOn) {
-        if (userId == null || !sheetOn || digestLoaded) return@LaunchedEffect
+        // `digest` is not saveable, so after a rotation it is read again until the visit is marked seen.
+        if (userId == null || !sheetOn || seenPosted || digest != null) return@LaunchedEffect
         val d = FloorClient.digest() ?: return@LaunchedEffect
         digestLoaded = true
         if (digestWorthShowing(d)) digest = d else markSeen()
@@ -363,7 +364,12 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
     // Leaving the Office with the card unseen (a sheet or the full facility covered it) still marks the visit seen.
     val leaveSeen by androidx.compose.runtime.rememberUpdatedState(digestLoaded && !seenPosted)
     DisposableEffect(userId) {
-        onDispose { if (leaveSeen) CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { FloorClient.seen() } }
+        onDispose {
+            // A rotation disposes this too: the person has not left, and the card comes back after it.
+            if (leaveSeen && context.findActivity()?.isChangingConfigurations != true) {
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { FloorClient.seen() }
+            }
+        }
     }
     LaunchedEffect(sendStatus) { if (sendStatus != null) { delay(6_000); sendStatus = null } }
     // With no sheet open, the frame frames the floor above the chief dock: `focus` null with the dock's height (dp =
@@ -585,4 +591,10 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
             },
         )
     }
+}
+
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
