@@ -132,7 +132,7 @@ Status values:
 
 Group names, in this order: `Allternit Cloud`, `On your desk`, `Your servers`, `Shared with you`.
 
-Provider labels: `Allternit Cloud` (Orgo), `Mac`, `Windows`, `Linux`, `Server`. Clients show the label the cloud sends and do not guess one.
+Provider labels (#2757): `Allternit Cloud` for cloud computers (logo key `allternit`; Orgo is never shown), `Paired` for paired computers, `Allternit Desktop` for Desktop runtimes. Clients show the label the cloud sends and do not guess one.
 
 ### Needs attention (one rule for every client)
 
@@ -141,9 +141,11 @@ A computer needs attention when any of these is true. Every client uses this rul
 | Condition | Source |
 |---|---|
 | `status` is `offline` or `error` | Row status |
-| CPU percent at or above the alert threshold | `lastSample.cpu.percent` |
-| Any disk at or above the alert threshold | `lastSample.disk` |
-| A finding with severity `warning` or `critical` is open | `/host/findings` |
+| CPU at 90% or more | `lastSample.cpu.percent` |
+| Memory at 90% or more | `lastSample` memory |
+| Any disk at 90% or more full | `lastSample.disk` |
+
+Findings (`/host/findings`) show in the detail card's Health tab; they are not part of this list rule.
 
 `asleep`, `stopped` and `suspended` never need attention on their own: the user chose that state.
 
@@ -209,7 +211,7 @@ Errors:
 | `POST /api/v1/computers/:id/rebuild` | Held until the backup check passes | planned (step 2.4) |
 | `GET /api/v1/computers/:id/backups` | `{ backups: [{ id, createdAt, sizeBytes? }] }` | planned (step 2.6) |
 | `POST /api/v1/computers/:id/backups/restore` | `{ backupId }` | planned (step 2.6) |
-| `GET /api/v1/computers/templates` | Starter templates | planned (step 2.5) |
+| `GET /api/v1/computers/templates` | Starter templates | planned (step 2.4) |
 | `PATCH /api/v1/computers/paired/:id` | `{ name }` renames a paired computer | planned (step 2.10) |
 | `DELETE /api/v1/computers/paired/:id` | Remove a paired computer | exists |
 
