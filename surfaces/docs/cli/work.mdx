@@ -60,6 +60,17 @@ gizzi computers stop cmp_7fe9…
 - **Computers**: the ones in Desktop's Computers view (this machine, paired machines, cloud desktops). `start` and `stop` take a name or an id from this list.
 - **Paired runtimes**: every runtime signed in to your account (Desktops, cloud computers, VPSs, phones), online first.
 
+### Computers console in the terminal
+
+When the Computers console is on for your account (set `GIZZI_COMPUTERS_CONSOLE=1` until the account flag can be read from the terminal), `/computers` opens it in the session:
+
+- The list is grouped, with **Needs attention** first (a full disk, high memory or CPU, or an error status). Each row shows its status and CPU, memory and disk meters from the last sample.
+- `↑` and `↓` choose a computer, `enter` opens it, `r` refreshes, `esc` goes back or closes.
+- An open computer shows an overview (`o`), its services (`s`) and its listening ports (`p`).
+- The view only reads. An asleep computer shows its last sample and is never woken. To wake, sleep, snapshot or restore, use `gizzi computers wake`, `sleep`, `snapshot` and `restore`, which ask first.
+
+Agents get five read-only tools with the same flag: `computers_console_list`, `computer_snapshot`, `computer_services`, `computer_ports` and `computer_logs_tail` (at most 200 lines, 50 by default; log lines are masked on the computer). There are no action tools: anything that changes a computer needs your approval in the app.
+
 ### Run a session on another computer
 
 ```bash

@@ -61,7 +61,7 @@ import status from './commands/status/index.js'
 import tasks from './commands/tasks/index.js'
 import goal from './commands/goal.js'
 import loops from './commands/loops.js'
-import { decisions, pr, projects, routines } from './commands/work/index.js'
+import { computers, decisions, pr, projects, routines } from './commands/work/index.js'
 import live from './commands/live/index.js'
 import find from './commands/find/index.js'
 import grep from './commands/grep/index.js'
@@ -368,6 +368,7 @@ const COMMANDS = memoize((): Command[] => [
   loops,
   keybindings,
   routines,
+  computers,
   decisions,
   pr,
   projects,

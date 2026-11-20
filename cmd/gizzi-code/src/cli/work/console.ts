@@ -11,6 +11,7 @@ export type ConsoleRow = {
   id: string
   kind: string
   name: string
+  group?: string
   provider?: string
   region?: string
   os?: string
