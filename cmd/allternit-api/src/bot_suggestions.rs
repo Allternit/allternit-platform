@@ -20,7 +20,17 @@
 //! answers (`inbox_needs`, kind `suggestion`).
 //!
 //! Route (authenticated; gizzi sends the user's token or the internal
-//! service token): `POST /bot-routing/suggest` `{sessionId, title, objective, why?}`.
+//! service token): `POST /bot-routing/suggest` `{sessionId, title, objective, why?, schedule?}`.
+//!
+//! `schedule` `{cron, tz?}` asks for the work to repeat: a 5-field cron line
+//! read in an IANA zone (default `UTC`), checked by the same rules as the
+//! `automation` tool (`agent_automation_tools::check_schedule`); a bad one is
+//! 400 `{error, code: "bad_schedule"}`. It is stored as `origin.schedule`
+//! and read back as the thread's `schedule`. Approving makes one local
+//! routine for the bot (`automation_routes::insert_routine`, the row the app's
+//! Routines list shows and `routine_local_scheduler` runs) and records its id
+//! as `origin.scheduleRoutineId`; a retried approve makes no second one.
+//! Declining makes nothing.
 
 use std::sync::Arc;
 
@@ -60,6 +70,28 @@ pub struct SuggestBody {
     pub objective: String,
     #[serde(default)]
     pub why: Option<String>,
+    /// `{cron, tz?}`; kept as JSON so a malformed one is a 400 `bad_schedule`, not a 422.
+    #[serde(default)]
+    pub schedule: Option<Value>,
+}
+
+/// Check a requested schedule. `null`/absent → `None`; otherwise `{cron, tz}`
+/// normalised (tz defaults to UTC), or the message for a 400 `bad_schedule`.
+pub fn check_schedule(raw: Option<&Value>, now: chrono::DateTime<chrono::Utc>) -> Result<Option<Value>, String> {
+    let Some(raw) = raw.filter(|v| !v.is_null()) else { return Ok(None) };
+    let cron = raw
+        .get("cron")
+        .and_then(Value::as_str)
+        .ok_or("schedule must be {cron, tz}: cron is a 5-field line such as \"0 9 * * 1\".")?;
+    let tz = match raw.get("tz") {
+        None | Some(Value::Null) => "UTC",
+        Some(Value::String(z)) if z.trim().is_empty() => "UTC",
+        Some(Value::String(z)) => z.as_str(),
+        Some(_) => return Err("schedule.tz must be an IANA time zone name, such as \"America/Chicago\".".into()),
+    };
+    let body = crate::agent_automation_tools::ScheduleBody::Cron { expression: cron.to_string() };
+    let c = crate::agent_automation_tools::check_schedule(&body, tz, now).map_err(|(_, _, msg)| msg)?;
+    Ok(Some(json!({ "cron": c.expression, "tz": c.timezone })))
 }
 
 fn truncate(s: &str, cap: usize) -> String {
@@ -86,6 +118,19 @@ fn note_text(caller: &Caller, title: &str, objective: &str, why: Option<&str>) -
 /// Open a suggestion for the calling bot. A suggestion with the same title
 /// that is still open is returned as it is (a retried tool call adds nothing).
 pub async fn suggest<R: RouteRuntime>(db: &DbHandle, rt: &R, caller: &Caller, title: &str, objective: &str, why: Option<&str>) -> Result<Value, RouteError> {
+    suggest_scheduled(db, rt, caller, title, objective, why, None).await
+}
+
+/// [`suggest`] with an already-checked [`check_schedule`] value stored on the thread.
+pub async fn suggest_scheduled<R: RouteRuntime>(
+    db: &DbHandle,
+    rt: &R,
+    caller: &Caller,
+    title: &str,
+    objective: &str,
+    why: Option<&str>,
+    schedule: Option<Value>,
+) -> Result<Value, RouteError> {
     let title = truncate(title.trim(), 80);
     let objective = objective.trim();
     let why = why.map(str::trim).filter(|w| !w.is_empty());
@@ -135,6 +180,7 @@ pub async fn suggest<R: RouteRuntime>(db: &DbHandle, rt: &R, caller: &Caller, ti
             "fromBotName": caller.name,
             "fromThreadId": caller.thread_id,
             "fromSessionId": caller.session_id,
+            "schedule": schedule,
         },
     }))
     .map_err(|e| RouteError::Failed(e.to_string()))?;
@@ -148,7 +194,7 @@ pub async fn suggest<R: RouteRuntime>(db: &DbHandle, rt: &R, caller: &Caller, ti
         let _ = conn.execute("UPDATE bot_threads SET status_line = ?2 WHERE id = ?1", params![t.id, why.map(|w| truncate(w, 140))]);
     }
     thread_routes::ledger(db, &caller.bot_id, &t.id, "thread.proposed", ("bot", &caller.bot_id), json!({ "title": t.title, "why": why }), t.current_session_id.as_deref());
-    Ok(json!({ "status": "proposed", "threadId": t.id, "existing": false }))
+    Ok(json!({ "status": "proposed", "threadId": t.id, "existing": false, "schedule": t.schedule }))
 }
 
 /// The suggestion behind `id` when `user_id` owns it and it is still open.
@@ -201,8 +247,18 @@ fn origin_session(t: &ThreadView, db: &DbHandle) -> Option<String> {
 pub async fn approve<R: RouteRuntime>(db: &DbHandle, rt: Arc<R>, user_id: &str, id: &str) -> Result<ThreadView, (StatusCode, String)> {
     let t = open_suggestion(db, user_id, id)?;
     let session = t.current_session_id.clone().ok_or((StatusCode::CONFLICT, "the suggestion has no session".into()))?;
+    // Made before the work starts: a failure leaves the suggestion open to approve again.
+    let routine_id = schedule_routine(db, user_id, &t, chrono::Utc::now()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     set_status(db, id, "working", Some("Working on it"), None);
-    thread_routes::ledger(db, &t.bot_id, id, "thread.started", ("user", user_id), json!({ "from": "proposed", "to": "working", "approved": true }), Some(&session));
+    thread_routes::ledger(
+        db,
+        &t.bot_id,
+        id,
+        "thread.started",
+        ("user", user_id),
+        json!({ "from": "proposed", "to": "working", "approved": true, "routineId": routine_id }),
+        Some(&session),
+    );
     let kickoff = format!(
         "[Your user said go ahead with your suggestion] {}\n\n{}\n\nDo the work now, then reply with the result.",
         t.title,
@@ -229,6 +285,68 @@ pub async fn approve<R: RouteRuntime>(db: &DbHandle, rt: Arc<R>, user_id: &str, 
     thread_routes::load_view(db, id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "thread not found".into()))
+}
+
+/// The suggestion's schedule as a local routine for its bot, made once: the
+/// thread's `origin.scheduleRoutineId` is claimed in the same transaction as
+/// the insert, so a retried or concurrent approve returns the first id.
+/// `Ok(None)` when the suggestion has no schedule.
+fn schedule_routine(db: &DbHandle, user_id: &str, t: &ThreadView, now: chrono::DateTime<chrono::Utc>) -> Result<Option<String>, String> {
+    let Some(s) = t.schedule.as_ref() else { return Ok(None) };
+    if let Some(done) = s.get("routineId").and_then(Value::as_str) {
+        return Ok(Some(done.to_string()));
+    }
+    let tz = s["tz"].as_str().unwrap_or("UTC");
+    let body = crate::agent_automation_tools::ScheduleBody::Cron { expression: s["cron"].as_str().unwrap_or_default().to_string() };
+    let c = crate::agent_automation_tools::check_schedule(&body, tz, now).map_err(|(_, _, msg)| format!("the suggestion's schedule can't run: {msg}"))?;
+    let conn = db.connect().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let claimed = tx
+        .execute(
+            "UPDATE bot_threads SET origin = json_set(CASE WHEN json_valid(origin) THEN origin ELSE '{}' END, '$.scheduleRoutineId', ?2)
+             WHERE id = ?1 AND json_extract(CASE WHEN json_valid(origin) THEN origin ELSE '{}' END, '$.scheduleRoutineId') IS NULL",
+            params![t.id, id],
+        )
+        .map_err(|e| e.to_string())?;
+    if claimed == 0 {
+        let existing: Option<String> = tx
+            .query_row("SELECT json_extract(origin, '$.scheduleRoutineId') FROM bot_threads WHERE id = ?1", params![t.id], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        return Ok(existing);
+    }
+    let stamp = now.to_rfc3339();
+    let routine = crate::automation_routes::Routine {
+        id: id.clone(),
+        user_id: user_id.to_string(),
+        workspace_id: None,
+        agent_id: Some(t.bot_id.clone()),
+        goal_id: None,
+        gizzi_job_id: None,
+        name: t.title.clone(),
+        description: None,
+        status: "active".into(),
+        schedule_type: c.schedule_type.into(),
+        schedule_expression: c.expression,
+        timezone: Some(c.timezone),
+        // Never a company server: this machine, or the user's cloud computer.
+        execution_domain: "local".into(),
+        config: json!({ "jobType": "agent", "prompt": t.objective.as_deref().unwrap_or(&t.title) }),
+        tags: Some(vec!["suggestion".into()]),
+        // Not tied to the suggestion thread (no sourceThreadId / threadId): resolving
+        // that thread must not stop the routine; it runs in its own standing thread.
+        metadata: Some(json!({ "origin": "suggestion", "suggestionThreadId": t.id })),
+        max_runs: None,
+        timeout_seconds: None,
+        max_retries: None,
+        created_at: stamp.clone(),
+        updated_at: stamp,
+        next_run_at: Some(c.first.to_rfc3339()),
+        last_run_at: None,
+    };
+    crate::automation_routes::insert_routine(&tx, &routine).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(Some(id))
 }
 
 /// Not now: the suggestion resolves as `declined`.
@@ -258,8 +376,12 @@ async fn suggest_route(State(state): State<Arc<AppState>>, Extension(user): Exte
         Ok(Err(e)) => return (StatusCode::NOT_FOUND, Json(json!({ "error": e.message() }))).into_response(),
         Err(e) => return (StatusCode::BAD_GATEWAY, Json(json!({ "error": e.to_string() }))).into_response(),
     };
+    let schedule = match check_schedule(body.schedule.as_ref(), chrono::Utc::now()) {
+        Ok(s) => s,
+        Err(msg) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg, "code": "bad_schedule" }))).into_response(),
+    };
     let rt = GizziRouter { db: state.db.clone() };
-    match suggest(&state.db, &rt, &caller, &body.title, &body.objective, body.why.as_deref()).await {
+    match suggest_scheduled(&state.db, &rt, &caller, &body.title, &body.objective, body.why.as_deref(), schedule).await {
         Ok(v) => {
             // Autopilot (floor_autopilot_eval): a new suggestion may be answered by the
             // main bot under the user's rules. Off the request path; it never fails the tool call.
@@ -383,6 +505,58 @@ mod tests {
         assert!(rt.turns.lock().unwrap()[0].1.contains("go ahead with your suggestion"));
         assert_eq!(rt.reports.lock().unwrap()[0].0, "s-duet", "the result goes back to the chat it came from");
         assert_eq!(approve(&db, rt.clone(), "user-a", &id).await.unwrap_err().0, StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn schedule_is_checked_and_defaults_to_utc() {
+        let now = chrono::Utc::now();
+        assert_eq!(check_schedule(None, now), Ok(None));
+        assert_eq!(check_schedule(Some(&Value::Null), now), Ok(None));
+        let s = check_schedule(Some(&json!({ "cron": "0  9 * * 1" })), now).unwrap().unwrap();
+        assert_eq!(s, json!({ "cron": "0 9 * * 1", "tz": "UTC" }));
+        let s = check_schedule(Some(&json!({ "cron": "30 8 * * *", "tz": "America/Chicago" })), now).unwrap().unwrap();
+        assert_eq!(s["tz"], "America/Chicago");
+        for bad in [json!({ "cron": "0 9 * *" }), json!({ "cron": "0 9 * * 1", "tz": "Mars/Base" }), json!({ "tz": "UTC" }), json!("daily"), json!({ "cron": "* * * * *" })] {
+            assert!(check_schedule(Some(&bad), now).is_err(), "{bad} should be refused");
+        }
+    }
+
+    #[tokio::test]
+    async fn approving_a_scheduled_suggestion_makes_one_routine_and_decline_makes_none() {
+        let db = setup().await;
+        let rt = Arc::new(FakeRt::default());
+        let caller = crate::bot_routing::caller_for_session(&db, "s-duet").unwrap();
+        let sched = check_schedule(Some(&json!({ "cron": "0 9 * * 1", "tz": "America/Chicago" })), chrono::Utc::now()).unwrap();
+        let v = suggest_scheduled(&db, rt.as_ref(), &caller, "Weekly report", "Sum up the week.", None, sched.clone()).await.unwrap();
+        let id = v["threadId"].as_str().unwrap().to_string();
+        assert_eq!(thread_routes::load_view(&db, &id).unwrap().unwrap().schedule, sched);
+        let declined = suggest_scheduled(&db, rt.as_ref(), &caller, "Daily tidy", "Tidy up.", None, sched.clone()).await.unwrap();
+        let did = declined["threadId"].as_str().unwrap().to_string();
+        let count = |db: &DbHandle| -> i64 { db.connect().unwrap().query_row("SELECT COUNT(*) FROM routines", [], |r| r.get(0)).unwrap() };
+
+        decline(&db, "user-a", &did).unwrap();
+        assert_eq!(count(&db), 0, "declining makes nothing");
+
+        // Make it twice for the same thread view (a retried approve): one routine.
+        let t = thread_routes::load_view(&db, &id).unwrap().unwrap();
+        let first = schedule_routine(&db, "user-a", &t, chrono::Utc::now()).unwrap().unwrap();
+        let again = schedule_routine(&db, "user-a", &t, chrono::Utc::now()).unwrap().unwrap();
+        assert_eq!(first, again);
+        assert_eq!(count(&db), 1);
+
+        let t = approve(&db, rt.clone(), "user-a", &id).await.unwrap();
+        assert_eq!(t.schedule.as_ref().unwrap()["routineId"], json!(first));
+        assert_eq!(count(&db), 1, "approve reuses the claimed routine");
+        let (agent, kind, expr, zone, domain): (String, String, String, String, String) = db
+            .connect()
+            .unwrap()
+            .query_row("SELECT agent_id, schedule_type, schedule_expression, timezone, execution_domain FROM routines WHERE id = ?1", params![first], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
+            .unwrap();
+        assert_eq!((agent.as_str(), kind.as_str(), expr.as_str(), zone.as_str(), domain.as_str()), ("duet", "cron", "0 9 * * 1", "America/Chicago", "local"));
+        assert_eq!(approve(&db, rt.clone(), "user-a", &id).await.unwrap_err().0, StatusCode::CONFLICT);
+        assert_eq!(count(&db), 1);
     }
 
     #[test]

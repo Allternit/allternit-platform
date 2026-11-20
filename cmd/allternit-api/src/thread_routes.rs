@@ -155,6 +155,10 @@ pub struct ThreadView {
     pub icon: Option<String>,
     /// Colour key from `THREAD_COLORS`; clients map it to a design token.
     pub color: Option<String>,
+    /// A suggestion's repeat schedule (`origin.schedule`, set by
+    /// `POST /bot-routing/suggest`): `{cron, tz}`, plus `routineId` once
+    /// approving it made the routine. `null` for every other thread.
+    pub schedule: Option<Value>,
     pub created_at: String,
 }
 
@@ -339,7 +343,7 @@ fn now() -> String {
 
 const COLS: &str = "t.id, t.bot_id, t.project_id, t.parent_thread_id, t.kind, t.incognito, t.title, t.objective, \
      t.success_criteria, t.status, t.status_line, t.todo, t.summary, t.checkpoint, t.current_session_id, \
-     t.created_by, t.last_activity_at, t.resolved_at, t.created_at, t.user_id, t.archived_at, t.purpose, t.icon, t.color";
+     t.created_by, t.last_activity_at, t.resolved_at, t.created_at, t.user_id, t.archived_at, t.purpose, t.icon, t.color, t.origin";
 
 struct Stored {
     view: ThreadView,
@@ -384,10 +388,25 @@ fn map_row(row: &Row<'_>) -> rusqlite::Result<Stored> {
             purpose: row.get(21)?,
             icon: row.get(22)?,
             color: row.get(23)?,
+            schedule: schedule_of_origin(row.get::<_, Option<String>>(24)?.as_deref()),
             created_at: row.get(18)?,
         },
         user_id: row.get(19)?,
     })
+}
+
+/// `{cron, tz, routineId?}` from a thread's stored `origin` JSON, when it
+/// carries a suggestion schedule (`bot_suggestions`).
+pub(crate) fn schedule_of_origin(origin: Option<&str>) -> Option<Value> {
+    let o: Value = serde_json::from_str(origin?).ok()?;
+    let s = o.get("schedule")?;
+    let cron = s.get("cron")?.as_str()?;
+    let tz = s.get("tz").and_then(Value::as_str).unwrap_or("UTC");
+    let mut out = json!({ "cron": cron, "tz": tz });
+    if let Some(r) = o.get("scheduleRoutineId").and_then(Value::as_str) {
+        out["routineId"] = json!(r);
+    }
+    Some(out)
 }
 
 /// Fill generation, context use and dependencies.
