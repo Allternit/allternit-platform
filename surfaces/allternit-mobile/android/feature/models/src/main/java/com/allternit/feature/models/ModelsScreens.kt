@@ -151,7 +151,7 @@ fun ModelsRoot(host: ModelsHost) {
         })
         PillRow(Segment.entries, segment, { it.label }, { "modelsSegment${it.name}" }, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { segment = it }
         when (segment) {
-            Segment.Device -> OnThisPhone(c.textSecondary) { segment = Segment.Catalog }
+            Segment.Device -> OnThisPhoneScreen(host) { segment = Segment.Catalog }
             Segment.Catalog -> PullToRefreshBox(isRefreshing = loading && catalog.isNotEmpty(), onRefresh = { attempt++ }, modifier = Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -246,16 +246,6 @@ private fun ModelRow(m: FwRow, budget: Long, onClick: () -> Unit) {
     }
 }
 
-/** iOS OnThisIPhoneView: the segment for models that run on the phone itself. */
-@Composable
-private fun OnThisPhone(secondary: androidx.compose.ui.graphics.Color, onBrowse: () -> Unit) {
-    FriendlyState(
-        FriendlyStyle.Empty, "No models on this phone",
-        "Models you download to run on this phone show up here. Browse the catalog, or send one to your computer.",
-        Modifier.padding(horizontal = 20.dp).testTag("modelsDeviceEmpty"), "Browse the catalog", onBrowse,
-    ) { Icon(painterResource(DesignR.drawable.ph_cpu), null, tint = secondary) }
-}
-
 /** The model page (iOS freeweightsDetailSheet): what it is, whether it fits, Use in chat, Send to your computer. */
 @Composable
 private fun ModelDetailSheet(m: FwRow, host: ModelsHost, onDismiss: () -> Unit) {
@@ -284,6 +274,8 @@ private fun ModelDetailSheet(m: FwRow, host: ModelsHost, onDismiss: () -> Unit) 
             }
             if (m.formats.isNotEmpty()) Text("Formats: ${m.formats.joinToString(", ")}", color = c.textSecondary, fontSize = 13.sp)
             m.note?.let { Text(it, color = c.textSecondary, fontSize = 13.sp) }
+            // Gap run GS-D: Download a phone build and run it here (iOS device builds).
+            PhoneBuildsSection(m)
             if (!host.signedIn) Text("Sign in to send pulls to your computer.", color = c.textSecondary, fontSize = 13.sp)
             pull?.let { Text(ComputerPullApi.label(it.status), color = c.textPrimary, fontSize = 14.sp, modifier = Modifier.testTag("modelPullStatus")) }
             error?.let { Text(it, color = AllternitStatic.StatusError, fontSize = 13.sp) }

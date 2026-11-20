@@ -94,6 +94,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     val view = LocalView.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    androidx.compose.runtime.LaunchedEffect(Unit) { com.allternit.feature.chat.ChatHooks.onNotificationsGranted = { com.allternit.feature.push.AllternitPush.registerIfAuthorized(context) } }
 
     var mode by remember { mutableStateOf(launch.mode ?: ShellModePrefs.load(context)) }
     // A first-run checklist fix opens Settings once the workspace is up (iOS DeepLinkRouter);

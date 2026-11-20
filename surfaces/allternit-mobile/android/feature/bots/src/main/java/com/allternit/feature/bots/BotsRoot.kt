@@ -217,6 +217,8 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
         LibraryHeader(
             title = "Bots", onBack = null, leading = host.menuButton,
             trailing = {
+                // iOS BotsDrawerRail "Office" button: one tap to the floor, not only a row inside Bots options.
+                if (host.officeFloor != null) LibraryIconButton(DesignR.drawable.ph_desktop, "Office: your bots at their desks", "botsOffice") { nav.open(BotRoute.Office) }
                 LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search bots", "botsSearch") { searching = !searching }
                 Box {
                     LibraryIconButton(

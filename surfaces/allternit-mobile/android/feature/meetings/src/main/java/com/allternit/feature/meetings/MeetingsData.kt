@@ -275,6 +275,7 @@ object MeetingsStore {
                 replyMode = modeJob.await()
             }
             loadSessions()
+            syncNotices()
         } catch (e: MeetingsException) {
             when (val err = e.error) {
                 MeetingsError.SignedOut -> { phase = Phase.SignedOut; clear() }
@@ -285,7 +286,35 @@ object MeetingsStore {
         }
     }
 
-    private fun clear() { live.clear(); upcoming.clear(); past.clear(); sessions.clear() }
+    /** Posts a banner (iOS MeetingNotifier): set by the screen, which owns a Context. */
+    var notifier: ((String, Meeting) -> Unit)? = null
+    private val seenStates = HashMap<String, String>()
+
+    /** What a notification would say about this meeting now (iOS noticeKey). */
+    private fun noticeKey(m: Meeting, session: MeetingSession?): String = when (m.status) {
+        GizziStatus.Launching, GizziStatus.Joining -> "joining"
+        GizziStatus.WaitingAdmit -> "waiting_admit"
+        GizziStatus.Live, GizziStatus.Paused -> "live"
+        GizziStatus.NotAdmitted -> "not_admitted"
+        GizziStatus.Ended -> if (session?.summary != null) "recap_ready" else "ended"
+        GizziStatus.Scheduled, GizziStatus.Off -> m.status.raw
+    }
+
+    /** Joining, waiting in the lobby, not let in, and recap ready: one banner per change; a meeting seen for the first time posts none. */
+    private fun syncNotices() {
+        for (m in live + past.take(12)) {
+            val key = noticeKey(m, sessions[m.id])
+            val previous = seenStates[m.id]
+            if (previous == key) continue
+            seenStates[m.id] = key
+            if (previous == null) continue
+            if (key in setOf("joining", "waiting_admit", "not_admitted", "recap_ready")) notifier?.invoke(key, m)
+        }
+        val known = (live + upcoming + past).map { it.id }.toSet()
+        seenStates.keys.retainAll(known)
+    }
+
+    private fun clear() { live.clear(); upcoming.clear(); past.clear(); sessions.clear(); seenStates.clear() }
 
     private fun apply(now: List<Meeting>, next: List<Meeting>, done: List<Meeting>) {
         val seen = HashSet<String>()

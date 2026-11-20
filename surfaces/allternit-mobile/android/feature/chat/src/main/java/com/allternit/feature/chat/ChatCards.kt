@@ -37,6 +37,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -854,3 +861,40 @@ internal fun splitAnswer(text: String, streaming: Boolean): List<AnswerPiece> {
 internal fun Spacer8() = Spacer(Modifier.height(8.dp))
 
 internal val CardMaxWidth: Dp = 520.dp
+
+
+/** Set by the shell: registers this phone for push once the notifications permission is granted (AllternitPush.registerIfAuthorized). */
+object ChatHooks { var onNotificationsGranted: (() -> Unit)? = null }
+
+/**
+ * The empty-chat notifications card (iOS: empty-chat card, then PermissionPrimingSheet, then the system dialog). Shown while
+ * notifications are off and the person hasn't said "Not now"; Turn on notifications runs the priming trigger.
+ */
+@androidx.compose.runtime.Composable
+fun NotificationsCard() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val c = com.allternit.core.design.AllternitTheme.colors
+    val prefs = remember { context.getSharedPreferences("allternit_shell", android.content.Context.MODE_PRIVATE) }
+    var granted by remember { mutableStateOf(com.allternit.feature.chat.voice.AppPermission.Notifications.isGranted(context)) }
+    var dismissed by remember { mutableStateOf(prefs.getBoolean("notificationsCardDismissed", false)) }
+    val ask = com.allternit.feature.chat.voice.rememberPrimedPermission(com.allternit.feature.chat.voice.AppPermission.Notifications) { ok ->
+        granted = ok
+        if (ok) ChatHooks.onNotificationsGranted?.invoke()
+    }
+    if (granted || dismissed) return
+    androidx.compose.foundation.layout.Column(
+        androidx.compose.ui.Modifier.padding(top = 20.dp, start = 24.dp, end = 24.dp).fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).background(c.fillNeutral).padding(16.dp)
+            .testTag("chatNotificationsCard"),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Let your bots reach you?", color = c.textPrimary, fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+        Text("Know when a task finishes or a bot needs your approval. No marketing messages.", color = c.textSecondary, fontSize = 13.sp)
+        androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp)) {
+            Text("Turn on notifications", color = c.accentPrimary, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                modifier = androidx.compose.ui.Modifier.heightIn(min = 44.dp).clickable { ask() }.padding(vertical = 12.dp).testTag("chatNotificationsTurnOn"))
+            Text("Not now", color = c.textSecondary, fontSize = 14.sp,
+                modifier = androidx.compose.ui.Modifier.heightIn(min = 44.dp).clickable { dismissed = true; prefs.edit().putBoolean("notificationsCardDismissed", true).apply() }.padding(vertical = 12.dp).testTag("chatNotificationsNotNow"))
+        }
+    }
+}

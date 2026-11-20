@@ -211,6 +211,7 @@ fun SettingsRoot(host: SettingsHost) {
             "brain" -> BrainPage(back, push)
             "brain-capture" -> BrainCapturePage(back)
             "billing" -> BillingPage(host, back)
+            "usage" -> UsagePage(host, back)
             "gizziio-code" -> ProductsPage(ProductsPart.GizziCode, host, back)
             "cowork" -> ProductsPage(ProductsPart.Cowork, host, back)
             "extensions" -> ProductsPage(ProductsPart.Extensions, host, back)

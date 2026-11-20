@@ -144,7 +144,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | ConnectSuggestCardView | ios/Features/Chat/Views/ConnectSuggestCardView.swift | — | feature/chat/ChatCards.kt (ConnectSuggestCard) | built (#2614) | — |
 | DictationOnboardingSheet | ios/Features/Chat/Views/DictationOnboardingSheet.swift | — | android/feature/chat/.../voice/VoiceSheets.kt (DictationOnboardingSheet) | built (#2663) | — |
 | FormSurfacesView | ios/Features/Chat/Views/FormSurfacesView.swift | — | — | N/A: no caller on iOS (dead code) | — |
-| ModelPickerSheet | ios/Features/Chat/Views/ModelPickerSheet.swift | — | feature/shell/ModelPicker.kt | built (#2614: the pick drives the send) | — |
+| ModelPickerSheet | ios/Features/Chat/Views/ModelPickerSheet.swift | — | feature/shell/ModelPicker.kt + ModelStore.kt | built (#2614: the pick drives the send; #2676: the "On this phone" group, turns run on the phone) | — |
 | PermissionPrimingSheet | ios/Features/Chat/Views/PermissionPrimingSheet.swift | — | android/feature/chat/.../voice/VoiceSheets.kt (PermissionPrimingSheet, rememberPrimedPermission) | built (#2663): microphone priming before voice mode; camera/photos need none on Android (TakePicturePreview and the photo picker show no system dialog); the notifications sheet is built but the empty-chat notifications card that opens it is not ported | — |
 | RunCodeFilesView | ios/Features/Chat/Views/RunCodeFilesView.swift | — | feature/chat/ChatCards.kt (RunCodeFilesView, UploadFileCard) | built (#2614) | — |
 | SettingsChangeCardView | ios/Features/Chat/Views/SettingsChangeCardView.swift | — | feature/chat/ChatCards.kt (SettingsChangeCard) | built (#2614: status + Open Settings; Apply/Undo on this phone with wave G) | — |
@@ -152,7 +152,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | ThinkingSliderView | ios/Features/Chat/Views/ThinkingSliderView.swift | — | feature/shell/ThinkingSlider.kt | built (#2626) | — |
 | ThreadShareSheet | ios/Features/Chat/Views/ThreadShareSheet.swift | — | feature/chat/ThreadShare.kt (chat ⋯ menu, reply Share menu) | built (#2614) | — |
 | VoiceCaptionsView | ios/Features/Chat/Views/Voice/VoiceCaptionsView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceCaptions) | built (#2663): bot stage not ported, so captions are not shown in voice mode yet | — |
-| VoiceModeView | ios/Features/Chat/Views/Voice/VoiceModeView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceModeView, VoiceModeViewModel, VoiceHost, VoiceQuickBar), VoiceEngine.kt | built (#2663): system route (SpeechRecognizer + TextToSpeech); the Sherpa on-device engine, BYOK OpenAI/ElevenLabs sessions and the bot stage are not on Android | — |
+| VoiceModeView | ios/Features/Chat/Views/Voice/VoiceModeView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceModeView, VoiceModeViewModel, VoiceHost, VoiceQuickBar), VoiceEngine.kt | built (#2663, #2676): system route (SpeechRecognizer + TextToSpeech); own-key OpenAI (Realtime listening + speech) and ElevenLabs (speech) engines in VoiceEngines.kt (#2676); the Sherpa on-device engine is behind a feature check (needs the sherpa-onnx AAR); the bot stage is not on Android | — |
 | VoiceSettingsSheet | ios/Features/Chat/Views/Voice/VoiceSettingsSheet.swift | — | android/feature/chat/.../voice/VoiceSheets.kt (VoiceSettingsSheet) | built (#2663): Live mode look section not ported | — |
 | VoiceSpeakerView | ios/Features/Chat/Views/Voice/VoiceSpeakerView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceSpeakerRing) | built (#2663): ring style only; blocks/ascii/glow/orb looks not ported | — |
 | VoiceSummaryCardView | ios/Features/Chat/Views/Voice/VoiceSummaryCardView.swift | — | android/feature/chat/.../voice/VoiceMode.kt (VoiceSummaryCard) | built (#2663) | — |
@@ -183,7 +183,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| ConnectWizardView | ios/Features/Connect/ConnectWizardView.swift | — | feature/phones/Connect.kt (GiveBotPhoneSheet + ConnectWizardSheet, Email flow; phone number, Telegram and OAuth flows left) | built (#2648) | — |
+| ConnectWizardView | ios/Features/Connect/ConnectWizardView.swift | — | feature/phones/Connect.kt (GiveBotPhoneSheet + ConnectWizardSheet, Email flow) + ConnectFlows.kt (phone number buy/port/registration, Telegram, Slack/Discord/Teams/WhatsApp OAuth) | built (#2648, #2681) | — |
 | VendorConnectView | ios/Features/Connect/VendorConnectView.swift | — | feature/phones/Connect.kt (VendorConnectScreen, VendorProductScreen) | built (#2648) | — |
 
 ## Connectors
@@ -231,8 +231,8 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | --- | --- | --- | --- | --- | --- |
 | section: model-lab | — | src/fabric-session/phone/phone-nav.ts (PhoneSection model-lab) | feature/models/ModelsScreens.kt (ModelsRoot, the Models section) | built (#2648) | — |
 | BenchmarkView | ios/Features/Models/BenchmarkView.swift | — | feature/models/ModelsScreens.kt (BenchmarkScreen) | built (#2648) | — |
-| FreeweightsBrowseView | ios/Features/Models/FreeweightsBrowseView.swift | — | feature/models/ModelsScreens.kt (catalog, faces, ModelDetailSheet) + ModelsData.kt | built (#2648) | — |
-| ModelsTabView | ios/Features/Models/ModelsTabView.swift | — | feature/models/ModelsScreens.kt (ModelsRoot) | built (#2648) | — |
+| FreeweightsBrowseView | ios/Features/Models/FreeweightsBrowseView.swift | — | feature/models/ModelsScreens.kt (catalog, faces, ModelDetailSheet) + ModelsData.kt + OnPhone.kt (PhoneBuildsSection) | built (#2648; #2676: Run on this phone builds with Download) | — |
+| ModelsTabView | ios/Features/Models/ModelsTabView.swift | — | feature/models/ModelsScreens.kt (ModelsRoot) + OnPhone.kt (OnThisPhoneScreen), ondevice/PhoneModels.kt | built (#2648; #2676: On this phone with downloads, pause/resume, remove, storage) | — |
 
 ## Office
 

@@ -100,18 +100,18 @@ fun hasMicPermission(context: Context): Boolean =
  * the platform recognizer too, not a server route). Live partial results into [transcript], a 2.5 s
  * silence stop, and the same in-place error copy. Main thread only (SpeechRecognizer requires it).
  */
-class Dictation(private val context: Context) {
-    var transcript by mutableStateOf("")
+class Dictation(private val context: Context) : VoiceListener {
+    override var transcript by mutableStateOf("")
         private set
-    var isRecording by mutableStateOf(false)
+    override var isRecording by mutableStateOf(false)
         private set
-    var errorMessage by mutableStateOf<String?>(null)
+    override var errorMessage by mutableStateOf<String?>(null)
     /** 0…1 microphone level for the speaker ring (iOS VoiceLevels.pushMic). */
-    var micLevel by mutableFloatStateOf(0f)
+    override var micLevel by mutableFloatStateOf(0f)
         private set
 
     /** Called once each time recording stops (silence, final result, stop(), error). */
-    var onStopped: (() -> Unit)? = null
+    override var onStopped: (() -> Unit)? = null
 
     private val main = Handler(Looper.getMainLooper())
     private var recognizer: SpeechRecognizer? = null
@@ -119,7 +119,7 @@ class Dictation(private val context: Context) {
 
     val isAvailable: Boolean get() = SpeechRecognizer.isRecognitionAvailable(context)
 
-    fun start() {
+    override fun start() {
         if (isRecording) return
         errorMessage = null
         transcript = ""
@@ -152,7 +152,7 @@ class Dictation(private val context: Context) {
         scheduleSilenceStop()
     }
 
-    fun stop() {
+    override fun stop() {
         if (!isRecording) return
         teardown()
     }
@@ -218,11 +218,11 @@ class Dictation(private val context: Context) {
  * queue drains, speed and voice follow [VoicePrefs]. iOS voice mode's system path uses
  * AVSpeechSynthesizer; this is its Android twin.
  */
-class Speaker(context: Context) {
-    var isSpeaking by mutableStateOf(false)
+class Speaker(context: Context) : ReplySpeaker {
+    override var isSpeaking by mutableStateOf(false)
         private set
     /** Called when the queue drains (iOS `speaker.isSpeaking` → false). */
-    var onFinished: (() -> Unit)? = null
+    override var onFinished: (() -> Unit)? = null
 
     private val main = Handler(Looper.getMainLooper())
     private var ready = false
@@ -270,7 +270,7 @@ class Speaker(context: Context) {
             .map { v -> v.name to listOfNotNull(v.locale.toLanguageTag(), if (v.quality >= 400) "Enhanced" else null).joinToString(" · ") }
     }
 
-    fun speakChunk(text: String) {
+    override fun speakChunk(text: String) {
         if (text.isBlank()) return
         if (!ready) {
             backlog += text
@@ -283,14 +283,14 @@ class Speaker(context: Context) {
         tts.speak(text, TextToSpeech.QUEUE_ADD, null, UUID.randomUUID().toString())
     }
 
-    fun stop() {
+    override fun stop() {
         backlog.clear()
         pending = 0
         runCatching { tts.stop() }
         isSpeaking = false
     }
 
-    fun shutdown() {
+    override fun shutdown() {
         stop()
         runCatching { tts.shutdown() }
     }

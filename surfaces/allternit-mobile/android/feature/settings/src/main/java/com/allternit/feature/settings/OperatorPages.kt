@@ -1,6 +1,15 @@
 package com.allternit.feature.settings
 
 import android.content.Context
+import android.net.Uri
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.sp
+import com.allternit.core.design.AllternitStatic
+import com.allternit.core.design.AllternitTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -183,6 +192,19 @@ internal fun MeetingsPage(back: () -> Unit) {
     val (load, reload) = rememberLoad("meetingSettings") { Net.cloud("GET", "api/v1/me/meeting-settings").toLoad("load meeting settings") }
     val (cals, calsReload) = rememberLoad("meetingCalendars") { Net.cloud("GET", "api/v1/calendar/connections").toLoad("load your calendars") }
     var error by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    var removeId by remember { mutableStateOf<String?>(null) }
+    var linkOpen by remember { mutableStateOf(false) }
+    var link by remember { mutableStateOf("") }
+    var zoomConnected by remember { mutableStateOf<Boolean?>(null) }
+    var usage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        val z = (Net.cloud("GET", "api/v1/zoom/connection") as? ApiResult.Ok)?.value.obj
+        if (z != null) zoomConnected = z.bool("connected") == true && z.str("status") != "needs_reauth"
+        val u = (Net.cloud("GET", "api/v1/me/meeting-usage") as? ApiResult.Ok)?.value.obj
+        val used = u.num("usedMinutes") ?: u.num("used_minutes"); val included = u.num("includedMinutes") ?: u.num("included_minutes")
+        if (used != null && included != null) usage = "${used.toInt()} of ${included.toInt()} meeting minutes used this month."
+    }
     suspend fun update(body: JsonObject) {
         error = null
         val r = Net.cloud("PUT", "api/v1/me/meeting-settings", body)
@@ -212,21 +234,68 @@ internal fun MeetingsPage(back: () -> Unit) {
         SLabel("Calendars")
         LoadView(cals, calsReload, "load your calendars") { body ->
             val rows = body.listUnder("connections", "items")
-            if (rows.isEmpty()) SNote("No calendar is connected. Connect Google or Microsoft on the web to let Gizzi see your meetings.") else SCard {
+            if (rows.isNotEmpty()) SCard {
                 rows.forEachIndexed { i, c ->
                     if (i > 0) SDivider()
-                    SRow(c.str("label") ?: c.str("accountEmail") ?: c.str("account_email") ?: "Calendar", "meetings_cal_$i", detail = c.str("provider"), value = c.str("status"), chevron = false)
+                    val provider = c.str("provider")
+                    SRow(c.str("label") ?: c.str("accountEmail") ?: c.str("account_email") ?: (if (provider == "google") "Google Calendar" else if (provider == "ics") "Calendar link" else "Calendar"), "meetings_cal_$i",
+                        detail = provider, value = c.str("status"), chevron = false,
+                        trailing = { Text("✕", color = AllternitTheme.colors.textTertiary, fontSize = 16.sp, modifier = Modifier.clickable { removeId = c.str("id") }.padding(12.dp).testTag("meetings_calRemove_$i")) })
                 }
             }
         }
-        SCard(Modifier.padding(top = 18.dp)) {
-            SRow("Disconnect Zoom", "meetings_zoomDisconnect", destructive = true, chevron = false, onClick = {
+        SNote("Gizzi joins your Meet, Zoom and Teams calls by itself. Calls from every connected calendar follow the same rule.")
+        SCard {
+            SRow("Connect Google Calendar", "meetings_connectGoogle", chevron = false, onClick = {
                 scope.launch {
-                    val r = Net.cloud("DELETE", "api/v1/zoom/connection")
-                    if (r is ApiResult.Ok) calsReload() else error = r.friendly("disconnect Zoom")
+                    val r = Net.cloud("GET", "api/v1/calendar/oauth/google/start?return_to=" + Uri.encode("allternit://meetings/calendar-connected"))
+                    val url = (r as? ApiResult.Ok)?.value.obj.str("url") ?: (r as? ApiResult.Ok)?.value.obj.str("consent_url")
+                    if (url != null) { openLink(context, url); calsReload() } else error = r.friendly("start Google Calendar")
+                }
+            })
+            SDivider()
+            SRow("Paste a calendar link", "meetings_pasteCalendar", chevron = false, onClick = { linkOpen = true })
+        }
+        SLabel("Zoom")
+        SNote("Zoom lets Gizzi into calls through the account of someone in the call. Connect yours to send Gizzi to Zoom calls.")
+        SCard {
+            if (zoomConnected == true) SRow("Zoom", "meetings_zoomDisconnect", value = "Connected", destructive = false, chevron = false, trailing = { Text("Disconnect", color = AllternitTheme.colors.textSecondary, fontSize = 14.sp, modifier = Modifier.clickable {
+                scope.launch { val r = Net.cloud("DELETE", "api/v1/zoom/connection"); if (r is ApiResult.Ok) zoomConnected = false else error = r.friendly("disconnect Zoom") }
+            }.padding(12.dp).testTag("meetings_zoomDisconnectButton")) })
+            else SRow("Connect Zoom", "meetings_connectZoom", chevron = false, onClick = {
+                scope.launch {
+                    val r = Net.cloud("GET", "api/v1/zoom/oauth/start?return_to=" + Uri.encode("allternit://meetings/zoom-connected"))
+                    val url = (r as? ApiResult.Ok)?.value.obj.str("url") ?: (r as? ApiResult.Ok)?.value.obj.str("consent_url")
+                    if (url != null) { openLink(context, url) } else error = r.friendly("start Zoom")
                 }
             })
         }
+        usage?.let { SNote(it, Modifier.padding(top = 16.dp)) }
+        if (removeId != null) androidx.compose.material3.AlertDialog(
+            onDismissRequest = { removeId = null },
+            title = { Text("Disconnect this calendar?") },
+            text = { Text("Gizzi stops joining calls from it. Calls already on your list stay.") },
+            confirmButton = { Text("Disconnect", color = AllternitStatic.StatusError, modifier = Modifier.clickable {
+                val id = removeId ?: return@clickable; removeId = null
+                scope.launch { val r = Net.cloud("DELETE", "api/v1/calendar/connections/${LibraryNet.escape(id)}"); if (r is ApiResult.Ok) calsReload() else error = r.friendly("disconnect the calendar") }
+            }.padding(12.dp).testTag("meetings_calRemoveConfirm")) },
+            dismissButton = { Text("Cancel", modifier = Modifier.clickable { removeId = null }.padding(12.dp).testTag("meetings_calRemoveCancel")) },
+        )
+        if (linkOpen) androidx.compose.material3.AlertDialog(
+            onDismissRequest = { linkOpen = false },
+            title = { Text("Paste a calendar link") },
+            text = { Column { 
+                Text("Paste a private calendar feed (ICS) link. The server fetches it once to check it. Outlook: Settings, Calendar, Shared calendars, Publish a calendar. iCloud: Calendar app, tap the info button, Public Calendar. Any private address ending in .ics works; the link stays encrypted on our servers.", fontSize = 12.sp)
+                SField("Link", link, "meetings_calendarLink", { link = it }) } },
+            confirmButton = { Text("Add calendar", modifier = Modifier.clickable {
+                val v = link.trim(); if (v.isEmpty()) return@clickable
+                scope.launch {
+                    val r = Net.cloud("POST", "api/v1/calendar/connections", buildJsonObject { put("provider", "ics"); put("feed_url", v) })
+                    if (r is ApiResult.Ok) { linkOpen = false; link = ""; calsReload(); reload() } else error = r.friendly("add the calendar")
+                }
+            }.padding(12.dp).testTag("meetings_calendarLinkAdd")) },
+            dismissButton = { Text("Cancel", modifier = Modifier.clickable { linkOpen = false }.padding(12.dp).testTag("meetings_calendarLinkCancel")) },
+        )
         SError(error)
     }
 }

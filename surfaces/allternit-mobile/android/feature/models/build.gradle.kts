@@ -40,5 +40,7 @@ dependencies {
     implementation(project(":core:auth"))
     // ChatStreamEvent (the benchmark times a streamed reply).
     implementation(project(":core:stream"))
+    // Gap run GS-D: the on-phone llama.cpp engine, downloads and storage ("On this phone").
+    implementation(project(":ondevice"))
     testImplementation(libs.junit)
 }

@@ -45,5 +45,9 @@ dependencies {
     implementation(libs.activity.compose)
     // Wave H1: Cloud credits and the store sheet (Google Play Billing) for the credits and compute gates.
     implementation(project(":feature:billing"))
+    // Gap run GS-D: chat turns on the phone (ondevice/<id>#<quant> brains).
+    implementation(project(":ondevice"))
+    // Gap run GS-D: the own-key voice engine reads the Keystore-sealed voice keys (SealedSecret).
+    implementation(project(":core:files"))
     testImplementation(libs.junit)
 }

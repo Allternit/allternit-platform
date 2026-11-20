@@ -221,6 +221,7 @@ internal fun AciMcpAppsView(host: AciHost) {
     var selected by remember { mutableStateOf<McpInstalledApp?>(null) }
     var category by remember { mutableStateOf<String?>(null) }
     var limit by remember { mutableStateOf(48) }
+    var collection by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(host.signedIn) { if (host.signedIn) model.refresh() }
     LaunchedEffect(model.signIn) { model.signIn?.let { openExternal(context, it); model.signIn = null } }
 
@@ -229,7 +230,7 @@ internal fun AciMcpAppsView(host: AciHost) {
             AciViewHeader("MCP Apps", "Connect apps and services the agent can use.", bottom = 16.dp)
             AciSearchField(query, "Search apps", { query = it; limit = 48; if (it.isNotEmpty() && tab == McpTab.Build) tab = McpTab.Discover }, "aciMcpSearch")
             AciChipRow {
-                McpTab.entries.forEach { t -> AciChip(t.label, tab == t, "aciMcpTab-${t.name}") { tab = t; category = null; limit = 48 } }
+                McpTab.entries.forEach { t -> AciChip(t.label, tab == t, "aciMcpTab-${t.name}") { tab = t; category = null; collection = null; limit = 48 } }
                 AciChip("＋ Add by URL", false, "aciMcpAdd") { addOpen = true }
                 AciChip("Mini Apps", false, "aciMiniApps") { miniOpen = true }
             }
@@ -262,19 +263,20 @@ internal fun AciMcpAppsView(host: AciHost) {
                 tab == McpTab.Discover -> {
                     val all = model.directory()
                     val cats = all.map { it.category }.distinct().sorted()
+                    fun add(e: McpEntry) { if (!e.connected) scope.launch { model.signIn = if (e.shelfConnector) model.connectCatalog(e) else model.installServer(e.id, e.name, e.serverUrl.orEmpty()) } }
+                    // The landing shelf (iOS DirectoryHero): curated collections above the list until a search, category or collection narrows it.
+                    if (query.isBlank() && category == null && collection == null) AciDirectoryHero(all, { add(it) }, { collection = it; limit = 48 })
+                    mcpCollections.firstOrNull { it.id == collection }?.let { col -> AciPillButton("${col.title}  ✕", "aciMcpCollectionClear", "Show every app") { collection = null } }
                     AciChipRow {
-                        AciChip("All", category == null, "aciMcpCat-all") { category = null; limit = 48 }
+                        AciChip("All", category == null, "aciMcpCat-all") { category = null; collection = null; limit = 48 }
                         cats.forEach { cat -> AciChip(cat, category == cat, "aciMcpCat-$cat") { category = cat; limit = 48 } }
                     }
                     val q = query.trim().lowercase()
-                    val list = all.filter { (category == null || it.category == category) && (q.isEmpty() || it.name.lowercase().contains(q) || it.description.lowercase().contains(q)) }
+                    val colKeys = mcpCollections.firstOrNull { it.id == collection }?.ids?.toSet()
+                    val list = all.filter { (category == null || it.category == category) && (colKeys == null || mcpRankKey(it.id) in colKeys) && (q.isEmpty() || it.name.lowercase().contains(q) || it.description.lowercase().contains(q)) }
                     if (list.isEmpty()) AciStateCard("No apps found", if (q.isEmpty()) "Nothing is listed here yet." else "No apps match your search.")
                     list.take(limit).forEach { e ->
-                        AciListRow((if (e.official) "✓ " else "") + e.name, e.description.ifBlank { e.category }, if (e.connected) "Connected" else "Add", "aciMcpEntry-${e.id}") {
-                            if (!e.connected) scope.launch {
-                                model.signIn = if (e.shelfConnector) model.connectCatalog(e) else model.installServer(e.id, e.name, e.serverUrl.orEmpty())
-                            }
-                        }
+                        AciAppRow(e, if (e.connected) "Connected" else "Add", "aciMcpEntry-${e.id}") { add(e) }
                     }
                     if (list.size > limit) AciPillButton("Show more", "aciMcpMore") { limit += 48 }
                 }
