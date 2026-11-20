@@ -39,9 +39,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install protoc
-        shell: pwsh
-        run: choco install protoc --yes --no-progress
+      - name: Install protoc (pinned, from GitHub)
+        # Was `choco install protoc`: the Chocolatey feed returned 504 on release run
+        # 44638449078 (Desktop 1.1.17) and prost-build then failed with "Could not find
+        # protoc". GitHub release download with retries, pinned by checksum.
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 \
+            https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-win64.zip \
+            -o "$RUNNER_TEMP/protoc.zip"
+          echo "f0c128dc0d8492eceece83bb459a4c0e316764b929ffbf1aa416357fd644edd3  $RUNNER_TEMP/protoc.zip" | sha256sum -c -
+          unzip -q -o "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+          echo "PROTOC=$RUNNER_TEMP/protoc/bin/protoc.exe" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/protoc/bin/protoc.exe" --version
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.94.1
