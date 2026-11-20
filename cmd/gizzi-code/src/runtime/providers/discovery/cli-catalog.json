@@ -4816,7 +4816,6 @@
       },
       "brains": "any",
       "access": [
-        "plan",
         "key"
       ],
       "more": true,
