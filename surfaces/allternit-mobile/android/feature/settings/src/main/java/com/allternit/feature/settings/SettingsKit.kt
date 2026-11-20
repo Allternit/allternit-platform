@@ -221,6 +221,8 @@ internal fun SRow(
     enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    logoName: String? = null,
+    logoId: String? = null,
 ) {
     val c = AllternitTheme.colors
     val view = LocalView.current
@@ -233,6 +235,7 @@ internal fun SRow(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         if (icon != null) Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+        if (logoName != null) com.allternit.core.design.AppLogo(logoName, id = logoId, size = 32.dp)
         Column(Modifier.weight(1f)) {
             Text(title, color = if (enabled) tint else c.textTertiary, fontSize = 16.sp)
             if (detail != null) Text(detail, color = c.textSecondary, fontSize = 13.sp, lineHeight = 18.sp)

@@ -465,7 +465,10 @@ internal fun ConnectionRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
+        val logoKey = ConnectionsCatalog.logoKey(entry.id)
+        if (logoKey != null) {
+            com.allternit.core.design.AppLogo(entry.name, id = logoKey, size = 34.dp)
+        } else Box(
             Modifier.size(34.dp).background(c.card, RoundedCornerShape(9.dp)).border(1.dp, c.line, RoundedCornerShape(9.dp)),
             contentAlignment = Alignment.Center,
         ) { Text(entry.mono, style = mono(13.sp, FontWeight.Bold), color = c.ink) }

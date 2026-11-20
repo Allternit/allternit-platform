@@ -300,6 +300,7 @@ private fun ConnectedAccounts(signedIn: Boolean) {
         all.forEach { card ->
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.bgSecondary).padding(12.dp).testTag("usage_account_${card.provider}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    com.allternit.core.design.AppLogo(card.provider, id = com.allternit.core.design.AppLogoCatalog.providerKey(if (card.provider == "Allternit Cloud") "allternit" else card.provider), size = 24.dp)
                     Text(card.provider.replaceFirstChar { it.uppercase() }, color = c.textPrimary, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold)
                     card.plan?.let { Text(it, color = c.textSecondary, fontSize = 10.5.sp, modifier = Modifier.clip(RoundedCornerShape(50)).background(c.fillNeutral).padding(horizontal = 7.dp, vertical = 1.dp)) }
                 }

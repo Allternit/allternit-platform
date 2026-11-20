@@ -459,6 +459,22 @@ internal object ConnectionsCatalog {
         ConnEntry("discord", "Discord", "D", way = ConnWay.OAuth, group = "channels"),
     )
 
+    /** The bundled logo (assets/logos) iOS shows for a row; null where iOS draws an SF symbol. */
+    fun logoKey(id: String): String? = when (id) {
+        "allternit", "gizzi" -> "allternit"
+        "chatgpt", "openai-voice" -> "openai"
+        "claude", "claude-code" -> "claude"
+        "gemini" -> "googlegemini"
+        "gemini-cli" -> "gemini"
+        "copilot", "github" -> "github"
+        "grok", "grok-cli" -> "grok"
+        "kimi", "kimi-cli" -> "kimi"
+        "local" -> "ollama"
+        "codex", "cursor", "elevenlabs", "gmail", "slack", "notion", "telegram", "whatsapp", "discord" -> id
+        "drive" -> "googledrive"
+        else -> null
+    }
+
     val keyProviders = listOf(
         ConnKeyProvider("openai-key", "OpenAI", "https://platform.openai.com/api-keys"),
         ConnKeyProvider("anthropic-key", "Anthropic", "https://console.anthropic.com/settings/keys"),
