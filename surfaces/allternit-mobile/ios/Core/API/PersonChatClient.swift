@@ -31,6 +31,13 @@ struct PersonChatRefusal: Error, Equatable, Sendable {
         case "usage_limit": return "ChatGPT limit reached. It resets on OpenAI's schedule. Try again later, or pick another model."
         case "text_only": return "Your \(vendor) plan takes text only. Remove the attachment and send again."
         case "signed_out_allternit": return "Sign in to Allternit on this phone to use your \(vendor) plan."
+        // Claude organization refusals (billing contract, linked/claude/*).
+        case "claude_link_not_billable": return "Your Claude organization can't be billed. It must pay Anthropic directly. Check it in Settings › Connections, or pick another model."
+        case "claude_link_spend_limit": return "Your Claude organization's spend limit is reached. Raise it at platform.claude.com/linked-platforms, or pick another model."
+        case "claude_link_billing_unavailable": return "Anthropic can't bill your Claude organization right now. Try again later, or pick another model."
+        case "claude_link_disconnected": return "Your Claude organization is disconnected. Link it again in Settings › Connections."
+        case "claude_link_unavailable": return "Claude organization billing isn't available yet. Pick another model."
+        case "claude_link_upstream": return "Anthropic is busy. Try again in a moment."
         case "incomplete": return "\(vendor) stopped before the reply was finished\(message.map { " (\($0))" } ?? "")."
         default:
             if let message, !message.isEmpty { return message }

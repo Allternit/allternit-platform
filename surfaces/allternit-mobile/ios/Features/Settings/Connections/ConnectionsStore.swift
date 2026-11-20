@@ -88,6 +88,15 @@ final class ConnectionsStore: ObservableObject {
 
     func state(_ id: String) -> ConnState { row(id).state }
 
+    /// Rows behind a server flag stay out of the list until cloud-api sends
+    /// the row with `available: true` (the Claude organization row, while
+    /// `ALLTERNIT_CLAUDE_LINK` is off, is missing or `available: false`).
+    func isListed(_ id: String) -> Bool {
+        guard id == "claude-org" else { return true }
+        guard let row = rows[id] else { return false }
+        return row.available || row.state == .on || row.state == .needs
+    }
+
     /// Can this account use it now? A connected row always can.
     func isAvailable(_ id: String) -> Bool {
         let r = row(id)
@@ -179,7 +188,9 @@ final class ConnectionsStore: ObservableObject {
         switch r.state {
         case .off: return entry.blurb.map { "Not connected · \($0)" } ?? "Not connected"
         case .connecting: return "Connecting…"
-        case .on: return r.found.map { "Connected · \($0)" } ?? "Connected"
+        case .on:
+            if entry.id == "claude-org" { return "Connected · " + (r.found ?? "Billed to your organization") }
+            return r.found.map { "Connected · \($0)" } ?? "Connected"
         case .needs:
             let reason = r.reason ?? ConnectionsCatalog.reasonText(r.reasonCode, name: entry.name)
             return reason.map { "Needs you · \($0)" } ?? "Needs you"
