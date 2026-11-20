@@ -220,6 +220,50 @@ paths:
                   cycles: { type: array, items: { $ref: "#/components/schemas/SleepCycle" } }
                   count: { type: integer }
         default: { $ref: "#/components/responses/Error" }
+  /memory/sleep/cycles/{id}:
+    get:
+      operationId: getSleepCycle
+      summary: One Sleep cycle with its report (null while it runs)
+      x-base: api
+      x-handler: cmd/allternit-api/src/sleep/routes.rs get_cycle
+      tags: [Memory]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The cycle and its report (per-stage outcome, counts, spend, undo info).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cycle]
+                properties:
+                  cycle: { $ref: "#/components/schemas/SleepCycle" }
+                  report: { type: [object, "null"] }
+        default: { $ref: "#/components/responses/Error" }
+  /memory/sleep/run:
+    post:
+      operationId: runSleep
+      summary: Start a sleep now (queues a nap or daydream). 409 with `accepted:false` while Sleep is off or the kind is not built
+      x-base: api
+      x-handler: cmd/allternit-api/src/sleep/routes.rs run
+      tags: [Memory]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kind: { type: string, enum: [nap, daydream] }
+      responses:
+        "202": { description: Queued. }
+        "409":
+          description: Refused.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SleepNotAccepted" }
+        default: { $ref: "#/components/responses/Error" }
   /memory/sleep/cycles/{id}/undo:
     post:
       operationId: undoSleepCycle
