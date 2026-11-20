@@ -411,13 +411,7 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
  */
 private const val SEEN_KEY = "allternit-phone-session-seen"
 
-internal fun isNoComputer(r: ApiResult.HttpError): Boolean {
-    if (r.status == 428) return true
-    if (r.status != 409 && r.status != 410) return false
-    val text = "${r.code.orEmpty()} ${r.message.orEmpty()}"
-    return Regex("""\b(compute_required|free_computers_retired)\b""", RegexOption.IGNORE_CASE).containsMatchIn(text) ||
-        text.contains("data-plane node", ignoreCase = true)
-}
+internal fun isNoComputer(r: ApiResult.HttpError): Boolean = com.allternit.core.api.NoComputerRule.isGate(r)
 
 /** The sentence for a status with no usable message (iOS statusSentence, web statusSentence). */
 internal fun statusSentence(status: Int): String? = when (status) {

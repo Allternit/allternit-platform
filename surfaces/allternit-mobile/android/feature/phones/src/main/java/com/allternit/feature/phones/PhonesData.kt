@@ -60,7 +60,7 @@ data class PhoneEntry(val bot: BotRecord, val hasPhone: Boolean, val unread: Int
 
 sealed interface PhonesLoad {
     data class Ok(val entries: List<PhoneEntry>) : PhonesLoad
-    data class Failed(val message: String) : PhonesLoad
+    data class Failed(val message: String, val noComputer: Boolean = false) : PhonesLoad
 }
 
 /** iOS BotPhonesStore.totalUnread: the badge on the drawer's Phones button. */
@@ -75,8 +75,12 @@ object PhonesUnread {
 object BotPhonesApi {
     /** iOS BotPhonesStore.refresh: every bot's channels, numbers and unread conversations. */
     suspend fun load(): PhonesLoad = coroutineScope {
-        val bots = (BotsApi.listAgents() as? BotsResult.Ok)?.value
-            ?: return@coroutineScope PhonesLoad.Failed("Couldn't reach your bots' phones.")
+        val botsResult = BotsApi.listAgents()
+        val bots = (botsResult as? BotsResult.Ok)?.value
+            ?: return@coroutineScope PhonesLoad.Failed(
+                "Couldn't reach your bots' phones.",
+                noComputer = (botsResult as? BotsResult.Failed)?.let { com.allternit.core.api.NoComputerRule.isGate(it.status, null, it.message) } == true,
+            )
         if (bots.isEmpty()) return@coroutineScope PhonesLoad.Ok(emptyList())
         val numbers = (LibraryNet.get("phone/numbers") as? ApiResult.Ok)?.value.listUnder("numbers")
         val seen = (LibraryNet.get("bot-phone/seen") as? ApiResult.Ok)?.value.obj?.get("seen").let { it as? JsonObject }

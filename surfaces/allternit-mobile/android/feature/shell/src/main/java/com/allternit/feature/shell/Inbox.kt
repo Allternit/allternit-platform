@@ -826,4 +826,4 @@ private fun HoldButtons(approveEnabled: Boolean, busy: Boolean, onDeny: () -> Un
 
 /** cloud-api's account-state refusals (428 "No data-plane node", compute_required, free_computers_retired): no computer, not a timeout. */
 private fun isComputeGateText(message: String?): Boolean =
-    message != null && Regex("""\b(428|compute_required|free_computers_retired|data-plane node)\b""", RegexOption.IGNORE_CASE).containsMatchIn(message)
+    message != null && (Regex("""\b428\b""").containsMatchIn(message) || com.allternit.core.api.NoComputerRule.isGate(null, null, message) || Regex("""\b(compute_required|free_computers_retired)\b""", RegexOption.IGNORE_CASE).containsMatchIn(message))
