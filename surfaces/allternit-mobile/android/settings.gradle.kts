@@ -47,3 +47,7 @@ include(":feature:automation")
 // drive screen) is shared by :feature:computer (ACI Computers) and :feature:bots (a bot's desktop).
 include(":core:rfb")
 include(":feature:computer")
+// Wave F4a: Cowork, Models, and Phones + Connect. :feature:shell depends on all three (nativeapp flavor only).
+include(":feature:cowork")
+include(":feature:models")
+include(":feature:phones")

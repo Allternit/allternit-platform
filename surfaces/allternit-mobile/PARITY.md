@@ -183,8 +183,8 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| ConnectWizardView | ios/Features/Connect/ConnectWizardView.swift | — | — | todo | — |
-| VendorConnectView | ios/Features/Connect/VendorConnectView.swift | — | — | todo | — |
+| ConnectWizardView | ios/Features/Connect/ConnectWizardView.swift | — | feature/phones/Connect.kt (GiveBotPhoneSheet + ConnectWizardSheet, Email flow; phone number, Telegram and OAuth flows left) | built (#2648) | — |
+| VendorConnectView | ios/Features/Connect/VendorConnectView.swift | — | feature/phones/Connect.kt (VendorConnectScreen, VendorProductScreen) | built (#2648) | — |
 
 ## Connectors
 
@@ -196,12 +196,12 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| CoworkSessionWorkspaceView | ios/Features/Cowork/Views/CoworkSessionWorkspaceView.swift | — | — | todo | — |
-| CoworkTaskDetailView | ios/Features/Cowork/Views/CoworkTaskDetailView.swift | — | — | todo | — |
-| CoworkTasksListView | ios/Features/Cowork/Views/CoworkTasksListView.swift | — | — | todo | — |
-| CoworkWorkspaceView | ios/Features/Cowork/Views/CoworkWorkspaceView.swift | — | — | todo | — |
-| CreateCoworkTaskSheet | ios/Features/Cowork/Views/CreateCoworkTaskSheet.swift | — | — | todo | — |
-| FabricApprovalsView | ios/Features/Cowork/Views/FabricApprovalsView.swift | — | — | todo | — |
+| CoworkSessionWorkspaceView | ios/Features/Cowork/Views/CoworkSessionWorkspaceView.swift | — | feature/cowork/CoworkScreens.kt (CoworkSessionScreen) | built (#2648) | — |
+| CoworkTaskDetailView | ios/Features/Cowork/Views/CoworkTaskDetailView.swift | — | feature/cowork/CoworkScreens.kt (CoworkTaskDetail) | built (#2648) | — |
+| CoworkTasksListView | ios/Features/Cowork/Views/CoworkTasksListView.swift | — | feature/cowork/CoworkScreens.kt (CoworkTasksScreen) | built (#2648) | — |
+| CoworkWorkspaceView | ios/Features/Cowork/Views/CoworkWorkspaceView.swift | — | feature/cowork/CoworkScreens.kt (CoworkLaunchpad) | built (#2648) | — |
+| CreateCoworkTaskSheet | ios/Features/Cowork/Views/CreateCoworkTaskSheet.swift | — | feature/cowork/CoworkScreens.kt (CreateCoworkTaskSheet) | built (#2648) | — |
+| FabricApprovalsView | ios/Features/Cowork/Views/FabricApprovalsView.swift | — | feature/cowork/CoworkScreens.kt (FabricApprovalsScreen) | built (#2648) | — |
 
 ## Customize
 
@@ -229,10 +229,10 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: model-lab | — | src/fabric-session/phone/phone-nav.ts (PhoneSection model-lab) | — | todo | — |
-| BenchmarkView | ios/Features/Models/BenchmarkView.swift | — | — | todo | — |
-| FreeweightsBrowseView | ios/Features/Models/FreeweightsBrowseView.swift | — | — | todo | — |
-| ModelsTabView | ios/Features/Models/ModelsTabView.swift | — | — | todo | — |
+| section: model-lab | — | src/fabric-session/phone/phone-nav.ts (PhoneSection model-lab) | feature/models/ModelsScreens.kt (ModelsRoot, the Models section) | built (#2648) | — |
+| BenchmarkView | ios/Features/Models/BenchmarkView.swift | — | feature/models/ModelsScreens.kt (BenchmarkScreen) | built (#2648) | — |
+| FreeweightsBrowseView | ios/Features/Models/FreeweightsBrowseView.swift | — | feature/models/ModelsScreens.kt (catalog, faces, ModelDetailSheet) + ModelsData.kt | built (#2648) | — |
+| ModelsTabView | ios/Features/Models/ModelsTabView.swift | — | feature/models/ModelsScreens.kt (ModelsRoot) | built (#2648) | — |
 
 ## Office
 
@@ -261,11 +261,11 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| LinkedPhonesSection | — | src/fabric-session/phone/screens/LinkedPhonesSection.tsx | — | todo | — |
-| AndroidScreenPairingView | ios/Features/Phones/AndroidScreenPairingView.swift | — | — | todo | — |
-| AppPhonesSettingsView | ios/Features/Phones/AppPhonesSettingsView.swift | — | — | todo | — |
-| PhoneLiveView | ios/Features/Phones/PhoneLiveView.swift | src/fabric-session/phone/screens/LinkedPhoneOverlay.tsx | — | todo | — |
-| PhoneTaskCardView | ios/Features/Phones/PhoneTaskCardView.swift | — | — | todo | — |
+| LinkedPhonesSection | — | src/fabric-session/phone/screens/LinkedPhonesSection.tsx | feature/computer/AciComputers.kt (AciLinkedPhonesSection, F3; now opens PhoneLiveView) | built (#2648) | — |
+| AndroidScreenPairingView | ios/Features/Phones/AndroidScreenPairingView.swift | — | feature/phones/PhonesScreens.kt (AndroidScreenPairingScreen) | built (#2648) | — |
+| AppPhonesSettingsView | ios/Features/Phones/AppPhonesSettingsView.swift | — | feature/phones/PhonesScreens.kt (AppPhonesSettingsScreen; the pairing handshake stays in :app AppPhoneLink) | built (#2648) | — |
+| PhoneLiveView | ios/Features/Phones/PhoneLiveView.swift | src/fabric-session/phone/screens/LinkedPhoneOverlay.tsx | feature/phones/PhoneLive.kt | built (#2648) | — |
+| PhoneTaskCardView | ios/Features/Phones/PhoneTaskCardView.swift | — | feature/phones/PhonesScreens.kt (PhoneTaskCard, read only) | built (#2648) | — |
 
 ## Projects
 
@@ -354,13 +354,13 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | --- | --- | --- | --- | --- | --- |
 | mode: aci | — | src/fabric-session/phone/phone-nav.ts (PhoneMode aci) | feature/shell/WorkspaceShell.kt (ShellMode.Aci → AciRoot) | built (#2644) | — |
 | mode: bots | — | src/fabric-session/phone/phone-nav.ts (PhoneMode bots) | feature/shell/WorkspaceShell.kt (ShellMode.Bots → BotsModeRoot) | built (wave E PR) | — |
-| mode: code | — | src/fabric-session/phone/phone-nav.ts (PhoneMode code) | — | todo | — |
+| mode: code | — | src/fabric-session/phone/phone-nav.ts (PhoneMode code) | feature/code/ (CodeModeRoot, wave F1) | built (#2640) | — |
 | mode: home | — | src/fabric-session/phone/phone-nav.ts (PhoneMode home) | — | todo | — |
 | StageBackdropView | ios/Features/Shell/Backdrop/StageBackdropView.swift | — | feature/shell/backdrop/StageBackdrop.kt (drawn from waves D–F: iOS draws it only on bot, group, project and Code screens, and in the drawer while one of those publishes it) | built (#2626) | — |
 | InboxSheet | ios/Features/Shell/InboxSheet.swift | — | feature/shell/Inbox.kt | built (#2626) | — |
 | ModeDialView | ios/Features/Shell/ModeDialView.swift | — | — | todo | — |
 | NativeSessionPickerSheet | ios/Features/Shell/NativeSessionPickerSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |
-| PhonesSheet | ios/Features/Shell/PhonesSheet.swift | — | — | todo | — |
+| PhonesSheet | ios/Features/Shell/PhonesSheet.swift | — | feature/phones/PhonesScreens.kt (PhonesSheet; the drawer Phones button opens it) | built (#2648) | — |
 | QuickTaskSheet | ios/Features/Shell/QuickTaskSheet.swift | — | feature/shell/StartSheets.kt | built (#2626) | — |
 | SessionOverviewView | ios/Features/Shell/SessionOverviewView.swift | src/fabric-session/phone/screens/PhoneOverviewOverlay.tsx | feature/shell/SessionOverview.kt | built (#2626) | — |
 | ShellSearchView | ios/Features/Shell/ShellSearchView.swift | src/fabric-session/phone/screens/PhoneSearchOverlay.tsx | feature/shell/ShellSearch.kt | built (#2626) | — |

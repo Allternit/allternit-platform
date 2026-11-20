@@ -128,7 +128,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
                 }
             }
             Spacer(Modifier.height(24.dp))
-            AciLinkedPhonesSection(host.signedIn)
+            AciLinkedPhonesSection(host.signedIn, host.openPhoneLive)
             AciCloudBackupsSection(host.signedIn)
             Spacer(Modifier.height(24.dp))
             AciWorkflowsSection(host, workflowRuntime)
@@ -251,7 +251,7 @@ internal fun AciComputerScreenSheet(onDismiss: () -> Unit) {
 /** LinkedPhonesSection.tsx: phones paired to this account; signed out or none shows the setup line. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AciLinkedPhonesSection(signedIn: Boolean) {
+private fun AciLinkedPhonesSection(signedIn: Boolean, onOpenLive: ((CloudPhone) -> Unit)? = null) {
     val c = AllternitTheme.colors
     var phones by remember { mutableStateOf<List<CloudPhone>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -286,7 +286,7 @@ private fun AciLinkedPhonesSection(signedIn: Boolean) {
             }
             list == null -> Text("Loading phones…", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(vertical = 12.dp))
             else -> list.forEach { p ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().then(if (onOpenLive != null && p.isLive && !p.isKeyboard) Modifier.clickable { onOpenLive(p) }.testTag("aciPhoneOpen") else Modifier), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f).heightIn(min = 44.dp).padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(p.name, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {

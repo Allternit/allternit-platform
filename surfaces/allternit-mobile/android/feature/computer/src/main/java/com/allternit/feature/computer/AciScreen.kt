@@ -74,6 +74,8 @@ data class AciHost(
     val backend: ChatBackend,
     val menuButton: @Composable () -> Unit,
     val openSignIn: () -> Unit,
+    /** Opens a linked phone's live view (iOS ACIComputersPane fullScreenCover PhoneLiveView); wave F4a. */
+    val openPhoneLive: ((CloudPhone) -> Unit)? = null,
 )
 
 private sealed interface AciDestination {
