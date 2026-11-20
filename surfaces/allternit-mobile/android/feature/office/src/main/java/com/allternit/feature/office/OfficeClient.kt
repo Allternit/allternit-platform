@@ -221,15 +221,18 @@ object FloorClient {
         return FloorSeen(o.long("previous"), now)
     }
 
-    /** `GET /floor/digest?since=` (epoch ms). Null on any failure. */
-    suspend fun digest(since: Long): FloorDigest? {
-        val o = (LibraryNet.get("floor/digest?since=$since") as? ApiResult.Ok)?.value?.obj ?: return null
+    /**
+     * `GET /floor/digest` (epoch ms). With no [since] the server uses the stored last-seen time, else the last 24 h.
+     * Null on any failure.
+     */
+    suspend fun digest(since: Long? = null): FloorDigest? {
+        val o = (LibraryNet.get(if (since != null) "floor/digest?since=$since" else "floor/digest") as? ApiResult.Ok)?.value?.obj ?: return null
         fun items(k: String) = o.list(k).mapNotNull { e ->
             val bot = e.str("botId") ?: return@mapNotNull null
             val text = e.str("text")?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
             FloorDigestItem(bot, e.str("threadId"), text, e.long("at") ?: 0L, e.str("ruleId"))
         }
-        return FloorDigest(o.long("since") ?: since, o.long("until") ?: 0L, items("answered"), items("waiting"), items("finished"), items("suggestions"))
+        return FloorDigest(o.long("since") ?: since ?: 0L, o.long("until") ?: 0L, items("answered"), items("waiting"), items("finished"), items("suggestions"))
     }
 
     private fun parseAutopilot(o: JsonObject): AutopilotState = AutopilotState(

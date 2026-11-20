@@ -110,6 +110,11 @@ class BotsHost(
     val openInbox: () -> Unit,
     /** The bots' Office floor (iOS OfficeFloorView), from :feature:office, which depends on this module: the store, the chat backend, open a bot's chat, back, and the Bots views its thread sheet reuses ([BotsOfficeKit]). Null hides the entry. */
     val officeFloor: (@Composable (store: BotModeStore, backend: ChatBackend, openBot: (String) -> Unit, onBack: () -> Unit, kit: BotsOfficeKit) -> Unit)? = null,
+    /**
+     * The shell's main-bot picker (first run's "Who leads your team?" step in a sheet), for the Office's "Pick your main
+     * bot" ([BotsOfficeKit.MainBotSetup]). [onDone] runs after the choice was applied. Null falls back to [NewBotSheet].
+     */
+    val mainBotPicker: (@Composable (onDismiss: () -> Unit, onDone: () -> Unit) -> Unit)? = null,
 )
 
 /**
@@ -130,17 +135,27 @@ class BotsOfficeKit internal constructor(private val host: BotsHost, private val
     /** The shell's sign-in (Settings), for the chief dock's signed-out state. */
     fun openSignIn() = host.openSignIn()
 
+    /** The shell's existing main-bot picker ([BotsHost.mainBotPicker]), or null when the shell didn't provide one. */
+    val mainBotPicker: (@Composable (onDismiss: () -> Unit, onDone: () -> Unit) -> Unit)? get() = host.mainBotPicker
+
     /**
-     * "Pick your main bot" (step 27): Bots mode's own new-bot sheet ([NewBotSheet]); the first bot made on an account
-     * with no main bot becomes the main bot ([BotFormData.needsMain]). [onDone] runs after the roster is refreshed.
+     * "Pick your main bot" (step 27, iOS MainBotSetupSheet). An account with bots chooses one in the shell's picker
+     * ([mainBotPicker]: existing bots, A:// and its looks); an account with no bots (or no picker) gets Bots mode's
+     * new-bot sheet ([NewBotSheet]), where the first bot made becomes the main bot ([BotFormData.needsMain]).
+     * [onDone] runs after the roster is refreshed.
      */
     @Composable
     fun MainBotSetup(onDismiss: () -> Unit, onDone: () -> Unit) {
         val scope = rememberCoroutineScope()
-        NewBotSheet(
-            store = store, host = host, onBrowseTemplates = null, onDismiss = onDismiss,
-            onCreated = { scope.launch { store.refreshAll(); onDone() } },
-        )
+        val picker = host.mainBotPicker
+        if (picker != null && store.bots.isNotEmpty()) {
+            picker(onDismiss) { scope.launch { store.refreshAll(); onDone() } }
+        } else {
+            NewBotSheet(
+                store = store, host = host, onBrowseTemplates = null, onDismiss = onDismiss,
+                onCreated = { scope.launch { store.refreshAll(); onDone() } },
+            )
+        }
     }
 
     /**

@@ -46,14 +46,14 @@ import com.allternit.feature.bots.BotModeStore
 /** Away at least this long before the digest shows (plan D13). */
 internal const val DIGEST_AWAY_MS = 30 * 60_000L
 
-/** Whether a `POST /floor/seen` result means the digest should be fetched: a previous visit 30 minutes or more ago. */
-internal fun digestDue(seen: FloorSeen): Boolean = seen.previous != null && seen.now - seen.previous >= DIGEST_AWAY_MS
+/** Whether the digest is worth a card: its window (the time away) is 30 minutes or more and it has at least one item. */
+internal fun digestWorthShowing(d: FloorDigest): Boolean = d.until - d.since >= DIGEST_AWAY_MS && !d.isEmpty
 
 /**
  * "While you were away" (step 27, iOS OfficeDigestView), over the floor when the Office opens after 30 minutes or more
  * away with at least one item: what the main bot answered on autopilot, what is waiting, what finished, and new
- * suggestions, each a bot face and a line. Tapping a line opens that bot's thread sheet. The server already marked
- * the visit seen (`POST /floor/seen`), so it does not show again on any device.
+ * suggestions, each a bot face and a line. Tapping a line opens that bot's thread sheet. The host marks the visit seen
+ * (`POST /floor/seen`) once the card has shown, so it does not show again on any device.
  */
 @Composable
 fun OfficeDigestCard(

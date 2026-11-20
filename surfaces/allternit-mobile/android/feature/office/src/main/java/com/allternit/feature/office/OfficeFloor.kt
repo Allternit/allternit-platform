@@ -34,6 +34,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
@@ -340,18 +342,34 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
     var pickMainOpen by rememberSaveable { mutableStateOf(false) }
     var sendStatus by remember { mutableStateOf<String?>(null) }
     var digest by remember { mutableStateOf<FloorDigest?>(null) }
-    // One `POST /floor/seen` per Office visit (kept across rotation, so the digest isn't lost to a second post).
+    // The digest is read first; the visit is marked seen (`POST /floor/seen`) only after the card has shown, right away
+    // when there is nothing to show, or on leaving the Office. A failed digest load never marks seen. Both flags are
+    // kept across rotation so one visit reads and marks once.
+    var digestLoaded by rememberSaveable(userId) { mutableStateOf(false) }
     var seenPosted by rememberSaveable(userId) { mutableStateOf(false) }
+    fun markSeen() {
+        if (seenPosted) return
+        seenPosted = true
+        scope.launch { if (FloorClient.seen() == null) seenPosted = false }
+    }
     val mainBot = officeMainBot(store, floor)
     LaunchedEffect(autopilot) { if (userId != null && sheetOn) autopilot.load() }
     LaunchedEffect(userId, sheetOn) {
-        if (userId == null || !sheetOn || seenPosted) return@LaunchedEffect
-        val seen = FloorClient.seen() ?: return@LaunchedEffect
-        seenPosted = true
-        val previous = seen.previous
-        if (previous != null && digestDue(seen)) FloorClient.digest(previous)?.takeIf { !it.isEmpty }?.let { digest = it }
+        if (userId == null || !sheetOn || digestLoaded) return@LaunchedEffect
+        val d = FloorClient.digest() ?: return@LaunchedEffect
+        digestLoaded = true
+        if (digestWorthShowing(d)) digest = d else markSeen()
+    }
+    // Leaving the Office with the card unseen (a sheet or the full facility covered it) still marks the visit seen.
+    val leaveSeen by androidx.compose.runtime.rememberUpdatedState(digestLoaded && !seenPosted)
+    DisposableEffect(userId) {
+        onDispose { if (leaveSeen) CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { FloorClient.seen() } }
     }
     LaunchedEffect(sendStatus) { if (sendStatus != null) { delay(6_000); sendStatus = null } }
+    // With no sheet open, the frame frames the floor above the chief dock: `focus` null with the dock's height (dp =
+    // frame CSS px) as the bottom inset, on frame ready, when a sheet closes and when the dock's height changes.
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var dockDp by remember { mutableIntStateOf(0) }
 
     /** After a card's answer (sheet or dock): drop the need, add the done bubble, then re-read threads, needs and floor. */
     fun needDone(need: OfficeNeed, bubble: String?) {
@@ -392,6 +410,9 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
             floor = FloorClient.state()
             delay(15_000)
         }
+    }
+    LaunchedEffect(frameReady, sheetBot, full, dockDp) {
+        if (kit != null && frameReady && !full && sheetBot == null) link.focus(null, bottom = dockDp)
     }
     // A cold 3D load on a slow phone can take a while (web: 25 s).
     LaunchedEffect(attempt, full) { delay(25_000); if (!ready) failed = true }
@@ -512,12 +533,14 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
                     onPickMain = { pickMainOpen = true },
                     onSignIn = { kit.openSignIn() },
                     onSuggestionDone = { n, b -> needDone(n, b) },
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { dockDp = with(density) { it.height.toDp().value.roundToInt() } },
                 )
             }
             // "While you were away": once per visit after 30+ minutes away; a line opens that bot's sheet.
             val away = digest
             if (kit != null && away != null && !full && sheetBot == null) {
+                // The card is on screen: the visit counts as seen.
+                LaunchedEffect(away) { markSeen() }
                 OfficeDigestCard(
                     away, store, mainBot?.displayName,
                     onOpenBot = { id -> digest = null; sheetBot = id },
@@ -531,14 +554,14 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
     val openId = sheetBot
     if (kit != null && openId != null && !full) {
         if (store.bot(openId) == null) {
-            LaunchedEffect(openId) { sheetBot = null; link.focus(null) }
+            LaunchedEffect(openId) { sheetBot = null } // the dock-inset effect re-sends focus
         } else {
             val mainName = mainBot?.displayName
             OfficeThreadSheet(
                 botId = openId, store = store, kit = kit, needs = needs, mainBotName = mainName,
                 onInset = { bottom -> link.focus(openId, bottom = bottom) },
                 onDone = { need, bubble -> needDone(need, bubble) },
-                onDismiss = { sheetBot = null; link.focus(null) },
+                onDismiss = { sheetBot = null }, // the dock-inset effect re-sends focus with the dock's height
             )
         }
     }

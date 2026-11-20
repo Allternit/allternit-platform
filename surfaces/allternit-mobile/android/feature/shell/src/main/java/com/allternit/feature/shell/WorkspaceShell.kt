@@ -385,6 +385,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         openProjectInLibrary = { id -> page = ShellPage.Project(id) },
         openInbox = { inboxOpen = true },
         officeFloor = com.allternit.feature.office.OfficeFeature.floor,
+        mainBotPicker = { onDismiss, onDone -> com.allternit.feature.shell.firstrun.MainBotPickerSheet(onDismiss, onDone) },
     )
 
     /** iOS newOptions: press and hold the New pill. */
