@@ -55,7 +55,7 @@ internal fun AutoScaffold(title: String, onBack: () -> Unit, backTag: String, tr
 }
 
 @Composable
-internal fun NoComputerState(onRetry: (() -> Unit)?, modifier: Modifier = Modifier) {
+internal fun NoComputerState(modifier: Modifier = Modifier, onRetry: (() -> Unit)?) {
     val c = AllternitTheme.colors
     FriendlyState(
         style = FriendlyStyle.Error,

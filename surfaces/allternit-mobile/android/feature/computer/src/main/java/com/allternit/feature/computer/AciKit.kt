@@ -65,7 +65,7 @@ internal fun RuntimeCall.failureText(): String? = when (this) {
 /**
  * A call through the relay to one named computer (not the picked one): `POST /api/v1/runtime-devices/:id/proxy`
  * with the `{method, path, headers, body, bodyEncoding}` envelope (the same one `ChatBackend.runtimeJson` sends).
- * The Files drive screens use it for `/api/v1/files/v2/*`; :app's Files client is not a dependency of a feature module.
+ * The Files drive screens use it for `/api/v1/files/v2/…`; :app's Files client is not a dependency of a feature module.
  */
 internal object AciRelay {
     private val config = ApiConfig()

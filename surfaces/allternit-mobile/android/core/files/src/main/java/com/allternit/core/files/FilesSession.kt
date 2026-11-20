@@ -4,8 +4,8 @@ import android.content.Context
 
 /**
  * Files sign-in from the native session (gap run GS-B). Every cloud-api route the Files client calls
- * (`/api/v1/files-keys/*`, `/api/v1/runtime-devices/:id/proxy` for Files v2, `/api/v1/computer-files/*`,
- * `/api/v1/files-gateway/*`) authenticates with `auth::resolve_user_scoped(…, "compute")`, which accepts the normal
+ * (`/api/v1/files-keys/…`, `/api/v1/runtime-devices/:id/proxy` for Files v2, `/api/v1/computer-files/…`,
+ * `/api/v1/files-gateway/…`) authenticates with `auth::resolve_user_scoped(…, "compute")`, which accepts the normal
  * Clerk session JWT. So the native app needs no separate Files token and no Custom Tab hand-off: it gives the Files
  * client its own session here, and :app's FilesAuth uses it before the sealed Custom Tab token.
  *

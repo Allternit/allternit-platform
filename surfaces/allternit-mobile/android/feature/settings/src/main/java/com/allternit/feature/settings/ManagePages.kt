@@ -264,7 +264,7 @@ internal fun WebhooksPage(host: SettingsHost, back: () -> Unit) {
                     SButton("Create", "webhook_create", enabled = name.isNotBlank() && botId != null) {
                         scope.launch {
                             val r = Net.send("POST", "webhook-triggers", buildJsonObject { put("name", name.trim()); put("target_bot_id", botId ?: "") })
-                            if (r is ApiResult.Ok) { creating = false; name = ""; botId = null; message = (r.value.obj["trigger"] as? JsonObject)?.str("id")?.let { "Created. Inbound URL: /webhooks/inbound/$it" } ?: "Created."; reload() } else error = r.friendly("create the webhook")
+                            if (r is ApiResult.Ok) { creating = false; name = ""; botId = null; message = (r.value.obj?.get("trigger") as? JsonObject)?.str("id")?.let { "Created. Inbound URL: /webhooks/inbound/$it" } ?: "Created."; reload() } else error = r.friendly("create the webhook")
                         }
                     }
                     SButton("Cancel", "webhook_cancel") { creating = false }

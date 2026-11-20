@@ -1,5 +1,6 @@
 package com.allternit.feature.chat.voice
 
+import com.allternit.core.design.AllternitSerif
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -406,7 +407,7 @@ fun VoiceModeView(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
             if (viewModel.replyText.isNotEmpty()) {
                 Text(
                     viewModel.replyText,
-                    color = c.textPrimary, fontSize = 22.sp, lineHeight = 30.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Medium,
+                    color = c.textPrimary, fontSize = 22.sp, lineHeight = 30.sp, fontFamily = AllternitSerif, fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.weight(2f, fill = false).verticalScroll(rememberScrollState()).padding(horizontal = 36.dp)
                         .clickable(onClickLabel = "Interrupt") { viewModel.interrupt() }.testTag("voiceReply"),
@@ -414,7 +415,7 @@ fun VoiceModeView(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
             } else {
                 VoiceSpeakerRing(state = viewModel.state, muted = viewModel.isMuted, level = host.listener.micLevel, size = 120)
                 Text(
-                    viewModel.state.statusLabel(viewModel), color = c.textSecondary, fontSize = 22.sp, fontFamily = FontFamily.Serif,
+                    viewModel.state.statusLabel(viewModel), color = c.textSecondary, fontSize = 22.sp, fontFamily = AllternitSerif,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 40.dp, vertical = 12.dp).clickable { viewModel.interrupt() }.testTag("voiceStatus"),
                 )

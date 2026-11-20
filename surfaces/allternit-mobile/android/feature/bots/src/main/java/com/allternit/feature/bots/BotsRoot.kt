@@ -1,5 +1,6 @@
 package com.allternit.feature.bots
 
+import com.allternit.core.design.AllternitSerif
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -447,7 +448,7 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     selected?.let { "What should ${it.displayName} work on?" } ?: "What should the team work on?",
-                    color = c.textPrimary, fontSize = 30.sp, fontFamily = FontFamily.Serif, lineHeight = 34.sp, modifier = Modifier.testTag("botsLaunchHeadline"),
+                    color = c.textPrimary, fontSize = 30.sp, fontFamily = AllternitSerif, lineHeight = 34.sp, modifier = Modifier.testTag("botsLaunchHeadline"),
                 )
                 Text(
                     selected?.let { "${it.displayName} starts a thread for it and keeps going when you close the app." }

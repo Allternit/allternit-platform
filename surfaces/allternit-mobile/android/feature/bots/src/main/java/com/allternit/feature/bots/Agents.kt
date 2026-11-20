@@ -1,5 +1,6 @@
 package com.allternit.feature.bots
 
+import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,6 +47,7 @@ import com.allternit.feature.artifacts.LibrarySheetAction
 import com.allternit.feature.artifacts.LibrarySpinner
 import com.allternit.feature.artifacts.PillRow
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -322,7 +324,7 @@ internal fun BotHomeScreen(bot: BotRecord, host: BotsHost, store: BotModeStore, 
     var files by remember { mutableStateOf<Int?>(null) }
     var webhooks by remember { mutableStateOf<Int?>(null) }
     var runOpen by remember { mutableStateOf(false) }
-    suspend fun load() {
+    suspend fun load() = coroutineScope {
         val t = async { BotsApi.listBotThreads(bot.id) }
         val r = async { BotsApi.listRoutines().orNull() }
         val f = async { BotsApi.listWorkspaceFiles(bot.id).orNull() }
@@ -508,7 +510,7 @@ internal fun MarketplaceListingScreen(id: String, store: BotModeStore, nav: BotN
             val d = detail
             if (d == null) { ListState(error == null, error, true, "Couldn't load agent details", "") { scope.launch { load() } }; return@Column }
             val (l, reviews) = d
-            Text(l.title, color = c.textPrimary, fontSize = 22.sp, fontFamily = FontFamily.Serif)
+            Text(l.title, color = c.textPrimary, fontSize = 22.sp, fontFamily = AllternitSerif)
             l.publisherName?.let { Text("By $it", color = c.textSecondary, fontSize = 13.sp) }
             Text(l.description, color = c.textPrimary, fontSize = 15.sp)
             if (installed != null) Text("✓ Installed", color = AllternitStatic.StatusSuccess, fontSize = 14.sp, fontWeight = FontWeight.Medium)

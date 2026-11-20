@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -103,6 +104,14 @@ fun ChatScreen(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val list = rememberLazyListState()
+    // iOS ChatView .scrollDismissesKeyboard(.interactively): dragging the feed hides the keyboard.
+    val feedFocus = LocalFocusManager.current
+    // Only a finger drag counts: auto-scroll while a reply streams must not hide the keyboard.
+    LaunchedEffect(list) {
+        list.interactionSource.interactions.collect { interaction ->
+            if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) feedFocus.clearFocus()
+        }
+    }
     val messages = viewModel.messages
 
     val hasSession = viewModel.currentSessionId != null

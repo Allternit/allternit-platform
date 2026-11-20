@@ -1,5 +1,6 @@
 package com.allternit.feature.bots
 
+import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -481,7 +482,7 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
         })
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.padding(horizontal = 20.dp)) {
-                Text(title, color = c.textPrimary, fontSize = 26.sp, fontFamily = FontFamily.Serif, modifier = Modifier.testTag("botProjectTitle"))
+                Text(title, color = c.textPrimary, fontSize = 26.sp, fontFamily = AllternitSerif, modifier = Modifier.testTag("botProjectTitle"))
                 if (details.isNotEmpty()) Text(details, color = c.textSecondary, fontSize = 14.sp)
                 val w = threads.count { it.group == "waiting" }
                 val k = threads.count { it.group == "working" }

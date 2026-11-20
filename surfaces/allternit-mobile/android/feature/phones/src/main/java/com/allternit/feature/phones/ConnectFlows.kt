@@ -276,7 +276,8 @@ internal fun PhoneNumberFlow(host: PhonesHost, botId: String, onClose: () -> Uni
             Problem(error)
             ConnectButton(if (working) "Submitting…" else if (individual) "Send me the code" else "Submit registration", "connectPhoneSubmit", !working) {
                 run {
-                    val id = accountId ?: run { error = "Pick a number first."; return@run }
+                    val id = accountId
+                    if (id == null) { error = "Pick a number first."; return@run }
                     val (v, e) = call("POST", "phone/numbers/${LibraryNet.escape(id)}/registration", registrationBody(form, individual), "submit the registration")
                     if (e != null) { error = "Couldn’t submit the registration: ${if (e == "unavailable") "not available yet" else e}"; return@run }
                     registration = registrationState(v, individual)

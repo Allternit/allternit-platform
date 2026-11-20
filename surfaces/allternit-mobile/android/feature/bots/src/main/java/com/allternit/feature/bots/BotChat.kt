@@ -1,5 +1,6 @@
 package com.allternit.feature.bots
 
+import com.allternit.core.design.AllternitSerif
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -340,7 +341,7 @@ private fun BotGreeting(bot: BotRecord, onPrompt: (String) -> Unit) {
     val c = AllternitTheme.colors
     Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         BotAvatar(bot, 64.dp, live = true)
-        Text(bot.botGreeting, color = c.textPrimary, fontSize = 20.sp, fontFamily = FontFamily.Serif, textAlign = TextAlign.Center)
+        Text(bot.botGreeting, color = c.textPrimary, fontSize = 20.sp, fontFamily = AllternitSerif, textAlign = TextAlign.Center)
         (bot.starterPrompts.ifEmpty { bot.suggestedPrompts }).take(4).forEach { p ->
             Text(
                 p, color = c.textSecondary, fontSize = 13.5.sp,

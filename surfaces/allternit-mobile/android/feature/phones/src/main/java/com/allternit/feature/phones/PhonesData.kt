@@ -13,6 +13,8 @@ import com.allternit.feature.bots.BotRecord
 import com.allternit.feature.bots.BotsApi
 import com.allternit.feature.bots.BotsResult
 import com.allternit.feature.chat.ChatBackend
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import com.allternit.feature.chat.RuntimeCall
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async

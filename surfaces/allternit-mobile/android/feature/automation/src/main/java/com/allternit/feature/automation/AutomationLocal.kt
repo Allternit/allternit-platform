@@ -45,7 +45,7 @@ import com.allternit.core.design.R as DesignR
 
 /*
  * The computer's own routines and loops (iOS RoutinesListView, RoutineDetailView, LoopsListView, LoopDetailView,
- * CreateRoutineSheet, CreateLoopSheet): `v1/automations/*` on the user's gizzi-code, through the relay.
+ * CreateRoutineSheet, CreateLoopSheet): `v1/automations/…` on the user's gizzi-code, through the relay.
  */
 
 private enum class LocalTab(val label: String) { Routines("Routines"), Loops("Loops") }
@@ -89,7 +89,7 @@ internal fun AutomationLocalScreen(host: AutomationHost, onBack: () -> Unit) {
             AResult.NoComputer -> NoComputerState { tick++ }
             is AResult.Failed -> ErrorState("Couldn't load ${tab.label.lowercase()}", state.message, { tick++ })
             is AResult.Ok -> if (tab == LocalTab.Routines) {
-                val rows = st.routines.orNull().orEmpty().filter { query.isBlank() || it.name.contains(query, true) }
+                val rows = st.routines?.orNull().orEmpty().filter { query.isBlank() || it.name.contains(query, true) }
                 if (rows.isEmpty()) EmptyState(if (query.isBlank()) "No routines" else "No matches", if (query.isBlank()) "Chain a few commands into a named routine you can run on demand, anytime." else "No routines match.", Modifier.padding(horizontal = 20.dp), if (query.isBlank()) "New routine" else null) { newRoutine = true }
                 else LazyColumn(Modifier.fillMaxSize().testTag("automationLocalRoutines"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(rows, key = { it.id }) { r ->
@@ -97,7 +97,7 @@ internal fun AutomationLocalScreen(host: AutomationHost, onBack: () -> Unit) {
                     }
                 }
             } else {
-                val rows = st.loops.orNull().orEmpty().filter { query.isBlank() || it.command.contains(query, true) }
+                val rows = st.loops?.orNull().orEmpty().filter { query.isBlank() || it.command.contains(query, true) }
                 if (rows.isEmpty()) EmptyState(if (query.isBlank()) "No loops" else "No matches", if (query.isBlank()) "Run a command on repeat until it exits clean or hits its iteration cap." else "No loops match.", Modifier.padding(horizontal = 20.dp), if (query.isBlank()) "New loop" else null) { newLoop = true }
                 else LazyColumn(Modifier.fillMaxSize().testTag("automationLocalLoops"), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(rows, key = { it.id }) { l ->
@@ -109,7 +109,7 @@ internal fun AutomationLocalScreen(host: AutomationHost, onBack: () -> Unit) {
     }
 
     routine?.let { r ->
-        val cur = st.routines.orNull()?.firstOrNull { it.id == r.id } ?: r
+        val cur = st.routines?.orNull()?.firstOrNull { it.id == r.id } ?: r
         LocalDetail(
             title = cur.name, tag = "automationRoutineDetail", state = cur.state, onClose = { routine = null },
             info = listOfNotNull("State" to cur.state, cur.trigger?.takeIf { it.isNotBlank() }?.let { "Trigger" to it }, cur.schedule?.takeIf { it.isNotBlank() }?.let { "Schedule" to it }, relativeTime(cur.updated.toLong()).let { "Updated" to it }),
@@ -129,7 +129,7 @@ internal fun AutomationLocalScreen(host: AutomationHost, onBack: () -> Unit) {
         }
     }
     loop?.let { l0 ->
-        val cur = st.loops.orNull()?.firstOrNull { it.id == l0.id } ?: l0
+        val cur = st.loops?.orNull()?.firstOrNull { it.id == l0.id } ?: l0
         LocalDetail(
             title = cur.command, tag = "automationLoopDetail", state = cur.state, onClose = { loop = null },
             info = listOfNotNull("State" to cur.state, "Iterations" to "${cur.iterations.size} of ${cur.maxIterations}", cur.exitCondition?.takeIf { it.isNotBlank() }?.let { "Exit when" to it }, relativeTime(cur.updated.toLong()).let { "Updated" to it }),

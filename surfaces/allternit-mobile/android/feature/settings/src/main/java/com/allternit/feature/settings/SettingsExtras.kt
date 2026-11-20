@@ -46,7 +46,7 @@ internal fun ExecutionModeCard(host: SettingsHost) {
     fun apply(r: RuntimeCall) {
         when (r) {
             is RuntimeCall.Ok -> {
-                val o: JsonObject = r.body.obj
+                val o: JsonObject = r.body.obj ?: JsonObject(emptyMap())
                 mode = o.str("mode") ?: mode
                 (o["supported_modes"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }?.takeIf { it.isNotEmpty() }?.let { supported = it }
                 state = "ready"

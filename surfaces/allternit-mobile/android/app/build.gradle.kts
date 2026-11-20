@@ -30,9 +30,9 @@ val firebaseResValues: Map<String, String> = run {
         "project_id" to setting("ALLTERNIT_FIREBASE_PROJECT_ID"),
     )
     if (explicit.values.all { it != null }) return@run explicit.mapValues { it.value.orEmpty() }
-    val file = java.io.File(setting("ALLTERNIT_FIREBASE_CONFIG") ?: "${System.getProperty("user.home")}/.config/allternit/firebase/google-services.json")
-    if (!file.isFile) return@run emptyMap()
-    val root = groovy.json.JsonSlurper().parse(file) as? Map<*, *> ?: return@run emptyMap()
+    val configFile = project.file(setting("ALLTERNIT_FIREBASE_CONFIG") ?: "${System.getProperty("user.home")}/.config/allternit/firebase/google-services.json")
+    if (!configFile.isFile) return@run emptyMap()
+    val root = groovy.json.JsonSlurper().parse(configFile) as? Map<*, *> ?: return@run emptyMap()
     val project = root["project_info"] as? Map<*, *> ?: return@run emptyMap()
     val client = (root["client"] as? List<*>).orEmpty().filterIsInstance<Map<*, *>>().firstOrNull { c ->
         ((c["client_info"] as? Map<*, *>)?.get("android_client_info") as? Map<*, *>)?.get("package_name") == "com.allternit.app"

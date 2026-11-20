@@ -38,6 +38,7 @@ dependencies {
     // LibraryNet (the /api/v1 routes), the JSON helpers and the library chrome.
     implementation(project(":feature:artifacts"))
     implementation(project(":core:auth"))
+    implementation(libs.activity.compose)
     // Bot records, channels (BotsApi) for the Phones sheet and the connect flows.
     implementation(project(":feature:bots"))
     // CloudPhone + AciApi (the linked phones list), shared with ACI Computers.

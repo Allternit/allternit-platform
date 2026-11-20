@@ -44,5 +44,6 @@ dependencies {
     // RoutineRule + RoutineScheduleEditor (the time editor) and BotsApi.listAgents (the bot picker).
     implementation(project(":feature:bots"))
     implementation(project(":core:auth"))
+    implementation(libs.activity.compose)
     testImplementation(libs.junit)
 }

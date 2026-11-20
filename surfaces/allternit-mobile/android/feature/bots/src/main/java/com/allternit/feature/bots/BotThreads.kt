@@ -1,5 +1,6 @@
 package com.allternit.feature.bots
 
+import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -100,7 +101,7 @@ internal fun BotThreadsOverview(store: BotModeStore, botId: String?, title: Stri
         item {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.Bottom) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(title, color = c.textPrimary, fontSize = 26.sp, fontFamily = FontFamily.Serif)
+                    Text(title, color = c.textPrimary, fontSize = 26.sp, fontFamily = AllternitSerif)
                     Text(waitingLine(waiting), color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.testTag("botThreadsWaiting"))
                 }
                 LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search threads", "botThreadsSearch") { searching = !searching }
@@ -216,7 +217,7 @@ internal fun BotThreadsPanel(store: BotModeStore, threads: List<BotThread>, botI
     val rows = threads.filter { !it.incognito }.sortedWith(BotThread.order)
     Column(Modifier.fillMaxWidth()) {
         if (greeting != null) Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-            Text(greeting, color = c.textPrimary, fontSize = 22.sp, fontFamily = FontFamily.Serif)
+            Text(greeting, color = c.textPrimary, fontSize = 22.sp, fontFamily = AllternitSerif)
             Text(waitingLine(rows.count { it.group == "waiting" }), color = c.textSecondary, fontSize = 13.sp)
         }
         if (rows.isEmpty()) Text("No threads yet. Start one from the composer.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(20.dp))

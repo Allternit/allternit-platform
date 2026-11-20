@@ -149,10 +149,10 @@ fun MeetingsScreen(host: MeetingsHost, focusMeetingId: String? = null) {
                 when (val p = store.phase) {
                     MeetingsStore.Phase.Idle -> Skeleton()
                     MeetingsStore.Phase.Loading -> if (empty) Skeleton() else Agenda(host, onPaste = { pasteOpen = true }, onSend = { sendTarget = it }, onRoute = { route = it })
-                    MeetingsStore.Phase.SignedOut -> FriendlyState(FriendlyStyle.Empty, "Sign in to use Meetings", "Gizzi joins your calls, takes notes and makes what you ask for, once you're signed in.")
+                    MeetingsStore.Phase.SignedOut -> MeetingsState(FriendlyStyle.Empty, "Sign in to use Meetings", "Gizzi joins your calls, takes notes and makes what you ask for, once you're signed in.")
                     MeetingsStore.Phase.PaidPlan -> PaidPlanCard()
-                    is MeetingsStore.Phase.Forbidden -> FriendlyState(FriendlyStyle.Error, "Meetings is off for your organization", p.message)
-                    is MeetingsStore.Phase.Failed -> if (empty) FriendlyState(FriendlyStyle.Offline, "Couldn't load meetings", p.message, actionTitle = "Retry", onAction = { scope.launch { store.load(host.signedIn) } })
+                    is MeetingsStore.Phase.Forbidden -> MeetingsState(FriendlyStyle.Error, "Meetings is off for your organization", p.message)
+                    is MeetingsStore.Phase.Failed -> if (empty) MeetingsState(FriendlyStyle.Offline, "Couldn't load meetings", p.message, actionTitle = "Retry", onAction = { scope.launch { store.load(host.signedIn) } })
                         else Agenda(host, onPaste = { pasteOpen = true }, onSend = { sendTarget = it }, onRoute = { route = it })
                     MeetingsStore.Phase.Loaded -> Agenda(host, onPaste = { pasteOpen = true }, onSend = { sendTarget = it }, onRoute = { route = it })
                 }
@@ -398,9 +398,9 @@ fun MeetingLiveScreen(sessionId: String, meeting: Meeting?, onBack: () -> Unit, 
             trailing = if (live.session != null) ({ StateChip(live.status, live.session, live.meeting) }) else null)
         when (val p = live.phase) {
             MeetingLiveSession.Phase.Loading -> if (live.session == null) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = c.textSecondary) }; return@Column }
-            is MeetingLiveSession.Phase.Failed -> if (live.session == null) { FriendlyState(FriendlyStyle.Offline, "Couldn't open the meeting", p.m, actionTitle = "Retry", onAction = { scope.launch { live.loadAll() } }); return@Column }
+            is MeetingLiveSession.Phase.Failed -> if (live.session == null) { MeetingsState(FriendlyStyle.Offline, "Couldn't open the meeting", p.m, actionTitle = "Retry", onAction = { scope.launch { live.loadAll() } }); return@Column }
             MeetingLiveSession.Phase.PaidPlan -> { Box(Modifier.padding(16.dp)) { PaidPlanCard() }; return@Column }
-            MeetingLiveSession.Phase.SignedOut -> { FriendlyState(FriendlyStyle.Empty, "Sign in to use Meetings", "Your session ended. Sign in again to see this meeting."); return@Column }
+            MeetingLiveSession.Phase.SignedOut -> { MeetingsState(FriendlyStyle.Empty, "Sign in to use Meetings", "Your session ended. Sign in again to see this meeting."); return@Column }
             MeetingLiveSession.Phase.Ready -> {}
         }
         val platform = live.meeting?.platformName ?: "the call"
@@ -547,7 +547,7 @@ fun MeetingRecapScreen(meeting: Meeting, initialSession: MeetingSession?, onBack
                 when {
                     paid -> PaidPlanCard()
                     loading && session == null -> Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = c.textSecondary) }
-                    error != null && session == null -> FriendlyState(FriendlyStyle.Offline, "Couldn't load the recap", error!!, actionTitle = "Retry", onAction = { scope.launch { load() } })
+                    error != null && session == null -> MeetingsState(FriendlyStyle.Offline, "Couldn't load the recap", error!!, actionTitle = "Retry", onAction = { scope.launch { load() } })
                     session == null -> Text("Gizzi wasn't in this call, so there's no recap.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(top = 16.dp))
                     else -> {
                         val s = session!!
@@ -678,6 +678,18 @@ private fun ArtifactRow(a: MeetingArtifact, onOpen: () -> Unit) {
         Column {
             Text(text, color = c.textPrimary, fontSize = 15.sp)
             if (!detail.isNullOrEmpty()) Text(detail, color = c.textTertiary, fontSize = 12.sp)
+        }
+    }
+}
+
+/** [FriendlyState] with the Meetings icon for each style (the design slot needs one). */
+@Composable
+private fun MeetingsState(style: FriendlyStyle, title: String, message: String, actionTitle: String? = null, onAction: (() -> Unit)? = null) {
+    FriendlyState(style, title, message, actionTitle = actionTitle, onAction = onAction) {
+        val c = AllternitTheme.colors
+        when (style) {
+            FriendlyStyle.Empty -> Icon(painterResource(DesignR.drawable.ph_calendar_blank), null, tint = c.accentPrimary, modifier = Modifier.size(28.dp))
+            else -> Icon(painterResource(DesignR.drawable.ph_warning), null, tint = c.textSecondary, modifier = Modifier.size(28.dp))
         }
     }
 }

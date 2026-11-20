@@ -207,10 +207,10 @@ internal class DriveCache(val root: File) {
 
     fun partFile(cid: String, iid: String, rev: String) = File(content, key(cid, iid, rev) + ".part")
 
-    @Synchronized
     /** Content keys of files kept on this phone (FilesPins); [trim] never deletes them. Set by FilesDrive. */
     @Volatile var keptKeys: () -> Set<String> = { emptySet() }
 
+    @Synchronized
     fun trim(cap: Long = CONTENT_CAP_BYTES) {
         val files = content.listFiles { f -> !f.name.endsWith(".rev") && !f.name.endsWith(".tmp") }?.toMutableList() ?: return
         var total = files.sumOf { it.length() }

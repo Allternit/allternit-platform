@@ -46,6 +46,7 @@ dependencies {
     // LibraryNet (the /api/v1 routes) and the JSON helpers.
     implementation(project(":feature:artifacts"))
     implementation(project(":core:auth"))
+    implementation(libs.activity.compose)
     // Wave H1: Billing (Google Play Billing, the store pieces, the account plan state).
     implementation(project(":feature:billing"))
     // Wave I1: Settings > Notifications registers this phone for push after the permission.
