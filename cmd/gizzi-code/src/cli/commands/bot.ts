@@ -137,11 +137,9 @@ export function runtimeOrThrow(id: string): RuntimeEntry {
  * registry rule (`fits`), a CLI's own provider id (claude-cli/…, codex-cli/…)
  * fits the runtime built on that CLI.
  */
+/** Kept as a name for callers; the rule lives in the registry's `fits`. */
 export function brainFits(r: RuntimeEntry, provider: string): boolean {
-  if (fits(r, provider)) return true
-  if (!r.tool) return false
-  const tool = CLI_CATALOG.find((t) => t.id === r.tool)
-  return provider === r.tool || (r.aliases ?? []).includes(provider) || (tool?.aliases ?? []).includes(provider)
+  return fits(r, provider)
 }
 
 /** The first brain that fits a vendor-locked runtime: its CLI's default model. */
