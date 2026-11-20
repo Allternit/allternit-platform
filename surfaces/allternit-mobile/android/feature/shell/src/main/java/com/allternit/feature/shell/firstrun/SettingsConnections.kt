@@ -61,13 +61,14 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiConfig
 import com.allternit.core.design.AllternitTheme
 import com.allternit.feature.chat.RuntimeRelay
+import com.allternit.feature.settings.SettingsPrefs
 import com.allternit.feature.shell.MenuRow
 import com.allternit.feature.shell.ShellApi
 import kotlinx.coroutines.launch
 import com.allternit.core.design.R as DesignR
 
 /** iOS ConnGroup: the order, the title and the one-line blurb of each Settings > Connections group. */
-private val CONNECTION_GROUPS = listOf(
+internal val CONNECTION_GROUPS = listOf(
     Triple("brains", "Brains", "The AI that thinks. Use a plan you already pay for, or ours."),
     Triple("computers", "Computers", "Only needed when Allternit should click and type in apps for you."),
     Triple("phones", "Phones", "Talk to Allternit from your phone, and let it use your phone."),
@@ -100,6 +101,7 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
     var query by remember { mutableStateOf("") }
     var searchOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    var browse by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(ConnStatus.All) }
     var layout by remember { mutableStateOf(LibraryLayout.load(context, LAYOUT_KEY, LibraryLayout.List)) }
     LaunchedEffect(Unit) {
@@ -196,10 +198,13 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
         ConnectionCard(e, store, t, onConnect = { connect(e.id) }, onFallback = ::fallback, modifier = modifier)
     }
 
-    // Layout changes crossfade; with the system animator scale at 0 they snap (same check as ThinkingOrb).
+    // Layout changes crossfade; they snap with the system animator scale at 0 (same check as ThinkingOrb)
+    // or the in-app Reduce motion switch (Settings > Reduce motion) on.
     val reduceMotion = remember(context) {
-        runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
+        runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false) ||
+            runCatching { SettingsPrefs.reduceMotion(context) }.getOrDefault(false)
     }
+    val connector = rememberMoreConnector(store, onSheet = { sheet = it }, onMessage = { message = it })
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
 
     @Composable
@@ -228,6 +233,7 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary).statusBarsPadding().navigationBarsPadding().testTag("settingsConnections")) {
         // One glass toolbar (approved List/Grid/Deck design): search and the menu in the trailing capsule.
         LibraryHeader(
@@ -301,9 +307,16 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
                         }
                     }
                 }
+                // The More tile and panel close each group (only without a search or status filter).
+                if (query.isBlank() && status == ConnStatus.All) {
+                    MoreSection(group, title, store, layout, connector, onFallback = ::fallback, onBrowse = { browse = true })
+                }
             }
         }
     }
+    if (browse) ConnectionsBrowseScreen(store, connector, onFallback = ::fallback, onBack = { browse = false })
+    }
+    MoreConnectorDialog(connector)
 
     if (menuOpen) {
         LibrarySheet("Connections", "connectionsMenuSheet", onDismiss = { menuOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { menuOpen = false }) {
@@ -314,8 +327,7 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
                     MenuRow(null, "${s.label} ${counts[s] ?: 0}", checked = status == s, testTag = "connectionsStatus${s.name}") { status = s; menuOpen = false }
                 }
                 FilterLabel("More")
-                // The More catalog panel is the next step; this opens search for now.
-                MenuRow(DesignR.drawable.ph_magnifying_glass, "Find more connections", testTag = "connectionsFindMore") { menuOpen = false; searchOpen = true }
+                MenuRow(DesignR.drawable.ph_magnifying_glass, "Find more connections", testTag = "connectionsFindMore") { menuOpen = false; browse = true }
             }
         }
     }
