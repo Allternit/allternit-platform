@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.allternit.core.api.ApiResult
+import com.allternit.core.design.AppLogo
+import androidx.compose.ui.Alignment
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
 import com.allternit.feature.artifacts.LibraryNet
@@ -252,8 +254,13 @@ internal fun AciMcpAppsView(host: AciHost) {
                         !model.loaded -> AciStateCard("Loading…", "Reading your connected apps.")
                         list.isEmpty() -> AciStateCard("No apps yet", "Find one in Discover, or add one by its address.", "Open Discover", { tab = McpTab.Discover })
                         else -> list.forEach { app ->
-                            AciListRow(app.name, listOfNotNull(app.host, if (app.connected) "Connected" else "Needs sign-in", MCP_MODES.firstOrNull { it.first == app.permissionMode }?.second).joinToString(" · "),
-                                null, "aciMcpInstalled-${app.appId}") { selected = app }
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                AppLogo(app.name, id = app.logoKey ?: app.appId, size = 40.dp)
+                                Box(Modifier.weight(1f)) {
+                                    AciListRow(app.name, listOfNotNull(app.host, if (app.connected) "Connected" else "Needs sign-in", MCP_MODES.firstOrNull { it.first == app.permissionMode }?.second).joinToString(" · "),
+                                        null, "aciMcpInstalled-${app.appId}") { selected = app }
+                                }
+                            }
                             if (!app.connected && app.connectorId.isNotEmpty()) {
                                 AciPillButton("Reconnect", "aciMcpReconnect-${app.appId}", "Reconnect ${app.name}") { scope.launch { model.signIn = model.startOAuth(app.connectorId) } }
                             }

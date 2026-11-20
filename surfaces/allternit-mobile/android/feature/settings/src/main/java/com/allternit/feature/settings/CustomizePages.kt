@@ -296,7 +296,7 @@ internal fun ConnectorsBody(query: String, onlyConnected: Boolean) {
                 val connected = c["connection"].obj.str("status") == "connected"
                 val account = c["connection"].obj.str("account")
                 if (i > 0) SDivider()
-                SRow(c.str("name") ?: id, "connector_$id", detail = listOfNotNull(c.str("description"), account).joinToString(" · ").ifBlank { null }, chevron = false,
+                SRow(c.str("name") ?: id, "connector_$id", detail = listOfNotNull(c.str("description"), account).joinToString(" · ").ifBlank { null }, chevron = false, logoName = c.str("name") ?: id, logoId = c.str("logo") ?: id,
                     enabled = busy == null && (connected || c.bool("connectable") != false),
                     onClick = { if (connected) confirm = id else if (c.str("auth_type") == "api_key") keyFor = id else connect(id, null) },
                     trailing = { androidx.compose.material3.Text(if (busy == id) "..." else if (connected) "Connected" else "Connect", color = com.allternit.core.design.AllternitTheme.colors.textSecondary, fontSize = 14.sp) })

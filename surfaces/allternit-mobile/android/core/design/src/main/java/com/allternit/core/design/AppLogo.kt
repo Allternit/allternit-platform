@@ -41,6 +41,16 @@ object AppLogoCatalog {
 
     fun key(value: String): String = value.lowercase().replace(fold, "_").trim('_')
 
+    /** Model-provider ids whose logo file is named differently. */
+    private val providerAlias = mapOf(
+        "google" to "google", "gemini" to "googlegemini", "moonshot" to "moonshot", "kimi" to "kimi",
+        "local-brain" to "ollama", "allternit-sidecar" to "allternit", "omlx" to "ollama",
+        "copilot" to "githubcopilot", "z-ai" to "zai", "z.ai" to "zai",
+    )
+
+    /** The logo key for a provider or brain id (anthropic, openai, deepseek, zai, copilot and so on). */
+    fun providerKey(pid: String): String = providerAlias[pid.lowercase()] ?: key(pid)
+
     /** `mcp.airtable.com` becomes `airtable`. */
     fun siteHost(url: String?): String? {
         val host = url?.let { runCatching { java.net.URI(it).host }.getOrNull() }?.lowercase() ?: return null

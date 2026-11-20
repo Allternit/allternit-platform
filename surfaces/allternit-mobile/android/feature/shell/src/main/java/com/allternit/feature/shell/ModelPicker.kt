@@ -294,15 +294,15 @@ private fun OverviewCard(title: String, detail: String, active: Boolean, testTag
 @Composable
 private fun ProviderMark(pid: String, size: Dp) {
     val c = AllternitTheme.colors
+    if (pid != "allternit") {
+        com.allternit.core.design.AppLogo(ModelProviderNames.name(pid), id = com.allternit.core.design.AppLogoCatalog.providerKey(pid), size = size)
+        return
+    }
     Box(
         Modifier.size(size).clip(RoundedCornerShape(size * 0.28f)).background(c.fillNeutral),
         contentAlignment = Alignment.Center,
     ) {
-        if (pid == "allternit") {
-            MatrixLogo(size = size * 0.84f)
-        } else {
-            Text(ModelProviderNames.mark(pid), color = c.textPrimary, fontSize = (size.value * 0.55f).sp, fontWeight = FontWeight.SemiBold)
-        }
+        MatrixLogo(size = size * 0.84f)
     }
 }
 

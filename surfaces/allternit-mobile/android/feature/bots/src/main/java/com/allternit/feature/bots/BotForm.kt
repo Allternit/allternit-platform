@@ -642,10 +642,13 @@ fun VendorConnectSheet(offerMain: Boolean, onDismiss: () -> Unit, onConnected: (
                 else -> {
                     RowGroup {
                         list.forEachIndexed { i, prod ->
-                            Column(Modifier.fillMaxWidth().testTag("vendor${prod.product}").clickable { open = prod }.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Row(Modifier.fillMaxWidth().testTag("vendor${prod.product}").clickable { open = prod }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            com.allternit.core.design.AppLogo(prod.name, id = prod.product, size = 40.dp)
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(prod.name, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                                 Text(prod.offers, color = c.textSecondary, fontSize = 12.5.sp, maxLines = 2)
                                 Text(if (prod.connected) "Connected · ${prod.bots.size} bot${if (prod.bots.size == 1) "" else "s"}" else prod.signInText, color = c.textTertiary, fontSize = 12.sp)
+                            }
                             }
                             if (i < list.lastIndex) Hairline()
                         }
