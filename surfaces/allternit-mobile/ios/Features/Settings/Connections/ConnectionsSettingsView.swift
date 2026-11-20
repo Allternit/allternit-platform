@@ -65,40 +65,30 @@ struct ConnectionsSettingsView: View {
     @State private var page: ConnPage?
     @State private var showConnectors = false
     @State private var showChannels = false
-    @State private var filter: Filter = .all
+    @State private var status: ConnStatusFilter = .all
     @State private var query = ""
+    @State private var isSearching = false
+    @AppStorage("connections.layout") private var layoutRaw = OverviewLayout.list.rawValue
+    @Environment(\.dismiss) private var dismiss
     @State private var actionError: String?
     @State private var confirmUnlink = false
     @Environment(\.openURL) private var openURL
 
-    enum Filter: String, CaseIterable { case all, on, needs }
+    /// The chosen layout. Grid and Deck cards arrive in step 15; until then
+    /// every layout renders the list.
+    private var layout: OverviewLayout { OverviewLayout(stored: layoutRaw) ?? .list }
 
     var body: some View {
-        PhoneSettingsPage(title: "Connections") {
-            SettingsDescription(text: "Everything Allternit uses, in one place. Each one connects the same way and shows the same status.")
-            if let loadError = store.loadError {
-                SettingsErrorBanner(message: "Couldn't load your connections. \(loadError)")
+        VStack(spacing: 0) {
+            header
+            if isSearching || !query.isEmpty {
+                ProjectsSearchField(query: $query, placeholder: "Search connections")
             }
-            if let actionError {
-                SettingsErrorBanner(message: actionError)
-            }
-            needsBanner
-            filterBar
-            if !store.loaded && store.isLoading {
-                HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 24)
-            }
-            ForEach(ConnGroup.allCases, id: \.self) { group in
-                groupSection(group)
-            }
-            if visible.isEmpty {
-                Text(query.isEmpty ? "Nothing here yet." : "Nothing matches “\(query)”.")
-                    .font(.system(size: 14))
-                    .foregroundColor(Color("TextSecondary"))
-                    .padding(.top, 12)
-            }
+            page
         }
-        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search connections")
-        .refreshable { await store.load() }
+        .background(Color("BgPrimary").ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
+        .background(KeepsSwipeBack())
         .task { await store.load() }
         .sheet(item: $sheet, onDismiss: { Task { await store.load() } }) { s in
             ConnectSheetView(sheet: s, store: store, onFallback: { f in handleFallback(f) })
@@ -118,15 +108,71 @@ struct ConnectionsSettingsView: View {
         .accessibilityIdentifier("connections-page")
     }
 
+    // MARK: - Header
+
+    private var header: some View {
+        ZStack {
+            Text("Connections")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .accessibilityAddTraits(.isHeader)
+            HStack {
+                CodeGlassRoundButton(icon: "chevron.left", label: "Back") { dismiss() }
+                Spacer()
+                ProjectsPill(
+                    searching: $isSearching,
+                    filtersActive: status != .all || !needs.isEmpty,
+                    searchLabel: "Search connections",
+                    dotColor: needs.isEmpty ? nil : Color(hex: "#E8A33A"),
+                    filterLabel: needs.isEmpty ? "Filter and layout" : "Filter and layout, something needs you"
+                ) {
+                    ConnectionsFilterPopover(
+                        layoutRaw: $layoutRaw,
+                        status: $status,
+                        counts: ConnStatusCounts(states: listed.map { store.state($0.id) }),
+                        onFindMore: { showConnectors = true }
+                    )
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+    }
+
+    private var page: some View {
+        PhoneSettingsPage(title: "Connections") {
+            SettingsDescription(text: "Everything Allternit uses, in one place. Each one connects the same way and shows the same status.")
+            if let loadError = store.loadError {
+                SettingsErrorBanner(message: "Couldn't load your connections. \(loadError)")
+            }
+            if let actionError {
+                SettingsErrorBanner(message: actionError)
+            }
+            if status != .all {
+                statusChip
+            }
+            if !store.loaded && store.isLoading {
+                HStack { Spacer(); ProgressView(); Spacer() }.padding(.vertical, 24)
+            }
+            ForEach(ConnGroup.allCases, id: \.self) { group in
+                groupSection(group)
+            }
+            if visible.isEmpty {
+                Text(query.isEmpty && status == .all ? "Nothing here yet." : query.isEmpty ? "Nothing is \(status.label.lowercased())." : "Nothing matches “\(query)”.")
+                    .font(.system(size: 14))
+                    .foregroundColor(Color("TextSecondary"))
+                    .padding(.top, 12)
+            }
+        }
+        .refreshable { await store.load() }
+    }
+
     // MARK: - Filtering
 
     private var visible: [ConnEntry] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         return ConnectionsCatalog.entries.filter { e in
-            guard store.isListed(e.id) else { return false }
-            let s = store.state(e.id)
-            if filter == .on && s != .on { return false }
-            if filter == .needs && s != .needs { return false }
+            guard store.isListed(e.id), status.matches(store.state(e.id)) else { return false }
             return q.isEmpty || e.name.lowercased().contains(q) || (e.blurb ?? "").lowercased().contains(q)
                 || e.group.title.lowercased().contains(q)
         }
@@ -134,34 +180,29 @@ struct ConnectionsSettingsView: View {
 
     private var needs: [ConnEntry] { ConnectionsCatalog.entries.filter { store.isListed($0.id) && store.state($0.id) == .needs } }
 
-    @ViewBuilder
-    private var needsBanner: some View {
-        let needs = needs
-        if !needs.isEmpty {
-            HStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundColor(Color(hex: "#E8A33A")).accessibilityHidden(true)
-                Text("\(needs.count) needs you: " + needs.map { "\($0.name) · \(store.row($0.id).reason ?? ConnectionsCatalog.reasonText(store.row($0.id).reasonCode, name: $0.name) ?? "")" }.joined(separator: ", "))
-                    .font(.system(size: 13.5))
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button("Fix") { act(needs[0], .fix) }.buttonStyle(ConnPrimaryButtonStyle())
-            }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color("FillNeutral")))
-            .padding(.bottom, 12)
-            .accessibilityElement(children: .contain)
-        }
-    }
+    private var listed: [ConnEntry] { ConnectionsCatalog.entries.filter { store.isListed($0.id) } }
 
-    private var filterBar: some View {
-        let count = needs.count
-        return Picker("Show", selection: $filter) {
-            Text("All").tag(Filter.all)
-            Text("Connected").tag(Filter.on)
-            Text(count > 0 ? "Needs you (\(count))" : "Needs you").tag(Filter.needs)
+    /// The removable chip shown while a status filter is on.
+    private var statusChip: some View {
+        HStack {
+            Button {
+                Haptics.light()
+                status = .all
+            } label: {
+                HStack(spacing: 6) {
+                    Text(status.label).font(.system(size: 13.5, weight: .medium))
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(Color("TextPrimary"))
+                .padding(.horizontal, 12)
+                .frame(minHeight: 32)
+                .background(Capsule().fill(Color("FillNeutral")))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Showing \(status.label). Remove filter")
+            Spacer()
         }
-        .pickerStyle(.segmented)
-        .padding(.bottom, 4)
+        .padding(.top, 8)
     }
 
     // MARK: - Groups
