@@ -1,6 +1,21 @@
 package com.allternit.feature.shell.firstrun
 
 import androidx.compose.foundation.background
+import android.provider.Settings
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -143,27 +158,73 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
         }
     }
 
+    fun disconnect(e: ConnEntry) {
+        scope.launch {
+            runCatching { ConnectionsClient.disconnect(e.id, store.target(e.id)) }
+                .onFailure { message = ConnectionsClient.describe(it) }
+            store.load(relay)
+        }
+    }
+
+    fun isOn(e: ConnEntry) = store.state(e.id) == ConnState.On && e.way != ConnWay.Included
+
+    /** The Brains sub-sections in List order; Grid and Deck show the same order flat. */
+    fun brainSections(rows: List<ConnEntry>) = listOf(
+        "Works on any device" to rows.filter { it.runsOn != ConnRunsOn.Computer && store.isAvailable(it.id) },
+        "Needs your computer" to rows.filter { it.runsOn == ConnRunsOn.Computer },
+        "Coming soon" to rows.filter { it.runsOn != ConnRunsOn.Computer && !store.isAvailable(it.id) },
+    ).filter { it.second.isNotEmpty() }
+
     @Composable
     fun RowList(rows: List<ConnEntry>) {
         rows.forEachIndexed { i, e ->
             if (i > 0) HorizontalDivider(thickness = 0.5.dp, color = c.line)
-            val on = store.state(e.id) == ConnState.On && e.way != ConnWay.Included
             ConnectionRow(
                 entry = e,
                 store = store,
                 tag = null,
-                trailing = if (on) ({
-                    SetupQuietButton("Disconnect") {
-                        scope.launch {
-                            runCatching { ConnectionsClient.disconnect(e.id, store.target(e.id)) }
-                                .onFailure { message = ConnectionsClient.describe(it) }
-                            store.load(relay)
-                        }
-                    }
-                }) else null,
+                trailing = if (isOn(e)) ({ SetupQuietButton("Disconnect") { disconnect(e) } }) else null,
                 onConnect = { connect(e.id) },
                 onFallback = ::fallback,
             )
+        }
+    }
+
+    @Composable
+    fun CardFor(e: ConnEntry, modifier: Modifier) {
+        val t: (@Composable (Modifier) -> Unit)? = if (isOn(e)) { m -> SetupQuietButton("Disconnect", m) { disconnect(e) } } else null
+        ConnectionCard(e, store, t, onConnect = { connect(e.id) }, onFallback = ::fallback, modifier = modifier)
+    }
+
+    // Layout changes crossfade; with the system animator scale at 0 they snap (same check as ThinkingOrb).
+    val reduceMotion = remember(context) {
+        runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
+    }
+    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
+
+    @Composable
+    fun CardLayout(rows: List<ConnEntry>, deck: Boolean) {
+        val cards = rows.filter { it.id != "claude-org" }
+        val wide = rows.filter { it.id == "claude-org" }
+        Column(Modifier.fillMaxWidth().testTag(if (deck) "connectionsDeck" else "connectionsGrid"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (deck) {
+                val listState = rememberLazyListState()
+                LazyRow(
+                    state = listState,
+                    flingBehavior = rememberSnapFlingBehavior(listState),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(cards, key = { it.id }) { e -> CardFor(e, Modifier.width(screenWidth * 0.78f).fillMaxHeight()) }
+                }
+            } else {
+                cards.chunked(2).forEach { pair ->
+                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        pair.forEach { e -> CardFor(e, Modifier.weight(1f).fillMaxHeight()) }
+                        if (pair.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+            if (wide.isNotEmpty()) Column(Modifier.fillMaxWidth().background(c.card, RoundedCornerShape(12.dp))) { RowList(wide) }
         }
     }
 
@@ -199,20 +260,6 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
             if (store.loadError != null) Text(store.loadError ?: "", color = c.errFg, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp).testTag("connectionsError"))
             message?.let { Text(it, color = c.sub, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp)) }
-            if (needs.isNotEmpty() && status == ConnStatus.All && query.isBlank()) {
-                Row(
-                    Modifier.padding(top = 8.dp).fillMaxWidth().background(c.card, RoundedCornerShape(14.dp)).padding(12.dp).testTag("connectionsNeedsBanner"),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Box(Modifier.size(8.dp).background(AMBER, CircleShape))
-                    Text(
-                        "${needs.size} needs you: " + needs.joinToString(", ") { n -> n.name + store.row(n.id).reason?.let { " · $it" }.orEmpty() },
-                        color = AllternitTheme.colors.textPrimary, fontSize = 13.5.sp, modifier = Modifier.weight(1f),
-                    )
-                    SetupPrimaryButton("Fix") { connect(needs[0].id) }
-                }
-            }
-            // Grid and Deck cards are the next step; every layout reads as the list until then.
             for ((group, title, blurb) in CONNECTION_GROUPS) {
                 val rows = shown(group)
                 if (rows.isEmpty()) continue
@@ -233,22 +280,25 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
                         SetupPrimaryButton("Add a computer") { sheet = ConnSheet.OnComputer("this-mac") }
                     }
                 } else {
-                    Column(Modifier.fillMaxWidth().background(c.card, RoundedCornerShape(12.dp)).testTag("connectionsGroup_$group")) {
-                        if (group == "brains") {
-                            val sections = listOf(
-                                "Works on any device" to rows.filter { it.runsOn != ConnRunsOn.Computer && store.isAvailable(it.id) },
-                                "Needs your computer" to rows.filter { it.runsOn == ConnRunsOn.Computer },
-                                "Coming soon" to rows.filter { it.runsOn != ConnRunsOn.Computer && !store.isAvailable(it.id) },
-                            ).filter { it.second.isNotEmpty() }
-                            sections.forEachIndexed { si, (name, list) ->
-                                if (si > 0) HorizontalDivider(thickness = 0.5.dp, color = c.line)
-                                Text(
-                                    name.uppercase(), color = c.mut, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp,
-                                    modifier = Modifier.fillMaxWidth().background(AllternitTheme.colors.textPrimary.copy(alpha = 0.03f)).padding(horizontal = 16.dp, vertical = 6.dp),
-                                )
-                                RowList(list)
+                    Crossfade(layout, animationSpec = if (reduceMotion) snap() else tween(180), label = "connectionsLayout") { lay ->
+                        if (lay == LibraryLayout.List) {
+                            Column(Modifier.fillMaxWidth().background(c.card, RoundedCornerShape(12.dp)).testTag("connectionsGroup_$group")) {
+                                if (group == "brains") {
+                                    brainSections(rows).forEachIndexed { si, (name, list) ->
+                                        if (si > 0) HorizontalDivider(thickness = 0.5.dp, color = c.line)
+                                        Text(
+                                            name.uppercase(), color = c.mut, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp,
+                                            modifier = Modifier.fillMaxWidth().background(AllternitTheme.colors.textPrimary.copy(alpha = 0.03f)).padding(horizontal = 16.dp, vertical = 6.dp),
+                                        )
+                                        RowList(list)
+                                    }
+                                } else RowList(rows)
                             }
-                        } else RowList(rows)
+                        } else {
+                            Column(Modifier.testTag("connectionsGroup_$group")) {
+                                CardLayout(if (group == "brains") brainSections(rows).flatMap { it.second } else rows, deck = lay == LibraryLayout.Deck)
+                            }
+                        }
                     }
                 }
             }
