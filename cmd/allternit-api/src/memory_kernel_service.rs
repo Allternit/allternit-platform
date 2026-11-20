@@ -299,6 +299,12 @@ pub fn record_observation(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![id, user_id, agent_id, session_id, kind, content, source],
     )?;
+    // Sleep stage `intentions`: fire and capture reminders on a user turn.
+    if kind == "turn_user" {
+        if let Err(e) = crate::sleep::intentions::on_turn(&conn, user_id, &id, content, chrono::Utc::now()) {
+            tracing::debug!("sleep intentions skipped: {e}");
+        }
+    }
 
     Ok(id)
 }

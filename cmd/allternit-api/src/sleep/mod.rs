@@ -20,6 +20,8 @@
 //! - [`arbiter`]: the deterministic pick by scope, credence, recency, goal
 //!   and stakes, or `needs_user` (6.1).
 //! - [`checks`]: spaced checks, the bounded check set and the tether ladder (6.3).
+//! - [`intentions`]: prospective memory: reminders captured from user turns,
+//!   fired by cue or due time, delivered once through context (6.4).
 //! - [`routes`]: `/api/v1/memory/sleep/...` and `/api/v1/memory/disputes...`.
 //!
 //! The module stays self-contained (D1) so it can become its own crate when
@@ -32,6 +34,7 @@ pub mod config;
 pub mod cycle;
 pub mod disputes;
 pub mod fit;
+pub mod intentions;
 pub mod queue;
 pub mod report;
 pub mod routes;
