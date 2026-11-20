@@ -28,7 +28,8 @@ Print one snapshot: `cargo run -p host-probe --example snapshot`.
 
 ## Rules
 
-- Read-only. Nothing here changes the host or needs root.
+- Read-only, except the `actions` module (below). Nothing else changes the
+  host or needs root.
 - Linux, macOS and Windows code sits behind `cfg(target_os = ...)`. Any other
   OS gets `ProbeError::Unsupported`, never a panic.
 - Pure parsing (os-release, primary disk, rates, mount filter) is separate
@@ -44,7 +45,7 @@ Each wave-1 step adds a module and keeps this crate a library:
 | `ports` | `GET /v1/host/ports` | listening sockets, owning process, exposure (built, see below) |
 | `updates` | `GET /v1/host/updates` | apt, dnf, softwareupdate, Windows Update (built, see below) |
 | `logs` | `GET /v1/host/logs/stream` | log lines masked before they leave the machine (built, see below) |
-| `actions` | `POST /v1/host/actions` | the fixed action list; needs an approval id, records a change and its undo; the only part that writes |
+| `actions` | `POST /v1/host/actions` | the fixed action list; needs an approval id, records a change and its undo; the only part that writes (built, see below) |
 | `findings` | `GET /v1/host/findings` | rules over the above (disk, failed service, security updates, exposed port) |
 
 allternit-api mounts the routes; this crate holds no HTTP code.
@@ -174,3 +175,40 @@ Dropping a `LogStream` kills the child process and stops the threads.
   Retention is a cloud setting and is off by default.
 - Masking is best effort on free text. It is table-tested in
   `fixtures/logs/mask-cases.txt`; add a row there for any new leak.
+
+## Actions (`actions` and `changes` modules)
+
+`POST /v1/host/actions` body `{ type, target, approval_id }` (`approvalId` is
+accepted too; optional `restorePoint`), answer `{ changeId, undo?, note? }`.
+
+```rust
+let engine = host_probe::ActionEngine::system(); // real host, store in the runtime home
+let res = engine.run(&req)?;                     // blocking: use spawn_blocking
+```
+
+| `type` | `target` | Runs | Undo |
+|---|---|---|---|
+| `service.start` / `stop` / `restart` | unit or unique name from `services` | `systemctl`, `supervisorctl`, `docker`, `launchctl start/stop`, `net start/stop` | start ↔ stop; restart is not undoable |
+| `port.free` | port number | stops the owning service if `services` knows it, else `kill -TERM` / `taskkill /T /F` | `service.start` when a service held it; a killed process is not undoable |
+| `updates.install` | update id or `all-security` | `apt-get install --only-upgrade`, `dnf upgrade`, `softwareupdate --install`, Windows Update COM by KB | not undoable (the restore point is the way back) |
+| `space.clean` | `apt-cache`, `dnf-cache`, `journal-vacuum`, `docker-prune`, `brew-cleanup` (`clean_items()`) | fixed command per item | not undoable |
+| `snippet.run` | saved snippet id (`<store>/snippets/<id>.json`) | `sh -c` / PowerShell `-Command` with the snippet's script | not undoable |
+
+Order of work: unknown `type` → 400; missing, malformed or refused approval →
+403 and nothing runs; target looked up through `services` / `ports` /
+`updates` (only names the host reported reach a command line, no shell) →
+400/404; needs root/admin without it → `needs_elevation` (403) before
+anything runs, approval kept for after the elevation setup; then the approval
+is claimed (single use), the change record is written as `pending`, the
+commands run, and the record gets the result, masked output, the state read
+back after, and the undo or a plain "Not undoable: ..." note. A permission
+error at run time is also `needs_elevation` and gives the approval back. The
+probe never stops the process serving it (409 `refused`). An undo is itself
+an action and needs its own approval. `ActionError::http_status()` and
+`body()` give the route its answer.
+
+Change records are JSON files under `~/.allternit/host-probe/changes/`
+(override with `ALLTERNIT_HOST_PROBE_DIR`); no database. `ChangeStore::list`
+feeds the Activity tab. `ApprovalVerifier` lets the mounting runtime add a
+signature check; the default accepts any well-formed id. Tests use a fake
+`Executor`; no real command runs in tests.

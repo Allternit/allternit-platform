@@ -11,4 +11,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
+dirs = { workspace = true }
+uuid = { workspace = true }
 sysinfo = "0.30"
