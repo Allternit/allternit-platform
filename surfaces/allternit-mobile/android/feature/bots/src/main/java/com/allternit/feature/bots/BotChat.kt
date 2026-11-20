@@ -213,7 +213,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                         BotStatusAvatar(bot, 28.dp, working = live.third && !live.second, waiting = live.second)
                     }
                     Column(Modifier.clickable(onClickLabel = "Open the bot page") { deck = DeckTab.Bot }.testTag("botChip")) {
-                        Text(bot.displayName, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        com.allternit.core.design.BotNameText(bot.displayName, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             if (live.third) Dot(if (live.second) AllternitStatic.StatusWarning else AllternitStatic.StatusSuccess, 6.dp)
                             Text(live.first, color = c.textSecondary, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))

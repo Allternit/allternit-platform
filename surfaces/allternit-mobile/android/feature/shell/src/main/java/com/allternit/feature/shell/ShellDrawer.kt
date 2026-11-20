@@ -1,5 +1,8 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.design.GizziCodeWordmark
+import com.allternit.core.design.PixelWordmark
+import com.allternit.core.design.MatrixLogo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi

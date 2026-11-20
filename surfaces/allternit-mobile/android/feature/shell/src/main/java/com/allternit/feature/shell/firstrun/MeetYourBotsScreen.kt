@@ -710,7 +710,7 @@ private fun Pick(label: String, selected: Boolean, onClick: () -> Unit, tile: @C
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box(Modifier.border(if (selected) 2.dp else 0.dp, if (selected) c.ink else Color.Transparent, RoundedCornerShape(16.dp)).padding(3.dp)) { tile() }
-        Text(label, fontSize = 11.5.sp, color = if (selected) c.ink else c.sub, maxLines = 1)
+        com.allternit.core.design.BotNameText(label, fontSize = 11.5.sp, color = if (selected) c.ink else c.sub, maxLines = 1)
     }
 }
 

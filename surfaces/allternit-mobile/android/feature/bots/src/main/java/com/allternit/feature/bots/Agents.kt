@@ -173,7 +173,7 @@ private fun AgentGroup(list: List<BotRecord>, store: BotModeStore, nav: BotNavig
                 BotAvatar(a, 34.dp)
                 Column(Modifier.weight(1f)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(a.displayName, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                        com.allternit.core.design.BotNameText(a.displayName, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                         if (a.isPrimary) Text("PRIMARY", color = c.textTertiary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                     }
                     val parent = a.parentAgentId?.let { store.bot(it)?.displayName }
@@ -206,7 +206,7 @@ internal fun AgentDetailView(bot: BotRecord, store: BotModeStore, nav: BotNaviga
         Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             BotAvatar(bot, 52.dp)
             Column(Modifier.weight(1f)) {
-                Text(bot.displayName, color = c.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                com.allternit.core.design.BotNameText(bot.displayName, color = c.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 Text(bot.tagline, color = c.textSecondary, fontSize = 13.sp, maxLines = 2)
             }
         }

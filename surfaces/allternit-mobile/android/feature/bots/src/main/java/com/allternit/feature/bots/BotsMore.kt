@@ -517,7 +517,7 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         BotAvatar(b, 44.dp)
-                        Text(b.displayName, color = c.textSecondary, fontSize = 12.sp, maxLines = 1)
+                        com.allternit.core.design.BotNameText(b.displayName, color = c.textSecondary, fontSize = 12.sp, maxLines = 1)
                     }
                 }
                 Column(Modifier.clip(RoundedCornerShape(12.dp)).testTag("botProjectAddBot").clickable { nav.open(BotRoute.Hub) }.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -604,7 +604,7 @@ internal fun BotProjectThreadPage(thread: BotThread, store: BotModeStore, nav: B
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 bot?.let { BotAvatar(it, 40.dp, live = true) }
                 Column {
-                    Text(bot?.displayName ?: "Bot", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    com.allternit.core.design.BotNameText(bot?.displayName ?: "Bot", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     Text(BotThreadGroup.of(current.group).title, color = groupColor(BotThreadGroup.of(current.group)), fontSize = 12.5.sp)
                 }
             }

@@ -92,7 +92,7 @@ internal fun BotPageView(bot: BotRecord, store: BotModeStore, nav: BotNavigator,
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             BotAvatar(bot, 92.dp, live = true)
-            Text(bot.displayName, color = c.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            com.allternit.core.design.BotNameText(bot.displayName, color = c.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
             val role = listOfNotNull(bot.tagline, bot.modelShort).filter { it.isNotEmpty() }.joinToString(" · ")
             if (role.isNotEmpty()) Text(role, color = c.textSecondary, fontSize = 13.sp, textAlign = TextAlign.Center)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {

@@ -1,5 +1,6 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.design.MatrixLogo
 import android.content.Context
 import android.content.Intent
 import android.net.Uri

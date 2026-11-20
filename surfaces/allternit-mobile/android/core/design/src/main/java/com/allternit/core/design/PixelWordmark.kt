@@ -1,4 +1,4 @@
-package com.allternit.feature.shell
+package com.allternit.core.design
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
@@ -13,13 +13,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.allternit.core.design.AllternitTheme
 
 /** The A core block's coral (#D97757), the same on every mark. */
-internal val PixelCoral = Color(0xFFD97757)
+val PixelCoral = Color(0xFFD97757)
 
 /** MatrixLogo.svg's sand blocks (#D4B08C). */
-internal val MatrixSand = Color(0xFFD4B08C)
+val MatrixSand = Color(0xFFD4B08C)
 
 /**
  * The pixel A://TERNIT wordmark with an optional pixel-letter suffix (iOS PixelWordmark,
@@ -27,7 +26,7 @@ internal val MatrixSand = Color(0xFFD4B08C)
  * 10-unit cells with 8.5 blocks and 1.5 corner radius, the A core block in coral.
  */
 @Composable
-internal fun PixelWordmark(height: Dp = 16.dp, suffix: String = "", ink: Color = AllternitTheme.colors.textPrimary, modifier: Modifier = Modifier) {
+fun PixelWordmark(height: Dp = 16.dp, suffix: String = "", ink: Color = AllternitTheme.colors.textPrimary, modifier: Modifier = Modifier) {
     val (letters, cols) = PixelGlyphs.layout("TERNIT $suffix".trim())
     val width = height * (cols.toFloat() / PixelGlyphs.ROWS)
     val label = "Allternit $suffix".trim()
@@ -43,7 +42,7 @@ internal fun PixelWordmark(height: Dp = 16.dp, suffix: String = "", ink: Color =
 
 /** The condensed A:// mark (iOS AProtocolMark): the wordmark's A:// with its coral core, 3:1. */
 @Composable
-internal fun AProtocolMark(height: Dp = 14.dp, ink: Color = AllternitTheme.colors.textPrimary, modifier: Modifier = Modifier) {
+fun AProtocolMark(height: Dp = 14.dp, ink: Color = AllternitTheme.colors.textPrimary, modifier: Modifier = Modifier) {
     Canvas(modifier.size(height * 3, height).semantics { contentDescription = "A://" }) {
         val scale = size.height / (PixelGlyphs.ROWS * PixelGlyphs.CELL)
         PixelGlyphs.markCells.forEach { pixel(it, scale, ink) }
@@ -57,7 +56,7 @@ internal fun AProtocolMark(height: Dp = 14.dp, ink: Color = AllternitTheme.color
  * Phones button draws it in the text colour (iOS AllternitMarkView).
  */
 @Composable
-internal fun MatrixLogo(size: Dp, ink: Color = MatrixSand, modifier: Modifier = Modifier) {
+fun MatrixLogo(size: Dp, ink: Color = MatrixSand, modifier: Modifier = Modifier) {
     Canvas(modifier.size(size)) {
         val s = this.size.width / 100f
         val r = CornerRadius(2f * s, 2f * s)
@@ -74,7 +73,7 @@ internal fun MatrixLogo(size: Dp, ink: Color = MatrixSand, modifier: Modifier = 
  * Gizzi head mark): 10-unit cells, 8.5 blocks.
  */
 @Composable
-internal fun GizziCodeWordmark(height: Dp = 15.dp, ink: Color = AllternitTheme.colors.textPrimary) {
+fun GizziCodeWordmark(height: Dp = 15.dp, ink: Color = AllternitTheme.colors.textPrimary) {
     val rows = PixelGlyphs.gizziCodeRows
     val width = height * (rows[0].length / 5f)
     Canvas(Modifier.size(width, height).semantics { contentDescription = "gizzi code" }) {
@@ -96,7 +95,7 @@ private fun DrawScope.pixel(cell: Pair<Int, Int>, scale: Float, color: Color) {
 }
 
 /** The grid and glyph table, copied from iOS PixelWordmark.swift. */
-internal object PixelGlyphs {
+object PixelGlyphs {
     const val CELL = 10f
     const val BLOCK = 8.5f
     const val ROWS = 5
@@ -149,4 +148,48 @@ internal object PixelGlyphs {
         }
         return cells to (col - 1)
     }
+}
+
+/**
+ * A bot name or sentence with every "A://" drawn as the pixel mark (iOS BotNameText, web
+ * BotName / BotNameText). [fontSize] is the font size the text runs at; the mark is 0.78 of it.
+ */
+@androidx.compose.runtime.Composable
+fun BotNameText(
+    text: String,
+    fontSize: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit(15f, androidx.compose.ui.unit.TextUnitType.Sp),
+    color: Color = AllternitTheme.colors.textPrimary,
+    modifier: Modifier = Modifier,
+    overflow: androidx.compose.ui.text.style.TextOverflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+    fontWeight: androidx.compose.ui.text.font.FontWeight? = null,
+    maxLines: Int = Int.MAX_VALUE,
+) {
+    val parts = text.split("A://")
+    val markHeight = fontSize * 0.78f
+    val annotated = androidx.compose.ui.text.buildAnnotatedString {
+        append(parts[0])
+        parts.drop(1).forEach { part ->
+            appendInlineContent("aprotocol", "A://")
+            append(part)
+        }
+    }
+    val inline = mapOf(
+        "aprotocol" to androidx.compose.foundation.text.InlineTextContent(
+            androidx.compose.ui.text.Placeholder(
+                width = markHeight * 3f,
+                height = markHeight,
+                placeholderVerticalAlign = androidx.compose.ui.text.PlaceholderVerticalAlign.TextCenter,
+            ),
+        ) { AProtocolMark(height = with(androidx.compose.ui.platform.LocalDensity.current) { markHeight.toDp() }, ink = color) },
+    )
+    androidx.compose.material3.Text(
+        annotated,
+        inlineContent = inline,
+        color = color,
+        fontSize = fontSize,
+        fontWeight = fontWeight,
+        maxLines = maxLines,
+        overflow = overflow,
+        modifier = modifier.semantics { contentDescription = text },
+    )
 }

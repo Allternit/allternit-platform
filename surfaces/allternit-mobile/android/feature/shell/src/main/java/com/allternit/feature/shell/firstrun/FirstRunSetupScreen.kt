@@ -242,7 +242,7 @@ private fun SetupRail(
             Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SetupGizzi(30.dp)
                 ThinkingOrb(state = orb, size = ThinkingOrbSize.Inline, label = "A:// is $word")
-                Text("Gizzi + A://", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = c.ink, maxLines = 1)
+                com.allternit.core.design.BotNameText("Gizzi + A://", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = c.ink, maxLines = 1)
                 Row(
                     Modifier.semantics(mergeDescendants = true) { contentDescription = "A:// is $word" },
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),

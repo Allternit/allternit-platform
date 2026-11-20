@@ -59,7 +59,7 @@ internal fun AciDirectoryHero(pool: List<McpEntry>, onOpen: (McpEntry) -> Unit, 
         HorizontalPager(pager) { page ->
             val (col, members) = slides[page]
             Column(Modifier.fillMaxWidth().heightIn(min = 248.dp).padding(start = 24.dp, end = 24.dp, top = 28.dp, bottom = 40.dp)) {
-                Text("A://TERNIT  APPS", color = c.bgPrimary, fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 20.dp))
+                com.allternit.core.design.PixelWordmark(height = 12.dp, suffix = "APPS", ink = c.bgPrimary, modifier = Modifier.padding(bottom = 20.dp))
                 Text("CURATED BY ALLTERNIT", color = c.bgPrimary.copy(alpha = 0.7f), fontSize = 11.sp, fontFamily = FontFamily.Monospace, letterSpacing = 1.3.sp)
                 Text(col.title, color = c.bgPrimary, fontSize = 22.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
                 Text(col.blurb, color = c.bgPrimary.copy(alpha = 0.7f), fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))

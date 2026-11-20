@@ -158,7 +158,7 @@ private fun BotThreadCard(t: BotThread, store: BotModeStore, showsBot: Boolean, 
             val bot = store.bot(t.botId)
             if (showsBot && bot != null) BotStatusAvatar(bot, 22.dp, working = g == BotThreadGroup.Working, waiting = g == BotThreadGroup.Waiting) else Dot(groupColor(g))
             if (status != null) Text(status, color = groupColor(g), fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            if (showsBot && bot != null) Text(bot.displayName, color = c.textTertiary, fontSize = 12.sp, maxLines = 1)
+            if (showsBot && bot != null) com.allternit.core.design.BotNameText(bot.displayName, color = c.textTertiary, fontSize = 12.sp, maxLines = 1)
             androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
             Text(botTimeRelative(t.lastActivityAt), color = c.textTertiary, fontSize = 11.5.sp)
         }

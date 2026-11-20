@@ -1,5 +1,6 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.design.MatrixLogo
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border

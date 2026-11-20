@@ -473,9 +473,9 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
                 ) {
                     if (selected != null) {
                         BotAvatar(selected, 18.dp)
-                        Text(selected.displayName, color = c.textSecondary, fontSize = 12.5.sp, maxLines = 1)
+                        com.allternit.core.design.BotNameText(selected.displayName, color = c.textSecondary, fontSize = 12.5.sp, maxLines = 1)
                         Text("· ${statusOf(selected).word}", color = statusOf(selected).tone(), fontSize = 12.5.sp)
-                    } else Text("$mainName · new project", color = c.textSecondary, fontSize = 12.5.sp)
+                    } else com.allternit.core.design.BotNameText("$mainName · new project", color = c.textSecondary, fontSize = 12.5.sp)
                     Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_down), null, tint = c.textTertiary, modifier = Modifier.size(12.dp))
                 }
                 if (selected != null) Text("×", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.clip(CircleShape).testTag("botsLaunchToClear").clickable { selectedBotId = null }.padding(4.dp))

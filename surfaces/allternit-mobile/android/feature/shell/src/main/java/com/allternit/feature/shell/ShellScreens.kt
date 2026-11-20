@@ -1,5 +1,7 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.design.GizziCodeWordmark
+import com.allternit.core.design.AProtocolMark
 import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
