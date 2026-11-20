@@ -1,0 +1,3 @@
+{"timestamp":"2026-11-20 06:00:00.123456-0600","messageType":"Error","eventMessage":"boom","processImagePath":"/usr/sbin/cfprefsd"}
+{"timestamp":"2026-11-20 06:00:01.000000-0600","messageType":"Default","eventMessage":"hello","processImagePath":"/usr/sbin/cfprefsd"}
+{"timestamp":"2026-11-20 06:00:02.000000-0600","messageType":"Debug","eventMessage":"trace","processImagePath":"/usr/sbin/cfprefsd"}

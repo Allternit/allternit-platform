@@ -43,7 +43,7 @@ Each wave-1 step adds a module and keeps this crate a library:
 | `services` | `GET /v1/host/services` | systemd, supervisord, docker, launchd, Windows SCM (built, see below) |
 | `ports` | `GET /v1/host/ports` | listening sockets, owning process, exposure (built, see below) |
 | `updates` | `GET /v1/host/updates` | apt, dnf, softwareupdate, Windows Update (built, see below) |
-| `logs` | `GET /v1/host/logs/stream` | log lines masked before they leave the machine |
+| `logs` | `GET /v1/host/logs/stream` | log lines masked before they leave the machine (built, see below) |
 | `actions` | `POST /v1/host/actions` | the fixed action list; needs an approval id, records a change and its undo; the only part that writes |
 | `findings` | `GET /v1/host/findings` | rules over the above (disk, failed service, security updates, exposed port) |
 
@@ -129,3 +129,48 @@ JSON follows the contract: `id`, `name`, `current`, `available`, `security`,
 `kind` (`package` | `os`), plus additive `source`, `cves`, `requiresRestart`
 and `recommended`. `current` is only known from apt; Windows has no version
 string, so `available` is the KB number (or the title when there is none).
+
+## Logs (`logs` and `mask` modules)
+
+```rust
+use host_probe::{stream_logs, tail_logs, LogOptions, LogTarget};
+
+let back = tail_logs(LogTarget::Systemd { unit: "nginx.service".into() }, 200)?; // Vec<LogLine>
+let live = stream_logs(LogTarget::Docker { container: "web".into() }, LogOptions::default())?;
+for line in live { /* LogLine { ts, unit, level, message } */ }  // drop `live` to stop
+```
+
+Both are blocking; run the iterator on a blocking thread (or use
+`recv_timeout`) and write each `LogLine` as one SSE `data:` JSON line.
+
+| Target | Source (fixed args, no shell) |
+|---|---|
+| systemd (Linux) | `journalctl -u <unit> -f -o json --lines N` (`-p err` for errors only); `MESSAGE`, `PRIORITY`, `__REALTIME_TIMESTAMP` |
+| supervisord | `supervisorctl tail -f <program>` (backlog: `supervisorctl tail -<bytes>`) |
+| Docker | `docker logs -f --tail N --timestamps <id>` (stdout and stderr merged) |
+| file | a regular file under an allow-listed root (`/var/log`, `/Library/Logs`, `~/Library/Logs` on macOS, `%ProgramData%` on Windows; set `LogOptions::file_roots`); rotation and truncation are followed by reopening when the inode changes or the file shrinks |
+| macOS | `log stream --style ndjson --predicate 'process == "<name>"'` |
+| Windows | `Get-WinEvent` polled every 2 s for the provider (Application and System logs) through `powershell` |
+
+Unit, container, program and process names must match `[A-Za-z0-9@._:-]+`
+(max 255, never starting with `-`); a Windows provider may also hold inner
+spaces. Anything else is `LogError::InvalidTarget` before a command runs. A
+target for another OS is `LogError::Unsupported`; a missing tool is
+`LogError::Unavailable`. `level` is `debug` | `info` | `warn` | `error`, from
+the journal priority, macOS message type or Windows event level, or from a
+level word at the start of the text. `errors_only` keeps `error` only.
+Dropping a `LogStream` kills the child process and stops the threads.
+
+### Privacy
+
+- Every line is masked at the node, before it can leave this crate:
+  IPv4 and IPv6 addresses (loopback stays; `MaskOptions::keep_mesh` also keeps
+  `100.64.0.0/10`; `ips: false` turns IP masking off), email local parts
+  (`[email]@example.com`), JWTs, `Bearer` and `Basic` credentials,
+  `password=` / `secret=` / `token=` / `api_key=` values, AWS-style keys
+  (`AKIA...`), private key blocks (including the body lines), and hex or base64
+  values of 32+ characters in `key=value` context.
+- Nothing is stored here: no file, no buffer beyond the in-flight channel.
+  Retention is a cloud setting and is off by default.
+- Masking is best effort on free text. It is table-tested in
+  `fixtures/logs/mask-cases.txt`; add a row there for any new leak.

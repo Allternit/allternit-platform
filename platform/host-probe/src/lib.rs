@@ -15,6 +15,8 @@
 use serde::{Deserialize, Serialize};
 
 pub mod cmd;
+pub mod logs;
+pub mod mask;
 pub mod os;
 pub mod ports;
 pub mod services;
@@ -22,6 +24,11 @@ pub mod snapshot;
 pub mod updates;
 
 pub use cmd::SourceStatus;
+pub use logs::{
+    stream as stream_logs, tail as tail_logs, tail_with as tail_logs_with, LogError, LogLevel, LogLine, LogOptions,
+    LogStream, LogTarget,
+};
+pub use mask::{mask_line, MaskOptions, Masker};
 pub use ports::{ports, ports_report, services_with_ports, Exposure, HostPort, PortsReport, Protocol};
 pub use services::{
     services, services_report, HostService, ProviderStatus, ServiceOptions, ServiceProvider, ServiceState,
