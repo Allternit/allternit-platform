@@ -82,7 +82,7 @@ import com.allternit.core.design.R as DesignR
 enum class PtyState { Starting, Live, Ended, Offline, Failed }
 
 /** One shell: the pty, its socket and its screen. */
-class PtySession(private val backend: ChatBackend, private val scope: CoroutineScope) {
+class PtySession(private val backend: ChatBackend, private val scope: CoroutineScope, private val target: String? = null) {
     val screen = VtScreen(80, 24)
     var state by mutableStateOf(PtyState.Starting); private set
     var message by mutableStateOf<String?>(null); private set
@@ -97,7 +97,7 @@ class PtySession(private val backend: ChatBackend, private val scope: CoroutineS
 
     fun start(title: String?) {
         scope.launch {
-            when (val r = CodeApi.createPty(backend, title)) {
+            when (val r = CodeApi.createPty(backend, title, target)) {
                 CodeResult.NoComputer -> state = PtyState.Offline
                 is CodeResult.Failed -> { state = PtyState.Failed; message = r.message }
                 is CodeResult.Ok -> { ptyId = r.value; connect(r.value) }
@@ -112,6 +112,7 @@ class PtySession(private val backend: ChatBackend, private val scope: CoroutineS
             // The only binary frame is the meta frame (0x00 + JSON): the end of the scrollback replay.
             onBinary = { bytes -> if (bytes.isNotEmpty() && bytes[0] == 0.toByte()) main.post { markLive() } },
             onEnd = { main.post { if (!closed && state != PtyState.Failed) state = PtyState.Ended } },
+            targetRuntimeId = target,
         )
         when (open) {
             is RuntimeSocketOpen.Opened -> socket = open.socket
@@ -128,7 +129,7 @@ class PtySession(private val backend: ChatBackend, private val scope: CoroutineS
 
     private fun pushSize(cols: Int, rows: Int) {
         val id = ptyId ?: return
-        scope.launch { CodeApi.resizePty(backend, id, cols, rows) }
+        scope.launch { CodeApi.resizePty(backend, id, cols, rows, target) }
     }
 
     fun resize(cols: Int, rows: Int) {
@@ -149,11 +150,18 @@ class PtySession(private val backend: ChatBackend, private val scope: CoroutineS
         ptyId?.let { id -> scope.launch { connect(id) } } ?: start(null)
     }
 
+    /** Leaves the shell running on the computer and only drops this view's socket (Computers console: foreground only). */
+    fun detach() {
+        closed = true
+        socket?.close(1000, null)
+        socket = null
+    }
+
     fun close() {
         closed = true
         socket?.close(1000, null)
         socket = null
-        ptyId?.let { id -> scope.launch { CodeApi.deletePty(backend, id) } }
+        ptyId?.let { id -> scope.launch { CodeApi.deletePty(backend, id, target) } }
     }
 }
 
@@ -323,6 +331,12 @@ private fun TabChip(label: String, selected: Boolean, tag: String, onClick: () -
         modifier = Modifier.testTag(tag).clip(RoundedCornerShape(10.dp)).background(if (selected) TerminalColors.keyPressed else Color.Transparent)
             .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp),
     )
+}
+
+/** One shell's screen + key bar for another module (Computers console Terminal tab). */
+@Composable
+fun PtyTerminalView(session: PtySession, modifier: Modifier = Modifier) {
+    ShellPane(session, onConnect = {}, modifier = modifier)
 }
 
 @Composable

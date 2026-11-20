@@ -268,8 +268,9 @@ class ChatBackend(
         onText: (String) -> Unit,
         onBinary: (ByteArray) -> Unit,
         onEnd: () -> Unit,
+        targetRuntimeId: String? = null,
     ): RuntimeSocketOpen {
-        val runtimeId = when (val pick = relay.resolve()) {
+        val runtimeId = if (!targetRuntimeId.isNullOrBlank()) targetRuntimeId else when (val pick = relay.resolve()) {
             is RelayPick.Computer -> pick.runtimeId
             RelayPick.NoComputer -> return RuntimeSocketOpen.NoComputer
             RelayPick.Unreachable -> return RuntimeSocketOpen.Failed(ChatErrors.UNREACHABLE)

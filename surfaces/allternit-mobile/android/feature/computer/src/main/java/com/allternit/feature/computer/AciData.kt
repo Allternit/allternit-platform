@@ -61,6 +61,12 @@ object AciNav {
         this.tab = tab
     }
     fun openTeach() { teachOpen = true }
+    /** A computer_alert tap or `allternit://computers/<id>`: the Computers view opens this console row's detail once the list has loaded. */
+    var openComputerId: String? by mutableStateOf(null)
+    fun openComputer(id: String) {
+        openComputerId = id
+        tab = AciTab.Computers
+    }
 }
 
 /** A suggestion shown until it's dismissed once (iOS ACIOnceNudge, the PWA's key names). */
@@ -271,6 +277,22 @@ object AciApi {
             status == 404 || status == 405 || status == 501 -> HostRead.Unavailable
             status == 401 -> HostRead.Failed("Sign in to Allternit to see this computer.")
             else -> HostRead.Failed(ApiCall.httpError(status, body).message?.takeIf { it.isNotBlank() } ?: "Couldn't load this. Try again.")
+        }
+    }
+
+    /**
+     * `GET {cloud}/api/v1/computers/snippets`: `{snippets:[{id,name,command,description?}]}` or a bare array (iOS #2770).
+     * 404/405/501 = [HostRead.Unavailable]. Not tied to one computer, so there is no asleep case.
+     */
+    internal suspend fun consoleSnippets(): HostRead<List<ConsoleSnippet>> {
+        val url = config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/computers/snippets").build()
+        val (status, body) = rawCall(ApiCall.request("GET", url, null)) ?: return HostRead.Failed("You're offline. Check your connection and try again.")
+        return when {
+            status in 200..299 -> runCatching { ApiJson.default.parseToJsonElement(body) }
+                .fold({ HostRead.Ok(it.rows("snippets").mapNotNull(ConsoleSnippet::parse)) }, { HostRead.Failed("Couldn't read the snippets. Try again.") })
+            status == 404 || status == 405 || status == 501 -> HostRead.Unavailable
+            status == 401 -> HostRead.Failed("Sign in to Allternit to see your snippets.")
+            else -> HostRead.Failed(ApiCall.httpError(status, body).message?.takeIf { it.isNotBlank() } ?: "Couldn't load your snippets. Try again.")
         }
     }
 

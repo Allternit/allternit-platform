@@ -40,8 +40,8 @@ internal inline fun <T, R> CodeResult<T>.map(f: (T) -> R): CodeResult<R> = when 
 }
 
 /** One runtime call as a [CodeResult]; [doing] words the failure ("load the files"). */
-internal suspend fun ChatBackend.codeCall(method: String, path: String, body: String? = null, doing: String): CodeResult<JsonElement> =
-    when (val r = runtimeJson(method, path, body)) {
+internal suspend fun ChatBackend.codeCall(method: String, path: String, body: String? = null, doing: String, target: String? = null): CodeResult<JsonElement> =
+    when (val r = runtimeJson(method, path, body, target)) {
         is RuntimeCall.Ok -> CodeResult.Ok(r.body)
         RuntimeCall.NoComputer -> CodeResult.NoComputer
         is RuntimeCall.Http -> CodeResult.Failed(FriendlyErrorMessage.from(r.message ?: r.code ?: "HTTP ${r.status}", doing), r.status)
@@ -178,18 +178,18 @@ internal object CodeApi {
         return b.codeCall("POST", "/v1/pty/${encode(ptyId)}/preview/token", body, "open the preview").map { (it as? JsonObject).str("token").orEmpty() }
     }
 
-    suspend fun createPty(b: ChatBackend, title: String?): CodeResult<String> {
+    suspend fun createPty(b: ChatBackend, title: String?, target: String? = null): CodeResult<String> {
         val body = buildJsonObject { if (title != null) put("title", title) }.toString()
-        return b.codeCall("POST", "/v1/pty/create", body, "start a shell").map { (it as? JsonObject).str("id").orEmpty() }
+        return b.codeCall("POST", "/v1/pty/create", body, "start a shell", target).map { (it as? JsonObject).str("id").orEmpty() }
     }
 
-    suspend fun resizePty(b: ChatBackend, id: String, cols: Int, rows: Int) {
+    suspend fun resizePty(b: ChatBackend, id: String, cols: Int, rows: Int, target: String? = null) {
         val body = buildJsonObject { put("size", buildJsonObject { put("cols", cols); put("rows", rows) }) }.toString()
-        b.codeCall("PUT", "/v1/pty/${encode(id)}", body, "resize the shell")
+        b.codeCall("PUT", "/v1/pty/${encode(id)}", body, "resize the shell", target)
     }
 
-    suspend fun deletePty(b: ChatBackend, id: String) {
-        b.codeCall("DELETE", "/v1/pty/${encode(id)}", doing = "close the shell")
+    suspend fun deletePty(b: ChatBackend, id: String, target: String? = null) {
+        b.codeCall("DELETE", "/v1/pty/${encode(id)}", doing = "close the shell", target = target)
     }
 
     suspend fun terminalBots(b: ChatBackend): CodeResult<TerminalBots> =

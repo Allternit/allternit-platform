@@ -175,10 +175,10 @@ internal fun consoleBytes(bytes: Double): String {
 
 // ---- Detail sheet ----
 
-private enum class DetailTab(val title: String) { Overview("Overview"), Services("Services"), Usage("Usage"), Ports("Ports"), Access("Access"), Backups("Backups"), Health("Health"), Settings("Settings") }
+private enum class DetailTab(val title: String) { Overview("Overview"), Services("Services"), Usage("Usage"), Ports("Ports"), Terminal("Terminal"), Files("Files"), Access("Access"), Backups("Backups"), Health("Health"), Settings("Settings") }
 
 /**
- * One computer's detail (iOS ACIConsoleDetailView): Overview, Services (+ live logs), Usage, Ports, then Access,
+ * One computer's detail (iOS ACIConsoleDetailView): Overview, Services (+ live logs), Usage, Ports, Terminal and Files (AciConsoleTerminalFiles.kt), then Access,
  * Backups, Health, Settings (AciConsoleManage.kt). A 409 means asleep: last sample + "Asleep, not woken", nothing retried, never woken. 404/501 = not
  * available per tab.
  */
@@ -209,6 +209,8 @@ internal fun AciConsoleDetail(computer: ConsoleComputer, restorePoints: (@Compos
                     DetailTab.Services -> ServicesTab(computer)
                     DetailTab.Usage -> UsageTab(computer)
                     DetailTab.Ports -> PortsTab(computer)
+                    DetailTab.Terminal -> TerminalTab(computer)
+                    DetailTab.Files -> FilesTab(computer, onDone)
                     DetailTab.Access -> AccessTab(computer)
                     DetailTab.Backups -> BackupsTab(computer, restorePoints)
                     DetailTab.Health -> HealthTab(computer)

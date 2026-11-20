@@ -6,7 +6,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -142,16 +145,36 @@ private sealed interface FilesNav {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AciComputerFilesScreen(device: AciDevice, onClose: () -> Unit) {
+internal fun AciComputerFilesScreen(device: AciDevice, onClose: () -> Unit, embedded: Boolean = false) {
     val api = remember(device.id) { FilesApi(device.id) }
     val stack = remember { mutableStateListOf<FilesNav>(FilesNav.Roots) }
     var pending by remember { mutableStateOf<List<FilesTask>>(emptyList()) }
-    BackHandler { if (stack.size > 1) stack.removeAt(stack.lastIndex) else onClose() }
+    // Embedded in a console tab, the system Back belongs to the sheet unless a folder is open.
+    BackHandler(enabled = !embedded || stack.size > 1) { if (stack.size > 1) stack.removeAt(stack.lastIndex) else onClose() }
     LaunchedEffect(device.id) { (api.pendingTasks() as? FilesApi.Out.Ok)?.let { pending = it.value } }
     // Open, save, upload, scan, Share with… and the wake sheet (iOS FilesComputerModel + FilesSheets).
     val actions = rememberAciFileActions(device)
-    Box(Modifier.fillMaxSize()) {
-        when (val top = stack.last()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // Two panes on wide screens (>= 700 dp, iOS regular size class): roots on the left, the open folder on the right.
+        val wide = embedded && maxWidth >= 700.dp
+        if (wide) {
+            Row(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(0.38f).fillMaxHeight()) {
+                    AciFilesRoots(device, api, actions, pending.size, onBack = onClose,
+                        onRoot = { stack.clear(); stack += FilesNav.Roots; stack += FilesNav.Folder(it, it.rootItemId, it.name) },
+                        onInbox = { stack.clear(); stack += FilesNav.Roots; stack += FilesNav.Inbox })
+                }
+                Box(Modifier.width(1.dp).fillMaxHeight().background(AllternitTheme.colors.borderSubtle))
+                Box(Modifier.weight(0.62f).fillMaxHeight()) {
+                    when (val top = stack.last()) {
+                        FilesNav.Roots -> AciFullPage { AciStateCard("Pick a folder", "Choose a folder on the left to see what is in it.") }
+                        is FilesNav.Folder -> AciFilesFolder(api, actions, top, onBack = { stack.removeAt(stack.lastIndex) },
+                            onFolder = { stack += FilesNav.Folder(top.root, it.id, it.name) })
+                        FilesNav.Inbox -> AciInboxRequests(api, onBack = { stack.removeAt(stack.lastIndex) }, onChanged = { pending = it })
+                    }
+                }
+            }
+        } else when (val top = stack.last()) {
             FilesNav.Roots -> AciFilesRoots(device, api, actions, pending.size,
                 onBack = onClose,
                 onRoot = { stack += FilesNav.Folder(it, it.rootItemId, it.name) },
