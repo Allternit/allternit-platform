@@ -87,6 +87,28 @@ A grant never covers everything:
 - **Secrets are still blocked** and personal data still asks, as described below.
 - A grant from your words only counts when the latest message in the thread is your own. Text the bot read in an email, a page or a tool result can't grant anything.
 
+## Autopilot
+
+Autopilot lets your main bot answer your other bots' needs while you are away. Turn it on and set its rules in the Office (Workspace floor). The rules use the same four levels as above, per need kind: suggestions, permission requests and questions.
+
+What it can answer today:
+
+- **Suggestions.** It can say go ahead, the same as pressing **Go ahead** yourself.
+- **Permission requests.** It can approve a single request once, for kinds it can read with confidence, such as reading files or a web search. Shell commands wait for you. It never picks "always" or "for this task".
+- **Questions.** Not yet. They are noted as drafts and wait for you.
+
+What always waits for you, whatever your rules say:
+
+- Payments, purchases and anything that spends money.
+- Signatures and contracts.
+- Deleting, removing or destroying anything.
+- Any thread with content from outside your team (an email, a web page, a stranger's message).
+- Bots whose **What this bot may do** setting is tighter than **Act within limits**, and the same for the main bot.
+
+Every answer is recorded on the thread as "Answered by" your main bot "on autopilot", and listed in the away digest. **Act within limits** stops at its daily cap (20 a day when you set none) and then waits for you.
+
+To turn it off, switch Autopilot off in the Office. It stops from the next need on. Needs it already answered stay answered; check the thread or the digest to see them. See [Floor API](/api/floor) for developers.
+
 ## Good to know
 
 - A call that needs your OK is not placed until you approve it. The bot is told to try again once you have.

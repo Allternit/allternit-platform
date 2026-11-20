@@ -6,7 +6,8 @@
 //!   level: draft|ask|tell|limits, limits?: { maxPerDay, allowedActions[] }, note? }`.
 //!   PUT validates every rule (see `validate_rules`) and replaces the user's whole set in
 //!   one transaction. This module only stores the switch and the rules: nothing here acts
-//!   on a need. The evaluator that does reads them through `load_rules`.
+//!   on a need. `floor_autopilot_eval` does, reading them through `load_state` and
+//!   `load_rules` on every need (a `limits` rule with no maxPerDay answers 20 a day there).
 //! - `GET /floor/digest?since=` (RFC 3339 or epoch ms) -> `{ since, until, answered,
 //!   waiting, finished, suggestions }`, at most 20 items per list, newest first, one query
 //!   per list. `answered` (autopilot answer events) and `finished` (thread.completed
@@ -34,9 +35,9 @@ use crate::auth::AuthUser;
 use crate::floor_routes::{clip, ms_of, preview, second_floor};
 use crate::AppState;
 
-/// `bot_events.event_type` of one autopilot answer. Written by the evaluator with
-/// payload `{ "ruleId": "...", "need": "suggestion|permission|question", "text": "..." }`
-/// and the answered thread in `thread_id`; read here for the digest's `answered` list.
+/// `bot_events.event_type` of one autopilot answer. Written by `floor_autopilot_eval` with
+/// payload `{ ruleId, need, text, outcome, silent, action, mainBotId }` and the answered
+/// thread in `thread_id`; read here for the digest's `answered` list.
 pub const AUTOPILOT_ANSWER_EVENT: &str = "autopilot_answer";
 
 pub const SCOPES: [&str; 3] = ["all", "bot", "pod"];

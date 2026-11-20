@@ -75,6 +75,7 @@ pub mod bot_event_routes;
 pub mod events_feed;
 pub mod floor_routes;
 pub mod floor_autopilot;
+pub mod floor_autopilot_eval;
 pub mod netops;
 pub mod routine_local_scheduler;
 pub mod agent_gateway_routes;
