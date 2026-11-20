@@ -261,6 +261,22 @@ fn existing_fact_id(conn: &rusqlite::Connection, user_id: &str, fact: &str) -> R
         .optional()?)
 }
 
+/// Debt intake floor for one turn: Some only when Sleep is on, debt pauses
+/// decay and `debt_intake_min_attention` is above 0.
+fn debt_intake(conn: &rusqlite::Connection, user_id: &str) -> Option<(crate::sleep::config::Resolved, f64)> {
+    let cfg = crate::sleep::score::load_cfg(conn, user_id)?;
+    let floor = crate::sleep::cycle::intake_floor(conn, &cfg, user_id, chrono::Utc::now())?;
+    Some((cfg, floor))
+}
+
+/// True when the debt floor holds this new fact back (logged by the caller).
+fn held_by_debt(conn: &rusqlite::Connection, intake: &Option<(crate::sleep::config::Resolved, f64)>, user_id: &str, fact: &str, observation_id: &str) -> bool {
+    match intake {
+        Some((cfg, floor)) => crate::sleep::score::below_intake_floor(conn, cfg, user_id, fact, observation_id, *floor),
+        None => false,
+    }
+}
+
 /// Apply model operations. Returns how many memories changed.
 pub fn apply_ops(
     db: &DbHandle,
@@ -296,6 +312,8 @@ pub fn apply_ops_typed(
     // (fact text, type, fact id it updates)
     let mut writes: Vec<(String, MemoryType, Option<String>)> = Vec::new();
     let mut adds = 0;
+    let mut held = 0usize;
+    let intake = debt_intake(&conn, user_id);
     for op in ops {
         match op {
             MemoryOp::Add { fact, memory_type } => {
@@ -304,6 +322,8 @@ pub fn apply_ops_typed(
                     rel::write_relation(&conn, user_id, (NodeKind::Observation, observation_id), RelationType::Same,
                         (NodeKind::Fact, &existing), 0.85, rel::ORIGIN_INCUMBENT, None)?;
                     outcome.relations.push((existing, RelationType::Same, None));
+                } else if held_by_debt(&conn, &intake, user_id, &fact, observation_id) {
+                    held += 1;
                 } else if adds < MAX_ADDS_PER_TURN {
                     adds += 1;
                     writes.push((fact, MemoryOp::typed(memory_type), None));
@@ -325,6 +345,9 @@ pub fn apply_ops_typed(
                 }
             }
         }
+    }
+    if held > 0 {
+        tracing::info!(user = user_id, held, "sleep debt intake floor held back new facts");
     }
     for (fact, t, updates) in writes {
         // An update to a restated value still retires the old memory.
@@ -419,6 +442,8 @@ fn apply_ops_drive(
     let mut writes: Vec<(String, MemoryType, Option<String>)> = Vec::new();
     let mut forgets: Vec<String> = Vec::new();
     let mut adds = 0;
+    let mut held = 0usize;
+    let intake = debt_intake(conn, user_id);
     for op in ops {
         match op {
             MemoryOp::Add { fact, memory_type } => {
@@ -427,6 +452,8 @@ fn apply_ops_drive(
                     rel::write_relation(conn, user_id, (NodeKind::Observation, observation_id), RelationType::Same,
                         (NodeKind::Fact, &existing), 0.85, rel::ORIGIN_INCUMBENT, None)?;
                     outcome.relations.push((existing, RelationType::Same, None));
+                } else if held_by_debt(conn, &intake, user_id, &fact, observation_id) {
+                    held += 1;
                 } else if adds < MAX_ADDS_PER_TURN {
                     adds += 1;
                     writes.push((fact, MemoryOp::typed(memory_type), None));
@@ -445,6 +472,9 @@ fn apply_ops_drive(
                 }
             }
         }
+    }
+    if held > 0 {
+        tracing::info!(user = user_id, held, "sleep debt intake floor held back new facts");
     }
     // Sleep `disputes` stage: a contradicting update keeps the old fact (None
     // for every write when the stage is off, so retire is today's list).
@@ -762,6 +792,69 @@ mod tests {
         let ops = vec![MemoryOp::Forget { id: kept[0].id.clone() }];
         assert_eq!(apply_ops(&db, "u1", None, &obs, &ops, &[]).unwrap(), 0);
         assert_eq!(kernel::list_facts(&db, "u1", None, 50).unwrap().len(), 1);
+    }
+
+    /// Sleep on (orchestrator included) with one stored fact so debt = 1.0.
+    fn indebted(db: &DbHandle, sleep_on: bool, extra: &[(&str, &str)]) {
+        let conn = db.connect().unwrap();
+        let mut rows = vec![("debt_scale", "1"), ("debt_pause_threshold", "1")];
+        if sleep_on {
+            rows.push(("enabled", "true"));
+            rows.push(("stage.orchestrator", "true"));
+        }
+        rows.extend_from_slice(extra);
+        for (k, v) in rows {
+            conn.execute("INSERT INTO sleep_config (user_id, key, value_json, source) VALUES ('u1', ?1, ?2, 'owner')", [k, v]).unwrap();
+        }
+        let seed = kernel::record_observation(db, "u1", None, None, "turn_user", "x", Some("user")).unwrap();
+        kernel::persist_facts(db, "u1", None, &seed, &["Seed fact for debt.".into()]).unwrap();
+    }
+
+    fn stored(db: &DbHandle) -> Vec<String> {
+        kernel::list_facts(db, "u1", None, 50).unwrap().into_iter().map(|f| f.fact).collect()
+    }
+
+    fn add(fact: &str) -> MemoryOp {
+        MemoryOp::Add { fact: fact.into(), memory_type: None }
+    }
+
+    fn intake_turn(db: &DbHandle, kind: &str, turn: &str, facts: &[&str]) -> usize {
+        let obs = kernel::record_observation(db, "u1", None, None, kind, turn, Some("user")).unwrap();
+        let ops: Vec<MemoryOp> = facts.iter().map(|f| add(f)).collect();
+        apply_ops(db, "u1", None, &obs, &ops, &[]).unwrap()
+    }
+
+    #[test]
+    fn debt_intake_holds_plain_facts_but_keeps_what_matters() {
+        let db = db();
+        indebted(&db, true, &[]);
+        // Plain model-inferred fact: attention 0.1, under the 0.25 floor.
+        assert_eq!(intake_turn(&db, "turn_assistant", "Here is a summary.", &["The sky is discussed often."]), 0);
+        // Stakes (0.3) and self-disclosure (0.3) clear the floor.
+        assert_eq!(intake_turn(&db, "turn_assistant", "ok", &["The rent is $1200 due on the 1st."]), 1);
+        assert_eq!(intake_turn(&db, "turn_user", "I live in Austin.", &["User lives in Austin."]), 1);
+        // A remember-flagged turn always goes in.
+        assert_eq!(intake_turn(&db, "turn_user", "Remember this: tea is nice.", &["Tea is nice."]), 1);
+        let now = stored(&db);
+        assert!(!now.iter().any(|f| f.contains("sky")));
+        assert!(now.iter().any(|f| f.contains("rent")) && now.iter().any(|f| f.contains("Austin")) && now.iter().any(|f| f.contains("Tea")));
+    }
+
+    #[test]
+    fn debt_intake_stores_everything_under_threshold_at_zero_or_with_sleep_off() {
+        // Debt under the threshold.
+        let under = db();
+        indebted(&under, true, &[]);
+        under.connect().unwrap().execute("UPDATE sleep_config SET value_json = '100' WHERE key = 'debt_pause_threshold'", []).unwrap();
+        assert_eq!(intake_turn(&under, "turn_assistant", "ok", &["The sky is discussed often."]), 1);
+        // Floor set to 0 = off.
+        let zero = db();
+        indebted(&zero, true, &[("debt_intake_min_attention", "0")]);
+        assert_eq!(intake_turn(&zero, "turn_assistant", "ok", &["The sky is discussed often."]), 1);
+        // Sleep off: behaviour unchanged.
+        let off = db();
+        indebted(&off, false, &[]);
+        assert_eq!(intake_turn(&off, "turn_assistant", "ok", &["The sky is discussed often."]), 1);
     }
 
     #[test]

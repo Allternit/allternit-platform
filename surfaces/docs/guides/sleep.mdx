@@ -52,6 +52,8 @@ See the [memory command reference](/cli/memory) for every `gizzi memory sleep` c
 
 After a sleep, open its report to see each step, what it changed and what it cost. `gizzi memory sleep report` shows the latest one, and `gizzi memory sleep undo <id>` undoes it.
 
+When Sleep is behind (too many new memories since the last nap), nothing fades, and Allternit stores only the memories that matter most until the next nap: what you asked it to remember, things about you, and money, health, legal or deadline facts. The conversation itself is still kept.
+
 Undo reverses what Sleep's Dream step changed and keeps anything you added or edited since. If you edited the same lines after the sleep, Undo stops and changes nothing. Merges and fading done by the free steps have no undo, and the report lists them as such.
 
 ## Memory conflicts

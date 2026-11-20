@@ -231,6 +231,14 @@ pub fn decay_paused(conn: &Connection, cfg: &Resolved, user: &str, now: DateTime
         && debt(conn, cfg, user, now).map(|d| d >= cfg.number("debt_pause_threshold")).unwrap_or(false)
 }
 
+/// While decay is paused by debt, the lowest attention a new extracted fact
+/// needs to be stored (`debt_intake_min_attention`). None when decay is not
+/// paused or the setting is 0.
+pub fn intake_floor(conn: &Connection, cfg: &Resolved, user: &str, now: DateTime<Utc>) -> Option<f64> {
+    let min = cfg.number("debt_intake_min_attention");
+    (min > 0.0 && decay_paused(conn, cfg, user, now)).then_some(min)
+}
+
 /// Write one Sleep event on the memory activity stream. Best effort: a
 /// failed write is dropped and never reaches the caller.
 pub fn emit(conn: &Connection, user: &str, kind: &'static str, title: String, extra: Value, session: Option<String>, run: Option<String>) {

@@ -72,7 +72,7 @@ The lease is a conditional UPDATE, following Dream's claim pattern.
 One worker runs queued `daydream` and `nap` units, one per user at a time. A daydream runs the first two stages only.
 
 1. `capture`: marks queued `capture` units done and records what they asked for.
-2. `consolidation`: merges duplicates. Decay is skipped while sleep debt is at or above `debt_pause_threshold`.
+2. `consolidation`: merges duplicates. Decay is skipped while sleep debt is at or above `debt_pause_threshold`. In the same state, extraction applies an intake floor (`cycle::intake_floor`): a new extracted fact whose pre-write attention (`score::pre_write_attention`) is under `debt_intake_min_attention` (default 0.25, 0 = off) is not stored. Updates, forgets, explicit saves and flagged facts are never held, and the raw turn log is untouched.
 3. `fit` (stage `strengths`): fits the decay half-life from labelled recalls.
 4. `dream` (spends quota): the existing Dream pass, if not already done today.
 5. `rem` (stage `rem`): REM insight links through the hypothesis queue.

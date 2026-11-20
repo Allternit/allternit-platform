@@ -149,16 +149,13 @@ pub fn apply_use(attention: f64, used: bool, step: f64) -> f64 {
     if used { clamp01(attention + step) } else { attention }
 }
 
-fn load_cfg(conn: &Connection, user_id: &str) -> Option<Resolved> {
+pub fn load_cfg(conn: &Connection, user_id: &str) -> Option<Resolved> {
     config::load(conn, user_id).ok().filter(|c| c.enabled())
 }
 
-/// Score one just-written fact and write the four columns. Does nothing (and
-/// returns Ok) when Sleep is off, so the columns stay NULL. `observation_id`
-/// names the turn the fact came from; it supplies the source kind and the
-/// text the markers are read from (the fact text is used if it is missing).
-pub fn score_written_fact(conn: &Connection, user_id: &str, fact_id: &str, fact: &str, observation_id: &str) -> rusqlite::Result<()> {
-    let Some(cfg) = load_cfg(conn, user_id) else { return Ok(()) };
+/// Read the scoring signals for a fact from its turn. `fact_id` is left out of
+/// the repeat check (use "" before the fact is written).
+fn build_signals(conn: &Connection, cfg: &Resolved, user_id: &str, fact_id: &str, fact: &str, observation_id: &str) -> rusqlite::Result<Signals> {
     let obs: Option<(String, String)> = conn
         .query_row(
             "SELECT kind, content FROM memory_observations WHERE id = ?1 AND user_id = ?2",
@@ -178,17 +175,39 @@ pub fn score_written_fact(conn: &Connection, user_id: &str, fact_id: &str, fact:
         let rows = stmt.query_map(params![user_id, fact_id], |r| r.get::<_, String>(0))?;
         rows.collect::<Result<_, _>>()?
     };
-    let sc = score(
-        &cfg,
-        Signals {
-            source,
-            flagged,
-            self_disclosure: is_self_disclosure(fact) || (is_self_disclosure(&turn) && source == SourceType::UserSaid),
-            repeat: is_repeat(fact, &others, cfg.number("attention_repeat_jaccard")),
-            surprise: false,
-            stakes: has_stakes(fact),
-        },
-    );
+    Ok(Signals {
+        source,
+        flagged,
+        self_disclosure: is_self_disclosure(fact) || (is_self_disclosure(&turn) && source == SourceType::UserSaid),
+        repeat: is_repeat(fact, &others, cfg.number("attention_repeat_jaccard")),
+        surprise: false,
+        stakes: has_stakes(fact),
+    })
+}
+
+/// The attention a fact would get if it were written now, before the write.
+pub fn pre_write_attention(conn: &Connection, cfg: &Resolved, user_id: &str, fact: &str, observation_id: &str) -> rusqlite::Result<f64> {
+    Ok(score(cfg, build_signals(conn, cfg, user_id, "", fact, observation_id)?).attention)
+}
+
+/// True when a new fact should be held back by the debt intake floor: its
+/// pre-write attention is under `floor` and the user did not flag it. A
+/// flagged fact (explicit memory or remember marker) always goes in, and so
+/// does any fact when scoring fails.
+pub fn below_intake_floor(conn: &Connection, cfg: &Resolved, user_id: &str, fact: &str, observation_id: &str, floor: f64) -> bool {
+    match build_signals(conn, cfg, user_id, "", fact, observation_id) {
+        Ok(sig) if !sig.flagged => score(cfg, sig).attention < floor,
+        _ => false,
+    }
+}
+
+/// Score one just-written fact and write the four columns. Does nothing (and
+/// returns Ok) when Sleep is off, so the columns stay NULL. `observation_id`
+/// names the turn the fact came from; it supplies the source kind and the
+/// text the markers are read from (the fact text is used if it is missing).
+pub fn score_written_fact(conn: &Connection, user_id: &str, fact_id: &str, fact: &str, observation_id: &str) -> rusqlite::Result<()> {
+    let Some(cfg) = load_cfg(conn, user_id) else { return Ok(()) };
+    let sc = score(&cfg, build_signals(conn, &cfg, user_id, fact_id, fact, observation_id)?);
     conn.execute(
         "UPDATE memory_facts SET attention = ?3, credence = ?4, flashbulb = ?5, source_type = ?6
          WHERE id = ?1 AND user_id = ?2",
