@@ -151,7 +151,7 @@ object BotDesktopStore {
  * its live screen.
  */
 @Composable
-internal fun BotComputerScreen(bot: BotRecord, nav: BotNavigator) {
+internal fun BotComputerScreen(bot: BotRecord, nav: BotNavigator, embedded: Boolean = false) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     val entry = BotDesktopStore.entries[bot.id]
@@ -163,7 +163,8 @@ internal fun BotComputerScreen(bot: BotRecord, nav: BotNavigator) {
         computers = (ComputersApi.list(bot.id) as? ComputersApi.Result.Ok)?.value.orEmpty()
     }
     LaunchedEffect(bot.id) { reload() }
-    BotScreen("Computer", nav, testTag = "botComputerScreen") {
+    // [embedded]: the Office floor's Screen tab (step 26) draws it inside its sheet, without the pushed screen's header.
+    val body: @Composable () -> Unit = {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
             Text("${bot.displayName}'s desktop", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(start = 20.dp, bottom = 6.dp, top = 8.dp))
             RowGroup {
@@ -234,6 +235,7 @@ internal fun BotComputerScreen(bot: BotRecord, nav: BotNavigator) {
             }
         }
     }
+    if (embedded) Box(Modifier.fillMaxSize().testTag("botComputerScreen")) { body() } else BotScreen("Computer", nav, testTag = "botComputerScreen", content = body)
     viewing?.let { status ->
         Dialog(onDismissRequest = { viewing = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
             BotDesktopView(bot, status, onClose = { viewing = null })

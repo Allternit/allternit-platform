@@ -108,9 +108,86 @@ class BotsHost(
     val openProjectInLibrary: (projectId: String) -> Unit,
     /** The Inbox phone-hold Review (wave C), reused by the decisions deck. */
     val openInbox: () -> Unit,
-    /** The bots' Office floor (iOS OfficeFloorView), from :feature:office, which depends on this module: the store, the chat backend, open a bot's chat, back. Null hides the entry. */
-    val officeFloor: (@Composable (store: BotModeStore, backend: ChatBackend, openBot: (String) -> Unit, onBack: () -> Unit) -> Unit)? = null,
+    /** The bots' Office floor (iOS OfficeFloorView), from :feature:office, which depends on this module: the store, the chat backend, open a bot's chat, back, and the Bots views its thread sheet reuses ([BotsOfficeKit]). Null hides the entry. */
+    val officeFloor: (@Composable (store: BotModeStore, backend: ChatBackend, openBot: (String) -> Unit, onBack: () -> Unit, kit: BotsOfficeKit) -> Unit)? = null,
 )
+
+/**
+ * The Bots views the Office floor's thread sheet (step 26, iOS OfficeThreadSheet) embeds instead of rebuilding them:
+ * the bot's main chat ([ChatScreen] on the bot's [ChatViewModel] with the shell composer, the same stack as
+ * [BotChatSessionScreen], tool steps and ask cards included) and its computer ([BotComputerScreen] with Take over /
+ * Hand back). Made by Bots mode, which owns the host and the navigator these need.
+ */
+class BotsOfficeKit internal constructor(private val host: BotsHost, private val store: BotModeStore, private val nav: BotNavigator) {
+    val backend: ChatBackend get() = host.backend
+
+    /** Pushes the bot's full chat screen over the floor. */
+    fun openFullChat(botId: String) = nav.open(BotRoute.Chat(botId, null))
+
+    /**
+     * The bot's main chat, embedded. [refreshKey] re-reads the session's permission asks (bump it after an approval
+     * from the sheet's card so the chat's own card closes too).
+     */
+    @Composable
+    fun Thread(botId: String, refreshKey: Int = 0, modifier: Modifier = Modifier) {
+        val bot = store.bot(botId) ?: return
+        val scope = rememberCoroutineScope()
+        val vm = rememberBotChat(host, bot)
+        var sessionId by remember(bot.id) { mutableStateOf<String?>(null) }
+        var error by remember(bot.id) { mutableStateOf<String?>(null) }
+        var prefill by remember { mutableStateOf<String?>(null) }
+        var editingId by remember { mutableStateOf<String?>(null) }
+        var pickerRequest by remember { mutableStateOf(0) }
+        suspend fun resolve() {
+            error = null
+            when (val r = store.mainChatSessionId(bot)) {
+                is BotsResult.Ok -> sessionId = r.value
+                is BotsResult.Failed -> error = r.message
+            }
+        }
+        LaunchedEffect(bot.id) { resolve() }
+        LaunchedEffect(sessionId) { sessionId?.let { vm.loadSession(it) } }
+        LaunchedEffect(refreshKey) { if (refreshKey > 0) vm.refreshPermissions() }
+        val callbacks = remember(vm) {
+            com.allternit.feature.chat.ChatCallbacks(
+                onChooseModel = { pickerRequest += 1 },
+                currentModel = host.currentModel,
+                onEdit = { m -> editingId = vm.lastUserMessageId; prefill = com.allternit.feature.chat.ChatViewModel.strippedText(m.content) },
+                onOpenSettings = host.openConnections,
+                onConnectConnector = { host.openConnections() },
+                onOpenArtifact = host.openArtifact,
+            )
+        }
+        Box(modifier.testTag("officeSheetThread")) {
+            when {
+                sessionId != null -> com.allternit.feature.chat.ChatScreen(
+                    viewModel = vm, backend = host.backend, callbacks = callbacks,
+                    editing = editingId != null, onCancelEdit = { editingId = null; prefill = "" },
+                    greeting = {},
+                    composer = {
+                        host.composer(BotComposerSpec(
+                            placeholder = "Message ${bot.displayName}…", isStreaming = vm.isStreaming, sendDisabled = vm.isCreatingSession,
+                            prefill = prefill, onPrefillConsumed = { prefill = null }, pickerRequest = pickerRequest, onStop = vm::stopStreaming,
+                            onSend = { req -> val e = editingId; if (e != null) { editingId = null; vm.resendEdited(e, req) } else vm.send(req) },
+                        ))
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                error != null -> FriendlyState(FriendlyStyle.Error, "Couldn't open ${bot.displayName}", error.orEmpty(), actionTitle = "Try again", onAction = { scope.launch { resolve() } }) {
+                    Icon(painterResource(com.allternit.core.design.R.drawable.ph_chat_circle), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp))
+                }
+                else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LibrarySpinnerBox() }
+            }
+        }
+    }
+
+    /** The bot's computer: its desktop (View desktop, Take over / Hand back) and assigned computers. */
+    @Composable
+    fun Screen(botId: String, modifier: Modifier = Modifier) {
+        val bot = store.bot(botId) ?: return
+        Box(modifier) { BotComputerScreen(bot, nav, embedded = true) }
+    }
+}
 
 /** Every screen Bots mode can push (iOS BotRoute, cut to the wave E screens). */
 sealed interface BotRoute {
@@ -700,7 +777,8 @@ private fun BotRouteDestination(route: BotRoute, host: BotsHost, store: BotModeS
             Column(Modifier.fillMaxSize().statusBarsPadding().testTag("officeFloorScreen")) {
                 LibraryHeader(title = "Office", onBack = nav::back, backTag = "botsBack")
                 Box(Modifier.weight(1f).fillMaxWidth()) {
-                    floor(store, host.backend, { id -> nav.open(BotRoute.Chat(id, null)) }, nav::back)
+                    val kit = remember(host, store, nav) { BotsOfficeKit(host, store, nav) }
+                    floor(store, host.backend, { id -> nav.open(BotRoute.Chat(id, null)) }, nav::back, kit)
                 }
             }
         }

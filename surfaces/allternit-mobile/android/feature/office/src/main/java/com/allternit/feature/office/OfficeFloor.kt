@@ -47,6 +47,7 @@ import com.allternit.core.design.R as DesignR
 import com.allternit.feature.artifacts.LibrarySpinner
 import com.allternit.feature.bots.BotFloorEntry
 import com.allternit.feature.bots.BotModeStore
+import com.allternit.feature.bots.BotsOfficeKit
 import com.allternit.feature.bots.BotsResult
 import com.allternit.feature.bots.floorEntries
 import com.allternit.feature.bots.floorProjects
@@ -82,7 +83,7 @@ internal fun workspaceComputers(list: List<com.allternit.feature.bots.ComputerRo
     return kept.sortedByDescending { it.isRunning }.take(12).map { Triple(it.id, it.name, state(it.status)!!) }
 }
 
-internal fun workspaceFeed(entries: List<BotFloorEntry>, projects: List<com.allternit.feature.bots.BotFloorProject>, signedIn: Boolean, computers: List<Triple<String, String, String>> = emptyList(), floor: FloorState? = null, v2: Boolean = false, now: Long = System.currentTimeMillis()): String {
+internal fun workspaceFeed(entries: List<BotFloorEntry>, projects: List<com.allternit.feature.bots.BotFloorProject>, signedIn: Boolean, computers: List<Triple<String, String, String>> = emptyList(), floor: FloorState? = null, v2: Boolean = false, now: Long = System.currentTimeMillis(), done: List<OfficeDoneBubble> = emptyList()): String {
     // Feed v2 only when the frame said v:2 and the server's floor state is v2.
     val f = if (v2) floor else null
     val obj = buildJsonObject {
@@ -115,13 +116,16 @@ internal fun workspaceFeed(entries: List<BotFloorEntry>, projects: List<com.allt
             put("pods", buildJsonArray { f.pods.forEach { p -> add(buildJsonObject { put("id", p.id); put("name", p.name); put("color", p.color); put("kind", p.kind) }) } })
             val ids = entries.map { it.id }.toSet()
             put("bubbles", buildJsonArray {
+                // Done bubbles first: an approval from the sheet's card shows over the bot right away (10 minutes).
+                done.filter { it.botId in ids && now - it.at in 0..600_000L }.takeLast(4)
+                    .forEach { d -> add(buildJsonObject { put("id", d.id); put("botId", d.botId); put("kind", "done"); put("text", d.text.take(120)); put("at", d.at) }) }
                 f.bots.entries.asSequence()
                     .filter { (id, b) -> id in ids && !b.resultText.isNullOrBlank() && now - b.resultAt in 0..600_000L }
                     .sortedByDescending { it.value.resultAt }.take(8)
                     .forEach { (id, b) -> add(buildJsonObject { put("id", "res-$id-${b.resultAt}"); put("botId", id); put("kind", "result"); put("text", b.resultText!!.trim().take(120)); put("at", b.resultAt) }) }
             })
             if (f.handoffs.isNotEmpty()) put("handoffs", buildJsonArray {
-                f.handoffs.filter { it.from in ids && it.to in ids }.forEach { h -> add(buildJsonObject { put("id", h.id); put("from", h.from); put("to", h.to); put("label", h.label) }) }
+                f.handoffs.filter { it.from in ids && it.to in ids }.forEach { h -> add(buildJsonObject { put("id", h.id); put("from", h.from); put("to", h.to); put("label", h.label); put("what", h.label.ifEmpty { "work" }) }) }
             })
         }
         if (signedIn && projects.isNotEmpty()) {
@@ -284,10 +288,13 @@ addEventListener('message', (e) => {
  * the person's real bots. Picking a bot or answering opens its main chat ([openBot]); a message written in the panel is
  * sent in the background and its reply streams into the panel. The 3D scene is the same web facility iOS frames, so
  * there is no 2D fallback to build; a failed or slow load shows the same "didn't load" state with Try again.
+ * On the Workspace floor (step 26) with a [kit], tapping a bot opens [OfficeThreadSheet] over the floor instead, the
+ * "N need you" pill ([OfficeNeedPill]) opens the first waiting bot with its [OfficeApprovalCard], and an approval adds
+ * a done bubble to the feed.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (String) -> Unit, link: WorkspaceLink = remember { WorkspaceLink() }) {
+fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (String) -> Unit, link: WorkspaceLink = remember { WorkspaceLink() }, kit: BotsOfficeKit? = null) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val state by AllternitAuth.state.collectAsState()
@@ -307,12 +314,22 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
     val visitorKey = "allternit.facility.visitor.${userId ?: "local"}"
     val prefs = remember { context.getSharedPreferences("allternit_office", Context.MODE_PRIVATE) }
     val currentOpenBot by androidx.compose.runtime.rememberUpdatedState(openBot)
+    val scope = rememberCoroutineScope()
+    // Step 26: the thread sheet's bot (null = closed), the client-side needs, and done bubbles for the feed.
+    var sheetBot by rememberSaveable { mutableStateOf<String?>(null) }
+    val needs = remember(store, backend) { OfficeNeeds(store, backend) }
+    var done by remember { mutableStateOf<List<OfficeDoneBubble>>(emptyList()) }
+    val sheetOn = kit != null
 
     // Names only for the Commons studios; a failed load just omits the field. Statuses and questions come from the
     // threads, so keep them fresh while the floor is open (iOS: every 15 s).
     LaunchedEffect(store) {
         if (store.projects.isEmpty()) store.refreshProjects()
-        while (true) { store.refreshThreads(); delay(15_000) }
+        while (true) {
+            store.refreshThreads()
+            if (userId != null) needs.refresh()
+            delay(15_000)
+        }
     }
     var computers by remember { mutableStateOf<List<Triple<String, String, String>>>(emptyList()) }
     LaunchedEffect(userId) {
@@ -336,7 +353,7 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
     LaunchedEffect(frameReady, attempt, full) {
         if (!frameReady) return@LaunchedEffect
         var last: String? = null
-        snapshotFlow { workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null, computers, floor, frameV2) }.collectLatest { feed ->
+        snapshotFlow { workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null, computers, floor?.withClientNeeds(needs), frameV2, done = done) }.collectLatest { feed ->
             if (feed != last) { last = feed; webRef[0]?.evaluateJavascript("window.feed($feed)", null) }
         }
     }
@@ -389,7 +406,7 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
                                             frameReady = true
                                             ready = true
                                             // Replay the feed (v2 fields join as soon as the floor state lands, via the watcher).
-                                            evaluateJavascript("window.feed(${workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null, computers, floor, v2)})", null)
+                                            evaluateJavascript("window.feed(${workspaceFeed(store.floorEntries(), store.floorProjects(), userId != null, computers, floor?.withClientNeeds(needs), v2, done = done)})", null)
                                         }
                                         "anchors" -> link.parseAnchors(body)
                                         "action" -> if (str("action") == "pod") {
@@ -397,8 +414,9 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
                                         } else {
                                             val id = str("botId")
                                             if (id != null && store.bot(id) != null) when (str("action")) {
-                                                // The full facility opens real native bot work, then returns to the same world.
-                                                "select", "answer", "open" -> currentOpenBot(id)
+                                                // The Workspace floor opens the bot's thread sheet over the floor (step 26);
+                                                // the full facility opens real native bot work, then returns to the same world.
+                                                "select", "answer", "open" -> if (sheetOn && !full) { sheetBot = id } else currentOpenBot(id)
                                                 // Written in the panel: sent into the bot's main chat here, the reply streams back.
                                                 "message" -> str("text")?.trim()?.takeIf { it.isNotEmpty() }?.let { thread.send(it, id) }
                                             }
@@ -414,12 +432,48 @@ fun OfficeFloorScreen(store: BotModeStore, backend: ChatBackend, openBot: (Strin
             }
             Box(
                 Modifier.align(Alignment.TopEnd).padding(12.dp).clip(RoundedCornerShape(20.dp)).background(c.bgSecondary)
-                    .clickable { full = !full; ready = false; link.anchors = emptyList(); link.selectedPodId = null }
+                    .clickable { full = !full; ready = false; link.anchors = emptyList(); link.selectedPodId = null; sheetBot = null }
                     .padding(horizontal = 14.dp, vertical = 8.dp).testTag("officeViewSwitch"),
             ) { Text(if (full) "Back to Workspace" else "Open the full facility", color = c.textPrimary) }
             if (!ready) {
                 Box(Modifier.align(Alignment.Center).clip(RoundedCornerShape(12.dp)).background(c.bgSecondary).padding(16.dp)) { LibrarySpinner("Opening the office…") }
             }
+            // "N need you": opens the first waiting bot's sheet with its approval card on top.
+            if (sheetOn && !full && ready && needs.items.isNotEmpty()) {
+                val colorOf = store.floorEntries().associate { it.id to it.colorHex }
+                OfficeNeedPill(
+                    count = needs.items.size,
+                    colors = needs.waitingBotIds().map { officeColor(colorOf[it]) },
+                    onClick = { needs.first()?.let { sheetBot = it.botId } },
+                    modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
+                )
+            }
+        }
+    }
+
+    val openId = sheetBot
+    if (kit != null && openId != null && !full) {
+        if (store.bot(openId) == null) {
+            LaunchedEffect(openId) { sheetBot = null; link.focus(null) }
+        } else {
+            val mainName = floor?.mainBotId?.let { store.bot(it)?.displayName } ?: store.bots.firstOrNull { it.isPrimaryTemplateBot }?.displayName
+            OfficeThreadSheet(
+                botId = openId, store = store, kit = kit, needs = needs, mainBotName = mainName,
+                onInset = { bottom -> link.focus(openId, bottom = bottom) },
+                onDone = { need, bubble ->
+                    needs.markAnswered(need)
+                    if (bubble != null) {
+                        val now = System.currentTimeMillis()
+                        done = (done.filter { now - it.at < 600_000L } + OfficeDoneBubble("done-${need.id}-$now", need.botId, bubble, now)).takeLast(8)
+                    }
+                    scope.launch {
+                        store.refreshThreads()
+                        needs.refresh()
+                        if (frameV2 && userId != null) FloorClient.state()?.let { floor = it }
+                    }
+                },
+                onDismiss = { sheetBot = null; link.focus(null) },
+            )
         }
     }
 }
