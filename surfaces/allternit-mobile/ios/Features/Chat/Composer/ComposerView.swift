@@ -212,13 +212,16 @@ struct ComposerView: View {
                         }
                 )
 
-            if deck != .none, !isTerminal {
+            // The tab shows only while the band is folded. An open band
+            // joins the card directly; a swipe down on the card folds it.
+            if deck != .none, !isTerminal, !(deckBandOpen || forcedDeckOpen) {
                 HStack {
-                    ComposerToolsTab(folded: deckFolded) { setDeckFolded(!deckFolded) }
+                    ComposerToolsTab { setDeckFolded(false) }
                     Spacer()
                 }
                 .padding(.leading, 16)
                 .zIndex(1)
+                .transition(.opacity)
             }
 
             if deck != .none, !isTerminal, deckBandOpen || forcedDeckOpen {
@@ -227,6 +230,8 @@ struct ComposerView: View {
                     onAllArtifacts: onAllArtifacts, onSheetActive: { deckSheetActive = $0 }
                 )
                     .zIndex(0)
+                    // With no tab while open, VoiceOver folds it from here.
+                    .accessibilityAction(named: Text("Hide tools")) { setDeckFolded(true) }
                     .transition(reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
             }
         }
@@ -944,16 +949,15 @@ private struct ComposerFrameReporter: View {
 }
 
 /// The grey "tools" pull tab under the composer's bottom-left edge: flat top
-/// joined to the card, rounded bottom corners. The only deck toggle; it is
-/// always visible (chevron up when open, down when folded).
+/// joined to the card, rounded bottom corners. It shows only while the deck
+/// is folded and unfolds it; the open band has no tab (swipe down folds it).
 struct ComposerToolsTab: View {
-    let folded: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: folded ? "chevron.down" : "chevron.up")
+                Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
                 Text("tools")
                     .font(.system(size: 10))
@@ -968,8 +972,8 @@ struct ComposerToolsTab: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(folded ? "Show tools" : "Hide tools")
-        .accessibilityValue(folded ? "Folded" : "Expanded")
+        .accessibilityLabel("Show tools")
+        .accessibilityHint("Swipe down on the message box to hide them again")
         .accessibilityAddTraits(.isButton)
     }
 }
