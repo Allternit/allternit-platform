@@ -19,13 +19,14 @@
 import type {
   AgentEvent,
   AgentTask,
+  CliToolApproval,
   CliToolVerdict,
   ExecutionLog,
   RuntimeDriver,
   TaskHandle,
 } from "@/runtime/runtime-driver"
 import { claudeToolDecision, deniedMessage } from "@/runtime/bots/bot-turn"
-import { codexDeveloperInstructions, cliTurnMessage, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
+import { codexDeveloperInstructions, cliTurnMessage, channelSystemPrompt, systemLayerPath, toolCallsBrokered, codexApprovalParams, acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { CodexContext } from "@/runtime/session/codex-context"
@@ -164,8 +165,15 @@ export class LocalCliDriver implements RuntimeDriver {
     // The path is one argv element (it may contain spaces, e.g. a custom tool).
     const baseCmd = [cliPath, ...parseCmd(this.specArgs())]
     const adapter = resolveAdapter(this.cliName)
-    // CLIs without a system-prompt channel get the session's instructions in the message.
+    // Allternit's layer is only ever appended (registry systemLayer.via):
+    // through the CLI's own append channel, or leading the message when it
+    // has none. The runtime's own system prompt stays.
     const message = cliTurnMessage(prompt, task?.systemPrompt, this.cliName, adapter.mode)
+    const channelPrompt = channelSystemPrompt(task?.systemPrompt, this.cliName, adapter.mode)
+    if (task?.approveTool && !toolCallsBrokered(this.cliName, adapter.mode)) {
+      // No permission channel: the caller cannot be asked; say so once per turn.
+      log.warn("cli has no permission channel; its tools are not brokered", { cli: this.cliName, mode: adapter.mode })
+    }
 
     if (task?.attachments && task.attachments.length > 0 && !adapter.supportsAttachments) {
       throw new Error(
@@ -176,7 +184,7 @@ export class LocalCliDriver implements RuntimeDriver {
     const argvCtx = {
       cwd: task?.cwd,
       taskId: handle.taskId,
-      systemPrompt: task?.systemPrompt,
+      systemPrompt: channelPrompt,
       mcp: task?.mcp,
       vendorSessionId: task?.vendorSessionId,
       bot: task?.bot,
@@ -236,7 +244,7 @@ export class LocalCliDriver implements RuntimeDriver {
           yield* this.runAcp(handle, argv, task?.cwd, env, adapter.acpModelConfig)
         }
       } else if (adapter.mode === "codex-app-server") {
-        for await (const event of this.runCodexAppServer(handle, argv, message, task?.cwd, task?.systemPrompt, env, sessionModel(task?.model, this.cliName))) {
+        for await (const event of this.runCodexAppServer(handle, argv, message, task?.cwd, channelPrompt, env, sessionModel(task?.model, this.cliName))) {
           if (event.type === "error" || (event.type === "finish" && event.finishReason === "error")) failed = true
           yield event
         }
@@ -1376,7 +1384,10 @@ export class LocalCliDriver implements RuntimeDriver {
         }
       }
 
-      const promptText = withInstructions(task?.prompt ?? "", task?.systemPrompt)
+      // ACP has no system prompt field: Allternit's layer leads the turn's
+      // first prompt (systemLayer.via "acp-session"); "none" sends no layer.
+      const promptText =
+        systemLayerPath(this.cliName, "acp") === "none" ? task?.prompt ?? "" : withInstructions(task?.prompt ?? "", task?.systemPrompt)
       const attachmentBlocks = task?.attachments?.length
         ? attachmentsToAcpContent(task.attachments)
         : []
@@ -1558,6 +1569,34 @@ export class LocalCliDriver implements RuntimeDriver {
       return { permissions: granted, scope: "turn" }
     }
 
+    // A caller that approves tools itself (AgentTask.approveTool, the Gizzi
+    // TUI) gets every exec and file-change request; with none, the turn is
+    // autonomous and Codex's requests are accepted as before.
+    const approveTool = this.tasks.get(handle.taskId)?.approveTool
+    // File-change items carry the patch; their approval request only names the item.
+    const fileChanges = new Map<string, unknown>()
+    const codexApproval = (id: number, method: string, params: Record<string, unknown>) => {
+      const legacy = method === "execCommandApproval" || method === "applyPatchApproval"
+      const accept = legacy ? "approved" : "accept"
+      if (!approveTool) {
+        respond(id, { decision: "accept" })
+        return
+      }
+      const exec = method === "item/commandExecution/requestApproval" || method === "execCommandApproval"
+      const itemId = String(params.itemId ?? params.callId ?? "")
+      const command = Array.isArray(params.command) ? params.command.join(" ") : params.command
+      const request: CliToolApproval = exec
+        ? { id: itemId || undefined, name: "exec_command", input: { command, cwd: params.cwd, reason: params.reason } }
+        : {
+            id: itemId || undefined,
+            name: "patch_apply",
+            input: { changes: params.changes ?? params.fileChanges ?? fileChanges.get(itemId), reason: params.reason },
+          }
+      void approveTool(request)
+        .catch((err): CliToolVerdict => ({ allow: false, message: err instanceof Error ? err.message : String(err) }))
+        .then((verdict) => respond(id, { decision: verdict.allow === true ? accept : legacy ? "denied" : "decline" }))
+    }
+
     // Capture a bounded stderr tail for diagnostics.
     ;(async () => {
       try {
@@ -1599,15 +1638,15 @@ export class LocalCliDriver implements RuntimeDriver {
               }
 
               if (hasMethod) {
-                // Server request (has both id and method) — auto-approve in autonomous mode.
+                // Server request (has both id and method). Exec and file
+                // changes go to the caller's broker when there is one
+                // (codexApproval); autonomous turns accept them.
                 switch (msg.method) {
                   case "item/commandExecution/requestApproval":
                   case "execCommandApproval":
-                    respond(msg.id!, { decision: "accept" })
-                    break
                   case "item/fileChange/requestApproval":
                   case "applyPatchApproval":
-                    respond(msg.id!, { decision: "accept" })
+                    codexApproval(msg.id!, String(msg.method), (msg.params ?? {}) as Record<string, unknown>)
                     break
                   case "item/permissions/requestApproval":
                     respond(msg.id!, codexPermissionsApprovalResponse(msg.params ?? {}))
@@ -1671,6 +1710,7 @@ export class LocalCliDriver implements RuntimeDriver {
 
             if (method === "item/started") {
               const item = params.item as Record<string, unknown> | undefined
+              if (item?.type === "fileChange" && item.id != null) fileChanges.set(String(item.id), item.changes)
               if (item?.type === "agentMessage") {
                 if (typeof item.phase === "string") messagePhase.set(String(item.id ?? ""), item.phase)
                 continue
@@ -1776,6 +1816,8 @@ export class LocalCliDriver implements RuntimeDriver {
         developerInstructions: codexDeveloperInstructions(systemPrompt, this.tasks.get(handle.taskId)?.mcp),
         ...(mcpConfig ? { config: mcpConfig } : {}),
         ...codexPlanParams(this.tasks.get(handle.taskId)?.plan, this.tasks.get(handle.taskId)?.toolsOff),
+        // A caller that approves tools: Codex asks before exec and file changes.
+        ...codexApprovalParams(approveTool ? { mode: this.tasks.get(handle.taskId)?.permissionMode ?? "default" } : undefined),
       }
       const resumeId = this.tasks.get(handle.taskId)?.vendorSessionId
       let thread: unknown

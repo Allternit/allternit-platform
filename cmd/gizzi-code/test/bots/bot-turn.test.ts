@@ -144,9 +144,9 @@ describe("claude-cli bot spawn args", () => {
     expect(allowed).toEqual(expect.arrayContaining(["WebSearch", "Read", "Glob", "Grep", "mcp__allternit"]))
     // ask-each-time tools are not pre-approved
     expect(allowed).not.toContain("Bash")
-    // persona replaces Claude Code's own prompt instead of being appended
-    expect(after(args, "--system-prompt").startsWith(PERSONA)).toBe(true)
-    expect(args).not.toContain("--append-system-prompt")
+    // the persona is appended: Claude Code's own prompt stays (D10)
+    expect(after(args, "--append-system-prompt").startsWith(PERSONA)).toBe(true)
+    expect(args).not.toContain("--system-prompt")
   })
 
   test("a bot with no allowlist asks for anything beyond reading, still isolated", () => {

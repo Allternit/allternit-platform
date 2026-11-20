@@ -2031,7 +2031,7 @@
       ],
       "more": false,
       "systemLayer": {
-        "via": "agents-md"
+        "via": "append-flag"
       },
       "look": {
         "default": "terminal",

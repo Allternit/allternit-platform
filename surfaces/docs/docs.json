@@ -262,6 +262,13 @@
             "icon": "/icons/stack.svg"
           },
           {
+            "group": "Concepts",
+            "pages": [
+              "concepts/system-layers"
+            ],
+            "icon": "/icons/book.svg"
+          },
+          {
             "group": "Work Runtime",
             "pages": [
               "architecture/work-runtime/lifecycle",
