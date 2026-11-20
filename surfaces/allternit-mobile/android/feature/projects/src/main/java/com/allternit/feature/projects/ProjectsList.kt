@@ -90,6 +90,8 @@ class ProjectsNav(
     val backdrop: @Composable (scope: String) -> Unit,
     /** A GET on the user's computer through the runtime relay (the folder picker's `v1/path`, `v1/file/tree`). */
     val runtimeGet: RuntimeGet = { Result.failure(IllegalStateException("No computer")) },
+    /** Wave E: a bot project opens the bot project page in Bots mode (iOS BotProjectPage); null keeps the project detail. */
+    val openBotProject: ((projectId: String) -> Unit)? = null,
 )
 
 private enum class ProjectSort(val label: String) { Recent("Recent"), Name("Name"), Created("Created") }
@@ -140,7 +142,8 @@ fun ProjectsListScreen(
         page = when (p.mode) {
             ProjectMode.Code -> ProjectPage.Code(p, asksForFolder)
             ProjectMode.Design -> ProjectPage.Design(p)
-            // Bot projects open their detail here until the bot project page (wave E) lands.
+            // Bot projects open the bot project page (wave E) when the shell can show it.
+            ProjectMode.Bot -> nav.openBotProject?.let { openBot -> openBot(p.nativeId); return } ?: ProjectPage.Chat(p)
             else -> ProjectPage.Chat(p)
         }
     }

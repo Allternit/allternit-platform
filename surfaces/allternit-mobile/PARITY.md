@@ -39,23 +39,23 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| AgentActivityDetailView | ios/Features/AgentActivity/Views/AgentActivityDetailView.swift | — | — | todo | — |
-| AgentActivityListView | ios/Features/AgentActivity/Views/AgentActivityListView.swift | — | — | todo | — |
+| AgentActivityDetailView | ios/Features/AgentActivity/Views/AgentActivityDetailView.swift | — | feature/bots/BotsMore.kt (AgentActivityDetailScreen) | built (wave E PR) | — |
+| AgentActivityListView | ios/Features/AgentActivity/Views/AgentActivityListView.swift | — | feature/bots/BotsMore.kt (AgentActivityListScreen) | built (wave E PR): tag filter is a sheet, not a menu | — |
 
 ## Agents
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| AgentDetailView | ios/Features/Agents/AgentDetailView.swift | — | — | todo | — |
-| AgentHubView | ios/Features/Agents/AgentHubView.swift | — | — | todo | — |
-| AgentIdenticonView | ios/Features/Agents/AgentIdenticonView.swift | — | — | todo | — |
-| BotBrainPickerSheet | ios/Features/Agents/BotBrainPickerSheet.swift | — | — | todo | — |
-| BotHomeView | ios/Features/Agents/BotHomeView.swift | — | — | todo | — |
-| BotWebhooksSheet | ios/Features/Agents/BotWebhooksSheet.swift | — | — | todo | — |
-| BotWorkspaceFilesSheet | ios/Features/Agents/BotWorkspaceFilesSheet.swift | — | — | todo | — |
-| BotDesktopView | ios/Features/Agents/Desktop/BotDesktopView.swift | src/fabric-session/phone/screens/PhoneDesktopOverlay.tsx | — | todo | — |
-| MarketplaceView | ios/Features/Agents/MarketplaceView.swift | — | — | todo | — |
-| WorkspaceFileEditorView | ios/Features/Agents/WorkspaceFileEditorView.swift | — | — | todo | — |
+| AgentDetailView | ios/Features/Agents/AgentDetailView.swift | — | feature/bots/Agents.kt (AgentDetailView) | built (wave E PR): avatar editor sheet not ported; desktop take-over waits on wave F | — |
+| AgentHubView | ios/Features/Agents/AgentHubView.swift | — | feature/bots/Agents.kt (AgentHubScreen) | built (wave E PR): opened from Bots options; response style / active bot rows not ported | — |
+| AgentIdenticonView | ios/Features/Agents/AgentIdenticonView.swift | — | feature/bots/BotVisuals.kt (AgentIdenticon) | built (wave E PR) | — |
+| BotBrainPickerSheet | ios/Features/Agents/BotBrainPickerSheet.swift | — | feature/bots/BotForm.kt (BotBrainPickerSheet) | built (wave E PR) | — |
+| BotHomeView | ios/Features/Agents/BotHomeView.swift | — | feature/bots/Agents.kt (BotHomeScreen) | built (wave E PR): desktop preview card waits on wave F | — |
+| BotWebhooksSheet | ios/Features/Agents/BotWebhooksSheet.swift | — | feature/bots/Agents.kt (BotWebhooksSheet) | built (wave E PR) | — |
+| BotWorkspaceFilesSheet | ios/Features/Agents/BotWorkspaceFilesSheet.swift | — | feature/bots/Agents.kt (BotWorkspaceFilesSheet) | built (wave E PR) | — |
+| BotDesktopView | ios/Features/Agents/Desktop/BotDesktopView.swift | src/fabric-session/phone/screens/PhoneDesktopOverlay.tsx | — | moved to wave F: the RFB client ships with ACI Computer, which needs the same port | — |
+| MarketplaceView | ios/Features/Agents/MarketplaceView.swift | — | feature/bots/Agents.kt (MarketplaceScreen, MarketplaceListingScreen) | built (wave E PR) | — |
+| WorkspaceFileEditorView | ios/Features/Agents/WorkspaceFileEditorView.swift | — | feature/bots/Agents.kt (WorkspaceFileEditorScreen) | built (wave E PR): "Edit with chat" assist (EditWithChat.kt: instruction → streamed revision in a bot session, line diff, Apply / Discard) | — |
 
 ## Artifacts
 
@@ -99,18 +99,21 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| section: bots | — | src/fabric-session/phone/phone-nav.ts (PhoneSection bots) | — | todo | — |
-| BotsScreen | — | src/fabric-session/phone/screens/BotsScreen.tsx | — | todo | — |
-| BotAvatarView | ios/Features/Bots/BotAvatarView.swift | — | — | todo | — |
-| BotChatSessionView | ios/Features/Bots/BotChatSessionView.swift | — | — | todo | — |
-| BotHomeTabsView | ios/Features/Bots/BotHomeTabsView.swift | — | — | todo | — |
-| BotLaunchpadView | ios/Features/Bots/BotLaunchpadView.swift | — | — | todo | — |
-| BotLiveStageView | ios/Features/Bots/BotLiveStageView.swift | — | — | todo | — |
-| BotPageView | ios/Features/Bots/BotPageView.swift | — | — | todo | — |
-| BotProjectPage | ios/Features/Bots/BotProjectPage.swift | — | — | todo | — |
-| BotsModeRootView | ios/Features/Bots/BotsModeRootView.swift | — | — | todo | — |
-| BotThreadsView | ios/Features/Bots/BotThreadsView.swift | — | — | todo | — |
-| BotFormSheet | ios/Features/Bots/CreateBot/BotFormSheet.swift | — | — | todo | — |
+| section: bots | — | src/fabric-session/phone/phone-nav.ts (PhoneSection bots) | feature/shell/WorkspaceShell.kt (Section "bots") | built (wave E PR) | — |
+| BotsScreen | — | src/fabric-session/phone/screens/BotsScreen.tsx | feature/bots/BotsRoot.kt (BotsModeRoot) | built (wave E PR) | — |
+| BotAvatarView | ios/Features/Bots/BotAvatarView.swift | — | feature/bots/BotVisuals.kt (BotAvatar, BotStatusAvatar) | built (wave E PR): sprite still frame, no sprite animation | — |
+| BotChatSessionView | ios/Features/Bots/BotChatSessionView.swift | — | feature/bots/BotChat.kt (BotChatSessionScreen) | built (wave E PR): call button and Background picker not ported | — |
+| BotHomeTabsView | ios/Features/Bots/BotHomeTabsView.swift | — | feature/bots/BotPage.kt (BotHomeTabsScreen) | built (wave E PR) | — |
+| BotLaunchpadView | ios/Features/Bots/BotLaunchpadView.swift | — | feature/bots/BotsRoot.kt (BotLaunchpad) | built (wave E PR): To: picker is a sheet | — |
+| BotLiveStageView | ios/Features/Bots/BotLiveStageView.swift | — | feature/bots/BotChat.kt (BotLiveStageScreen) | built (wave E PR) | — |
+| BotPageView | ios/Features/Bots/BotPageView.swift | — | feature/bots/BotPage.kt (BotPageView) | built (wave E PR) | — |
+| BotProjectPage | ios/Features/Bots/BotProjectPage.swift | — | feature/bots/BotsMore.kt (BotProjectPage) | built (wave E PR): Delegate / Factory panes and the canvas open the Projects detail | — |
+| BotsModeRootView | ios/Features/Bots/BotsModeRootView.swift | — | feature/bots/BotsRoot.kt (BotsModeRoot) | built (wave E PR): group chats (GroupChat.kt: list, new, room stage, member turns + vendor members, add members, swipe delete); Office floor is wave F | — |
+| GroupChatViews / VendorGroupTurn | ios/Features/Bots/GroupChatViews.swift, VendorGroupTurn.swift | — | feature/bots/GroupChat.kt | built (wave E PR): room background picker not ported (same as the bot chat Background picker) | — |
+| BotZipImport | ios/Features/Connect/BotZipImport.swift | — | feature/bots/BotZip.kt + ImportBotSheet | built (wave E PR) | — |
+| ImpactMapView | ios/Features/Shared/ImpactMapView.swift | — | feature/bots/ImpactMap.kt | built (wave E PR): focus graph, Open, Forget, Turn off skill | — |
+| BotThreadsView | ios/Features/Bots/BotThreadsView.swift | — | feature/bots/BotThreads.kt (BotThreadsOverview, BotThreadsPanel, BotThreadTasks) | built (wave E PR) | — |
+| BotFormSheet | ios/Features/Bots/CreateBot/BotFormSheet.swift | — | feature/bots/BotForm.kt (NewBotSheet, EditBotSheet) | built (wave E PR): Look editor (BotLook.kt, the web /editor/bot-look page signed in, avatar saved on create/edit, asset sync); voice, starter prompts and "Draft instructions" not ported | — |
 
 ## Brain
 
@@ -211,10 +214,10 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| DecisionsDeckView | ios/Features/Decisions/Views/DecisionsDeckView.swift | — | — | todo | — |
-| PermissionAskView | ios/Features/Decisions/Views/PermissionAskView.swift | — | — | todo | — |
-| PhoneHoldReviewView | ios/Features/Decisions/Views/PhoneHoldReviewView.swift | — | — | todo | — |
-| QuestionCardView | ios/Features/Decisions/Views/QuestionCardView.swift | — | — | todo | — |
+| DecisionsDeckView | ios/Features/Decisions/Views/DecisionsDeckView.swift | — | feature/bots/BotsMore.kt (DecisionsScreen) | built (wave E PR) | — |
+| PermissionAskView | ios/Features/Decisions/Views/PermissionAskView.swift | — | feature/chat/ChatCards.kt (PermissionAskCard, wave A) | built (#2614, wave A chat card) | — |
+| PhoneHoldReviewView | ios/Features/Decisions/Views/PhoneHoldReviewView.swift | — | feature/shell/Inbox.kt (PhoneHoldReviewSheet, wave C; Decisions links to it) | built (#2626, wave C Review sheet) | — |
+| QuestionCardView | ios/Features/Decisions/Views/QuestionCardView.swift | — | feature/chat/ChatCards.kt (QuestionCard; reused by DecisionsScreen) | built (#2614, wave A chat card) | — |
 
 ## History
 
@@ -246,7 +249,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| MeetYourBotsView | ios/Features/Onboarding/MeetYourBotsView.swift | — | feature/shell/firstrun/MeetYourBotsScreen.kt (+ MeetFinish.kt, MeetVisuals.kt) | built (#2621; vendor bots, New bot, Import and the routine time editor not yet) | — |
+| MeetYourBotsView | ios/Features/Onboarding/MeetYourBotsView.swift | — | feature/shell/firstrun/MeetYourBotsScreen.kt (+ MeetFinish.kt, MeetVisuals.kt) | built (#2621; wave E adds vendor bots, New bot, Import, the routine time editor and Week / Month) | — |
 | OnboardingView | ios/Features/Onboarding/OnboardingView.swift | — | feature/shell/firstrun/FirstRunGate.kt (+ FirstRunStore.kt) | built (#2621) | — |
 | ConnectedView | ios/Features/Onboarding/Setup/ConnectedView.swift | — | feature/shell/firstrun/ConnectedScreen.kt (+ SetupHandoff.kt) | built (#2621) | — |
 | FirstRunSetupView | ios/Features/Onboarding/Setup/FirstRunSetupView.swift | — | feature/shell/firstrun/FirstRunSetupScreen.kt (+ SetupModel.kt, SetupApi.kt, ConnectSheets.kt) | built (#2621) | — |
@@ -274,18 +277,18 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | DesignProjectCanvasView | ios/Features/Projects/Views/DesignProjectCanvasView.swift | — | feature/projects/ProjectDetail.kt (DesignProjectCanvasScreen) | built (#2629: Close does not flush a pending canvas save first; the canvas saves itself) | — |
 | FolderCoverView | ios/Features/Projects/Views/FolderCoverView.swift | — | feature/projects/FolderCover.kt (FolderCover) | built (#2629: symbols drawn as glyphs, not SF Symbols) | — |
 | FolderLookSheet | ios/Features/Projects/Views/FolderLookSheet.swift | — | feature/projects/FolderCover.kt (FolderLookSheet) | built (#2629: colour picker with Grid, Spectrum and hex, matching the iOS ColorPicker sheet) | — |
-| NewProjectSheet | ios/Features/Projects/Views/NewProjectSheet.swift | — | feature/projects/ProjectsList.kt (NewProjectSheet) | built (#2629: bot projects save to the account; NewBotSheet and the bot project page are wave E) | — |
-| PadEditSheet | ios/Features/Projects/Views/PadEditSheet.swift | — | feature/projects/ProjectPad.kt (PadEditSheet) | built (#2629: move up / down for reorder, Your colors with Main / Accent pickers; Your templates (saved account pad templates) not built yet) | — |
+| NewProjectSheet | ios/Features/Projects/Views/NewProjectSheet.swift | — | feature/projects/ProjectsList.kt (NewProjectSheet) | built (#2629: bot projects save to the account; the bot project page is wave E) | — |
+| PadEditSheet | ios/Features/Projects/Views/PadEditSheet.swift | — | feature/projects/ProjectPad.kt (PadEditSheet) | built (#2629; wave E adds Your templates and Save as template) | — |
 | ProjectDetailView | ios/Features/Projects/Views/ProjectDetailView.swift | — | feature/projects/ProjectDetail.kt (ProjectDetailScreen) | built (#2629: Overview with coordinator conversation and composer, Delegate pane, Board pane, Details with status, Memory, Add files (Photos / Files), instructions, files and Folder) | — |
 | ProjectPadView | ios/Features/Projects/Views/ProjectPadView.swift | — | feature/projects/ProjectPad.kt (ProjectPadCard) | built (#2629: notes, links, checklist, quick actions, threads; Style tiles drawn like iOS ProjectDashboard Bento with the palette slots) | — |
-| ProjectsListView | ios/Features/Projects/Views/ProjectsListView.swift | — | feature/projects/ProjectsList.kt (ProjectsListScreen) | built (#2629: bot projects open the project detail until the wave E bot project page) | — |
+| ProjectsListView | ios/Features/Projects/Views/ProjectsListView.swift | — | feature/projects/ProjectsList.kt (ProjectsListScreen) | built (#2629; wave E: bot projects open the bot project page in Bots mode) | — |
 
 ## RunTree
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
-| AgentRunTreeSheet | ios/Features/RunTree/Views/AgentRunTreeSheet.swift | — | — | todo | — |
-| SubagentFaceView | ios/Features/RunTree/Views/SubagentFaceView.swift | — | — | todo | — |
+| AgentRunTreeSheet | ios/Features/RunTree/Views/AgentRunTreeSheet.swift | — | feature/chat/RunTree.kt (AgentRunTreeSheet, from the tool rail) | built (wave E PR) | — |
+| SubagentFaceView | ios/Features/RunTree/Views/SubagentFaceView.swift | — | feature/chat/RunTree.kt (SubagentFace) | built (wave E PR) | — |
 
 ## Settings
 
@@ -343,14 +346,14 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | CloudCreditsSheet | ios/Features/Shared/CloudCreditsSheet.swift | — | — | todo | — |
 | ComputeGateView | ios/Features/Shared/ComputeGateView.swift | — | feature/chat/ComputeGate.kt (ComputeGateCard) | built (#2614) | — |
 | ConnectComputerView | ios/Features/Shared/ConnectComputerView.swift | — | feature/chat/ComputeGate.kt (ConnectComputerSheet) | built (#2614) | — |
-| ImpactMapView | ios/Features/Shared/ImpactMapView.swift | — | — | todo | — |
+| ImpactMapView | ios/Features/Shared/ImpactMapView.swift | — | feature/bots/BotsMore.kt (ImpactMapView) | built (wave E PR): list view, not the node graph | — |
 
 ## Shell
 
 | Screen | iOS path | Web path | Android path | Status | Proof |
 | --- | --- | --- | --- | --- | --- |
 | mode: aci | — | src/fabric-session/phone/phone-nav.ts (PhoneMode aci) | — | todo | — |
-| mode: bots | — | src/fabric-session/phone/phone-nav.ts (PhoneMode bots) | — | todo | — |
+| mode: bots | — | src/fabric-session/phone/phone-nav.ts (PhoneMode bots) | feature/shell/WorkspaceShell.kt (ShellMode.Bots → BotsModeRoot) | built (wave E PR) | — |
 | mode: code | — | src/fabric-session/phone/phone-nav.ts (PhoneMode code) | — | todo | — |
 | mode: home | — | src/fabric-session/phone/phone-nav.ts (PhoneMode home) | — | todo | — |
 | StageBackdropView | ios/Features/Shell/Backdrop/StageBackdropView.swift | — | feature/shell/backdrop/StageBackdrop.kt (drawn from waves D–F: iOS draws it only on bot, group, project and Code screens, and in the drawer while one of those publishes it) | built (#2626) | — |

@@ -206,6 +206,10 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         }
     }
 
+    // Wave E: Bots mode (iOS BotsModeRootView), with the shell's chat backend, composer and backdrop.
+    val botsStore = remember { com.allternit.feature.bots.BotModeStore(context) }
+    var botsLaunch by remember { mutableStateOf(com.allternit.feature.bots.BotsLaunch()) }
+
     // Wave D: what the Projects and Artifacts screens need from the shell.
     val shellMenuButton: @Composable () -> Unit = {
         PhoneMenuButton(mode = mode, hold = hold, holdEnabled = !drawerOpenNow(drawer), onOpen = { setDrawer(true) }, onPick = ::pickMode)
@@ -220,6 +224,12 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 openSessionId(id)
             },
             backdrop = { scopeId -> ProjectBackdrop(scopeId) },
+            openBotProject = { id ->
+                mode = ShellMode.Bots
+                ShellModePrefs.save(context, ShellMode.Bots)
+                botsLaunch = com.allternit.feature.bots.BotsLaunch(projectId = id)
+                page = ShellPage.Home
+            },
             runtimeGet = { path ->
                 when (val r = chatBackend.runtimeJson("GET", path)) {
                     is com.allternit.feature.chat.RuntimeCall.Ok -> Result.success(r.body)
@@ -245,6 +255,36 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             onOpenSettings = { page = ShellPage.Settings },
         )
     }
+
+    val botsHost = com.allternit.feature.bots.BotsHost(
+        signedIn = account != null,
+        backend = chatBackend,
+        menuButton = shellMenuButton,
+        composer = { spec ->
+            Composer(
+                models = models,
+                noComputer = store.noComputer,
+                phoneArmed = false,
+                onClearPhone = {},
+                onSend = { draft -> spec.onSend(draft.toChatRequest()) },
+                onOpenSection = { row -> page = ShellPage.Section(row) },
+                isStreaming = spec.isStreaming,
+                sendDisabled = spec.sendDisabled,
+                onStop = spec.onStop,
+                prefill = spec.prefill,
+                onPrefillConsumed = spec.onPrefillConsumed,
+                pickerRequest = spec.pickerRequest,
+                placeholderOverride = spec.placeholder,
+            )
+        },
+        currentModel = { models.selectedId to models.selected?.let { models.level(it) } },
+        backdrop = { botId, hex -> BotBackdrop(botId, hex) },
+        openConnections = { page = ShellPage.Section(RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected)) },
+        openSignIn = { page = ShellPage.Settings },
+        openArtifact = { a -> page = ShellPage.Artifact(com.allternit.feature.artifacts.ArtifactRecordInput(a.id, a.kind, a.title, a.url, a.content), back = page) },
+        openProjectInLibrary = { id -> page = ShellPage.Project(id) },
+        openInbox = { inboxOpen = true },
+    )
 
     /** iOS newOptions: press and hold the New pill. */
     fun newOptions(): List<NewOption> {
@@ -323,7 +363,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             ) {
                 Box(Modifier.fillMaxSize().then(if (drawerOpen) Modifier.clearAndSetSemantics {} else Modifier)) {
                     when (val current = page) {
-                        ShellPage.Home -> ShellHome(
+                        ShellPage.Home -> if (mode == ShellMode.Bots) {
+                            com.allternit.feature.bots.BotsModeRoot(botsHost, botsStore, botsLaunch)
+                        } else ShellHome(
                             mode = mode,
                             store = store,
                             models = models,
@@ -386,6 +428,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 onConnectors = { page = ShellPage.Section(RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected)) },
                                 onSignIn = { page = ShellPage.Settings },
                             )
+                            // Wave E: the drawer's "Your bots" and a bot from search open Bots mode's root.
+                            "bots" -> com.allternit.feature.bots.BotsModeRoot(botsHost, botsStore, botsLaunch)
                             else -> SectionStub(current.row, onBack = { page = ShellPage.Home })
                         }
                         is ShellPage.Project -> ProjectsListScreen(
@@ -584,4 +628,13 @@ private fun ProjectBackdrop(scopeId: String) {
     val backdrops = remember(context) { StageBackdropStore.get(context) }
     val variant = backdrops.variantFor(BackdropSurface.Project, BackdropScope.project(scopeId))
     if (variant != "plain") StageBackdrop(variant = variant, modifier = Modifier.fillMaxSize())
+}
+
+/** The StageBackdrop behind a bot chat (iOS BotChatSessionView: the bot's look, else the Bot chats default). */
+@Composable
+private fun BotBackdrop(botId: String, colorHex: String?) {
+    val context = LocalContext.current
+    val backdrops = remember(context) { StageBackdropStore.get(context) }
+    val variant = backdrops.variantFor(BackdropSurface.Bot, BackdropScope.bot(botId))
+    if (variant != "plain") StageBackdrop(variant = variant, modifier = Modifier.fillMaxSize(), colors = listOf(colorHex))
 }

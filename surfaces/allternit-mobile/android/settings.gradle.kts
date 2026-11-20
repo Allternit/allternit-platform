@@ -34,3 +34,6 @@ include(":feature:chat")
 // uses :feature:artifacts for the library chrome and to open a project's artifacts.
 include(":feature:artifacts")
 include(":feature:projects")
+// Wave E: Bots mode. :feature:shell depends on it (nativeapp flavor only); it reuses :feature:chat and
+// :feature:artifacts (LibraryNet, library chrome).
+include(":feature:bots")

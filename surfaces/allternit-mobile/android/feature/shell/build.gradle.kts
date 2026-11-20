@@ -40,6 +40,8 @@ dependencies {
     // Wave D: Projects and Artifacts replace the drawer rows' placeholders.
     implementation(project(":feature:projects"))
     implementation(project(":feature:artifacts"))
+    // Wave E: Bots mode replaces the Bots placeholder.
+    implementation(project(":feature:bots"))
     // The drawer and home list GET /agent-sessions (also reaches us through :core:auth's api()).
     implementation(project(":core:api"))
     // Wave B: DataStore for the first-run "setup done" flag (iOS OnboardingStore, UserDefaults).

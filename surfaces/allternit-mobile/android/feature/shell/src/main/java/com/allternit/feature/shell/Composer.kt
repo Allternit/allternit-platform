@@ -186,6 +186,8 @@ internal fun Composer(
     onPrefillConsumed: () -> Unit = {},
     /** Bumped by the chat to open the model picker (a `no_brain` send, "Choose a model"). */
     pickerRequest: Int = 0,
+    /** Wave E: a fixed placeholder (iOS ComposerView placeholderOverride), e.g. "Message Ada…" in a bot chat. */
+    placeholderOverride: String? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -218,6 +220,7 @@ internal fun Composer(
     }
 
     val placeholders = when {
+        placeholderOverride != null -> listOf(placeholderOverride)
         agentMode == null -> ComposerPlaceholders.chat
         armedMode != null -> ComposerPlaceholders.byMode(armedMode)
         else -> ComposerPlaceholders.agentNoMode

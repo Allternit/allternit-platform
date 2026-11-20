@@ -104,7 +104,7 @@ internal fun MessageRow(
             ) {
                 if (message.reasoning.isNotEmpty()) ThinkingBlock(message.reasoning, streaming = message.isStreaming && message.content.isEmpty())
                 if (message.toolCalls.isNotEmpty()) {
-                    ToolCallsRail(message.toolCalls, message.isStreaming, waiting = message.permissions.any { it.answered == null })
+                    ToolCallsRail(message.toolCalls, message.isStreaming, waiting = message.permissions.any { it.answered == null }, backend = backend)
                 } else {
                     message.toolStatus?.let { ToolStatusLine(it) }
                 }

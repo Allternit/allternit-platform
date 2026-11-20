@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -188,6 +189,9 @@ internal class MeetYourBotsModel(context: Context, private val scope: CoroutineS
     }
 
     fun toggleRoutine(id: String) { routines = routines.map { if (it.id == id) it.copy(enabled = !it.enabled) else it } }
+
+    /** The routine time editor's save (iOS saveRoutine): the new cron and its label. */
+    fun setSchedule(id: String, cron: String, label: String) { routines = routines.map { if (it.id == id) it.copy(cron = cron, scheduleLabel = label) else it } }
 
     fun removeRoutine(id: String) { routines = routines.filter { it.id != id }; removedDrafts += id }
 
@@ -413,7 +417,7 @@ private fun MeetVisual(model: MeetYourBotsModel, step: MeetYourBotsModel.Step, n
                 if (n > 0) "$n bot${if (n > 1) "s" else ""} · tap to take one off" else "Tap a card to add a bot", model.existingTemplateIds, model::toggle)
         }
         MeetYourBotsModel.Step.Main -> MeetMainStage(leaderField(model), "${model.leader} idle") { LeaderTile(model, 150.dp, live = true) }
-        MeetYourBotsModel.Step.Routines -> MeetRoutineDay(model.routines, { key -> botColor(model, key) }, model::toggleRoutine)
+        MeetYourBotsModel.Step.Routines -> MeetRoutinesPicture(model)
         MeetYourBotsModel.Step.Notifications -> Box(Modifier.fillMaxSize().background(meetSoft), contentAlignment = Alignment.Center) {
             SetupBlockField()
             Box(Modifier.size(96.dp).background(c.bg, RoundedCornerShape(24.dp)).border(1.dp, c.line, RoundedCornerShape(24.dp)), contentAlignment = Alignment.Center) {
@@ -592,6 +596,10 @@ private fun TemplateCard(t: MeetBotTemplate, on: Boolean, have: Boolean = false,
 private fun MainStep(model: MeetYourBotsModel) {
     val c = setupColors
     var discOpen by remember { mutableStateOf(false) }
+    var leadSheet by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val botsStore = remember { com.allternit.feature.bots.BotModeStore(context) }
     H2("Who leads your team?")
     Sub("Your main bot talks to you and hands each job to the bot that owns it.")
     val bubble = when (val m = model.mainChoice) {
@@ -626,6 +634,26 @@ private fun MainStep(model: MeetYourBotsModel) {
                 }
             }
         }
+    }
+    // iOS "Who leads": vendor / new / import (useBotSetup modes), from Bots mode's sheets.
+    Spacer(Modifier.height(12.dp))
+    MonoLabel("Bring your own")
+    PickGrid {
+        Pick("Vendor bot", false, { leadSheet = "vendor" }) { ActionTile("⇄") }
+        Pick("New bot", false, { leadSheet = "new" }) { ActionTile("+") }
+        Pick("Import", false, { leadSheet = "import" }) { ActionTile("↓") }
+    }
+    fun adopt(ids: List<String>) {
+        leadSheet = null
+        scope.launch {
+            model.loadRoster()
+            ids.firstOrNull()?.let { model.mainChoice = MeetMainChoice.Bot(it) }
+        }
+    }
+    when (leadSheet) {
+        "vendor" -> com.allternit.feature.bots.VendorConnectSheet(offerMain = true, onDismiss = { leadSheet = null }) { first, main -> adopt(listOfNotNull(main ?: first)) }
+        "new" -> com.allternit.feature.bots.NewBotSheet(store = botsStore, onBrowseTemplates = null, onDismiss = { leadSheet = null }) { ids -> adopt(ids) }
+        "import" -> com.allternit.feature.bots.ImportBotSheet(onDismiss = { leadSheet = null }) { ids -> adopt(ids) }
     }
     val isPrimary = model.mainChoice == MeetMainChoice.Primary
     if (isPrimary || model.mainChoice is MeetMainChoice.Look) {
@@ -687,8 +715,20 @@ private fun Pick(label: String, selected: Boolean, onClick: () -> Unit, tile: @C
 @Composable
 private fun RoutinesStep(model: MeetYourBotsModel) {
     val c = setupColors
+    var editing by remember { mutableStateOf<MeetRoutineDraft?>(null) }
+    editing?.let { r ->
+        // iOS RoutineScheduleEditor from the routine row.
+        com.allternit.feature.bots.RoutineScheduleEditor(
+            title = r.title,
+            initial = com.allternit.feature.bots.RoutineRule.fromCron(r.cron)
+                ?: com.allternit.feature.bots.RoutineRule(com.allternit.feature.bots.RoutineRule.Repeat.Weekdays, 9 * 60, days = com.allternit.feature.bots.RoutineRule.WEEKDAYS),
+            saving = false, error = null,
+            onSave = { rule -> model.setSchedule(r.id, rule.cron, rule.label); editing = null },
+            onCancel = { editing = null },
+        )
+    }
     H2("When your bots work")
-    Sub("Your bots come with these routines. Turn one off, or take it out. You can change when each runs later in Automation.")
+    Sub("Your bots come with these routines. Tap one to change when it runs, turn one off, or take it out.")
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         model.routines.forEach { r ->
             Row(
@@ -696,7 +736,7 @@ private fun RoutinesStep(model: MeetYourBotsModel) {
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 KeyTile(model, r.botKey, 32.dp)
-                Column(Modifier.weight(1f)) {
+                Column(Modifier.weight(1f).clickable(onClickLabel = "Change when ${r.title} runs") { editing = r }.testTag("meet-routine-${r.id}")) {
                     Text(r.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = c.ink, maxLines = 1)
                     Text("${model.routineBotName(r.botKey)} · ${r.scheduleLabel}", fontSize = 12.sp, color = c.sub, maxLines = 1)
                 }
@@ -846,6 +886,65 @@ private fun CheckRow(done: Boolean, title: String, detail: String?) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, fontSize = 13.5.sp, fontWeight = FontWeight.Medium, color = c.ink)
             if (!detail.isNullOrEmpty()) Text(detail, fontSize = 12.sp, color = c.mut)
+        }
+    }
+}
+
+@Composable
+private fun ActionTile(glyph: String) {
+    val c = setupColors
+    Box(Modifier.size(52.dp).background(c.card, RoundedCornerShape(14.dp)).border(1.dp, c.line, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
+        Text(glyph, fontSize = 20.sp, color = c.sub)
+    }
+}
+
+/**
+ * The routines picture with Day, Week and Month (iOS MeetYourBotsVisuals routines views): Day is the
+ * timeline; Week shows each routine on the weekdays its cron runs; Month marks the days of the month.
+ */
+@Composable
+private fun MeetRoutinesPicture(model: MeetYourBotsModel) {
+    val c = setupColors
+    var view by remember { mutableStateOf("Day") }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.padding(10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("Day", "Week", "Month").forEach { v ->
+                Text(v, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (view == v) c.bg else c.ink,
+                    modifier = Modifier.background(if (view == v) c.ink else c.card, RoundedCornerShape(50)).clickable { view = v }.testTag("meet-routines-$v").padding(horizontal = 12.dp, vertical = 5.dp))
+            }
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            val rules = model.routines.filter { it.enabled }.map { it to com.allternit.feature.bots.RoutineRule.fromCron(it.cron) }
+            when (view) {
+                "Day" -> MeetRoutineDay(model.routines, { key -> botColor(model, key) }, model::toggleRoutine)
+                "Week" -> Row(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    com.allternit.feature.bots.RoutineRule.DAY_SHORT.forEachIndexed { d, name ->
+                        Column(Modifier.weight(1f).fillMaxHeight().background(c.card, RoundedCornerShape(8.dp)).padding(3.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(name, fontSize = 10.sp, color = c.mut, modifier = Modifier.align(Alignment.CenterHorizontally))
+                            rules.filter { (_, rule) -> rule == null || (rule.repeatKind != com.allternit.feature.bots.RoutineRule.Repeat.Monthly && d in rule.days) }.forEach { (r, _) ->
+                                Box(Modifier.fillMaxWidth().height(14.dp).background(botColor(model, r.botKey).copy(alpha = 0.8f), RoundedCornerShape(4.dp)))
+                            }
+                        }
+                    }
+                }
+                else -> Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val today = java.time.LocalDate.now()
+                    val first = today.withDayOfMonth(1)
+                    (1..today.lengthOfMonth()).chunked(7).forEach { week ->
+                        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            week.forEach { dom ->
+                                val dow = first.plusDays((dom - 1).toLong()).dayOfWeek.value % 7
+                                val on = rules.filter { (_, rule) -> rule == null || (if (rule.repeatKind == com.allternit.feature.bots.RoutineRule.Repeat.Monthly) dom in rule.dom.orEmpty() else dow in rule.days) }
+                                Column(Modifier.weight(1f).fillMaxHeight().background(if (dom == today.dayOfMonth) c.fill else c.card, RoundedCornerShape(6.dp)).padding(2.dp)) {
+                                    Text("$dom", fontSize = 9.sp, color = c.mut)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) { on.take(4).forEach { (r, _) -> Box(Modifier.size(5.dp).background(botColor(model, r.botKey), RoundedCornerShape(50))) } }
+                                }
+                            }
+                            repeat(7 - week.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+            }
         }
     }
 }
