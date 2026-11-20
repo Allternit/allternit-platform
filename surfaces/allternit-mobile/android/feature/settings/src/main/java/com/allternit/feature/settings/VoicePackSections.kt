@@ -84,6 +84,7 @@ internal fun ReplyVoiceSection() {
         return
     }
     SNote("Bots answer in Kokoro, a natural voice that runs on this phone. It downloads once ($megabytes, on Wi-Fi unless you tap Download). Until then, and if this phone runs low on memory, the built-in voice reads replies.")
+    SNote("Kokoro reads text through espeak-ng, which is free software under the GNU GPL version 3 or later. Its source is at github.com/espeak-ng/espeak-ng.")
     val state = pack.state
     SCard {
         SRow(
