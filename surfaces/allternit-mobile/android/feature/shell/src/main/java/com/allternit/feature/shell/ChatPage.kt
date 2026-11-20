@@ -83,13 +83,19 @@ internal fun ChatPage(
                 prefill = ChatViewModel.strippedText(m.content)
             },
             onOpenSettings = onOpenSettings,
-            onConnectConnector = { onOpenSection(RailRow("connectors", "Connectors", R.drawable.shell_bolt)) },
+            onConnectConnector = { onOpenSection(RailRow("connectors", "Connectors", com.allternit.core.design.R.drawable.ph_lightning)) },
             onShareLink = { shareOpen = true },
             onOpenArtifact = onOpenArtifact,
         )
     }
 
     val title = store.sessions.firstOrNull { it.id == chat.currentSessionId }?.title ?: "Allternit"
+    // Wave H2: voice mode (iOS ChatView voiceHost): full screen or the bar over the composer.
+    val voiceContext = androidx.compose.ui.platform.LocalContext.current
+    val voiceHost = remember(chat) { com.allternit.feature.chat.voice.VoiceHost(voiceContext) }
+    com.allternit.feature.chat.voice.VoiceHostWiring(voiceHost, chat)
+    val endVoice: (Int) -> Unit = { seconds -> chat.appendVoiceSummary(seconds) }
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().statusBarsPadding().testTag("chatScreen")) {
         PhoneHeader(
             title = title,
@@ -97,12 +103,12 @@ internal fun ChatPage(
             leading = menuButton,
             trailing = {
                 Box {
-                    PhoneIconButton(R.drawable.shell_dots, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
+                    PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
                         if (chat.currentSessionId == null) {
                             Text("Send a message to start this chat.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
                         } else {
-                            MenuRow(icon = R.drawable.shell_link, title = "Share link", testTag = "chatMenushareLink") {
+                            MenuRow(icon = com.allternit.core.design.R.drawable.ph_link, title = "Share link", testTag = "chatMenushareLink") {
                                 menuOpen = false
                                 shareOpen = true
                             }
@@ -113,7 +119,7 @@ internal fun ChatPage(
                         }
                     }
                 }
-                PhoneIconButton(R.drawable.shell_note_pencil, "New chat", testTag = "chatNewChat", onClick = onNewChat)
+                PhoneIconButton(com.allternit.core.design.R.drawable.ph_note_pencil, "New chat", testTag = "chatNewChat", onClick = onNewChat)
             },
         )
         ChatScreen(
@@ -127,6 +133,10 @@ internal fun ChatPage(
             },
             greeting = { LaunchGreeting() },
             composer = {
+                val voiceVm = voiceHost.viewModel
+                if (voiceHost.presentation == com.allternit.feature.chat.voice.VoiceHost.Presentation.Bar && voiceVm != null) {
+                    com.allternit.feature.chat.voice.VoiceQuickBar(voiceHost, voiceVm, onEnd = endVoice)
+                }
                 Composer(
                     models = models,
                     noComputer = store.noComputer,
@@ -143,15 +153,25 @@ internal fun ChatPage(
                     },
                     onOpenSection = onOpenSection,
                     isStreaming = chat.isStreaming,
+                    deck = ComposerDeck.Compact,
                     sendDisabled = chat.isCreatingSession,
                     onStop = chat::stopStreaming,
                     prefill = prefill,
                     onPrefillConsumed = { prefill = null },
                     pickerRequest = pickerRequest,
+                    onVoiceMode = {
+                        voiceHost.start(chat, models.selectedId, models.selected?.let { models.level(it) })
+                    },
                 )
             },
             modifier = Modifier.weight(1f),
         )
+    }
+    val fullVoice = voiceHost.viewModel
+    if (voiceHost.presentation == com.allternit.feature.chat.voice.VoiceHost.Presentation.Full && fullVoice != null) {
+        androidx.activity.compose.BackHandler { voiceHost.presentation = com.allternit.feature.chat.voice.VoiceHost.Presentation.Bar }
+        com.allternit.feature.chat.voice.VoiceModeView(voiceHost, fullVoice, onEnd = endVoice)
+    }
     }
     if (shareOpen) {
         ThreadShareSheet(backend = backend, sessionId = chat.currentSessionId, title = title, messages = chat.messages, onDismiss = { shareOpen = false })

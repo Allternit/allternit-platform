@@ -26,6 +26,31 @@ activityCompose = "1.10.1"
 # androidx.webkit (Apache-2.0): origin-scoped web message listeners and document-start scripts for
 # the wave D artifact web views (the iOS WKScriptMessageHandler / WKUserScript equivalents).
 webkit = "1.12.1"
+# Google Play Billing Library (Apache-2.0) for the native app's plans and credit packs (wave H1, store purchases
+# D15). 8.3.0 is the version the play flavor already ships through androidbrowserhelper billing:1.2.0; new apps and
+# updates need PBL 8+. Only :feature:billing uses it, so only the nativeapp flavor carries it.
+playBilling = "8.3.0"
+# Firebase Cloud Messaging (Apache-2.0) for native push (wave I1). Only :feature:push uses it, so only the nativeapp
+# flavor carries it. No google-services plugin: the Firebase options come from string resources :app generates from
+# the local client config (app/build.gradle.kts, firebaseResValues), so nothing Firebase-specific is in git.
+firebaseMessaging = "24.1.0"
+# Jetpack Glance (Apache-2.0) for the home-screen status widget (wave I2, iOS AllternitWidgets StatusWidget). Only
+# :feature:system uses it, so only the nativeapp flavor carries it.
+glance = "1.1.1"
+# CameraX (Apache-2.0) + ML Kit barcode scanning, bundled model (Google ML Kit terms, free, on-device) for the voice key
+# QR scan in Settings > Voice (gap run GS-B, iOS VoiceKeyScannerView). Only :feature:settings uses them, so only the
+# nativeapp flavor carries them.
+camerax = "1.4.2"
+mlkitBarcode = "17.3.0"
+# ML Kit Document Scanner (Google Play services): the Android counterpart of iOS VisionKit VNDocumentCamera.
+mlkitDocScanner = "16.0.0-beta1"
+# sherpa-onnx (Apache-2.0, k2-fsa) for on-phone voice: Silero VAD + Moonshine listening and Kokoro replies, the same
+# release iOS (Frameworks/fetch-sherpa-onnx.sh) and the native voice engine (services/voice) pin. k2-fsa publishes the
+# Android AAR only as a GitHub release asset, so settings.gradle.kts declares that release as an ivy repository and
+# :feature:chat checks the AAR's sha256 before every build. Gradle caches it; nothing is committed.
+sherpaOnnx = "1.13.8"
+# Apache Commons Compress (Apache-2.0): unpacks the .tar.bz2 voice packs (iOS Core/Voice/Bz2Tar).
+commonsCompress = "1.27.1"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -41,7 +66,17 @@ kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 clerk-android-api = { group = "com.clerk", name = "clerk-android-api", version.ref = "clerk" }
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-browser = { group = "androidx.browser", name = "browser", version = "1.8.0" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
+play-billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "playBilling" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging", version.ref = "firebaseMessaging" }
+glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
+camerax-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+camerax-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
+mlkit-barcode = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcode" }
+mlkit-document-scanner = { group = "com.google.android.gms", name = "play-services-mlkit-document-scanner", version.ref = "mlkitDocScanner" }
+commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

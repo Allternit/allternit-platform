@@ -803,6 +803,13 @@ struct ChatContentView: View {
         PhoneRunHosting.hosts(messages: viewModel.messages, cards: phoneRuns.cards(for: viewModel.currentSessionId))
     }
 
+    /// The credits button shows only when a Cloud model is listed.
+    private var errorActionKinds: Set<ChatErrorAction.Kind> {
+        var kinds: Set<ChatErrorAction.Kind> = [.manageClaudeOrg, .linkAgain]
+        if modelStore.creditsFallbackModelId != nil { kinds.insert(.useCredits) }
+        return kinds
+    }
+
     private func messageRow(_ message: MessageRecord, hostedRun: PhoneTaskCardModel? = nil) -> some View {
         MessageRow(
             message: message,
@@ -814,6 +821,18 @@ struct ChatContentView: View {
             },
             onRetry: { failedMessageId in
                 viewModel.retryFailedMessage(failedMessageId, runtimeModelId: modelStore.selectedModelId, effort: modelStore.effortForSend)
+            },
+            availableErrorActions: errorActionKinds,
+            onErrorAction: { failedMessageId, action in
+                switch action.kind {
+                case .useCredits:
+                    if let cloudId = modelStore.creditsFallbackModelId {
+                        viewModel.resendOnCloudModel(failedMessageId, cloudModelId: cloudId)
+                    }
+                case .manageClaudeOrg, .linkAgain:
+                    // Settings › Connections holds the Claude organization row.
+                    DeepLinkRouter.shared.enqueue(.settings("subscriptions"))
+                }
             },
             isLastAssistant: message.id == viewModel.lastAssistantMessageId,
             isLastUser: message.id == viewModel.lastUserMessageId,

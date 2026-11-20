@@ -171,8 +171,60 @@ pub fn reason_text(code: &str) -> &'static str {
         "not_available_yet" => "Not available yet",
         "computer_offline" => "Your computer is offline",
         "update_app" => "Update the app to connect this plan.",
+        "org_not_eligible" => "Your Claude organization can't be billed. It must pay Anthropic directly.",
+        "spend_limit_reached" => "Your Claude organization's spend limit is reached",
+        "disconnected" => "Your Claude organization is disconnected",
+        "relink_needed" => "Link your Claude organization again",
         "runner_busy" => "Busy. Try again",
         _ => "Could not start. Try again",
+    }
+}
+
+/// What the `claude-org` row reads from `services::claude_link`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClaudeOrgFacts {
+    /// `unlinked` | `linked` | `relink_needed` | `disconnected`.
+    pub state: &'static str,
+    pub org_name: Option<String>,
+    /// Our last linked request was refused for the organization's spend limit.
+    pub spend_limit_reached: bool,
+    /// The person started a sign-in that has not come back yet.
+    pub pending: bool,
+}
+
+/// The `claude-org` row with the feature configured (contract 10.1, 10.2):
+/// connectable and person-only; models only while `on`. `org_not_eligible` is
+/// not stored anywhere yet, so it is never shown from here.
+pub fn apply_claude_org(row: &mut Row, facts: &ClaudeOrgFacts, models: Vec<String>) {
+    row.available = true;
+    row.unavailable_reason = None;
+    row.reason = None;
+    row.reason_code = None;
+    row.found = None;
+    row.models = Vec::new();
+    row.person_only = true;
+    let needs = |row: &mut Row, code: &'static str| {
+        row.state = State::Needs;
+        row.reason = Some(reason_text(code).to_string());
+        row.reason_code = Some(code);
+    };
+    match facts.state {
+        "linked" if facts.spend_limit_reached => needs(row, "spend_limit_reached"),
+        "linked" => {
+            row.state = State::On;
+            let org = facts.org_name.as_deref().unwrap_or("Claude organization");
+            row.found = Some(format!("{org} · billed to your organization"));
+            row.models = models;
+        }
+        "relink_needed" => needs(row, "relink_needed"),
+        "disconnected" => needs(row, "disconnected"),
+        _ => row.state = State::Off,
+    }
+    // A sign-in in flight shows as connecting so the poll keeps going.
+    if facts.pending && row.state != State::On {
+        row.state = State::Connecting;
+        row.reason = None;
+        row.reason_code = None;
     }
 }
 
@@ -405,6 +457,16 @@ pub fn build_rows(facts: &Facts, aliases_for: &dyn Fn(&str) -> Vec<String>) -> V
     let mut copilot = Row::new("copilot", "brains", "server").unavailable("Coming soon.", "not_available_yet", &["github"]);
     copilot.terms = "pending";
     rows.push(copilot);
+    // CONTRACT-connections section 10: the person's own Claude organization.
+    // Hidden as not available until the feature is configured; the route
+    // layer turns it live (`apply_claude_org`).
+    let mut claude_org = Row::new("claude-org", "brains", "server").unavailable(
+        "Not available yet.",
+        "not_available_yet",
+        &["allternit-credits", "anthropic-key"],
+    );
+    claude_org.person_only = true;
+    rows.push(claude_org);
     if !online {
         rows.push(Row::new("local", "brains", "computer").unavailable(RUNS_ON_COMPUTER, "no_computer", &["this-mac"]));
     }

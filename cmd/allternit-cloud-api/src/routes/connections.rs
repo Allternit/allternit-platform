@@ -161,7 +161,60 @@ async fn rows_for(state: &ApiState, user_id: &str, runner_caps: bool) -> Result<
             copilot_row(&service, user_id, row).await;
         }
     }
+    if let Some(row) = rows.iter_mut().find(|row| row.id == "claude-org") {
+        claude_org_row(state, user_id, row).await;
+    }
     Ok(rows)
+}
+
+/// The `claude-org` row (contract 10): unchanged (not available yet) unless
+/// the feature is configured. The state comes from the link status (the
+/// 60-second cached Anthropic read the claude-link route uses, 3 s cap),
+/// falling back to the stored link when Anthropic cannot be read.
+async fn claude_org_row(state: &ApiState, user_id: &str, row: &mut Row) {
+    use crate::services::claude_link::{self, LinkState};
+    if !crate::auth::anthropic_client::is_configured() {
+        return;
+    }
+    let Some(service) = claude_link::service(state) else { return };
+    let read = tokio::time::timeout(std::time::Duration::from_secs(3), service.status(user_id)).await;
+    let (link_state, org_name, spend_limit_reached) = match read {
+        Ok(Ok(status)) => (status.state, status.org_name, status.spend_limit_reached == Some(true)),
+        _ => match claude_link::linked_profile(&state.db, user_id).await {
+            Ok(None) => ("unlinked", None, false),
+            Ok(Some(link)) => (
+                match link.state {
+                    LinkState::Linked => "linked",
+                    LinkState::RelinkNeeded => "relink_needed",
+                    LinkState::Disconnected => "disconnected",
+                },
+                None,
+                false,
+            ),
+            Err(error) => {
+                tracing::warn!(%error, "claude-org link unavailable; showing the row off");
+                return;
+            }
+        },
+    };
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM anthropic_link_requests WHERE user_id = $1 AND used_at IS NULL AND expires_at > now())",
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
+    // `linked/claude/<model>`: the Claude models of the catalog, listed ones only.
+    let mut models: Vec<String> = Vec::new();
+    for entry in state.model_router.catalog().entries() {
+        if let Some(id) = entry.upstream_id.strip_prefix("anthropic/").filter(|id| !id.is_empty() && entry.listed) {
+            let model = format!("linked/claude/{}", id.replace('.', "-"));
+            if !models.contains(&model) {
+                models.push(model);
+            }
+        }
+    }
+    conn::apply_claude_org(row, &conn::ClaudeOrgFacts { state: link_state, org_name, spend_limit_reached, pending }, models);
 }
 
 /// The `copilot` row with the GitHub App configured (contract 9.5): connectable,
@@ -416,6 +469,24 @@ async fn connect(
                 .into_response());
             }
         }
+        if id == "claude-org" {
+            // The claude-link start: same login shape as Copilot.
+            let Some(service) = crate::services::claude_link::service(&state) else {
+                return Ok(crate::services::claude_link::LinkError::not_available().into_response());
+            };
+            return match service.start(&user, body.return_to.as_deref()).await {
+                Ok((url, expires)) => Ok(Json(json!({ "login": {
+                    "kind": "oauth",
+                    "code": Value::Null,
+                    "url": url,
+                    "url_with_code": Value::Null,
+                    "expires_at": expires.to_rfc3339_opts(SecondsFormat::Secs, true),
+                    "poll": true,
+                }}))
+                .into_response()),
+                Err(error) => Ok(error.into_response()),
+            };
+        }
         if conn::key_provider_for(&id).is_some() || conn::voice_provider_for(&id).is_some() || id == "api-key" {
             return Ok(login_reply("paste", Some(conn::key_page(&id)), false, None));
         }
@@ -625,6 +696,16 @@ async fn remove(
                 service.disconnect(&user).await?;
                 return Ok(StatusCode::NO_CONTENT.into_response());
             }
+        }
+        // Claude organization: revoke at Anthropic (best effort), drop the link.
+        if id == "claude-org" {
+            return match crate::services::claude_link::service(&state) {
+                Some(service) => match service.unlink(&user).await {
+                    Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
+                    Err(error) => Ok(error.into_response()),
+                },
+                None => Ok(crate::services::claude_link::LinkError::not_available().into_response()),
+            };
         }
         if let Some(provider) = conn::key_provider_for(&id) {
             if let Some(service) = &state.inference_key_service {

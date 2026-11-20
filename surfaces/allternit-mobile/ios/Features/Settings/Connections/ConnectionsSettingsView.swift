@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// A settings page a row opens (the existing flow for that kind of connection).
 enum ConnPage: String, Identifiable, Hashable {
@@ -47,7 +48,9 @@ enum ConnRoute {
         switch entry.group {
         case .apps: return .connectors
         case .channels: return .channels
-        default: return entry.ways.contains(.code) ? .sheet(.login(id)) : .none
+        default:
+            // The Claude organization link is a redirect sign-in the server starts and polls.
+            return entry.ways.contains(.code) || id == "claude-org" ? .sheet(.login(id)) : .none
         }
     }
 }
@@ -65,6 +68,8 @@ struct ConnectionsSettingsView: View {
     @State private var filter: Filter = .all
     @State private var query = ""
     @State private var actionError: String?
+    @State private var confirmUnlink = false
+    @Environment(\.openURL) private var openURL
 
     enum Filter: String, CaseIterable { case all, on, needs }
 
@@ -101,6 +106,15 @@ struct ConnectionsSettingsView: View {
         .sheet(isPresented: $showConnectors, onDismiss: { Task { await store.load() } }) { ConnectorsListView() }
         .sheet(isPresented: $showChannels, onDismiss: { Task { await store.load() } }) { GiveBotPhoneSheet(botId: nil) }
         .navigationDestination(item: $page) { p in ConnPageView(page: p) }
+        .confirmationDialog("Unlink your Claude organization?", isPresented: $confirmUnlink, titleVisibility: .visible) {
+            Button("Unlink", role: .destructive) {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                disconnect(name: "Claude organization", id: "claude-org")
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Chats on your Claude organization stop. Allternit stops billing it right away. You can link it again later.")
+        }
         .accessibilityIdentifier("connections-page")
     }
 
@@ -109,6 +123,7 @@ struct ConnectionsSettingsView: View {
     private var visible: [ConnEntry] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         return ConnectionsCatalog.entries.filter { e in
+            guard store.isListed(e.id) else { return false }
             let s = store.state(e.id)
             if filter == .on && s != .on { return false }
             if filter == .needs && s != .needs { return false }
@@ -117,7 +132,7 @@ struct ConnectionsSettingsView: View {
         }
     }
 
-    private var needs: [ConnEntry] { ConnectionsCatalog.entries.filter { store.state($0.id) == .needs } }
+    private var needs: [ConnEntry] { ConnectionsCatalog.entries.filter { store.isListed($0.id) && store.state($0.id) == .needs } }
 
     @ViewBuilder
     private var needsBanner: some View {
@@ -253,17 +268,25 @@ struct ConnectionsSettingsView: View {
         case .fallback(let f):
             handleFallback(f)
         case .disconnect:
-            Task {
-                do {
-                    try await store.disconnect(entry.id)
-                } catch let unconfirmed as ChatGPTSignOutUnconfirmed {
-                    actionError = unconfirmed.errorDescription
-                } catch {
-                    actionError = "Couldn't disconnect \(entry.name). \(ConnectionsClient.describe(error))"
-                }
-            }
+            if entry.id == "claude-org" { confirmUnlink = true; return }
+            disconnect(name: entry.name, id: entry.id)
+        case .fix where entry.id == "claude-org" && store.row(entry.id).reasonCode == "spend_limit_reached":
+            // Raised at Anthropic, not here.
+            openURL(ConnectionsCatalog.claudeLinkedPlatformsURL)
         case .connect, .fix, .open:
             route(ConnRoute.forConnect(entry.id, store: store))
+        }
+    }
+
+    private func disconnect(name: String, id: String) {
+        Task {
+            do {
+                try await store.disconnect(id)
+            } catch let unconfirmed as ChatGPTSignOutUnconfirmed {
+                actionError = unconfirmed.errorDescription
+            } catch {
+                actionError = "Couldn't disconnect \(name). \(ConnectionsClient.describe(error))"
+            }
         }
     }
 

@@ -89,6 +89,7 @@ struct ConnectSheetView: View {
             return "Connect a key"
         case .login(let id), .onComputer(let id):
             let name = ConnectionsCatalog.entry(id)?.name ?? id
+            if id == "claude-org" { return store.state(id) == .needs ? "Link again" : "Link your Claude organization" }
             return store.state(id) == .needs ? "Reconnect \(name)" : "Connect \(name)"
         case .chatgptDevice:
             return store.state("chatgpt") == .needs ? "Reconnect ChatGPT" : "Connect ChatGPT"
@@ -318,7 +319,7 @@ private struct ConnLoginStep: View {
     private var vendor: String {
         switch id {
         case "chatgpt", "codex": return "ChatGPT"
-        case "claude-code": return "Claude"
+        case "claude-code", "claude-org": return "Claude"
         case "grok-cli": return "Grok"
         case "kimi-cli": return "Kimi"
         case "gemini-cli": return "Google"
@@ -330,7 +331,7 @@ private struct ConnLoginStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if store.state(id) == .needs, let reason = store.row(id).reason ?? ConnectionsCatalog.reasonText(store.row(id).reasonCode, name: vendor) {
-                Text("\(reason). Sign in again and everything that used it picks up where it left off.")
+                Text(id == "claude-org" ? "\(reason)." : "\(reason). Sign in again and everything that used it picks up where it left off.")
                     .font(.system(size: 13))
                     .foregroundColor(Color("TextPrimary"))
                     .padding(10)
@@ -338,7 +339,9 @@ private struct ConnLoginStep: View {
                     .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: "#E8A33A").opacity(0.12)))
             }
             if case .disclosure = phase {} else {
-                Text(onRunner
+                Text(id == "claude-org"
+                     ? "Chats you send on this model are billed to your Claude organization, not to Allternit credits. \(ConnectionsCatalog.claudeOrgNote) Allternit never sees your password."
+                     : onRunner
                      ? "Your \(vendor) plan signs in on Allternit, with a code from \(vendor)'s own page. No computer needed. Allternit never sees your password."
                      : "\(entry?.name ?? vendor) on your computer signs in with a code from \(vendor)'s own page. Allternit never sees your password.")
                     .font(.system(size: 14))
@@ -356,7 +359,7 @@ private struct ConnLoginStep: View {
             case .starting:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Getting your \(vendor) sign-in ready…").font(.system(size: 13.5)).foregroundColor(Color("TextSecondary"))
+                    Text(id == "claude-org" ? "Getting your link ready…" : "Getting your \(vendor) sign-in ready…").font(.system(size: 13.5)).foregroundColor(Color("TextSecondary"))
                 }
             case .vendor:
                 if let login { vendorStep(login) }
@@ -412,7 +415,7 @@ private struct ConnLoginStep: View {
                 Button("Try again") { attempt += 1 }.buttonStyle(ConnPrimaryButtonStyle())
                 if onRunner {
                     Button("Use a key instead") { onFallback(ConnectionsCatalog.keyFallback(id)) }.buttonStyle(ConnQuietButtonStyle())
-                } else if !store.computerOnline {
+                } else if !store.computerOnline && id != "claude-org" {
                     Button("Add a computer") { onFallback("this-mac") }.buttonStyle(ConnQuietButtonStyle())
                 }
             }
@@ -532,7 +535,7 @@ private struct ConnLoginStep: View {
         defer { if phase != .done { store.setConnecting(id, false) } }
         let target = store.target(for: id)
         do {
-            let result = try await ConnectionsClient.connect(id, target: target, way: "code", acceptDisclosure: accepted)
+            let result = try await ConnectionsClient.connect(id, target: target, way: id == "claude-org" ? "oauth" : "code", acceptDisclosure: accepted)
             if result.state == .on, result.login == nil {
                 store.markOn(id)
                 phase = .done

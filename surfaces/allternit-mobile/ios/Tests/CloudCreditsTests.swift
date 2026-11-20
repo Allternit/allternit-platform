@@ -123,4 +123,23 @@ final class CloudCreditsTests: XCTestCase {
         XCTAssertFalse(CloudCreditsCopy.line("credits_required").contains("$"))
         XCTAssertFalse(CloudCreditsCopy.line("credits_exhausted").contains("$"))
     }
+
+    // MARK: - Claude organization refusal: "Use Allternit credits"
+
+    func test_credits_fallback_picks_last_cloud_model() {
+        let listed = ["allternit/glm-5.3", "allternit/kimi-k3"]
+        XCTAssertEqual(CreditsFallback.modelId(recent: "allternit/kimi-k3", listed: listed), "allternit/kimi-k3")
+        // A recent model no longer listed falls back to the first listed one.
+        XCTAssertEqual(CreditsFallback.modelId(recent: "allternit/gone", listed: listed), "allternit/glm-5.3")
+        XCTAssertEqual(CreditsFallback.modelId(recent: nil, listed: listed), "allternit/glm-5.3")
+    }
+
+    func test_no_cloud_model_hides_button() {
+        XCTAssertNil(CreditsFallback.modelId(recent: "allternit/glm-5.3", listed: []))
+        XCTAssertNil(CreditsFallback.modelId(recent: nil, listed: []))
+        // Only claude_link_* codes get actions; Link again only when disconnected.
+        XCTAssertTrue(ChatErrorAction.forClaudeLink(code: "login_expired").isEmpty)
+        XCTAssertEqual(ChatErrorAction.forClaudeLink(code: "claude_link_spend_limit").map(\.kind), [.useCredits, .manageClaudeOrg])
+        XCTAssertEqual(ChatErrorAction.forClaudeLink(code: "claude_link_disconnected").map(\.kind), [.useCredits, .linkAgain, .manageClaudeOrg])
+    }
 }

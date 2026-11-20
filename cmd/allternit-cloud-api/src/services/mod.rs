@@ -18,6 +18,8 @@ pub mod hosted_runtime_lifecycle;
 pub mod inference_keys;
 pub mod connections;
 pub mod copilot;
+/// Link your Claude organization: profile, PAR, code exchange, status, revoke (oauth-linked-billing B2).
+pub mod claude_link;
 pub mod voice_keys;
 pub mod inference_pool;
 pub mod inference_settlement;
@@ -28,6 +30,11 @@ pub mod bot_profiles;
 /// Allternit Meetings: one pod per meeting session (docs/meetings/CONTRACT.md).
 pub mod meeting_launcher;
 pub mod node_resolution;
+/// Sign in with Allternit: OAuth apps (CONTRACT-oauth-linked-billing-2026-11, Part A).
+pub mod oauth_apps;
+/// Who pays for an `alt_oat_` inference call: reserve, then settle (A8).
+pub mod oauth_spend;
+pub mod oauth_tokens;
 pub mod ops_alert;
 pub mod provisioning;
 pub mod quota_service;

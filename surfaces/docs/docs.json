@@ -191,6 +191,7 @@
               "guides/bot-page",
               "guides/bot-soul",
               "guides/memory-and-learning",
+              "guides/sleep",
               "guides/needs-you-inbox",
               "guides/invite-someone",
               "guides/call-notifications",
@@ -210,6 +211,8 @@
               "guides/mcp-apps-status",
               "guides/mcp-events",
               "guides/connected-apps",
+              "guides/apps-with-access",
+              "guides/claude-organization",
               "guides/wake-a-bot-from-app-events"
             ],
             "icon": "/icons/window.svg"
@@ -231,6 +234,7 @@
               "architecture",
               "architecture/dependency-map",
               "architecture/facility-workspace",
+              "architecture/facility-campus",
               "architecture/first-run-setup",
               "architecture/bot-setup-picker",
               "architecture/group-room-brief",
@@ -290,7 +294,8 @@
             "pages": [
               "architecture/context-memory/overview",
               "architecture/context-memory/projections",
-              "architecture/context-memory/memory"
+              "architecture/context-memory/memory",
+              "architecture/context-memory/sleep"
             ],
             "icon": "/icons/document.svg"
           },
@@ -393,6 +398,7 @@
               "operations/compute-providers",
               "operations/cloud-computer-network",
               "operations/upstream-funding",
+              "operations/claude-linked-billing",
               "operations/database-migrations",
               "operations/store-billing",
               "operations/cloud-api-edge",
@@ -823,6 +829,7 @@
                   "api/memory-stores",
                   "api/memory",
                   "api/memory-drive",
+                  "api/memory-sleep",
                   "api/bot-hub",
                   "api/page-agents",
                   "api/local-brains",
@@ -931,6 +938,7 @@
                   "api/workspaces",
                   "api/har",
                   "api/oauth",
+                  "api/oauth-apps",
                   "api/pricing",
                   "api/backend-install",
                   "api/brain-git",

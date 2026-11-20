@@ -11,6 +11,8 @@ struct MessageRow: View {
     /// else offers "Retry" (re-streams the last sent text).
     var onChooseModel: () -> Void = {}
     var onRetry: (String) -> Void = { _ in }
+    var availableErrorActions: Set<ChatErrorAction.Kind> = []
+    var onErrorAction: (String, ChatErrorAction) -> Void = { _, _ in }
     /// Phase 8 action bar: true only on the most recent assistant reply —
     /// its row gets the retry (regenerate) button.
     var isLastAssistant: Bool = false
@@ -238,7 +240,9 @@ struct MessageRow: View {
                     ChatErrorCardView(
                         error: error,
                         onChooseModel: onChooseModel,
-                        onRetry: { onRetry(message.id) }
+                        onRetry: { onRetry(message.id) },
+                        availableActions: availableErrorActions,
+                        onAction: { onErrorAction(message.id, $0) }
                     )
                 }
 

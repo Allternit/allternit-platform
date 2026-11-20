@@ -66,6 +66,8 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     /** Debug "Continue without signing in" (iOS skipAuth): the home without a session. */
     private var skippedAuth by mutableStateOf(false)
+    /** A document opened with Allternit from another app (iOS onOpenURL, LocalDocumentView). */
+    private var openedDocument by mutableStateOf<android.net.Uri?>(null)
 
     /** Debug launch extras for the workspace (iOS `-open-tab`, `-sidebar`, …); default in release. */
     private var shellLaunch by mutableStateOf(ShellLaunch())
@@ -92,21 +94,38 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         AllternitAuth.start(applicationContext)
+        // Gap run GS-B: the Files drive (DocumentsProvider, Share > Save to computer, Files key) signs in with this
+        // session instead of its own Custom Tab hand-off. Every Files route accepts the Clerk session.
+        com.allternit.core.files.FilesSession.bearer = {
+            if (AllternitAuth.state.value is AuthState.SignedIn) AllternitAuth.tokenProvider.bearerToken() else null
+        }
+        // Wave I1: notification channels, push registration after each sign-in, token removal at sign-out.
+        com.allternit.feature.push.AllternitPush.start(applicationContext)
+        // Sign-out clears the person's Files key material, Files drive and voice keys (iOS clearsPersonData).
+        com.allternit.feature.settings.SettingsPersonData.start(applicationContext)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
             val state by AllternitAuth.state.collectAsState()
             val signedIn = state is AuthState.SignedIn || skippedAuth
+            // Wave H1 (iOS StorePurchaseManager.start at launch): load the store catalog and post every open Play purchase,
+            // again after each sign-in. Nothing is bought here.
+            LaunchedEffect(state is AuthState.SignedIn) {
+                if (state is AuthState.SignedIn) com.allternit.feature.billing.PlayPurchases.start(applicationContext)
+            }
             val firstRun = remember { FirstRunStore(applicationContext) }
             LaunchedEffect(firstRun) { firstRun.load() }
             // Sign-in is always dark, like iOS LoginGateView; the workspace is light by default.
             // System bar icons follow the screen: light icons on the dark sign-in, dark icons on
             // the light workspace. Bars stay transparent (no grey 3-button nav scrim).
-            DisposableEffect(signedIn) {
-                applySystemBars(darkContent = !signedIn)
+            val appearance = com.allternit.feature.settings.AppearancePrefs.mode
+            DisposableEffect(signedIn, appearance) {
+                applySystemBars(darkContent = !signedIn || appearance == ThemeMode.Dark)
                 onDispose {}
             }
-            AllternitTheme(themeMode = if (signedIn) ThemeMode.Light else ThemeMode.Dark) {
+            // Settings > Appearance picks the workspace theme (light by default); sign-in is always dark.
+            LaunchedEffect(Unit) { com.allternit.feature.settings.AppearancePrefs.load(applicationContext) }
+            AllternitTheme(themeMode = if (signedIn) com.allternit.feature.settings.AppearancePrefs.mode else ThemeMode.Dark) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -151,6 +170,11 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     }
+                    openedDocument?.let { uri ->
+                        com.allternit.feature.office.LocalDocumentScreen(uri, onClose = { openedDocument = null })
+                    }
+                    // Privacy > "Lock with screen lock" (iOS AppLockStore): covers the app at launch and after it was in the background.
+                    if (signedIn) com.allternit.feature.settings.AppLockGate()
                     // Over setup and then over the freshly mounted workspace (iOS runs it in its own window).
                     handoff?.let { spec ->
                         SetupHandoffOverlay(spec, dark = !signedIn, onDone = { handoff = null })
@@ -160,6 +184,66 @@ class MainActivity : ComponentActivity() {
         }
         if (BuildConfig.DEBUG) readDebugLaunch(intent)
         handleDebugTicket(intent)
+        readOpenedDocument(intent)
+        readPushTap(intent)
+        readSystemLink(intent)
+    }
+
+    /** Foreground: refresh the status snapshot and redraw the widget, tiles, shortcuts and the ongoing run notification. */
+    override fun onStart() {
+        super.onStart()
+        lifecycleScope.launch {
+            val snap = runCatching { com.allternit.feature.system.StatusSync.refresh(applicationContext) }.getOrNull()
+            com.allternit.feature.push.LiveRunNotification.update(applicationContext, snap)
+        }
+    }
+
+    /**
+     * An `allternit://` link from the widget, a Quick Settings tile or a shortcut (iOS DeepLinkRouter): `inbox`,
+     * `inbox/<id>`, `bot/<id>/chat`, `bot/main/chat`, `call/main`, `handoff`, `routines`. The workspace applies it
+     * through [ShellLaunch.nonce] like a notification tap.
+     */
+    private fun readSystemLink(intent: Intent) {
+        val uri = intent.data ?: return
+        if (intent.action != Intent.ACTION_VIEW || uri.scheme != com.allternit.feature.system.SystemLinks.SCHEME) return
+        val segments = listOfNotNull(uri.host) + uri.pathSegments
+        val nonce = System.nanoTime()
+        shellLaunch = when (segments.firstOrNull()) {
+            "inbox" -> ShellLaunch(sheet = "inbox", inboxItem = segments.getOrNull(1), nonce = nonce)
+            // Bots mode opens the bot's chat; "main" is the first bot of the roster (BotsLaunch.openBotId null opens the launchpad).
+            "bot" -> ShellLaunch(mode = ShellMode.Bots, botId = segments.getOrNull(1)?.takeIf { it != "main" }, nonce = nonce)
+            // iOS DeepLinkHost .callMain: the main bot's chat in Bots mode (its voice button starts the call).
+            "call" -> ShellLaunch(mode = ShellMode.Bots, openMain = true, nonce = nonce)
+            "handoff" -> ShellLaunch(mode = ShellMode.Bots, nonce = nonce)
+            "routines", "routine" -> ShellLaunch(tab = "automation-tasks", nonce = nonce)
+            else -> ShellLaunch(mode = ShellMode.Home, nonce = nonce)
+        }
+        intent.data = null
+    }
+
+    /**
+     * A tapped notification (or its Open / Review button) opens what it points at (iOS
+     * PushNotificationManager.handleTap → DeepLinkRouter): the inbox item, Decisions for an approval, Settings, or
+     * Bots for a bot's message. The workspace applies it when it is already up ([ShellLaunch.nonce]).
+     */
+    private fun readPushTap(intent: Intent) {
+        val tap = com.allternit.feature.push.AllternitPush.readTap(intent) ?: return
+        val nonce = System.nanoTime()
+        val url = tap.url.orEmpty()
+        shellLaunch = when {
+            tap.inboxItem != null -> ShellLaunch(sheet = "inbox", inboxItem = tap.inboxItem, nonce = nonce)
+            tap.event == "approval.requested" -> ShellLaunch(sheet = "inbox", nonce = nonce)
+            url.contains("settings") -> ShellLaunch(tab = "settings", nonce = nonce)
+            tap.botId != null -> ShellLaunch(mode = ShellMode.Bots, botId = tap.botId, sessionId = tap.sessionId, nonce = nonce)
+            tap.sessionId != null -> ShellLaunch(mode = ShellMode.Bots, nonce = nonce)
+            else -> ShellLaunch(mode = ShellMode.Home, nonce = nonce)
+        }
+    }
+
+    /** An ACTION_VIEW on a content or file Uri (a PDF, text, Word or Excel file) opens in the local document viewer. */
+    private fun readOpenedDocument(intent: Intent) {
+        val uri = intent.data
+        if (intent.action == Intent.ACTION_VIEW && uri != null && (uri.scheme == "content" || uri.scheme == "file")) openedDocument = uri
     }
 
     /**
@@ -181,6 +265,9 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleDebugTicket(intent)
+        readOpenedDocument(intent)
+        readPushTap(intent)
+        readSystemLink(intent)
     }
 
     /**

@@ -104,7 +104,7 @@ internal fun MessageRow(
             ) {
                 if (message.reasoning.isNotEmpty()) ThinkingBlock(message.reasoning, streaming = message.isStreaming && message.content.isEmpty())
                 if (message.toolCalls.isNotEmpty()) {
-                    ToolCallsRail(message.toolCalls, message.isStreaming, waiting = message.permissions.any { it.answered == null })
+                    ToolCallsRail(message.toolCalls, message.isStreaming, waiting = message.permissions.any { it.answered == null }, backend = backend)
                 } else {
                     message.toolStatus?.let { ToolStatusLine(it) }
                 }
@@ -141,7 +141,7 @@ internal fun MessageRow(
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = c.bgPrimary) {
                                 if (isLastUser) DropdownMenuItem(
                                     text = { Text("Edit", color = c.textPrimary) },
-                                    leadingIcon = { Icon(painterResource(R.drawable.chat_pencil), null, tint = c.textPrimary, modifier = Modifier.size(16.dp)) },
+                                    leadingIcon = { Icon(painterResource(com.allternit.core.design.R.drawable.ph_pencil_simple), null, tint = c.textPrimary, modifier = Modifier.size(16.dp)) },
                                     onClick = {
                                         menu = false
                                         actions.onEdit(message)
@@ -165,7 +165,7 @@ internal fun MessageRow(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(5.dp),
                                     ) {
-                                        Icon(painterResource(R.drawable.chat_file), null, tint = c.textSecondary, modifier = Modifier.size(12.dp))
+                                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_file), null, tint = c.textSecondary, modifier = Modifier.size(12.dp))
                                         Text(name, color = c.textPrimary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
                                     }
                                 }
@@ -232,9 +232,9 @@ private fun ThinkingBlock(text: String, streaming: Boolean) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Icon(painterResource(R.drawable.chat_brain), null, tint = c.textSecondary, modifier = Modifier.size(13.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_brain), null, tint = c.textSecondary, modifier = Modifier.size(13.dp))
             Text(if (streaming) "Thinking…" else "Thinking", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Icon(painterResource(if (open) R.drawable.chat_caret_up else R.drawable.chat_caret_down), null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
+            Icon(painterResource(if (open) com.allternit.core.design.R.drawable.ph_caret_up else com.allternit.core.design.R.drawable.ph_caret_down), null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
         }
         if (open) {
             SelectionContainer {
@@ -271,7 +271,7 @@ private fun ArtifactChip(a: ArtifactRecord, onOpen: ((ArtifactRecord) -> Unit)?)
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(painterResource(R.drawable.chat_file), null, tint = c.textSecondary, modifier = Modifier.size(18.dp))
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_file), null, tint = c.textSecondary, modifier = Modifier.size(18.dp))
         Column(Modifier.weight(1f)) {
             Text(a.title, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(if (openable) "Click to view" else a.kind, color = c.textSecondary, fontSize = 12.sp, maxLines = 1)
@@ -335,7 +335,7 @@ private fun MessageActionBar(message: MessageRecord, isLast: Boolean, onRegenera
         // Share: with a saved chat, a menu of Share text / Share link… (iOS); otherwise the share sheet.
         var shareMenu by remember { mutableStateOf(false) }
         Box {
-            ActionIcon(R.drawable.chat_share, "Share") {
+            ActionIcon(com.allternit.core.design.R.drawable.ph_export, "Share") {
                 tap { if (onShareLink != null) shareMenu = true else shareText(context, message.content) }
             }
             DropdownMenu(expanded = shareMenu, onDismissRequest = { shareMenu = false }, containerColor = AllternitTheme.colors.bgPrimary) {
@@ -349,12 +349,12 @@ private fun MessageActionBar(message: MessageRecord, isLast: Boolean, onRegenera
                 })
             }
         }
-        ActionIcon(if (speaking) R.drawable.chat_stop else R.drawable.chat_speaker, if (speaking) "Stop" else "Read aloud") {
+        ActionIcon(if (speaking) com.allternit.core.design.R.drawable.ph_stop_fill else com.allternit.core.design.R.drawable.ph_speaker_high, if (speaking) "Stop" else "Read aloud") {
             tap { Speaker.toggle(context, message.id, MarkdownPlain.from(message.content)) }
         }
-        ActionIcon(R.drawable.chat_thumbs_up, "Good response", active = feedback == 1) { tap { feedback = if (feedback == 1) 0 else 1 } }
-        ActionIcon(R.drawable.chat_thumbs_down, "Bad response", active = feedback == -1) { tap { feedback = if (feedback == -1) 0 else -1 } }
-        if (isLast) ActionIcon(R.drawable.chat_retry, "Retry") { tap(onRegenerate) }
+        ActionIcon(com.allternit.core.design.R.drawable.ph_thumbs_up, "Good response", active = feedback == 1) { tap { feedback = if (feedback == 1) 0 else 1 } }
+        ActionIcon(com.allternit.core.design.R.drawable.ph_thumbs_down, "Bad response", active = feedback == -1) { tap { feedback = if (feedback == -1) 0 else -1 } }
+        if (isLast) ActionIcon(com.allternit.core.design.R.drawable.ph_arrow_clockwise, "Retry") { tap(onRegenerate) }
     }
 }
 

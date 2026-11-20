@@ -1,0 +1,734 @@
+---
+title: Memory Sleep API
+description: "Routes for Allternit Sleep: status, cycles, runtime signals, topic pages, disputes, settings and thresholds. Every stage is off by default; the orchestrator runs cycles once you turn it on."
+---
+
+Allternit Sleep is memory consolidation that runs on your own computer while you are
+not using it. When a session goes idle, before a conversation is compacted, or when a
+session ends, the runtime tells Sleep. Sleep then sorts new memories, keeps
+contradicting memories as disputes instead of silently picking one, and builds short
+topic pages the model can load at the start of a chat. Every page claim keeps a pointer
+back to where it came from. Sleep uses your own model quota, up to a daily cap you set,
+and you can undo a cycle.
+
+These routes are served by the Allternit API under `/api/v1`, next to the
+[Memory API](/api/memory) and the [Memory Drive API](/api/memory-drive). They use the
+normal signed-in session; a request with no user gets `401`.
+
+<Note>
+Every stage is off by default. The `orchestrator` stage (cycles from the unit queue)
+and the `disputes` stage (contradictions kept as disputes) run once you turn them on;
+the other stages are still contract only. Read routes return real empty states, never
+`501`. Write routes that need a later stage check their input, then refuse (see
+[Refused writes](#refused-writes)). The status column below says which stage makes each
+route live.
+</Note>
+
+## Routes
+
+| Route | Status | What it does |
+| --- | --- | --- |
+| `GET /memory/sleep/status` | Live | Master switch, stage flags, debt, last cycle, spend today, manifest, open disputes. |
+| `GET /memory/sleep/cycles` | Live (empty until the orchestrator stage runs a cycle) | Recent cycles, newest first. |
+| `GET /memory/sleep/cycles/:id` | Live (empty until the orchestrator stage runs a cycle) | One cycle and its report. |
+| `POST /memory/sleep/cycles/:id/undo` | Live | Undo a finished or stopped cycle. |
+| `POST /memory/sleep/run` | Live with the orchestrator stage on; otherwise refuses | Queue a nap or daydream now. |
+| `POST /memory/sleep/signal` | Live with the orchestrator stage on; otherwise refuses | Runtime trigger: idle, pre-compact, session end, resume. |
+| `GET /memory/sleep/context` | Live (empty until the router) | What the runtime puts in front of the model at session start. |
+| `POST /memory/sleep/pages/load` | Refuses until the router | Load one topic page mid-session. |
+| `GET /memory/sleep/pages` | Live (empty until pages) | Page versions. |
+| `GET /memory/sleep/pages/:topic` | Live (empty until pages) | One topic's versions and claims with their sources. |
+| `GET /memory/disputes` | Live (empty until the disputes stage opens one) | Contradicting memories, with both sides' text. |
+| `POST /memory/disputes/:id/resolve` | Live with the disputes stage on; otherwise refuses | Pick a side. |
+| `GET /memory/sleep/settings`, `PUT /memory/sleep/settings` | Live | Master switch, stage flags and the daily spend cap. |
+| `GET /memory/sleep/config`, `PUT /memory/sleep/config` | Live | Thresholds, each with its source. |
+
+## Errors
+
+| Status | Meaning |
+| --- | --- |
+| 400 | Invalid input, for example an unknown stage, an unknown config key, or a value out of range. Nothing is written. |
+| 401 | Not signed in. |
+| 404 | No such cycle, topic or dispute for you. |
+| 409 | A refused write: the stage it needs is off or not built yet. |
+| 422 | The JSON body has the wrong shape or an unknown field. |
+
+### Refused writes
+
+`run` (with the orchestrator stage off, or for `deep` and `rem`),
+`pages/load`, and `disputes/:id/resolve` (with the disputes stage off) answer `409`.
+`signal` answers `200`, because the runtime sends it on every idle, compaction and
+session end, whether Sleep is on or not.
+
+```json
+{ "accepted": false, "reason": "sleep_disabled", "stage": "orchestrator",
+  "error": "Sleep is off (stage `orchestrator`). Turn it on in Memory settings." }
+```
+
+| `reason` | Meaning |
+| --- | --- |
+| `sleep_disabled` | The master switch or that stage's flag is off. |
+| `stage_not_built` | The flags are on, but this version does not have that stage yet. |
+
+## Status
+
+### `GET /memory/sleep/status`
+
+```json
+{
+  "available": true,
+  "enabled": false,
+  "stages": {
+    "checks": false, "disputes": false, "intentions": false, "labels_live": false,
+    "orchestrator": false, "pages": false, "rem": false, "router": false,
+    "strengths": false, "track1": false
+  },
+  "debt": 0,
+  "last_cycle": null,
+  "spend_today_usd": 0,
+  "daily_spend_cap_usd": 0,
+  "manifest_id": null,
+  "open_disputes": 0,
+  "tracks": { "track1": "off", "track2": "off" }
+}
+```
+
+- `enabled` is the master switch. A stage runs only when `enabled` and its own flag are both `true`.
+- `stages` holds each stage's own flag.
+- `debt` is sleep debt: memories added since your last finished nap (at most the last 7 days), divided by `debt_scale`. At or above `debt_pause_threshold` decay pauses and new extracted facts under `debt_intake_min_attention` are not stored. See [How a cycle runs](#how-a-cycle-runs).
+- `last_cycle` is the newest cycle row and `spend_today_usd` the sum of today's cycle spend.
+- `tracks.track2` (pages) is `on` when `enabled` and `stages.pages` are both on. `tracks.track1` (personal adapters) is the same for `stages.track1`.
+
+## Cycles
+
+### `GET /memory/sleep/cycles?limit=`
+
+`limit` is 1 to 200, default 50.
+
+```json
+{ "cycles": [
+  { "id": "cyc_1", "trigger": "idle", "kind": "nap", "state": "finished", "stage": null,
+    "session_id": "s_123", "spend_usd": 0.04, "manifest_before": "man_0", "manifest_after": "man_1",
+    "started_at": "2026-11-20 03:10:00", "finished_at": "2026-11-20 03:12:41", "undone_at": null,
+    "summary": "nap finished: consolidation merged 2, decayed 1; Dream 3 changes; spent $0.0412" }
+], "count": 1 }
+```
+
+| Field | Values |
+| --- | --- |
+| `trigger` | `idle`, `pre_compact`, `session_end`, `manual`, `clock` |
+| `kind` | `daydream`, `nap`, `deep`, `rem` |
+| `state` | `running`, `finished`, `stopped`, `failed`, `undone` |
+| `stage` | The stage running now, or the last one that ran: `capture`, `consolidation`, `fit`, `dream`, `rem`, `curation`, `pages`, `checks`, `sign` |
+
+### `GET /memory/sleep/cycles/:id`
+
+`{ "cycle": { ... }, "report": { ... } | null }`, with the same cycle fields as the list
+(including `summary`, the same line `status.last_cycle` carries). `report` is `null` while
+the cycle is running.
+
+```json
+{ "report": {
+  "cycle_id": "cyc_1", "kind": "nap", "state": "finished", "spend_usd": 0.0412,
+  "summary": "nap finished: ...", "stop_reason": null, "resume_from_stage": null, "error": null,
+  "stages": [
+    { "stage": "consolidation", "outcome": "ran", "reason": null, "spend_usd": 0,
+      "counts": { "merged": 2, "decayed": 1 },
+      "started_at": "2026-11-20 03:10:01", "finished_at": "2026-11-20 03:10:09" },
+    { "stage": "dream", "outcome": "ran", "reason": null, "spend_usd": 0.0412,
+      "counts": { "merged": 1, "resolved": 0, "lessons": 2, "pruned": 0, "proposals": 0, "skipped": 1 },
+      "started_at": "2026-11-20 03:10:09", "finished_at": "2026-11-20 03:12:30" }
+  ],
+  "undo": {
+    "available": true, "undone_at": null,
+    "dream": { "dream_id": "drm_1", "status": "applied", "revision": "r2", "base_revision": "r1" },
+    "manifest": { "before": null, "after": null },
+    "cannot_undo": ["consolidation: merged or decayed facts have no undo"],
+    "result": null
+  } } }
+```
+
+`stages` lists every stage of the cycle's plan (a daydream lists capture and
+consolidation) in order. `outcome` is `ran`, `skipped` (with the `reason`, for example
+`spend_cap`, `not_due` or `stage_off: strengths`), `failed` (the error), `held` (a clean
+stop left it for the next signal) or `not_run`. `counts` per stage: `capture` has
+`captured`; `consolidation` has `scanned`, `candidates`, `merged`, `decayed`; `fit` has
+`events`, `fitted`, `kept_owner`; `dream` has the Dream summary; `curation` has `bots`.
+
+**Spend is real.** A stage's `spend_usd` is the cost the usage ledger holds for your
+`memory` surface calls during that stage (Dream and curation). The ledger can write after
+the stage returns, so this route reads it again and raises the stage and cycle spend when
+more arrived; that is the number the daily cap counts. The configured estimates
+(`dream_cost_estimate_usd`, `curation_cost_estimate_usd`) only decide whether a stage may
+start. Other `memory` model calls of yours in the same minutes (for example fact
+extraction) fall in the same window and count too.
+
+### `POST /memory/sleep/cycles/:id/undo`
+
+No body. Works for a `finished` or `stopped` cycle of yours, with or without the
+orchestrator stage on.
+
+- The Dream part is undone with Dream's own undo: it reverses only the lines the Dream
+  changed and keeps anything you added or edited since.
+- The page manifest is rolled back to `manifest_before`. Cycles write no manifest until
+  pages land (step 4.1), so today this part is recorded as `recorded_no_op`.
+- Consolidation merges and decays and curation edits have no undo. They are listed in
+  `cannot_undo`; nothing pretends to reverse them.
+
+`200`: `{ "undone": true, "undone_at": "...", "cycle": { ... }, "parts": [ { "part": "dream",
+"status": "undone", "detail": "...", "revision": "..." } ], "cannot_undo": [ ... ] }`, and the
+cycle's `state` becomes `undone`. A part `status` is `undone`, `nothing_to_undo`,
+`recorded_no_op` or `cannot_undo`.
+
+| Status | Meaning |
+| --- | --- |
+| `404` | Unknown cycle (or another user's). |
+| `409` `already undone` | The cycle was undone before. |
+| `409` | The cycle is running or failed, or you edited lines the Dream changed after it ran (`conflicts` lists the files); nothing was changed and the cycle stays undoable. |
+
+### `POST /memory/sleep/run`
+
+Optional body `{ "kind": "nap" }`, where `kind` is `daydream`, `nap`, `deep` or `rem`.
+Leave it out for a `nap`. With the `orchestrator` stage on, a `nap` or `daydream` is
+queued and the worker runs it within `worker_poll_s` seconds:
+
+```json
+{ "accepted": true, "kind": "nap", "queued": ["<unit id>"] }
+```
+
+It answers `202`. `queued` is empty when a manual run of that kind is already waiting
+or running. `deep` and `rem` answer `409` with `reason: "stage_not_built"`.
+
+### `POST /memory/sleep/signal`
+
+Sent by the runtime, never by a person.
+
+```json
+{ "session_id": "s_123", "event": "idle", "cache_ttl_s": 300 }
+```
+
+| `event` | When the runtime sends it |
+| --- | --- |
+| `idle` | The session has been idle for the provider's cache time, so the prompt cache has already expired. |
+| `pre_compact` | Just before the conversation is compacted. |
+| `session_end` | The session ended. It only queues work. |
+| `resume` | You came back. Any running cycle stops cleanly. |
+
+`session_id` is required. `cache_ttl_s` is optional and must be above 0.
+
+With the `orchestrator` stage on, a signal writes units to the queue and answers:
+
+```json
+{ "accepted": true, "event": "idle", "queued": ["<unit id>"], "cancelled": [] }
+```
+
+| `event` | What it does |
+| --- | --- |
+| `idle` | Queues one `nap`. If you raise `nap_after_ttl_multiple` above 1.0 the first idle queues a `daydream` (a light pass) instead. |
+| `pre_compact` | Records a `capture` unit (scratch values and unsaved high-attention items must be captured), then queues a `nap`. It answers `200` fast and never blocks compaction; an internal error is logged and answers `queued: []`. |
+| `session_end` | Queues a `nap`. No immediate work. |
+| `resume` | Cancels this session's `queued` daydream and nap units (`cancelled` lists them). A unit already `leased` gets `stop_requested: true` in its payload, and its cycle stops cleanly after the stage that is running; the rest is held and the session's next signal continues it. |
+
+There is at most one open (`queued` or `leased`) unit per session and kind, so a repeated
+signal never queues twice. With the stage off the signal is refused as shown above and
+nothing is written. `nap_after_ttl_multiple` (default 1.0) is in the thresholds list.
+
+#### Who sends what: Gizzi
+
+Gizzi sends these signals from both of its loops: the terminal app (`gizzi`) and the
+runtime that Allternit Desktop and other hosts run (`gizzi serve`). It sends them only
+for your own top-level chat, never for subagents. It sends nothing when you are signed
+out, when `GET /memory/sleep/status` says Sleep is off, or when the runtime is older
+and answers `404`. Gizzi checks the status once per process and keeps the answer for
+five minutes.
+
+| `event` | When Gizzi sends it |
+| --- | --- |
+| `idle` | Once, when no new message arrives within the prompt-cache time after a turn ends. That time is 300 s, or 3600 s with one-hour caching. Gizzi sends it in `cache_ttl_s`. |
+| `resume` | Your next message after an `idle`. Gizzi does not wait for the reply. |
+| `pre_compact` | When compaction starts. Gizzi does not wait for the reply, so compaction runs even when the API is slow or down. |
+| `session_end` | When the app quits or `gizzi serve` shuts down. Gizzi waits at most 500 ms, then quits anyway. |
+
+There is no timer job behind these signals. Each one follows something the session did.
+When Sleep is on, Gizzi's local `autoDream` stays off, so only one consolidator runs.
+
+## How a cycle runs
+
+With `enabled` and `stages.orchestrator` on, one background worker in the Allternit
+API takes queued `daydream` and `nap` units one at a time (one per user at once) and
+runs each as a cycle. Nothing is scheduled by launchd or cron.
+
+A nap runs these stages in this order. A daydream runs the first two only.
+
+| # | Stage | Runs when | Spends quota |
+| --- | --- | --- | --- |
+| 1 | `capture` | Always. Marks your queued `capture` units done and records what they asked for. | No |
+| 2 | `consolidation` | Always. Merges duplicate memories (the same job as the consolidation clock). | No |
+| 2b | `fit` | `stages.strengths` is on. Fits the decay half-life from your labelled recalls. | No |
+| 3 | `dream` | Dream is on for your drive and today's Dream has not finished. | Yes |
+| 3b | `rem` | `stages.rem` is on and REM has not switched itself off (see REM and the hypothesis queue). | No |
+| 4 | `curation` | A bot's weekly memory curation is due. | Yes |
+| 5 | `pages` | Not built yet. Recorded as skipped. | - |
+| 6 | `checks` | `stages.checks` is on. Spaced checks and the tether ladder (see Spaced checks). | No |
+| 7 | `sign` | Not built yet. Recorded as skipped. | - |
+
+The cycle row stores each stage with `status` (`done`, `skipped` or `failed`), a `note`
+(for example `not_due`, `spend_cap`, `stage_off: strengths`), `spend_usd` and the job's
+own result. The `sleep.cycle.stage` event uses the same fields. The report route
+(`GET sleep/cycles/:id`, see Cycle report) turns them into `outcome` and `reason`.
+
+- **Daily spend cap.** A spending stage runs only when `daily_spend_cap_usd` is above 0
+  and today's spend plus the stage's estimate (`dream_cost_estimate_usd`,
+  `curation_cost_estimate_usd`) fits under it. Otherwise it is skipped with
+  `spend_cap`. With the default cap of 0, no stage spends quota and the others still run.
+- **Clean stop.** A `resume` signal stops the cycle after the stage that is running. The
+  cycle ends `stopped` and the remaining stages wait as a `held` unit; the session's next
+  signal queues it again and the next cycle starts from the next stage. The per-cycle stop
+  rule (`cycle_max_stages`, `cycle_max_minutes`) stops a cycle the same way.
+- **Failures.** A stage error ends the cycle `failed` and counts one attempt. After
+  `unit_max_attempts` failures (or expired leases) the unit is `deferred`: it is not
+  retried until your next cycle opens, then it gets fresh attempts.
+- **Sleep debt.** While `debt` is at or above `debt_pause_threshold`, consolidation
+  skips its decay step, so nothing fades while a nap is overdue. Extraction also gets a stricter intake: a new fact whose attention score is under `debt_intake_min_attention` is not stored (the turn itself is still logged). Updates, forgets, explicit saves and facts flagged with a remember marker are never held.
+- **The old clocks.** The consolidation tick, the nightly Dream and the weekly bot
+  curation still run on their own for users with the orchestrator off, exactly as
+  before. With it on, they only queue a `nap` (session `clock`, at most one waiting)
+  and the cycle runs the job.
+
+Unit states in `sleep_units`: `queued`, `leased`, `done`, `cancelled`, `deferred`
+(failed `unit_max_attempts` times this cycle) and `held` (the rest of a stopped cycle,
+with `resume_from_stage` in its payload).
+
+## Context and pages
+
+### `GET /memory/sleep/context?session_id=&model=`
+
+```json
+{
+  "available": true, "enabled": false,
+  "core": null, "index": [], "pages": [],
+  "overlay": [], "disputes": [], "intentions": [],
+  "budget": { "share": 0.05, "tokens": null },
+  "manifest_id": null, "signature": null
+}
+```
+
+- `enabled` is the router stage.
+- `overlay` holds your corrections that are not applied to a page yet. Each one is `{ id, topic_id, claim_id, correction, as_of }`.
+- `disputes` holds the open disputes, in the same shape as `GET /memory/disputes`.
+- `intentions` holds reminders that fired since the last read: `{ id, content, cue_kind, cue, due_at, fired_at }`. Each is returned once. `intentions_open` counts the ones still waiting. Both are empty unless the `intentions` stage is on.
+- `budget.share` is the share of the model's context window pages may use.
+
+### `POST /memory/sleep/pages/load`
+
+```json
+{ "topic_id": "top_42", "session_id": "s_123", "model": "default" }
+```
+
+`topic_id` is required. Once live, it returns the page and records a router miss.
+
+### `GET /memory/sleep/pages?limit=`
+
+```json
+{ "pages": [
+  { "id": "pg_1", "topic_id": "top_42", "version": 3, "sha256": "9f2c…", "manifest_id": "man_1",
+    "provenance_tier": "user", "tokens": 410, "created_at": "2026-11-20 03:12:40" }
+], "count": 1, "manifest_id": "man_1" }
+```
+
+A page's text is stored once per `sha256`. The manifest is signed, and the runtime
+checks the hash and the signature every time it loads a page.
+
+### `GET /memory/sleep/pages/:topic`
+
+```json
+{
+  "topic": { "id": "top_42", "name": "Acme launch", "state": "active" },
+  "versions": [ { "id": "pg_1", "version": 3, "sha256": "9f2c…" } ],
+  "claims": [
+    { "id": "cl_7", "claim": "Launch moved to March 3.", "source_type": "user_said",
+      "observation_id": "obs_88", "fact_id": null, "as_of": "2026-11-18", "superseded_by": null }
+  ]
+}
+```
+
+Topic `state` is `active`, `weak`, `gist` or `untethered`. An untethered topic is
+left out of the index but can still be loaded directly.
+
+### Source types
+
+Every claim, and every fact Sleep scores, carries a `source_type`:
+
+| `source_type` | Meaning |
+| --- | --- |
+| `user_said` | You said it. |
+| `tool_observed` | A tool or web result showed it. It never goes into a page without your confirmation. |
+| `model_inferred` | The model concluded it. |
+| `dream_generated` | A Sleep cycle proposed it. It is kept only if it improves a score. |
+| `imported` | It came from an import. |
+
+A claim must point back to an observation or a fact. A claim without that pointer is refused.
+
+## Disputes
+
+With the `disputes` stage on, two memories that contradict each other are both kept, and
+a dispute records them. Nothing is fixed silently, and a dispute never stops an answer.
+
+### When a dispute opens
+
+When the model that saves memories says a message changes an existing memory, Sleep
+checks what kind of change it is:
+
+| Kind | Example | What happens |
+| --- | --- | --- |
+| Refinement | "likes Python" becomes "likes Python and Rust" | The old memory is replaced, as before. No dispute. |
+| Correction | You say "I moved to Denver" | The old memory is replaced, as before, and a resolved dispute keeps the history (`pick: "b"`, `picked_by: "user_said_update"`). |
+| Contradiction | "lives in Austin" and later "lives in Denver", with no word that it changed | Both memories stay. A dispute opens and the arbiter decides it. |
+
+A refinement keeps every word of the old memory and adds no "not" or "no longer". A
+correction is a message from you with a change word in it, such as "moved", "now", "no
+longer", "switched", "changed", "used to", "instead" or "actually". Anything else is a
+contradiction. The nightly Dream follows the same rule: when it finds two memories that
+disagree, it removes nothing and opens a dispute between the memory it wanted to drop
+(side a) and the one it kept (side b). Side a is the older memory, side b the newer one.
+The same pair never gets a second dispute.
+
+### How the arbiter picks
+
+The arbiter decides with fixed rules and no model call, so the same dispute always gets
+the same answer.
+
+1. **Scope.** If both memories name a different situation ("at work" and "at home", "on
+   weekends") or belong to different agents, both can be true: the pick is `both_scoped`.
+2. **Support.** Each side gets `dispute_w_credence × credence + dispute_w_recency ×
+   recency`, plus `dispute_w_goal × goal fit` when your current goal is known (no goal is
+   stored yet, so this part is skipped today). Credence comes from where the memory came
+   from: something you said beats something the model inferred. Recency moves from 0.5
+   towards 1 for the newer side and towards 0 for the older one, in full at a gap of
+   `dispute_recency_days`. The side with more support is picked. `margin` is the gap
+   between the two, divided by the weights used, so it is between 0 and 1. A tie picks
+   side b.
+3. **Stakes.** Money, health and legal words give high stakes (0.8 to 0.9); deadlines
+   0.6; anything else 0.2. Stakes never change the pick. They decide whether to ask you.
+
+When `margin` is under `dispute_ask_margin` and `stakes` is at or above
+`dispute_ask_stakes`, the dispute is `needs_user` and no pick is applied. Otherwise it is
+`resolved` with `picked_by: "arbiter"`, and the other memory is not deleted: it stays,
+with the dispute pointing at it. `reason` is one short sentence, for example "It is the
+more recent of the two." or "It comes from what you said, the other from the assistant's
+guess."
+
+### At recall
+
+When a recalled memory is a side of a dispute that is not resolved, or was resolved with
+both sides still kept, its result carries an extra `dispute` field: both sides with their
+text, which side this memory is, the pick and the reason. Results are never removed or
+reordered because of a dispute, and results with no dispute have no `dispute` field, so
+older clients see the same shape.
+
+```json
+{ "id": "f_9", "item_type": "fact", "content": "User lives in Denver.", "score": 0.61,
+  "metadata": { "confidence": 0.85 }, "timestamp": "2026-11-20 03:11:02",
+  "dispute": { "id": "dsp_3", "state": "resolved", "this_side": "b",
+    "side_a": { "kind": "fact", "id": "f_1", "text": "User lives in Austin.", "current": true },
+    "side_b": { "kind": "fact", "id": "f_9", "text": "User lives in Denver.", "current": true },
+    "pick": "b", "reason": "It is the more recent of the two.", "scope": null,
+    "picked_by": "arbiter", "needs_user": false } }
+```
+
+### `GET /memory/disputes?state=&limit=`
+
+`state` is `open`, `needs_user` or `resolved`. Leave it out to get all of them. Each side
+carries its memory's `text` and `current` (false once it was replaced).
+
+```json
+{ "disputes": [
+  { "id": "dsp_3", "topic_id": null,
+    "side_a": { "kind": "fact", "id": "f_1", "text": "User is allergic to penicillin.", "current": true },
+    "side_b": { "kind": "fact", "id": "f_9", "text": "User is not allergic to penicillin.", "current": true },
+    "scope": null, "stakes": 0.9, "margin": 0.0, "pick": null,
+    "reason": "These are too close to call and they touch health, so you decide.",
+    "picked_by": null, "state": "needs_user",
+    "created_at": "2026-11-20 03:11:02", "resolved_at": null }
+], "count": 1 }
+```
+
+`needs_user` means the two sides were close and the stakes were high, so Sleep asks
+you instead of picking.
+
+### `POST /memory/disputes/:id/resolve`
+
+```json
+{ "choice": "both_scoped", "reason": "Home address vs. office address" }
+```
+
+`choice` is `a`, `b`, `both_scoped` (both are true in different scopes) or `neither`.
+Your pick wins: the dispute becomes `resolved` with `picked_by: "user"`.
+
+| `choice` | Effect |
+| --- | --- |
+| `a` or `b` | The other side is replaced (kept in history). The side you picked gets a small credence boost (+0.1). |
+| `both_scoped` | Both stay. `scope` keeps the arbiter's scope, else your `reason`. |
+| `neither` | Both are replaced. |
+
+Returns `200` with `{ "accepted": true, "dispute": { ... } }`, `404` for an unknown
+dispute, `409` with `reason: "sleep_disabled"` when the disputes stage is off, and `409`
+with `reason: "already_settled"` when you, or your own correction, already settled it.
+
+## Spaced checks and the tether ladder
+
+With `stages.checks` on, the `checks` stage of a nap tests old memories with no model call. A
+check asks three things of one current fact: (a) its own words find it in the top
+`checks_recall_k` search hits, (b) no newer current fact contradicts it without a dispute
+record, (c) its source observation still exists. `pass` is 3 of 3, `fail` is (a) or (b) failing,
+and `weak` is only (c) failing. Each check is a row in `sleep_checks` (`check_kind` is `spaced`,
+`changed`, `neighbour` or `sample`; a failed memory also gets a `queued_reconsolidation` row).
+
+**Spacing.** The first check is due `checks_spacing_base_days` after the fact was written. After
+`n` passes in a row the next one is `base x checks_spacing_growth^n` days away (at most 365). A
+check that is not a pass comes back after `base` days.
+
+**The bounded set.** Each nap checks at most `checks_max_per_cycle` memories, however many you
+have: today's changes (written since the last nap), their neighbours (shared relation edges),
+due spaced checks (the most faded and highest-stakes first), and `checks_sample_size` slots of a
+fixed sample spread over tether state and age. The general-skill probe is recorded
+`skipped: no pages yet`.
+
+**The ladder.** `memory_facts.tether` goes `tethered`, `weak`, `gist`, `untethered`. A `fail`
+moves a memory one step down; a `pass` on a `weak` memory moves it back up. `gist` marks the
+memory for a shorter form on pages. `untethered` memories leave recall results but nothing is
+deleted: loading the fact by its id still returns it. With the stage off, recall and
+`memory_facts.tether` are untouched and no check row is written.
+
+## REM and the hypothesis queue
+
+Dream lessons and REM links are guesses, so with `stages.rem` on they do not write
+anything until a metric says they help. Each guess is a row in `sleep_hypotheses`
+(`kind` `lesson` or `link`, a `metric`, `score_before`, `score_after`, and a `state` of
+`pending`, `kept` or `rejected`). A guess that does not score a gain is rejected and
+writes nothing. With `stages.rem` off, Dream writes its lessons exactly as before.
+No model call is made to score a guess.
+
+- **Dream lessons** (metric `evidence_reach`). For each turn the lesson cites, the
+  query is that turn's own content words. A turn is reached when the keyword index
+  returns, in the top `checks_recall_k`, a fact drawn from that turn.
+  `score_before` counts the turns reached today. `score_after` counts them with the
+  lesson added as a temporary fact in a transaction that is rolled back. A kept lesson
+  is written as today and then marked `source_type = dream_generated` with the low
+  `credence_dream_generated`, plus a `caused_by` edge (origin `dream_lesson`) to each
+  evidence turn.
+- **REM links** (metric `seed_reach_gain`). REM starts from failed recalls (a recall log
+  with `label_used = []`), corrections (disputes resolved by `user_said_update`) and
+  open disputes. It finds memories that share words with the seed but sit below the
+  top results, and proposes an `about_entity` link (origin `rem`) from a top result to
+  each. The score is how many useful memories (sharing the seed's words) the seed's
+  recall reaches with neighbour expansion, before and after the link is inserted in a
+  rolled-back transaction. A link is kept, and written for real, only on a gain of at
+  least `hypothesis_keep_margin`.
+- **An insight is a link that gets used.** When a kept link's memory is later labelled
+  used, `rem.note_link_used` raises `insight_score` and `attention` on both ends.
+- **Self-off.** When the keep rate over the last `rem_window_cycles` cycles that
+  decided a link is under `rem_min_keep_rate`, REM writes a `fitted` row
+  `rem_auto_off = 1` and skips itself. Set `rem_auto_off` to 0 as the owner to turn it
+  back on.
+
+The cycle report's `rem` stage counts `links_proposed`, `links_kept`, `links_rejected`,
+`lessons_kept`, `lessons_rejected` and `keep_rate`.
+
+## Reminders (prospective memory)
+
+With the `intentions` stage on, a user turn that says "remind me ..." is kept as a reminder
+and brought back at the right moment. It needs no model call and no scheduler.
+
+**What it catches.**
+
+- *Event cues*: "remind me when I mention Acme", "next time we talk about pricing, ...",
+  "when I open the billing project, ...". The cue words are stored and matched later as
+  whole words in a turn. An event reminder expires after `intention_event_expiry_days`.
+- *Time cues*: "remind me tomorrow at 9", "remind me on Friday to send the deck", "remind me
+  in two weeks", "remind me at 5pm", "remind me on 2026-12-01". Times are read as UTC, and
+  a day with no clock means 09:00. A date this parser cannot place exactly ("next month",
+  "on March 3rd", "soon") is kept as an event cue on those words instead of a due time.
+
+**When it fires.** On each user turn, before a new reminder is read from that turn: an event
+reminder fires when its words are in the turn, a time reminder fires on the first turn at or
+after its due time (nothing runs in between), and an open reminder past its expiry becomes
+`expired` and is dropped.
+
+**Delivery.** A fired reminder comes back once, in `intentions` on
+`GET /memory/sleep/context`, so the runtime can preload it on its next request. Reading it
+marks it `done`. States: `open`, `fired`, `done`, `expired`. With the stage off nothing is
+captured, fired or delivered.
+
+## Settings and thresholds
+
+Every value has a default in code. Your own value overrides it. Each value reports its
+`source`:
+
+| `source` | Set by |
+| --- | --- |
+| `default` | The code default. |
+| `fitted` | Fitted from your own recall logs. |
+| `owner` | You, through `PUT /memory/sleep/settings` or `PUT /memory/sleep/config`. |
+
+### `GET /memory/sleep/settings`
+
+```json
+{
+  "enabled": false,
+  "stages": { "pages": false, "router": false, "...": false },
+  "daily_spend_cap_usd": 0,
+  "entries": {
+    "enabled": { "value": false, "source": "default", "default": false, "updated_at": null,
+                 "group": "setting", "about": "Master switch for Sleep." },
+    "stage.pages": { "value": false, "source": "default", "...": "..." },
+    "daily_spend_cap_usd": { "value": 0, "source": "default", "...": "..." }
+  }
+}
+```
+
+The daily spend cap defaults to `0`, which means Sleep spends nothing.
+
+### `PUT /memory/sleep/settings`
+
+Send only the fields you change. Returns the same object as `GET`.
+
+```json
+{ "enabled": true, "stages": { "pages": true }, "daily_spend_cap_usd": 0.5 }
+```
+
+Stage names are `labels_live`, `strengths`, `pages`, `router`, `orchestrator`,
+`disputes`, `checks`, `intentions`, `rem` and `track1`. An unknown stage or a cap outside
+0 to 1000 returns `400`, and nothing is written.
+
+`labels_live` works now. When it and `enabled` are both on, each assistant reply sent to
+`POST /memory/retain` labels the session's most recent recall from the last 30 minutes. The
+recall's `memory_recall_logs` row gets `label_used`, a JSON array of the result ids the reply
+used (every other id in `results` counts as unused), plus `label_source` set to `answer` and
+`labeled_at`. A recall is labelled only once. With the flag off, nothing is written.
+
+### `GET /memory/sleep/config`
+
+`{ "values": { "<key>": { "value", "source", "default", "updated_at", "group", "about" } } }`
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `idle_ttl_s` | 300 | Idle seconds before a nap. The runtime sends its real cache time. |
+| `nap_after_ttl_multiple` | 1.0 | An idle signal starts a nap once the session has been idle this many times the cache time; below that it starts a daydream. |
+| `unit_max_attempts` | 3 | Attempts before a unit of work moves to the next cycle. |
+| `unit_lease_s` | 900 | Lease length for a running unit. |
+| `worker_poll_s` | 30 | Seconds between the Sleep worker's checks of the queue (global row only). |
+| `cycle_max_stages` | 9 | Per-cycle stop rule: most stages one cycle runs. The rest waits for the next signal. |
+| `cycle_max_minutes` | 30 | Per-cycle stop rule: no new stage starts after this many minutes. |
+| `dream_cost_estimate_usd` | 0.05 | Spend charged against the daily cap for one Dream. |
+| `curation_cost_estimate_usd` | 0.05 | Spend charged against the daily cap for one weekly curation. |
+| `debt_scale` | 50 | New memories since the last finished nap that make 1.0 of sleep debt. |
+| `debt_pause_threshold` | 1.0 | At or above this debt, memory decay pauses until a nap finishes. |
+| `debt_intake_min_attention` | 0.25 | While sleep debt pauses fading, new facts scoring below this attention are not stored (0 = off). |
+| `page_budget_share` | 0.05 | Share of the model's context window for pages per message. |
+| `router_min_confidence` | 0.5 | Below this, the router falls back to embedding search. |
+| `pull_cost_multiple_max` | 2 | Most a mid-session page load may cost, as a multiple of a preload. |
+| `intention_event_expiry_days` | 30 | Days an event-cue reminder stays open before it expires. |
+| `checks_max_per_cycle` | 40 | Most memories one nap's checks test, whatever the library size. |
+| `checks_sample_size` | 8 | Slots kept for the fixed sample, spread over tether state and age. |
+| `checks_spacing_base_days` | 3 | Days before a first check, and the wait after a check that did not pass. |
+| `checks_spacing_growth` | 2 | Each consecutive pass multiplies the wait by this. |
+| `checks_recall_k` | 10 | A check finds a memory when it is in this many top hits for its own words. |
+| `dispute_ask_margin` | 0.15 | Margin under which a high-stakes dispute asks you. |
+| `dispute_ask_stakes` | 0.7 | Stakes at or above which a close dispute asks you. |
+| `dispute_w_credence` | 0.5 | Arbiter weight of credence: what you said beats what was inferred. |
+| `dispute_w_recency` | 0.3 | Arbiter weight of recency: the newer side. |
+| `dispute_w_goal` | 0.2 | Arbiter weight of fit with your current goal, when one is known. |
+| `dispute_recency_days` | 30 | Age gap in days at which recency counts in full. |
+| `rem_min_keep_rate` | 0.25 | REM turns itself off under this keep rate. |
+| `rem_window_cycles` | 5 | REM judges its keep rate over this many recent cycles that decided a link. |
+| `rem_max_candidates` | 6 | Most REM link candidates scored in one cycle. |
+| `hypothesis_keep_margin` | 1 | A Dream lesson or REM link is kept only if its metric rises by at least this much, and by more than 0. |
+| `rem_insight_step` | 0.1 | Insight and attention a kept REM link adds to both memories when one is later used. |
+| `rem_auto_off` | 0 | 1 = REM switched itself off. REM writes it as a `fitted` row; set 0 yourself to turn REM back on. |
+| `fit_min_labeled_events` | 200 | Labelled events needed before fitted values replace defaults. |
+| `check_router_sample` | 200 | Fixed router sample size in the bounded check. |
+| `check_neighbours` | 5 | Neighbours checked for each changed memory. |
+| `strength_half_life_days` | 30 | Days for retrieval strength to halve at storage strength 0. |
+| `strength_spacing_credit` | 0.2 | Storage strength a fully spaced recall earns. |
+| `strength_difficulty_weight` | 1 | Extra credit for a recall made while retrieval strength was low. |
+| `strength_min_spacing_days` | 1 | Days since the last recall that earn full spacing credit. |
+| `strength_instant_credit_cap` | 0.02 | Most a recall under the minimum spacing can earn. |
+| `credence_user_said` | 0.9 | Credence of a fact you said. |
+| `credence_tool_observed` | 0.8 | Credence of a fact a tool reported. |
+| `credence_imported` | 0.6 | Credence of an imported fact. |
+| `credence_model_inferred` | 0.5 | Credence of a fact the model inferred. |
+| `credence_dream_generated` | 0.3 | Credence of a fact a dream produced. |
+| `attention_base` | 0.1 | Attention every new fact starts with. |
+| `attention_w_remember` | 0.35 | Attention added when you flagged the fact ("remember this"). |
+| `attention_w_self` | 0.2 | Attention added for a first-person statement about you. |
+| `attention_w_repeat` | 0.15 | Attention added when a near-duplicate is already stored. |
+| `attention_w_surprise` | 0.2 | Attention added when the fact updates an existing one. |
+| `attention_w_stakes` | 0.2 | Attention added for money, health, legal or deadline facts. |
+| `attention_repeat_jaccard` | 0.6 | Word overlap at or above which two facts count as a repeat. |
+
+### Write-time scores
+
+When the Sleep master switch is on, every new memory fact is scored as it is written,
+with no model call. `attention` (0 to 1) says how much the fact deserves keeping. It
+rises for a "remember this" flag, a first-person statement about you, a near-duplicate
+already stored, an update to an existing memory, and money, health, legal or deadline
+words. `credence` (0 to 1) says how likely the fact is true and comes only from where it
+came from: you said it, a tool reported it, it was imported, the model inferred it, or a
+dream produced it. `flashbulb` is 1 when you flagged the fact. A flag raises attention
+and never credence. `source_type` names the source. With Sleep off these four columns
+stay empty. The goal-link signal is not scored yet.
+
+### `PUT /memory/sleep/config`
+
+```json
+{ "values": { "router_min_confidence": 0.6, "unit_max_attempts": 4 } }
+```
+
+Every key must be one of the keys above, and its value must be in range. Whole-number
+keys refuse fractions. One bad key returns `400`, and nothing is written.
+
+## Two strengths
+
+With the `strengths` stage on, each memory keeps two numbers. Storage strength says how
+well it is learned and only rises. Retrieval strength says how reachable it is now: it
+fades with time and a recall resets it to 1. Time never deletes or retires a memory. A
+recall raises storage strength by more when it is spaced out and when the memory had
+faded. A repeat recall seconds later earns almost nothing. For a user with the stage on,
+the old 90-day decay no longer runs. The consolidation pass logs which memories it would
+have decayed (`shadow_old_decay`) and changes nothing. With the stage off, nothing here
+runs and decay works as before. Recall ranking does not use the strengths yet.
+
+## Fitted decay
+
+Once you have at least `fit_min_labeled_events` recalls with answer-used labels, Sleep can
+fit how fast your memories fade from your own history. For each memory shown in a labelled
+recall it takes the days since that memory was last recalled and whether the reply used it,
+then fits `used chance = a x 0.5^(days / h)` by a grid search. The fitted `h` is saved as
+`strength_half_life_days` with source `fitted`. Below the label minimum, or when the labels
+show no clear decay, nothing is written and the default stays. A value you set yourself is
+never replaced. `strength_spacing_credit` is not fitted: the labels do not show it, so it
+keeps its default. Nothing runs this fit on a schedule yet.
+
+## Events
+
+These events go on the memory activity stream (`GET /memory/drive/activity`, the same rows
+Memory Drive shows). Each event is its own `kind`, spelled with the dotted name below, so
+`?kind=sleep.cycle.finished` filters to one of them and `?after=<cursor>` follows them live
+with everything else. The API writes them; agents cannot report a `sleep.*` kind
+(`POST /memory/drive/activity` refuses it). Writing is best effort and never fails the nap,
+dispute or request that caused it. Rows for incognito sessions are not written.
+
+| Event | When | `detail` |
+| --- | --- | --- |
+| `sleep.cycle.started` | A cycle begins. | `cycle`, `unit`, `kind` (`nap` or `daydream`), `trigger` |
+| `sleep.cycle.stage` | A stage ends (one per stage, in order, also when it is skipped or fails). | `cycle`, `stage`, `status` (`done`, `skipped`, `failed`), `note`, `spend_usd` |
+| `sleep.cycle.finished` | A cycle ends: finished, stopped or failed. | `cycle`, `kind`, `state`, `spend_usd`, `stages`, `stages_done`, `stop_reason`, `error` |
+| `sleep.dispute.opened` | Two memories contradict each other and a dispute row is written. | `dispute`, `state`, `scope`, `stakes`, `margin` |
+| `sleep.dispute.needs_user` | The dispute needs you to pick (written right after `opened`). | `dispute` |
+| `sleep.debt.changed` | Sleep debt crossed `debt_pause_threshold`, up or down. | `debt`, `threshold`, `decay_paused` |
+
+Cycle rows carry the cycle id as `run` (filter with `?run=`) and the chat `session` when the
+nap came from a chat. `sleep.debt.changed` is written only when the debt crosses the
+threshold, never on every read of `GET /memory/sleep/status`. It is checked when a cycle
+starts and when it ends; the last event row tells whether the debt was above or below.

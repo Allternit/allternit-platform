@@ -1,0 +1,133 @@
+---
+title: "Sleep architecture"
+description: "How Allternit Sleep is built: the sleep module in allternit-api, its tables, the unit queue, the nap stage order, triggers, disputes, the tether ladder, events, flags and what is not built yet"
+---
+
+**Implementation: PARTIAL (every stage behind its own flag, all off by default) · Exposure: INTERNAL.** See [status labels](/architecture#status-labels). Routes, config keys and event payloads are in the [Memory Sleep API](/api/memory-sleep); this page explains how the parts fit. The user view is the [Sleep guide](/guides/sleep).
+
+Sleep is event-driven memory consolidation on the user's own runtime. Nothing is scheduled by launchd or cron. The runtime tells the API when a session is idle, about to be compacted or finished, and one background worker in the API runs the work.
+
+## Module
+
+Everything lives in `cmd/allternit-api/src/sleep/`. The module is self-contained so it can become its own crate when the allternit-api crate split reaches memory.
+
+| File | Job |
+| --- | --- |
+| `config.rs` | Code defaults for every switch and threshold, overlaid with `sleep_config` rows. |
+| `types.rs` | Wire types: `Stage`, `SourceType`, `SignalEvent`, `DisputeChoice`, the `sleep.*` event names. |
+| `routes.rs` | `/api/v1/memory/sleep/...` and `/api/v1/memory/disputes...`. |
+| `trigger.rs` | Turns runtime signals into queued units. |
+| `queue.rs` | Unit leases, attempts, deferral and held continuations over `sleep_units`. |
+| `cycle.rs` | The orchestrator: stage order, spend cap, clean stop, sleep debt, the worker. |
+| `report.rs` | The per-cycle report, real spend from the usage ledger, and undo. |
+| `strength.rs` | Storage and retrieval strength per memory (stage `strengths`). |
+| `score.rs` | Write-time `attention`, `credence`, `flashbulb` and `source_type`. No model call. |
+| `fit.rs` | Fits the decay half-life from labelled recalls. |
+| `disputes.rs` | Dispute records, update classification, recall notes and the user's resolve. |
+| `arbiter.rs` | The deterministic pick of a side, or `needs_user`. |
+| `checks.rs` | Spaced checks, the bounded check set and the tether ladder. |
+| `intentions.rs` | Reminders captured from user turns and fired by cue or due time. |
+| `hypotheses.rs` | The queue Dream lessons and REM links wait in. |
+| `rem.rs` | REM insight links, their metric, self-off and the use hook. |
+
+## Tables (migration V291)
+
+`cmd/allternit-api/migrations/V291__sleep_core.sql` is additive only: new tables are `CREATE TABLE IF NOT EXISTS` and the new columns on existing tables are plain nullable `ADD COLUMN`s, so old code keeps working on the new schema.
+
+- **Sleep's own tables:** `sleep_config`, `sleep_cycles`, `sleep_units`, `sleep_hypotheses`, `sleep_checks`, `sleep_router_misses`.
+- **Memory tables for later stages:** `memory_topics`, `memory_manifests`, `memory_pages`, `memory_page_claims`, `memory_overlays`, `memory_vault`. These exist in the schema; nothing writes them until the page stages are built.
+- **Written today:** `memory_disputes` and `memory_intentions`.
+- **Columns added to `memory_facts`:** `storage_strength`, `retrieval_strength`, `tether`, `last_reconsolidated_at`, `source_type`, `insight_score`, `attention`, `credence`, `flashbulb`.
+- **Columns added to `memory_recall_logs`:** `label_used`, `label_source`, `labeled_at`.
+
+Track 1 (adapter) tables are not in V291. They come in a second migration only if gate G3 passes.
+
+## Triggers
+
+The gizzi side is `cmd/gizzi-code/src/runtime/memory/sleep/triggers.ts`. It sends `POST /memory/sleep/signal` and is used by both loops: the session runtime (Desktop and other hosts) and the ink-app TUI.
+
+| Signal | Sent |
+| --- | --- |
+| `idle` | Once, when no new prompt arrives for the prompt-cache TTL after a turn ended, so the cache is already cold. |
+| `resume` | Fire and forget, when a prompt arrives after `idle` was sent. A running cycle stops cleanly. |
+| `pre_compact` | Fire and forget at compaction. Never awaited, so compaction proceeds with the API slow or down. |
+| `session_end` | Best effort at process exit, bounded to 500 ms. |
+
+Signals are sent only when signed in and Sleep is on for the account. Off, a 404 or any error sends nothing, and nothing here throws into a turn. On the API side `trigger.rs` writes at most one open unit per session and kind.
+
+## The unit queue
+
+`sleep_units.stage` holds the unit kind: `daydream`, `nap` or `capture`. States:
+
+- `queued`: waiting for the worker.
+- `leased`: a worker runs it until `lease_expires_at`. An expired lease is reclaimable and counts as one failed attempt. A `resume` sets `stop_requested` in the payload of a leased unit.
+- `done`, and `cancelled` (a `resume` before the unit started).
+- `deferred`: failed `unit_max_attempts` times. Not retried until the user's next cycle opens.
+- `held`: the rest of a stopped cycle, with `resume_from_stage` in its payload. The session's next signal queues it again.
+
+The lease is a conditional UPDATE, following Dream's claim pattern.
+
+## A nap, in order
+
+One worker runs queued `daydream` and `nap` units, one per user at a time. A daydream runs the first two stages only.
+
+1. `capture`: marks queued `capture` units done and records what they asked for.
+2. `consolidation`: merges duplicates. Decay is skipped while sleep debt is at or above `debt_pause_threshold`. In the same state, extraction applies an intake floor (`cycle::intake_floor`): a new extracted fact whose pre-write attention (`score::pre_write_attention`) is under `debt_intake_min_attention` (default 0.25, 0 = off) is not stored. Updates, forgets, explicit saves and flagged facts are never held, and the raw turn log is untouched.
+3. `fit` (stage `strengths`): fits the decay half-life from labelled recalls.
+4. `dream` (spends quota): the existing Dream pass, if not already done today.
+5. `rem` (stage `rem`): REM insight links through the hypothesis queue.
+6. `curation` (spends quota): a bot's weekly memory curation, if due.
+7. `pages`: not built. Recorded as skipped.
+8. `checks` (stage `checks`): spaced checks and the tether ladder.
+9. `sign`: not built. Recorded as skipped.
+
+Spending stages run only when `daily_spend_cap_usd` is above 0 and today's spend plus the stage estimate fits under it. Reported spend is read from the usage ledger, not the estimate. A cycle stops cleanly after the running stage on `resume`, or on `cycle_max_stages` and `cycle_max_minutes`.
+
+For users with the orchestrator off, the old consolidation tick, nightly Dream and weekly curation clocks run as before. With it on they only queue a `nap`.
+
+## Strength, scores and labels
+
+- `score.rs` writes `attention` and `credence` on every new fact when the master switch is on. Emphasis raises attention, never credence; credence comes from `source_type` alone.
+- `strength.rs` keeps two numbers per memory. Storage strength only rises; retrieval strength fades with time and a recall resets it. Time never deletes a memory. Recall ranking does not use the strengths yet.
+- **Labels to fit.** With `labels_live` on, each assistant reply sent to `POST /memory/retain` labels the session's latest recall of the last 30 minutes with the result ids the reply used. `fit.rs` fits `used chance = a x 0.5^(days / h)` by grid search once `fit_min_labeled_events` labelled recalls exist, and saves `h` as `strength_half_life_days` with source `fitted`. Nothing runs the fit on a schedule other than the nap's `fit` stage.
+
+## Recall monitor and disputes
+
+When the extraction model says a message changes an existing memory, `disputes.rs` classifies it: refinement (replace, no dispute), correction (replace, and a resolved dispute keeps the history) or contradiction (both kept, dispute opened). Dream follows the same rule. `arbiter.rs` then picks with no model call, in order: scope, then weighted support (credence, recency, goal fit when a goal is known), with stakes deciding only whether to ask. A close, high-stakes dispute becomes `needs_user`.
+
+At recall, a result that is a side of an unresolved or both-kept dispute carries a `dispute` field. Results are never removed or reordered. The gizzi side (`dispute-note.ts`) renders the note for the model and asks the person once per dispute per session.
+
+## The tether ladder
+
+`checks.rs` tests current facts with no model call: (a) the fact is in the top `checks_recall_k` hits for its own words, (b) no newer current fact contradicts it without a dispute, (c) its source observation still exists. A `fail` moves `memory_facts.tether` one step down the ladder `tethered`, `weak`, `gist`, `untethered` and queues a reconsolidation; a `pass` on a `weak` fact moves it up. `untethered` facts leave recall results, but nothing is deleted and loading by id still works. Each nap checks at most `checks_max_per_cycle` facts: changed today, their neighbours, due spaced checks and a fixed sample.
+
+## Hypotheses and REM
+
+Dream lessons and REM links are guesses. With `rem` on they become `sleep_hypotheses` rows and are kept only when a deterministic metric rises by at least `hypothesis_keep_margin`. REM turns itself off (a `fitted` row `rem_auto_off`) when its keep rate falls under `rem_min_keep_rate`.
+
+## Reminders
+
+`intentions.rs` runs on every recorded user turn. It fires matching event and due-time reminders first, then reads a new "remind me" from the turn. A fired reminder is delivered once in `intentions` on `GET /memory/sleep/context`.
+
+## Events
+
+The API writes `sleep.cycle.started`, `sleep.cycle.stage`, `sleep.cycle.finished`, `sleep.dispute.opened`, `sleep.dispute.needs_user` and `sleep.debt.changed` to the memory activity stream. Agents cannot post a `sleep.*` kind. Writes are best effort and skipped for incognito sessions. Payloads are in the [API reference](/api/memory-sleep#events).
+
+## Flags and config sources
+
+Every stage has one flag, `stage.<name>` in `sleep_config`, all off by default: `labels_live`, `strengths`, `pages`, `router`, `orchestrator`, `disputes`, `checks`, `intentions`, `rem`, `track1`. A stage runs only when the master switch `enabled` and its own flag are both on. The daily spend cap defaults to 0.
+
+Each value has a `source`: `default` (code), `fitted` (written by the fitter) or `owner` (the user). The owner wins. The global row (`user_id` empty) applies first and the user's own row overlays it. A writer of `fitted` rows must not replace an `owner` row.
+
+## Gates
+
+- **G1** (after step 1.2) decides whether Track 2 pages go ahead at full size. One 2026 study found LLM-consolidated memory below the no-memory baseline, so a smaller Track 2 is planned if G1 fails.
+- **G2** (after step 1.4) picks where a mid-session `load_page` goes. If a pull costs more than `pull_cost_multiple_max` times a preload, pulls go in the message layer only.
+- **G3** (after step 1.5 and the owner's decision on the teacher model) decides whether Track 1 adapters are more than experimental.
+
+## Not built yet
+
+- **Phase 4:** topic pages, the manifest and its signature, the vault and the router. The `pages` and `sign` stages are recorded as skipped, `POST /memory/sleep/pages/load` refuses, and `GET /memory/sleep/context` is empty.
+- **Phase 7:** Track 1 personal adapters, and the second migration with their tables.
+- The `deep` and `rem` cycle kinds answer `stage_not_built`.
+- The Settings, Memory, Sleep screen is in progress.

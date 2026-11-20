@@ -27,6 +27,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -36,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -101,6 +104,14 @@ fun ChatScreen(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val list = rememberLazyListState()
+    // iOS ChatView .scrollDismissesKeyboard(.interactively): dragging the feed hides the keyboard.
+    val feedFocus = LocalFocusManager.current
+    // Only a finger drag counts: auto-scroll while a reply streams must not hide the keyboard.
+    LaunchedEffect(list) {
+        list.interactionSource.interactions.collect { interaction ->
+            if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) feedFocus.clearFocus()
+        }
+    }
     val messages = viewModel.messages
 
     val hasSession = viewModel.currentSessionId != null
@@ -135,6 +146,13 @@ fun ChatScreen(
 
     // Follow the reply: new rows and streamed text keep the end in view (iOS onChange(messages.last)).
     val last = messages.lastOrNull()
+    // iOS ChatView: a reply refused for Cloud credits (402 credits_required / credits_exhausted) opens Cloud credits,
+    // once per reply. Packs and plans are bought there through Google Play when the server has Google on.
+    val creditsReason = last?.error?.let { e -> com.allternit.feature.billing.CloudCreditsCopy.reason(listOfNotNull(e.name, e.message, e.raw).joinToString(" ")) }
+    var creditsShownFor by remember { mutableStateOf<Any?>(null) }
+    if (creditsReason != null && last != null && creditsShownFor != last.id) {
+        com.allternit.feature.billing.CloudCreditsSheet(com.allternit.feature.billing.CloudCreditsRequest(creditsReason)) { creditsShownFor = last.id }
+    }
     LaunchedEffect(messages.size, last?.content?.length, last?.toolCalls?.size, viewModel.computeGate) {
         val count = list.layoutInfo.totalItemsCount
         if (count > 0) {
@@ -163,7 +181,10 @@ fun ChatScreen(
                     if (viewModel.isLoadingHistory) {
                         CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = c.textSecondary)
                     } else {
-                        greeting()
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            greeting()
+                            NotificationsCard()
+                        }
                     }
                 }
             } else {
@@ -174,6 +195,10 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     items(messages, key = { it.id }) { m ->
+                        val summary = m.voiceSummary
+                        if (summary != null) {
+                            com.allternit.feature.chat.voice.VoiceSummaryCard(summary)
+                        } else androidx.compose.runtime.CompositionLocalProvider(LocalRunTreeSession provides viewModel.currentSessionId) {
                         MessageRow(
                             message = m,
                             isLastAssistant = m.id == viewModel.lastAssistantMessageId,
@@ -182,6 +207,7 @@ fun ChatScreen(
                             backend = backend,
                             actions = actions,
                         )
+                        }
                     }
                     if (gate != null) {
                         item(key = "computeGate") {
@@ -230,7 +256,7 @@ fun ChatScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(painterResource(R.drawable.chat_pencil), null, tint = c.textSecondary, modifier = Modifier.size(13.dp))
+                Icon(painterResource(com.allternit.core.design.R.drawable.ph_pencil_simple), null, tint = c.textSecondary, modifier = Modifier.size(13.dp))
                 Text("Editing message — sending replaces everything after it", color = c.textSecondary, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
                 Box(
                     Modifier.size(32.dp).clickable(role = Role.Button, onClick = onCancelEdit).semantics { contentDescription = "Cancel edit" },

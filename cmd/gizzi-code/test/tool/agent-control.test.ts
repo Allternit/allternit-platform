@@ -162,6 +162,8 @@ describe("agent_control", () => {
       expect(resumed.outcome).toBe("resumed")
       expect(resumed.run_id).not.toBe(first)
       expect(await BackgroundTask.get(resumed.run_id)).toMatchObject({ status: "running", childSessionID: a.id, description: "Scan repo" })
+      // The turn starts after the SubagentStart hooks have run, so wait for it.
+      for (let i = 0; i < 200 && fake.calls.turns.length === 0; i++) await Bun.sleep(10)
       expect(fake.calls.turns.map((turn) => turn.sessionID)).toEqual([a.id])
 
       expect(await AgentControl.run({ sessionID: parent.id, abort: abort(), action: "resume", target: a.id })).toMatchObject({

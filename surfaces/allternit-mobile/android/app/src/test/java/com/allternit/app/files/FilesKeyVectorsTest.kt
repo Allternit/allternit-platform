@@ -1,5 +1,9 @@
 package com.allternit.app.files
 
+import com.allternit.core.files.Blake3
+import com.allternit.core.files.FilesKeyCrypto
+import com.allternit.core.files.XChaCha20Poly1305
+
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals

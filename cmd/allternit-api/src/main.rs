@@ -1049,6 +1049,8 @@ async fn main() {
         // ALLTERNIT_FILES_DRIVE=1; nothing is created on disk until first use.
         .merge(allternit_api::files_v2::router(&state.data_dir, state.db.clone()))
         .merge(memory_router())
+        // Allternit Sleep (`/memory/sleep/*`, `/memory/disputes*`); every stage off by default.
+        .merge(allternit_api::sleep::routes::sleep_router())
         .merge(me_router())
         .merge(setup_router())
         .merge(local_brain_router())
@@ -1617,6 +1619,9 @@ async fn main() {
     allternit_api::memory_consolidation::spawn(state.clone());
     // Memory Drive nightly Dream (one commit + report per drive per night).
     allternit_api::memory_dream::spawn(state.clone());
+    // Allternit Sleep (step 5.1): runs queued sleep units as cycles. For users
+    // with the `orchestrator` stage on, the three clocks above only queue naps.
+    allternit_api::sleep::cycle::spawn(state.clone());
     allternit_api::memory_capture::spawn(state.db.clone());
     // Memory Drive: read saved memories and new chats from the person's own
     // assistant logins on their Sessions computer (read-only, every 6 h).

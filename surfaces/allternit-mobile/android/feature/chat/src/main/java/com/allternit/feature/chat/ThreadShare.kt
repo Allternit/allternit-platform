@@ -237,9 +237,9 @@ fun ThreadShareSheet(backend: ChatBackend, sessionId: String?, title: String, me
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
                     )
-                    CapsuleButton("Share link", icon = R.drawable.chat_share, primary = true) { shareText(context, p.entry.url) }
+                    CapsuleButton("Share link", icon = com.allternit.core.design.R.drawable.ph_export, primary = true) { shareText(context, p.entry.url) }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CapsuleButton("Update link", icon = R.drawable.chat_retry, enabled = !busy) {
+                        CapsuleButton("Update link", icon = com.allternit.core.design.R.drawable.ph_arrow_clockwise, enabled = !busy) {
                             val snap = client.snapshot(messages)
                             if (snap.isEmpty()) {
                                 notice = ShareCopy.EMPTY

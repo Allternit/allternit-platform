@@ -72,7 +72,20 @@ pub struct InferenceAttribution {
     /// The request carried `X-Allternit-Turn: person` (a composer send by
     /// the person; contract 9.3). Plan models need it.
     pub person_turn: bool,
+    /// `inference_usage.billed_to` (migrations_pg/151): `user_wallet` for an
+    /// app's call under Sign in with Allternit, `claude_org` for a linked
+    /// Claude organization. None leaves the column NULL (plain credits calls
+    /// and every row before 151).
+    pub billed_to: Option<&'static str>,
+    /// The app and grant of an app's call (migrations_pg/151).
+    pub oauth_app_id: Option<Uuid>,
+    pub oauth_grant_id: Option<Uuid>,
 }
+
+/// `inference_usage.billed_to` for an app's call billed to the person's wallet.
+pub const BILLED_TO_USER_WALLET: &str = "user_wallet";
+/// `inference_usage.billed_to` for a call billed to a linked Claude organization.
+pub const BILLED_TO_CLAUDE_ORG: &str = "claude_org";
 
 /// Header a client sets only on a person's composer send (contract 9.3).
 pub const TURN_HEADER: &str = "x-allternit-turn";
@@ -394,31 +407,42 @@ pub async fn settle_inference(
     let usage_id = Uuid::new_v4().to_string();
     let ref_id = format!("inference-{}", Uuid::new_v4().simple());
 
-    if let Err(error) = sqlx::query(
+    // The payer columns (migrations_pg/151) are written only when the call
+    // names a payer, so every other call keeps the pre-151 statement.
+    let sql = if attribution.billed_to.is_some() {
+        r#"
+        INSERT INTO inference_usage (
+            id, user_id, model, prompt_tokens, completion_tokens, cost_usd, wholesale_cost_usd, estimated, pool_id,
+            project_id, key_id, client, request_id, latency_ms, billed_to, oauth_app_id, oauth_grant_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        "#
+    } else {
         r#"
         INSERT INTO inference_usage (
             id, user_id, model, prompt_tokens, completion_tokens, cost_usd, wholesale_cost_usd, estimated, pool_id,
             project_id, key_id, client, request_id, latency_ms
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        "#,
-    )
-    .bind(&usage_id)
-    .bind(user_id)
-    .bind(model)
-    .bind(prompt_tokens as i64)
-    .bind(completion_tokens as i64)
-    .bind(cost_usd)
-    .bind(wholesale_cost_usd)
-    .bind(estimated)
-    .bind(pool_id)
-    .bind(&attribution.project_id)
-    .bind(&attribution.key_id)
-    .bind(&attribution.client)
-    .bind(&attribution.request_id)
-    .bind(attribution.latency_ms())
-    .execute(db)
-    .await
-    {
+        "#
+    };
+    let mut insert = sqlx::query(sql)
+        .bind(&usage_id)
+        .bind(user_id)
+        .bind(model)
+        .bind(prompt_tokens as i64)
+        .bind(completion_tokens as i64)
+        .bind(cost_usd)
+        .bind(wholesale_cost_usd)
+        .bind(estimated)
+        .bind(pool_id)
+        .bind(&attribution.project_id)
+        .bind(&attribution.key_id)
+        .bind(&attribution.client)
+        .bind(&attribution.request_id)
+        .bind(attribution.latency_ms());
+    if let Some(billed_to) = attribution.billed_to {
+        insert = insert.bind(billed_to).bind(attribution.oauth_app_id).bind(attribution.oauth_grant_id);
+    }
+    if let Err(error) = insert.execute(db).await {
         error!(
             "REVENUE-CRITICAL: failed to record inference usage for user {} (model {}, ${:.6}, ref {}): {}",
             user_id, model, cost_usd, ref_id, error
@@ -1110,6 +1134,7 @@ mod tests {
                 started_at: Some(std::time::Instant::now()),
                 capture_request: None,
                 person_turn: false,
+                ..Default::default()
             },
         };
         let body = axum::body::Body::new(UsageMeteringBody::new(inner, settlement));
@@ -1163,6 +1188,7 @@ mod tests {
             started_at: Some(std::time::Instant::now()),
             capture_request: None,
             person_turn: false,
+            ..Default::default()
         };
         settle_inference(&pool, "user_1", "gpt-4o", None, true, &test_prices(), 10, 5, false, &attribution).await;
         settle_inference(&pool, "user_2", "gpt-4o", None, true, &test_prices(), 10, 5, false, &InferenceAttribution::default()).await;

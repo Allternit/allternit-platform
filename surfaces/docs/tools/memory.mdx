@@ -61,6 +61,16 @@ A query should stand alone. The agent uses your exact names, terms and time wind
 
 Entries come back as `id`, `version`, `text` and `added`.
 
+## Memory conflicts
+
+When [Allternit Sleep](/api/memory-sleep) finds two memories that disagree, a `memory_recall` hit for either one carries a conflict note under it: both sides, which one Sleep kept and why. The agent may mention the conflict if it matters.
+
+If Sleep could not decide, the note says the conflict needs the user. The agent then asks once per session, through the same question prompt as any other question, with four choices: side A, side B, "Both, in different contexts" or "Neither". The answer is recorded with `POST /api/v1/memory/disputes/:id/resolve`. If the conflict is already settled or Sleep is off, the agent is told quietly and nothing else happens. A server without Sleep sends no conflict note and recall looks the same as before.
+
+## Reminders
+
+When you ask the agent to remind you of something and the reminder fires, Gizzi reads it at the start of your next message and adds it to that turn as a short note (`The user asked to be reminded: "..."`). The agent mentions it if it is relevant. Each reminder is delivered once. The read waits at most 1.5 seconds, so a slow or missing Sleep service never delays your turn. With Sleep off, signed out or on an older runtime, nothing is added. The system prompt is never changed, so the prompt cache stays warm. This works the same in the terminal and in Desktop.
+
 ## Two devices, one memory
 
 When a push is rejected because another computer changed the drive, the agent's local work is replayed per entry, three ways, instead of overwriting the newer copy:

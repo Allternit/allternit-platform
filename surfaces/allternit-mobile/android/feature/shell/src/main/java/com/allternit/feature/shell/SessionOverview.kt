@@ -86,9 +86,9 @@ import kotlinx.coroutines.launch
 
 /** List · Grid · Deck (iOS OverviewLayout), kept across launches (`allternit-phone-overview-layout`). */
 internal enum class OverviewLayout(val raw: String, val label: String, val icon: Int) {
-    List("list", "List", R.drawable.shell_list),
-    Grid("grid", "Grid", R.drawable.shell_grid),
-    Deck("deck", "Deck", R.drawable.shell_stack),
+    List("list", "List", com.allternit.core.design.R.drawable.ph_list),
+    Grid("grid", "Grid", com.allternit.core.design.R.drawable.ph_squares_four),
+    Deck("deck", "Deck", com.allternit.core.design.R.drawable.ph_stack),
 }
 
 /** All · Pinned · Archived (iOS OverviewView). */
@@ -101,7 +101,7 @@ internal fun sessionIcon(session: AgentSession): Int = when {
     session.agentId != null -> DesignR.drawable.ph_cpu
     session.originSurface == "code" -> DesignR.drawable.ph_terminal
     session.originSurface == "browser" -> DesignR.drawable.ph_globe
-    else -> R.drawable.shell_chat
+    else -> com.allternit.core.design.R.drawable.ph_chat_circle
 }
 
 /** The session's home in words (iOS ShellSearchView.surfaceLabel). */
@@ -301,7 +301,7 @@ internal fun SessionOverviewScreen(
                 trailing = {
                     if (groups.size > 1) {
                         Box {
-                            PhoneIconButton(R.drawable.shell_list, "Filter", testTag = "overviewFilter", iconSize = 20) { filterOpen = true }
+                            PhoneIconButton(com.allternit.core.design.R.drawable.ph_list, "Filter", testTag = "overviewFilter", iconSize = 20) { filterOpen = true }
                             if (group != null) Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(7.dp).clip(CircleShape).background(c.accentPrimary))
                             DropdownMenu(
                                 expanded = filterOpen,
@@ -326,7 +326,7 @@ internal fun SessionOverviewScreen(
                     }
                     Box {
                         if (hasOptions) {
-                            PhoneIconButton(R.drawable.shell_dots, "Recents options", testTag = "recentsOptions", iconSize = 20) { optionsOpen = true }
+                            PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Recents options", testTag = "recentsOptions", iconSize = 20) { optionsOpen = true }
                         } else {
                             PhoneIconButton(DesignR.drawable.ph_sliders_horizontal, "Layout", testTag = "overviewLayout", iconSize = 20) { optionsOpen = true }
                         }
@@ -431,11 +431,11 @@ internal fun SessionOverviewScreen(
                         .padding(6.dp)
                         .testTag("overviewSelectBar"),
                 ) {
-                    BarButton(if (archivedView) "Unarchive" else "Archive", R.drawable.shell_tray, none) {
+                    BarButton(if (archivedView) "Unarchive" else "Archive", com.allternit.core.design.R.drawable.ph_tray, none) {
                         Haptics.perform(view, Haptics.Kind.Tap)
                         bulk { id -> store.setArchived(id, !archivedView) }
                     }
-                    BarButton(if (pinAll) "Pin" else "Unpin", R.drawable.shell_star, none) {
+                    BarButton(if (pinAll) "Pin" else "Unpin", com.allternit.core.design.R.drawable.ph_star, none) {
                         pins = if (pinAll) pins + selected else pins - selected
                         RailPinPrefs.set(context, pins)
                         selecting = false
@@ -638,10 +638,10 @@ private fun CardControls(s: AgentSession, actions: CardActions, deck: Boolean) {
         Box(
             Modifier.size(28.dp).clickable(role = Role.Button, onClickLabel = "More") { menu = true }.semantics { contentDescription = "More for ${s.title}" },
             contentAlignment = Alignment.Center,
-        ) { Icon(painterResource(R.drawable.shell_dots), contentDescription = null, tint = c.textTertiary, modifier = Modifier.size(if (deck) 15.dp else 13.dp)) }
+        ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_dots_three), contentDescription = null, tint = c.textTertiary, modifier = Modifier.size(if (deck) 15.dp else 13.dp)) }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp), containerColor = c.bgPrimary) {
             MenuRow(DesignR.drawable.ph_arrow_square_out, "Open") { menu = false; actions.onOpen(s) }
-            MenuRow(R.drawable.shell_note_pencil, "Rename") { menu = false; actions.onRename(s) }
+            MenuRow(com.allternit.core.design.R.drawable.ph_note_pencil, "Rename") { menu = false; actions.onRename(s) }
             actions.teleport?.let { move ->
                 val inCloud = actions.place(s.id) != null
                 MenuRow(if (inCloud) DesignR.drawable.ph_desktop else DesignR.drawable.ph_upload_simple, if (inCloud) "Bring back to this Mac" else "Teleport to cloud", testTag = "overviewTeleport") {
@@ -649,13 +649,13 @@ private fun CardControls(s: AgentSession, actions: CardActions, deck: Boolean) {
                     move(s, !inCloud)
                 }
             }
-            MenuRow(R.drawable.shell_tray, "Archive") { menu = false; actions.onClose(s) }
+            MenuRow(com.allternit.core.design.R.drawable.ph_tray, "Archive") { menu = false; actions.onClose(s) }
         }
     }
     Box(
         Modifier.size(28.dp).clickable(role = Role.Button, onClickLabel = "Archive") { actions.onClose(s) }.semantics { contentDescription = "Archive ${s.title}" },
         contentAlignment = Alignment.Center,
-    ) { Icon(painterResource(R.drawable.shell_x), contentDescription = null, tint = c.textTertiary, modifier = Modifier.size(if (deck) 13.dp else 11.dp)) }
+    ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_x), contentDescription = null, tint = c.textTertiary, modifier = Modifier.size(if (deck) 13.dp else 11.dp)) }
 }
 
 @Composable
@@ -835,7 +835,7 @@ private fun OverviewFloatingBar(query: String, placeholder: String, newLabel: St
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Icon(painterResource(R.drawable.shell_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
             Text(newLabel, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
         }
     }

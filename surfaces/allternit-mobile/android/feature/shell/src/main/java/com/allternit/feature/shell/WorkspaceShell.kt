@@ -9,6 +9,7 @@ import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.anchoredDraggable
 import androidx.compose.foundation.gestures.animateTo
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -35,7 +36,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -93,7 +96,10 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     val context = LocalContext.current
     val view = LocalView.current
     val density = LocalDensity.current
+    // Tap anywhere outside a text field to hide the keyboard (iOS dismisses it the same way).
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
+    androidx.compose.runtime.LaunchedEffect(Unit) { com.allternit.feature.chat.ChatHooks.onNotificationsGranted = { com.allternit.feature.push.AllternitPush.registerIfAuthorized(context) } }
 
     var mode by remember { mutableStateOf(launch.mode ?: ShellModePrefs.load(context)) }
     // A first-run checklist fix opens Settings once the workspace is up (iOS DeepLinkRouter);
@@ -127,6 +133,13 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     var inboxOpen by remember { mutableStateOf(launch.sheet == "inbox") }
     var quickTaskOpen by remember { mutableStateOf(launch.sheet == "quick-task") }
     var cliPickerSurface by remember { mutableStateOf(if (launch.sheet == "continue-cli") (if (mode == ShellMode.Code) "code" else "chat") else null) }
+    // A notification tap while the workspace is up (iOS DeepLinkRouter): open what it points at.
+    LaunchedEffect(launch.nonce) {
+        if (launch.nonce == 0L) return@LaunchedEffect
+        launch.mode?.let { mode = it }
+        if (launch.tab == "settings") page = ShellPage.Settings
+        if (launch.sheet == "inbox") inboxOpen = true
+    }
 
     fun reload() {
         if (account != null) scope.launch { store.load() }
@@ -166,14 +179,15 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     LaunchedEffect(drawer.settledValue) {
         if (drawer.settledValue == DrawerValue.Open) {
             Haptics.perform(view, Haptics.Kind.Tap)
-            hold.closeFan()
+            hold.dispatch(MenuHoldEvent.DrawerOpened)
             if (account != null) store.load()
+        } else {
+            hold.dispatch(MenuHoldEvent.DrawerClosed)
         }
     }
 
+    /** The hold machine's switchMode effect (it already closed the fan and played the haptic). */
     fun pickMode(m: ShellMode) {
-        hold.closeFan()
-        Haptics.perform(view, Haptics.Kind.Tap)
         if (m != mode) {
             mode = m
             ShellModePrefs.save(context, m)
@@ -206,10 +220,96 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         }
     }
 
+    // Wave E: Bots mode (iOS BotsModeRootView), with the shell's chat backend, composer and backdrop.
+    val botsStore = remember { com.allternit.feature.bots.BotModeStore(context) }
+    var botsLaunch by remember { mutableStateOf(com.allternit.feature.bots.BotsLaunch()) }
+    // Wave I2: a widget, tile or shortcut link (allternit://bot/<id>/chat, allternit://routines) while the workspace is up.
+    LaunchedEffect(launch.nonce) {
+        if (launch.nonce == 0L) return@LaunchedEffect
+        val bot = launch.botId
+        if (launch.openMain) {
+            mode = ShellMode.Bots
+            ShellModePrefs.save(context, ShellMode.Bots)
+            botsLaunch = com.allternit.feature.bots.BotsLaunch(openMain = true)
+            page = ShellPage.Home
+        } else if (bot != null) {
+            mode = ShellMode.Bots
+            ShellModePrefs.save(context, ShellMode.Bots)
+            botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = bot, openSessionId = launch.sessionId)
+            page = ShellPage.Home
+        } else if (launch.tab != null && launch.tab != "settings") {
+            launchSection(launch.tab)?.let { page = ShellPage.Section(it) }
+        }
+    }
+    /** Open a bot's main chat in Bots mode (the ☰ bots shelf, iOS MenuHoldController .openBot). */
+    fun openBotChat(botId: String) {
+        mode = ShellMode.Bots
+        ShellModePrefs.save(context, ShellMode.Bots)
+        botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = botId)
+        page = ShellPage.Home
+    }
+    // ☰ hold: the mode fan and the bots shelf (iOS MenuHoldController.install in MainWorkspaceView).
+    hold.install(
+        scope = scope,
+        view = view,
+        isDrawerOpen = { drawer.targetValue == DrawerValue.Open },
+        isDrawerShown = { drawer.offset.let { !it.isNaN() && it > 0.5f } },
+        openDrawer = { setDrawer(true) },
+        closeDrawer = { setDrawer(false) },
+        switchMode = ::pickMode,
+        openBot = ::openBotChat,
+        shelfBotIds = { botsStore.bots.map { it.id } },
+    )
+    // Wave F4a: the live view of a linked phone (iOS ACIComputersPane fullScreenCover PhoneLiveView).
+    var phoneLive by remember { mutableStateOf<com.allternit.feature.computer.CloudPhone?>(null) }
+
+    // Wave F1: Code mode (iOS CodeModeView). The thread is this shell's chat screen on a code session;
+    // the Code home, the tools and the terminal come from :feature:code.
+    val codeStore = remember { com.allternit.feature.code.CodeStore(chatBackend) }
+    var codeRoute by remember { mutableStateOf<com.allternit.feature.code.CodeRoute?>(null) }
+    val codeHost = com.allternit.feature.code.CodeHost(
+        backend = chatBackend,
+        sessions = {
+            store.of(ShellMode.Code).map { sn ->
+                com.allternit.feature.code.CodeSessionRow(
+                    id = sn.id,
+                    title = sn.title,
+                    updatedMillis = sn.timestampMillis,
+                    model = sn.agentName,
+                    messages = (sn.messageCount ?: 0L).toInt(),
+                    status = when {
+                        sn.archived -> com.allternit.feature.code.CodeSessionStatus.Archived
+                        sn.needsInput -> com.allternit.feature.code.CodeSessionStatus.NeedsInput
+                        chat.isStreaming && chat.currentSessionId == sn.id -> com.allternit.feature.code.CodeSessionStatus.Working
+                        sn.readyForReview -> com.allternit.feature.code.CodeSessionStatus.ReadyForReview
+                        sn.completed -> com.allternit.feature.code.CodeSessionStatus.Done
+                        else -> com.allternit.feature.code.CodeSessionStatus.Idle
+                    },
+                )
+            } + store.archivedOf(ShellMode.Code).map { sn ->
+                com.allternit.feature.code.CodeSessionRow(sn.id, sn.title, sn.timestampMillis, com.allternit.feature.code.CodeSessionStatus.Archived, sn.agentName, (sn.messageCount ?: 0L).toInt())
+            }
+        },
+        reloadSessions = { if (account != null) store.load() },
+        openSession = { id -> codeRoute = null; openSessionId(id) },
+        currentSessionId = { chat.currentSessionId },
+        openConnections = {
+            codeRoute = null
+            page = ShellPage.Section(RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected))
+        },
+    )
+
     // Wave D: what the Projects and Artifacts screens need from the shell.
     val shellMenuButton: @Composable () -> Unit = {
         PhoneMenuButton(mode = mode, hold = hold, holdEnabled = !drawerOpenNow(drawer), onOpen = { setDrawer(true) }, onPick = ::pickMode)
     }
+    // Wave F3: ACI mode's host (iOS ACITabView): the relay for runs and workflows, ☰, sign-in.
+    val aciHost = com.allternit.feature.computer.AciHost(
+        signedIn = account != null,
+        backend = chatBackend,
+        menuButton = shellMenuButton,
+        openSignIn = { page = ShellPage.Settings },
+    )
     val projectsNav = remember {
         ProjectsNav(
             openSession = { id, sessionMode ->
@@ -220,6 +320,12 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 openSessionId(id)
             },
             backdrop = { scopeId -> ProjectBackdrop(scopeId) },
+            openBotProject = { id ->
+                mode = ShellMode.Bots
+                ShellModePrefs.save(context, ShellMode.Bots)
+                botsLaunch = com.allternit.feature.bots.BotsLaunch(projectId = id)
+                page = ShellPage.Home
+            },
             runtimeGet = { path ->
                 when (val r = chatBackend.runtimeJson("GET", path)) {
                     is com.allternit.feature.chat.RuntimeCall.Ok -> Result.success(r.body)
@@ -246,11 +352,46 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         )
     }
 
+    remember { com.allternit.feature.office.OfficeFeature.install() }
+    com.allternit.feature.office.OfficeFeature.selectedModel = { models.selectedId to models.selected?.let { models.level(it) } }
+    com.allternit.feature.office.OfficeFeature.openChat = { id -> openSessionId(id) }
+    val botsHost = com.allternit.feature.bots.BotsHost(
+        signedIn = account != null,
+        backend = chatBackend,
+        menuButton = shellMenuButton,
+        composer = { spec ->
+            Composer(
+                models = models,
+                noComputer = store.noComputer,
+                phoneArmed = false,
+                onClearPhone = {},
+                onSend = { draft -> spec.onSend(draft.toChatRequest()) },
+                onOpenSection = { row -> page = ShellPage.Section(row) },
+                isStreaming = spec.isStreaming,
+                sendDisabled = spec.sendDisabled,
+                onStop = spec.onStop,
+                prefill = spec.prefill,
+                onPrefillConsumed = spec.onPrefillConsumed,
+                pickerRequest = spec.pickerRequest,
+                placeholderOverride = spec.placeholder,
+                deck = ComposerDeck.None,
+            )
+        },
+        currentModel = { models.selectedId to models.selected?.let { models.level(it) } },
+        backdrop = { botId, hex -> BotBackdrop(botId, hex) },
+        openConnections = { page = ShellPage.Section(RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected)) },
+        openSignIn = { page = ShellPage.Settings },
+        openArtifact = { a -> page = ShellPage.Artifact(com.allternit.feature.artifacts.ArtifactRecordInput(a.id, a.kind, a.title, a.url, a.content), back = page) },
+        openProjectInLibrary = { id -> page = ShellPage.Project(id) },
+        openInbox = { inboxOpen = true },
+        officeFloor = com.allternit.feature.office.OfficeFeature.floor,
+    )
+
     /** iOS newOptions: press and hold the New pill. */
     fun newOptions(): List<NewOption> {
-        val quick = NewOption("quick-task", "Quick task", R.drawable.shell_bolt) { quickTaskOpen = true }
-        val scheduled = NewOption("scheduled", "New scheduled task", R.drawable.shell_clock) {
-            openPage(ShellPage.Section(RailRow(if (mode == ShellMode.Code) "code-automations" else "automation-tasks", "Automation Tasks", R.drawable.shell_clock)))
+        val quick = NewOption("quick-task", "Quick task", com.allternit.core.design.R.drawable.ph_lightning) { quickTaskOpen = true }
+        val scheduled = NewOption("scheduled", "New scheduled task", com.allternit.core.design.R.drawable.ph_clock) {
+            openPage(ShellPage.Section(RailRow(if (mode == ShellMode.Code) "code-automations" else "automation-tasks", "Automation Tasks", com.allternit.core.design.R.drawable.ph_clock)))
         }
         fun continueCli(surface: String) = NewOption("continue-cli", "Continue CLI session", DesignR.drawable.ph_terminal) { cliPickerSurface = surface }
         return when (mode) {
@@ -278,7 +419,14 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
 
     // Every Text in the shell uses the bundled sans (iOS SF Pro sizes); the headline sets Serif itself.
     CompositionLocalProvider(LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = ShellSans)) {
-    BoxWithConstraints(Modifier.fillMaxSize().background(c.bgPrimary)) {
+    BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .background(c.bgPrimary)
+            // Children (buttons, fields) handle their own taps first; a tap on empty space
+            // reaches here and clears focus, which hides the keyboard.
+            .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) },
+    ) {
         val widthDp = drawerWidth(maxWidth)
         val widthPx = with(density) { widthDp.toPx() }
         val gapPx = with(density) { 24.dp.toPx() }
@@ -323,7 +471,12 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             ) {
                 Box(Modifier.fillMaxSize().then(if (drawerOpen) Modifier.clearAndSetSemantics {} else Modifier)) {
                     when (val current = page) {
-                        ShellPage.Home -> ShellHome(
+                        ShellPage.Home -> if (mode == ShellMode.Bots) {
+                            com.allternit.feature.bots.BotsModeRoot(botsHost, botsStore, botsLaunch)
+                        } else if (mode == ShellMode.Aci) {
+                            // Wave F3: ACI mode (iOS ACITabView): the agent landing, browser, run, Computers.
+                            com.allternit.feature.computer.AciRoot(aciHost)
+                        } else ShellHome(
                             mode = mode,
                             store = store,
                             models = models,
@@ -344,6 +497,15 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             },
                             onNew = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
+                            codeHome = if (mode == ShellMode.Code) ({
+                                com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it })
+                            }) else null,
+                            onCodeSessions = if (mode == ShellMode.Code) ({ codeRoute = com.allternit.feature.code.CodeRoute.Overview }) else null,
+                            codeActions = if (mode == ShellMode.Code) CodeComposerActions(
+                                onTerminal = { codeRoute = com.allternit.feature.code.CodeRoute.Terminal },
+                                onFiles = { codeRoute = com.allternit.feature.code.CodeRoute.Files },
+                                onComputer = { codeRoute = com.allternit.feature.code.CodeRoute.Computer },
+                            ) else null,
                         )
                         is ShellPage.Chat -> ChatPage(
                             chat = chat,
@@ -386,6 +548,120 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 onConnectors = { page = ShellPage.Section(RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected)) },
                                 onSignIn = { page = ShellPage.Settings },
                             )
+                            // Wave E: the drawer's "Your bots" and a bot from search open Bots mode's root.
+                            "bots" -> com.allternit.feature.bots.BotsModeRoot(botsHost, botsStore, botsLaunch)
+                            // Wave F3: the drawer's ACI rail opens that ACI view (iOS ACINavStore.open).
+                            // The drawer's Teach row opens Teach over ACI (iOS ACINavStore.openTeach).
+                            "site-apis" -> {
+                                LaunchedEffect(Unit) { com.allternit.feature.computer.AciNav.open(com.allternit.feature.computer.AciTab.Agent); com.allternit.feature.computer.AciNav.openTeach() }
+                                com.allternit.feature.computer.AciRoot(aciHost)
+                            }
+                            // The drawer's More menu opens Mini Apps (iOS HistorySidebarView MiniAppsStoreView).
+                            "mini-apps" -> com.allternit.feature.computer.AciMiniAppsStore(onClose = { page = ShellPage.Home })
+                            "mcp-apps", "browser-extensions", "computers" -> {
+                                val aciTab = when (current.row.id) {
+                                    "mcp-apps" -> com.allternit.feature.computer.AciTab.Apps
+                                    "browser-extensions" -> com.allternit.feature.computer.AciTab.Extensions
+                                    else -> com.allternit.feature.computer.AciTab.Computers
+                                }
+                                LaunchedEffect(aciTab) { com.allternit.feature.computer.AciNav.open(aciTab) }
+                                androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                                    com.allternit.feature.computer.AciRoot(aciHost.copy(openPhoneLive = { phoneLive = it }))
+                                    phoneLive?.let { p ->
+                                        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary)) {
+                                            com.allternit.feature.phones.PhoneLiveView(p, chatBackend, onClose = { phoneLive = null })
+                                        }
+                                    }
+                                }
+                            }
+                            // Wave F2: Automation Tasks (both modes' rows) opens the hub: goals, routines, loops, heartbeats, the board.
+                            "automation-tasks", "code-automations" -> com.allternit.feature.automation.AutomationRoot(
+                                com.allternit.feature.automation.AutomationHost(
+                                    signedIn = account != null,
+                                    backend = chatBackend,
+                                    menuButton = shellMenuButton,
+                                    openSignIn = { page = ShellPage.Settings },
+                                ),
+                            )
+                            // Wave F4a: Cowork (iOS CoworkWorkspaceView; the tasks sheet from the composer's plus), Models, Phones.
+                            "cowork", "cowork-tasks" -> com.allternit.feature.cowork.CoworkRoot(
+                                com.allternit.feature.cowork.CoworkHost(
+                                    signedIn = account != null,
+                                    backend = chatBackend,
+                                    menuButton = shellMenuButton,
+                                    openSignIn = { page = ShellPage.Settings },
+                                    openChat = ::openSessionId,
+                                ),
+                                initialTasks = current.row.id == "cowork-tasks",
+                            )
+                            // Wave G2: Customize (iOS CustomizeScreen) and Connectors (iOS ConnectorsListView), from the drawer and the + sheet.
+                            "customize" -> com.allternit.feature.settings.CustomizeRoot(
+                                com.allternit.feature.settings.SettingsHost(
+                                    account = account,
+                                    backend = chatBackend,
+                                    versionName = "",
+                                    onClose = { page = ShellPage.Settings },
+                                    connections = { _ -> },
+                                    openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
+                                    openModels = { page = ShellPage.Section(RailRow("models", "Models", DesignR.drawable.ph_cpu)) },
+                                ),
+                                onBack = { page = ShellPage.Home },
+                            )
+                            "connectors" -> com.allternit.feature.settings.ConnectorsRoot(onBack = { page = ShellPage.Home })
+                            "models" -> com.allternit.feature.models.ModelsRoot(
+                                com.allternit.feature.models.ModelsHost(
+                                    signedIn = account != null,
+                                    backend = chatBackend,
+                                    menuButton = shellMenuButton,
+                                    onRun = { id ->
+                                        models.select(id)
+                                        chat.startNewSession()
+                                        page = ShellPage.Home
+                                    },
+                                ),
+                            )
+                            "phones", "phone-control", "android-screen", "vendor-connect" -> {
+                                val phonesHost = com.allternit.feature.phones.PhonesHost(
+                                    signedIn = account != null,
+                                    backend = chatBackend,
+                                    openSignIn = { page = ShellPage.Settings },
+                                    openBotPhone = { botId ->
+                                        mode = ShellMode.Bots
+                                        ShellModePrefs.save(context, ShellMode.Bots)
+                                        botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = botId)
+                                        page = ShellPage.Home
+                                    },
+                                    openInbox = { inboxOpen = true },
+                                    openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
+                                    openAndroidScreen = { page = ShellPage.Section(RailRow("android-screen", "Android phone", DesignR.drawable.ph_cpu)) },
+                                    openVendorConnect = { page = ShellPage.Section(RailRow("vendor-connect", "Connect a subscription", DesignR.drawable.ph_plugs_connected)) },
+                                )
+                                when (current.row.id) {
+                                    "phones" -> {
+                                        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary))
+                                        com.allternit.feature.phones.PhonesSheet(phonesHost, onDismiss = { page = ShellPage.Home })
+                                    }
+                                    "phone-control" -> androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                                        com.allternit.feature.phones.AppPhonesSettingsScreen(phonesHost, onBack = { page = ShellPage.Home }, onOpenLive = { phoneLive = it })
+                                        phoneLive?.let { p ->
+                                            androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(AllternitTheme.colors.bgPrimary)) {
+                                                com.allternit.feature.phones.PhoneLiveView(p, chatBackend, onClose = { phoneLive = null })
+                                            }
+                                        }
+                                    }
+                                    "android-screen" -> com.allternit.feature.phones.AndroidScreenPairingScreen(phonesHost, onBack = { page = ShellPage.Home })
+                                    else -> com.allternit.feature.phones.VendorConnectScreen(phonesHost, onBack = { page = ShellPage.Home }, onReady = { })
+                                }
+                            }
+                            // Wave H2: Meetings (iOS MeetingsView, opened from the drawer's Meetings button).
+                            "meetings" -> com.allternit.feature.meetings.MeetingsScreen(
+                                com.allternit.feature.meetings.MeetingsHost(
+                                    signedIn = account != null,
+                                    onClose = { page = ShellPage.Home },
+                                    openComputers = { page = ShellPage.Section(RailRow("computers", "Computers", DesignR.drawable.ph_desktop)) },
+                                    openMeetingsSettings = { page = ShellPage.Settings },
+                                ),
+                            )
                             else -> SectionStub(current.row, onBack = { page = ShellPage.Home })
                         }
                         is ShellPage.Project -> ProjectsListScreen(
@@ -400,7 +676,27 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             onOpenChat = ::openSessionId,
                             onSignIn = { page = ShellPage.Settings },
                         )
-                        ShellPage.Settings -> SettingsScreen(account, onBack = { page = ShellPage.Home })
+                        // Wave G1: Settings part 1 (iOS SettingsView): the root, Advanced and the Account, Privacy, Notifications,
+                        // Connections, Memory, Devices, Models, Subagents, MCP and Webhooks pages.
+                        ShellPage.Settings -> com.allternit.feature.settings.SettingsRoot(
+                            com.allternit.feature.settings.SettingsHost(
+                                account = account,
+                                backend = chatBackend,
+                                versionName = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() },
+                                onClose = { page = ShellPage.Home },
+                                connections = { onBack ->
+                                    com.allternit.feature.shell.firstrun.ConnectionsSettingsScreen(
+                                        onBack = onBack,
+                                        openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
+                                        openAndroidScreen = { page = ShellPage.Section(RailRow("android-screen", "Android phone", DesignR.drawable.ph_cpu)) },
+                                    )
+                                },
+                                openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
+                                openModels = { page = ShellPage.Section(RailRow("models", "Models", DesignR.drawable.ph_cpu)) },
+                                // Files & devices → Open Cowork workspace (iOS sets the mode to Cowork; Android opens the Cowork section).
+                                openCowork = { page = ShellPage.Section(RailRow("cowork", "Cowork", DesignR.drawable.ph_desktop)) },
+                            ),
+                        )
                         ShellPage.AllChats -> SessionOverviewScreen(
                             mode = mode,
                             store = store,
@@ -423,6 +719,21 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             onOpenProject = { entry -> page = ShellPage.Project(entry.id) },
                             onOpenBot = { page = ShellPage.Section(RailRow("bots", "Your bots", DesignR.drawable.ph_cpu)) },
                         )
+                    }
+                    // Wave F1: the Code tools over a Code thread, and the full-screen Code tool screens.
+                    if (mode == ShellMode.Code && page is ShellPage.Chat) {
+                        com.allternit.feature.code.CodeThreadTools(
+                            host = codeHost,
+                            sessionId = chat.currentSessionId,
+                            onRoute = { codeRoute = it },
+                            modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd)
+                                .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 52.dp),
+                        )
+                    }
+                    codeRoute?.let { r ->
+                        Box(Modifier.fillMaxSize().testTag("codeRoute")) {
+                            com.allternit.feature.code.CodeRouteScreen(codeHost, codeStore, r, onRoute = { codeRoute = it }, onClose = { codeRoute = null })
+                        }
                     }
                 }
                 if (p > 0f) {
@@ -480,13 +791,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                     mode = mode,
                     account = account,
                     store = store,
-                    onModeDial = {
-                        // D4: close the drawer, then fan the modes out of ☰.
-                        scope.launch {
-                            drawer.animateTo(DrawerValue.Closed, Motion.standardSpring())
-                            hold.openFan()
-                        }
-                    },
+                    // D4: the machine closes the drawer and fans the modes out of ☰ at once.
+                    onModeDial = { hold.openFan() },
+                    botsWaiting = botsStore.waitingCount,
                     onRow = { row -> openPage(ShellPage.Section(row)) },
                     onOpenSession = {
                         openSession(it)
@@ -508,7 +815,23 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             }
         }
 
-        ModeFanOverlay(hold = hold, current = mode, onPick = ::pickMode)
+        MenuOverlayHost(hold = hold, current = mode, botsStore = botsStore, signedIn = account != null)
+        // The shelf's Create a bot: a new bot opens straight into its chat (iOS MenuOverlayHost sheet).
+        if (hold.isCreateBotPresented) {
+            com.allternit.feature.bots.NewBotSheet(
+                store = botsStore,
+                host = botsHost,
+                onBrowseTemplates = null,
+                onDismiss = { hold.isCreateBotPresented = false },
+                onCreated = { ids ->
+                    hold.isCreateBotPresented = false
+                    scope.launch {
+                        botsStore.refreshAll()
+                        ids.firstOrNull()?.let { openBotChat(it) }
+                    }
+                },
+            )
+        }
 
         if (inboxOpen) {
             InboxSheet(
@@ -554,6 +877,14 @@ internal data class ShellLaunch(
     val sheet: String? = null,
     /** The inbox item a link asked for (iOS `allternit://inbox/<id>`). */
     val inboxItem: String? = null,
+    /** Non-zero for a notification tap (wave I1): a new value re-applies the launch to a workspace already up. */
+    val nonce: Long = 0L,
+    /** Open this bot's chat in Bots mode (a widget, tile or shortcut link, wave I2). */
+    val botId: String? = null,
+    /** Open the main bot's chat (`allternit://call/main`, iOS .callMain). */
+    val openMain: Boolean = false,
+    /** With [botId]: the exact thread a push named (iOS PushNotificationManager.handleTap → bot thread). */
+    val sessionId: String? = null,
 )
 
 /** iOS ModeBarItem raw values and the web rail ids → the drawer row they open. */
@@ -584,4 +915,13 @@ private fun ProjectBackdrop(scopeId: String) {
     val backdrops = remember(context) { StageBackdropStore.get(context) }
     val variant = backdrops.variantFor(BackdropSurface.Project, BackdropScope.project(scopeId))
     if (variant != "plain") StageBackdrop(variant = variant, modifier = Modifier.fillMaxSize())
+}
+
+/** The StageBackdrop behind a bot chat (iOS BotChatSessionView: the bot's look, else the Bot chats default). */
+@Composable
+private fun BotBackdrop(botId: String, colorHex: String?) {
+    val context = LocalContext.current
+    val backdrops = remember(context) { StageBackdropStore.get(context) }
+    val variant = backdrops.variantFor(BackdropSurface.Bot, BackdropScope.bot(botId))
+    if (variant != "plain") StageBackdrop(variant = variant, modifier = Modifier.fillMaxSize(), colors = listOf(colorHex))
 }

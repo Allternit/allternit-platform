@@ -2,6 +2,7 @@
 import { feature } from 'bun:bundle'
 import chalk from '@/shared/util/chalk'
 import { markPostCompaction } from './../../bootstrap/state.ts'
+import { sleepPreCompact } from '../../services/memoryDrive/sleep.js'
 import { getSystemPrompt } from '../../constants/prompts'
 import { getSystemContext, getUserContext } from '../../context'
 import { getShortcutDisplay } from '../../keybindings/shortcutFormat'
@@ -152,6 +153,8 @@ async function compactViaReactive(
     hookType: 'pre_compact',
   })
   context.setSDKStatus?.('compacting')
+  // Allternit Sleep: fire-and-forget pre_compact; never awaited.
+  sleepPreCompact(context.agentId)
 
   try {
     // Hooks and cache-param build are independent — run concurrently.

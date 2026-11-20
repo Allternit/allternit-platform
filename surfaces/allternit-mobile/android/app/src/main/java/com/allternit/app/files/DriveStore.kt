@@ -1,5 +1,7 @@
 package com.allternit.app.files
 
+import com.allternit.core.files.Blake3
+
 import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
@@ -205,14 +207,19 @@ internal class DriveCache(val root: File) {
 
     fun partFile(cid: String, iid: String, rev: String) = File(content, key(cid, iid, rev) + ".part")
 
+    /** Content keys of files kept on this phone (FilesPins); [trim] never deletes them. Set by FilesDrive. */
+    @Volatile var keptKeys: () -> Set<String> = { emptySet() }
+
     @Synchronized
     fun trim(cap: Long = CONTENT_CAP_BYTES) {
         val files = content.listFiles { f -> !f.name.endsWith(".rev") && !f.name.endsWith(".tmp") }?.toMutableList() ?: return
         var total = files.sumOf { it.length() }
         if (total <= cap) return
         files.sortBy { it.lastModified() }
+        val kept = keptKeys()
         for (f in files) {
             if (total <= cap) break
+            if (f.name in kept) continue
             total -= f.length()
             f.delete()
             File(f.parentFile, f.name + ".rev").delete()

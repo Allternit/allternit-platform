@@ -110,6 +110,7 @@ const baseConsoleNav: ConsoleNavConfig = {
         { to: "/platform/usage", label: "Usage", icon: Analytics01Icon },
         { to: "/platform/billing", label: "Billing", icon: Dollar01Icon },
         { to: "/platform/webhooks", label: "Webhooks", icon: WebhookIcon },
+        { to: "/platform/oauth-apps", label: "OAuth apps", icon: ShieldCheckIcon },
       ],
     },
     {

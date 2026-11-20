@@ -16,7 +16,9 @@ import kotlin.concurrent.thread
  * saving a file on a sleeping computer asks first. "Wake" calls wake-consent, the only
  * call that wakes a computer, and keeps the ticket for the requests that follow.
  * "Wake automatically from now on" sets the computer's wake setting to `auto`.
- * Started from the wake notification the provider posts.
+ * Started from the wake notification the provider posts, and for a result from a computer's in-app Files screens
+ * (:feature:computer, iOS FilesWakeSheet): there it answers RESULT_OK after a successful wake, and the screen runs the
+ * file action again (iOS FilesComputerModel.wake → prompt.retry).
  */
 class WakePromptActivity : Activity() {
     private val drive by lazy { FilesDrive.get(this) }
@@ -28,6 +30,7 @@ class WakePromptActivity : Activity() {
         val itemId = intent.getStringExtra(EXTRA_ITEM)
         val file = intent.getStringExtra(EXTRA_FILE)
         val name = drive.computerName(cid)
+        val retries = intent.getBooleanExtra(EXTRA_RETRY, false)
 
         val col = FilesUi.column(this)
         // A rounded sheet on the dialog's transparent window (Material 3 dialog radius).
@@ -56,13 +59,17 @@ class WakePromptActivity : Activity() {
             notNow.isEnabled = false
             body.text = "Waking $name…"
             thread(name = "files-wake") {
+                var ok = false
                 val msg = try {
                     if (auto.isChecked) drive.setWakeSetting(cid, WakeSetting.AUTO)
                     val res = drive.consentWake(cid, reason, itemId)
                     drive.kickUploads()
                     drive.notifyRoots()
                     val s = res.estimatedWakeS
-                    if (reason == WakeReason.UPLOAD) {
+                    ok = true
+                    if (retries) {
+                        "Waking $name" + (if (s != null && s > 0) " (about $s s)" else "") + "."
+                    } else if (reason == WakeReason.UPLOAD) {
                         "Waking $name. Your files upload as soon as it is up."
                     } else {
                         "Waking $name" + (if (s != null && s > 0) " (about $s s)" else "") + ". Open the file again in a moment."
@@ -72,6 +79,7 @@ class WakePromptActivity : Activity() {
                 }
                 runOnUiThread {
                     Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                    if (ok) setResult(RESULT_OK)
                     finish()
                 }
             }
@@ -89,5 +97,7 @@ class WakePromptActivity : Activity() {
         const val EXTRA_REASON = "reason"
         const val EXTRA_ITEM = "item_id"
         const val EXTRA_FILE = "file_name"
+        /** Set by an in-app caller that runs the action again on RESULT_OK. */
+        const val EXTRA_RETRY = "retry"
     }
 }

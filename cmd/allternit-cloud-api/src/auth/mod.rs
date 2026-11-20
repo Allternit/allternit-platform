@@ -3,6 +3,7 @@
 //! Provides middleware for token validation, permission checking,
 //! and development mode bypass capabilities.
 
+pub mod anthropic_client;
 pub mod clerk;
 pub mod dataplane_jwt;
 pub mod dev_token;

@@ -12,6 +12,11 @@
 //! from what was applied. Undo writes a new commit that reverses only the
 //! Dream's own lines and refuses (listing files) when later edits touched them.
 //! No transcript text is ever written to the drive.
+//!
+//! With the Sleep `disputes` stage on (D10, step 6.1), a contradiction the
+//! Dream finds is not fixed silently: nothing is removed, and a dispute is
+//! opened between the entry it wanted to drop (side a) and the one it kept
+//! (side b), which the Sleep arbiter decides or hands to the user.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -277,6 +282,93 @@ pub struct Checked {
     pub proposals: Vec<Proposal>,
     pub summary: Summary,
     pub report: Vec<String>,
+    /// The contradictions that passed the checks (their deletes are in `ops`).
+    pub contradictions: Vec<CheckedContradiction>,
+    /// The lessons that passed the checks, for the Sleep hypothesis queue.
+    pub lessons: Vec<CheckedLesson>,
+}
+
+/// One accepted lesson (its entry is in `ops`).
+#[derive(Debug, Clone)]
+pub struct CheckedLesson {
+    pub entry_id: String,
+    pub text: String,
+    pub evidence: Vec<String>,
+    /// Index of its line in `report`.
+    pub report_line: usize,
+}
+
+/// A lesson the hypothesis queue kept; written by the normal Dream commit.
+#[derive(Debug, Clone)]
+pub struct KeptLesson {
+    pub entry_id: String,
+    pub hypothesis_id: String,
+    pub evidence: Vec<String>,
+}
+
+/// Sleep `rem` stage (D11): each lesson becomes a hypothesis scored by its
+/// metric; a lesson with no gain loses its write. With the stage off nothing
+/// changes. Returns the kept lessons for [`finalize_lessons`].
+pub fn queue_lessons(conn: &Connection, owner: &str, checked: &mut Checked, turns: &[Evidence]) -> Vec<KeptLesson> {
+    use crate::sleep::hypotheses::{judge_lesson, LessonCandidate};
+    let Ok(cfg) = crate::sleep::config::load(conn, owner) else { return vec![] };
+    if !cfg.stage_on(crate::sleep::types::Stage::Rem) {
+        return vec![];
+    }
+    let mut kept = Vec::new();
+    let mut dropped: BTreeSet<String> = BTreeSet::new();
+    for l in std::mem::take(&mut checked.lessons) {
+        let evidence: Vec<(String, String)> = l
+            .evidence
+            .iter()
+            .filter_map(|id| turns.iter().find(|t| t.id == *id).map(|t| (t.id.clone(), t.content.clone())))
+            .collect();
+        let cand = LessonCandidate { entry_id: l.entry_id.clone(), text: l.text.clone(), evidence };
+        match judge_lesson(conn, owner, None, &cfg, &cand) {
+            Ok((hid, true)) => kept.push(KeptLesson { entry_id: l.entry_id.clone(), hypothesis_id: hid, evidence: l.evidence.clone() }),
+            Ok((_, false)) | Err(_) => {
+                // A lesson that scored no gain, or could not be scored, writes nothing.
+                dropped.insert(l.entry_id.clone());
+                checked.report[l.report_line] = format!("- **Lesson** not kept (no gain on its evidence): “{}”", l.text);
+                checked.summary.lessons = checked.summary.lessons.saturating_sub(1);
+            }
+        }
+    }
+    checked.ops.retain(|op| !matches!(op, Operation::UpsertEntry { entry, .. } if dropped.contains(&entry.id)));
+    kept
+}
+
+/// After the Dream commit: mark each kept lesson's fact and point it at its evidence.
+pub fn finalize_lessons(conn: &Connection, owner: &str, drive: &DriveRecord, kept: &[KeptLesson]) {
+    for k in kept {
+        let fact: Option<String> = conn
+            .query_row(
+                "SELECT fact_id FROM memory_drive_entries WHERE drive_id = ?1 AND entry_id = ?2",
+                params![drive.id, k.entry_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .flatten();
+        if let Some(f) = fact {
+            if let Err(e) = crate::sleep::hypotheses::finalize_lesson(conn, owner, &k.hypothesis_id, &f, &k.evidence) {
+                tracing::warn!("dream lesson provenance skipped: {e}");
+            }
+        }
+    }
+}
+
+/// One accepted contradiction, kept so the Sleep `disputes` stage can turn
+/// it into disputes instead of deletes.
+#[derive(Debug, Clone)]
+pub struct CheckedContradiction {
+    pub keep: String,
+    pub keep_text: String,
+    pub drops: Vec<(String, String)>,
+    pub evidence: Vec<String>,
+    /// Index of its line in `report`.
+    pub report_line: usize,
 }
 
 fn clean(text: &str) -> Option<String> {
@@ -343,6 +435,13 @@ pub fn check(plan: &Plan, shown: &[Shown], evidence: &[Evidence], today: chrono:
             drops.iter().map(|d| format!("“{}”", by_id[d.as_str()].entry.text)).collect::<Vec<_>>().join(", "),
             c.evidence.join(", ")
         ));
+        out.contradictions.push(CheckedContradiction {
+            keep: c.keep.clone(),
+            keep_text: keep.entry.text.clone(),
+            drops: drops.iter().map(|d| ((*d).clone(), by_id[d.as_str()].entry.text.clone())).collect(),
+            evidence: c.evidence.clone(),
+            report_line: out.report.len() - 1,
+        });
         out.summary.resolved += 1;
     }
 
@@ -369,6 +468,7 @@ pub fn check(plan: &Plan, shown: &[Shown], evidence: &[Evidence], today: chrono:
             continue;
         }
         out.report.push(format!("- **Lesson** added to `lessons.md`: “{}”", entry.text));
+        out.lessons.push(CheckedLesson { entry_id: entry.id.clone(), text: entry.text.clone(), evidence: l.evidence.clone(), report_line: out.report.len() - 1 });
         out.ops.push(Operation::UpsertEntry { path: "lessons.md".into(), entry });
         out.summary.lessons += 1;
     }
@@ -569,7 +669,11 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
     let date_s = date.format("%Y-%m-%d").to_string();
     let conn = db.connect()?;
     let session_ok = |s: &str| service::session_is_owned(&conn, owner, s).unwrap_or(false);
-    let checked = check(plan, shown, turns, date, &session_ok);
+    let mut checked = check(plan, shown, turns, date, &session_ok);
+    if crate::sleep::disputes::stage_on(&conn, owner) {
+        dispute_contradictions(&conn, owner, drive, &mut checked);
+    }
+    let kept_lessons = queue_lessons(&conn, owner, &mut checked, turns);
     let report = report_markdown(&date_s, &checked);
     let sm = &checked.summary;
     step(
@@ -616,6 +720,7 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
         match service::apply_as(db, owner, &expected, &ops, &message, AUTHOR) {
             Ok(r) => {
                 conn.execute("UPDATE memory_dreams SET base_revision=?2 WHERE id=?1", params![id, expected])?;
+                finalize_lessons(&conn, owner, drive, &kept_lessons);
                 finish(&conn, id, "applied", Some(&r.revision), Some(&report), &checked.summary, None)?;
                 done(
                     "applied",
@@ -655,6 +760,45 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
     finish(&conn, id, "failed", None, None, &checked.summary, Some("Memory kept changing during the Dream; it will retry."))?;
     done("failed", "Memory kept changing during the Dream; it will retry".into());
     Ok(())
+}
+
+/// Sleep `disputes` stage: replace each accepted contradiction's deletes with
+/// disputes (both sides kept). A side that is not in the index is still not
+/// deleted; its report line says so.
+pub fn dispute_contradictions(conn: &Connection, owner: &str, drive: &DriveRecord, checked: &mut Checked) {
+    let fact_of = |entry: &str| -> Option<String> {
+        conn.query_row(
+            "SELECT fact_id FROM memory_drive_entries WHERE drive_id = ?1 AND entry_id = ?2",
+            params![drive.id, entry],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+        .flatten()
+    };
+    let mut kept: BTreeSet<String> = BTreeSet::new();
+    for c in std::mem::take(&mut checked.contradictions) {
+        let keep_fact = fact_of(&c.keep);
+        let mut opened = 0;
+        for (drop, _) in &c.drops {
+            kept.insert(drop.clone());
+            let (Some(a), Some(b)) = (fact_of(drop), keep_fact.as_deref()) else { continue };
+            match crate::sleep::disputes::open(conn, owner, &a, b) {
+                Ok(Some(_)) => opened += 1,
+                Ok(None) => {}
+                Err(e) => tracing::warn!("dream dispute not written: {e}"),
+            }
+        }
+        let drops = c.drops.iter().map(|(_, t)| format!("“{t}”")).collect::<Vec<_>>().join(", ");
+        checked.report[c.report_line] = if opened > 0 {
+            format!("- **Dispute** opened instead of a silent fix: “{}” vs {drops}; both kept (evidence: {})", c.keep_text, c.evidence.join(", "))
+        } else {
+            format!("- **Contradiction** noted, nothing removed: “{}” vs {drops} (evidence: {})", c.keep_text, c.evidence.join(", "))
+        };
+        checked.summary.resolved = checked.summary.resolved.saturating_sub(1);
+    }
+    checked.ops.retain(|op| !matches!(op, Operation::DeleteEntry { id } if kept.contains(id)));
 }
 
 // ─── Undo ───────────────────────────────────────────────────────────────────
@@ -792,6 +936,36 @@ pub fn dream_date(timezone: Option<&str>, now: chrono::DateTime<chrono::Utc>) ->
     (2..6).contains(&local.hour()).then(|| local.date())
 }
 
+/// Sleep cycle (step 5.1): the owner's local date when their Dream is due
+/// today. Same rules as the nightly clock (personal drive, dreaming on, no
+/// other computer syncing it), but no 02:00-06:00 window: the cycle runs when
+/// the user is idle. Not due once today's Dream finished (`applied`,
+/// `no_changes`, `undone`) or failed [`MAX_ATTEMPTS`] times; [`run`] keeps the
+/// UNIQUE(drive, date) lease and attempt rules.
+pub fn due_date(conn: &Connection, owner: &str, now: chrono::DateTime<chrono::Utc>) -> Result<Option<chrono::NaiveDate>> {
+    let drive: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT d.id, d.timezone FROM memory_drives d WHERE d.kind='personal' AND d.user_id=?1 AND d.dreaming_enabled=1
+             AND NOT EXISTS(SELECT 1 FROM memory_drive_peers p WHERE p.drive_id=d.id AND p.last_sync_at >= datetime('now','-7 days'))
+             LIMIT 1",
+            params![owner],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((drive_id, tz)) = drive else { return Ok(None) };
+    let date = match tz.as_deref().and_then(|t| t.parse::<chrono_tz::Tz>().ok()) {
+        Some(tz) => now.with_timezone(&tz).date_naive(),
+        None => now.with_timezone(&chrono::Local).date_naive(),
+    };
+    let finished: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM memory_dreams WHERE drive_id=?1 AND date=?2
+           AND (status IN ('applied','no_changes','undone') OR (status='failed' AND attempts>=?3)))",
+        params![drive_id, date.format("%Y-%m-%d").to_string(), MAX_ATTEMPTS],
+        |r| r.get(0),
+    )?;
+    Ok((!finished).then_some(date))
+}
+
 pub fn set_timezone(db: &DbHandle, owner: &str, timezone: &str) -> Result<()> {
     if timezone.parse::<chrono_tz::Tz>().is_err() {
         return Err(ServiceError::Provenance("unknown time zone".into()));
@@ -861,6 +1035,10 @@ async fn sweep_owners(db: &DbHandle, date: chrono::NaiveDate, only: Option<&[Str
         }
     };
     for owner in owners.into_iter().filter(|o| only.map_or(true, |l| l.contains(o))) {
+        // Sleep `orchestrator` on: queue a nap instead; its cycle runs the Dream.
+        if crate::sleep::queue::clock_feeds_queue(db, &owner, "dream") {
+            continue;
+        }
         if let Err(e) = run(db.clone(), owner.clone(), date, gizzi_completer(owner.clone())).await {
             tracing::warn!("dream for a user failed: {e}");
         }

@@ -44,7 +44,7 @@ All endpoints require a valid bearer token in the `Authorization` header. See [A
 | `DELETE` | `/api/memory/session` | Delete a session memory key. |
 | `POST` | `/api/memory/v2/observation` | Record one observation. |
 | `GET` | `/api/memory/v2/observations` | List observations. |
-| `POST` | `/api/memory/v2/recall` | Recall facts for a query. |
+| `POST` | `/api/memory/v2/recall` | Recall facts for a query. With the Sleep `disputes` stage on, a fact that is a side of a dispute carries a `dispute` field (see [Disputes](/api/memory-sleep#at-recall)). |
 | `POST` | `/api/memory/v2/retain` | Retain a conversation turn as facts. |
 | `GET` | `/api/memory/v2/facts` | List retained facts. |
 | `DELETE` | `/api/memory/v2/facts/:id` | Delete a fact. |

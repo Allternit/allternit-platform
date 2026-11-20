@@ -242,7 +242,7 @@ private fun SetupRail(
             Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SetupGizzi(30.dp)
                 ThinkingOrb(state = orb, size = ThinkingOrbSize.Inline, label = "A:// is $word")
-                Text("Gizzi + A://", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = c.ink, maxLines = 1)
+                com.allternit.core.design.BotNameText("Gizzi + A://", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = c.ink, maxLines = 1)
                 Row(
                     Modifier.semantics(mergeDescendants = true) { contentDescription = "A:// is $word" },
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -448,7 +448,7 @@ private fun SetupKitAIStep(
  * line, and one action. A row that can't be used yet shows its reason and its fallback button.
  */
 @Composable
-private fun ConnectionRow(
+internal fun ConnectionRow(
     entry: ConnEntry,
     store: ConnectionsStore,
     tag: String?,
@@ -465,7 +465,10 @@ private fun ConnectionRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
+        val logoKey = ConnectionsCatalog.logoKey(entry.id)
+        if (logoKey != null) {
+            com.allternit.core.design.AppLogo(entry.name, id = logoKey, size = 34.dp)
+        } else Box(
             Modifier.size(34.dp).background(c.card, RoundedCornerShape(9.dp)).border(1.dp, c.line, RoundedCornerShape(9.dp)),
             contentAlignment = Alignment.Center,
         ) { Text(entry.mono, style = mono(13.sp, FontWeight.Bold), color = c.ink) }

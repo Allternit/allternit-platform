@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -191,6 +192,8 @@ fun V2ArtifactScreen(
     var commentsOpen by remember { mutableStateOf(false) }
     var exportOpen by remember { mutableStateOf(false) }
     var pdfOpen by remember { mutableStateOf(false) }
+    var signBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var legacyOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
@@ -215,6 +218,16 @@ fun V2ArtifactScreen(
     if (editing && ready != null) {
         V2ArtifactEditorScreen(ready, onDone = { saved -> editing = false; if (saved != null) state = V2State.Ready(saved) })
         return
+    }
+
+    // iOS: the PDF's Sign sheet (PDFSignView) and the sectioned Office record's interactive screen (OfficeDocumentView).
+    ArtifactOfficeHooks.signPdf?.let { sign ->
+        val bytes = signBytes
+        if (bytes != null) { sign(ready?.title ?: "Document", bytes, { signBytes = null }); return }
+    }
+    ArtifactOfficeHooks.legacyDocument?.let { legacy ->
+        val legacyId = ready?.summary?.origin?.legacyId
+        if (legacyOpen && legacyId != null) { legacy(legacyId, { legacyOpen = false }); return }
     }
 
     Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().testTag("v2ArtifactView")) {
@@ -247,7 +260,35 @@ fun V2ArtifactScreen(
                 is V2State.Failed -> FriendlyState(FriendlyStyle.Error, "Couldn't open this artifact", s.message, actionTitle = "Retry", onAction = { reload += 1 }, modifier = Modifier.testTag("v2ArtifactError")) {
                     Icon(painterResource(DesignR.drawable.ph_warning), null, tint = c.textSecondary)
                 }
-                is V2State.Ready -> ArtifactBody(s.artifact, dark)
+                is V2State.Ready -> {
+                    val art = s.artifact
+                    val canLegacy = art.summary.origin?.legacySource == "sectioned" && art.summary.origin?.legacyId != null &&
+                        art.kind in setOf("doc", "sheet", "slides", "pdf") && ArtifactOfficeHooks.legacyDocument != null
+                    val canSign = art.kind == "pdf" && ArtifactOfficeHooks.signPdf != null
+                    Column(Modifier.fillMaxSize()) {
+                        // iOS legacyEditorBanner: a visible bar above an imported Office record.
+                        if (canLegacy) Row(
+                            Modifier.fillMaxWidth().background(c.fillNeutral).testTag("v2ArtifactLegacyEditor")
+                                .clickable(role = androidx.compose.ui.semantics.Role.Button) { legacyOpen = true }.padding(horizontal = 16.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text("Open in editor", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text("›", color = c.textSecondary, fontSize = 14.sp)
+                        }
+                        Box(Modifier.weight(1f).fillMaxWidth()) { ArtifactBody(art, dark) }
+                        // iOS "Sign this PDF": a visible bar under the PDF.
+                        if (canSign) Box(
+                            Modifier.fillMaxWidth().background(c.fillNeutral).testTag("v2ArtifactSignPdf")
+                                .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                                    scope.launch {
+                                        val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pdfBytes(art) }
+                                        if (bytes == null) actionError = "The PDF couldn't be read. Try again." else signBytes = bytes
+                                    }
+                                }.padding(vertical = 14.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { Text("Sign this PDF", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+                    }
+                }
             }
         }
     }
@@ -449,7 +490,7 @@ private fun ExportSheet(a: ArtifactV2, onPdf: () -> Unit, onDismiss: () -> Unit)
 }
 
 /** Reads a file body: https (no bearer), `/api/...` paths (with the bearer), or a data: URL. */
-private fun fetchBytes(ref: String): ByteArray? = runCatching {
+internal fun fetchBytes(ref: String): ByteArray? = runCatching {
     when {
         ref.startsWith("data:") -> android.util.Base64.decode(ref.substringAfter(','), android.util.Base64.DEFAULT)
         ref.startsWith("https://") -> okhttp3.OkHttpClient().newCall(okhttp3.Request.Builder().url(ref).build()).execute().use { if (it.isSuccessful) it.body?.bytes() else null }
@@ -457,3 +498,12 @@ private fun fetchBytes(ref: String): ByteArray? = runCatching {
         else -> null
     }
 }.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= 512 * 1024 * 1024 }
+
+/** The PDF's bytes: a base64 body (`application/pdf`) or an https / `/api/` / data: reference. */
+internal fun pdfBytes(a: ArtifactV2): ByteArray? {
+    val b = a.body.trim()
+    return runCatching {
+        if (b.startsWith("data:") || b.startsWith("https://") || b.startsWith("/api/")) fetchBytes(b)
+        else android.util.Base64.decode(b, android.util.Base64.DEFAULT)
+    }.getOrNull()?.takeIf { it.isNotEmpty() }
+}

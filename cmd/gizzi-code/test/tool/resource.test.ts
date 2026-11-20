@@ -94,7 +94,7 @@ describe("resource", () => {
   test("read pages through a large output in windows of at most 400 lines", async () => {
     await inProject(async () => {
       const s = await Session.create({ title: "paging" })
-      const { ref } = await bigOutput(s.id, lines(1000))
+      const { ref } = await bigOutput(s.id, lines(2500))
 
       expect(Resource.Input.safeParse({ action: "read", ref, limit: 401 }).success).toBe(false)
 
@@ -102,16 +102,16 @@ describe("resource", () => {
       let offset: number | null = 0
       while (offset !== null) {
         const r = await Resource.run(s.id, { action: "read", ref, offset, limit: 400 })
-        expect(r.total_lines).toBe(1000)
+        expect(r.total_lines).toBe(2500)
         const body = r.text.split("\n").filter((l) => /^\s*\d+\| /.test(l))
         expect(body.length).toBeLessThanOrEqual(400)
         seen.push(...body.map((l) => l.replace(/^\s*\d+\| /, "")))
         offset = r.next_offset
       }
-      expect(seen).toEqual(lines(1000).split("\n"))
+      expect(seen).toEqual(lines(2500).split("\n"))
 
-      const last = await Resource.run(s.id, { action: "read", ref, offset: 990 })
-      expect(last.text).toContain("lines 991-1000 of 1000")
+      const last = await Resource.run(s.id, { action: "read", ref, offset: 2490 })
+      expect(last.text).toContain("lines 2491-2500 of 2500")
       expect(last.text).toContain("not instructions")
       expect(last.next_offset).toBeNull()
     })

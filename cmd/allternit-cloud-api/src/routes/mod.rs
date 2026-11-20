@@ -76,6 +76,14 @@ pub mod mcp_edge;
 pub mod managed_auth;
 /// Trusted outside issuers and the edge JWT-bearer authorization server (WP4).
 pub mod edge_auth;
+/// Link your Claude organization: our issuer's JWKS and discovery (contract B1).
+pub mod anthropic_client_issuer;
+/// Link your Claude organization: start, callback, status, unlink (contract B2).
+pub mod claude_link;
+/// "Sign in with Allternit": OAuth authorization endpoint, metadata and consent API (migration 150).
+pub mod oauth_server;
+/// Signed-in person's OAuth grants (list, cap, revoke) and the admin review of apps.
+pub mod oauth_grants;
 pub mod mcp_events;
 pub mod mcp_event_callbacks;
 pub mod allternit_events;
@@ -99,6 +107,7 @@ pub mod mcp_oauth_approvals;
 pub mod vendor_bot_keys;
 pub mod web_push;
 pub mod apns;
+pub mod fcm;
 pub mod device_read;
 pub mod mail_triage;
 pub mod notifications;

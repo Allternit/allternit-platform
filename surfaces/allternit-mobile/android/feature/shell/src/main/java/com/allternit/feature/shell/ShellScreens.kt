@@ -1,5 +1,8 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.design.GizziCodeWordmark
+import com.allternit.core.design.AProtocolMark
+import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -93,6 +96,8 @@ internal fun PhoneHeader(
     wideSides: Boolean = false,
     leading: @Composable () -> Unit,
     trailing: @Composable () -> Unit = {},
+    /** Drawn in place of the title text (Code's gizzi code lockup); [title] stays the heading. */
+    titleContent: (@Composable () -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val side = if (wideSides) 96.dp else 52.dp
@@ -102,7 +107,7 @@ internal fun PhoneHeader(
     ) {
         Box(Modifier.width(side), contentAlignment = Alignment.CenterStart) { leading() }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
+            if (titleContent != null) Box(Modifier.semantics { heading(); contentDescription = title }) { titleContent() } else Text(
                 text = title,
                 color = c.textPrimary,
                 fontSize = 16.sp,
@@ -146,7 +151,7 @@ internal fun PhoneIconButton(icon: Int, label: String, testTag: String? = null, 
 /**
  * The signed-in home (iOS ChatView in launch style): the header (☰ with the mode badge,
  * "Allternit", ••• and New chat), the pixel A:// mark over the serif headline, and the composer.
- * Recents live in the drawer, as on iOS. Bots / Code / ACI say plainly that their screens are next.
+ * Recents live in the drawer, as on iOS. Bots and ACI have their own roots (waves E, F3); Code adds its home.
  */
 @Composable
 internal fun ShellHome(
@@ -157,6 +162,12 @@ internal fun ShellHome(
     onNewChat: (ComposerDraft) -> Unit,
     onNew: () -> Unit,
     onOpenSection: (RailRow) -> Unit,
+    /** Wave F1: Code mode's home (folder, tools, recent threads) replaces the placeholder and the composer starts a thread. */
+    codeHome: (@Composable () -> Unit)? = null,
+    /** Code mode's header button: the Code sessions view (iOS CodeSessionsButton → CodeOverview). */
+    onCodeSessions: (() -> Unit)? = null,
+    /** Code mode's composer deck row (iOS CodeDeckRow): terminal, files, computer. */
+    codeActions: CodeComposerActions? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var phoneArmed by remember { mutableStateOf(false) }
@@ -168,7 +179,7 @@ internal fun ShellHome(
             trailing = {
                 if (mode == ShellMode.Home) {
                     Box {
-                        PhoneIconButton(R.drawable.shell_dots, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
+                        PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
                         ChatOptionsMenu(
                             expanded = menuOpen,
                             phoneArmed = phoneArmed,
@@ -180,13 +191,22 @@ internal fun ShellHome(
                         )
                     }
                 }
-                PhoneIconButton(R.drawable.shell_note_pencil, mode.newLabel, testTag = "chatNewChat", onClick = onNew)
+                if (mode == ShellMode.Code && onCodeSessions != null) {
+                    // iOS CodeModeView header: the Code sessions view (CodeSessionsButton), no new-chat pencil.
+                    PhoneIconButton(com.allternit.core.design.R.drawable.ph_list_checks, "Code sessions", testTag = "codeSessionsButton", iconSize = 20, onClick = onCodeSessions)
+                } else {
+                    PhoneIconButton(com.allternit.core.design.R.drawable.ph_note_pencil, mode.newLabel, testTag = "chatNewChat", onClick = onNew)
+                }
             },
+            // iOS Code launchpad title: the gizzi code lockup.
+            titleContent = if (mode == ShellMode.Code && onCodeSessions != null) ({ GizziCodeWordmark(height = 15.dp) }) else null,
         )
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            if (mode == ShellMode.Home) LaunchGreeting() else ModeArrives(mode)
+            if (mode == ShellMode.Home) LaunchGreeting() else if (codeHome != null && mode == ShellMode.Code) codeHome() else ModeArrives(mode)
         }
-        if (mode == ShellMode.Home) {
+        if (mode == ShellMode.Code && codeHome != null && codeActions != null) {
+            CodeLaunchComposer(models = models, noComputer = store.noComputer, actions = codeActions, onSend = onNewChat, onOpenSection = onOpenSection)
+        } else if (mode == ShellMode.Home || (mode == ShellMode.Code && codeHome != null)) {
             Composer(
                 models = models,
                 noComputer = store.noComputer,
@@ -218,7 +238,7 @@ internal fun LaunchGreeting() {
             text = "What are we working on?",
             color = c.textPrimary,
             lineHeight = 38.sp,
-            fontFamily = FontFamily.Serif,
+            fontFamily = AllternitSerif,
             letterSpacing = (-0.64).sp,
             textAlign = TextAlign.Center,
             // One line like iOS: 32sp, stepping down on narrower phones instead of wrapping.
@@ -243,7 +263,7 @@ private fun ChatOptionsMenu(expanded: Boolean, phoneArmed: Boolean, onDismiss: (
         modifier = Modifier.width(300.dp),
     ) {
         MenuRow(
-            icon = R.drawable.shell_device_mobile,
+            icon = com.allternit.core.design.R.drawable.ph_device_mobile,
             title = "Run on my phone",
             checked = phoneArmed,
             testTag = "chatMenurunOnPhone",
@@ -298,14 +318,14 @@ private fun ModeArrives(mode: ShellMode) {
             text = "${mode.label} arrives in the next update",
             color = c.textPrimary,
             fontSize = 20.sp,
-            fontFamily = FontFamily.Serif,
+            fontFamily = AllternitSerif,
             textAlign = TextAlign.Center,
         )
         Text(
             text = when (mode) {
                 ShellMode.Bots -> "Your bots, their threads and their phones come to this app next."
                 ShellMode.Code -> "Code threads, terminals and reviews come to this app next."
-                ShellMode.Aci -> "Agent runs, computers and Teach come to this app next."
+                ShellMode.Aci -> "Open the mode again from the menu."
                 ShellMode.Home -> ""
             },
             color = c.textSecondary,
@@ -341,87 +361,7 @@ internal fun SectionStub(row: RailRow, onBack: () -> Unit) {
     }
 }
 
-/** Settings, account part (iOS Settings sheet top): who is signed in, and sign out. */
-@Composable
-internal fun SettingsScreen(account: Account?, onBack: () -> Unit) {
-    val c = AllternitTheme.colors
-    val scope = rememberCoroutineScope()
-    var signingOut by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().testTag("settingsScreen")) {
-        PhoneHeader(title = "Settings", leading = { BackButton(onBack) })
-        Column(
-            modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)
-                    .clip(RoundedCornerShape(AllternitRadii.LG))
-                    .background(c.fillNeutral)
-                    .padding(16.dp)
-                    .semantics(mergeDescendants = true) {},
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                AccountAvatar(account, size = 52)
-                Column(Modifier.weight(1f)) {
-                    Text(account?.displayName ?: "Not signed in", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                    Text(account?.email ?: "Debug session without an account", color = c.textSecondary, fontSize = 13.sp)
-                }
-            }
-            Text(
-                "Models, memory, connectors and appearance come to this screen next.",
-                color = c.textTertiary,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-            )
-            if (account != null) {
-                SettingsRow(
-                    title = if (signingOut) "Signing out…" else "Sign out",
-                    icon = R.drawable.shell_sign_out,
-                    testTag = "settingsSignOut",
-                    enabled = !signingOut,
-                ) {
-                    signingOut = true
-                    error = null
-                    scope.launch {
-                        val result = AllternitAuth.signOut()
-                        // Success flips AllternitAuth.state, and MainActivity shows sign-in.
-                        error = result.error
-                        signingOut = false
-                    }
-                }
-            }
-            error?.let { Text(it, color = c.textSecondary, fontSize = 13.sp) }
-        }
-    }
-}
-
-@Composable
-private fun SettingsRow(title: String, icon: Int, testTag: String, enabled: Boolean = true, onClick: () -> Unit) {
-    val c = AllternitTheme.colors
-    val view = LocalView.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(AllternitRadii.MD))
-            .background(c.fillNeutral)
-            .testTag(testTag)
-            .clickable(enabled = enabled, role = Role.Button) {
-                Haptics.perform(view, Haptics.Kind.Tap)
-                onClick()
-            }
-            .heightIn(min = 52.dp)
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Icon(painter = painterResource(icon), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
-        Text(title, color = if (enabled) c.textPrimary else c.textTertiary, fontSize = 16.sp)
-    }
-}
+/* Settings moved to :feature:settings (wave G1); the shell hosts SettingsRoot. */
 
 @Composable
 internal fun PillButton(title: String, testTag: String? = null, enabled: Boolean = true, onClick: () -> Unit) {

@@ -5,6 +5,10 @@ description: 'Initiate and manage OAuth authorization codes for Allternit deskto
 
 ## Overview
 
+<Note>
+  This page covers the runtime's own sign-in: the authorization code the browser extension and the Gizzi code agent use. To let other people's apps sign in with Allternit and spend their users' credits, see [Sign in with Allternit (OAuth apps)](/api/oauth-apps).
+</Note>
+
 The OAuth API lets authenticated users authorize third-party Allternit clients — such as the browser extension and the Gizzi code agent — to act on their behalf. It implements a minimal OAuth 2.0-style authorization-code flow: the user is already authenticated through the platform auth middleware, the endpoint validates the client and redirect URI, and then redirects back to the client with a short-lived authorization code.
 
 All OAuth routes are mounted under `/api` and require a valid bearer token via the platform auth middleware.

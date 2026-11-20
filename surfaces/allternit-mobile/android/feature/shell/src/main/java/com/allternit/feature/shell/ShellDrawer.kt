@@ -1,5 +1,8 @@
 package com.allternit.feature.shell
 
+import com.allternit.core.design.GizziCodeWordmark
+import com.allternit.core.design.PixelWordmark
+import com.allternit.core.design.MatrixLogo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -10,7 +13,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -70,6 +75,8 @@ internal fun ShellDrawer(
     account: Account?,
     store: ShellSessionsStore,
     onModeDial: () -> Unit,
+    /** Bots' waiting count on the mode dial (iOS ModeDialButton badge). */
+    botsWaiting: Int = 0,
     onRow: (RailRow) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
     onNew: () -> Unit,
@@ -101,12 +108,14 @@ internal fun ShellDrawer(
     val rows = railRows(mode)
     Box(modifier.fillMaxSize().statusBarsPadding()) {
         Column(Modifier.fillMaxSize()) {
-            DrawerHeader(mode = mode, onModeDial = onModeDial, onInbox = onInbox, inboxCount = inboxCount, onSearch = onSearch)
+            DrawerHeader(mode = mode, onModeDial = onModeDial, botsWaiting = botsWaiting, onInbox = onInbox, inboxCount = inboxCount, onSearch = onSearch)
             LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 items(rows.filter { it.id !in hidden }, key = { "rail-${it.id}" }) { row -> DrawerNavRow(row.label, row.icon, "drawerRow${row.id}") { onRow(row) } }
                 item(key = "rail-more") {
                     MoreRow(rows = rows, hidden = hidden, onToggle = { id -> hidden = RailTabPrefs.toggle(context, mode, id) }, onApps = {
                         onRow(RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected))
+                    }, onMiniApps = {
+                        onRow(RailRow("mini-apps", "Mini Apps", DesignR.drawable.ph_puzzle_piece))
                     })
                 }
                 item(key = "recents-label") {
@@ -164,7 +173,8 @@ internal fun ShellDrawer(
             mode = mode,
             account = account,
             onSettings = onSettings,
-            onPhones = { onRow(RailRow("phones", "Phones", R.drawable.shell_device_mobile)) },
+            onPhones = { onRow(RailRow("phones", "Phones", com.allternit.core.design.R.drawable.ph_device_mobile)) },
+            onMeetings = { onRow(RailRow("meetings", "Meetings", com.allternit.core.design.R.drawable.ph_video_camera)) },
             onNew = onNew,
             newOptions = newOptions,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -174,7 +184,7 @@ internal fun ShellDrawer(
 
 /** `phone-drawer-top-modes`: the mode dial, the wordmark, Inbox and Search (iOS header). */
 @Composable
-private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, onInbox: () -> Unit, inboxCount: Int, onSearch: () -> Unit) {
+private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, botsWaiting: Int, onInbox: () -> Unit, inboxCount: Int, onSearch: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     Row(
@@ -182,23 +192,8 @@ private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, onInbox: () ->
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // ModeDialButton: the active mode as a round filled icon; tap closes the drawer and fans the modes.
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .testTag("modeDial")
-                .clickable(role = Role.Button, onClickLabel = "Switch mode") {
-                    Haptics.perform(view, Haptics.Kind.Tap)
-                    onModeDial()
-                }
-                .semantics { contentDescription = "${mode.label} mode. Switch mode" },
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(Modifier.size(40.dp).clip(CircleShape).background(c.textPrimary), contentAlignment = Alignment.Center) {
-                Icon(painter = painterResource(mode.icon), contentDescription = null, tint = c.bgPrimary, modifier = Modifier.size(20.dp))
-            }
-        }
+        // D4: tap closes the drawer, then the mode fan opens out of ☰ (iOS ModeDialButton).
+        ModeDialButton(mode = mode, botsWaiting = botsWaiting, onOpenFan = onModeDial)
         // ShellWordmark: the pixel mark; suffixed marks run smaller to fit beside the buttons.
         Box(
             modifier = Modifier.padding(start = 6.dp).weight(1f).heightIn(min = 44.dp).testTag("shellWordmark${mode.raw}"),
@@ -211,7 +206,7 @@ private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, onInbox: () ->
             }
         }
         Box {
-            RoundButton(R.drawable.shell_tray, if (inboxCount > 0) "Needs you, $inboxCount waiting" else "Needs you", "drawerInbox", onInbox)
+            RoundButton(com.allternit.core.design.R.drawable.ph_tray, if (inboxCount > 0) "Needs you, $inboxCount waiting" else "Needs you", "drawerInbox", onInbox)
             if (inboxCount > 0) {
                 // The waiting count (iOS inbox badge on the drawer's Inbox button).
                 Text(
@@ -284,11 +279,11 @@ private fun DrawerNavRow(label: String, icon: Int, testTag: String, dot: Boolean
 
 /** More: choose which rows show (shared with desktop), and Apps & Extensions (iOS moreRow). */
 @Composable
-private fun MoreRow(rows: List<RailRow>, hidden: Set<String>, onToggle: (String) -> Unit, onApps: () -> Unit) {
+private fun MoreRow(rows: List<RailRow>, hidden: Set<String>, onToggle: (String) -> Unit, onApps: () -> Unit, onMiniApps: () -> Unit) {
     val c = AllternitTheme.colors
     var open by remember { mutableStateOf(false) }
     Box {
-        DrawerNavRow("More", R.drawable.shell_dots, "drawerRowmore", dot = rows.any { it.id in hidden }) { open = true }
+        DrawerNavRow("More", com.allternit.core.design.R.drawable.ph_dots_three, "drawerRowmore", dot = rows.any { it.id in hidden }) { open = true }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
             Text("Show in rail", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
             rows.forEach { row ->
@@ -302,6 +297,10 @@ private fun MoreRow(rows: List<RailRow>, hidden: Set<String>, onToggle: (String)
             MenuRow(icon = DesignR.drawable.ph_plugs_connected, title = "Apps & Extensions", testTag = "railAppsExtensions") {
                 open = false
                 onApps()
+            }
+            MenuRow(icon = DesignR.drawable.ph_puzzle_piece, title = "Mini Apps", testTag = "railMiniApps") {
+                open = false
+                onMiniApps()
             }
         }
     }
@@ -336,7 +335,7 @@ private fun RecentsLabel(
             horizontalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text("View all", color = c.textSecondary, fontSize = 14.sp)
-            Icon(painterResource(R.drawable.shell_caret_right), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(11.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_right), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(11.dp))
         }
         Box {
             Box(
@@ -371,7 +370,7 @@ private fun InlineError(title: String, message: String, onRetry: () -> Unit) {
                 Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AllternitStatic.StatusWarning.copy(alpha = 0.16f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(painterResource(R.drawable.shell_wifi_slash), contentDescription = null, tint = AllternitStatic.StatusWarning, modifier = Modifier.size(18.dp))
+                Icon(painterResource(com.allternit.core.design.R.drawable.ph_wifi_slash), contentDescription = null, tint = AllternitStatic.StatusWarning, modifier = Modifier.size(18.dp))
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(title, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -408,7 +407,7 @@ private fun DrawerEmpty(title: String, message: String, newLabel: String, onNew:
             Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).border(1.dp, c.borderSubtle, RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(painterResource(R.drawable.shell_chat), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_chat_circle), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
         }
         Text(title, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 20.dp))
         Text(message, color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
@@ -423,7 +422,7 @@ private fun DrawerEmpty(title: String, message: String, newLabel: String, onNew:
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Icon(painterResource(R.drawable.shell_note_pencil), contentDescription = null, tint = c.onAccent, modifier = Modifier.size(13.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_note_pencil), contentDescription = null, tint = c.onAccent, modifier = Modifier.size(13.dp))
             Text(newLabel, color = c.onAccent, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         }
     }
@@ -450,7 +449,7 @@ internal fun RecentRow(session: AgentSession, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Icon(
-            painter = painterResource(R.drawable.shell_chat),
+            painter = painterResource(com.allternit.core.design.R.drawable.ph_chat_circle),
             contentDescription = null,
             tint = c.textSecondary,
             modifier = Modifier.size(18.dp),
@@ -491,6 +490,8 @@ private fun DrawerFooter(
     account: Account?,
     onSettings: () -> Unit,
     onPhones: () -> Unit,
+    /** Wave H2: iOS MeetingsDrawerButton, shown with the account's `meetings` flag. */
+    onMeetings: () -> Unit,
     onNew: () -> Unit,
     newOptions: List<NewOption>,
     modifier: Modifier = Modifier,
@@ -534,10 +535,54 @@ private fun DrawerFooter(
                     Haptics.perform(view, Haptics.Kind.Tap)
                     onPhones()
                 }
-                .semantics { contentDescription = "Phones" },
+                .semantics { contentDescription = if (com.allternit.feature.phones.PhonesUnread.total > 0) "Phones, ${com.allternit.feature.phones.PhonesUnread.total} unread" else "Phones" },
             contentAlignment = Alignment.Center,
         ) {
             MatrixLogo(size = 22.dp, ink = c.textPrimary)
+            val unread = com.allternit.feature.phones.PhonesUnread.total
+            if (unread > 0) {
+                Text(
+                    if (unread > 99) "99+" else "$unread",
+                    color = androidx.compose.ui.graphics.Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 4.dp, y = (-4).dp)
+                        .clip(CircleShape)
+                        .background(com.allternit.core.design.AllternitStatic.StatusError)
+                        .padding(horizontal = 4.dp)
+                        .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                        .testTag("drawerPhonesBadge"),
+                )
+            }
+        }
+        androidx.compose.runtime.LaunchedEffect(account) {
+            if (account == null) { com.allternit.feature.phones.PhonesUnread.clear(); return@LaunchedEffect }
+            while (true) { com.allternit.feature.phones.PhonesUnread.refresh(); kotlinx.coroutines.delay(60_000) }
+        }
+        val meetingsContext = androidx.compose.ui.platform.LocalContext.current
+        androidx.compose.runtime.LaunchedEffect(account) { com.allternit.feature.meetings.MeetingsStore.refreshFlag(meetingsContext, signedIn = account != null) }
+        // iOS keeps the agenda watched app-wide: banners post with the Meetings screen closed.
+        androidx.compose.runtime.LaunchedEffect(account) { com.allternit.feature.meetings.MeetingsStore.watch(meetingsContext, signedIn = account != null) }
+        if (com.allternit.feature.meetings.MeetingsStore.isEnabled) {
+            val inCall = com.allternit.feature.meetings.MeetingsStore.live.isNotEmpty()
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(c.fillNeutral)
+                    .testTag("drawerMeetings")
+                    .clickable(role = Role.Button, onClickLabel = "Meetings") {
+                        Haptics.perform(view, Haptics.Kind.Tap)
+                        onMeetings()
+                    }
+                    .semantics { contentDescription = if (inCall) "Meetings, Gizzi is in a call" else "Meetings" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(painterResource(com.allternit.core.design.R.drawable.ph_video_camera), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
+                if (inCall) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(8.dp).clip(CircleShape).background(Color(0xFF16A34A)))
+            }
         }
         Spacer(Modifier.weight(1f))
         Box {
@@ -566,7 +611,7 @@ private fun DrawerFooter(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(painterResource(R.drawable.shell_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
             Text(mode.newLabel, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
         }
         DropdownMenu(

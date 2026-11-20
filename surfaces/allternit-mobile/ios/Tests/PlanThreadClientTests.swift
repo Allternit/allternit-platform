@@ -66,6 +66,7 @@ final class PlanThreadClientTests: XCTestCase {
     func testChatGPTOnDeviceChatsAreNotStored() {
         XCTAssertTrue(PlanThreadClient.isStored(model: "plan/claude/sonnet"))
         XCTAssertTrue(PlanThreadClient.isStored(model: "copilot/gpt"))
+        XCTAssertTrue(PlanThreadClient.isStored(model: "linked/claude/sonnet"))
         XCTAssertFalse(PlanThreadClient.isStored(model: "chatgpt/gpt-5"))
     }
 }

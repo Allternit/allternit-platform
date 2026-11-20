@@ -80,15 +80,22 @@ describe("zones", () => {
     expect(z[0].time).toBe("09:00")
     expect(z[1].time).toBe("00:00")
   })
+  test("a place that starts with am, in, at or Z is read as the place", async () => {
+    const r = await lookupZones({ query: "9am Zurich", zones: ["Zurich", "UTC"] }, ctx())
+    const z = (r.card as any).data.zones
+    expect(z[0].time).toBe("09:00")
+    expect(z[1].time).toBe("08:00")
+  })
   test("DST boundary: New York on 2026-03-08", async () => {
-    const before = await lookupZones({ query: "2026-03-08 01:30", zones: ["America/New_York", "UTC"] }, ctx())
-    const after = await lookupZones({ query: "2026-03-08 03:30", zones: ["America/New_York", "UTC"] }, ctx())
+    const before = await lookupZones({ query: "2026-03-08 01:30 America/New_York", zones: ["America/New_York", "UTC"] }, ctx())
+    const after = await lookupZones({ query: "2026-03-08 03:30 America/New_York", zones: ["America/New_York", "UTC"] }, ctx())
     const b = (before.card as any).data.zones
     const a = (after.card as any).data.zones
     expect(b[0].offset).toBe("UTC-05:00")
     expect(a[0].offset).toBe("UTC-04:00")
-    expect(b[1].time).toBe("01:30")
+    expect(b[1].time).toBe("06:30")
     expect(a[0].time).toBe("03:30")
+    expect(a[1].time).toBe("07:30")
   })
   test("unknown zone and unreadable time are refused", async () => {
     await expect(lookupZones({ zones: ["Atlantis"] }, ctx())).rejects.toThrow(/not a zone/)

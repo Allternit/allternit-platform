@@ -3326,6 +3326,34 @@
       ]
     },
     {
+      "id": "feature:facility-campus",
+      "label": "Facility campus: twelve districts",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "The 3D facility grows from one building to a 1,280 x 960 m campus of twelve districts, loaded by distance under a frame budget, with travel by map, cart and shuttle. Bots light Bot Quarter homes, projects fill Commons Loop studios and cloud computers light Compute Row halls through additive fields in the allternit:workspace payload. In review as websites PRs 147 to 160; not merged.",
+      "touches": [
+        "external:allternit-facility",
+        "allternit-ai/src/views/office/OfficeFloor.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Office/Floor/OfficeFloorView.swift",
+        "allternit/surfaces/docs/guides/facility.mdx",
+        "allternit/surfaces/docs/architecture/facility-campus.mdx",
+        "allternit/surfaces/docs/architecture/facility-workspace.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-17",
+          "note": "Eoj: campus of twelve districts replaces the neighbour blocks; no backend change, the stage manifest is a static file; project and computer names show only in the signed-in embed."
+        },
+        {
+          "on": "2026-11-19",
+          "note": "Docs written ahead of the websites PRs 147 to 160. Do not merge the docs before those PRs merge."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/architecture/facility-campus.mdx"
+      ]
+    },
+    {
       "id": "feature:waiting-games",
       "label": "Waiting games (Play in the message box)",
       "product": "product:ai-allternit",
@@ -5151,6 +5179,102 @@
         "allternit/surfaces/docs/cli/background-runs.mdx",
         "allternit/surfaces/docs/tools/worktree.mdx"
       ]
+    },
+    {
+      "id": "feature:sleep",
+      "label": "Allternit Sleep",
+      "product": "product:memory-drive",
+      "status": "building",
+      "description": "Memory consolidation that runs while you are away: naps on idle, a deeper cycle with REM-style hypothesis checks, reminders, and a question to you when two memories conflict. Backend, gizzi-code runtime and docs are built behind flags and not live. Desktop, ai.allternit.com, the PWA and iPhone get a memory settings switch (planned, plan steps 8.2 and 8.4); gizzi-code triggers, client, dispute note and reminders are on sibling PRs and join this entry after they merge.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/sleep",
+        "allternit/cmd/allternit-api/migrations/V291__sleep_core.sql",
+        "allternit/cmd/gizzi-code/src/runtime/memory",
+        "allternit/surfaces/docs/guides/sleep.mdx",
+        "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
+        "allternit/surfaces/docs/api/memory-sleep.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-19",
+          "note": "Sleep is a feature of Memory Drive, not a new product. Everything ships off by default; the main switch alone turns no stage on."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/sleep/mod.rs",
+        "allternit/cmd/allternit-api/migrations/V291__sleep_core.sql",
+        "allternit/surfaces/docs/guides/sleep.mdx",
+        "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
+        "allternit/surfaces/docs/api/memory-sleep.mdx"
+      ]
+    },
+    {
+      "id": "feature:oauth-apps",
+      "label": "Sign in with Allternit (OAuth apps)",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "Allternit is an OAuth 2.0 authorization server for outside apps. A developer registers an app in the console (platform.allternit.com, OAuth apps); a person approves it on a consent page and sets a monthly limit; the app gets an alt_oat_ token that calls only POST /v1/chat/completions (scope inference), /api/v1/oauth/usage and /oauth2/userinfo, billed to the person's credits with a reserve-then-settle cap and no auto top-up. Apps start in testing (test users, $50 cap) until an Allternit admin approves them. Tokens are opaque and hashed, refresh tokens rotate with a 30 s retry grace, and sub is per app. People see and change their apps in Settings > Connections > Apps with access (web, Desktop, phone, PWA), iPhone Settings > Privacy > Connected apps, and gizzi auth apps. New code (open PRs platform #2634 to #2643 and #2656, ai #1188 #1189, platform #2658 #2660) adds migration 150, cloud-api routes/oauth_server.rs, oauth_grants.rs, platform_v1/oauth_apps.rs and services oauth_apps.rs, oauth_tokens.rs, oauth_spend.rs; the touches below name the existing files they extend.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+        "allternit/cmd/allternit-cloud-api/src/auth/middleware.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/caller.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/cost_service.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/account_erase.rs",
+        "allternit/cmd/allternit-cloud-api/src/lib.rs",
+        "allternit/surfaces/platform.allternit.com/src/App.tsx",
+        "allternit/surfaces/platform.allternit.com/src/components/console-ui/navConfig.ts",
+        "allternit-ai/src/pages/OAuthAuthorizePage.tsx",
+        "allternit-ai/src/routes.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectionsHub.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/PrivacySettingsView.swift",
+        "allternit/cmd/gizzi-code/src/cli/commands/auth.ts",
+        "allternit/surfaces/docs/api/oauth-apps.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-19",
+          "note": "Review policy: apps stay in testing (listed test users, monthly limit up to $50) until an Allternit admin approves them. App-driven spend never triggers auto top-up. ALLTERNIT_OAUTH_SUB_SECRET must never change after launch, because it changes every app's sub."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/api/oauth-apps.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "id": "feature:claude-org-billing",
+      "label": "Claude organization linked billing",
+      "product": "product:cloud-api",
+      "status": "building",
+      "description": "A person links their own Claude organization (Admin or Billing role, organization pays Anthropic directly) and their own chats with linked/claude/<model> models are billed to it through Anthropic's linked billing, not to Allternit credits. cloud-api is the client: it signs client assertions and a Workload Identity Federation token with one ES256 key under its own issuer (JWKS and discovery served at /oauth2/anthropic-client), links through auth.claude.com, and calls api.anthropic.com/v1/chat/completions with the person's user profile id read from the database. Person-only (no bots, routines, schedules, missions or sub-agents), no wallet debit (inference_usage.billed_to = claude_org), a refusal never falls back by itself and the client offers the button Use Allternit credits for this message. Behind ALLTERNIT_CLAUDE_LINK, default off; shows Not available yet until configured. Migration 151. Surfaces: Settings > Connections row and a Claude organization picker group on web, Desktop, phone and PWA; iPhone Settings > Connections; gizzi auth link claude-org. New code (open PRs platform #2645 #2647 #2649 #2651 #2652 #2658 #2660, ai #1186 #1187) adds auth/anthropic_client.rs, routes/anthropic_client_issuer.rs, routes/claude_link.rs and routes/model_router/anthropic_linked.rs; the touches below name the existing files they extend.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+        "allternit/cmd/allternit-cloud-api/src/auth/middleware.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/account_erase.rs",
+        "allternit/cmd/allternit-cloud-api/src/lib.rs",
+        "allternit-ai/src/components/chat/ModelPickerPopover.tsx",
+        "allternit-ai/src/lib/ai/rust-stream-adapter.ts",
+        "allternit-ai/src/components/connect-kit/registry.ts",
+        "allternit-ai/src/components/connect-kit/ConnectionsHub.tsx",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsSettingsView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/ModelManagementView.swift",
+        "allternit/cmd/gizzi-code/src/cli/commands/auth.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/person-plan/turn.ts",
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-19",
+          "note": "Linked requests run under Allternit's Anthropic account, so its rate limits and retention apply and the organization's ZDR or BAA do not. Explicit model ids (linked/claude/<model>), never a silent switch. Real Anthropic traffic is unchecked until owner gates G1 to G5."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ]
     }
   ],
   "journeys": [
@@ -5695,6 +5819,105 @@
       "evidence": [
         "allternit/surfaces/docs/tools/freeweights.mdx",
         "allternit/contracts/model-source/README.md"
+      ]
+    },
+    {
+      "id": "journey:sleep-nap-and-ask",
+      "label": "Sleep consolidates memory and asks when memories conflict",
+      "description": "From turning Sleep on to a nap on idle, a question about a conflict, and a reminder.",
+      "steps": [
+        {
+          "at": "allternit/surfaces/docs/guides/sleep.mdx",
+          "says": "The user turns Sleep on in memory settings (settings switch planned for Desktop, web, PWA and iPhone)."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/memory",
+          "says": "Gizzi sends an idle or turn signal to the backend when the session goes quiet."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/sleep",
+          "says": "The backend queues a nap, runs the cycle, scores memories and records any dispute between conflicting memories."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/sleep",
+          "says": "A conflict is put to the user as a question; resolving it updates the memory through the disputes route."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/memory",
+          "says": "A due reminder is surfaced in the session."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/sleep.mdx",
+        "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
+        "allternit/surfaces/docs/api/memory-sleep.mdx",
+        "allternit/cmd/allternit-api/src/sleep/routes.rs"
+      ]
+    },
+    {
+      "id": "journey:oauth-app-sign-in",
+      "label": "An outside app signs in with Allternit and spends the person's credits",
+      "description": "From a developer's authorize link to a billed model call, a monthly limit and a revoke.",
+      "steps": [
+        {
+          "at": "allternit/surfaces/platform.allternit.com/src/App.tsx",
+          "says": "The developer registers the app in the console (OAuth apps): client type, redirect URIs, test users. It starts in testing."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/lib.rs",
+          "says": "The app sends the browser to GET /oauth2/authorize with PKCE. A bad client or redirect shows an error page and never redirects; otherwise cloud-api stores the request and sends the person to the consent page."
+        },
+        {
+          "at": "allternit-ai/src/pages/OAuthAuthorizePage.tsx",
+          "says": "The person signs in, reads the plain-word scopes, sets a monthly limit (at most $50 while the app is not live) and taps Allow. cloud-api returns the redirect with a single-use code."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/auth/middleware.rs",
+          "says": "The app trades the code at /oauth2/token for an alt_oat_ access token and an alt_ort_ refresh token; the token is hashed at rest and only the oauth routes and chat completions accept it."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+          "says": "A chat completion reserves the most it could cost under the grant's row lock. Over the limit answers 402 app_spend_cap_reached, low credits 402 user_credits_exhausted, with no model call; otherwise it runs and settles to the real cost."
+        },
+        {
+          "at": "allternit-ai/src/components/connect-kit/ConnectionsHub.tsx",
+          "says": "The person sees spend against the limit in Settings > Connections > Apps with access, changes the limit or revokes; revoke is immediate."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/api/oauth-apps.mdx",
+        "allternit/surfaces/docs/guides/apps-with-access.mdx"
+      ]
+    },
+    {
+      "id": "journey:link-claude-org",
+      "label": "Link a Claude organization and bill a chat to it",
+      "description": "From the Link your Claude organization row to a billed Claude message, a refusal and the credits button.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/components/connect-kit/ConnectionsHub.tsx",
+          "says": "The person taps Link your Claude organization (feature on and configured, else Not available yet). The eligibility notes show first."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/connections.rs",
+          "says": "The claude-org row starts the link: cloud-api creates the user profile, makes a pushed authorization request at auth.claude.com and returns the browser URL. The callback exchanges the code, seals the refresh token and returns to the app."
+        },
+        {
+          "at": "allternit-ai/src/components/chat/ModelPickerPopover.tsx",
+          "says": "Linked models appear in their own Claude organization group, billed to the person's organization. The person picks one."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/model_router.rs",
+          "says": "A person-sent message goes to Anthropic's chat completions with the operator token and the person's profile id from the database. No wallet debit; the usage event says claude_org."
+        },
+        {
+          "at": "allternit-ai/src/lib/ai/rust-stream-adapter.ts",
+          "says": "A refusal (spend limit, not billable, disconnected) shows a card. Use Allternit credits for this message resends once, only when the person taps."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/claude-organization.mdx",
+        "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
       ]
     }
   ]

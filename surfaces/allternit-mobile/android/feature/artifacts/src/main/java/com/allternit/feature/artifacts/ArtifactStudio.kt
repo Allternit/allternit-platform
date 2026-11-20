@@ -1,5 +1,6 @@
 package com.allternit.feature.artifacts
 
+import com.allternit.core.design.AllternitSerif
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -217,7 +218,7 @@ private fun StudioEmpty(kind: StudioKind, onDescribe: () -> Unit) {
         Box(Modifier.size(96.dp).clip(RoundedCornerShape(20.dp)).background(c.fillNeutral), contentAlignment = Alignment.Center) {
             Icon(painterResource(kind.deck), null, tint = c.textPrimary, modifier = Modifier.size(40.dp))
         }
-        Text(kind.emptyTitle, color = c.textPrimary, fontSize = 20.sp, fontFamily = FontFamily.Serif, textAlign = TextAlign.Center)
+        Text(kind.emptyTitle, color = c.textPrimary, fontSize = 20.sp, fontFamily = AllternitSerif, textAlign = TextAlign.Center)
         Text(kind.studioHint, color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center)
         LibraryRowButton("Describe it in the chat", com.allternit.core.design.R.drawable.ph_arrow_right, "artifactStudioDescribe", onClick = onDescribe)
     }

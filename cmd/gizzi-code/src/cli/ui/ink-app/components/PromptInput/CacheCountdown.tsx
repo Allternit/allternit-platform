@@ -4,7 +4,7 @@ import { Text } from '../../ink'
 import type { Message } from '../../types/message'
 import { getTokenUsage } from '../../utils/tokens'
 import { getPromptCache1hAllowlist, getPromptCache1hEligible } from '../../bootstrap/state'
-import { cacheCountdown } from '../../../../../shared/util/cache-countdown'
+import { cacheCountdown, promptCacheTtlSeconds } from '../../../../../shared/util/cache-countdown'
 
 /** Separate row preserves user status-line output and updates without running a command. */
 export function CacheCountdown({ messages, model }: { messages: Message[]; model: string }) {
@@ -16,11 +16,11 @@ export function CacheCountdown({ messages, model }: { messages: Message[]; model
   const responseModel = last?.type === 'assistant' ? last.message.model : undefined
   const cached = (usage?.cache_read_input_tokens ?? 0) + (usage?.cache_creation_input_tokens ?? 0)
   const at = last?.timestamp ? new Date(last.timestamp).getTime() : NaN
-  const eligible = getPromptCache1hEligible() === true
-  const allowlist = getPromptCache1hAllowlist() ?? []
-  const source = 'repl_main_thread'
-  const oneHour = eligible && allowlist.some(p => p.endsWith('*') ? source.startsWith(p.slice(0, -1)) : p === source)
-  const ttl = oneHour ? 3600 : 300
+  const ttl = promptCacheTtlSeconds({
+    eligible: getPromptCache1hEligible(),
+    allowlist: getPromptCache1hAllowlist(),
+    source: 'repl_main_thread',
+  })
   const available = cached > 0 && Number.isFinite(at) && responseModel === model.split('/').pop() && model.includes('claude')
   const status = available ? cacheCountdown({
     cacheTtlSeconds: ttl, cacheExpiresAt: at + ttl * 1000,

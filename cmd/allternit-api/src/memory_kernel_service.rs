@@ -71,6 +71,11 @@ pub struct RecallResult {
     pub content: String,
     pub metadata: Value,
     pub timestamp: String,
+    /// Sleep `disputes` stage (step 6.1): set when this memory is a side of a
+    /// dispute. Both sides, the pick and the reason; absent otherwise, so old
+    /// clients see the same shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispute: Option<crate::sleep::types::DisputeNote>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -187,6 +192,7 @@ pub(crate) fn load_target(
                             "decay_score": row.get::<_, Option<f64>>(7)?,
                         }),
                         timestamp: row.get::<_, String>(3)?,
+                        dispute: None,
                     })
                 },
             )
@@ -212,6 +218,7 @@ pub(crate) fn load_target(
                             "summary": summary,
                         }),
                         timestamp: row.get::<_, String>(5)?,
+                        dispute: None,
                     })
                 },
             )
@@ -232,6 +239,7 @@ pub(crate) fn load_target(
                             "source": row.get::<_, Option<String>>(4)?,
                         }),
                         timestamp: row.get::<_, String>(3)?,
+                        dispute: None,
                     })
                 },
             )
@@ -239,6 +247,19 @@ pub(crate) fn load_target(
             .map_err(MemoryKernelError::from),
         _ => Ok(None),
     }
+}
+
+/// Direct load of one current fact by id for its owner. Not filtered by the
+/// Sleep tether ladder: an untethered fact is off recall but still loads here.
+pub fn get_fact(db: &DbHandle, user_id: &str, fact_id: &str) -> Result<Option<RecallResult>, MemoryKernelError> {
+    let conn = db.connect()?;
+    let owned: Option<i64> = conn
+        .query_row("SELECT 1 FROM memory_facts WHERE id = ?1 AND user_id = ?2", params![fact_id, user_id], |r| r.get(0))
+        .optional()?;
+    if owned.is_none() {
+        return Ok(None);
+    }
+    load_target(&conn, "fact", fact_id, None, false)
 }
 
 /// Memory targets most similar to the query text: hybrid keyword + vector
@@ -255,7 +276,9 @@ pub fn recall_semantic(
     let q = memory_index::hash_embed(&[query.to_string()]);
     let scope = Scope { scope: user_id, target_types: MEMORY_TYPES, only_ids: None };
     let hits = memory_index::hybrid_search(&conn, &scope, query, Some((&q.model, &q.vectors[0])), limit)?;
-    Ok(hits.into_iter().map(|h| (h.target_type, h.target_id, h.score)).collect())
+    let fact_ids: Vec<&str> = hits.iter().filter(|h| h.target_type == "fact").map(|h| h.target_id.as_str()).collect();
+    let off = crate::sleep::checks::untethered_ids(&conn, user_id, &fact_ids).unwrap_or_default();
+    Ok(hits.into_iter().filter(|h| !(h.target_type == "fact" && off.contains(&h.target_id))).map(|h| (h.target_type, h.target_id, h.score)).collect())
 }
 
 /// Record a raw observation (turn, tool execution, file event, decision, or checkpoint).
@@ -276,6 +299,12 @@ pub fn record_observation(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![id, user_id, agent_id, session_id, kind, content, source],
     )?;
+    // Sleep stage `intentions`: fire and capture reminders on a user turn.
+    if kind == "turn_user" {
+        if let Err(e) = crate::sleep::intentions::on_turn(&conn, user_id, &id, content, chrono::Utc::now()) {
+            tracing::debug!("sleep intentions skipped: {e}");
+        }
+    }
 
     Ok(id)
 }
@@ -457,6 +486,10 @@ pub fn persist_facts_typed(
             let mut persisted = Vec::new();
             for ((text, t), id) in facts.iter().zip(out.fact_ids) {
                 if let Some(id) = id {
+                    // Sleep write-time scores (no model call); a no-op with Sleep off.
+                    if let Err(e) = crate::sleep::score::score_written_fact(&conn, user_id, &id, text, observation_id) {
+                        tracing::debug!("sleep write score skipped: {e}");
+                    }
                     persisted.push(MemoryFact {
                         id,
                         user_id: user_id.to_string(),
@@ -502,6 +535,11 @@ pub fn persist_facts_typed(
              VALUES (?1, ?2, ?3, ?4, 0.85, ?5)",
             params![fact_id, user_id, agent_id, fact, observation_id],
         )?;
+
+        // Sleep write-time scores (no model call); a no-op with Sleep off.
+        if let Err(e) = crate::sleep::score::score_written_fact(&conn, user_id, &fact_id, fact, observation_id) {
+            tracing::debug!("sleep write score skipped: {e}");
+        }
 
         // Best-effort embedding index; failures should not block fact persistence.
         let _ = store_embedding(db, user_id, "fact", &fact_id, fact);
@@ -743,10 +781,27 @@ pub fn recall_logged(
         }
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     }
+    // Sleep `checks` stage (flagged users only): untethered facts are off the index.
+    // A direct load by id ([`get_fact`]) still finds them.
+    {
+        let ids: Vec<&str> = results.iter().filter(|r| r.item_type == "fact").map(|r| r.id.as_str()).collect();
+        match crate::sleep::checks::untethered_ids(&conn, user_id, &ids) {
+            Ok(off) if !off.is_empty() => results.retain(|r| !(r.item_type == "fact" && off.contains(&r.id))),
+            Ok(_) => {}
+            Err(e) => tracing::debug!(error = %e, "sleep untethered filter skipped"),
+        }
+    }
     results.truncate(limit);
+    // Sleep `disputes` stage: the recall monitor notes disputed memories (never drops one).
+    crate::memory_retrieve::attach_disputes(&conn, user_id, &mut results);
 
     // Retrieval stats feed consolidation's decay (WP-M1d).
     let fact_ids: Vec<&str> = results.iter().filter(|r| r.item_type == "fact").map(|r| r.id.as_str()).collect();
+    // Sleep `strengths` stage (flagged users only): reconsolidate before the legacy
+    // stats overwrite last_retrieved_at.
+    if let Err(e) = crate::sleep::strength::on_recall(&conn, user_id, &fact_ids) {
+        tracing::debug!(error = %e, "sleep strengths not updated");
+    }
     if let Err(e) = crate::memory_consolidation::note_retrieved(&conn, user_id, &fact_ids) {
         tracing::debug!(error = %e, "memory retrieval stats not recorded");
     }

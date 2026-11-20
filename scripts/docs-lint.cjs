@@ -254,6 +254,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['guides/connectors-in-other-apps.mdx', 'guides/connectors.mdx', 'guides/managed-authorization.mdx', 'security/allternit-idjag-issuer.mdx', 'security/trusting-outside-issuers.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Brain runner ops: each box runs the named vendor programs unmodified, so the page lists their versions, sign-in commands and allowed domains.
       if (mdxPath.endsWith('operations/brain-runner.mdx')) continue;
+      // Linking a Claude organization (Anthropic Linked billing) is that integration: the guide and ops page name the provider, its routes and error codes; external keys links to that guide by its path.
+      if (['guides/claude-organization.mdx', 'operations/claude-linked-billing.mdx', 'admin/external-keys.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Guard's model picker lists the detected CLI brains and their source ids by name.
       if (mdxPath.endsWith('guides/guard.mdx')) continue;
       // gizzi connect names the plans it signs in to (ChatGPT direct sign-in, plan rows).

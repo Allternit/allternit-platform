@@ -15,8 +15,9 @@
 //! With the key, key id or team id unset, the routes answer 503 `apns_not_configured` and nothing is sent.
 //!
 //! Routes (Clerk session or `compute`-scoped API key):
-//! - `POST   /api/v1/device-tokens` {token, platform:"ios", environment?, deviceId?, osVersion?, appBuild?,
-//!   capabilities?} → `{ok, id, readToken}`. `capabilities` lists what the app supports ([`KNOWN_CAPABILITIES`]);
+//! - `POST   /api/v1/device-tokens` {token, platform:"ios"|"android", environment?, deviceId?, osVersion?, appBuild?,
+//!   capabilities?} → `{ok, id, readToken}`. `platform: "android"` stores an FCM registration token (case kept,
+//!   503 `fcm_not_configured` without `FCM_SERVICE_ACCOUNT_JSON`); [`super::fcm`] sends to those rows and APNs never does. `capabilities` lists what the app supports ([`KNOWN_CAPABILITIES`]);
 //!   an old app that sends none gets `[]`. `readToken` is new on every registration (only its hash is stored)
 //!   and works on the two device-read routes in [`super::device_read`] only.
 //! - `DELETE /api/v1/device-tokens` {token} → `{ok, removed}`; also removes that device's activity tokens.
@@ -353,9 +354,10 @@ struct ActivityRow {
     activity_key: Option<String>,
 }
 
-/// Every iOS device `user` registered, with its capabilities.
+/// Every iOS device `user` registered, with its capabilities. Android rows (`platform = 'android'`) are FCM tokens
+/// and never reach APNs (an APNs "BadDeviceToken" answer would delete them).
 pub async fn device_targets(db: &PgPool, user: &str) -> Result<Vec<PushTarget>, sqlx::Error> {
-    let rows: Vec<DeviceRow> = sqlx::query_as("SELECT id, user_id, device_id, token, environment, capabilities, focus, focus_at FROM apns_device_tokens WHERE user_id = $1").bind(user).fetch_all(db).await?;
+    let rows: Vec<DeviceRow> = sqlx::query_as("SELECT id, user_id, device_id, token, environment, capabilities, focus, focus_at FROM apns_device_tokens WHERE user_id = $1 AND platform = 'ios'").bind(user).fetch_all(db).await?;
     let now = chrono::Utc::now();
     Ok(rows
         .into_iter()
@@ -582,7 +584,7 @@ pub async fn can_reach(db: &PgPool, user: &str) -> bool {
     if Apns::from_env().is_none() {
         return false;
     }
-    sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM apns_device_tokens WHERE user_id = $1)").bind(user).fetch_one(db).await.unwrap_or(false)
+    sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM apns_device_tokens WHERE user_id = $1 AND platform = 'ios')").bind(user).fetch_one(db).await.unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -667,21 +669,30 @@ fn new_read_token(id: &str) -> Result<(String, String), String> {
 }
 
 async fn register_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<RegisterBody>) -> Response {
-    let Some(apns) = Apns::from_env() else { return error(StatusCode::SERVICE_UNAVAILABLE, "apns_not_configured") };
+    let platform = body.platform.as_deref().map(str::trim).unwrap_or("ios");
+    if !matches!(platform, "ios" | "android") {
+        return error(StatusCode::BAD_REQUEST, "unsupported_platform");
+    }
+    // Android: an FCM registration token (case matters). FCM has no sandbox, so it is stored as `production`.
+    let (token, env) = if platform == "android" {
+        if super::fcm::Fcm::from_env().is_none() {
+            return error(StatusCode::SERVICE_UNAVAILABLE, "fcm_not_configured");
+        }
+        (body.token.trim().to_string(), "production")
+    } else {
+        let Some(apns) = Apns::from_env() else { return error(StatusCode::SERVICE_UNAVAILABLE, "apns_not_configured") };
+        (body.token.trim().to_ascii_lowercase(), body.environment.as_deref().and_then(normalize_env).unwrap_or(apns.default_env))
+    };
     let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await {
         Ok(u) => u.id,
         Err(e) => return e.into_response(),
     };
-    if body.platform.as_deref().is_some_and(|p| p != "ios") {
-        return error(StatusCode::BAD_REQUEST, "unsupported_platform");
-    }
-    let token = body.token.trim().to_ascii_lowercase();
-    if !token_ok(&token) {
+    let token_valid = if platform == "android" { super::fcm::token_ok(&token) } else { token_ok(&token) };
+    if !token_valid {
         return error(StatusCode::BAD_REQUEST, "bad_token");
     }
-    let env = body.environment.as_deref().and_then(normalize_env).unwrap_or(apns.default_env);
     let device = DeviceInfo::from_body(&body);
-    match register(&state.db, &user, &token, env, &device).await {
+    match register_platform(&state.db, &user, &token, env, platform, &device).await {
         Ok(Some(done)) => (StatusCode::CREATED, Json(json!({ "ok": true, "id": done.id, "readToken": done.read_token }))).into_response(),
         Ok(None) => error(StatusCode::TOO_MANY_REQUESTS, "too_many_devices"),
         Err(e) => {
@@ -693,8 +704,14 @@ async fn register_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, 
 
 /// Register (or move) one device token and issue a new read token for it. A token belongs to one person:
 /// registering it while signed in as someone else moves it to them, and the previous owner's activity
-/// tokens for that device are removed. `None` when the person is at the device cap.
+/// tokens for that device are removed. `None` when the person is at the device cap. An iOS device; see
+/// [`register_platform`] for Android.
 pub async fn register(db: &PgPool, user: &str, token: &str, env: &str, device: &DeviceInfo) -> Result<Option<Registered>, sqlx::Error> {
+    register_platform(db, user, token, env, "ios", device).await
+}
+
+/// [`register`] for `platform` `ios` (APNs token) or `android` (FCM token). The device cap counts both.
+pub async fn register_platform(db: &PgPool, user: &str, token: &str, env: &str, platform: &str, device: &DeviceInfo) -> Result<Option<Registered>, sqlx::Error> {
     let existing: i64 = sqlx::query_scalar("SELECT count(*) FROM apns_device_tokens WHERE user_id = $1 AND token <> $2").bind(user).bind(token).fetch_one(db).await?;
     if existing >= MAX_TOKENS_PER_USER {
         return Ok(None);
@@ -712,8 +729,8 @@ pub async fn register(db: &PgPool, user: &str, token: &str, env: &str, device: &
     }
     let id = format!("apns_{}", uuid::Uuid::new_v4().simple());
     let id: String = sqlx::query_scalar(
-        "INSERT INTO apns_device_tokens (id, user_id, token, environment, device_id, os_version, app_build, capabilities) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (token) DO UPDATE SET user_id = $2, environment = $4, device_id = $5, os_version = $6, app_build = $7, capabilities = $8, failures = 0, last_error = NULL
+        "INSERT INTO apns_device_tokens (id, user_id, token, environment, device_id, os_version, app_build, capabilities, platform) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (token) DO UPDATE SET user_id = $2, environment = $4, device_id = $5, os_version = $6, app_build = $7, capabilities = $8, platform = $9, failures = 0, last_error = NULL
          RETURNING id",
     )
     .bind(&id)
@@ -724,6 +741,7 @@ pub async fn register(db: &PgPool, user: &str, token: &str, env: &str, device: &
     .bind(&device.os_version)
     .bind(&device.app_build)
     .bind(json!(device.capabilities))
+    .bind(platform)
     .fetch_one(&mut *tx)
     .await?;
     let (read_token, hash) = new_read_token(&id).map_err(|e| sqlx::Error::Protocol(format!("read token: {e}")))?;
@@ -743,10 +761,13 @@ async fn unregister_route(State(state): State<Arc<ApiState>>, headers: HeaderMap
         Ok(u) => u.id,
         Err(e) => return e.into_response(),
     };
-    let token = body.token.trim().to_ascii_lowercase();
-    match sqlx::query_scalar::<_, String>("DELETE FROM apns_device_tokens WHERE user_id = $1 AND token = $2 RETURNING device_id").bind(&user).bind(&token).fetch_optional(&state.db).await {
-        Ok(device_id) => {
-            let removed = device_id.is_some();
+    // iOS tokens are stored lowercased; Android FCM tokens keep their case.
+    let raw = body.token.trim().to_string();
+    let token = raw.to_ascii_lowercase();
+    match sqlx::query_scalar::<_, String>("DELETE FROM apns_device_tokens WHERE user_id = $1 AND (token = $2 OR token = $3) RETURNING device_id").bind(&user).bind(&token).bind(&raw).fetch_all(&state.db).await {
+        Ok(device_ids) => {
+            let removed = !device_ids.is_empty();
+            let device_id = device_ids.into_iter().next();
             if let Some(device_id) = device_id {
                 forget_device_activity(&state.db, &user, &device_id).await;
             }

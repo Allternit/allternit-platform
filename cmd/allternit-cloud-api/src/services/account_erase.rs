@@ -86,6 +86,10 @@ pub const ERASE: &[(&str, &str)] = &[
     ("account_projects", USER),
     // Copilot grants (migration 142). Revoked at GitHub in release_computers first.
     ("copilot_grants", USER),
+    // Linked Claude organization (migration 151). REVOKE disconnects it first.
+    ("anthropic_connections", USER),
+    ("anthropic_link_requests", USER),
+    ("anthropic_link_profiles", USER),
     // Account preferences: pad templates and per-mode defaults (migration 145).
     ("account_prefs", USER),
     // Platform API projects, children first.
@@ -121,6 +125,17 @@ pub const ERASE: &[(&str, &str)] = &[
     ("platform_phone_runs", OWNER_USER),
     ("platform_idempotency", "key_id IN (SELECT id FROM api_keys WHERE user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
     ("api_keys", "user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
+    // Sign in with Allternit (migration 150). The person's grants on any app
+    // (tokens and spend cascade), then their own apps (redirect URIs cascade),
+    // before platform_projects. Test-user rows go by account or address; the
+    // address is read before SCRUB clears it.
+    // Tokens cascade from their grant; listed so the actor check sees replaced_by
+    // (a token id, not a person) as handled.
+    ("oauth_tokens", "grant_id IN (SELECT id FROM oauth_grants WHERE user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)))"),
+    ("oauth_grants", "user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
+    ("oauth_auth_requests", "user_id = $1 OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
+    ("oauth_app_test_users", "user_id = $1 OR email IN (SELECT lower(email) FROM users WHERE id = $1) OR app_id IN (SELECT id FROM oauth_apps WHERE owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1))"),
+    ("oauth_apps", "owner_user_id = $1 OR project_id IN (SELECT id FROM platform_projects WHERE owner_user_id = $1)"),
     ("platform_agents", PROJECT),
     ("platform_accounts", PROJECT),
     ("platform_projects", OWNER_USER),
@@ -269,6 +284,7 @@ const SCRUB: &[&str] = &[
     "UPDATE task_assignments SET assigned_by = NULL WHERE assigned_by = $1",
     "UPDATE audit_log SET user_email = NULL, ip_address = NULL, user_agent = NULL WHERE user_id = $1",
     "UPDATE audit_logs SET ip_address = NULL WHERE user_id = $1",
+    "UPDATE oauth_audit_log SET actor = 'deleted', ip = NULL, ua = NULL WHERE actor = $1",
     // The user as a participant in someone else's meeting: the owner keeps the
     // record of what was said, without the link to the account or the address.
     "UPDATE meeting_participants SET user_id = NULL, email = NULL WHERE user_id = $1",
@@ -287,6 +303,11 @@ const REVOKE: &[&str] = &[
     // Calendar and Zoom tokens stop working at once.
     "DELETE FROM calendar_connections WHERE user_id = $1",
     "DELETE FROM zoom_connections WHERE user_id = $1",
+    // A linked Claude organization stops billing at once: the sealed refresh
+    // token goes and the link reads disconnected. The row (connection and
+    // profile ids) stays for the remote revoke until ERASE deletes it.
+    "UPDATE anthropic_connections SET status = 'disconnected', refresh_token_ciphertext = NULL, refresh_token_nonce = NULL WHERE user_id = $1",
+    "DELETE FROM anthropic_link_requests WHERE user_id = $1",
     "UPDATE runtime_devices SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND revoked_at IS NULL",
 ];
 
@@ -445,6 +466,10 @@ async fn release_computers(state: &ApiState, user_id: &str) -> Result<(), ApiErr
     crate::services::brain_runners::shared(&state.db).destroy(user_id).await?;
     // The Copilot grant is given back to GitHub (best effort; ERASE deletes the row).
     crate::services::copilot::revoke_for_erase(state, user_id).await;
+    // The linked Claude organization is revoked at auth.claude.com by its
+    // connection id (best effort, never fails the erase). REVOKE already
+    // disconnected it locally; ERASE deletes its rows.
+    crate::services::claude_link::revoke_for_erase(state, user_id).await;
     crate::routes::hosted_runtimes::destroy_all_for_user(state, user_id).await?;
     let phones: Vec<String> =
         sqlx::query_scalar("SELECT id FROM cloud_phones WHERE user_id = $1 AND status <> 'deleted'")
@@ -970,6 +995,67 @@ mod tests {
             sqlx::query(step).bind("user_gone").execute(&db).await.unwrap();
             assert_eq!(count(&db, "SELECT count(*) FROM thread_shares WHERE user_id = 'user_gone'").await, 0, "{step}");
             assert_eq!(count(&db, "SELECT count(*) FROM thread_shares WHERE user_id = 'user_stays'").await, 1, "{step}");
+        }
+    }
+
+    /// A linked Claude organization stops billing the moment erase starts
+    /// (REVOKE: disconnected, sealed refresh token gone, pending sign-ins
+    /// gone) and its rows are gone after ERASE; someone else's link stays.
+    #[tokio::test]
+    async fn erase_disconnects_then_removes_the_claude_link() {
+        let db = crate::routes::test_support::test_pool().await;
+        // 151 widens inference_usage; a minimal one stands in for 007.
+        sqlx::raw_sql("CREATE TABLE IF NOT EXISTS inference_usage (id TEXT PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT now())")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::raw_sql(&include_str!("../../migrations_pg/151_anthropic_links.sql").replace("public.", ""))
+            .execute(&db)
+            .await
+            .expect("151 applies");
+        for user in ["user_gone", "user_stays"] {
+            sqlx::query("INSERT INTO anthropic_link_profiles (user_id, user_profile_id) VALUES ($1, 'uprof_' || $1::text)")
+                .bind(user)
+                .execute(&db)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO anthropic_connections (user_id, user_profile_id, connection_id, refresh_token_ciphertext, refresh_token_nonce)
+                 VALUES ($1, 'uprof_' || $1::text, 'ocon_' || $1::text, '\\x01'::bytea, '\\x02'::bytea)",
+            )
+            .bind(user)
+            .execute(&db)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO anthropic_link_requests (state, user_id, code_verifier_ciphertext, code_verifier_nonce)
+                 VALUES ('st_' || $1::text, $1, '\\x01'::bytea, '\\x02'::bytea)",
+            )
+            .bind(user)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+
+        let revoke: Vec<&str> = REVOKE.iter().copied().filter(|s| s.contains("anthropic_")).collect();
+        assert_eq!(revoke.len(), 2);
+        run_all(&db, &revoke, "user_gone").await.unwrap();
+        for (sql, want) in [
+            ("SELECT count(*) FROM anthropic_connections WHERE user_id = 'user_gone' AND status = 'disconnected' \
+              AND refresh_token_ciphertext IS NULL AND connection_id = 'ocon_user_gone'", 1),
+            ("SELECT count(*) FROM anthropic_link_requests WHERE user_id = 'user_gone'", 0),
+            ("SELECT count(*) FROM anthropic_connections WHERE user_id = 'user_stays' AND status = 'linked' \
+              AND refresh_token_ciphertext IS NOT NULL", 1),
+        ] {
+            assert_eq!(count(&db, sql).await, want, "{sql}");
+        }
+
+        for (table, condition) in ERASE.iter().filter(|(t, _)| t.starts_with("anthropic_")) {
+            sqlx::query(&format!("DELETE FROM {table} WHERE {condition}")).bind("user_gone").execute(&db).await.unwrap();
+        }
+        for table in ["anthropic_connections", "anthropic_link_requests", "anthropic_link_profiles"] {
+            assert_eq!(count(&db, &format!("SELECT count(*) FROM {table} WHERE user_id = 'user_gone'")).await, 0, "{table}");
+            assert_eq!(count(&db, &format!("SELECT count(*) FROM {table} WHERE user_id = 'user_stays'")).await, 1, "{table}");
         }
     }
 }

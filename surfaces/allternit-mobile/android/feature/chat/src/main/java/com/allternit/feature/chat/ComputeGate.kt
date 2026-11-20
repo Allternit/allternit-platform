@@ -47,8 +47,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DOWNLOAD_URL = "https://www.allternit.com/download"
-private const val PLANS_URL = "https://allternit.com/pricing"
-private const val CREDITS_URL = "https://ai.allternit.com/settings/billing"
 
 /**
  * The no-computer state in a chat (iOS ComputeGateView, and RuntimeRelayError.unreachable for a
@@ -132,7 +130,7 @@ internal fun ComputeGateCard(reason: ComputeGateReason, backend: ChatBackend, on
                                 copyToClipboard(context, DOWNLOAD_URL)
                                 copied = true
                             }
-                            CapsuleButton("Share", icon = R.drawable.chat_share) { shareText(context, DOWNLOAD_URL) }
+                            CapsuleButton("Share", icon = com.allternit.core.design.R.drawable.ph_export) { shareText(context, DOWNLOAD_URL) }
                         }
                         Text("2. Open Allternit and approve the link it opens in your browser.", color = c.textPrimary, fontSize = 13.sp)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -142,8 +140,20 @@ internal fun ComputeGateCard(reason: ComputeGateReason, backend: ChatBackend, on
                     }
                 }
             }
-            GateOption(title = "Subscribe", cost = "Hosted computers run on Allternit servers. They sleep when idle.", button = "See plans", testTag = "chatComputeGatePlans", onClick = { openUrl(context, PLANS_URL) })
-            GateOption(title = "Buy credits", cost = "Manage your plan on the web.", button = "Buy credits", testTag = "chatComputeGateCredits", onClick = { openUrl(context, CREDITS_URL) })
+            // iOS ComputeGateView card C: plans and credits open the store sheet where Google Play sells them (wave H1).
+            // A Play app may not link out to buy on the web, so with Google off these two options are hidden.
+            var storeSheet by remember { mutableStateOf<com.allternit.feature.billing.StoreKind?>(null) }
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                com.allternit.feature.billing.PlayPurchases.start(context)
+                com.allternit.feature.billing.PlayPurchases.loadCatalog()
+            }
+            if (com.allternit.feature.billing.PlayPurchases.showsStoreButtons(com.allternit.feature.billing.StoreKind.Plan)) {
+                GateOption(title = "Subscribe", cost = "Hosted computers run on Allternit servers. They sleep when idle.", button = "See plans", testTag = "chatComputeGatePlans", onClick = { storeSheet = com.allternit.feature.billing.StoreKind.Plan })
+            }
+            if (com.allternit.feature.billing.PlayPurchases.showsStoreButtons(com.allternit.feature.billing.StoreKind.Pack)) {
+                GateOption(title = "Buy credits", cost = "Credit packs through Google Play.", button = "Buy credits", testTag = "chatComputeGateCredits", onClick = { storeSheet = com.allternit.feature.billing.StoreKind.Pack })
+            }
+            storeSheet?.let { kind -> com.allternit.feature.billing.StorePurchaseSheet(kind) { storeSheet = null } }
             Text(
                 "Already have one? Pick a computer",
                 color = c.accentPrimary,

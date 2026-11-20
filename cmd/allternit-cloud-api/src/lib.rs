@@ -65,6 +65,43 @@ pub fn cors_origin_allowed(origin: &str, path: &str, configured: &[String]) -> b
             && routes::freeweights::is_freeweights_cors_path(path))
 }
 
+/// Sign in with Allternit endpoints a browser-only public app (PKCE) calls
+/// from its own origin (contract A1, "CORS:"). They read no cookies.
+pub const OAUTH_PUBLIC_CORS_PATHS: [&str; 4] = [
+    "/oauth2/token",
+    "/oauth2/revoke",
+    "/oauth2/userinfo",
+    "/.well-known/oauth-authorization-server",
+];
+
+/// `Access-Control-Allow-Origin: *` without credentials for
+/// [`OAUTH_PUBLIC_CORS_PATHS`]; every other path passes through untouched to
+/// the global CORS layer. It wraps that layer because the global layer answers
+/// every OPTIONS request itself and sets `allow-credentials` on every
+/// response, so a layer on the route could neither see a preflight nor drop
+/// the credentials header.
+async fn oauth_public_cors(request: axum::extract::Request, next: axum_middleware::Next) -> axum::response::Response {
+    use axum::{http::HeaderValue, response::IntoResponse};
+    if !OAUTH_PUBLIC_CORS_PATHS.contains(&request.uri().path()) {
+        return next.run(request).await;
+    }
+    let preflight = request.method() == Method::OPTIONS;
+    let mut response = if preflight {
+        axum::http::StatusCode::NO_CONTENT.into_response()
+    } else {
+        next.run(request).await
+    };
+    let headers = response.headers_mut();
+    headers.remove(header::ACCESS_CONTROL_ALLOW_CREDENTIALS);
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    if preflight {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET, POST, OPTIONS"));
+        headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("authorization, content-type"));
+        headers.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("3600"));
+    }
+    response
+}
+
 /// API application state
 pub struct ApiState {
     pub db: sqlx::PgPool,
@@ -387,6 +424,18 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // ALLTERNIT_IDJAG_ES256_PEM.
         .merge(routes::managed_auth::routes())
         .merge(routes::edge_auth::routes())
+        // Link your Claude organization: our issuer's JWKS and discovery
+        // (public; 503 without ALLTERNIT_ANTHROPIC_CLIENT_ES256_PEM).
+        .merge(routes::anthropic_client_issuer::routes())
+        // Link your Claude organization: start/status/unlink check the Clerk session
+        // in the handler; the callback has none (single-use state). 503 until
+        // ALLTERNIT_CLAUDE_LINK=1 and the B1 env are set.
+        .merge(routes::claude_link::routes())
+        // Sign in with Allternit: RFC 8414 metadata, /oauth2/authorize (public; never
+        // redirects to an unregistered URI) and the consent API (Clerk session only).
+        .merge(routes::oauth_server::routes())
+        // The person's grants (Clerk session only) and the admin app review (admin session).
+        .merge(routes::oauth_grants::routes())
         // The event registry in plain words (signed-in users; Settings › Connected apps).
         .merge(routes::allternit_events::routes())
         // Runtimes forward their bot_events ledger into the event backbone (relay-signature auth in the handler).
@@ -784,6 +833,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .fallback(routes::data_plane_fallback::fallback)
         .layer(DefaultBodyLimit::max(max_body_size))
         .layer(cors)
+        // Outside the global CORS layer: the OAuth token endpoints answer any origin.
+        .layer(axum_middleware::from_fn(oauth_public_cors))
         .layer(axum::middleware::from_fn_with_state(
             state.metrics_state.clone(),
             crate::middleware::metrics::metrics_middleware,

@@ -313,7 +313,7 @@ internal fun SetupGraph(state: SetupState, orb: ThinkingOrbState, orbWord: Strin
                 ThinkingOrb(state = orb, size = ThinkingOrbSize.Avatar, label = "A:// is $orbWord", modifier = Modifier.popIn(0))
             }
             Box(Modifier.centerAt(center.x, center.y + 52f)) {
-                Text("A:// · ${orbWord.uppercase()}", style = mono(10.5.sp, FontWeight.SemiBold), color = c.mut)
+                com.allternit.core.design.BotNameText("A:// · ${orbWord.uppercase()}", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = c.mut)
             }
         }
     }

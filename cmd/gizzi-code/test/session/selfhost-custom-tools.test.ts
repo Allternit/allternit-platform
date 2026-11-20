@@ -260,9 +260,10 @@ describe("self-hosted custom tools", () => {
       expect(refused.code).toBe("custom_tool_conflict")
       expect(refused.conflict).toEqual({ tool: "mcp__modern__echo", clashes_with: "mcp:modern:echo" })
 
-      // A name the MCP server does not hold still goes through, and the MCP tool is offered beside it.
+      // A name the MCP server does not hold still goes through. MCP tools are a deferred family
+      // (primitives/tool-families.ts): tool_search is offered to load them, not their schemas.
       await send(s.id, [LOOKUP])
-      expect(Object.keys(toolLists[0])).toEqual(expect.arrayContaining(["lookup_order", "mcp__modern__echo"]))
+      expect(Object.keys(toolLists[0])).toEqual(expect.arrayContaining(["lookup_order", "tool_search"]))
     }, MCP_CONFIG)
   }, 60_000)
 

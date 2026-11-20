@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.contentOrNull
 
 /**
@@ -31,6 +32,10 @@ internal data class PickerModel(
     val hidden: Boolean,
     val rank: Long?,
     val thinking: ModelThinking?,
+    /** Cloud catalog rows only (iOS SetupModelRow): the serving provider and the per-1M prices. */
+    val cloudProvider: String? = null,
+    val inputPer1mUsd: Double? = null,
+    val outputPer1mUsd: Double? = null,
 )
 
 private fun RuntimeModel.toPicker() = PickerModel(
@@ -63,7 +68,27 @@ internal class ModelStore(context: Context) {
         private set
 
     /** The computer's catalog, or with no computer the Allternit Cloud catalog (iOS chatModels). */
-    val chatModels: List<PickerModel> get() = models.ifEmpty { cloudModels }
+    val chatModels: List<PickerModel> get() = models.ifEmpty { cloudModels } + phoneModels
+
+    /** Gap run GS-D: the models downloaded to this phone (iOS "On this iPhone" group), `ondevice/<id>#<quant>`. */
+    var phoneModels by mutableStateOf<List<PickerModel>>(emptyList())
+        private set
+
+    init {
+        com.allternit.ondevice.PhoneModels.init(context)
+    }
+
+    /** Reads the installed list from disk (no native code). */
+    suspend fun refreshPhone() {
+        phoneModels = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.allternit.ondevice.PhoneModels.installed().map { m ->
+                PickerModel(
+                    id = com.allternit.ondevice.PhoneModels.chatId(m.key), name = "${m.name} ${m.quant}", provider = "ondevice",
+                    description = "On this phone · works offline", isDefault = false, hidden = false, rank = null, thinking = null,
+                )
+            }
+        }
+    }
 
     val selected: PickerModel? get() = chatModels.firstOrNull { it.id == selectedId }
 
@@ -103,6 +128,7 @@ internal class ModelStore(context: Context) {
      * catalog failure is only shown when there is nothing to pick from.
      */
     suspend fun load(force: Boolean = false) {
+        refreshPhone()
         if (isLoading) return
         if (!force && models.isNotEmpty()) return
         isLoading = true
@@ -114,7 +140,7 @@ internal class ModelStore(context: Context) {
                     models = r.value.map { it.toPicker() }
                     // A persisted id the computer catalog no longer lists is a dead end.
                     val id = selectedId
-                    if (id != null && models.isNotEmpty() && models.none { it.id == id }) select(null)
+                    if (id != null && !id.startsWith(com.allternit.ondevice.PhoneModels.CHAT_PREFIX) && models.isNotEmpty() && models.none { it.id == id }) select(null)
                 }
                 is ApiResult.HttpError -> if (!isNoComputer(r) && r.status != 503) {
                     loadError = statusSentence(r.status) ?: FriendlyErrorMessage.from(r.message ?: "", "load models")
@@ -146,6 +172,9 @@ internal class ModelStore(context: Context) {
                 id = CLOUD_PREFIX + alias, name = name, provider = "allternit",
                 description = "Allternit Cloud · no computer needed", isDefault = bool("default"),
                 hidden = false, rank = null, thinking = null,
+                cloudProvider = str("provider"),
+                inputPer1mUsd = (o["pricing"] as? JsonObject)?.get("input_per_1m_usd")?.let { (it as? JsonPrimitive)?.doubleOrNull },
+                outputPer1mUsd = (o["pricing"] as? JsonObject)?.get("output_per_1m_usd")?.let { (it as? JsonPrimitive)?.doubleOrNull },
             )
         }
         if (rows.isNotEmpty()) cloudModels = rows

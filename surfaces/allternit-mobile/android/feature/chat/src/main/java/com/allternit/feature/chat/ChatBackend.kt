@@ -169,6 +169,16 @@ class ChatBackend(
     suspend fun rejectQuestion(id: String): ApiResult<Unit> =
         ApiCall.executeUnit(okHttp, json, ApiCall.request("POST", v1("questions", id, "reject"), "{}"))
 
+    // MARK: Session tasks (iOS SessionTasksClient, wave E run tree)
+
+    /** `GET agent-sessions/:id/tasks`: the gizzi tasks (subagents) of a session. */
+    suspend fun sessionTasks(sessionId: String): ApiResult<kotlinx.serialization.json.JsonElement> =
+        ApiCall.execute(okHttp, json, ApiCall.request("GET", v1("agent-sessions", sessionId, "tasks"), null), kotlinx.serialization.json.JsonElement.serializer())
+
+    /** `POST agent-sessions/:id/background-tasks/:task/(cancel|interrupt|resume)`. */
+    suspend fun backgroundTask(sessionId: String, taskId: String, action: String, jsonBody: String = "{}"): ApiResult<Unit> =
+        ApiCall.executeUnit(okHttp, json, ApiCall.request("POST", v1("agent-sessions", sessionId, "background-tasks", taskId, action), jsonBody))
+
     // MARK: Runtime REST (allternit-api on the user's computer)
 
     /**
@@ -179,8 +189,9 @@ class ChatBackend(
      * 503 `runtime_warming` waits and retries for up to about 45 s like iOS; an offline
      * computer is marked unreachable for the next pick.
      */
-    suspend fun runtimeJson(method: String, path: String, jsonBody: String? = null): RuntimeCall {
-        val runtimeId = when (val pick = relay.resolve()) {
+    suspend fun runtimeJson(method: String, path: String, jsonBody: String? = null, targetRuntimeId: String? = null): RuntimeCall {
+        // A notification action acts on the computer the push names (iOS NotificationActions runtimeId), not the picked one.
+        val runtimeId = if (!targetRuntimeId.isNullOrBlank()) targetRuntimeId else when (val pick = relay.resolve()) {
             is RelayPick.Computer -> pick.runtimeId
             RelayPick.NoComputer -> return RuntimeCall.NoComputer
             RelayPick.Unreachable -> return RuntimeCall.Failed(ChatErrors.UNREACHABLE)
@@ -241,6 +252,121 @@ class ChatBackend(
             runCatching {
                 okHttp.newCall(request).execute().use { it.code to (it.body?.bytes() ?: ByteArray(0)) }
             }.getOrNull()
+        }
+    }
+
+    // MARK: Runtime sockets and streams (Code mode: the shell terminal and the Terminal-bot panes)
+
+    /**
+     * Opens a WebSocket to [path] on the user's computer through the relay (iOS
+     * RuntimeRelayClient.webSocket): `POST runtime-devices/:id/socket-ticket {path}`, then the
+     * cloud's `/socket?ticket=`. Frames before the tunnel's `allternit_socket_ready` sentinel are
+     * dropped, as on the PWA; [onText] / [onBinary] then get every frame and [onEnd] the end.
+     */
+    suspend fun openRuntimeSocket(
+        path: String,
+        onText: (String) -> Unit,
+        onBinary: (ByteArray) -> Unit,
+        onEnd: () -> Unit,
+    ): RuntimeSocketOpen {
+        val runtimeId = when (val pick = relay.resolve()) {
+            is RelayPick.Computer -> pick.runtimeId
+            RelayPick.NoComputer -> return RuntimeSocketOpen.NoComputer
+            RelayPick.Unreachable -> return RuntimeSocketOpen.Failed(ChatErrors.UNREACHABLE)
+            is RelayPick.Failed -> return if (pick.gate) RuntimeSocketOpen.NoComputer else RuntimeSocketOpen.Failed(pick.message)
+        }
+        val ticketUrl = config.cloudBaseUrl.newBuilder()
+            .addPathSegments("api/v1/runtime-devices").addPathSegment(runtimeId).addPathSegment("socket-ticket").build()
+        val ticketBody = buildJsonObject { put("path", path) }.toString()
+        val ticket = when (val r = ApiCall.execute(okHttp, json, ApiCall.request("POST", ticketUrl, ticketBody), JsonObject.serializer())) {
+            is ApiResult.Ok -> (r.value["ticket"] as? JsonPrimitive)?.content.orEmpty()
+            is ApiResult.HttpError -> {
+                if (ChatErrors.isComputeGate(r.status, r.code, r.message)) return RuntimeSocketOpen.NoComputer
+                return RuntimeSocketOpen.Failed(ChatErrors.statusSentence(r.status) ?: ChatErrors.UNREACHABLE)
+            }
+            else -> return RuntimeSocketOpen.Failed(ChatErrors.UNREACHABLE)
+        }
+        if (ticket.isEmpty()) return RuntimeSocketOpen.Failed(ChatErrors.UNREACHABLE)
+        val socketUrl = config.cloudBaseUrl.newBuilder()
+            .addPathSegments("api/v1/runtime-devices").addPathSegment(runtimeId).addPathSegment("socket")
+            .addQueryParameter("ticket", ticket).build()
+        val ready = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        var tunnelReady = false
+        val socket = okHttp.newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).pingInterval(25, TimeUnit.SECONDS).build()
+            .newWebSocket(
+                Request.Builder().url(socketUrl).build(),
+                object : okhttp3.WebSocketListener() {
+                    override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+                        if (!tunnelReady) {
+                            if (text.contains("allternit_socket_ready")) {
+                                tunnelReady = true
+                                ready.complete(true)
+                            }
+                            return
+                        }
+                        onText(text)
+                    }
+                    override fun onMessage(webSocket: okhttp3.WebSocket, bytes: okio.ByteString) {
+                        if (tunnelReady) onBinary(bytes.toByteArray())
+                    }
+                    override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                        ready.complete(false)
+                        onEnd()
+                    }
+                    override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
+                        ready.complete(false)
+                        onEnd()
+                    }
+                },
+            )
+        val ok = kotlinx.coroutines.withTimeoutOrNull(20_000L) { ready.await() } == true
+        if (!ok) {
+            socket.cancel()
+            relay.markUnreachable(runtimeId)
+            return RuntimeSocketOpen.Failed(ChatErrors.UNREACHABLE)
+        }
+        relay.markReachable(runtimeId)
+        return RuntimeSocketOpen.Opened(socket)
+    }
+
+    /**
+     * A Server-Sent-Events GET on the user's computer through the relay (iOS
+     * FactoryPaneClient.screenStream). Emits each event with its data; throws
+     * [NoComputerException] or [IllegalStateException] (a friendly sentence) when it can't connect.
+     */
+    fun runtimeEvents(path: String): Flow<RuntimeEvent> = kotlinx.coroutines.flow.flow {
+        val runtimeId = when (val pick = relay.resolve()) {
+            is RelayPick.Computer -> pick.runtimeId
+            RelayPick.NoComputer -> throw NoComputerException()
+            RelayPick.Unreachable -> throw IllegalStateException(ChatErrors.UNREACHABLE)
+            is RelayPick.Failed -> if (pick.gate) throw NoComputerException() else throw IllegalStateException(pick.message)
+        }
+        val envelope = buildJsonObject {
+            put("method", "GET")
+            put("path", path)
+            put("headers", buildJsonObject { put("accept", "text/event-stream") })
+            put("bodyEncoding", "utf8")
+        }.toString()
+        val request = ApiCall.request("POST", relay.proxyUrl(runtimeId), envelope, accept = "text/event-stream")
+        val client = okHttp.newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).build()
+        val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { client.newCall(request).execute() }
+        response.use { r ->
+            if (!r.isSuccessful) {
+                if (ChatErrors.isComputeGate(r.code, null, null)) throw NoComputerException()
+                throw IllegalStateException(ChatErrors.statusSentence(r.code) ?: ChatErrors.UNREACHABLE)
+            }
+            val source = r.body?.source() ?: throw IllegalStateException(ChatErrors.UNREACHABLE)
+            var event = "message"
+            while (true) {
+                val line = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { source.readUtf8Line() } ?: break
+                when {
+                    line.startsWith("event:") -> event = line.removePrefix("event:").trim()
+                    line.startsWith("data:") -> {
+                        emit(RuntimeEvent(event, line.removePrefix("data:").trim()))
+                    }
+                    line.isEmpty() -> event = "message"
+                }
+            }
         }
     }
 
@@ -332,3 +458,16 @@ sealed interface RuntimeCall {
 
 private const val WARM_TRIES = 15
 private const val WARM_DELAY_MS = 3_000L
+
+/** The outcome of [ChatBackend.openRuntimeSocket]. */
+sealed interface RuntimeSocketOpen {
+    data class Opened(val socket: okhttp3.WebSocket) : RuntimeSocketOpen
+    data object NoComputer : RuntimeSocketOpen
+    data class Failed(val message: String) : RuntimeSocketOpen
+}
+
+/** One Server-Sent Event from [ChatBackend.runtimeEvents]. */
+data class RuntimeEvent(val event: String, val data: String)
+
+/** Thrown by [ChatBackend.runtimeEvents] when the account has no computer (the 428 / compute_required state). */
+class NoComputerException : Exception("No computer")

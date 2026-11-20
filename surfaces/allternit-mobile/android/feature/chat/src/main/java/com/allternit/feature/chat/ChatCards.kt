@@ -37,6 +37,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +58,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -175,7 +183,7 @@ internal fun ChatErrorCard(error: ChatError, onChooseModel: () -> Unit, onRetry:
         Text(error.detail, color = c.textSecondary, fontSize = 12.sp, lineHeight = 16.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (error.isModelError) CapsuleButton("Choose a model", icon = DesignR.drawable.ph_cpu, onClick = onChooseModel)
-            CapsuleButton("Retry", icon = R.drawable.chat_retry, primary = !error.isModelError, onClick = onRetry)
+            CapsuleButton("Retry", icon = com.allternit.core.design.R.drawable.ph_arrow_clockwise, primary = !error.isModelError, onClick = onRetry)
         }
         Row(
             Modifier.clickable(role = Role.Button) { details = !details },
@@ -183,7 +191,7 @@ internal fun ChatErrorCard(error: ChatError, onChooseModel: () -> Unit, onRetry:
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text("Details", color = c.textSecondary, fontSize = 11.sp)
-            Icon(painterResource(if (details) R.drawable.chat_caret_up else R.drawable.chat_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
+            Icon(painterResource(if (details) com.allternit.core.design.R.drawable.ph_caret_up else com.allternit.core.design.R.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
         }
         if (details) Text(error.raw, color = c.textSecondary, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
     }
@@ -192,14 +200,14 @@ internal fun ChatErrorCard(error: ChatError, onChooseModel: () -> Unit, onRetry:
 // MARK: - Permission ask (iOS PermissionAskView)
 
 @Composable
-internal fun PermissionAskCard(ask: PermissionAsk, onReply: (String, (String) -> Unit) -> Unit) {
+fun PermissionAskCard(ask: PermissionAsk, onReply: (String, (String) -> Unit) -> Unit) {
     val c = AllternitTheme.colors
     var problem by remember(ask.id) { mutableStateOf<String?>(null) }
     var sending by remember(ask.id) { mutableStateOf(false) }
     if (ask.answered != null) return
     CardChrome {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(painterResource(R.drawable.chat_hand), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(12.dp))
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_hand), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(12.dp))
             Text("Waiting for approval", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
         Text(ask.title, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -226,13 +234,13 @@ internal fun PermissionAskCard(ask: PermissionAsk, onReply: (String, (String) ->
 // MARK: - Question (iOS QuestionCardView)
 
 @Composable
-internal fun QuestionCard(ask: QuestionAsk, onAnswer: (List<List<String>>, (String) -> Unit) -> Unit, onSkip: ((String) -> Unit) -> Unit) {
+fun QuestionCard(ask: QuestionAsk, onAnswer: (List<List<String>>, (String) -> Unit) -> Unit, onSkip: ((String) -> Unit) -> Unit) {
     val c = AllternitTheme.colors
     if (ask.closed) return
     val picks = remember(ask.id) { mutableStateListOf<Set<String>>().apply { repeat(ask.questions.size) { add(emptySet()) } } }
     var problem by remember(ask.id) { mutableStateOf<String?>(null) }
     CardChrome {
-        CardHeader(R.drawable.chat_question, "Your agent is asking")
+        CardHeader(com.allternit.core.design.R.drawable.ph_question, "Your agent is asking")
         ask.questions.forEachIndexed { index, q ->
             q.header?.takeIf { it.isNotBlank() }?.let { Text(it, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
             Text(q.question, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -302,9 +310,14 @@ internal object ToolDescriber {
 internal fun formatDuration(ms: Long): String = if (ms < 1000) "${ms}ms" else String.format(java.util.Locale.US, "%.1fs", ms / 1000.0)
 
 @Composable
-internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, waiting: Boolean) {
+internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, waiting: Boolean, backend: ChatBackend? = null) {
     val c = AllternitTheme.colors
     var open by remember { mutableStateOf(false) }
+    // Wave E: a reply that handed work to other agents opens the run tree (iOS AgentRunTreeSheet from MessageRow).
+    val agentSteps = calls.count { isAgentStep(it) }
+    var treeOpen by remember { mutableStateOf(false) }
+    val treeSession = LocalRunTreeSession.current
+    if (treeOpen) AgentRunTreeSheet(calls, treeSession, streaming, backend, onDismiss = { treeOpen = false })
     val failed = calls.count { it.state == ToolState.Failed }
     val n = calls.size
     val noun = if (n == 1) "tool" else "tools"
@@ -330,7 +343,11 @@ internal fun ToolCallsRail(calls: List<ToolCallRecord>, streaming: Boolean, wait
         ) {
             if (streaming) com.allternit.core.design.ThinkingOrb(size = com.allternit.core.design.ThinkingOrbSize.Inline, state = com.allternit.core.design.ThinkingOrbState.forToolName(calls.lastOrNull()?.toolName ?: ""))
             Text(header, color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Icon(painterResource(if (open) R.drawable.chat_caret_up else R.drawable.chat_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
+            Icon(painterResource(if (open) com.allternit.core.design.R.drawable.ph_caret_up else com.allternit.core.design.R.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(9.dp))
+            if (agentSteps > 0) Text(
+                "· $agentSteps ${if (agentSteps == 1) "agent" else "agents"}", color = c.accentPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.testTag("toolRailAgents").clickable(role = Role.Button, onClickLabel = "Show the agents") { treeOpen = true },
+            )
         }
         if (open) {
             calls.forEach { call ->
@@ -415,7 +432,7 @@ internal object SettingsChanges {
 internal fun SettingsChangeCard(changes: List<SettingsChange>, onOpenSettings: () -> Unit) {
     val c = AllternitTheme.colors
     CardChrome(Modifier.semantics(mergeDescendants = true) { contentDescription = "Settings changes" }) {
-        CardHeader(R.drawable.chat_gear, if (changes.size == 1) "Settings change" else "Settings changes")
+        CardHeader(com.allternit.core.design.R.drawable.ph_gear, if (changes.size == 1) "Settings change" else "Settings changes")
         changes.forEachIndexed { index, ch ->
             if (index > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -442,7 +459,7 @@ internal fun SettingsChangeCard(changes: List<SettingsChange>, onOpenSettings: (
             }
             note?.let { Text(it, color = c.textSecondary, fontSize = 12.sp) }
             if (ch.outcome == "locked" || ch.outcome == "needs_confirmation" || (ch.outcome == "apply_on_device" && ch.scope != "runtime")) {
-                CapsuleButton("Open Settings", icon = R.drawable.chat_gear, label = "Open Settings for ${ch.label}", onClick = onOpenSettings)
+                CapsuleButton("Open Settings", icon = com.allternit.core.design.R.drawable.ph_gear, label = "Open Settings for ${ch.label}", onClick = onOpenSettings)
             }
         }
     }
@@ -480,7 +497,7 @@ internal fun ConnectSuggestCard(s: ConnectorSuggestion, onConnect: (String) -> U
     val c = AllternitTheme.colors
     val title = if (s.connectors.size == 1) "Suggested connection" else "Suggested connections"
     CardChrome(Modifier.semantics(mergeDescendants = false) { contentDescription = listOfNotNull("Suggested connections", s.reason).joinToString(". ") }) {
-        CardHeader(R.drawable.chat_plugs, title)
+        CardHeader(com.allternit.core.design.R.drawable.ph_plugs, title)
         s.reason?.let { Text(it, color = c.textPrimary, fontSize = 15.sp) }
         s.connectors.forEachIndexed { index, (id, name, group) ->
             if (index > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
@@ -609,7 +626,7 @@ internal fun UploadFileCard(f: RunFile, backend: ChatBackend) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(painterResource(R.drawable.chat_file), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
+        Icon(painterResource(com.allternit.core.design.R.drawable.ph_file), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
         Column(Modifier.weight(1f)) {
             Text(f.name, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
@@ -844,3 +861,40 @@ internal fun splitAnswer(text: String, streaming: Boolean): List<AnswerPiece> {
 internal fun Spacer8() = Spacer(Modifier.height(8.dp))
 
 internal val CardMaxWidth: Dp = 520.dp
+
+
+/** Set by the shell: registers this phone for push once the notifications permission is granted (AllternitPush.registerIfAuthorized). */
+object ChatHooks { var onNotificationsGranted: (() -> Unit)? = null }
+
+/**
+ * The empty-chat notifications card (iOS: empty-chat card, then PermissionPrimingSheet, then the system dialog). Shown while
+ * notifications are off and the person hasn't said "Not now"; Turn on notifications runs the priming trigger.
+ */
+@androidx.compose.runtime.Composable
+fun NotificationsCard() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val c = com.allternit.core.design.AllternitTheme.colors
+    val prefs = remember { context.getSharedPreferences("allternit_shell", android.content.Context.MODE_PRIVATE) }
+    var granted by remember { mutableStateOf(com.allternit.feature.chat.voice.AppPermission.Notifications.isGranted(context)) }
+    var dismissed by remember { mutableStateOf(prefs.getBoolean("notificationsCardDismissed", false)) }
+    val ask = com.allternit.feature.chat.voice.rememberPrimedPermission(com.allternit.feature.chat.voice.AppPermission.Notifications) { ok ->
+        granted = ok
+        if (ok) ChatHooks.onNotificationsGranted?.invoke()
+    }
+    if (granted || dismissed) return
+    androidx.compose.foundation.layout.Column(
+        androidx.compose.ui.Modifier.padding(top = 20.dp, start = 24.dp, end = 24.dp).fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).background(c.fillNeutral).padding(16.dp)
+            .testTag("chatNotificationsCard"),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Let your bots reach you?", color = c.textPrimary, fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+        Text("Know when a task finishes or a bot needs your approval. No marketing messages.", color = c.textSecondary, fontSize = 13.sp)
+        androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp)) {
+            Text("Turn on notifications", color = c.accentPrimary, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                modifier = androidx.compose.ui.Modifier.heightIn(min = 44.dp).clickable { ask() }.padding(vertical = 12.dp).testTag("chatNotificationsTurnOn"))
+            Text("Not now", color = c.textSecondary, fontSize = 14.sp,
+                modifier = androidx.compose.ui.Modifier.heightIn(min = 44.dp).clickable { dismissed = true; prefs.edit().putBoolean("notificationsCardDismissed", true).apply() }.padding(vertical = 12.dp).testTag("chatNotificationsNotNow"))
+        }
+    }
+}

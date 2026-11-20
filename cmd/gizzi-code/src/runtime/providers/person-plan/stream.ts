@@ -103,12 +103,13 @@ export function chatgptErrorText(code: string | undefined, status?: number, deta
 }
 
 /** Error code + detail from a non-2xx Responses reply (`{error:{code,message}}` or `{detail}`). */
-export function readErrorBody(text: string): { code?: string; message?: string } {
+export function readErrorBody(text: string): { code?: string; message?: string; fallbacks?: string[] } {
   try {
-    const body = JSON.parse(text) as { error?: unknown; detail?: unknown; message?: unknown }
+    const body = JSON.parse(text) as { error?: unknown; detail?: unknown; message?: unknown; fallbacks?: unknown }
     if (body.error && typeof body.error === "object") {
       const e = body.error as { code?: unknown; message?: unknown; type?: unknown }
       return {
+        fallbacks: stringList(body.fallbacks),
         code: typeof e.code === "string" ? e.code : typeof e.type === "string" ? e.type : undefined,
         message: typeof e.message === "string" ? e.message : undefined,
       }
@@ -180,6 +181,10 @@ export function chatCompletionsBody(model: string, messages: ChatMessage[]): Rec
   }
 }
 
+function stringList(v: unknown): string[] | undefined {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined
+}
+
 const PLAN_ERROR_TEXT: Record<string, string> = {
   plan_person_only: "Plans answer only messages you send yourself in chat, while signed in as yourself.",
   plan_rate: "Too many plan messages in the last few minutes. Wait a moment and try again.",
@@ -192,8 +197,21 @@ const PLAN_ERROR_TEXT: Record<string, string> = {
   vendor_limited: "This plan isn't active or its limit is used up. Check the subscription, or pick another brain.",
 }
 
+const CLAUDE_LINK_TEXT: Record<string, string> = {
+  claude_link_spend_limit: "Your Claude organization has reached its spend limit.",
+  claude_link_disconnected: "Your Claude organization link is disconnected. Link it again in Allternit settings.",
+  claude_link_not_billable: "Your Claude organization cannot be billed for this model.",
+  claude_link_billing_unavailable: "Billing for your Claude organization is unavailable right now.",
+  claude_link_unavailable: "Linked Claude organization models are not available right now.",
+}
+
 /** The plain message for a refused plan turn. The server's own message wins when it sends one. */
-export function planErrorText(code: string | undefined, status: number, serverMessage?: string): string {
+export function planErrorText(code: string | undefined, status: number, serverMessage?: string, fallbacks?: string[]): string {
+  if (code?.startsWith("claude_link_")) {
+    const base = serverMessage?.trim() || CLAUDE_LINK_TEXT[code] || "Your Claude organization could not answer."
+    // Shown only. gizzi never retries on another provider by itself.
+    return fallbacks?.includes("allternit-credits") ? `${base} Switch to Allternit credits to continue.` : base
+  }
   if (serverMessage && serverMessage.trim()) return serverMessage.trim()
   if (code && PLAN_ERROR_TEXT[code]) return PLAN_ERROR_TEXT[code]!
   if (status === 401) return "Allternit did not accept your sign-in."
@@ -218,7 +236,7 @@ export async function* parseChatCompletionsStream(body: ReadableStream<Uint8Arra
     if (ev?.error) {
       const code = typeof ev.error === "string" ? ev.error : ev.error.code
       const message = typeof ev.error === "object" ? ev.error.message : ev.message
-      yield { type: "error", code, message: planErrorText(code, 200, message) }
+      yield { type: "error", code, message: planErrorText(code, 200, message, stringList(ev.fallbacks)) }
       return
     }
     if (ev?.usage) usage = { inputTokens: num(ev.usage.prompt_tokens), outputTokens: num(ev.usage.completion_tokens) }

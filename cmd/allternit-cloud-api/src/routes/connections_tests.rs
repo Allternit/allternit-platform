@@ -368,3 +368,202 @@ async fn copilot_connect_callback_and_revoke() {
 fn urlencoding(value: &str) -> String {
     reqwest::Url::parse_with_params("http://x/", &[("v", value)]).unwrap().query().unwrap()[2..].to_string()
 }
+
+// ---- claude-org (contract 10) -------------------------------------------
+
+mod claude_org {
+    use super::*;
+    use crate::auth::anthropic_client::*;
+
+    fn clear_env() {
+        for name in [LINK_ENV, PEM_ENV, ISSUER_BASE_ENV, API_BASE_ENV, AUTH_BASE_ENV, crate::services::claude_link::REDIRECT_ENV]
+            .into_iter()
+            .chain(REQUIRED_ENV)
+        {
+            std::env::remove_var(name);
+        }
+    }
+
+    /// The feature on; both Anthropic bases at a closed port, so the status
+    /// read fails fast and the stored link answers.
+    fn configure() {
+        clear_env();
+        for (name, value) in [
+            (LINK_ENV, "1".to_string()),
+            (PEM_ENV, crate::auth::es256::testing::pem()),
+            (CLIENT_AUD_ENV, "https://auth.claude.com/oauth/client/aud-test".to_string()),
+            (WIF_AUD_ENV, "https://api.anthropic.com".to_string()),
+            (FEDERATION_RULE_ID_ENV, "fdrl_test".to_string()),
+            (ORGANIZATION_ID_ENV, "00000000-0000-0000-0000-000000000001".to_string()),
+            (SERVICE_ACCOUNT_ID_ENV, "svac_test".to_string()),
+            (WORKSPACE_ID_ENV, "wrkspc_test".to_string()),
+            (OAUTH_CLIENT_ID_ENV, "client_test".to_string()),
+            (OAUTH_APP_ID_ENV, "oapp_test".to_string()),
+            (API_BASE_ENV, "http://127.0.0.1:1".to_string()),
+            (AUTH_BASE_ENV, "http://127.0.0.1:1".to_string()),
+        ] {
+            std::env::set_var(name, value);
+        }
+    }
+
+    struct Ctx {
+        router: Router,
+        db: PgPool,
+        base: String,
+        name: String,
+    }
+
+    async fn ctx() -> Option<Ctx> {
+        let (db, base, name) = migrated_db().await?;
+        let base_state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+        let mut state = Arc::try_unwrap(base_state).ok().expect("one owner");
+        state.db = db.clone();
+        state.credential_cipher = Some(Arc::new(allternit_cloud_core::CredentialCipher::new("test cipher key material")));
+        Some(Ctx { router: routes().with_state(Arc::new(state)), db, base, name })
+    }
+
+    impl Ctx {
+        async fn link(&self, user: &str, status: &str, expires_in_days: i32) {
+            self.db.execute(format!("INSERT INTO users (id, email) VALUES ('{user}', '{user}@example.com');").as_str()).await.unwrap();
+            sqlx::query("INSERT INTO anthropic_link_profiles (user_id, user_profile_id) VALUES ($1, $2)")
+                .bind(user)
+                .bind(format!("prof_{user}"))
+                .execute(&self.db)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO anthropic_connections (user_id, user_profile_id, connection_id, status, refresh_expires_at)
+                 VALUES ($1, $2, $3, $4, now() + make_interval(days => $5))",
+            )
+            .bind(user)
+            .bind(format!("prof_{user}"))
+            .bind(format!("ocon_{user}"))
+            .bind(status)
+            .bind(expires_in_days)
+            .execute(&self.db)
+            .await
+            .unwrap();
+        }
+
+        async fn row(&self, user: &str, id: &str) -> Value {
+            let (status, body) = send(&self.router, "GET", "/api/v1/connections", Some(("x-test-session-user", user)), None).await;
+            assert_eq!(status, StatusCode::OK);
+            body["connections"].as_array().unwrap().iter().find(|r| r["id"] == id).cloned().unwrap()
+        }
+
+        async fn done(self) {
+            self.db.close().await;
+            let admin = PgPool::connect(&self.base).await.unwrap();
+            admin.execute(format!("DROP DATABASE {} WITH (FORCE)", self.name).as_str()).await.unwrap();
+        }
+    }
+
+    macro_rules! ctx_or_skip {
+        () => {
+            match ctx().await {
+                Some(c) => c,
+                None => {
+                    eprintln!("skipped: TEST_DATABASE_URL is not set or cannot create a database");
+                    return;
+                }
+            }
+        };
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(anthropic_client_env)]
+    async fn claude_org_row_flag_off_not_available_yet() {
+        clear_env();
+        let c = ctx_or_skip!();
+        let row = c.row("user_org_off", "claude-org").await;
+        assert_eq!((row["available"].as_bool(), row["state"].as_str(), row["reason_code"].as_str()), (Some(false), Some("off"), Some("not_available_yet")), "{row}");
+        assert_eq!(row["fallbacks"], serde_json::json!(["allternit-credits", "anthropic-key"]));
+        assert_eq!(row["models"], serde_json::json!([]));
+        let (status, body) = send(&c.router, "POST", "/api/v1/connections/claude-org/connect", Some(("x-test-session-user", "user_org_off")), None).await;
+        assert_eq!((status, body["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("not_available")), "{body}");
+        c.done().await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(anthropic_client_env)]
+    async fn claude_org_row_linked_signed_in() {
+        configure();
+        let c = ctx_or_skip!();
+        let unlinked = c.row("user_org_none", "claude-org").await;
+        assert_eq!((unlinked["available"].as_bool(), unlinked["state"].as_str(), unlinked["reason_code"].as_str()), (Some(true), Some("off"), None), "{unlinked}");
+        c.link("user_org_on", "linked", 300).await;
+        let row = c.row("user_org_on", "claude-org").await;
+        assert_eq!((row["available"].as_bool(), row["state"].as_str()), (Some(true), Some("on")), "{row}");
+        assert_eq!(row["found"], "Claude organization · billed to your organization");
+        assert_eq!(row["runs_on"], "server");
+        assert_eq!(row["source"], "cloud");
+        assert_eq!(row["terms"], "cleared");
+        for model in row["models"].as_array().unwrap() {
+            assert!(model.as_str().unwrap().starts_with("linked/claude/"), "{row}");
+        }
+        // Disconnect goes through claude-link unlink and leaves the row off.
+        let (status, _) = send(&c.router, "DELETE", "/api/v1/connections/claude-org", Some(("x-test-session-user", "user_org_on")), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(c.row("user_org_on", "claude-org").await["state"], "off");
+        c.done().await;
+        clear_env();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(anthropic_client_env)]
+    async fn claude_org_row_relink_needed_reason() {
+        configure();
+        let c = ctx_or_skip!();
+        c.link("user_org_relink", "linked", 10).await;
+        let row = c.row("user_org_relink", "claude-org").await;
+        assert_eq!((row["state"].as_str(), row["reason_code"].as_str()), (Some("needs"), Some("relink_needed")), "{row}");
+        assert_eq!(row["reason"], "Link your Claude organization again");
+        assert_eq!(row["models"], serde_json::json!([]));
+        c.done().await;
+        clear_env();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(anthropic_client_env)]
+    async fn claude_org_row_disconnected_reason() {
+        configure();
+        let c = ctx_or_skip!();
+        c.link("user_org_disc", "disconnected", 300).await;
+        let row = c.row("user_org_disc", "claude-org").await;
+        assert_eq!((row["state"].as_str(), row["reason_code"].as_str()), (Some("needs"), Some("disconnected")), "{row}");
+        assert_eq!(row["reason"], "Your Claude organization is disconnected");
+        c.done().await;
+        clear_env();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(anthropic_client_env)]
+    async fn claude_org_row_person_only_true() {
+        // Off and on: the flag never depends on the feature.
+        clear_env();
+        let c = ctx_or_skip!();
+        assert_eq!(c.row("user_org_p", "claude-org").await["person_only"], true);
+        configure();
+        assert_eq!(c.row("user_org_p", "claude-org").await["person_only"], true);
+        c.done().await;
+        clear_env();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(anthropic_client_env)]
+    async fn claude_row_unchanged() {
+        // The CLI subscription row is the same with the feature off and on.
+        clear_env();
+        let c = ctx_or_skip!();
+        let off = c.row("user_org_c", "claude").await;
+        configure();
+        c.link("user_org_c", "linked", 300).await;
+        let on = c.row("user_org_c", "claude").await;
+        assert_eq!(off, on);
+        assert!(on.get("person_only").is_none() || on["person_only"] == true, "{on}");
+        assert_eq!(on["fallbacks"], serde_json::json!(["anthropic-key"]));
+        assert_ne!(on["id"], "claude-org");
+        c.done().await;
+        clear_env();
+    }
+}

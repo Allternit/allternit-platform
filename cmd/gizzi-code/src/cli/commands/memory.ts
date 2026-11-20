@@ -4,6 +4,7 @@ import { MemoryDrive } from "@/runtime/memory/drive/drive"
 import { DrivePlatform } from "@/runtime/memory/drive/platform"
 import { applyMemdirImport, legacyMemdirRoots, planMemdirImport } from "@/runtime/memory/drive/import"
 import { formatDreams, formatFileView, formatHistory, formatOverview, formatSearch, syncLine } from "@/runtime/memory/drive/report"
+import { sleepApi, sleepStatusLine, type SleepOutcome } from "@/runtime/memory/sleep/client"
 import { PlatformApiError, PlatformSignedOutError, platformRequest } from "@/runtime/bots/platform-api"
 
 /**
@@ -21,6 +22,9 @@ import { PlatformApiError, PlatformSignedOutError, platformRequest } from "@/run
  *   gizzi memory list              twin memory + facts, newest first (--source, --json)
  *   gizzi memory edit <id> "text"  edit one twin memory or fact
  *   gizzi memory forget <id>       delete one twin memory or fact
+ *   gizzi memory sleep [status|run|report|undo|on|off]   Allternit Sleep
+ *   gizzi memory disputes [resolve <id> a|b|both_scoped|neither]
+ *   gizzi memory pages [<topic>]   memory pages Sleep wrote
  */
 
 function isConnectionError(error: unknown): boolean {
@@ -415,6 +419,186 @@ const ForgetCommand = cmd({
   },
 })
 
+/** Print a Sleep outcome; refusals and older runtimes exit 2, errors exit 1. */
+function sleepResult(outcome: SleepOutcome, json: boolean, render: (body: any) => string): void {
+  if (outcome.kind === "ok") {
+    UI.println(json ? JSON.stringify(outcome.body, null, 2) : render(outcome.body))
+    return
+  }
+  UI.println(outcome.message)
+  process.exit(outcome.kind === "error" ? 1 : 2)
+}
+
+const jsonOption = (yargs: any) => yargs.option("json", { type: "boolean", describe: "print the route body as JSON" })
+
+const cycleLine = (c: any) =>
+  `${c.id}  ${c.kind}  ${c.state}${c.undone_at ? " (undone)" : ""}  $${Number(c.spend_usd ?? 0).toFixed(2)}  ${c.started_at}`
+
+const SleepStatusCommand = cmd({
+  command: ["status", "$0"],
+  describe: "Sleep on/off, debt, last sleep, spend today",
+  builder: (yargs) => jsonOption(yargs),
+  handler: async (args) => {
+    try {
+      sleepResult(await sleepApi.status(), !!args.json, (s) => {
+        const lines = [sleepStatusLine(s)]
+        if (s.open_disputes > 0) lines.push(`${s.open_disputes} memory conflicts need you. Run \`gizzi memory disputes\`.`)
+        return lines.join("\n")
+      })
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const SleepRunCommand = cmd({
+  command: "run",
+  describe: "start a sleep now",
+  builder: (yargs) =>
+    yargs.option("kind", { type: "string", choices: ["nap", "daydream"], describe: "which sleep to run" }),
+  handler: async (args) => {
+    try {
+      sleepResult(await sleepApi.run(args.kind as string | undefined), false, (b) => `Started: ${JSON.stringify(b)}`)
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const SleepReportCommand = cmd({
+  command: "report [id]",
+  describe: "what a sleep did (latest by default)",
+  builder: (yargs) => jsonOption(yargs).positional("id", { type: "string" }),
+  handler: async (args) => {
+    try {
+      let id = args.id as string | undefined
+      if (!id) {
+        const list = await sleepApi.cycles()
+        if (list.kind !== "ok") return sleepResult(list, false, () => "")
+        id = list.body.cycles?.[0]?.id
+        if (!id) {
+          UI.println("No sleeps yet.")
+          return
+        }
+      }
+      sleepResult(await sleepApi.cycle(id), !!args.json, (b) =>
+        [cycleLine(b.cycle), b.report ? JSON.stringify(b.report, null, 2) : "No report."].join("\n"),
+      )
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const SleepUndoCommand = cmd({
+  command: "undo <id>",
+  describe: "undo one sleep",
+  builder: (yargs) => yargs.positional("id", { type: "string", demandOption: true }),
+  handler: async (args) => {
+    try {
+      sleepResult(await sleepApi.undo(String(args.id)), false, () => `Undid sleep ${args.id}.`)
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const SleepOnCommand = cmd({
+  command: "on",
+  describe: "turn Sleep on",
+  handler: async () => {
+    try {
+      sleepResult(await sleepApi.setEnabled(true), false, () => "Sleep is on.")
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const SleepOffCommand = cmd({
+  command: "off",
+  describe: "turn Sleep off",
+  handler: async () => {
+    try {
+      sleepResult(await sleepApi.setEnabled(false), false, () => "Sleep is off.")
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const SleepCommand = cmd({
+  command: "sleep",
+  describe: "Allternit Sleep: status, run, report, undo, on, off",
+  builder: (yargs) =>
+    yargs
+      .command(SleepStatusCommand)
+      .command(SleepRunCommand)
+      .command(SleepReportCommand)
+      .command(SleepUndoCommand)
+      .command(SleepOnCommand)
+      .command(SleepOffCommand),
+  handler: async () => {},
+})
+
+const DisputeResolveCommand = cmd({
+  command: "resolve <id> <choice>",
+  describe: "settle one conflict: a, b, both_scoped or neither",
+  builder: (yargs) =>
+    yargs
+      .positional("id", { type: "string", demandOption: true })
+      .positional("choice", { type: "string", choices: ["a", "b", "both_scoped", "neither"], demandOption: true }),
+  handler: async (args) => {
+    try {
+      sleepResult(
+        await sleepApi.resolve(String(args.id), String(args.choice)),
+        false,
+        () => `Resolved ${args.id}: ${args.choice}.`,
+      )
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const DisputesCommand = cmd({
+  command: ["disputes", "conflicts"],
+  describe: "memory conflicts Sleep found",
+  builder: (yargs) => jsonOption(yargs).command(DisputeResolveCommand),
+  handler: async (args) => {
+    try {
+      sleepResult(await sleepApi.disputes(), !!args.json, (b) => {
+        const list: any[] = b.disputes ?? []
+        if (!list.length) return "No memory conflicts."
+        return list
+          .map((d) => `${d.id}  ${d.state}  ${d.side_a?.kind}:${d.side_a?.id} vs ${d.side_b?.kind}:${d.side_b?.id}${d.scope ? `  [${d.scope}]` : ""}`)
+          .join("\n")
+      })
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const PagesCommand = cmd({
+  command: "pages [topic]",
+  describe: "memory pages Sleep wrote",
+  builder: (yargs) => jsonOption(yargs).positional("topic", { type: "string" }),
+  handler: async (args) => {
+    try {
+      const topic = args.topic as string | undefined
+      sleepResult(topic ? await sleepApi.page(topic) : await sleepApi.pages(), !!args.json, (b) => {
+        if (topic) return JSON.stringify(b, null, 2)
+        const list: any[] = b.pages ?? []
+        if (!list.length) return "No pages yet."
+        return list.map((p) => `${p.topic_id}  v${p.version}  ${p.tokens ?? "?"} tokens  ${p.created_at}`).join("\n")
+      })
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
 export const MemoryCommand = cmd({
   command: "memory",
   describe: "your Memory Drive — status, sync, import, Dreams",
@@ -433,6 +617,9 @@ export const MemoryCommand = cmd({
       .command(UndoDreamCommand)
       .command(ListCommand)
       .command(EditCommand)
-      .command(ForgetCommand),
+      .command(ForgetCommand)
+      .command(SleepCommand)
+      .command(DisputesCommand)
+      .command(PagesCommand),
   handler: async () => {},
 })

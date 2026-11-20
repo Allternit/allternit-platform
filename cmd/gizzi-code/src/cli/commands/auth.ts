@@ -4,6 +4,18 @@ import path from "path"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import { printComputeStatusAfterLogin } from "@/cli/commands/computers"
+import {
+  CliError,
+  appsCap,
+  appsList,
+  appsRevoke,
+  claudeStatusLine,
+  linkClaudeOrg,
+  unlinkClaudeOrg,
+  type Deps,
+} from "@/cli/commands/auth-apps"
+import { cloudOrigin } from "@/runtime/providers/discovery/allternit-cloud"
+import { personToken } from "@/runtime/providers/person-plan/rules"
 import { Global } from "@/runtime/context/global"
 import {
   addAuthProfile,
@@ -16,6 +28,37 @@ import {
   setActiveAuthProfile,
   storeApiKeyForProfile,
 } from "@/runtime/context/config/auth-profiles"
+
+function cloudDeps(): Deps {
+  return {
+    origin: cloudOrigin(),
+    token: personToken(),
+    fetch,
+    out: (line) => UI.println(line),
+    confirm: async (message) => {
+      const answer = await prompts.confirm({ message })
+      return !prompts.isCancel(answer) && answer === true
+    },
+    open: async (url) => {
+      if (!process.stdout.isTTY || process.env.SSH_CONNECTION) return
+      const { default: open } = await import("open")
+      await open(url)
+    },
+  }
+}
+
+async function guarded(run: () => Promise<unknown>) {
+  try {
+    await run()
+  } catch (err) {
+    if (err instanceof CliError) {
+      UI.println(err.message)
+      process.exitCode = 1
+      return
+    }
+    throw err
+  }
+}
 
 const configPath = () => path.join(Global.Path.config, "config.toml")
 
@@ -63,7 +106,56 @@ const StatusCommand = cmd({
         UI.println("Not authenticated")
         break
     }
+    const line = await claudeStatusLine(cloudDeps())
+    if (line) UI.println(line)
   },
+})
+
+const AppsListCommand = cmd({
+  command: "list",
+  describe: "list apps connected to your account",
+  builder: (yargs) => yargs.option("json", { type: "boolean", describe: "print JSON" }),
+  handler: (args) => guarded(() => appsList(cloudDeps(), { json: args.json })),
+})
+
+const AppsCapCommand = cmd({
+  command: "cap <app> <dollars>",
+  describe: "set an app's monthly spend cap",
+  builder: (yargs) =>
+    yargs.positional("app", { type: "string", demandOption: true }).positional("dollars", { type: "string", demandOption: true }),
+  handler: (args) => guarded(() => appsCap(cloudDeps(), args.app, args.dollars)),
+})
+
+const AppsRevokeCommand = cmd({
+  command: "revoke <app>",
+  describe: "revoke an app's access",
+  builder: (yargs) =>
+    yargs.positional("app", { type: "string", demandOption: true }).option("yes", { type: "boolean", describe: "skip the question" }),
+  handler: (args) => guarded(() => appsRevoke(cloudDeps(), args.app, { yes: args.yes })),
+})
+
+const AppsCommand = cmd({
+  command: "apps",
+  describe: "manage apps connected to your account",
+  builder: (yargs: Argv) => yargs.command(AppsListCommand).command(AppsCapCommand).command(AppsRevokeCommand).demandCommand(),
+  async handler() {},
+})
+
+const LinkCommand = cmd({
+  command: "link <target>",
+  describe: "link a Claude organization (claude-org)",
+  builder: (yargs) => yargs.positional("target", { type: "string", choices: ["claude-org"] as const, demandOption: true }),
+  handler: () => guarded(() => linkClaudeOrg(cloudDeps())),
+})
+
+const UnlinkCommand = cmd({
+  command: "unlink <target>",
+  describe: "unlink a Claude organization (claude-org)",
+  builder: (yargs) =>
+    yargs
+      .positional("target", { type: "string", choices: ["claude-org"] as const, demandOption: true })
+      .option("yes", { type: "boolean", describe: "skip the question" }),
+  handler: (args) => guarded(() => unlinkClaudeOrg(cloudDeps(), { yes: args.yes })),
 })
 
 const LogoutCommand = cmd({
@@ -210,6 +302,9 @@ export const AuthCommand = cmd({
       .command(LogoutCommand)
       .command(DiagnoseCommand)
       .command(ProfileCommand)
+      .command(AppsCommand)
+      .command(LinkCommand)
+      .command(UnlinkCommand)
       .demandCommand(),
   async handler() {},
 })

@@ -18,6 +18,7 @@ import com.clerk.api.signup.sendCode
 import com.clerk.api.signup.verifyCode
 import com.clerk.api.sso.OAuthProvider
 import com.clerk.api.user.User
+import com.clerk.api.user.delete
 import com.clerk.api.user.getOrganizationMemberships
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -273,8 +274,60 @@ object AllternitAuth {
         }
     }
 
+    /**
+     * Deletes the signed-in person's Clerk account (iOS AuthManager.deleteAccount: `user.delete()`).
+     * Only the Delete account screen calls this, after the person typed DELETE. The caller signs out
+     * afterwards (iOS finishAccountDeletion).
+     */
+    suspend fun deleteAccount(): StepResult {
+        val user = Clerk.user ?: return StepResult("You're not signed in.")
+        return when (val r = user.delete()) {
+            is ClerkResult.Success -> {
+                tokenProvider.clear()
+                StepResult.OK
+            }
+            is ClerkResult.Failure -> StepResult(r.message())
+        }
+    }
+
+    /** Work that must run before the session is dropped (wave I1: push removes this phone's token). */
+    private val signOutHooks = java.util.concurrent.CopyOnWriteArrayList<suspend () -> Unit>()
+
+    /**
+     * Registers [hook] to run at the start of [signOut], while the leaving account's token still works
+     * (iOS PushNotificationManager.willSignOut runs before the session goes). A failing hook never blocks sign-out.
+     */
+    fun addSignOutHook(hook: suspend () -> Unit) {
+        signOutHooks += hook
+    }
+
+    /** One organization the person belongs to (iOS SettingsView memberships). */
+    data class OrgMembership(val id: String, val name: String)
+
+    /** The person's organizations: the cached list first, then a refresh (a failed refresh keeps the cached list). */
+    suspend fun organizations(): List<OrgMembership> {
+        val user = Clerk.user ?: return emptyList()
+        var list = user.organizationMemberships.orEmpty().mapNotNull { m -> m.organization?.let { OrgMembership(it.id, it.name) } }
+        val fresh = user.getOrganizationMemberships()
+        if (fresh is ClerkResult.Success) {
+            list = fresh.value.data.mapNotNull { m -> m.organization?.let { OrgMembership(it.id, it.name) } }
+        }
+        return list
+    }
+
+    /** iOS AccountSwitch.activate: `setActive` on the current session with the picked organization. */
+    suspend fun switchOrganization(orgId: String): StepResult {
+        val session = Clerk.session ?: return StepResult("You're signed out.")
+        tokenProvider.clear()
+        return when (val r = Clerk.auth.setActive(session.id, orgId)) {
+            is ClerkResult.Success -> StepResult.OK
+            is ClerkResult.Failure -> StepResult(r.message())
+        }
+    }
+
     /** Signs out of Clerk on this device and forgets the cached token. */
     suspend fun signOut(): StepResult {
+        for (hook in signOutHooks) runCatching { hook() }
         tokenProvider.clear()
         cancelEmail()
         return when (val r = Clerk.auth.signOut()) {

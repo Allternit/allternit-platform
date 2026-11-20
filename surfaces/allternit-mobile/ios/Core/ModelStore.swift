@@ -15,7 +15,21 @@ final class ModelStore: ObservableObject {
     static let shared = ModelStore()
 
     @Published var selectedModelId: String? {
-        didSet { defaults.set(selectedModelId, forKey: Keys.selectedModelId) }
+        didSet {
+            defaults.set(selectedModelId, forKey: Keys.selectedModelId)
+            if Self.cloudAlias(selectedModelId) != nil { lastCloudModelId = selectedModelId }
+        }
+    }
+
+    /// The person's most recent Allternit Cloud model (persisted): where
+    /// "Use Allternit credits for this message" re-sends.
+    private(set) var lastCloudModelId: String? {
+        didSet { defaults.set(lastCloudModelId, forKey: Keys.lastCloudModelId) }
+    }
+
+    /// The Cloud model the credits button uses, or nil to hide the button.
+    var creditsFallbackModelId: String? {
+        CreditsFallback.modelId(recent: lastCloudModelId, listed: cloudModels.map(\.id))
     }
 
     /// The picked thinking level (persisted). Each model offers its own levels;
@@ -47,6 +61,7 @@ final class ModelStore: ObservableObject {
 
     private enum Keys {
         static let selectedModelId = "allternit-runtime-model-id"
+        static let lastCloudModelId = "allternit-last-cloud-model-id"
         static let selectedEffort = "allternit-model-effort"
         static let fastMode = "allternit-model-fast"
     }
@@ -54,7 +69,11 @@ final class ModelStore: ObservableObject {
     init(defaults: UserDefaults = .standard, chatClient: AgentChatClient = AgentChatClient()) {
         self.defaults = defaults
         self.chatClient = chatClient
-        self.selectedModelId = defaults.string(forKey: Keys.selectedModelId)
+        // Locals first: reading self before every stored property is set does not compile.
+        let storedSelected = defaults.string(forKey: Keys.selectedModelId)
+        let storedCloud = defaults.string(forKey: Keys.lastCloudModelId)
+        self.lastCloudModelId = storedCloud ?? (Self.cloudAlias(storedSelected) != nil ? storedSelected : nil)
+        self.selectedModelId = storedSelected
         self.selectedEffort = defaults.string(forKey: Keys.selectedEffort) ?? "medium"
         self.fastMode = defaults.bool(forKey: Keys.fastMode)
     }

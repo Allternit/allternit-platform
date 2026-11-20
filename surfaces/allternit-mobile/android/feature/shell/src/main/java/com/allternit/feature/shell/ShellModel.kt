@@ -29,7 +29,7 @@ import java.time.OffsetDateTime
  * `modeFanCard<raw>` and the persisted value. Cowork is not a mode (a composer toggle in Home).
  */
 internal enum class ShellMode(val raw: String, val label: String, @DrawableRes val icon: Int, val accent: Color) {
-    Home("home", "Home", R.drawable.shell_house, ModeAccents.Chat.accent),
+    Home("home", "Home", com.allternit.core.design.R.drawable.ph_house, ModeAccents.Chat.accent),
     Bots("bots", "Bots", DesignR.drawable.ph_cpu, ModeAccents.Cowork.accent),
     Code("code", "Code", DesignR.drawable.ph_terminal, ModeAccents.Code.accent),
     Aci("aci", "ACI", DesignR.drawable.ph_globe, ModeAccents.Browser.accent);
@@ -94,17 +94,17 @@ internal object ShellModePrefs {
 internal data class RailRow(val id: String, val label: String, @DrawableRes val icon: Int)
 
 internal fun railRows(mode: ShellMode): List<RailRow> {
-    val projects = RailRow("projects", "Projects", R.drawable.shell_folder)
-    val artifacts = RailRow("artifacts-library", "Artifacts", R.drawable.shell_file_text)
+    val projects = RailRow("projects", "Projects", com.allternit.core.design.R.drawable.ph_folder)
+    val artifacts = RailRow("artifacts-library", "Artifacts", com.allternit.core.design.R.drawable.ph_file_text)
     return when (mode) {
         ShellMode.Home -> listOf(
             projects, artifacts,
-            RailRow("automation-tasks", "Automation Tasks", R.drawable.shell_clock),
+            RailRow("automation-tasks", "Automation Tasks", com.allternit.core.design.R.drawable.ph_clock),
             RailRow("customize", "Customize", DesignR.drawable.ph_sliders_horizontal),
         )
         ShellMode.Code -> listOf(
             projects, artifacts,
-            RailRow("code-automations", "Automation Tasks", R.drawable.shell_clock),
+            RailRow("code-automations", "Automation Tasks", com.allternit.core.design.R.drawable.ph_clock),
         )
         ShellMode.Aci -> listOf(
             RailRow("mcp-apps", "MCP Apps", DesignR.drawable.ph_plugs_connected),
@@ -153,8 +153,14 @@ internal val AgentSession.originSurface: String get() = metaString("originSurfac
 internal val AgentSession.agentId: String? get() = metaString("agent_id")?.takeIf { it.isNotEmpty() }
 /** The cowork project the session belongs to (`metadata.project_id`, iOS AgentSession.projectId). */
 internal val AgentSession.projectId: String? get() = metaString("project_id")?.takeIf { it.isNotEmpty() }
+/** The agent or bot the session runs as (`metadata.agentName`, iOS AgentSession.agentName): the Code usage Models tab groups by it. */
+internal val AgentSession.agentName: String? get() = metaString("agentName")?.takeIf { it.isNotEmpty() }
 internal val AgentSession.archived: Boolean get() = metaBool("archived")
 internal val AgentSession.ephemeral: Boolean get() = metaBool("ephemeral")
+/** Code thread status flags the server owns (iOS AgentSession.needsInput / readyForReview), read best-effort from the metadata bag. */
+internal val AgentSession.needsInput: Boolean get() = metaBool("needsInput") || metaBool("needs_input")
+internal val AgentSession.readyForReview: Boolean get() = metaBool("readyForReview") || metaBool("ready_for_review")
+internal val AgentSession.completed: Boolean get() = metaBool("completed")
 internal val AgentSession.isTerminal: Boolean
     get() = ((meta("sourceRef") as? JsonObject)?.get("harness") as? JsonPrimitive)?.contentOrNull == "gizzi-tui"
 internal val AgentSession.title: String get() = displayName(name)?.takeIf { it.isNotEmpty() } ?: "Untitled"
@@ -162,10 +168,13 @@ internal val AgentSession.title: String get() = displayName(name)?.takeIf { it.i
 /** iOS AutomationScheduleLogic.displayName: drop a routine run's `[bot:<name>] ` owner tag. */
 internal fun displayName(raw: String?): String? {
     val n = raw?.trim() ?: return null
-    if (!n.startsWith("[bot:")) return n
-    val close = n.indexOf(']')
-    return if (close < 0) n else n.substring(close + 1).trim()
+    if (!n.contains("[bot:")) return n
+    // Anywhere in the string: Inbox failure text quotes the routine title
+    // ("\"[bot:Client Reporter] Draft the weekly report\" failed").
+    return BOT_TAG.replace(n, "").trim()
 }
+
+private val BOT_TAG = Regex("""\[bot:[^\]]*]\s*""")
 
 /** ShellSessionsStore.belongs: which mode's list a session sits in. */
 internal fun AgentSession.belongs(mode: ShellMode): Boolean {
@@ -402,13 +411,7 @@ internal class ShellSessionsStore(private val api: AllternitApi = ShellApi.api) 
  */
 private const val SEEN_KEY = "allternit-phone-session-seen"
 
-internal fun isNoComputer(r: ApiResult.HttpError): Boolean {
-    if (r.status == 428) return true
-    if (r.status != 409 && r.status != 410) return false
-    val text = "${r.code.orEmpty()} ${r.message.orEmpty()}"
-    return Regex("""\b(compute_required|free_computers_retired)\b""", RegexOption.IGNORE_CASE).containsMatchIn(text) ||
-        text.contains("data-plane node", ignoreCase = true)
-}
+internal fun isNoComputer(r: ApiResult.HttpError): Boolean = com.allternit.core.api.NoComputerRule.isGate(r)
 
 /** The sentence for a status with no usable message (iOS statusSentence, web statusSentence). */
 internal fun statusSentence(status: Int): String? = when (status) {

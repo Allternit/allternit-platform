@@ -1,5 +1,6 @@
 package com.allternit.feature.projects
 
+import com.allternit.core.design.AllternitSerif
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -90,6 +91,8 @@ class ProjectsNav(
     val backdrop: @Composable (scope: String) -> Unit,
     /** A GET on the user's computer through the runtime relay (the folder picker's `v1/path`, `v1/file/tree`). */
     val runtimeGet: RuntimeGet = { Result.failure(IllegalStateException("No computer")) },
+    /** Wave E: a bot project opens the bot project page in Bots mode (iOS BotProjectPage); null keeps the project detail. */
+    val openBotProject: ((projectId: String) -> Unit)? = null,
 )
 
 private enum class ProjectSort(val label: String) { Recent("Recent"), Name("Name"), Created("Created") }
@@ -140,7 +143,8 @@ fun ProjectsListScreen(
         page = when (p.mode) {
             ProjectMode.Code -> ProjectPage.Code(p, asksForFolder)
             ProjectMode.Design -> ProjectPage.Design(p)
-            // Bot projects open their detail here until the bot project page (wave E) lands.
+            // Bot projects open the bot project page (wave E) when the shell can show it.
+            ProjectMode.Bot -> nav.openBotProject?.let { openBot -> openBot(p.nativeId); return } ?: ProjectPage.Chat(p)
             else -> ProjectPage.Chat(p)
         }
     }
@@ -377,7 +381,7 @@ private fun ProjectsExplainer(onOk: () -> Unit) {
             Modifier.padding(horizontal = 28.dp).clip(RoundedCornerShape(24.dp)).background(c.bgPrimary).padding(24.dp).testTag("projectsExplainer"),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Every project is a folder your team works in", color = c.textPrimary, fontSize = 20.sp, fontFamily = FontFamily.Serif)
+            Text("Every project is a folder your team works in", color = c.textPrimary, fontSize = 20.sp, fontFamily = AllternitSerif)
             Text("Put chats, code, designs and bots in one project. Everyone on it shares the same files, context and instructions.", color = c.textSecondary, fontSize = 15.sp)
             Text(
                 "OK", color = c.bgPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
@@ -417,7 +421,7 @@ fun NewProjectSheet(onDismiss: () -> Unit, create: suspend (ProjectMode, String,
         trailing = LibrarySheetAction("✓", enabled = valid, bold = true, testTag = "newProjectCreate", onClick = ::submit),
     ) {
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("New project", color = c.textPrimary, fontSize = 22.sp, fontFamily = FontFamily.Serif, modifier = Modifier.testTag("newProjectTitle"))
+            Text("New project", color = c.textPrimary, fontSize = 22.sp, fontFamily = AllternitSerif, modifier = Modifier.testTag("newProjectTitle"))
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { FolderCover(null, name.ifBlank { "the new project" }, mode, width = 120.dp) }
             PillRow(ProjectMode.entries, mode, { it.label }, { "newProjectMode${it.raw}" }) { mode = it }
             LibraryField("Name", name, "Project name", "newProjectName") { name = it }

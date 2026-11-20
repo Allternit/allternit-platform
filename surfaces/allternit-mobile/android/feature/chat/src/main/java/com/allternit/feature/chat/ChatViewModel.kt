@@ -325,6 +325,20 @@ class ChatViewModel(
                 }
                 lastSent = LastSent(text, runtimeModelId, effort, refs, tools)
 
+                // Gap run GS-D: a brain on this phone (iOS OnDeviceChat) needs no computer and no session.
+                OnPhoneChat.keyOf(runtimeModelId)?.let { key ->
+                    isCreatingSession = false
+                    requestStartedAt = System.currentTimeMillis()
+                    firstDeltaAt = null
+                    val roles = mutableListOf<String>()
+                    val contents = mutableListOf<String>()
+                    systemPrompt?.takeIf { it.isNotBlank() }?.let { roles += "system"; contents += it }
+                    messages.filter { it.id != assistantId && it.content.isNotBlank() && (it.role == "user" || it.role == "assistant") }
+                        .forEach { roles += it.role; contents += it.content }
+                    OnPhoneChat.stream(key, roles, contents).collect { event -> apply(event, assistantId) }
+                    finishStreaming(assistantId)
+                    return@launch
+                }
                 // Find the computer before creating the session, so a no-computer send leaves
                 // no empty chat behind.
                 val runtimeId = when (val pick = backend.relay.resolve()) {
@@ -495,6 +509,16 @@ class ChatViewModel(
     }
 
     /** The Stop button: cancel locally and abort the server-side run (`POST .../abort`). */
+    /** iOS appendVoiceSummary: the "Voice chat ended · Ns" card after a voice session. */
+    fun appendVoiceSummary(durationSeconds: Int) {
+        messages = messages + MessageRecord(
+            id = java.util.UUID.randomUUID().toString(),
+            role = "system",
+            content = "",
+            voiceSummary = com.allternit.feature.chat.voice.VoiceSummary(durationSeconds),
+        )
+    }
+
     fun stopStreaming() {
         val sessionId = currentSessionId
         val wasStreaming = isStreaming

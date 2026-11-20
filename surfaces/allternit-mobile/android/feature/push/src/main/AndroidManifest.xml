@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Wave I1: push notifications. Merged into the nativeapp flavor only (through :feature:shell). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Android 13+: asked after the priming sheet (MeetYourBots step, Settings > Notifications). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <!-- FCM token refreshes and data messages (iOS AppDelegate didRegister / didReceiveRemoteNotification). -->
+        <service
+            android:name="com.allternit.feature.push.AllternitMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <!-- Notification buttons that run without opening the app (iOS NotificationActions.handle). -->
+        <receiver
+            android:name="com.allternit.feature.push.NotificationActionReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

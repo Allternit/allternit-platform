@@ -121,6 +121,12 @@ struct ConnectionRowView: View {
                             .foregroundColor(row.state == .off ? Color("TextTertiary") : Color("TextSecondary"))
                             .lineLimit(2)
                     }
+                    if entry.id == "claude-org" && row.state == .off {
+                        Text(ConnectionsCatalog.claudeOrgNote)
+                            .font(.system(size: 12.5))
+                            .foregroundColor(Color("TextSecondary"))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -154,20 +160,20 @@ struct ConnectionRowView: View {
         } else if row.state == .connecting {
             ProgressView().controlSize(.small)
         } else if row.state == .needs {
-            Button("Fix") { onAction(.fix) }
+            Button(entry.id == "claude-org" && row.reasonCode != "spend_limit_reached" ? "Link again" : "Fix") { onAction(.fix) }
                 .buttonStyle(ConnPrimaryButtonStyle())
         } else if opensPage {
             Button { onAction(.open) } label: { PhoneRowChevron().padding(8) }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open \(entry.name)")
         } else if row.state == .on {
-            Button("Disconnect") { onAction(.disconnect) }
+            Button(entry.id == "claude-org" ? "Unlink" : "Disconnect") { onAction(.disconnect) }
                 .buttonStyle(ConnQuietButtonStyle())
-                .accessibilityLabel("Disconnect \(entry.name)")
+                .accessibilityLabel(entry.id == "claude-org" ? "Unlink your Claude organization" : "Disconnect \(entry.name)")
         } else {
-            Button(entry.id == "cloud-computer" ? "See plans" : "Connect") { onAction(.connect) }
+            Button(entry.id == "cloud-computer" ? "See plans" : entry.id == "claude-org" ? "Link" : "Connect") { onAction(.connect) }
                 .buttonStyle(ConnQuietButtonStyle())
-                .accessibilityLabel("Connect \(entry.name)")
+                .accessibilityLabel(entry.id == "claude-org" ? "Link your Claude organization" : "Connect \(entry.name)")
         }
     }
 }

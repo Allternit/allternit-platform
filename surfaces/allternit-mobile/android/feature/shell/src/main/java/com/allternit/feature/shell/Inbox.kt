@@ -431,7 +431,7 @@ internal fun InboxSheet(
                     title = if (focusedIsGone) "Already handled" else "You're all caught up",
                     message = "Approvals, held messages, missed calls, unanswered people and anything that failed show up here.",
                     modifier = Modifier.align(Alignment.Center).padding(20.dp).testTag("inboxEmpty"),
-                ) { Icon(painterResource(R.drawable.shell_bell_slash), contentDescription = null, tint = c.textSecondary) }
+                ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_bell_slash), contentDescription = null, tint = c.textSecondary) }
                 else -> PullToRefreshBox(
                     isRefreshing = refreshing,
                     onRefresh = {
@@ -745,7 +745,7 @@ private fun PhoneHoldReviewSheet(item: InboxItem, store: InboxStore, onClose: ()
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Icon(painterResource(R.drawable.shell_photo), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(26.dp))
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_image), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(26.dp))
                         Text("Could not load the screen. Approve stays off until you can see it.", color = c.textPrimary, fontSize = 13.sp, textAlign = TextAlign.Center)
                         InboxButton("Try again", prominent = false, enabled = true, testTag = "inboxReviewRetry") { scope.launch { loadCrop() } }
                     }
@@ -768,7 +768,7 @@ private fun PhoneHoldReviewSheet(item: InboxItem, store: InboxStore, onClose: ()
             when (phase) {
                 HoldPhase.Approved -> HoldOutcome(DesignR.drawable.ph_check_circle_fill, AllternitStatic.StatusSuccess, "Approved. Your bot taps \"$actionLabel\" now.")
                 HoldPhase.Denied -> HoldOutcome(DesignR.drawable.ph_x, AllternitStatic.StatusError, "Denied. The task stopped and nothing was done on your phone.")
-                HoldPhase.Expired -> HoldOutcome(R.drawable.shell_clock, c.textSecondary, "Expired. Nobody answered in 5 minutes, so the task ended and nothing was done.")
+                HoldPhase.Expired -> HoldOutcome(com.allternit.core.design.R.drawable.ph_clock, c.textSecondary, "Expired. Nobody answered in 5 minutes, so the task ended and nothing was done.")
                 HoldPhase.Changed -> {
                     HoldOutcome(DesignR.drawable.ph_arrows_down_up, AllternitStatic.StatusWarning, "Changed. The screen moved since your bot asked. Check the new screen, then decide.")
                     HoldButtons(approveEnabled = false, busy = busy, onDeny = { decide(false) }, onApprove = { decide(true) })
@@ -826,4 +826,4 @@ private fun HoldButtons(approveEnabled: Boolean, busy: Boolean, onDeny: () -> Un
 
 /** cloud-api's account-state refusals (428 "No data-plane node", compute_required, free_computers_retired): no computer, not a timeout. */
 private fun isComputeGateText(message: String?): Boolean =
-    message != null && Regex("""\b(428|compute_required|free_computers_retired|data-plane node)\b""", RegexOption.IGNORE_CASE).containsMatchIn(message)
+    message != null && (Regex("""\b428\b""").containsMatchIn(message) || com.allternit.core.api.NoComputerRule.isGate(null, null, message) || Regex("""\b(compute_required|free_computers_retired)\b""", RegexOption.IGNORE_CASE).containsMatchIn(message))

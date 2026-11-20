@@ -3,7 +3,8 @@ import SwiftUI
 /// Settings → Memory (pushed from SettingsView). Reads the live
 /// `/api/v1/memory/*` routes (stats + documents; `/query` exists but the UI
 /// searches the already-fetched document list client-side). A failed
-/// request shows a plain error state with retry.
+/// request shows a plain error state with retry. Sections: the memory map,
+/// About you, Memories, Sleep (`MemorySleepSection`), Drive.
 struct MemorySettingsView: View {
     @ObservedObject private var settings = SettingsStore.shared
 
@@ -37,6 +38,9 @@ struct MemorySettingsView: View {
                 .padding(.bottom, 8)
             MemoryAboutYouSection(refreshToken: refreshToken)
             MemoryItemsSection(refreshToken: refreshToken)
+            // Allternit Sleep (MemorySleepView.swift): runs on the computer,
+            // shown and switched here; no tab of its own.
+            MemorySleepSection(refreshToken: refreshToken)
             sectionHeader("Drive")
             if loadError == nil {
                 searchBar

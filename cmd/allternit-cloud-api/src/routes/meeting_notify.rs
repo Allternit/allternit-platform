@@ -218,10 +218,13 @@ async fn push_state(db: &PgPool, session: &SessionRow, meeting: &MeetingRow, tra
         Some(v) => {
             web_push::send_to_user(db, transport, v, user, &msg).await;
         }
-        None if apns_on => {
-            apns::send_to_user(db, user, &msg).await;
+        None => {
+            if apns_on {
+                apns::send_to_user(db, user, &msg).await;
+            }
+            // Android phones (no-op unless FCM_SERVICE_ACCOUNT_JSON is set).
+            super::fcm::send_to_user(db, user, &msg).await;
         }
-        None => {}
     }
 }
 

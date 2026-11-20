@@ -30,3 +30,26 @@ export function cacheCountdown(input: CacheCountdownInput | undefined, now: numb
     : `cache ● ${ttlLabel} ${bar} ~${time} left${hit}`
   return { state, fraction, label }
 }
+
+/** Anthropic prompt-cache lifetimes: the default ephemeral TTL and the one-hour opt-in. */
+export const PROMPT_CACHE_TTL_S = 300
+export const PROMPT_CACHE_1H_TTL_S = 3600
+
+/**
+ * The prompt-cache TTL a request source gets, in seconds: one hour when the
+ * user is eligible for 1h caching and the source matches the allowlist
+ * (entries ending in `*` are prefixes), else five minutes. Same rule as the
+ * TUI's `should1hCacheTTL` (services/api/claude.ts); shared by the cache
+ * countdown and the Sleep idle timer.
+ */
+export function promptCacheTtlSeconds(input: {
+  eligible: boolean | null | undefined
+  allowlist: readonly string[] | null | undefined
+  source: string
+}): number {
+  if (input.eligible !== true) return PROMPT_CACHE_TTL_S
+  const oneHour = (input.allowlist ?? []).some((p) =>
+    p.endsWith("*") ? input.source.startsWith(p.slice(0, -1)) : p === input.source,
+  )
+  return oneHour ? PROMPT_CACHE_1H_TTL_S : PROMPT_CACHE_TTL_S
+}
