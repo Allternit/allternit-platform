@@ -230,6 +230,10 @@ internal object CodeApi {
     suspend fun applyPermission(sessionId: String, mode: CodePermissionMode) =
         patch(sessionId, buildJsonObject { put("metadata", buildJsonObject { put("permission", mode.rules()) }) })
 
+    /** iOS updateSessionMetadata(isolation: "worktree"): the launch's Worktree pick isolates the new thread. */
+    suspend fun applyIsolation(sessionId: String) =
+        patch(sessionId, buildJsonObject { put("metadata", buildJsonObject { put("isolation", "worktree") }) })
+
     /** Pending permission asks for a session, raw (the changeset sheet needs `metadata.diff`). */
     suspend fun pendingPermissions(sessionId: String): List<ChangeRequest> {
         val r = LibraryNet.get("permissions?sessionId=${encode(sessionId)}") as? ApiResult.Ok<JsonElement> ?: return emptyList()

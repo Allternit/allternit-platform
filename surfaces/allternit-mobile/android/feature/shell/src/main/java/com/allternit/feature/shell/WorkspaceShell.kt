@@ -63,6 +63,7 @@ import com.allternit.feature.shell.backdrop.BackdropScope
 import com.allternit.feature.shell.backdrop.BackdropSurface
 import com.allternit.feature.shell.backdrop.StageBackdrop
 import com.allternit.feature.shell.backdrop.StageBackdropStore
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 internal enum class DrawerValue { Closed, Open }
@@ -496,6 +497,13 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 chat.startNewSession()
                                 chat.send(draft.toChatRequest())
                                 page = ShellPage.Chat(session = null, draft = draft)
+                                if (mode == ShellMode.Code) {
+                                    // iOS sessionChanged: the launch deck's permission mode and Worktree pick go onto the new thread.
+                                    scope.launch {
+                                        val id = androidx.compose.runtime.snapshotFlow { chat.currentSessionId }.first { it != null } ?: return@launch
+                                        com.allternit.feature.code.CodeDeckPrefs.applyToNewSession(context, id)
+                                    }
+                                }
                             },
                             onNew = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
@@ -510,6 +518,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             }) else null,
                             onCodeSessions = if (mode == ShellMode.Code) ({ codeRoute = com.allternit.feature.code.CodeRoute.Overview }) else null,
                             codeActions = if (mode == ShellMode.Code) CodeComposerActions(
+                                host = codeHost,
+                                onUsage = { codeRoute = com.allternit.feature.code.CodeRoute.Usage },
                                 onTerminal = { codeRoute = com.allternit.feature.code.CodeRoute.Terminal },
                                 onFiles = { codeRoute = com.allternit.feature.code.CodeRoute.Files },
                                 onComputer = { codeRoute = com.allternit.feature.code.CodeRoute.Computer },

@@ -895,8 +895,14 @@ private fun DeckTrigger(icon: Int?, label: String, testTag: String, iconSize: In
 }
 
 
-/** What the Code composer's deck row opens (iOS CodeDeckRow): the computer, the folder, the shell. */
-internal class CodeComposerActions(val onTerminal: () -> Unit, val onFiles: () -> Unit, val onComputer: () -> Unit)
+/** What the Code composer's deck row opens (iOS CodeDeckRow): the computer, the usage screen, the shell, the file attach. */
+internal class CodeComposerActions(
+    val host: com.allternit.feature.code.CodeHost,
+    val onTerminal: () -> Unit,
+    val onFiles: () -> Unit,
+    val onComputer: () -> Unit,
+    val onUsage: () -> Unit,
+)
 
 private val CodeCoral = Color(0xFFD97757)
 private val CodeIdle = Color(0xFF8EAB84)
@@ -923,6 +929,13 @@ internal fun CodeLaunchComposer(
     var chipDismissed by rememberSaveable { mutableStateOf(false) }
     val trimmed = text.trim()
     LaunchedEffect(Unit) { models.load() }
+    // The plan window the deck's usage meter fills from (iOS UsageStore, `GET /api/v1/me/usage`).
+    var planFraction by remember { mutableStateOf<Double?>(null) }
+    LaunchedEffect(Unit) {
+        com.allternit.feature.billing.StoreBillingClient.usage()?.let { u ->
+            planFraction = if (u.weeklyLimit > 0) u.weeklyUsed / u.weeklyLimit else 0.0
+        }
+    }
     val dictation = remember { com.allternit.feature.chat.voice.Dictation(context) }
     var dictationBase by remember { mutableStateOf("") }
     androidx.compose.runtime.DisposableEffect(dictation) { onDispose { dictation.stop() } }
@@ -1031,26 +1044,18 @@ internal fun CodeLaunchComposer(
             }
         }
         DashedRule(border, Modifier.fillMaxWidth())
-        // The deck row: environment · folder · (spacer) · terminal.
-        Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            CodeDeckIcon(DesignR.drawable.ph_desktop, "Environment: This computer", "codeEnvironment", onClick = actions.onComputer)
-            CodeDeckIcon(DesignR.drawable.ph_folder, "Working folder", "codeFolder", onClick = actions.onFiles)
-            Spacer(Modifier.weight(1f))
-            CodeDeckIcon(DesignR.drawable.ph_terminal_window, "Open terminal", "codeOpenTerminal", onClick = actions.onTerminal)
-        }
+        // The deck row (iOS CodeDeckRow): environment · folder · branch · worktree · permission · (spacer) · usage · view menu.
+        com.allternit.feature.code.CodeDeckRow(
+            host = actions.host,
+            planFraction = planFraction,
+            onOpenTerminal = actions.onTerminal,
+            onOpenUsage = actions.onUsage,
+            onConnect = actions.onComputer,
+        )
     }
     if (pickerOpen) {
         ModelPickerSheet(models = models, onOpenSection = { row -> pickerOpen = false; onOpenSection(row) }, onDismiss = { pickerOpen = false })
     }
-}
-
-@Composable
-private fun CodeDeckIcon(icon: Int, label: String, testTag: String, onClick: () -> Unit) {
-    val c = AllternitTheme.colors
-    Box(
-        Modifier.width(36.dp).height(40.dp).testTag(testTag).clickable(role = Role.Button, onClickLabel = label, onClick = onClick).semantics { contentDescription = label },
-        contentAlignment = Alignment.Center,
-    ) { Icon(painterResource(icon), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(16.dp)) }
 }
 
 /** A 1dp dashed rule, 3 on 3 off (iOS DashedHairline). */

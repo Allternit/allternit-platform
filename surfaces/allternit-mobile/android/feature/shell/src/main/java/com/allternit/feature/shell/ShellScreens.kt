@@ -167,7 +167,7 @@ internal fun ShellHome(
     codeHome: (@Composable () -> Unit)? = null,
     /** Code mode's header button: the Code sessions view (iOS CodeSessionsButton → CodeOverview). */
     onCodeSessions: (() -> Unit)? = null,
-    /** Code mode's composer deck row (iOS CodeDeckRow): terminal, files, computer. */
+    /** Code mode's composer deck row (iOS CodeDeckRow): environment, folder, branch, worktree, permission, usage, view menu. */
     codeActions: CodeComposerActions? = null,
     /** The home composer's voice button (iOS ComposerView onVoiceMode on the home chat): a new chat in voice mode. */
     onVoiceMode: (() -> Unit)? = null,
@@ -206,7 +206,16 @@ internal fun ShellHome(
             titleContent = if (mode == ShellMode.Code && onCodeSessions != null) ({ GizziCodeWordmark(height = 15.dp) }) else null,
         )
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            if (mode == ShellMode.Home) LaunchGreeting() else if (codeHome != null && mode == ShellMode.Code) codeHome() else ModeArrives(mode)
+            if (mode == ShellMode.Home) LaunchGreeting()
+            else if (codeHome != null && mode == ShellMode.Code) {
+                Column(Modifier.fillMaxSize()) {
+                    // iOS CodeModeView: What's new sits right under the sessions button.
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp).padding(top = 2.dp), horizontalArrangement = Arrangement.End) {
+                        com.allternit.feature.code.CodeWhatsNewButton()
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth()) { codeHome() }
+                }
+            } else ModeArrives(mode)
         }
         if (mode == ShellMode.Code && codeHome != null && codeActions != null) {
             CodeLaunchComposer(models = models, noComputer = store.noComputer, actions = codeActions, onSend = onNewChat, onOpenSection = onOpenSection)
