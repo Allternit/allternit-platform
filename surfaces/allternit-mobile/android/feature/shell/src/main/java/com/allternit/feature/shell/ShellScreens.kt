@@ -94,6 +94,8 @@ internal fun PhoneHeader(
     wideSides: Boolean = false,
     leading: @Composable () -> Unit,
     trailing: @Composable () -> Unit = {},
+    /** Drawn in place of the title text (Code's gizzi code lockup); [title] stays the heading. */
+    titleContent: (@Composable () -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val side = if (wideSides) 96.dp else 52.dp
@@ -103,7 +105,7 @@ internal fun PhoneHeader(
     ) {
         Box(Modifier.width(side), contentAlignment = Alignment.CenterStart) { leading() }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
+            if (titleContent != null) Box(Modifier.semantics { heading(); contentDescription = title }) { titleContent() } else Text(
                 text = title,
                 color = c.textPrimary,
                 fontSize = 16.sp,
@@ -160,6 +162,8 @@ internal fun ShellHome(
     onOpenSection: (RailRow) -> Unit,
     /** Wave F1: Code mode's home (folder, tools, recent threads) replaces the placeholder and the composer starts a thread. */
     codeHome: (@Composable () -> Unit)? = null,
+    /** Code mode's header button: the Code sessions view (iOS CodeSessionsButton → CodeOverview). */
+    onCodeSessions: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var phoneArmed by remember { mutableStateOf(false) }
@@ -183,8 +187,15 @@ internal fun ShellHome(
                         )
                     }
                 }
-                PhoneIconButton(R.drawable.shell_note_pencil, mode.newLabel, testTag = "chatNewChat", onClick = onNew)
+                if (mode == ShellMode.Code && onCodeSessions != null) {
+                    // iOS CodeModeView header: the Code sessions view (CodeSessionsButton), no new-chat pencil.
+                    PhoneIconButton(R.drawable.shell_checklist, "Code sessions", testTag = "codeSessionsButton", iconSize = 20, onClick = onCodeSessions)
+                } else {
+                    PhoneIconButton(R.drawable.shell_note_pencil, mode.newLabel, testTag = "chatNewChat", onClick = onNew)
+                }
             },
+            // iOS Code launchpad title: the gizzi code lockup.
+            titleContent = if (mode == ShellMode.Code && onCodeSessions != null) ({ GizziCodeWordmark(height = 15.dp) }) else null,
         )
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             if (mode == ShellMode.Home) LaunchGreeting() else if (codeHome != null && mode == ShellMode.Code) codeHome() else ModeArrives(mode)

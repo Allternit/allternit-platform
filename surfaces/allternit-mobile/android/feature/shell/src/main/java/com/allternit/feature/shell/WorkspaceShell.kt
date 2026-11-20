@@ -179,14 +179,15 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     LaunchedEffect(drawer.settledValue) {
         if (drawer.settledValue == DrawerValue.Open) {
             Haptics.perform(view, Haptics.Kind.Tap)
-            hold.closeFan()
+            hold.dispatch(MenuHoldEvent.DrawerOpened)
             if (account != null) store.load()
+        } else {
+            hold.dispatch(MenuHoldEvent.DrawerClosed)
         }
     }
 
+    /** The hold machine's switchMode effect (it already closed the fan and played the haptic). */
     fun pickMode(m: ShellMode) {
-        hold.closeFan()
-        Haptics.perform(view, Haptics.Kind.Tap)
         if (m != mode) {
             mode = m
             ShellModePrefs.save(context, m)
@@ -240,6 +241,25 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             launchSection(launch.tab)?.let { page = ShellPage.Section(it) }
         }
     }
+    /** Open a bot's main chat in Bots mode (the ☰ bots shelf, iOS MenuHoldController .openBot). */
+    fun openBotChat(botId: String) {
+        mode = ShellMode.Bots
+        ShellModePrefs.save(context, ShellMode.Bots)
+        botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = botId)
+        page = ShellPage.Home
+    }
+    // ☰ hold: the mode fan and the bots shelf (iOS MenuHoldController.install in MainWorkspaceView).
+    hold.install(
+        scope = scope,
+        view = view,
+        isDrawerOpen = { drawer.targetValue == DrawerValue.Open },
+        isDrawerShown = { drawer.offset.let { !it.isNaN() && it > 0.5f } },
+        openDrawer = { setDrawer(true) },
+        closeDrawer = { setDrawer(false) },
+        switchMode = ::pickMode,
+        openBot = ::openBotChat,
+        shelfBotIds = { botsStore.bots.map { it.id } },
+    )
     // Wave F4a: the live view of a linked phone (iOS ACIComputersPane fullScreenCover PhoneLiveView).
     var phoneLive by remember { mutableStateOf<com.allternit.feature.computer.CloudPhone?>(null) }
 
@@ -479,6 +499,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             codeHome = if (mode == ShellMode.Code) ({
                                 com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it })
                             }) else null,
+                            onCodeSessions = if (mode == ShellMode.Code) ({ codeRoute = com.allternit.feature.code.CodeRoute.Overview }) else null,
                         )
                         is ShellPage.Chat -> ChatPage(
                             chat = chat,
@@ -764,13 +785,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                     mode = mode,
                     account = account,
                     store = store,
-                    onModeDial = {
-                        // D4: close the drawer, then fan the modes out of ☰.
-                        scope.launch {
-                            drawer.animateTo(DrawerValue.Closed, Motion.standardSpring())
-                            hold.openFan()
-                        }
-                    },
+                    // D4: the machine closes the drawer and fans the modes out of ☰ at once.
+                    onModeDial = { hold.openFan() },
+                    botsWaiting = botsStore.waitingCount,
                     onRow = { row -> openPage(ShellPage.Section(row)) },
                     onOpenSession = {
                         openSession(it)
@@ -792,7 +809,23 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             }
         }
 
-        ModeFanOverlay(hold = hold, current = mode, onPick = ::pickMode)
+        MenuOverlayHost(hold = hold, current = mode, botsStore = botsStore, signedIn = account != null)
+        // The shelf's Create a bot: a new bot opens straight into its chat (iOS MenuOverlayHost sheet).
+        if (hold.isCreateBotPresented) {
+            com.allternit.feature.bots.NewBotSheet(
+                store = botsStore,
+                host = botsHost,
+                onBrowseTemplates = null,
+                onDismiss = { hold.isCreateBotPresented = false },
+                onCreated = { ids ->
+                    hold.isCreateBotPresented = false
+                    scope.launch {
+                        botsStore.refreshAll()
+                        ids.firstOrNull()?.let { openBotChat(it) }
+                    }
+                },
+            )
+        }
 
         if (inboxOpen) {
             InboxSheet(

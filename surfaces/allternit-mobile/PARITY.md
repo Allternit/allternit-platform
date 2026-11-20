@@ -166,6 +166,7 @@ The cutover rule needs 0 `todo` and 0 `built` rows.
 | PhoneCodeTerminal | — | src/fabric-session/phone/screens/PhoneCodeTerminal.tsx | feature/code/CodeTerminal.kt (TerminalScreen, PtySession, PaneMirror) | built (#2640) | — |
 | ChangesetReviewSheet | ios/Features/Code/ChangesetReviewSheet.swift | — | feature/code/CodeDiffs.kt (ChangesetReviewSheet, PendingChangesBanner) | built (#2640) | — |
 | CodeEditorView | ios/Features/Code/CodeEditor/CodeEditorView.swift | — | feature/code/CodeFiles.kt (CodeEditorScreen: line numbers, highlight, Save through files/write) | built (#2640) | — |
+| ModeDialView + MenuHoldMachine + BotShelfView | ios/Features/Shell/{ModeDialView,MenuHoldMachine,BotShelfView}.swift | — | feature/shell/ModeFan.kt (☰ hold machine, mode fan, bots shelf, drawer mode dial) | built (#MODEPR) | — |
 | CodeModeView | ios/Features/Code/CodeModeView.swift | — | feature/code/CodeHome.kt (CodeHome, CodeRouteScreen, CodeThreadTools) + feature/shell/WorkspaceShell.kt (Code card in the mode fan opens it) | built (#2640) | — |
 | CodeOverviewSheet | ios/Features/Code/CodeOverviewSheet.swift | — | feature/code/CodeHome.kt (CodeOverviewScreen, ThreadActionsSheet, PermissionsScreen) | built (#2640) | — |
 | CodeRuntimePairingView | ios/Features/Code/CodeRuntimePairingView.swift | — | feature/code/CodeHome.kt (CodeComputerScreen) | built (#2640) | — |

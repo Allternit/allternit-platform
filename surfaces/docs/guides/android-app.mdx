@@ -132,7 +132,7 @@ The native app is built to match the iPhone app screen for screen, in ten waves.
 | Wave | What it covers | State |
 | --- | --- | --- |
 | Sign-in | Welcome loop, email code, Google, GitHub, Apple | Built, in testing. Apple waits on a return URL in the Apple Services ID. |
-| Home shell | Home, drawer, mode fan, composer, **+** sheet, **Pick a brain** | Built, in testing |
+| Home shell | Home, drawer, mode fan with the ☰ hold and the bots shelf, drawer mode dial, composer, **+** sheet, **Pick a brain** | Built, in testing |
 | A. Chat | Sending, streamed replies, thinking, tool calls, permission asks, attachments, chat history, no-computer state | Built, in testing |
 | B. First run | "Which AI should I think with?", the setup graph, Meet your bots, Everything connected, the hand-off into the app | Built, in testing |
 | C. Rest of the shell | Search, session overview, Inbox, Quick task, Continue a CLI session, thinking slider, stage backdrop, test extras | Built, in testing |
@@ -348,6 +348,18 @@ The drawer's Models row (and the model picker's manage link) opens **Models**: t
 **On this phone** shows what the phone can run: the memory Allternit can give a model and what is running now (**Stop**), the llama.cpp engine (GPU on newer Adreno phones, otherwise CPU, or **Not available on this build**), downloads in progress with **Pause**, **Resume** and **Cancel**, and downloaded models with **Use in chat** and **Remove**, plus the storage they use. Downloaded models also show in the model picker under **On this phone**. A chat on one of them runs on the phone, with no computer and no connection; it is not saved to your account. A model unloads after 5 idle minutes, on a low-memory warning, or when you tap Stop.
 
 **Voice engines.** Voice mode picks its engine from **Where voice runs** in Settings › Voice, as on iPhone. With your own OpenAI key it listens through OpenAI Realtime and reads replies with OpenAI's voice. With your own ElevenLabs key it reads replies with your ElevenLabs voice and listens on the phone. Keys go straight to that company. If a key is rejected, out of credit, or the network drops, voice mode says so and uses the phone's voice. The on-device voice engine (no account, no network) is not in this build yet; until it is, voice mode uses the phone's recognizer and voice and says so.
+
+
+### Switching modes
+
+Two ways, the same as the iPhone app:
+
+- **Hold the menu button (☰)** at the top left for a moment. The mode fan opens: Home, Bots, Code and ACI on an arc. Slide your finger to a mode and let go to switch. Let go without moving and the fan stays open, so you can tap a mode. The small badge on ☰ shows the mode you are in.
+- **Tap the mode dial** at the top of the drawer (the round icon left of the wordmark). The drawer closes and the same fan opens, so you never have to hold.
+
+While the fan is open, slide onto **Bots** and keep holding: the bots shelf replaces the fan. Your bots sit on one glass bar; the one under your finger grows and its name and status show underneath. Let go on a bot to open its main chat, or on **+** to create a bot. A red count on the dial, the Bots card and each bot shows how many threads are waiting for you. With TalkBack, ☰ has a "Switch to" action per mode and "Open your bots".
+
+Bots mode's top bar has one glass pill with **Search bots** and **Bots options** (the Office, Threads, Pause and Connections live in Bots options). Code mode's top bar shows the gizzi code mark and a **Code sessions** button that opens all your Code sessions.
 
 ## Gap run E
 
