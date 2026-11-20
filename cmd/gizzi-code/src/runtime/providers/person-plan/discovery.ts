@@ -21,6 +21,14 @@ export const PERSON_PLAN_RUNTIME = "person-plan"
 const MODELS_TTL_MS = 6 * 3_600_000
 const VENDOR_NAME: Record<string, string> = { claude: "Claude", chatgpt: "ChatGPT", grok: "Grok", kimi: "Kimi" }
 
+/** `claude-sonnet-5-5` → "Claude Sonnet 5.5 (your organization)". Unknown shapes fall back to the id. */
+export function linkedModelDisplayName(id: string): string {
+  const m = /^claude-([a-z]+)-(\d{1,2}(?:-\d{1,2})*)(?:-\d{8})?$/.exec(id)
+  if (!m) return `${id} (your organization)`
+  const family = m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1)
+  return `Claude ${family} ${m[2]!.replace(/-/g, ".")} (your organization)`
+}
+
 type Row = { id?: string; state?: string; models?: unknown; person_only?: boolean; model_names?: unknown }
 
 /** Connected runner/Copilot rows → local `plan` and `copilot-plan` providers. */
@@ -43,7 +51,7 @@ export function planProvidersFromRows(rows: Row[]): DiscoveredProvider[] {
         if (!model) continue
         const names = row.model_names && typeof row.model_names === "object" ? (row.model_names as Record<string, unknown>) : {}
         const known = typeof names[id] === "string" && names[id] ? (names[id] as string).replace(/ \(your organization\)$/, "") : undefined
-        claudeOrg.push({ id: model, name: `${known ?? model} (your organization)`, context: 200_000, output: 16_384 })
+        claudeOrg.push({ id: model, name: known ? `${known} (your organization)` : linkedModelDisplayName(model), context: 200_000, output: 16_384 })
       } else if (id.startsWith("copilot/")) {
         const model = id.slice("copilot/".length)
         if (model) copilot.push({ id: model, name: `Copilot plan · ${model}`, context: 128_000, output: 16_384 })
