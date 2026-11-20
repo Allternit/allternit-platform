@@ -1829,9 +1829,7 @@
       "adapter": {
         "kind": "stream-json"
       },
-      "brains": [
-        "anthropic"
-      ],
+      "brains": ["anthropic", "claude"],
       "access": [
         "plan",
         "key"
@@ -2026,9 +2024,7 @@
       "adapter": {
         "kind": "codex-app-server"
       },
-      "brains": [
-        "openai"
-      ],
+      "brains": ["openai", "chatgpt"],
       "access": [
         "plan",
         "key"
