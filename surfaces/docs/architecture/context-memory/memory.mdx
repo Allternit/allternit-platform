@@ -45,7 +45,7 @@ Two harnesses live in `tools/memory-eval/`. `run.sh <fixture>` scores retrieval 
 tools/memory-eval/run.sh cmd/allternit-api/src/memory_retrieve/fixtures/tiny_locomo.json --arms none,raw,topk,pages
 ```
 
-The arms are `none` (question only), `raw` (full conversation), `topk` (the incumbent recall top-k from the cargo eval report) and `pages` (a prototype page of dated atomic claims, one brain call per conversation, cached). The default brain is a deterministic offline one that answers only when the gold answer is in the arm's context, so it checks coverage. Real runs use a subscription CLI brain (`--brain cmd --brain-cmd 'claude -p'` or `ALLTERNIT_EVAL_BRAIN_CMD`), never a metered API. `--dry` prints the plan and the brain-call counts without calling anything. `longmemeval_to_fixture.py` and `locomo_to_fixture.py` convert the public sets; neither set is vendored.
+The arms are `none` (question only), `raw` (full conversation), `topk` (the incumbent recall top-k from the cargo eval report) and `pages` (a prototype page of dated atomic claims, one brain call per conversation, cached). The default brain is a deterministic offline one that answers only when the gold answer is in the arm's context, so it checks coverage. Real runs use a subscription CLI brain (`--brain cmd --brain-cmd '<cli> -p'` or `ALLTERNIT_EVAL_BRAIN_CMD`), never a metered API. `--dry` prints the plan and the brain-call counts without calling anything. `longmemeval_to_fixture.py` and `locomo_to_fixture.py` convert the public sets; neither set is vendored.
 
 ## Related
 
