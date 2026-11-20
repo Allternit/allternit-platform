@@ -58,6 +58,9 @@ internal fun ChatPage(
     onOpenSettings: () -> Unit,
     /** Wave D: an artifact card opens the artifact screens. */
     onOpenArtifact: ((com.allternit.feature.chat.ArtifactRecord) -> Unit)? = null,
+    /** Opened from the home composer's voice button: start voice mode once, then [onVoiceStarted]. */
+    startVoice: Boolean = false,
+    onVoiceStarted: () -> Unit = {},
 ) {
     val c = AllternitTheme.colors
     var editingId by remember { mutableStateOf<String?>(null) }
@@ -94,6 +97,12 @@ internal fun ChatPage(
     val voiceContext = androidx.compose.ui.platform.LocalContext.current
     val voiceHost = remember(chat) { com.allternit.feature.chat.voice.VoiceHost(voiceContext) }
     com.allternit.feature.chat.voice.VoiceHostWiring(voiceHost, chat)
+    LaunchedEffect(startVoice) {
+        if (startVoice) {
+            voiceHost.start(chat, models.selectedId, models.selected?.let { models.level(it) })
+            onVoiceStarted()
+        }
+    }
     val endVoice: (Int) -> Unit = { seconds -> chat.appendVoiceSummary(seconds) }
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().statusBarsPadding().testTag("chatScreen")) {
