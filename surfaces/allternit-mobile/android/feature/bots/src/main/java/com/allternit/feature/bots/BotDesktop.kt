@@ -280,7 +280,7 @@ internal fun BotDesktopView(bot: BotRecord, status: BotDesktopStatus, onClose: (
             dark = true,
             trailing = {
                 if (session.allowsInput) {
-                    BarIcon(com.allternit.core.rfb.com.allternit.core.design.R.drawable.ph_keyboard, if (keyboard) "Hide keyboard" else "Show keyboard", "botDesktopKeyboard", tint = Color.White) { keyboard = !keyboard }
+                    BarIcon(com.allternit.core.design.R.drawable.ph_keyboard, if (keyboard) "Hide keyboard" else "Show keyboard", "botDesktopKeyboard", tint = Color.White) { keyboard = !keyboard }
                 }
                 Text(
                     BotDesktopStatus.controlLabel(live), color = badge, fontSize = 12.sp,

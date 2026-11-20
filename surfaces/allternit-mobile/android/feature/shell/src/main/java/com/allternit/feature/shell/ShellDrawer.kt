@@ -174,7 +174,7 @@ internal fun ShellDrawer(
             account = account,
             onSettings = onSettings,
             onPhones = { onRow(RailRow("phones", "Phones", com.allternit.core.design.R.drawable.ph_device_mobile)) },
-            onMeetings = { onRow(RailRow("meetings", "Meetings", com.allternit.core.design.com.allternit.core.design.R.drawable.ph_video_camera)) },
+            onMeetings = { onRow(RailRow("meetings", "Meetings", com.allternit.core.design.R.drawable.ph_video_camera)) },
             onNew = onNew,
             newOptions = newOptions,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -580,7 +580,7 @@ private fun DrawerFooter(
                     .semantics { contentDescription = if (inCall) "Meetings, Gizzi is in a call" else "Meetings" },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(painterResource(com.allternit.core.design.com.allternit.core.design.R.drawable.ph_video_camera), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
+                Icon(painterResource(com.allternit.core.design.R.drawable.ph_video_camera), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
                 if (inCall) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(8.dp).clip(CircleShape).background(Color(0xFF16A34A)))
             }
         }
