@@ -581,6 +581,12 @@ Stage names are `labels_live`, `strengths`, `pages`, `router`, `orchestrator`,
 `disputes`, `checks`, `intentions`, `rem` and `track1`. An unknown stage or a cap outside
 0 to 1000 returns `400`, and nothing is written.
 
+`labels_live` works now. When it and `enabled` are both on, each assistant reply sent to
+`POST /memory/retain` labels the session's most recent recall from the last 30 minutes. The
+recall's `memory_recall_logs` row gets `label_used`, a JSON array of the result ids the reply
+used (every other id in `results` counts as unused), plus `label_source` set to `answer` and
+`labeled_at`. A recall is labelled only once. With the flag off, nothing is written.
+
 ### `GET /memory/sleep/config`
 
 `{ "values": { "<key>": { "value", "source", "default", "updated_at", "group", "about" } } }`
