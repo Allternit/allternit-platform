@@ -151,6 +151,17 @@ internal class ConnectionsStore {
 
     fun isAvailable(id: String): Boolean = row(id).let { it.available || it.state == ConnState.On }
 
+    /**
+     * Rows behind a server flag stay out of the list until cloud-api sends the row with
+     * `available: true` (iOS isListed): the Claude organization row, while `ALLTERNIT_CLAUDE_LINK`
+     * is off, is missing or `available: false`. A row already linked or needing you always shows.
+     */
+    fun isListed(id: String): Boolean {
+        if (id != "claude-org") return true
+        val r = rows[id] ?: return false
+        return r.available || r.state == ConnState.On || r.state == ConnState.Needs
+    }
+
     /** "An API key" stands for every key provider. */
     private fun keysSummary(): ConnectionWire {
         val keys = ConnectionsCatalog.keyProviders.map { it to rows[it.id] }
@@ -169,7 +180,8 @@ internal class ConnectionsStore {
         return when (r.state) {
             ConnState.Off -> entry.blurb?.let { "Not connected · $it" } ?: "Not connected"
             ConnState.Connecting -> "Connecting…"
-            ConnState.On -> r.found?.let { "Connected · $it" } ?: "Connected"
+            ConnState.On -> if (entry.id == "claude-org") "Connected · " + (r.found ?: "Billed to your organization")
+            else r.found?.let { "Connected · $it" } ?: "Connected"
             ConnState.Needs -> (r.reason ?: ConnectionsCatalog.reasonText(r.reasonCode, entry.name))?.let { "Needs you · $it" } ?: "Needs you"
         }
     }

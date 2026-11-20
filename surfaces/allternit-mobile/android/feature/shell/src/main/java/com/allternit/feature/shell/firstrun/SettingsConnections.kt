@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -21,7 +23,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiConfig
@@ -58,9 +63,41 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
     val store = remember { ConnectionsStore() }
     var sheet by remember { mutableStateOf<ConnSheet?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    var confirmUnlink by remember { mutableStateOf(false) }
+    val uri = LocalUriHandler.current
     LaunchedEffect(Unit) { store.load(relay) }
 
     fun reload() { scope.launch { store.load(relay) } }
+
+    fun disconnect(id: String, name: String) {
+        message = null
+        scope.launch {
+            runCatching { ConnectionsClient.disconnect(id, store.target(id)) }
+                .onFailure { message = "Couldn't disconnect $name. ${ConnectionsClient.describe(it)}" }
+            store.load(relay)
+        }
+    }
+
+    /**
+     * The Claude organization row's one action (iOS ConnectionRowView + ConnectionsSettingsView.act):
+     * Link (off), Unlink after a confirm (on), Link again (needs), and for a reached spend limit
+     * Fix, which opens Claude's Linked platforms page because linking again would not help.
+     */
+    fun claudeOrgAction(r: ConnectionWire): (@Composable () -> Unit)? = when {
+        !store.isAvailable("claude-org") || r.state == ConnState.Connecting -> null
+        r.state == ConnState.On -> ({
+            SetupQuietButton("Unlink", Modifier.testTag("claude-org-unlink").semantics { contentDescription = "Unlink your Claude organization" }) { confirmUnlink = true }
+        })
+        r.state == ConnState.Needs && r.reasonCode == "spend_limit_reached" -> ({
+            SetupQuietButton("Fix", Modifier.semantics { contentDescription = "Open Claude's Linked platforms page" }) {
+                runCatching { uri.openUri(ConnectionsCatalog.CLAUDE_LINKED_PLATFORMS_URL) }
+            }
+        })
+        r.state == ConnState.Needs -> ({ SetupQuietButton("Link again", Modifier.testTag("claude-org-relink")) { connect("claude-org") } })
+        else -> ({
+            SetupQuietButton("Link", Modifier.testTag("claude-org-link").semantics { contentDescription = "Link your Claude organization" }) { connect("claude-org") }
+        })
+    }
 
     fun connect(id: String) {
         message = null
@@ -88,7 +125,7 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
             if (store.loadError != null) Text(store.loadError ?: "", color = c.errFg, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp).testTag("connectionsError"))
             message?.let { Text(it, color = c.sub, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp)) }
             for ((group, title, blurb) in CONNECTION_GROUPS) {
-                val entries = ConnectionsCatalog.entries.filter { it.group == group }
+                val entries = ConnectionsCatalog.entries.filter { it.group == group && store.isListed(it.id) }
                 if (entries.isEmpty()) continue
                 Text(title, color = AllternitTheme.colors.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(start = 6.dp, top = 18.dp, bottom = 2.dp))
                 Text(blurb, color = c.mut, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(start = 6.dp, bottom = 8.dp))
@@ -100,15 +137,11 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
                             entry = e,
                             store = store,
                             tag = null,
-                            trailing = if (on) ({
-                                SetupQuietButton("Disconnect") {
-                                    scope.launch {
-                                        runCatching { ConnectionsClient.disconnect(e.id, store.target(e.id)) }
-                                            .onFailure { message = ConnectionsClient.describe(it) }
-                                        store.load(relay)
-                                    }
-                                }
-                            }) else null,
+                            trailing = when {
+                                e.id == "claude-org" -> claudeOrgAction(store.row(e.id))
+                                on -> ({ SetupQuietButton("Disconnect") { disconnect(e.id, e.name) } })
+                                else -> null
+                            },
                             onConnect = { connect(e.id) },
                             onFallback = ::fallback,
                         )
@@ -116,6 +149,20 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
                 }
             }
         }
+    }
+
+    if (confirmUnlink) {
+        AlertDialog(
+            onDismissRequest = { confirmUnlink = false },
+            title = { Text("Unlink your Claude organization?") },
+            text = { Text("Chats on your Claude organization stop. Allternit stops billing it right away. You can link it again later.") },
+            confirmButton = {
+                TextButton(onClick = { confirmUnlink = false; disconnect("claude-org", "Claude organization") }, modifier = Modifier.testTag("claude-org-unlink-confirm")) {
+                    Text("Unlink", color = c.errFg)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmUnlink = false }) { Text("Cancel") } },
+        )
     }
 
     sheet?.let { s ->

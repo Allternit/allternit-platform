@@ -479,6 +479,9 @@ internal fun ConnectionRow(
                 else if (entry.isNew && r.state != ConnState.On) Text("New", fontSize = 11.sp, color = c.sub, modifier = Modifier.background(c.fill2, CircleShape).padding(horizontal = 7.dp, vertical = 2.dp))
             }
             Text(status, fontSize = 12.5.sp, color = if (r.state == ConnState.Needs) c.errFg else c.sub)
+            if (entry.id == "claude-org" && available && r.state == ConnState.Off) {
+                Text(ConnectionsCatalog.CLAUDE_ORG_NOTE, fontSize = 12.sp, lineHeight = 16.sp, color = c.sub, modifier = Modifier.padding(top = 2.dp))
+            }
         }
         when {
             trailing != null -> trailing()

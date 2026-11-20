@@ -353,10 +353,13 @@ internal object ConnectionsClient {
 
     suspend fun list(target: String? = null): List<ConnectionWire> = send("", target)["connections"].arr().mapNotNull(ConnectionWire::parse)
 
-    /** Returns the login to show next, or null when the row is already on. */
-    suspend fun connect(id: String, target: String?, acceptDisclosure: String? = null): Pair<ConnState?, ConnLogin?> {
+    /**
+     * Returns the login to show next, or null when the row is already on. [way] is `code` for plan
+     * sign-ins and `oauth` for the Claude organization link (a redirect sign-in the server starts and polls).
+     */
+    suspend fun connect(id: String, target: String?, acceptDisclosure: String? = null, way: String = "code"): Pair<ConnState?, ConnLogin?> {
         val json = send("$id/connect", target, "POST", buildJsonObject {
-            put("way", "code")
+            put("way", way)
             if (acceptDisclosure != null) put("accept_disclosure", acceptDisclosure)
         })
         val l = json["login"]
@@ -427,6 +430,8 @@ internal object ConnectionsCatalog {
         ConnEntry("allternit", "Allternit Cloud", "A", way = ConnWay.Included),
         ConnEntry("chatgpt", "ChatGPT", "G", "Plus or Pro plan", ConnWay.OAuth, ConnRunsOn.Runner),
         ConnEntry("claude", "Claude", "C", "Pro or Max plan", ConnWay.Code, ConnRunsOn.Runner),
+        // Listed only once cloud-api sends the row (Cloud flag ALLTERNIT_CLAUDE_LINK; ConnectionsStore.isListed).
+        ConnEntry("claude-org", "Claude organization", "C", "Bill your own Claude organization", ConnWay.OAuth, isNew = true),
         ConnEntry("gemini", "Gemini", "G", "Free Google AI Studio key", ConnWay.Paste, isNew = true),
         ConnEntry("copilot", "GitHub Copilot", "H", "Copilot Pro or Business", ConnWay.OAuth, isNew = true),
         ConnEntry("grok", "Grok", "X", "SuperGrok plan", ConnWay.Code, ConnRunsOn.Runner, isNew = true),
@@ -463,7 +468,7 @@ internal object ConnectionsCatalog {
     fun logoKey(id: String): String? = when (id) {
         "allternit", "gizzi" -> "allternit"
         "chatgpt", "openai-voice" -> "openai"
-        "claude", "claude-code" -> "claude"
+        "claude", "claude-code", "claude-org" -> "claude"
         "gemini" -> "googlegemini"
         "gemini-cli" -> "gemini"
         "copilot", "github" -> "github"
@@ -513,6 +518,7 @@ internal object ConnectionsCatalog {
         "claude", "grok", "kimi", "chatgpt" -> ConnectionWire(id, reasonCode = "not_available_yet", available = false,
             unavailableReason = "Not available yet. Use a key for now.", fallbacks = listOf(keyFallback(id)))
         "copilot" -> ConnectionWire(id, available = false, unavailableReason = "Coming soon.", fallbacks = listOf("github"))
+        "claude-org" -> ConnectionWire(id, reasonCode = "not_available_yet", available = false, unavailableReason = "Not available yet.")
         "local" -> if (computerOnline) ConnectionWire(id)
         else ConnectionWire(id, reasonCode = "no_computer", available = false, unavailableReason = "Runs on a computer.", fallbacks = listOf("this-mac"))
         else -> ConnectionWire(id)
@@ -525,6 +531,10 @@ internal object ConnectionsCatalog {
         "vendor_limited" -> "$name plan not active or limit used up"
         "no_computer" -> "Needs your own computer for now"
         "not_available_yet" -> "Not available yet"
+        "org_not_eligible" -> "Your Claude organization can't be billed. It must pay Anthropic directly."
+        "spend_limit_reached" -> "Your Claude organization's spend limit is reached"
+        "disconnected" -> "Your Claude organization is disconnected"
+        "relink_needed" -> "Link your Claude organization again"
         "computer_offline" -> "Your computer is offline"
         "could_not_start" -> "Could not start. Try again"
         "update_app" -> "Update the app to connect this plan."
@@ -532,6 +542,12 @@ internal object ConnectionsCatalog {
         "usage_limit" -> "$name limit reached"
         else -> null
     }
+
+    /** Where a person raises their organization's spend limit at Anthropic. */
+    const val CLAUDE_LINKED_PLATFORMS_URL = "https://platform.claude.com/linked-platforms"
+
+    /** The one-line note under the unlinked Claude organization row. */
+    const val CLAUDE_ORG_NOTE = "Needs the Admin or Billing role. Your org must pay Anthropic directly."
 
     fun fallbackLabel(id: String): String = when {
         id == "this-mac" -> "Add a computer"
