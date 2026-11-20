@@ -12,6 +12,10 @@
 //! action list, an approval id per action, and a change record written to
 //! the runtime home before anything runs ([`changes`]).
 //!
+//! [`findings`] (`GET /v1/host/findings`) turns what the read modules see
+//! into findings (disk nearly full, failed service, security updates, ports
+//! open to the network), each with a suggested fixed-list action.
+//!
 //! Actions that need root run through one allow-listed admin helper
 //! ([`helper`]) after a one-time setup the user approves ([`elevation`]);
 //! the probe itself never runs as root.
@@ -26,6 +30,7 @@ pub mod actions;
 pub mod changes;
 pub mod cmd;
 pub mod elevation;
+pub mod findings;
 pub mod helper;
 pub mod logs;
 pub mod mask;
@@ -44,6 +49,10 @@ pub use changes::{ChangeRecord, ChangeStatus, ChangeStore};
 pub use cmd::SourceStatus;
 pub use elevation::{
     ApprovalMethod, ElevationError, ElevationState, ElevationStatus, HelperKind, SetupPlan,
+};
+pub use findings::{
+    evaluate as evaluate_findings, findings, findings_report, findings_report_with, CleanEstimate,
+    FindingCategory, FindingsInput, FindingsReport, HostFinding, Severity, SuggestedAction,
 };
 pub use helper::{HelperError, HelperRequest, HELPER_VERSION};
 pub use logs::{
