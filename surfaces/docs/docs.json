@@ -234,6 +234,7 @@
               "architecture",
               "architecture/dependency-map",
               "architecture/facility-workspace",
+              "architecture/facility-campus",
               "architecture/first-run-setup",
               "architecture/bot-setup-picker",
               "architecture/group-room-brief",

@@ -1,0 +1,71 @@
+---
+title: "Facility campus districts"
+description: "How the 3D facility is split into districts, loaded by distance, and kept inside its frame budget."
+---
+
+The 3D facility grew from one building into a campus of twelve districts. This page is the map for developers. The full notes live in the facility project, so this page points to them instead of copying them: `projects/3dfacility.allternit.com/docs/CAMPUS_DISTRICTS.md` in the websites repo. The host side of the bridge is in [Facility workspace bridge](/architecture/facility-workspace).
+
+<Note>The district work is in review as websites pull requests 147 to 160 and is not merged yet. Names and numbers here describe those branches.</Note>
+
+## District registry
+
+A district is three files, found by a glob. Nothing central is edited.
+
+| File | Holds |
+|---|---|
+| `districts/<id>.layout.ts` | The layout: id, name, bounds, origin, the low-detail shell and the far skyline massing. Loaded eagerly. |
+| `districts/<id>.tsx` | The full-detail component. Loaded the first time the district becomes active. |
+| `campus-manifest.json`, one entry | The stage: 0 lot, 1 frame, 2 shell, 3 open, 4 busy. Changed by pull request only. |
+
+A layout with no manifest entry is ignored. Below stage 3 a district has no interior and shows its shell. Coordinates are campus metres, with north at negative Z. Geometry is authored district-local and placed at the district origin.
+
+## Loader
+
+`district-loader.tsx` runs pure rules four times a second against the camera:
+
+- **Active district:** only the nearest open district draws in full detail. It changes only when another one is at least 20 m nearer.
+- **Shells:** other districts within 400 m (250 m on the phone tier) show a solid shell, dropped at 60 m past that range. At most 5 are shown, 3 on phones.
+- **Far skyline:** every other district is merged into one mesh and one draw, always on.
+
+Shell and interior files load in packs, prefetched before you arrive. Interior packs are kept 2 at a time on phones and 4 on desktop.
+
+## Frame budget and gate
+
+| Slice | Draws | Triangles |
+|---|---|---|
+| Whole frame, every view | 1,200 | 900k |
+| Active district, desktop | 680 | 480k |
+| Active district, phone tier | 450 | 300k |
+| Each shell | 12 | 20k |
+| Far skyline | 2 | 20k |
+
+`scripts/test-facility-budget.mjs` is the gate. It opens the facility at 1440 by 900 and at 390 by 844, measures the overview, every room and the district views, and fails when a limit is exceeded. Other gate scripts walk the districts (`test-facility-walk.mjs`) and take the screenshots for each lane. Name new top-level groups so the per-part breakdown stays readable.
+
+## Shared interior kit
+
+Districts share one kit, under `campus/kit/`:
+
+- **Instanced equipment:** racks, laser cutters, 3D printers, CNC machines, whiteboards and street furniture draw as instances, one draw per material per 64 m cell, with a near and a far version.
+- **Facades:** a pure builder returns merged geometry per material, so a facade costs at most 7 draws.
+- **Detail by distance:** a district's furnishing is cut into tiles of about 20 m and each tile holds its furniture in merged sets, so the full version only draws near you.
+- **Materials:** everything maps onto the existing room materials. Interior floors and furniture use a fixed fill so rooms are never dark, ceilings use a panel grid, and no tan.
+- **Sand3D furnishing:** desks, chairs, shelves and similar props come from the Sand3D catalog. See `docs/FV_SAND3D_NOTES.md` in the facility project.
+- **Collision:** furniture is not collision. Walls and a few boxes per hall register walk collision, and each part registers and unregisters it as it mounts and unmounts.
+
+For a prop Sand3D does not have, use the `machine-build` skill: it builds the object in Blender code, checks it against reference sheets, and exports a model the kit can place.
+
+## Workspace payload
+
+The host posts `allternit:workspace` with the roster described in [Facility workspace bridge](/architecture/facility-workspace). The campus adds two additive fields. The facility ignores fields it does not know, so a host can ship them first.
+
+| Field | Used by | Rule |
+|---|---|---|
+| `bots` | Bot Quarter | Bots take homes in order. A home is lit while its bot is working or talking. |
+| `projects` | Commons Loop | One studio per project. The facility exposes a light hook per studio; the feed side is part of the host lane. |
+| `computers` | Compute Row | Entries are `{ id, name, status }`, running first, at most 12. Hall i belongs to computer i, lit while the status is running or starting. |
+
+With no payload, or on the public site, each of these districts shows a fixed mix of lit windows. Project and computer names show only in the signed-in embed.
+
+## Surfaces
+
+Desktop, the ai.allternit.com web and phone layouts and the m.allternit.com PWA all embed the same hosted facility, posted from `allternit-ai/src/views/office/OfficeFloor.tsx`. The iPhone app builds its own payload in `OfficeFloorView.swift`. Android gets the facility through the PWA.
