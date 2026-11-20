@@ -152,8 +152,14 @@ final class PushNotificationManager: NSObject {
     /// A notification was tapped: open what it points at.
     /// An approval opens Decisions, where it can be answered; the rest open
     /// their link.
-    func handleTap(urlPath: String?, event: String? = nil, inboxId: String? = nil, sessionId: String? = nil) {
+    func handleTap(urlPath: String?, event: String? = nil, inboxId: String? = nil, sessionId: String? = nil,
+                   type: String? = nil, computerId: String? = nil) {
         clearBadge()
+        // Computer alerts (offline, cpu, disk) open that computer's console detail.
+        if type == "computer_alert", let computerId, !computerId.isEmpty {
+            DeepLinkRouter.shared.enqueue(.computerConsole(computerId))
+            return
+        }
         if let inboxId, !inboxId.isEmpty {
             DeepLinkRouter.shared.enqueue(.inboxItem(inboxId))
             return

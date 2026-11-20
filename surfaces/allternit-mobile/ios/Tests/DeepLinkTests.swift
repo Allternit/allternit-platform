@@ -22,5 +22,7 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(DeepLink.parse(path: "/?allternit_channel=slack"), .channel("slack"))
         XCTAssertEqual(DeepLink.parse(path: "/settings/billing"), .settings("billing"))
         XCTAssertNil(DeepLink.parse(path: "/"))
+        XCTAssertEqual(DeepLink.parse(path: "/computers"), .computers)
+        XCTAssertEqual(DeepLink.parse(path: "/computers/inst_7"), .computerConsole("inst_7"))
     }
 }

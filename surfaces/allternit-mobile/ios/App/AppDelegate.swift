@@ -133,8 +133,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let event = data?["event"] as? String
         let inboxId = data?["inboxId"] as? String
         let sessionId = data?["sessionId"] as? String
+        // Computers console alerts: data = { type: "computer_alert", computerId, rule, value }.
+        let type = data?["type"] as? String
+        let computerId = data?["computerId"] as? String
         await MainActor.run {
-            PushNotificationManager.shared.handleTap(urlPath: urlPath, event: event, inboxId: inboxId, sessionId: sessionId)
+            PushNotificationManager.shared.handleTap(urlPath: urlPath, event: event, inboxId: inboxId, sessionId: sessionId,
+                                                     type: type, computerId: computerId)
         }
     }
 }

@@ -33,6 +33,8 @@ enum DeepLink: Equatable, Sendable {
     case invite(URL)
     /// The Computers view (`/computers`).
     case computers
+    /// One computer's console detail (`/computers/<id>`, a `computer_alert` push).
+    case computerConsole(String)
     /// Decisions: questions and approvals waiting on you (approval pushes).
     case decisions
     /// The "Needs you" inbox across all bots (`/inbox`, `allternit://inbox`).
@@ -151,6 +153,9 @@ enum DeepLink: Equatable, Sendable {
         case "settings":
             return .settings(segments.count >= 2 ? segments[1] : nil)
         case "computers":
+            if segments.count >= 2, let id = segments[1].removingPercentEncoding, !id.isEmpty, id != "console" {
+                return .computerConsole(id)
+            }
             return .computers
         case "phone-task":
             guard let goal = query["goal"], !goal.isEmpty else { return nil }
