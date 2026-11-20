@@ -92,12 +92,14 @@ enum class CaptionSize(val raw: String, val title: String, val sp: Float) {
 
 /**
  * Who voice mode is talking with, when it is a bot (iOS passes AgentRecord). [face] draws the bot's avatar at the
- * given size in dp; [colorHex] is the bot's accent ("Bot's colour"), null when it has none.
+ * given size in dp; [colorHex] is the bot's accent ("Bot's colour"), null when it has none; [voiceId] is the bot's
+ * own Kokoro voice (iOS AgentRecord.kokoroVoiceId), null when it uses the phone's pick.
  */
 class VoiceBot(
     val id: String,
     val name: String,
     val colorHex: String?,
+    val voiceId: String? = null,
     val face: @Composable (sizeDp: Float) -> Unit,
 ) {
     val color: Color? get() = parseHexColor(colorHex)
