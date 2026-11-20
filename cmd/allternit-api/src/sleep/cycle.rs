@@ -231,6 +231,54 @@ pub fn decay_paused(conn: &Connection, cfg: &Resolved, user: &str, now: DateTime
         && debt(conn, cfg, user, now).map(|d| d >= cfg.number("debt_pause_threshold")).unwrap_or(false)
 }
 
+/// Write one Sleep event on the memory activity stream. Best effort: a
+/// failed write is dropped and never reaches the caller.
+pub fn emit(conn: &Connection, user: &str, kind: &'static str, title: String, extra: Value, session: Option<String>, run: Option<String>) {
+    let _ = crate::memory_activity::record(
+        conn,
+        user,
+        crate::memory_activity::Activity { kind, title, extra: Some(extra), session, run, ..Default::default() },
+    );
+}
+
+/// The chat session an event belongs to: none for clock and manual units.
+fn event_session(unit: &Unit) -> Option<String> {
+    Some(unit.session().to_string()).filter(|s| !s.is_empty() && s != queue::SESSION_CLOCK && s != queue::SESSION_MANUAL)
+}
+
+/// Emit `sleep.debt.changed` when the debt has crossed `debt_pause_threshold`
+/// (up or down) since the last such event; otherwise write nothing. The last
+/// band is read from the user's newest `sleep.debt.changed` row (no row means
+/// "below"), so no extra state is stored. Called at a cycle's start and end,
+/// never on a read of `GET status`.
+pub fn emit_debt_if_crossed(conn: &Connection, cfg: &Resolved, user: &str, now: DateTime<Utc>) {
+    let Ok(d) = debt(conn, cfg, user, now) else { return };
+    let threshold = cfg.number("debt_pause_threshold");
+    let paused = d >= threshold;
+    let last: Option<bool> = conn
+        .query_row(
+            "SELECT detail FROM memory_activity WHERE user_id = ?1 AND kind = ?2 ORDER BY id DESC LIMIT 1",
+            params![user, super::types::events::DEBT_CHANGED],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|j| serde_json::from_str::<Value>(&j).ok())
+        .and_then(|v| v["decay_paused"].as_bool());
+    if last.unwrap_or(false) == paused {
+        return;
+    }
+    let title = if paused { "Memories are waiting for a nap" } else { "Sleep debt is back under the threshold" };
+    emit(
+        conn,
+        user,
+        super::types::events::DEBT_CHANGED,
+        title.into(),
+        json!({ "debt": d, "threshold": threshold, "decay_paused": paused }),
+        None,
+        None,
+    );
+}
+
 // ── Cycle rows ──────────────────────────────────────────────────────────────
 
 fn spend_today(conn: &Connection, user: &str, now: DateTime<Utc>) -> rusqlite::Result<f64> {
@@ -384,6 +432,10 @@ pub async fn run_once(db: &DbHandle, jobs: &dyn Jobs, worker: &str, clock: &Cloc
         // A new cycle: units deferred in an earlier one get their next try.
         queue::release_deferred(&conn, &unit.user_id).map_err(sql)?;
         let cycle_id = open_cycle(&conn, &unit, now).map_err(sql)?;
+        emit(&conn, &unit.user_id, super::types::events::CYCLE_STARTED, format!("Sleep started ({})", unit.kind),
+            json!({ "cycle": cycle_id, "unit": unit.id, "kind": unit.kind, "trigger": unit.trigger() }),
+            event_session(&unit), Some(cycle_id.clone()));
+        emit_debt_if_crossed(&conn, &cfg, &unit.user_id, now);
         let spent = spend_today(&conn, &unit.user_id, now).map_err(sql)?;
         (unit, cfg, cycle_id, spent)
     };
@@ -419,6 +471,7 @@ pub async fn run_once(db: &DbHandle, jobs: &dyn Jobs, worker: &str, clock: &Cloc
                 report.held_unit = Some(queue::hold_rest(&conn, &unit, step.as_str(), reason).map_err(sql)?);
                 close_cycle(&conn, &report, now).map_err(sql)?;
                 queue::done(&conn, &unit.id, &cycle_id, report.spend_usd, now).map_err(sql)?;
+                finish_events(&conn, &cfg, &unit, &report, now);
                 return Ok(Some(report));
             }
             conn.execute("UPDATE sleep_cycles SET stage = ?2 WHERE id = ?1", params![cycle_id, step.as_str()]).map_err(sql)?;
@@ -435,9 +488,13 @@ pub async fn run_once(db: &DbHandle, jobs: &dyn Jobs, worker: &str, clock: &Cloc
                     rec.spend_usd = ledger_spend_usd(&conn, &unit.user_id, &queue::ts(now), &queue::ts(end + Duration::seconds(1))).map_err(sql)?;
                 }
                 report.spend_usd += rec.spend_usd;
+                let (status, note, spend) = (rec.status, rec.note.clone(), rec.spend_usd);
                 report.steps.push(rec);
                 let conn = db.connect().map_err(sql)?;
                 conn.execute("UPDATE sleep_cycles SET spend_usd = ?2 WHERE id = ?1", params![cycle_id, report.spend_usd]).map_err(sql)?;
+                emit(&conn, &unit.user_id, super::types::events::CYCLE_STAGE, format!("Sleep stage {}: {status}", step.as_str()),
+                    json!({ "cycle": cycle_id, "stage": step.as_str(), "status": status, "note": note, "spend_usd": spend }),
+                    event_session(&unit), Some(cycle_id.clone()));
             }
             Err(e) => {
                 tracing::warn!(user = %unit.user_id, step = step.as_str(), error = %e, "sleep cycle stage failed");
@@ -446,6 +503,10 @@ pub async fn run_once(db: &DbHandle, jobs: &dyn Jobs, worker: &str, clock: &Cloc
                 let conn = db.connect().map_err(sql)?;
                 close_cycle(&conn, &report, clock()).map_err(sql)?;
                 queue::fail(&conn, &unit.id, report.error.as_deref().unwrap_or(""), max_attempts, clock()).map_err(sql)?;
+                emit(&conn, &unit.user_id, super::types::events::CYCLE_STAGE, format!("Sleep stage {}: failed", step.as_str()),
+                    json!({ "cycle": cycle_id, "stage": step.as_str(), "status": "failed", "note": e, "spend_usd": 0.0 }),
+                    event_session(&unit), Some(cycle_id.clone()));
+                finish_events(&conn, &cfg, &unit, &report, clock());
                 return Ok(Some(report));
             }
         }
@@ -454,7 +515,19 @@ pub async fn run_once(db: &DbHandle, jobs: &dyn Jobs, worker: &str, clock: &Cloc
     let conn = db.connect().map_err(sql)?;
     close_cycle(&conn, &report, now).map_err(sql)?;
     queue::done(&conn, &unit.id, &cycle_id, report.spend_usd, now).map_err(sql)?;
+    finish_events(&conn, &cfg, &unit, &report, now);
     Ok(Some(report))
+}
+
+/// `sleep.cycle.finished` (any end: finished, stopped or failed), then the
+/// debt check.
+fn finish_events(conn: &Connection, cfg: &Resolved, unit: &Unit, report: &CycleReport, now: DateTime<Utc>) {
+    let done = report.steps.iter().filter(|s| s.status == "done").count();
+    emit(conn, &unit.user_id, super::types::events::CYCLE_FINISHED, format!("Sleep {} ({})", report.state, unit.kind),
+        json!({ "cycle": report.cycle_id, "kind": unit.kind, "state": report.state, "spend_usd": report.spend_usd,
+                "stages": report.steps.len(), "stages_done": done, "stop_reason": report.stop_reason, "error": report.error }),
+        event_session(&unit), report.cycle_id.clone());
+    emit_debt_if_crossed(conn, cfg, &unit.user_id, now);
 }
 
 // ── Worker ──────────────────────────────────────────────────────────────────
@@ -619,6 +692,54 @@ mod tests {
         assert_eq!(unit_state(&db, &unit).0, "done");
         // Nothing else to run.
         assert!(run_once(&db, &stub, "w1", &clock()).await.unwrap().is_none());
+    }
+
+    fn kinds(db: &DbHandle) -> Vec<(String, Option<String>)> {
+        let conn = db.connect().unwrap();
+        crate::memory_activity::list(&conn, "u1", &crate::memory_activity::Filter { after: Some(0), limit: Some(200), ..Default::default() })
+            .unwrap().into_iter().map(|r| (r.kind, r.detail["stage"].as_str().map(String::from))).collect()
+    }
+
+    #[tokio::test]
+    async fn a_nap_writes_started_one_stage_event_per_stage_and_finished_in_order() {
+        let db = db();
+        turn_on(&db, "u1", &["orchestrator", "strengths"], 10.0);
+        signal(&db, "u1", "s1", SignalEvent::SessionEnd);
+        let r = run_once(&db, &Stub::default(), "w1", &clock()).await.unwrap().unwrap();
+        assert_eq!(r.state, "finished", "{r:?}");
+        let rows: Vec<_> = kinds(&db).into_iter().filter(|(k, _)| k != "sleep.debt.changed").collect();
+        let mut want = vec![("sleep.cycle.started".to_string(), None)];
+        want.extend(r.steps.iter().map(|s| ("sleep.cycle.stage".to_string(), Some(s.step.as_str().to_string()))));
+        want.push(("sleep.cycle.finished".to_string(), None));
+        assert_eq!(rows, want);
+    }
+
+    #[test]
+    fn debt_changed_is_written_only_when_the_threshold_is_crossed() {
+        let db = db();
+        let conn = db.connect().unwrap();
+        for (k, v) in [("enabled", "true"), ("debt_scale", "1")] {
+            conn.execute("INSERT INTO sleep_config (user_id, key, value_json, source) VALUES ('u1', ?1, ?2, 'owner')", [k, v]).unwrap();
+        }
+        let cfg = config::load(&conn, "u1").unwrap();
+        let now = clock()();
+        let count = |c: &Connection| -> i64 { c.query_row("SELECT COUNT(*) FROM memory_activity WHERE kind = 'sleep.debt.changed'", [], |r| r.get(0)).unwrap() };
+        // Below the threshold: nothing, however often it is checked.
+        emit_debt_if_crossed(&conn, &cfg, "u1", now);
+        emit_debt_if_crossed(&conn, &cfg, "u1", now);
+        assert_eq!(count(&conn), 0);
+        // One new memory crosses up (threshold 1.0, scale 1): one event; repeats add none.
+        conn.execute("INSERT INTO memory_facts (id, user_id, fact, valid_from) VALUES ('f1', 'u1', 'x', datetime('2026-11-19 11:00:00'))", []).unwrap();
+        emit_debt_if_crossed(&conn, &cfg, "u1", now);
+        emit_debt_if_crossed(&conn, &cfg, "u1", now);
+        assert_eq!(count(&conn), 1);
+        // A finished nap brings it back down: one more event, with decay_paused false.
+        conn.execute("INSERT INTO sleep_cycles (id, user_id, trigger, kind, state, started_at, finished_at) VALUES ('c1', 'u1', 'idle', 'nap', 'finished', '2026-11-19 11:30:00', '2026-11-19 11:40:00')", []).unwrap();
+        emit_debt_if_crossed(&conn, &cfg, "u1", now);
+        emit_debt_if_crossed(&conn, &cfg, "u1", now);
+        assert_eq!(count(&conn), 2);
+        let last: String = conn.query_row("SELECT detail FROM memory_activity WHERE kind = 'sleep.debt.changed' ORDER BY id DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&last).unwrap()["decay_paused"], false);
     }
 
     #[tokio::test]

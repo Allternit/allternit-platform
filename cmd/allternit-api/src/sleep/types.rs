@@ -119,8 +119,8 @@ pub enum SignalEvent {
     Resume,
 }
 
-/// Events on the memory activity stream. Declared for the contract; nothing
-/// emits them yet (the activity stream only takes its own fixed kinds).
+/// Events on the memory activity stream. Each is its own `kind` there
+/// (`memory_activity::KINDS`); emitted by `cycle.rs` and `disputes.rs`.
 pub mod events {
     pub const CYCLE_STARTED: &str = "sleep.cycle.started";
     pub const CYCLE_STAGE: &str = "sleep.cycle.stage";
