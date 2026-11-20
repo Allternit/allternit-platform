@@ -7,7 +7,7 @@
 //! |---|---|---|
 //! | Linux | helper at `/usr/local/libexec/allternit/allternit-host-helper` + sudoers drop-in `/etc/sudoers.d/allternit-host-probe` (checked with `visudo -cf` before it goes live) | `sudo -n <helper> <request>` |
 //! | macOS | helper at `/Library/PrivilegedHelperTools/com.allternit.host-helper` + LaunchDaemon `/Library/LaunchDaemons/com.allternit.host-helper.plist` | Unix socket `/var/run/com.allternit.host-helper.sock`, owned by the user, mode 0600 |
-//! | Windows | helper under `%ProgramFiles%\Allternit\HostHelper` + a SYSTEM task `AllternitHostHelper` started at boot | loopback TCP 127.0.0.1:47613 with a token file only the user and admins can read |
+//! | Windows | helper under `%ProgramFiles%\Allternit\HostHelper` + a SYSTEM task `AllternitHostHelper` started at boot | named pipe `\\.\pipe\allternit-host-helper`, first instance owned by SYSTEM, DACL = SYSTEM + the installing user's SID only, remote clients rejected; the probe checks the pipe's owner and the server's image path before it sends |
 //! | Root / Orgo | nothing: the runtime already runs as root (Orgo cloud computers do) | the engine runs commands itself |
 //!
 //! The flow for a client: [`plan`] (shown to the user before approval: every
@@ -43,7 +43,10 @@ pub const MAC_PLIST: &str = "/Library/LaunchDaemons/com.allternit.host-helper.pl
 pub const MAC_SOCKET: &str = "/var/run/com.allternit.host-helper.sock";
 
 pub const WINDOWS_TASK: &str = "AllternitHostHelper";
-pub const WINDOWS_PORT: u16 = 47613;
+/// The helper's named pipe. Created by the SYSTEM task with
+/// `FILE_FLAG_FIRST_PIPE_INSTANCE`, so a process that grabs the name first
+/// makes the helper fail loudly instead of sharing the name.
+pub const WINDOWS_PIPE: &str = r"\\.\pipe\allternit-host-helper";
 
 const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 const PROMPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -168,6 +171,9 @@ pub trait Host {
     fn is_root(&self) -> bool;
     /// Login name and (Unix) uid of the user the runtime runs as.
     fn user(&self) -> Option<(String, Option<u32>)>;
+    /// Windows: the SID (`S-1-5-21-...`) of the user the runtime runs as.
+    /// Only that SID (and SYSTEM) may open the helper's pipe.
+    fn user_sid(&self) -> Option<String>;
     fn exists(&self, path: &str) -> bool;
     /// A program on PATH (`pkexec`).
     fn has_program(&self, name: &str) -> bool;
@@ -205,6 +211,17 @@ impl Host for SystemHost {
             .ok()
             .and_then(|o| o.stdout.trim().parse().ok());
         (!name.is_empty()).then_some((name, uid))
+    }
+
+    fn user_sid(&self) -> Option<String> {
+        #[cfg(windows)]
+        {
+            win::current_user_sid()
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
     }
 
     fn exists(&self, path: &str) -> bool {
@@ -258,15 +275,26 @@ pub fn windows_helper() -> String {
     format!("{}\\{HELPER_BIN}", windows_helper_dir())
 }
 
-fn windows_token_dir() -> String {
-    format!(
-        "{}\\Allternit\\host-helper",
-        windows_dir("ProgramData", "C:\\ProgramData")
-    )
+/// A string SID as written by `ConvertSidToStringSidW` (`S-1-5-21-...`).
+/// It goes into the task command line and the pipe's SDDL, so nothing else
+/// is allowed through.
+pub fn valid_sid(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix("S-1-") else {
+        return false;
+    };
+    s.len() <= 184
+        && !rest.is_empty()
+        && rest.split('-').all(|part| {
+            !part.is_empty() && part.len() <= 20 && part.bytes().all(|b| b.is_ascii_digit())
+        })
 }
 
-pub fn windows_token_file() -> String {
-    format!("{}\\token", windows_token_dir())
+/// The pipe's security descriptor: owner SYSTEM, protected DACL with SYSTEM
+/// (full) and the installing user. The user's mask (0x12019b) is read/write
+/// data without FILE_CREATE_PIPE_INSTANCE, so even the user cannot add a
+/// server instance of the pipe.
+pub fn windows_pipe_sddl(sid: &str) -> Option<String> {
+    valid_sid(sid).then(|| format!("O:SYG:SYD:P(A;;GA;;;SY)(A;;0x12019b;;;{sid})"))
 }
 
 /// Where the helper binary lives once installed.
@@ -435,7 +463,7 @@ impl InstallOp {
                 path: path.clone(),
                 mode: format!("{mode:o}"),
                 contents: if *secret {
-                    "<random token made at install>".into()
+                    "<secret made at install>".into()
                 } else {
                     contents.clone()
                 },
@@ -461,8 +489,10 @@ pub struct SetupInput {
     pub user: String,
     pub uid: Option<u32>,
     pub helper_from: String,
-    /// Windows token; made at install time (the plan shows a placeholder).
-    pub token: String,
+    /// Windows: the installing user's SID, the only non-SYSTEM account the
+    /// helper's pipe lets in. Read from the unelevated runtime, because the
+    /// UAC prompt may run the install as a different admin account.
+    pub sid: Option<String>,
 }
 
 fn run_op(program: &str, args: &[&str], allow_fail: bool) -> InstallOp {
@@ -525,10 +555,15 @@ pub fn install_ops(os: OsFamily, input: &SetupInput) -> Result<Vec<InstallOp>, E
             ]
         }
         OsFamily::Windows => {
+            let sid = input
+                .sid
+                .as_deref()
+                .filter(|s| valid_sid(s))
+                .ok_or_else(|| {
+                    ElevationError::Invalid(format!("Windows user SID {:?}", input.sid))
+                })?;
             let helper = windows_helper();
-            let tr = format!("\"{helper}\" serve");
-            let grant_user = format!("{}:(OI)(CI)R", input.user);
-            let token_dir = windows_token_dir();
+            let tr = format!("\"{helper}\" serve --sid {sid}");
             vec![
                 InstallOp::MakeDir {
                     path: windows_helper_dir(),
@@ -538,28 +573,6 @@ pub fn install_ops(os: OsFamily, input: &SetupInput) -> Result<Vec<InstallOp>, E
                     from: input.helper_from.clone(),
                     to: helper.clone(),
                     mode: 0o755,
-                },
-                InstallOp::MakeDir {
-                    path: token_dir.clone(),
-                    mode: 0o700,
-                },
-                run_op(
-                    "icacls",
-                    &[
-                        token_dir.as_str(),
-                        "/inheritance:r",
-                        "/grant:r",
-                        "SYSTEM:(OI)(CI)F",
-                        "Administrators:(OI)(CI)F",
-                        grant_user.as_str(),
-                    ],
-                    false,
-                ),
-                InstallOp::WriteFile {
-                    path: windows_token_file(),
-                    mode: 0o600,
-                    contents: input.token.clone(),
-                    secret: true,
                 },
                 run_op("schtasks", &["/End", "/TN", WINDOWS_TASK], true),
                 run_op(
@@ -618,9 +631,6 @@ pub fn uninstall_ops(os: OsFamily) -> Vec<InstallOp> {
         OsFamily::Windows => vec![
             run_op("schtasks", &["/End", "/TN", WINDOWS_TASK], true),
             run_op("schtasks", &["/Delete", "/F", "/TN", WINDOWS_TASK], true),
-            InstallOp::RemoveFile {
-                path: windows_token_file(),
-            },
             InstallOp::RemoveFile {
                 path: windows_helper(),
             },
@@ -740,8 +750,8 @@ fn own_root(path: &str, mode: u32) -> std::io::Result<()> {
 
 #[cfg(not(unix))]
 fn own_root(_path: &str, _mode: u32) -> std::io::Result<()> {
-    // Windows: the folders sit under Program Files / ProgramData (admin-only
-    // write); the token folder's ACL is set by the icacls step.
+    // Windows: the helper sits under Program Files (admin-only write); the
+    // pipe's own security descriptor decides who may talk to it.
     Ok(())
 }
 
@@ -891,6 +901,10 @@ fn install_args(input: &SetupInput) -> Vec<String> {
         a.push("--uid".into());
         a.push(uid.to_string());
     }
+    if let Some(sid) = &input.sid {
+        a.push("--sid".into());
+        a.push(sid.clone());
+    }
     a
 }
 
@@ -935,13 +949,25 @@ fn input_for(
     if !valid_user(&user) {
         return Err(ElevationError::Invalid(format!("user name {user:?}")));
     }
+    let sid = match os {
+        OsFamily::Windows => {
+            let sid = host.user_sid().ok_or_else(|| {
+                ElevationError::Failed("could not read the current user's SID".into())
+            })?;
+            if !valid_sid(&sid) {
+                return Err(ElevationError::Invalid(format!("Windows user SID {sid:?}")));
+            }
+            Some(sid)
+        }
+        _ => None,
+    };
     Ok((
         os,
         SetupInput {
             user,
             uid,
             helper_from: from,
-            token: String::new(),
+            sid,
         },
     ))
 }
@@ -978,7 +1004,7 @@ pub fn plan(host: &dyn Host, helper_source: &Path) -> Result<SetupPlan, Elevatio
             input.user
         ),
         OsFamily::Windows => format!(
-            "Installs one helper under {} that runs as SYSTEM at startup and only answers requests carrying a token that {} and admins can read.",
+            "Installs one helper under {} that runs as SYSTEM at startup and only answers {} through a private named pipe that no other account can open.",
             windows_helper_dir(),
             input.user
         ),
@@ -1130,30 +1156,12 @@ pub fn send_to_helper(req: &HelperRequest, timeout: Duration) -> Result<CmdOutpu
         stream
             .set_read_timeout(Some(timeout))
             .map_err(|e| io_to_run(&e))?;
-        exchange(
-            stream,
-            &crate::helper::WireRequest { argv, token: None },
-            timeout,
-        )
+        exchange(stream, &crate::helper::WireRequest { argv }, timeout)
     }
     #[cfg(windows)]
     {
-        let token =
-            std::fs::read_to_string(windows_token_file()).map_err(|_| RunError::NotFound)?;
-        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], WINDOWS_PORT));
-        let stream = std::net::TcpStream::connect_timeout(&addr, STATUS_TIMEOUT)
-            .map_err(|e| io_to_run(&e))?;
-        stream
-            .set_read_timeout(Some(timeout))
-            .map_err(|e| io_to_run(&e))?;
-        exchange(
-            stream,
-            &crate::helper::WireRequest {
-                argv,
-                token: Some(token.trim().to_string()),
-            },
-            timeout,
-        )
+        let pipe = win::connect_helper_pipe(STATUS_TIMEOUT)?;
+        exchange(pipe, &crate::helper::WireRequest { argv }, timeout)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
@@ -1220,7 +1228,7 @@ fn require_root() -> Result<(), i32> {
     }
 }
 
-/// `allternit-host-helper install --user <name> [--uid <n>]`, run elevated.
+/// `allternit-host-helper install --user <name> [--uid <n>] [--sid <S-1-...>]`, run elevated.
 pub fn helper_install_main(args: &[String]) -> i32 {
     if let Err(code) = require_root() {
         return code;
@@ -1245,16 +1253,12 @@ pub fn helper_install_main(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let token = format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    );
+    let sid = flag(args, "--sid").map(str::to_string);
     let input = SetupInput {
         user,
         uid,
         helper_from: from,
-        token,
+        sid,
     };
     let ops = match install_ops(os, &input) {
         Ok(o) => o,
@@ -1308,8 +1312,11 @@ pub fn helper_serve_main(args: &[String]) -> i32 {
     }
     #[cfg(windows)]
     {
-        let _ = args;
-        if let Err(e) = serve_tcp() {
+        let Some(sid) = flag(args, "--sid").filter(|s| valid_sid(s)) else {
+            eprintln!("serve needs --sid <S-1-...>");
+            return crate::helper::EXIT_REFUSED;
+        };
+        if let Err(e) = win::serve_pipe(sid) {
             eprintln!("serve: {e}");
             return 1;
         }
@@ -1341,7 +1348,6 @@ fn serve_unix(uid: u32) -> std::io::Result<()> {
                     &crate::actions::SystemExecutor,
                     std::io::BufReader::new(reader),
                     stream,
-                    None,
                 );
             }
         });
@@ -1350,40 +1356,15 @@ fn serve_unix(uid: u32) -> std::io::Result<()> {
 }
 
 #[cfg(windows)]
-fn serve_tcp() -> std::io::Result<()> {
-    let token = std::fs::read_to_string(windows_token_file())?
-        .trim()
-        .to_string();
-    if token.len() < 32 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "token file is too short",
-        ));
-    }
-    let listener = std::net::TcpListener::bind(("127.0.0.1", WINDOWS_PORT))?;
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        let token = token.clone();
-        std::thread::spawn(move || {
-            let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-            if let Ok(reader) = stream.try_clone() {
-                let _ = crate::helper::serve_one(
-                    &crate::actions::SystemExecutor,
-                    std::io::BufReader::new(reader),
-                    stream,
-                    Some(token.as_str()),
-                );
-            }
-        });
-    }
-    Ok(())
-}
+mod win;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::collections::{HashMap, VecDeque};
+
+    const TEST_SID: &str = "S-1-5-21-1004336348-1177238915-682003330-1001";
 
     struct FakeHost {
         os: Option<OsFamily>,
@@ -1420,6 +1401,9 @@ mod tests {
         }
         fn user(&self) -> Option<(String, Option<u32>)> {
             Some(("joe".into(), Some(501)))
+        }
+        fn user_sid(&self) -> Option<String> {
+            (self.os == Some(OsFamily::Windows)).then(|| TEST_SID.to_string())
         }
         fn exists(&self, path: &str) -> bool {
             self.files.iter().any(|f| f == path)
@@ -1572,26 +1556,67 @@ mod tests {
     }
 
     #[test]
-    fn windows_plan_hides_the_token_and_registers_a_system_task() {
+    fn windows_plan_uses_a_pipe_for_the_user_sid_and_no_token() {
         let h = FakeHost::new(OsFamily::Windows);
-        let p = plan(&h, Path::new(SRC));
         // The Unix-style source path is fine for the plan on any build host.
-        let p = p.unwrap();
+        let p = plan(&h, Path::new(SRC)).unwrap();
         assert_eq!(p.approval, ApprovalMethod::Uac);
-        let token = p
-            .files
-            .iter()
-            .find(|f| f.path.ends_with("\\token"))
-            .unwrap();
-        assert!(token.contents.starts_with('<'), "token is never shown");
-        assert!(p
+        assert!(p.files.is_empty(), "no token or other file: {:?}", p.files);
+        assert!(p.steps.iter().any(|s| s.contains("/RU SYSTEM")
+            && s.contains(WINDOWS_TASK)
+            && s.contains(&format!("serve --sid {TEST_SID}"))));
+        assert!(!p
             .steps
             .iter()
-            .any(|s| s.contains("/RU SYSTEM") && s.contains(WINDOWS_TASK)));
-        assert!(p
-            .steps
-            .iter()
-            .any(|s| s.starts_with("run icacls") && s.contains("joe:(OI)(CI)R")));
+            .any(|s| s.contains("icacls") || s.contains("token")));
+        assert!(p.summary.contains("named pipe"));
+    }
+
+    #[test]
+    fn windows_install_needs_a_valid_sid() {
+        let mut input = linux_input();
+        input.sid = None;
+        assert!(matches!(
+            install_ops(OsFamily::Windows, &input),
+            Err(ElevationError::Invalid(_))
+        ));
+        input.sid = Some("S-1-5-21-1 & calc".into());
+        assert!(matches!(
+            install_ops(OsFamily::Windows, &input),
+            Err(ElevationError::Invalid(_))
+        ));
+        input.sid = Some(TEST_SID.into());
+        assert!(install_ops(OsFamily::Windows, &input).is_ok());
+        let args = install_args(&input);
+        assert_eq!(&args[args.len() - 2..], ["--sid", TEST_SID]);
+    }
+
+    #[test]
+    fn sid_check_and_pipe_sddl() {
+        for good in [TEST_SID, "S-1-5-18", "S-1-12-1-1234-5678"] {
+            assert!(valid_sid(good), "{good}");
+        }
+        for bad in [
+            "",
+            "S-1-",
+            "S-1-5-",
+            "S-1-5--18",
+            "s-1-5-18",
+            "S-1-5-18)(A;;GA;;;WD",
+            "S-1-5-21-1 2",
+            "S-1-5-123456789012345678901",
+        ] {
+            assert!(!valid_sid(bad), "{bad:?}");
+            assert!(windows_pipe_sddl(bad).is_none());
+        }
+        let sddl = windows_pipe_sddl(TEST_SID).unwrap();
+        assert!(
+            sddl.starts_with("O:SYG:SYD:P("),
+            "owner SYSTEM, protected DACL"
+        );
+        assert!(sddl.contains("(A;;GA;;;SY)"));
+        assert!(sddl.contains(&format!("(A;;0x12019b;;;{TEST_SID})")));
+        assert!(!sddl.contains(";WD)") && !sddl.contains(";BU)") && !sddl.contains(";AU)"));
     }
 
     #[test]
@@ -1670,7 +1695,7 @@ mod tests {
             user: "joe".into(),
             uid: Some(1000),
             helper_from: SRC.into(),
-            token: String::new(),
+            sid: None,
         }
     }
 
@@ -1707,7 +1732,7 @@ mod tests {
     fn uninstall_removes_what_install_wrote() {
         for os in [OsFamily::Linux, OsFamily::Macos, OsFamily::Windows] {
             let mut input = linux_input();
-            input.token = "t".repeat(64);
+            input.sid = Some(TEST_SID.into());
             let fs = FakeFs::default();
             apply_ops(&install_ops(os, &input).unwrap(), &fs, &mut |_| {}).unwrap();
             assert!(!fs.files.borrow().is_empty());

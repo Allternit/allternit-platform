@@ -224,7 +224,7 @@ approves once:
 |---|---|---|
 | Linux | `/usr/local/libexec/allternit/allternit-host-helper` + `/etc/sudoers.d/allternit-host-probe` (checked with `visudo -cf` before it goes live) | `sudo -n <helper> <request>` |
 | macOS | `/Library/PrivilegedHelperTools/com.allternit.host-helper` + LaunchDaemon `com.allternit.host-helper` | socket `/var/run/com.allternit.host-helper.sock` (user-owned, 0600) |
-| Windows | helper under `%ProgramFiles%\Allternit\HostHelper` + SYSTEM task `AllternitHostHelper` | `127.0.0.1:47613` + token file readable by the user and admins |
+| Windows | helper under `%ProgramFiles%\Allternit\HostHelper` + SYSTEM task `AllternitHostHelper` (`serve --sid <installing user's SID>`) | named pipe `\\.\pipe\allternit-host-helper`: first instance only, owner SYSTEM, DACL = SYSTEM + that user, remote clients rejected; the probe checks the pipe owner (SYSTEM) and the server's image path before sending. No port, no token file |
 | Root / Orgo | nothing | the engine runs the commands itself |
 
 - `elevation::plan` lists every file (with contents) and every privileged step before approval; `install` shows one OS admin prompt (pkexec, the macOS admin dialog, UAC; headless Linux gets the exact `sudo` command); `status` is installed / outdated / missing / notNeeded; `uninstall` removes everything install wrote.

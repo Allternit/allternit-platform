@@ -424,9 +424,6 @@ pub fn handle<E: Executor>(exec: &E, req: &HelperRequest) -> Result<CmdOutput, H
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WireRequest {
     pub argv: Vec<String>,
-    /// Windows only: the token from the user-readable token file.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
 }
 
 /// One answer line on the helper socket.
@@ -451,29 +448,20 @@ impl WireReply {
 
 const MAX_LINE: usize = 256 * 1024;
 
-fn tokens_match(a: &str, b: &str) -> bool {
-    a.len() == b.len()
-        && a.bytes()
-            .zip(b.bytes())
-            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-            == 0
-}
-
 /// Serve one connection: read one request line, re-validate, run, answer.
-/// `token` is the expected token (Windows); `None` means the socket's file
-/// permissions already limit who can connect (macOS).
+/// Who may connect is decided by the channel itself: the macOS socket's
+/// owner and mode, the Windows pipe's security descriptor.
 pub fn serve_one<E: Executor, R: BufRead, W: Write>(
     exec: &E,
     mut reader: R,
     mut writer: W,
-    token: Option<&str>,
 ) -> std::io::Result<()> {
     let mut line = String::new();
     let n = reader.by_ref().take(MAX_LINE as u64).read_line(&mut line)?;
     let reply = if n == 0 {
         return Ok(());
     } else {
-        answer(exec, &line, token)
+        answer(exec, &line)
     };
     let mut s = serde_json::to_string(&reply).unwrap_or_else(|_| "{\"code\":70}".into());
     s.push('\n');
@@ -481,7 +469,7 @@ pub fn serve_one<E: Executor, R: BufRead, W: Write>(
     writer.flush()
 }
 
-fn answer<E: Executor>(exec: &E, line: &str, token: Option<&str>) -> WireReply {
+fn answer<E: Executor>(exec: &E, line: &str) -> WireReply {
     let fail = |e: HelperError| WireReply {
         code: e.exit_code(),
         stdout: String::new(),
@@ -491,15 +479,6 @@ fn answer<E: Executor>(exec: &E, line: &str, token: Option<&str>) -> WireReply {
         Ok(w) => w,
         Err(_) => return fail(refused("request is not valid JSON")),
     };
-    if let Some(expected) = token {
-        if !wire
-            .token
-            .as_deref()
-            .is_some_and(|t| tokens_match(t, expected))
-        {
-            return fail(refused("bad or missing token"));
-        }
-    }
     match HelperRequest::parse(wire.argv.as_slice()).and_then(|req| handle(exec, &req)) {
         Ok(out) => WireReply {
             code: out.code.unwrap_or(1),
@@ -623,12 +602,5 @@ mod tests {
             EXIT_NOT_FOUND
         );
         assert_eq!(HelperError::NotRoot.exit_code(), EXIT_NOT_ROOT);
-    }
-
-    #[test]
-    fn token_compare() {
-        assert!(tokens_match("abc", "abc"));
-        assert!(!tokens_match("abc", "abd"));
-        assert!(!tokens_match("abc", "abcd"));
     }
 }
