@@ -76,7 +76,7 @@ describe("memory_write versioned edits (wave D)", () => {
   })
 
   test("replace needs exactly one match of the old text", async () => {
-    const { id, version } = await seed("Red car and red bike")
+    const { id, version } = await seed("red car and red bike")
     const twice = await write({ action: "replace", id, old: "red", new: "blue", if_version: version })
     expect(twice.metadata.refused).toBe(true)
     expect(twice.output).toContain("2 times")
@@ -87,7 +87,7 @@ describe("memory_write versioned edits (wave D)", () => {
     expect(once.metadata.refused).toBeUndefined()
 
     const list = await (await MemoryListTool.init()).execute({ topic: "notes" } as any, ctx)
-    expect(list.output).toContain("- Red car and blue bike (id: ")
+    expect(list.output).toContain("- red car and blue bike (id: ")
     expect(list.output).toContain(`version: ${once.metadata.version}`)
   })
 
