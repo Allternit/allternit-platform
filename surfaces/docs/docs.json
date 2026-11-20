@@ -190,6 +190,7 @@
               "guides/bot-page",
               "guides/bot-soul",
               "guides/memory-and-learning",
+              "guides/sleep",
               "guides/needs-you-inbox",
               "guides/invite-someone",
               "guides/call-notifications",
@@ -289,7 +290,8 @@
             "pages": [
               "architecture/context-memory/overview",
               "architecture/context-memory/projections",
-              "architecture/context-memory/memory"
+              "architecture/context-memory/memory",
+              "architecture/context-memory/sleep"
             ],
             "icon": "/icons/document.svg"
           },

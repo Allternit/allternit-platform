@@ -1,0 +1,65 @@
+---
+title: "Sleep"
+description: "Allternit tidies your memory while you are away: merges repeats, checks old memories, keeps conflicts side by side, delivers reminders and writes a report you can undo."
+---
+
+**Sleep** is Allternit tidying your memory while you are away. It does not run on a nightly clock. It runs at three moments:
+
+- when you step away from your computer and the session goes idle,
+- just before a long chat is compacted, and
+- when a session ends.
+
+If you come back while Sleep is working, it stops cleanly after the step it is on and picks up later.
+
+## Status
+
+Sleep is **off by default** and ships stage by stage. Each part has its own switch, and every switch is off until you turn Sleep on. Topic pages (short summaries of what you have told Allternit about a subject) wait on an experiment and are not available yet. Personal adapters are experimental and off. The sections below describe the parts that exist today.
+
+## What Sleep does
+
+- **Merges repeats.** Two memories that say the same thing become one.
+- **Checks old memories.** It tests that an older memory can still be found, that nothing newer contradicts it, and that the place it came from still exists. It uses no model for this.
+- **Keeps conflicts side by side.** When two memories disagree, both stay. Sleep records the conflict and picks a side by fixed rules (what you said beats what the model guessed, newer beats older). When the two are close and the subject is money, health or legal, it asks you instead. See [Memory conflicts](#memory-conflicts).
+- **Delivers reminders.** Say "remind me when I mention Acme" or "remind me tomorrow at 9" and the reminder comes back at that moment, once. A date Sleep cannot read exactly (for example "next month") is kept as words to watch for instead.
+- **Writes a report you can undo.** Every sleep leaves a report of what it did. See [The report and Undo](#the-report-and-undo).
+
+## What Sleep never does
+
+- It never deletes a memory for being old. Time makes a memory harder to reach, never gone.
+- It never runs without a computer. Memory still works without one; Sleep needs a computer to run on.
+- It never spends past your daily cap. The cap defaults to 0, which means no paid steps at all. The free steps (merging, checks, reminders) still run.
+
+## Turn it on
+
+Settings, then Memory, then Sleep. The settings screen is still in progress, so today the switch is also available from the terminal:
+
+```bash
+gizzi memory sleep on
+gizzi memory sleep status
+```
+
+See the [memory command reference](/cli/memory) for every `gizzi memory sleep` command. To let Sleep use paid model steps, set a daily cap above 0. Nothing is spent without one.
+
+## The report and Undo
+
+After a sleep, open its report to see each step, what it changed and what it cost. `gizzi memory sleep report` shows the latest one, and `gizzi memory sleep undo <id>` undoes it.
+
+Undo reverses what Sleep's Dream step changed and keeps anything you added or edited since. If you edited the same lines after the sleep, Undo stops and changes nothing. Merges and fading done by the free steps have no undo, and the report lists them as such.
+
+## Memory conflicts
+
+When a memory you recall is one side of a conflict, the agent sees both sides, which one Sleep kept and why, and may mention it if it matters. Nothing is removed and no answer is blocked because of a conflict. If Sleep asked you to decide, you pick a side, keep both for different situations, or discard both. Your pick wins. See [memory tools](/tools/memory).
+
+A correction from you ("I moved to Denver") replaces the old memory, as it always did, and the history is kept.
+
+## Privacy
+
+- With Sleep on, the raw turn log also keeps assistant replies and tool calls, in full. With Sleep off, it keeps less.
+- Incognito chats are never recorded.
+- Tool output is stored as-is today. There is no filter for secrets in tool output yet, so avoid running tools that print secrets in a chat while Sleep is on.
+- Sleep runs on your own computer and your own model quota, up to your cap.
+
+## Related
+
+- [Memory and Learning](/guides/memory-and-learning)
+- [Memory API for Sleep](/api/memory-sleep) and the [Sleep architecture](/architecture/context-memory/sleep) for developers
