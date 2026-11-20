@@ -92,7 +92,7 @@ interface VoiceKeySource {
 
 object SealedVoiceKeys : VoiceKeySource {
     override fun key(context: Context, vendor: String): OwnVoiceKey? = runCatching {
-        val raw = SealedSecret(context.applicationContext, "voice-$vendor", KeystoreBox("voice_keys_v1", "allternit-voice-keys-v1")).read()
+        val raw = SealedSecret(context.applicationContext, "voice-$vendor", KeystoreBox("voice_keys_v1", "allternit-voice-keys-v1")).read() // gitleaks:allow (Keystore alias + AAD label, not a secret)
             ?: return null
         val o = JSONObject(raw)
         OwnVoiceKey(o.optString("api_key"), o.optString("voice_id").ifEmpty { null }).takeIf { it.apiKey.isNotBlank() }

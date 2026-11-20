@@ -94,7 +94,7 @@ internal object VoiceKeys {
     class Saved(val apiKey: String, val voiceId: String?, val label: String, val updatedAt: Long = 0)
 
     private fun secret(context: Context, v: VoiceVendor) =
-        SealedSecret(context.applicationContext, "voice-${v.id}", KeystoreBox("voice_keys_v1", "allternit-voice-keys-v1"))
+        SealedSecret(context.applicationContext, "voice-${v.id}", KeystoreBox("voice_keys_v1", "allternit-voice-keys-v1")) // gitleaks:allow (Keystore alias + AAD label, not a secret)
 
     fun load(context: Context, v: VoiceVendor): Saved? = secret(context, v).read()?.let {
         runCatching { JSONObject(it) }.getOrNull()?.let { o ->
