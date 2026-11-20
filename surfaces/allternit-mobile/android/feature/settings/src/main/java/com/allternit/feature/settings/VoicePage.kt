@@ -366,6 +366,9 @@ internal fun VoicePage(back: () -> Unit) {
         }
         sync.error?.let { SError(it) }
         SNote("Disconnect removes a key from this phone only. To cut a key off everywhere, revoke it in your OpenAI or ElevenLabs account.")
+        // iOS order: own provider, speech to text, reply voice (VoicePackSections.kt).
+        SpeechToTextSection()
+        ReplyVoiceSection()
     }
 
     pasting?.let { v ->

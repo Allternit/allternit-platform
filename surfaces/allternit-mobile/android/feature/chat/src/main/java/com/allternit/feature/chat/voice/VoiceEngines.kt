@@ -7,8 +7,10 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.speech.SpeechRecognizer
 import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -33,9 +35,10 @@ import kotlin.math.sqrt
  * Gap run GS-D: the voice engines iOS has (Core/Voice VoiceRouter, ByokVoice, LocalVoiceEngine).
  *  - Own key: the person's OpenAI key (Realtime listening with gpt-4o-transcribe, replies read by gpt-4o-mini-tts) or
  *    ElevenLabs key (replies read by eleven_flash_v2_5, listening on this phone). Keys go only to the vendor.
- *  - On this phone: iOS runs Silero VAD + Moonshine + Kokoro through sherpa-onnx. The sherpa-onnx Android AAR is not in
- *    this repo, so [DeviceVoice.linked] is false and voice falls back to the phone's recognizer and voice, with a notice,
- *    as iOS does when no voice pack is downloaded.
+ *  - On this phone: Silero VAD + Moonshine listening and Kokoro replies through sherpa-onnx (LocalVoice.kt), from the
+ *    voice packs (VoicePacks.kt), as iOS. "Speech to text: Automatic" listens with the phone's on-device recognizer when
+ *    it has one (iOS: Apple's), otherwise Moonshine. Replies use the system voice until the Kokoro pack is on the phone;
+ *    the first session fetches it on Wi-Fi in the background (iOS).
  */
 
 /** What voice mode listens with: the system recognizer ([Dictation]) or a vendor stream. */
@@ -45,6 +48,8 @@ interface VoiceListener {
     var errorMessage: String?
     val micLevel: Float
     var onStopped: (() -> Unit)?
+    /** A progress line while the engine gets ready (the on-phone engine's first pack download), else null. */
+    val status: String? get() = null
     fun start()
     fun stop()
 }
@@ -98,9 +103,31 @@ object SealedVoiceKeys : VoiceKeySource {
             .getString("allternit.voice.route", null)?.takeIf { it.isNotEmpty() }
 }
 
-/** The on-device voice engine (iOS LocalVoiceEngine on sherpa-onnx). Feature check only on this build. */
+/** The on-device voice engine (iOS LocalVoiceEngine on sherpa-onnx): true when sherpa-onnx's native library loads. */
 object DeviceVoice {
-    val linked: Boolean by lazy { runCatching { Class.forName("com.k2fsa.sherpa.onnx.OfflineRecognizer") }.isSuccess }
+    val linked: Boolean by lazy { runCatching { System.loadLibrary("sherpa-onnx-jni") }.isSuccess }
+
+    /**
+     * Kokoro replies on sherpa-onnx phonemise through espeak-ng (GPL-3.0-or-later). Allternit keeps GPL code out of its
+     * closed apps: Desktop runs Kokoro in the separate GPL program allternit-tts, and iOS runs Kokoro on MLX + Misaki
+     * instead (project.yml). Off until Eoj decides how Android ships it; until then replies use the system voice,
+     * as on iOS 17. Listening (Silero + Moonshine) has no GPL part and is on.
+     */
+    const val KOKORO_ALLOWED = false
+
+    /** iOS ListeningPreference: "automatic" = the phone's on-device recognizer when it has one; "allternit" = Moonshine. */
+    fun listener(context: Context, dictation: Dictation): VoiceListener {
+        val onDevice = Build.VERSION.SDK_INT >= 31 && runCatching { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }.getOrDefault(false)
+        return if (VoicePrefs.listening == VoicePrefs.LISTENING_AUTOMATIC && onDevice) Dictation(context, onDevice = true) else LocalListener(context)
+    }
+
+    /** Kokoro when its pack is on the phone, else the system voice; a missing pack starts downloading on Wi-Fi (iOS). */
+    fun speaker(context: Context, system: Speaker): ReplySpeaker {
+        if (!KOKORO_ALLOWED) return system
+        val kokoro = VoicePackManager.kokoro
+        if (!kokoro.isInstalled(context)) { kokoro.install(context, cellular = false); return system }
+        return KokoroSpeaker(context, KokoroVoices.resolve(null, VoicePrefs.kokoroVoice), system)
+    }
 }
 
 /** The engines one voice session runs on. [label] is iOS engineLabel; [notice] says why a route fell back. */
@@ -121,11 +148,13 @@ object VoiceEngines {
                 VoiceRoute.ElevenLabs -> {
                     val k = keys.key(context, "elevenlabs")
                     if (k == null) { notice = "Your ElevenLabs key isn't on this phone. Using voice on this phone for now."; continue }
-                    return VoiceEngineChoice(dictation, OwnKeySpeaker(context, "elevenlabs", k, system), "ElevenLabs · your key", null)
+                    // iOS: your ElevenLabs account speaks; the phone still listens.
+                    val ear = if (DeviceVoice.linked) DeviceVoice.listener(context, dictation) else dictation
+                    return VoiceEngineChoice(ear, OwnKeySpeaker(context, "elevenlabs", k, system), "ElevenLabs · your key", null)
                 }
                 VoiceRoute.Device -> {
                     if (!DeviceVoice.linked) { notice = notice ?: DEVICE_FALLBACK; continue }
-                    notice = notice ?: DEVICE_FALLBACK
+                    return VoiceEngineChoice(DeviceVoice.listener(context, dictation), DeviceVoice.speaker(context, system), "On this device", notice)
                 }
                 VoiceRoute.Legacy -> return VoiceEngineChoice(dictation, system, notice?.let { "Phone voice" }, notice)
             }

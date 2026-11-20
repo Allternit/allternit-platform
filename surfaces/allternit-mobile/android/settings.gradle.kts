@@ -10,6 +10,15 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // sherpa-onnx's Android AAR (Apache-2.0) is published only as a k2-fsa GitHub release asset:
+        // v<version>/sherpa-onnx-<version>.aar. Only that one module resolves here; :feature:chat verifies its sha256.
+        ivy {
+            name = "sherpaOnnxReleases"
+            url = uri("https://github.com/k2-fsa/sherpa-onnx/releases/download")
+            patternLayout { artifact("v[revision]/[artifact]-[revision].[ext]") }
+            metadataSources { artifact() }
+            content { includeModule("com.k2fsa.sherpa.onnx", "sherpa-onnx") }
+        }
     }
 }
 rootProject.name = "allternit-phone-link"
