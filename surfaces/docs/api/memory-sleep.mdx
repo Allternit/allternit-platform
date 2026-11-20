@@ -249,7 +249,7 @@ A nap runs these stages in this order. A daydream runs the first two only.
 | 3 | `dream` | Dream is on for your drive and today's Dream has not finished. | Yes |
 | 4 | `curation` | A bot's weekly memory curation is due. | Yes |
 | 5 | `pages` | Not built yet. Recorded as skipped. | - |
-| 6 | `checks` | Not built yet. Recorded as skipped. | - |
+| 6 | `checks` | `stages.checks` is on. Spaced checks and the tether ladder (see Spaced checks). | No |
 | 7 | `sign` | Not built yet. Recorded as skipped. | - |
 
 The cycle's `report` lists each stage with `status` (`done` or `skipped`), a `note`
@@ -454,6 +454,31 @@ Returns `200` with `{ "accepted": true, "dispute": { ... } }`, `404` for an unkn
 dispute, `409` with `reason: "sleep_disabled"` when the disputes stage is off, and `409`
 with `reason: "already_settled"` when you, or your own correction, already settled it.
 
+## Spaced checks and the tether ladder
+
+With `stages.checks` on, the `checks` stage of a nap tests old memories with no model call. A
+check asks three things of one current fact: (a) its own words find it in the top
+`checks_recall_k` search hits, (b) no newer current fact contradicts it without a dispute
+record, (c) its source observation still exists. `pass` is 3 of 3, `fail` is (a) or (b) failing,
+and `weak` is only (c) failing. Each check is a row in `sleep_checks` (`check_kind` is `spaced`,
+`changed`, `neighbour` or `sample`; a failed memory also gets a `queued_reconsolidation` row).
+
+**Spacing.** The first check is due `checks_spacing_base_days` after the fact was written. After
+`n` passes in a row the next one is `base x checks_spacing_growth^n` days away (at most 365). A
+check that is not a pass comes back after `base` days.
+
+**The bounded set.** Each nap checks at most `checks_max_per_cycle` memories, however many you
+have: today's changes (written since the last nap), their neighbours (shared relation edges),
+due spaced checks (the most faded and highest-stakes first), and `checks_sample_size` slots of a
+fixed sample spread over tether state and age. The general-skill probe is recorded
+`skipped: no pages yet`.
+
+**The ladder.** `memory_facts.tether` goes `tethered`, `weak`, `gist`, `untethered`. A `fail`
+moves a memory one step down; a `pass` on a `weak` memory moves it back up. `gist` marks the
+memory for a shorter form on pages. `untethered` memories leave recall results but nothing is
+deleted: loading the fact by its id still returns it. With the stage off, recall and
+`memory_facts.tether` are untouched and no check row is written.
+
 ## Settings and thresholds
 
 Every value has a default in code. Your own value overrides it. Each value reports its
@@ -521,6 +546,11 @@ used (every other id in `results` counts as unused), plus `label_source` set to 
 | `page_budget_share` | 0.05 | Share of the model's context window for pages per message. |
 | `router_min_confidence` | 0.5 | Below this, the router falls back to embedding search. |
 | `pull_cost_multiple_max` | 2 | Most a mid-session page load may cost, as a multiple of a preload. |
+| `checks_max_per_cycle` | 40 | Most memories one nap's checks test, whatever the library size. |
+| `checks_sample_size` | 8 | Slots kept for the fixed sample, spread over tether state and age. |
+| `checks_spacing_base_days` | 3 | Days before a first check, and the wait after a check that did not pass. |
+| `checks_spacing_growth` | 2 | Each consecutive pass multiplies the wait by this. |
+| `checks_recall_k` | 10 | A check finds a memory when it is in this many top hits for its own words. |
 | `dispute_ask_margin` | 0.15 | Margin under which a high-stakes dispute asks you. |
 | `dispute_ask_stakes` | 0.7 | Stakes at or above which a close dispute asks you. |
 | `dispute_w_credence` | 0.5 | Arbiter weight of credence: what you said beats what was inferred. |

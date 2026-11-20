@@ -249,6 +249,19 @@ pub(crate) fn load_target(
     }
 }
 
+/// Direct load of one current fact by id for its owner. Not filtered by the
+/// Sleep tether ladder: an untethered fact is off recall but still loads here.
+pub fn get_fact(db: &DbHandle, user_id: &str, fact_id: &str) -> Result<Option<RecallResult>, MemoryKernelError> {
+    let conn = db.connect()?;
+    let owned: Option<i64> = conn
+        .query_row("SELECT 1 FROM memory_facts WHERE id = ?1 AND user_id = ?2", params![fact_id, user_id], |r| r.get(0))
+        .optional()?;
+    if owned.is_none() {
+        return Ok(None);
+    }
+    load_target(&conn, "fact", fact_id, None, false)
+}
+
 /// Memory targets most similar to the query text: hybrid keyword + vector
 /// search over the shared index, with the hash query embedding (sync callers;
 /// async callers use [`recall_hybrid`] for the real model). Returns
@@ -263,7 +276,9 @@ pub fn recall_semantic(
     let q = memory_index::hash_embed(&[query.to_string()]);
     let scope = Scope { scope: user_id, target_types: MEMORY_TYPES, only_ids: None };
     let hits = memory_index::hybrid_search(&conn, &scope, query, Some((&q.model, &q.vectors[0])), limit)?;
-    Ok(hits.into_iter().map(|h| (h.target_type, h.target_id, h.score)).collect())
+    let fact_ids: Vec<&str> = hits.iter().filter(|h| h.target_type == "fact").map(|h| h.target_id.as_str()).collect();
+    let off = crate::sleep::checks::untethered_ids(&conn, user_id, &fact_ids).unwrap_or_default();
+    Ok(hits.into_iter().filter(|h| !(h.target_type == "fact" && off.contains(&h.target_id))).map(|h| (h.target_type, h.target_id, h.score)).collect())
 }
 
 /// Record a raw observation (turn, tool execution, file event, decision, or checkpoint).
@@ -759,6 +774,16 @@ pub fn recall_logged(
             results.push(item);
         }
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    // Sleep `checks` stage (flagged users only): untethered facts are off the index.
+    // A direct load by id ([`get_fact`]) still finds them.
+    {
+        let ids: Vec<&str> = results.iter().filter(|r| r.item_type == "fact").map(|r| r.id.as_str()).collect();
+        match crate::sleep::checks::untethered_ids(&conn, user_id, &ids) {
+            Ok(off) if !off.is_empty() => results.retain(|r| !(r.item_type == "fact" && off.contains(&r.id))),
+            Ok(_) => {}
+            Err(e) => tracing::debug!(error = %e, "sleep untethered filter skipped"),
+        }
     }
     results.truncate(limit);
     // Sleep `disputes` stage: the recall monitor notes disputed memories (never drops one).
