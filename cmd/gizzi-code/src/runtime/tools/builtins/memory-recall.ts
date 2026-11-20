@@ -2,6 +2,8 @@ import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { MemoryDrive } from "@/runtime/memory/drive/drive"
 import { MemoryKernelAdapter } from "@/runtime/memory/kernel-adapter"
+import { Question } from "@/runtime/integrations/question"
+import { askDisputes, relatedLines, resolveDispute, type DisputeNote } from "@/runtime/memory/sleep/dispute-note"
 import DESCRIPTION from "@/runtime/tools/builtins/memory-recall.txt"
 
 export const MemoryRecallTool = Tool.define("memory_recall", {
@@ -39,8 +41,17 @@ export const MemoryRecallTool = Tool.define("memory_recall", {
         : ""
       return `- [${h.ref}:${h.path}] ${h.text}${meta}`
     })
+    // Sleep memory conflicts: show both sides + the pick; ask the person once when it needs them.
+    let disputes: DisputeNote[] = []
     if (extra.length > 0) {
-      lines.push("", "Also related (server recall; find the entry with memory_list before changing it):", ...extra.map((k) => `- ${k.text.split("\n")[0]}`))
+      const related = relatedLines(extra)
+      disputes = related.disputes
+      lines.push("", "Also related (server recall; find the entry with memory_list before changing it):", ...related.lines)
+    }
+    if (disputes.length > 0) {
+      // The question tool's own mechanism: Question.ask raises question.asked and waits for question.replied.
+      const notes = await askDisputes(ctx.sessionID, disputes, { ask: (input) => Question.ask(input), resolve: resolveDispute })
+      lines.push(...notes.map((n) => `- ${n}`))
     }
     return {
       title: `Recalled ${count} memor${count === 1 ? "y" : "ies"}`,
