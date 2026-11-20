@@ -17,9 +17,8 @@ import androidx.compose.ui.platform.LocalContext
  * the speaker's face in voice mode, its colour, and the caption size. Settings › Voice holds the default; each bot
  * can keep its own ("Same as Settings" follows the default). Kept on this phone, like iOS and the web.
  *
- * Android draws Ring (the VoiceRingKit port in VoiceRing.kt) and our own Blocks, ASCII, Glow and Still. Orbit, Sash,
- * Signal, Swell and Pixel keep their keys so a value saved for them round-trips, but they are not offered in the
- * picker until they are ported; a saved one draws as Ring meanwhile ([drawn]).
+ * Android draws every style: Ring (the VoiceRingKit port in VoiceRing.kt), the orbs Orbit, Sash, Signal, Swell and
+ * Pixel (VoiceOrbs.kt), and our own Blocks, ASCII, Glow and Still.
  */
 enum class SpeakerStyle(val raw: String, val title: String, val note: String) {
     Ring("ring", "Ring", "A ring of light that bends with the voice"),
@@ -36,18 +35,11 @@ enum class SpeakerStyle(val raw: String, val title: String, val note: String) {
     /** The Motion set (voice-ring) or ours (Allternit), as the web and iOS group them. */
     val isMotion: Boolean get() = this in MOTION
 
-    /** Whether this phone draws the style faithfully yet. */
-    val isRendered: Boolean get() = this !in NOT_PORTED
-
-    /** What actually draws: an unported Motion style falls back to Ring. */
-    val drawn: SpeakerStyle get() = if (isRendered) this else Ring
-
     companion object {
         private val MOTION = setOf(Ring, Orbit, Sash, Signal, Swell, Pixel)
-        private val NOT_PORTED = setOf(Orbit, Sash, Signal, Swell, Pixel)
         fun of(raw: String?): SpeakerStyle? = entries.firstOrNull { it.raw == raw }
         /** The tiles the picker offers for one set. */
-        fun offered(motion: Boolean): List<SpeakerStyle> = entries.filter { it.isMotion == motion && it.isRendered }
+        fun offered(motion: Boolean): List<SpeakerStyle> = entries.filter { it.isMotion == motion }
     }
 }
 

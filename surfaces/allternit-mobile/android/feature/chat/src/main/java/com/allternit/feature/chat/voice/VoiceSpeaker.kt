@@ -67,6 +67,8 @@ private const val SCALE = 1.78f
  * - Ring: the VoiceRingKit port (VoiceRing.kt), drawn once over the face with a soft cut-out around the head and
  *   chest, so its lower arc passes in front of the body. A palette tints it (greyscale times the palette's first
  *   colour); Spectrum keeps the ring's own colours.
+ * - Orbit, Sash, Signal, Swell, Pixel: the VoiceRingKit orb ports (VoiceOrbs.kt), drawn over the face through the
+ *   same cut-out, in plain ink times the palette's first colour (Spectrum: plain ink, as on iOS).
  * - Blocks, ASCII, Glow: our own looks, drawn behind the face.
  * - Still: the face alone; it lifts a little while the bot talks.
  *
@@ -96,7 +98,10 @@ fun VoiceSpeakerView(
         if (!paused) while (true) withFrameNanos { nanos = it }
     }
     val engine = remember { RingEngine() }
-    val drawn = style.drawn
+    val drawn = style
+    val orb = drawn.orbKind
+    val orbEngine = remember { OrbEngine() }
+    val orbPainter = remember { OrbPainter() }
     val outer = (sizeDp * SCALE).roundToInt().toFloat()
     val colors = if (muted) RingPalette.idle else palette.colors(botColor)
     val light = colors?.firstOrNull() ?: botColor ?: Color(0xFF8C8E94)
@@ -189,6 +194,16 @@ fun VoiceSpeakerView(
                     val t = time()
                     val frame = engine.frame(nanos, outer.toDouble(), ringState, levelAt(t), paused)
                     paintRing(frame, dark, tint)
+                    if (!compact) cutOutFace(sizeDp.dp.toPx(), faceDy.dp.toPx())
+                }
+            } else if (orb != null) {
+                // The Motion orbs (VoiceOrbs.kt): plain ink times the palette's first colour, over the face with the
+                // same cut-out as the ring (iOS draws them through the same mask).
+                val tint = colors?.firstOrNull()
+                Canvas(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) {
+                    val t = time()
+                    val frame = orbEngine.frame(nanos, outer.toDouble(), orb, ringState, levelAt(t), paused)
+                    orbPainter.paint(this, frame, dark, tint)
                     if (!compact) cutOutFace(sizeDp.dp.toPx(), faceDy.dp.toPx())
                 }
             }
