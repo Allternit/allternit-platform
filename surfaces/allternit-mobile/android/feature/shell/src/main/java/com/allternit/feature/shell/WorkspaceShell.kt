@@ -467,6 +467,15 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             )
                             // Wave E: the drawer's "Your bots" and a bot from search open Bots mode's root.
                             "bots" -> com.allternit.feature.bots.BotsModeRoot(botsHost, botsStore, botsLaunch)
+                            // Wave F2: Automation Tasks (both modes' rows) opens the hub: goals, routines, loops, heartbeats, the board.
+                            "automation-tasks", "code-automations" -> com.allternit.feature.automation.AutomationRoot(
+                                com.allternit.feature.automation.AutomationHost(
+                                    signedIn = account != null,
+                                    backend = chatBackend,
+                                    menuButton = shellMenuButton,
+                                    openSignIn = { page = ShellPage.Settings },
+                                ),
+                            )
                             else -> SectionStub(current.row, onBack = { page = ShellPage.Home })
                         }
                         is ShellPage.Project -> ProjectsListScreen(
