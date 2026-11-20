@@ -1008,10 +1008,14 @@ async fn set_default_runtime_device(
     Ok(Json(serde_json::json!({ "id": id, "preferred": true })))
 }
 
+/// The body is optional (agent-daemon sends none): a JSON object with a
+/// `hostSample` (computers console D4) is stored as that runtime's sample;
+/// anything else is ignored and the heartbeat still succeeds.
 async fn runtime_heartbeat(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let runtime = authenticate_runtime(&state, &headers, &id).await?;
     sqlx::query(
@@ -1020,6 +1024,18 @@ async fn runtime_heartbeat(
     .bind(&runtime.id)
     .execute(&state.db)
     .await?;
+    if !body.is_empty() && body.len() <= 64 * 1024 {
+        if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&body) {
+            super::computer_metrics::store_from_heartbeat(
+                &state.db,
+                super::computer_metrics::KIND_DEVICE,
+                &runtime.id,
+                &parsed,
+                Utc::now(),
+            )
+            .await;
+        }
+    }
     Ok(Json(serde_json::json!({
         "runtimeId": runtime.id,
         "userId": runtime.user_id,

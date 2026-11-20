@@ -21,6 +21,8 @@ fn device(id: &str, name: &str, runtime_type: &str, platform: &str) -> DeviceRow
         tailnet_ip: None,
         status: Some("online".into()),
         last_seen_at: at(1),
+        last_sample: None,
+        last_sample_at: None,
     }
 }
 
@@ -33,6 +35,8 @@ fn paired(id: &str, name: &str) -> PairedRow {
         last_seen_at: at(60),
         runtime_device_id: None,
         shared: false,
+        last_sample: None,
+        last_sample_at: None,
     }
 }
 
@@ -45,6 +49,8 @@ fn cloud(id: &str, status: &str, device_id: Option<&str>) -> CloudRow {
         tailnet_ip: None,
         location: Some("nyc".into()),
         host_region: Some("us-east".into()),
+        last_sample: None,
+        last_sample_at: None,
     }
 }
 
@@ -151,6 +157,9 @@ async fn setup() -> Arc<ApiState> {
     sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 153");
     // Additive and idempotent: the deploy may apply it twice.
     sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 153 again");
+    // The list reads the newest heartbeat sample (step 2.2).
+    let sql = include_str!("../../migrations_pg/154_computer_metrics.sql").replace("public.", "");
+    sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 154");
     state
 }
 
