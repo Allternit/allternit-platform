@@ -21,7 +21,9 @@ final class MenuHoldController: ObservableObject {
 
     @Published private(set) var state = MenuHoldState.initial
     /// The pressed (or newest) ☰'s frame in global coordinates, measured
-    /// while the drawer is closed (an open drawer pushes and scales the page).
+    /// only while the drawer is fully closed: an open or half-dragged drawer
+    /// pushes and scales the page, and a frame from then put the fan mid-screen
+    /// when the drawer's mode icon opened it (TestFlight 48).
     @Published private(set) var anchor = CGRect(x: 6, y: 59, width: 44, height: 44)
     /// The shelf's Create a bot item opens the new bot sheet.
     @Published var isCreateBotPresented = false
@@ -33,6 +35,8 @@ final class MenuHoldController: ObservableObject {
     // Installed by the shell (MainWorkspaceView).
     private weak var modeStore: AppModeStore?
     private var isDrawerOpen: () -> Bool = { false }
+    /// Closed with no drag in progress: the page (and ☰) sits at rest.
+    private var isDrawerAtRest: () -> Bool = { true }
     private var openDrawerAction: () -> Void = {}
     private var closeDrawerAction: () -> Void = {}
 
@@ -46,11 +50,13 @@ final class MenuHoldController: ObservableObject {
     func install(
         modeStore: AppModeStore,
         isDrawerOpen: @escaping () -> Bool,
+        isDrawerAtRest: @escaping () -> Bool,
         openDrawer: @escaping () -> Void,
         closeDrawer: @escaping () -> Void
     ) {
         self.modeStore = modeStore
         self.isDrawerOpen = isDrawerOpen
+        self.isDrawerAtRest = isDrawerAtRest
         self.openDrawerAction = openDrawer
         self.closeDrawerAction = closeDrawer
     }
@@ -68,12 +74,12 @@ final class MenuHoldController: ObservableObject {
 
     /// A ☰ reports where it is while nothing is open (D4 opens the fan from the newest one).
     func noteAnchor(_ rect: CGRect) {
-        guard rect.width > 0, !isDrawerOpen(), state.overlay == .none, !state.pressing, rect != anchor else { return }
+        guard rect.width > 0, isDrawerAtRest(), state.overlay == .none, !state.pressing, rect != anchor else { return }
         anchor = rect
     }
 
     func press(anchor rect: CGRect, onOpen: @escaping () -> Void) {
-        if rect.width > 0, !isDrawerOpen() { anchor = rect }
+        if rect.width > 0, isDrawerAtRest() { anchor = rect }
         pressOpen = onOpen
         Haptics.prepare()
         dispatch(.press)

@@ -104,6 +104,7 @@ struct MainWorkspaceView: View {
             MenuHoldController.shared.install(
                 modeStore: modeStore,
                 isDrawerOpen: { isSidebarOpen },
+                isDrawerAtRest: { !isSidebarOpen && dragOffset == 0 },
                 openDrawer: { setSidebar(true) },
                 closeDrawer: { setSidebar(false) }
             )
