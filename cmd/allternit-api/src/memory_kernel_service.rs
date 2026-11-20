@@ -71,6 +71,11 @@ pub struct RecallResult {
     pub content: String,
     pub metadata: Value,
     pub timestamp: String,
+    /// Sleep `disputes` stage (step 6.1): set when this memory is a side of a
+    /// dispute. Both sides, the pick and the reason; absent otherwise, so old
+    /// clients see the same shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispute: Option<crate::sleep::types::DisputeNote>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -187,6 +192,7 @@ pub(crate) fn load_target(
                             "decay_score": row.get::<_, Option<f64>>(7)?,
                         }),
                         timestamp: row.get::<_, String>(3)?,
+                        dispute: None,
                     })
                 },
             )
@@ -212,6 +218,7 @@ pub(crate) fn load_target(
                             "summary": summary,
                         }),
                         timestamp: row.get::<_, String>(5)?,
+                        dispute: None,
                     })
                 },
             )
@@ -232,6 +239,7 @@ pub(crate) fn load_target(
                             "source": row.get::<_, Option<String>>(4)?,
                         }),
                         timestamp: row.get::<_, String>(3)?,
+                        dispute: None,
                     })
                 },
             )
@@ -753,6 +761,8 @@ pub fn recall_logged(
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     }
     results.truncate(limit);
+    // Sleep `disputes` stage: the recall monitor notes disputed memories (never drops one).
+    crate::memory_retrieve::attach_disputes(&conn, user_id, &mut results);
 
     // Retrieval stats feed consolidation's decay (WP-M1d).
     let fact_ids: Vec<&str> = results.iter().filter(|r| r.item_type == "fact").map(|r| r.id.as_str()).collect();

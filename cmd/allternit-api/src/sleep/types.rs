@@ -97,6 +97,18 @@ pub enum DisputeChoice {
     Neither,
 }
 
+impl DisputeChoice {
+    /// The `memory_disputes.pick` value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DisputeChoice::A => "a",
+            DisputeChoice::B => "b",
+            DisputeChoice::BothScoped => "both_scoped",
+            DisputeChoice::Neither => "neither",
+        }
+    }
+}
+
 /// A trigger sent by the runtime to `POST /memory/sleep/signal`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -108,7 +120,7 @@ pub enum SignalEvent {
 }
 
 /// Events on the memory activity stream. Declared for the contract; nothing
-/// emits them until the orchestrator (step 5.1) and disputes (step 6.1) land.
+/// emits them yet (the activity stream only takes its own fixed kinds).
 pub mod events {
     pub const CYCLE_STARTED: &str = "sleep.cycle.started";
     pub const CYCLE_STAGE: &str = "sleep.cycle.stage";
@@ -273,14 +285,43 @@ pub struct DisputeView {
     pub margin: Option<f64>,
     pub pick: Option<String>,
     pub reason: Option<String>,
+    /// `arbiter`, `user`, or `user_said_update` (you said it changed).
+    pub picked_by: Option<String>,
     pub state: String,
     pub created_at: String,
+    pub resolved_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DisputeSide {
     pub kind: String,
     pub id: String,
+    /// The side's text (the fact), so a UI can render the card.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// False once the side was superseded.
+    #[serde(default)]
+    pub current: bool,
+}
+
+/// The dispute note the recall monitor attaches to a recalled memory that is
+/// a side of a dispute (step 6.1). Both sides, the pick and the reason; it
+/// never removes the result it is attached to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DisputeNote {
+    pub id: String,
+    /// `open`, `needs_user` or `resolved`.
+    pub state: String,
+    /// Which side the recalled memory is: `a` or `b`.
+    pub this_side: String,
+    pub side_a: DisputeSide,
+    pub side_b: DisputeSide,
+    /// `a`, `b`, `both_scoped`, `neither`, or none while it needs you.
+    pub pick: Option<String>,
+    pub reason: Option<String>,
+    pub scope: Option<String>,
+    pub picked_by: Option<String>,
+    pub needs_user: bool,
 }
 
 /// A refused write: the stage it needs is not built or not switched on.

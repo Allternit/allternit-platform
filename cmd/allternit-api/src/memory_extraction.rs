@@ -18,6 +18,11 @@
 //! incumbent that decides. The reply is schema-constrained (O10): gizzi's
 //! json_schema format where the lane honors it, and [`validate_reply`]
 //! always.
+//!
+//! Sleep `disputes` stage (D10, step 6.1; off by default): an `update` that
+//! contradicts the old fact without the user saying it changed keeps both
+//! facts and opens a dispute (`sleep::disputes`); a correction the user made
+//! still supersedes, plus a resolved dispute record. Off = unchanged.
 
 use rusqlite::params;
 use serde::Deserialize;
@@ -28,6 +33,7 @@ use tracing::{debug, warn};
 use crate::db::DbHandle;
 use crate::memory_kernel_service::{self as kernel, MemoryKernelError};
 use crate::memory_relations::{self as rel, MemoryType, NodeKind, RelationType, TurnOutcome};
+use crate::sleep::disputes::{self, UpdateKind};
 
 /// Existing memories shown to the model: all of them when there are few,
 /// otherwise the most similar to the message.
@@ -338,8 +344,15 @@ pub fn apply_ops_typed(
         if let Some(old) = updates {
             match new_id.as_deref().filter(|n| *n != old) {
                 Some(n) => {
-                    rel::write_relation(&conn, user_id, (NodeKind::Fact, n), RelationType::Updates,
-                        (NodeKind::Fact, &old), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+                    // Sleep `disputes` stage (off = None = today's supersede).
+                    let kind = disputes::plan_update(&conn, user_id, &old, &fact, observation_id).unwrap_or(None);
+                    if !(kind == Some(UpdateKind::Contradiction) && open_dispute(&conn, user_id, &old, n)) {
+                        rel::write_relation(&conn, user_id, (NodeKind::Fact, n), RelationType::Updates,
+                            (NodeKind::Fact, &old), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+                        if kind == Some(UpdateKind::Correction) {
+                            record_correction(&conn, user_id, &old, n);
+                        }
+                    }
                 }
                 None => {
                     rel::supersede_fact(&conn, user_id, &old)?;
@@ -358,6 +371,36 @@ pub fn apply_ops_typed(
         rel::set_observation_type(&conn, user_id, observation_id, t)?;
     }
     Ok((changed, outcome))
+}
+
+/// Opens a Sleep dispute between the old fact and the new one (both kept).
+/// False when it was not written, so the caller supersedes as before.
+fn open_dispute(conn: &rusqlite::Connection, user_id: &str, old: &str, new: &str) -> bool {
+    match disputes::open(conn, user_id, old, new) {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(e) => {
+            warn!("memory dispute not written, superseding instead: {e}");
+            false
+        }
+    }
+}
+
+fn record_correction(conn: &rusqlite::Connection, user_id: &str, old: &str, new: &str) {
+    if let Err(e) = disputes::record_correction(conn, user_id, old, new) {
+        warn!("memory correction record not written: {e}");
+    }
+}
+
+/// Drive path fallback: the old fact was kept out of the turn's commit for a
+/// dispute that then failed, so retire it in its own commit.
+fn retire_after_failed_dispute(db: &DbHandle, conn: &rusqlite::Connection, user_id: &str, old: &str) -> Result<(), MemoryKernelError> {
+    let out = crate::memory_drive_writer::commit_facts(db, user_id, &[], &[old.to_string()], "Remember from conversation")
+        .map_err(|e| MemoryKernelError::Internal(e.to_string()))?;
+    for legacy in out.map(|o| o.legacy_retire).unwrap_or_else(|| vec![old.to_string()]) {
+        rel::supersede_fact(conn, user_id, &legacy)?;
+    }
+    Ok(())
 }
 
 /// Memory Drive path: every add, update and forget of one turn lands as ONE
@@ -403,8 +446,23 @@ fn apply_ops_drive(
             }
         }
     }
+    // Sleep `disputes` stage: a contradicting update keeps the old fact (None
+    // for every write when the stage is off, so retire is today's list).
+    let kinds: Vec<Option<UpdateKind>> = writes
+        .iter()
+        .map(|(fact, _, old)| match old {
+            Some(old) => disputes::plan_update(conn, user_id, old, fact, observation_id).unwrap_or(None),
+            None => None,
+        })
+        .collect();
     let mut retire = forgets.clone();
-    retire.extend(writes.iter().filter_map(|(_, _, old)| old.clone()));
+    retire.extend(
+        writes
+            .iter()
+            .zip(&kinds)
+            .filter(|(_, k)| **k != Some(UpdateKind::Contradiction))
+            .filter_map(|((_, _, old), _)| old.clone()),
+    );
     let new_facts: Vec<crate::memory_drive_writer::NewFact> = writes
         .iter()
         .map(|(fact, t, _)| crate::memory_drive_writer::NewFact {
@@ -421,7 +479,7 @@ fn apply_ops_drive(
     for legacy in &out.legacy_retire {
         rel::supersede_fact(conn, user_id, legacy)?;
     }
-    for ((fact, t, updates), id) in writes.into_iter().zip(out.fact_ids) {
+    for (((fact, t, updates), id), kind) in writes.into_iter().zip(out.fact_ids).zip(kinds) {
         let new_id = match id {
             Some(id) => {
                 changed += 1;
@@ -437,8 +495,20 @@ fn apply_ops_drive(
         };
         if let Some(old) = updates {
             if let Some(n) = new_id.as_deref().filter(|n| *n != old) {
-                rel::write_relation(conn, user_id, (NodeKind::Fact, n), RelationType::Updates,
-                    (NodeKind::Fact, &old), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+                if kind == Some(UpdateKind::Contradiction) {
+                    if !open_dispute(conn, user_id, &old, n) {
+                        // The dispute could not be written: retire as before, never silently keep both.
+                        retire_after_failed_dispute(db, conn, user_id, &old)?;
+                        rel::write_relation(conn, user_id, (NodeKind::Fact, n), RelationType::Updates,
+                            (NodeKind::Fact, &old), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+                    }
+                } else {
+                    rel::write_relation(conn, user_id, (NodeKind::Fact, n), RelationType::Updates,
+                        (NodeKind::Fact, &old), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+                    if kind == Some(UpdateKind::Correction) {
+                        record_correction(conn, user_id, &old, n);
+                    }
+                }
             }
             changed += 1;
             outcome.relations.push((old, RelationType::Updates, new_id.clone()));

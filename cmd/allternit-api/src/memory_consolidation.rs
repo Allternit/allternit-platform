@@ -798,8 +798,14 @@ async fn search_route(State(state): State<Arc<AppState>>, Extension(user): Exten
             .into_iter()
             .map(|h| {
                 let link = links.get(&h.id);
-                json!({ "id": h.id, "type": h.item_type, "text": h.content, "score": h.score,
-                    "source": link.map(|l| l.0.clone()), "external_id": link.map(|l| l.1.clone()) })
+                let mut v = json!({ "id": h.id, "type": h.item_type, "text": h.content, "score": h.score,
+                    "source": link.map(|l| l.0.clone()), "external_id": link.map(|l| l.1.clone()) });
+                // Sleep `disputes` stage: gizzi's memory_recall reads this note. No key when there is none,
+                // so the response is unchanged for old clients and with the stage off.
+                if let Some(d) = &h.dispute {
+                    v["dispute"] = json!(d);
+                }
+                v
             })
             .collect())
     })

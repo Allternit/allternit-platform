@@ -393,3 +393,61 @@ async fn memory_eval_fixture() {
     summary["per_question"] = Value::Null;
     eprintln!("{}", serde_json::to_string_pretty(&summary).unwrap());
 }
+
+// ─── Sleep dispute monitor (step 6.1) ───────────────────────────────────────
+
+fn disputes_on(db: &DbHandle) {
+    let conn = db.connect().unwrap();
+    for k in ["enabled", "stage.disputes"] {
+        conn.execute("INSERT INTO sleep_config (user_id, key, value_json, source) VALUES ('u1', ?1, 'true', 'owner')", [k]).unwrap();
+    }
+}
+
+#[test]
+fn recall_returns_both_sides_the_pick_and_the_reason() {
+    let db = db();
+    fact(&db, "f_austin", "Maya lives in Austin.");
+    fact(&db, "f_denver", "Maya lives in Denver.");
+    let conn = db.connect().unwrap();
+    conn.execute("UPDATE memory_facts SET valid_from = datetime('now', '-60 days') WHERE id = 'f_austin'", []).unwrap();
+    // Stage off: no note, and the wire shape is exactly the old one.
+    let (before, _) = kernel::recall_logged(&db, "u1", None, None, "where does Maya live", None, 5).unwrap();
+    assert!(before.iter().all(|r| r.dispute.is_none()));
+    assert!(serde_json::to_value(&before[0]).unwrap().get("dispute").is_none());
+
+    disputes_on(&db);
+    let opened = crate::sleep::disputes::open(&conn, "u1", "f_austin", "f_denver").unwrap().unwrap();
+    let (results, _) = kernel::recall_logged(&db, "u1", None, None, "where does Maya live", None, 5).unwrap();
+    for id in ["f_austin", "f_denver"] {
+        let r = results.iter().find(|r| r.id == id).unwrap_or_else(|| panic!("{id} recalled: {results:?}"));
+        let n = r.dispute.as_ref().expect("dispute note");
+        assert_eq!(n.id, opened.id);
+        assert_eq!(n.this_side, if id == "f_austin" { "a" } else { "b" });
+        assert_eq!((n.side_a.text.as_deref(), n.side_b.text.as_deref()), (Some("Maya lives in Austin."), Some("Maya lives in Denver.")));
+        assert_eq!((n.pick.as_deref(), n.reason.as_deref(), n.needs_user), (Some("b"), Some("It is the more recent of the two."), false));
+    }
+    assert_eq!(serde_json::to_value(&results[0]).unwrap()["dispute"]["side_b"]["text"], "Maya lives in Denver.");
+}
+
+#[test]
+fn a_dispute_alone_never_blocks_an_answer() {
+    let db = db();
+    fact(&db, "f_allergic", "Maya is allergic to penicillin.");
+    fact(&db, "f_not", "Maya is not allergic to penicillin.");
+    fact(&db, "f_other", "Maya takes penicillin tablets for acne.");
+    disputes_on(&db);
+    let conn = db.connect().unwrap();
+    conn.execute("UPDATE memory_facts SET valid_from = '2026-11-01 10:00:00' WHERE id IN ('f_allergic', 'f_not')", []).unwrap();
+    let o = crate::sleep::disputes::open(&conn, "u1", "f_allergic", "f_not").unwrap().unwrap();
+    assert_eq!((o.state.as_str(), o.pick), ("needs_user", None));
+    let (results, _) = kernel::recall_logged(&db, "u1", None, None, "is Maya allergic to penicillin", None, 5).unwrap();
+    // Every matching memory still comes back; the disputed ones carry the question, no pick.
+    let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
+    for id in ["f_allergic", "f_not", "f_other"] {
+        assert!(ids.contains(&id), "{ids:?}");
+    }
+    let disputed: Vec<_> = results.iter().filter_map(|r| r.dispute.as_ref()).collect();
+    assert_eq!(disputed.len(), 2);
+    assert!(disputed.iter().all(|n| n.needs_user && n.pick.is_none() && n.state == "needs_user"));
+    assert!(results.iter().find(|r| r.id == "f_other").unwrap().dispute.is_none());
+}

@@ -6,10 +6,12 @@
 //! Writes that need a later stage validate their input, then refuse with
 //! `{"accepted": false, "reason": ...}`: `sleep_disabled` when Sleep or the
 //! stage's flag is off, `stage_not_built` when the flags are on but that stage
-//! has not landed yet. User actions (`resolve`, `pages/load`) refuse with 409
+//! has not landed yet. User actions (`resolve` with the `disputes` stage off,
+//! `pages/load`) refuse with 409
 //! (`run` queues a manual nap or daydream with 202 once the `orchestrator`
 //! stage is on, step 5.1; `cycles/:id/undo` is real since step 5.5); `signal` answers 200, because the runtime sends it on every
 //! idle, compaction and session end whether Sleep is on or not.
+//! `disputes/:id/resolve` is real with the `disputes` stage on (step 6.1).
 //! `PUT settings` and `PUT config` really write `sleep_config` rows (owner).
 
 use std::sync::Arc;
@@ -26,7 +28,7 @@ use serde_json::{json, Value};
 
 use super::config::{self, ConfigError, Group, Resolved};
 use super::types::{
-    ConfigUpdate, ContextQuery, CycleSummary, DisputeSide, DisputeView, ListQuery,
+    ConfigUpdate, ContextQuery, CycleSummary, DisputeView, ListQuery,
     LoadPageRequest, PageSummary, ResolveDisputeRequest, RunRequest, SettingsUpdate,
     SignalRequest, SleepStatus, Stage, Tracks, ClaimView,
 };
@@ -130,34 +132,7 @@ fn latest_manifest(conn: &Connection, user: &str) -> rusqlite::Result<Option<(St
 }
 
 fn disputes(conn: &Connection, user: &str, state: Option<&str>, limit: i64) -> rusqlite::Result<Vec<DisputeView>> {
-    let filter = if state.is_some() { "AND state = ?2" } else { "" };
-    let sql = format!(
-        "SELECT id, topic_id, side_a_kind, side_a_id, side_b_kind, side_b_id, scope, stakes,
-                margin, pick, reason, state, created_at
-         FROM memory_disputes WHERE user_id = ?1 {filter}
-         ORDER BY created_at DESC LIMIT {limit}"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<DisputeView> {
-        Ok(DisputeView {
-            id: r.get(0)?,
-            topic_id: r.get(1)?,
-            side_a: DisputeSide { kind: r.get(2)?, id: r.get(3)? },
-            side_b: DisputeSide { kind: r.get(4)?, id: r.get(5)? },
-            scope: r.get(6)?,
-            stakes: r.get(7)?,
-            margin: r.get(8)?,
-            pick: r.get(9)?,
-            reason: r.get(10)?,
-            state: r.get(11)?,
-            created_at: r.get(12)?,
-        })
-    };
-    let rows = match state {
-        Some(s) => stmt.query_map(params![user, s], map)?.collect::<rusqlite::Result<Vec<_>>>()?,
-        None => stmt.query_map(params![user], map)?.collect::<rusqlite::Result<Vec<_>>>()?,
-    };
-    Ok(rows)
+    super::disputes::list(conn, user, state, limit)
 }
 
 fn page_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<PageSummary> {
@@ -520,8 +495,9 @@ async fn resolve_dispute(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Json(_req): Json<ResolveDisputeRequest>,
+    Json(req): Json<ResolveDisputeRequest>,
 ) -> Reply {
+    use super::disputes::{resolve_by_user, ResolveError};
     let user = match user_id(&headers) { Ok(u) => u, Err(e) => return e };
     let (conn, cfg) = match open(&state, &user) { Ok(v) => v, Err(e) => return e };
     let found = conn
@@ -532,8 +508,24 @@ async fn resolve_dispute(
         )
         .optional();
     match found {
-        Ok(Some(())) => refused(&cfg, Stage::Disputes, StatusCode::CONFLICT),
-        Ok(None) => err(StatusCode::NOT_FOUND, "Dispute not found"),
+        Ok(Some(())) => {}
+        Ok(None) => return err(StatusCode::NOT_FOUND, "Dispute not found"),
+        Err(e) => return db_err(e),
+    }
+    if !cfg.stage_on(Stage::Disputes) {
+        return refused(&cfg, Stage::Disputes, StatusCode::CONFLICT);
+    }
+    drop(conn);
+    let db = state.db.clone();
+    let res = tokio::task::spawn_blocking(move || resolve_by_user(&db, &user, &id, req.choice, req.reason.as_deref())).await;
+    match res {
+        Ok(Ok(d)) => (StatusCode::OK, Json(json!({ "accepted": true, "dispute": d }))),
+        Ok(Err(ResolveError::NotFound)) => err(StatusCode::NOT_FOUND, "Dispute not found"),
+        Ok(Err(e @ ResolveError::AlreadySettled)) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "accepted": false, "reason": "already_settled", "error": e.to_string() })),
+        ),
+        Ok(Err(e)) => db_err(e),
         Err(e) => db_err(e),
     }
 }
@@ -738,6 +730,45 @@ mod tests {
         assert_eq!(units("user-b").len(), 3);
         let (s, v) = call(&app, "POST", "/api/v1/memory/sleep/run", "user-b", Some(json!({ "kind": "rem" }))).await;
         assert_eq!((s, v["reason"].clone()), (StatusCode::CONFLICT, json!("stage_not_built")));
+    }
+
+    #[tokio::test]
+    async fn disputes_list_with_side_texts_and_resolve_needs_the_stage() {
+        let dir = std::env::temp_dir().join(format!("allternit-sleep-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let conn = st.db.connect().unwrap();
+        for (id, text) in [("f_a", "User lives in Austin."), ("f_b", "User lives in Denver.")] {
+            conn.execute("INSERT INTO memory_facts (id, user_id, fact, confidence) VALUES (?1, 'user-a', ?2, 0.9)", params![id, text]).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO memory_disputes (id, user_id, side_a_id, side_b_id, pick, reason, picked_by, state)
+             VALUES ('dsp_1', 'user-a', 'f_a', 'f_b', 'b', 'It is the more recent of the two.', 'arbiter', 'resolved')",
+            [],
+        ).unwrap();
+        let app: Router = Router::new().nest("/api/v1", sleep_router()).with_state(st);
+        const RESOLVE: &str = "/api/v1/memory/disputes/dsp_1/resolve";
+
+        let (s, v) = call(&app, "GET", "/api/v1/memory/disputes", "user-a", None).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!((v["disputes"][0]["side_a"]["text"].clone(), v["disputes"][0]["side_b"]["text"].clone()),
+            (json!("User lives in Austin."), json!("User lives in Denver.")));
+        assert_eq!(v["disputes"][0]["picked_by"], json!("arbiter"));
+
+        // Stage off: refused, nothing changes. Someone else's dispute is not found.
+        let (s, v) = call(&app, "POST", RESOLVE, "user-a", Some(json!({ "choice": "a" }))).await;
+        assert_eq!((s, v["reason"].clone()), (StatusCode::CONFLICT, json!("sleep_disabled")));
+        assert_eq!(call(&app, "POST", RESOLVE, "user-b", Some(json!({ "choice": "a" }))).await.0, StatusCode::NOT_FOUND);
+
+        let (s, _) = call(&app, "PUT", "/api/v1/memory/sleep/settings", "user-a",
+            Some(json!({ "enabled": true, "stages": { "disputes": true } }))).await;
+        assert_eq!(s, StatusCode::OK);
+        let (s, v) = call(&app, "POST", RESOLVE, "user-a", Some(json!({ "choice": "a" }))).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!((v["dispute"]["pick"].clone(), v["dispute"]["picked_by"].clone(), v["dispute"]["side_b"]["current"].clone()),
+            (json!("a"), json!("user"), json!(false)));
+        let (s, v) = call(&app, "POST", RESOLVE, "user-a", Some(json!({ "choice": "b" }))).await;
+        assert_eq!((s, v["reason"].clone()), (StatusCode::CONFLICT, json!("already_settled")));
     }
 
     #[tokio::test]

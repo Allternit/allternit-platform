@@ -281,6 +281,7 @@ fn load_chunk(conn: &Connection, user_id: &str, id: &str) -> rusqlite::Result<Op
                 content: r.get(1)?,
                 metadata: json!({ "source_type": r.get::<_, String>(2)?, "source_id": r.get::<_, String>(3)?, "chunk_index": r.get::<_, i64>(4)? }),
                 timestamp: r.get(5)?,
+                dispute: None,
             })
         },
     )
@@ -296,7 +297,7 @@ fn load_note_or_procedure(conn: &Connection, t: &str, user_id: &str, agent_id: O
          FROM procedural_memory WHERE id = ?1 AND user_id = ?2 AND (agent_id IS NULL OR ?3 IS NULL OR agent_id = ?3)"
     };
     conn.query_row(sql, params![id, user_id, agent_id], |r| {
-        Ok(RecallResult { id: r.get(0)?, item_type: t.into(), score: 0.0, content: r.get(1)?, metadata: json!({}), timestamp: r.get(2)? })
+        Ok(RecallResult { id: r.get(0)?, item_type: t.into(), score: 0.0, content: r.get(1)?, metadata: json!({}), timestamp: r.get(2)?, dispute: None })
     })
     .optional()
 }
@@ -497,8 +498,42 @@ pub async fn retrieve(
         b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal).then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)).then(a.2.cmp(&b.2))
     });
     out.evidence = scored.into_iter().take(cfg.k).map(|(_, _, _, e)| e).collect();
+    {
+        let conn = db.connect()?;
+        let mut items: Vec<RecallResult> = out.evidence.iter().map(|e| e.item.clone()).collect();
+        attach_disputes(&conn, user_id, &mut items);
+        for (e, i) in out.evidence.iter_mut().zip(items) {
+            e.item.dispute = i.dispute;
+        }
+    }
     out.latency_ms = started.elapsed().as_millis();
     Ok(out)
+}
+
+// ─── Dispute monitor ────────────────────────────────────────────────────────
+
+/// The Sleep conflict monitor at recall (D10, step 6.1): every recalled fact
+/// that is a side of a dispute still in play gets `dispute` set (both sides,
+/// the pick if any, and the reason). Nothing is removed or reordered, so a
+/// dispute never blocks an answer. A no-op with the `disputes` stage off, and
+/// best effort: a failed lookup leaves the results as they were.
+pub fn attach_disputes(conn: &Connection, user_id: &str, results: &mut [RecallResult]) {
+    let ids: Vec<&str> = results.iter().filter(|r| r.item_type == "fact").map(|r| r.id.as_str()).collect();
+    let notes = match crate::sleep::disputes::notes_for(conn, user_id, &ids) {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::debug!(error = %e, "dispute notes not attached");
+            return;
+        }
+    };
+    if notes.is_empty() {
+        return;
+    }
+    for r in results.iter_mut().filter(|r| r.item_type == "fact") {
+        if let Some(n) = notes.get(&r.id) {
+            r.dispute = Some(n.clone());
+        }
+    }
 }
 
 // ─── Shadow ─────────────────────────────────────────────────────────────────
