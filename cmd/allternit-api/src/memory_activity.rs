@@ -14,8 +14,14 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-/// Kinds the API writes. Agents may report only [`AGENT_KINDS`].
-pub const KINDS: &[&str] = &["saved", "recalled", "forgot", "imported", "dream", "vendor"];
+/// Kinds the API writes. Agents may report only [`AGENT_KINDS`]. The
+/// `sleep.*` kinds are the Sleep events (`sleep::types::events`): the API
+/// writes them, agents never can.
+pub const KINDS: &[&str] = &[
+    "saved", "recalled", "forgot", "imported", "dream", "vendor",
+    "sleep.cycle.started", "sleep.cycle.stage", "sleep.cycle.finished",
+    "sleep.dispute.opened", "sleep.dispute.needs_user", "sleep.debt.changed",
+];
 pub const AGENT_KINDS: &[&str] = &["saved", "recalled", "forgot"];
 const MAX_ITEMS: usize = 20;
 const MAX_TEXT: usize = 240;
@@ -220,6 +226,17 @@ mod tests {
         c.execute("INSERT INTO ephemeral_sessions VALUES ('inc')", []).unwrap();
         assert!(record(&c, "u", Activity { kind: "saved", title: "x".into(), session: Some("inc".into()), ..Default::default() }).is_none());
         assert!(record(&c, "u", Activity { kind: "shell", title: "x".into(), ..Default::default() }).is_none());
+    }
+
+    #[test]
+    fn agents_cannot_report_sleep_kinds() {
+        assert_eq!(AGENT_KINDS, &["saved", "recalled", "forgot"]);
+        for k in crate::sleep::types::events::ALL {
+            assert!(KINDS.contains(&k), "{k} must be a writable kind");
+            assert!(!AGENT_KINDS.contains(&k), "{k} must not be reportable by agents");
+        }
+        // The agent route checks `AGENT_KINDS` before it records anything.
+        assert!(!AGENT_KINDS.contains(&"sleep.cycle.started"));
     }
 
     #[test]

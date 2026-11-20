@@ -275,6 +275,7 @@ Query: `after` (follow new rows, oldest first), `before` (page back, newest firs
 | `imported` | Imports and syncs (commit messages `Import memory from …` / `Sync memory from …`) |
 | `dream` | Each Dream step: `detail.step` is `gather`, `plan`, `check`, `done` or `undo`; `run` is the Dream id |
 | `vendor` | Reads of the owner's own vendor logins |
+| `sleep.*` | Sleep events (six kinds, see [Sleep: Events](/api/memory-sleep#events)). Written by the API only. A client that does not know them should skip the row or show its `title` |
 
 `detail.items` holds up to 20 `{ text, source }` previews (240 characters each) and
 `detail.total` the full count. A row is tied to a `session` only when every added line came from
@@ -285,7 +286,7 @@ than 90 days are dropped. The drive's git history stays the full record. Older c
 
 An agent working on the owner's own drive reports what it did. Body
 `{ kind: "saved" | "recalled" | "forgot", title, items?: [{ text, source }], source?, session? }`
-(at most 50 items; `source` must be a `scheme:value` label). Gizzi's `memory_recall` and
+Any other kind, including every `sleep.*` kind, is refused. (at most 50 items; `source` must be a `scheme:value` label). Gizzi's `memory_recall` and
 `memory_write` tools call it with `source: gizzi:session/<id>` (best effort, never blocking the tool).
 
 ### Ledger: `GET /memory/drive/ledger`, `GET /ledger/file`, `POST /ledger/snapshot`, `GET /ledger/download`

@@ -691,15 +691,23 @@ keeps its default. Nothing runs this fit on a schedule yet.
 
 ## Events
 
-These events go on the memory activity stream. They are declared, but not emitted yet:
-the activity stream only takes its own fixed kinds, so the orchestrator and disputes
-stages record their work in the cycle report and the disputes table instead.
+These events go on the memory activity stream (`GET /memory/drive/activity`, the same rows
+Memory Drive shows). Each event is its own `kind`, spelled with the dotted name below, so
+`?kind=sleep.cycle.finished` filters to one of them and `?after=<cursor>` follows them live
+with everything else. The API writes them; agents cannot report a `sleep.*` kind
+(`POST /memory/drive/activity` refuses it). Writing is best effort and never fails the nap,
+dispute or request that caused it. Rows for incognito sessions are not written.
 
-| Event | When |
-| --- | --- |
-| `sleep.cycle.started` | A cycle begins. |
-| `sleep.cycle.stage` | A cycle moves to its next stage. |
-| `sleep.cycle.finished` | A cycle ends: finished, stopped or failed. |
-| `sleep.dispute.opened` | Two memories contradict each other. |
-| `sleep.dispute.needs_user` | A dispute needs you to pick. |
-| `sleep.debt.changed` | The amount of waiting consolidation changed. |
+| Event | When | `detail` |
+| --- | --- | --- |
+| `sleep.cycle.started` | A cycle begins. | `cycle`, `unit`, `kind` (`nap` or `daydream`), `trigger` |
+| `sleep.cycle.stage` | A stage ends (one per stage, in order, also when it is skipped or fails). | `cycle`, `stage`, `status` (`done`, `skipped`, `failed`), `note`, `spend_usd` |
+| `sleep.cycle.finished` | A cycle ends: finished, stopped or failed. | `cycle`, `kind`, `state`, `spend_usd`, `stages`, `stages_done`, `stop_reason`, `error` |
+| `sleep.dispute.opened` | Two memories contradict each other and a dispute row is written. | `dispute`, `state`, `scope`, `stakes`, `margin` |
+| `sleep.dispute.needs_user` | The dispute needs you to pick (written right after `opened`). | `dispute` |
+| `sleep.debt.changed` | Sleep debt crossed `debt_pause_threshold`, up or down. | `debt`, `threshold`, `decay_paused` |
+
+Cycle rows carry the cycle id as `run` (filter with `?run=`) and the chat `session` when the
+nap came from a chat. `sleep.debt.changed` is written only when the debt crosses the
+threshold, never on every read of `GET /memory/sleep/status`. It is checked when a cycle
+starts and when it ends; the last event row tells whether the debt was above or below.

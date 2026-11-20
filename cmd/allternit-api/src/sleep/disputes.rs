@@ -28,6 +28,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::json;
 
 use super::arbiter::{self, Side};
 use super::config::{self, Resolved};
@@ -223,6 +224,26 @@ pub fn open(conn: &Connection, user_id: &str, a_id: &str, b_id: &str) -> rusqlit
             pick.as_ref().map(|_| BY_ARBITER), state
         ],
     )?;
+    super::cycle::emit(
+        conn,
+        user_id,
+        super::types::events::DISPUTE_OPENED,
+        "Two memories disagree".into(),
+        json!({ "dispute": id, "state": state, "scope": v.scope, "stakes": v.stakes, "margin": v.margin }),
+        None,
+        None,
+    );
+    if v.needs_user {
+        super::cycle::emit(
+            conn,
+            user_id,
+            super::types::events::DISPUTE_NEEDS_USER,
+            "A disagreement needs your pick".into(),
+            json!({ "dispute": id }),
+            None,
+            None,
+        );
+    }
     Ok(Some(Opened { id, state: state.into(), pick, created: true }))
 }
 
@@ -524,6 +545,26 @@ mod tests {
             "SELECT relation FROM memory_relationships WHERE source_entity_id = ?1 AND target_entity_id = ?2",
             [&new, &old], |r| r.get(0)).unwrap();
         assert_eq!(rel, "updates");
+    }
+
+    #[test]
+    fn opening_a_needs_user_dispute_writes_opened_and_needs_user() {
+        let db = DbHandle::new_memory().unwrap();
+        on(&db);
+        let obs = kernel::record_observation(&db, "u1", None, None, "turn_user", "x", Some("user")).unwrap();
+        let a = kernel::persist_facts(&db, "u1", None, &obs, &["User is allergic to penicillin.".into()]).unwrap().remove(0).id;
+        let b = kernel::persist_facts(&db, "u1", None, &obs, &["User is not allergic to penicillin.".into()]).unwrap().remove(0).id;
+        let conn = db.connect().unwrap();
+        conn.execute("UPDATE memory_facts SET valid_from = '2026-11-01 10:00:00' WHERE id IN (?1, ?2)", [&a, &b]).unwrap();
+        let o = open(&conn, "u1", &a, &b).unwrap().unwrap();
+        assert_eq!(o.state, "needs_user");
+        let kinds = |c: &Connection| -> Vec<String> {
+            crate::memory_activity::list(c, "u1", &crate::memory_activity::Filter { after: Some(0), ..Default::default() }).unwrap().into_iter().map(|r| r.kind).collect()
+        };
+        assert_eq!(kinds(&conn), vec!["sleep.dispute.opened", "sleep.dispute.needs_user"]);
+        // Opening the same pair again writes no dispute and no events.
+        assert!(!open(&conn, "u1", &a, &b).unwrap().unwrap().created);
+        assert_eq!(kinds(&conn).len(), 2);
     }
 
     #[test]
