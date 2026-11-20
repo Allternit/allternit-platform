@@ -5185,7 +5185,7 @@
       "label": "Allternit Sleep",
       "product": "product:memory-drive",
       "status": "building",
-      "description": "Memory consolidation that runs while you are away: naps on idle, a deeper cycle with REM-style hypothesis checks, reminders, stricter intake while Sleep is behind, and a question to you when two memories conflict. Backend, gizzi-code runtime and CLI, iPhone settings and docs merged 2026-11-20 (train 20261119-2008); every stage ships off. Desktop, ai.allternit.com, the phone layout and the PWA get the Sleep section in Memory settings and the chat conflict card (allternit-ai #1191, #1192).",
+      "description": "Memory consolidation that runs while you are away: naps on idle, a deeper cycle with REM-style hypothesis checks, reminders, stricter intake while Sleep is behind, and a question to you when two memories conflict. Backend, gizzi-code runtime and CLI, iPhone settings and docs merged 2026-11-20 (train 20261119-2008); every stage ships off. Desktop, ai.allternit.com, the phone layout and the PWA have the Sleep section in Memory settings and the chat conflict card (allternit-ai #1191, #1192, merged 2026-11-20).",
       "touches": [
         "allternit/cmd/allternit-api/src/sleep",
         "allternit/cmd/allternit-api/migrations/V291__sleep_core.sql",
@@ -5194,6 +5194,9 @@
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/memoryDrive/sleep.ts",
         "allternit/cmd/gizzi-code/src/cli/commands/memory.ts",
         "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySleepView.swift",
+        "allternit-ai/src/views/settings/memory-sleep",
+        "allternit-ai/src/lib/agents/memory-sleep-client.ts",
+        "allternit-ai/src/lib/agents/memory-conflict-card.ts",
         "allternit/surfaces/docs/guides/sleep.mdx",
         "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
         "allternit/surfaces/docs/api/memory-sleep.mdx"
@@ -5213,6 +5216,7 @@
         "allternit/cmd/allternit-api/migrations/V291__sleep_core.sql",
         "allternit/cmd/gizzi-code/src/runtime/memory/sleep/triggers.ts",
         "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySleepView.swift",
+        "allternit-ai/src/views/settings/memory-sleep/SleepSection.tsx",
         "allternit/surfaces/docs/guides/sleep.mdx",
         "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
         "allternit/surfaces/docs/api/memory-sleep.mdx"
