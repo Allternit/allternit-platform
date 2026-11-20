@@ -212,7 +212,7 @@ jobs:
       - name: Reuse prebuilt Rust binaries if unchanged
         id: prebuilt
         shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-macos
+        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory
 
       - name: Build allternit-api (x86_64)
         if: steps.prebuilt.outputs.hit != 'true'
@@ -642,7 +642,7 @@ jobs:
       - name: Reuse prebuilt Rust binaries if unchanged
         id: prebuilt
         shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-windows
+        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-windows --bin target/x86_64-pc-windows-msvc/release/allternit-api.exe --bin target/x86_64-pc-windows-msvc/release/allternit-factory.exe
 
       - name: Build allternit-api (Windows)
         if: steps.prebuilt.outputs.hit != 'true'
@@ -982,13 +982,13 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-glibc217${{ matrix.suffix }}-${{ github.sha }}-${{ github.run_id }}
-          restore-keys: prebuilt-rust-linux-glibc217${{ matrix.suffix }}-
+          key: prebuilt-rust-linux-glibc217-${{ matrix.arch }}-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: prebuilt-rust-linux-glibc217-${{ matrix.arch }}-
 
       - name: Reuse prebuilt Rust binaries if unchanged
         id: prebuilt
         shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-linux
+        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-linux --bin target/${{ matrix.triple }}/release/allternit-api
 
       - name: Build allternit-api (Linux ${{ matrix.arch }})
         if: steps.prebuilt.outputs.hit != 'true'
@@ -1014,7 +1014,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .prebuilt/rust-linux
-          key: prebuilt-rust-linux-glibc217${{ matrix.suffix }}-${{ github.sha }}-${{ github.run_id }}
+          key: prebuilt-rust-linux-glibc217-${{ matrix.arch }}-${{ github.sha }}-${{ github.run_id }}
 
       - name: Build voice service sidecar (Linux)
         # Same as macOS/Windows: allternit-voice-service (STT + API, no GPL)
