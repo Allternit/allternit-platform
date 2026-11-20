@@ -99,8 +99,8 @@ enum class TurnState { Idle, Listening, Thinking, Speaking }
  *
  * Gap run GS-D: the engines come from [VoiceEngines.choose] (iOS VoiceRouter): the person's own OpenAI key
  * (Realtime listening + OpenAI speech) or ElevenLabs key (ElevenLabs speech), else the phone's recognizer and voice.
- * The on-device sherpa-onnx engine is behind a feature check ([DeviceVoice]); without it the system route runs
- * with a notice, as on iOS with no voice pack.
+ * "On this device" runs the sherpa-onnx engine (LocalVoice.kt) when its native library loads ([DeviceVoice]);
+ * the first session downloads the listening pack with progress in the status line, as iOS.
  */
 class VoiceModeViewModel(
     private val context: Context,
@@ -134,6 +134,12 @@ class VoiceModeViewModel(
 
     val isPushToTalk: Boolean get() = VoicePrefs.interactionMode == VoiceInteractionMode.PushToTalk
     val canInterrupt: Boolean get() = state == TurnState.Thinking || state == TurnState.Speaking
+
+    /** The on-phone engine's pack download line ("Downloading the voice model… 42%"), iOS statusLine + modelProgress. */
+    fun packStatus(line: String?) {
+        if (line != null) statusLine = line
+        else if (statusLine?.startsWith("Downloading the voice model") == true) statusLine = notice
+    }
 
     fun begin() {
         startedAt = System.currentTimeMillis()
@@ -365,6 +371,7 @@ class VoiceHost(private val context: Context) {
 @Composable
 fun VoiceHostWiring(host: VoiceHost, chat: ChatViewModel) {
     LaunchedEffect(host) { snapshotFlow { host.listener.transcript }.collect { host.viewModel?.liveTranscript = it } }
+    LaunchedEffect(host) { snapshotFlow { host.listener.status }.collect { host.viewModel?.packStatus(it) } }
     LaunchedEffect(host) { snapshotFlow { host.listener.errorMessage }.collect { m -> if (m != null) host.viewModel?.dictationFailed(m) } }
     LaunchedEffect(host, chat) { snapshotFlow { chat.messages }.collect { host.viewModel?.replyUpdated(it) } }
     DisposableEffect(host) { onDispose { host.dispose() } }
