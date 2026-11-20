@@ -25,6 +25,8 @@ import { PlansPage } from "@/pages/PlansPage";
 import { CloudPage } from "@/pages/CloudPage";
 import { AdminCustomersPage } from "@/pages/AdminCustomersPage";
 import { AdminFundingPage } from "@/pages/AdminFundingPage";
+import { AdminOAuthAppsPage } from "@/pages/AdminOAuthAppsPage";
+import { OAuthAppsPage } from "@/pages/console/platform/OAuthAppsPage";
 import { PlaygroundPage } from "@/pages/console/PlaygroundPage";
 import { FilesPage } from "@/pages/console/FilesPage";
 import { BatchesPage } from "@/pages/console/BatchesPage";
@@ -187,6 +189,22 @@ export default function App() {
         element={
           <ConsoleRoute>
             <AdminFundingPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/admin/oauth-apps"
+        element={
+          <ConsoleRoute>
+            <AdminOAuthAppsPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/oauth-apps/*"
+        element={
+          <ConsoleRoute>
+            <OAuthAppsPage />
           </ConsoleRoute>
         }
       />
