@@ -1035,6 +1035,19 @@ fn stored_turn_metadata(body: &serde_json::Value) -> Option<serde_json::Value> {
     if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
 }
 
+/// `stored_turn_metadata` plus the person-turn marker: the browser composer's
+/// `metadata.turn: "person"` (only that value) rides through so Cloud serves
+/// person-only models (gizzi adds `x-allternit-turn: person` from it). Never
+/// set on a bot turn, whatever the body says.
+fn gizzi_turn_metadata(body: &serde_json::Value, is_bot_turn: bool) -> Option<serde_json::Value> {
+    let mut meta = stored_turn_metadata(body);
+    if !is_bot_turn && body.pointer("/metadata/turn").and_then(|v| v.as_str()) == Some("person") {
+        let obj = meta.get_or_insert_with(|| json!({}));
+        obj["turn"] = json!("person");
+    }
+    meta
+}
+
 /// Turn hints that pass only with their one allowed value (the other hint,
 /// `time_zone`, is checked by [`turn_time_zone`]). Shared by this route and
 /// agent_session_routes' message send.
@@ -2279,7 +2292,7 @@ async fn agent_chat_bridge(
         // `metadata.tools` carries {webSearch, research, toolAccess:
         // "auto"|"on_demand"|"always", disabledConnectors: [app ids]}. gizzi
         // applies them to this turn only (SessionPrompt.resolveTools).
-        if let Some(metadata) = stored_turn_metadata(&body_json) {
+        if let Some(metadata) = gizzi_turn_metadata(&body_json, bot_marker.is_some()) {
             gizzi_payload["metadata"] = metadata;
         }
         if let Some(action_id) = &subscription_action {
@@ -3318,6 +3331,26 @@ mod tests {
             "lat": 40.71, "lon": -74.01, "time_zone": "America/New_York", "at": "2020-01-01T00:00:00Z"
         } });
         assert_eq!(crate::client_location::from_body(&stale, chrono::Utc::now()), None);
+    }
+
+    #[test]
+    fn agent_chat_forwards_person_turn() {
+        let body = json!({ "metadata": { "turn": "person", "tools": { "webSearch": true } } });
+        assert_eq!(
+            gizzi_turn_metadata(&body, false).unwrap(),
+            json!({ "tools": { "webSearch": true }, "turn": "person" })
+        );
+        assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": "person" } }), false), Some(json!({ "turn": "person" })));
+        // Only the exact value passes.
+        assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": "bot" } }), false), None);
+        assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": true } }), false), None);
+    }
+
+    #[test]
+    fn bot_path_never_sets_person_turn() {
+        let body = json!({ "metadata": { "turn": "person", "tools": { "webSearch": true } } });
+        assert_eq!(gizzi_turn_metadata(&body, true).unwrap(), json!({ "tools": { "webSearch": true } }));
+        assert_eq!(gizzi_turn_metadata(&json!({ "metadata": { "turn": "person" } }), true), None);
     }
 
     #[test]
