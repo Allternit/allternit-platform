@@ -463,10 +463,10 @@ async fn release_computers(state: &ApiState, user_id: &str) -> Result<(), ApiErr
     crate::services::brain_runners::shared(&state.db).destroy(user_id).await?;
     // The Copilot grant is given back to GitHub (best effort; ERASE deletes the row).
     crate::services::copilot::revoke_for_erase(state, user_id).await;
-    // TODO(oauth-linked-billing step 9): revoke the linked Claude organization
-    // at auth.claude.com by user_profile_id (best effort, like Copilot above)
-    // once services::claude_link exists. Until then REVOKE disconnects the
-    // link locally and ERASE deletes its rows.
+    // The linked Claude organization is revoked at auth.claude.com by its
+    // connection id (best effort, never fails the erase). REVOKE already
+    // disconnected it locally; ERASE deletes its rows.
+    crate::services::claude_link::revoke_for_erase(state, user_id).await;
     crate::routes::hosted_runtimes::destroy_all_for_user(state, user_id).await?;
     let phones: Vec<String> =
         sqlx::query_scalar("SELECT id FROM cloud_phones WHERE user_id = $1 AND status <> 'deleted'")

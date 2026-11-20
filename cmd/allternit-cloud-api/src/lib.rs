@@ -427,6 +427,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Link your Claude organization: our issuer's JWKS and discovery
         // (public; 503 without ALLTERNIT_ANTHROPIC_CLIENT_ES256_PEM).
         .merge(routes::anthropic_client_issuer::routes())
+        // Link your Claude organization: start/status/unlink check the Clerk session
+        // in the handler; the callback has none (single-use state). 503 until
+        // ALLTERNIT_CLAUDE_LINK=1 and the B1 env are set.
+        .merge(routes::claude_link::routes())
         // Sign in with Allternit: RFC 8414 metadata, /oauth2/authorize (public; never
         // redirects to an unregistered URI) and the consent API (Clerk session only).
         .merge(routes::oauth_server::routes())
