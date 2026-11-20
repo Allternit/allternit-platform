@@ -13,8 +13,8 @@ import {
 } from '../../../runtime/providers/discovery/runtime-registry';
 import { findSubprocessSpec, resolveCliPath } from '../../../runtime/providers/discovery/subprocess';
 
-const CATEGORY_ORDER: RuntimeCategory[] = ['native', 'coding', 'personal', 'general', 'experimental'];
-const CATEGORY_LABEL: Record<RuntimeCategory, string> = {
+export const CATEGORY_ORDER: RuntimeCategory[] = ['native', 'coding', 'personal', 'general', 'experimental'];
+export const CATEGORY_LABEL: Record<RuntimeCategory, string> = {
   native: 'Native',
   coding: 'Coding',
   personal: 'Personal',

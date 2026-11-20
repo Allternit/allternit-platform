@@ -62,6 +62,26 @@ The table hides runtimes marked "More" unless you pass `--all`. `--json` always 
 | `--all` | Include the runtimes under "More" in the table |
 | `--json` | Print every registry entry as JSON, with an `installed` field where it is known |
 
+## Pick a runtime in the TUI
+
+`/runtime` opens a picker with two layers. Use the arrow keys, Enter to choose, and type to filter.
+
+1. **Runtime** (how it works). The runtimes are grouped by category, the same as `gizzi runtime catalog`. Each row shows the vendor, which brains it can run, whether its CLI is installed on this computer, and a status note such as "API key or Enterprise only". Runtimes under "More" open when you choose the **More** row or type a filter.
+2. **Brain** (how it thinks). Only the brains that fit the runtime are listed, from the same model list as `/model`. Each row has an access badge: `[plan]` (your subscription), `[key]` (your API key), `[local]` (this computer) or `[credits]` (Allternit credits). Esc or ← goes back to the runtime layer.
+
+If the runtime you choose can't run the current brain, the picker changes the brain to the first one that fits and says so in one line, for example: "Claude Code runs Anthropic models only, so the brain changed to claude-cli/claude-sonnet-5-5." A sentence at the bottom says what the result will be.
+
+`/runtime <id>` opens the picker on that runtime (ids and aliases from `gizzi runtime catalog --all`).
+
+Where the choice is saved:
+
+| Where you run `/runtime` | What is saved |
+|---|---|
+| A `/bots` chat | The bot's record, with the same rules as `gizzi agents bot edit --runtime --brain` |
+| A normal session | The brain, the same way `/model` saves it. The session has no separate runtime setting: a CLI brain runs on that CLI |
+
+A **Connected bot** (one its vendor runs) shows both layers locked as `Run by <Vendor>`. Its runtime and brain can't be changed from Allternit.
+
 ## Pick a runtime for a bot
 
 Use `--runtime` and `--brain` on `gizzi agents bot create` and `gizzi agents bot edit`. See [gizzi agents bot](/cli/bot).
