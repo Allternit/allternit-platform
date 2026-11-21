@@ -5185,11 +5185,18 @@
       "label": "Allternit Sleep",
       "product": "product:memory-drive",
       "status": "building",
-      "description": "Memory consolidation that runs while you are away: naps on idle, a deeper cycle with REM-style hypothesis checks, reminders, and a question to you when two memories conflict. Backend, gizzi-code runtime and docs are built behind flags and not live. Desktop, ai.allternit.com, the PWA and iPhone get a memory settings switch (planned, plan steps 8.2 and 8.4); gizzi-code triggers, client, dispute note and reminders are on sibling PRs and join this entry after they merge.",
+      "description": "Memory consolidation that runs while you are away: naps on idle, a deeper cycle with REM-style hypothesis checks, reminders, stricter intake while Sleep is behind, and a question to you when two memories conflict. Backend, gizzi-code runtime and CLI, iPhone settings and docs merged 2026-11-20 (train 20261119-2008); every stage ships off. Desktop, ai.allternit.com, the phone layout and the PWA have the Sleep section in Memory settings and the chat conflict card (allternit-ai #1191, #1192, merged 2026-11-20).",
       "touches": [
         "allternit/cmd/allternit-api/src/sleep",
         "allternit/cmd/allternit-api/migrations/V291__sleep_core.sql",
         "allternit/cmd/gizzi-code/src/runtime/memory",
+        "allternit/cmd/gizzi-code/src/runtime/memory/sleep",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/memoryDrive/sleep.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/memory.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySleepView.swift",
+        "allternit-ai/src/views/settings/memory-sleep",
+        "allternit-ai/src/lib/agents/memory-sleep-client.ts",
+        "allternit-ai/src/lib/agents/memory-conflict-card.ts",
         "allternit/surfaces/docs/guides/sleep.mdx",
         "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
         "allternit/surfaces/docs/api/memory-sleep.mdx"
@@ -5198,11 +5205,18 @@
         {
           "on": "2026-11-19",
           "note": "Sleep is a feature of Memory Drive, not a new product. Everything ships off by default; the main switch alone turns no stage on."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Merged to main in train 20261119-2008 with every stage off. While sleep debt pauses fading, extraction skips new facts under debt_intake_min_attention (0.25); flagged facts always go in (Eoj decision 7)."
         }
       ],
       "evidence": [
         "allternit/cmd/allternit-api/src/sleep/mod.rs",
         "allternit/cmd/allternit-api/migrations/V291__sleep_core.sql",
+        "allternit/cmd/gizzi-code/src/runtime/memory/sleep/triggers.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySleepView.swift",
+        "allternit-ai/src/views/settings/memory-sleep/SleepSection.tsx",
         "allternit/surfaces/docs/guides/sleep.mdx",
         "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
         "allternit/surfaces/docs/api/memory-sleep.mdx"
