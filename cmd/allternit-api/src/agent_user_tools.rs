@@ -283,7 +283,14 @@ pub fn notify(db: &DbHandle, owner: &Owner, body: &NotifyBody, secret: &dyn Rela
     }
     match &owner.bot {
         Some(c) => match &thread_id {
-            Some(tid) => crate::thread_routes::ledger(db, &c.bot_id, tid, event, ("bot", c.bot_id.as_str()), payload, Some(sid)),
+            Some(tid) => {
+                crate::thread_routes::ledger(db, &c.bot_id, tid, event, ("bot", c.bot_id.as_str()), payload, Some(sid));
+                // Autopilot (floor_autopilot_eval): a bot thread's question. Recorded as a
+                // draft only; nothing is answered server-side (plan D12).
+                if kind == "question" && event == EVENT_NEEDS_USER {
+                    crate::floor_autopilot_eval::after_question(db, &owner.user_id, &c.bot_id, tid, sid, &preview);
+                }
+            }
             None => {
                 let append = AppendEventBody {
                     event_type: event.to_string(),

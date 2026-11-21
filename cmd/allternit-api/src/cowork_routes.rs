@@ -2518,6 +2518,65 @@ fn write_approval_decision_row(
     })
 }
 
+/// Autopilot (`floor_autopilot_eval::after_permission_ask`): approve one gizzi
+/// permission ask once, as the person's decide path does for "Approve" with no
+/// scope: claim the open row, relay `{reply: "once"}` to the runtime. Never
+/// "always" or "task", never a subscription card (only a person decides those,
+/// D16), never a row that isn't a live runtime ask. When the relay fails the row
+/// is reopened so the card is still there for the person.
+/// `Ok(true)`: approved and relayed; `Ok(false)`: nothing to do (already decided,
+/// gone, or not answerable on autopilot).
+pub(crate) async fn autopilot_approve_once(db: &crate::db::DbHandle, user_id: &str, approval_id: &str) -> Result<bool, String> {
+    let (db2, uid, aid) = (db.clone(), user_id.to_string(), approval_id.to_string());
+    let claimed = tokio::task::spawn_blocking(move || -> rusqlite::Result<Option<(String, serde_json::Value)>> {
+        let conn = db2.connect()?;
+        let row: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT content, dismissed FROM cowork_approvals WHERE id = ?1 AND user_id = ?2 AND source = 'gizzi-permission'",
+                params![aid, uid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((content, dismissed)) = row else { return Ok(None) };
+        if dismissed != 0 {
+            return Ok(None);
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap_or(serde_json::Value::Null);
+        if crate::subscription_routes::is_subscription_card(&parsed) {
+            return Ok(None);
+        }
+        let Some(request_id) = extract_gizzi_request_id(&content) else { return Ok(None) };
+        // Non-subscription cards: `{reply: "once"}`, the same body the person's approve relays.
+        let Ok(body) = crate::subscription_routes::permission_reply_body(&db2, &uid, &parsed, "once", None) else { return Ok(None) };
+        if claim_open_approval(&conn, &aid, &ApprovalOutcome::Approved, &uid)? == 0 {
+            return Ok(None);
+        }
+        Ok(Some((request_id, body)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    let Some((request_id, body)) = claimed else { return Ok(false) };
+    let sent = gizzi_client(&HeaderMap::new())
+        .post(format!("{}/permission/{}/reply", gizzi_base(), request_id))
+        .json(&body)
+        .send()
+        .await;
+    let failure = match sent {
+        Ok(resp) if resp.status().is_success() => return Ok(true),
+        Ok(resp) => format!("agent runtime rejected the permission reply ({})", resp.status()),
+        Err(e) => format!("the agent runtime could not be reached: {e}"),
+    };
+    let (db3, uid, aid) = (db.clone(), user_id.to_string(), approval_id.to_string());
+    let _ = tokio::task::spawn_blocking(move || {
+        if let Ok(conn) = db3.connect() {
+            reopen_approval(&conn, &aid, &uid);
+        }
+    })
+    .await;
+    Err(failure)
+}
+
 /// Undo a claim whose follow-up (minting the human action) failed, so the
 /// card is still there for the person.
 fn reopen_approval(conn: &rusqlite::Connection, approval_id: &str, user_id: &str) {

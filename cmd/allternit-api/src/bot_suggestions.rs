@@ -260,7 +260,18 @@ async fn suggest_route(State(state): State<Arc<AppState>>, Extension(user): Exte
     };
     let rt = GizziRouter { db: state.db.clone() };
     match suggest(&state.db, &rt, &caller, &body.title, &body.objective, body.why.as_deref()).await {
-        Ok(v) => Json(v).into_response(),
+        Ok(v) => {
+            // Autopilot (floor_autopilot_eval): a new suggestion may be answered by the
+            // main bot under the user's rules. Off the request path; it never fails the tool call.
+            if v["existing"].as_bool() == Some(false) {
+                if let Some(tid) = v["threadId"].as_str().map(str::to_string) {
+                    let (db, owner) = (state.db.clone(), caller.user_id.clone());
+                    let rt = Arc::new(GizziRouter { db: db.clone() });
+                    tokio::spawn(async move { crate::floor_autopilot_eval::after_suggestion(&db, rt, &owner, &tid).await });
+                }
+            }
+            Json(v).into_response()
+        }
         Err(e) => {
             let status = match e {
                 RouteError::BadRequest(_) => StatusCode::BAD_REQUEST,

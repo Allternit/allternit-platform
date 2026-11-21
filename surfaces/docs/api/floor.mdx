@@ -60,6 +60,7 @@ Query: `since` and `until` (ms), `limit` (default 500, at most 2000). Returns `{
 | --- | --- | --- |
 | `started`, `finished`, `failed`, `needs_you` | Thread events | `text` when the event has a status line |
 | `handoff` | A bot-to-bot hop | `toBotId`, and `label` (60 characters at most) |
+| `autopilot` | An Autopilot answer or draft (see [How Autopilot answers](#how-autopilot-answers)) | `ruleId`, `need`, `outcome` (`answer` or `draft`), and `text` (120 characters at most) |
 
 `label` is the title of the thread that received the hop. Hops that link no thread have no `label`.
 
@@ -96,7 +97,7 @@ Returns the Autopilot switch and its rules. With no saved settings, Autopilot is
 | `rules[].limits` | `maxPerDay` and `allowedActions`. Sent only when the rule has a cap or actions. |
 | `updatedAt` | When the settings were last saved (ms), or `null`. |
 
-The levels have the same names and meanings as in the autonomy guide. This route stores the settings only. Outbound messages keep their own send policy under `/autonomy/policies`.
+The levels have the same names and meanings as in the autonomy guide. This route stores the settings only (see [How Autopilot answers](#how-autopilot-answers) for what acts on them). Outbound messages keep their own send policy under `/autonomy/policies`.
 
 ## PUT /floor/autopilot
 
@@ -119,6 +120,27 @@ The request is refused with `400` and `{ "error": "<code>", "rule": <index> }` w
 | `too_many_actions`, `bad_action` | More than 20 allowed actions, or one that is empty or longer than 40 characters. |
 | `note_too_long` | A note longer than 200 characters. |
 | `unknown_main_bot` | `mainBotId` is not one of your active bots. |
+
+## How Autopilot answers
+
+When Autopilot is on, each new need from one of your bots is checked once, at the moment it arrives. The switch and rules are read fresh every time, so turning Autopilot off stops it from the next need on.
+
+1. Autopilot off, or no main bot: the need waits for you. With no `mainBotId` saved, the main bot is your chief of staff bot, the same one `/floor/state` reports.
+2. The hard floor: the need waits for you, whatever the rules say (see below).
+3. The most specific rule for that need kind applies: a `bot` rule, then a `pod` rule, then an `all` rule. With no rule, the need waits.
+4. The level decides. `draft` records a proposed answer and answers nothing. `ask` waits. `tell` answers and leaves a note in the thread. `limits` answers without a "tell" note while the rule is under its `maxPerDay` for today (UTC) and the action is in `allowedActions` (when that list has entries). A `limits` rule with no `maxPerDay` stops at 20 answers a day. Past a limit, the need waits.
+
+What each need kind does when it is answered:
+
+| Need | Answer | Notes |
+| --- | --- | --- |
+| `suggestion` | Goes ahead with the suggestion, exactly as if you pressed Go ahead. | Its action name for `allowedActions` is `task`. |
+| `permission` | Approves that one request once. Never "always", never "for this task". | Only for requests from a bot's thread whose kind can be read with confidence (`read`, `glob`, `grep`, `list`, `webfetch`, `websearch`, `codesearch`, `lsp`, `todoread`, `todowrite`, `edit`, `write`, `skill`, `task`). Shell commands and every other kind wait for you. Approval cards from vendor agents always wait for a person. |
+| `question` | Not answered yet. | Recorded as a draft. Answering needs a turn in the main bot's own session on your computer, which is not built yet. |
+
+**Hard floor.** These always wait for you: payments, purchases and spending; signatures and contracts; deleting, removing or destroying anything; any thread that includes content from outside your team; and any bot (the one asking, or the main bot) whose envelope is tighter than **Act within limits**. Autopilot checks both the action and the words of the request, so a suggestion titled "Buy the tickets" waits even though its action is `task`.
+
+**Audit trail.** Every answer writes a bot event `autopilot_answer` on the thread, and every draft an `autopilot_draft`, with `{ ruleId, need, text, outcome, silent, action, mainBotId }`. The text starts with "Answered by" and the main bot's name. Answers show in the digest's `answered` list.
 
 ## GET /floor/digest
 

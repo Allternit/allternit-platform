@@ -212,7 +212,7 @@ pub fn assign_pods(bots: &[PodBot], projects: &[PodProject], main: Option<&str>)
 /// Same rule as `agent_session_routes::is_main_bot` (chiefOfStaff flag or the
 /// primary template), applied to a config already in hand: that function opens a
 /// connection per bot, which would be one query per bot here.
-fn config_is_main_bot(config: &Value) -> bool {
+pub(crate) fn config_is_main_bot(config: &Value) -> bool {
     config["botProfile"]["chiefOfStaff"].as_bool() == Some(true) || config["templateId"].as_str() == Some("primary-a")
 }
 
@@ -384,6 +384,33 @@ pub fn floor_events(conn: &Connection, owner: &str, since: i64, until: i64, limi
         // Hops carry no text; the receiving thread's title is the label when the hop links one.
         if let Some(label) = title.as_deref().map(|t| clip(t, LABEL_MAX)).filter(|t| !t.is_empty()) {
             ev["label"] = json!(label);
+        }
+        out.push((ms, ev));
+    }
+
+    // Autopilot answers and drafts (`floor_autopilot_eval`): kind `autopilot` with
+    // `{ruleId, need, outcome}`. Kept out of KINDS_SQL so they never change a bot's status.
+    let mut stmt = conn.prepare(
+        "SELECT e.id, e.bot_id, e.occurred_at, e.payload
+         FROM bot_events e JOIN agents a ON a.id = e.bot_id LEFT JOIN bot_threads t ON t.id = e.thread_id
+         WHERE a.user_id = ?1 AND e.event_type IN (?2, ?3) AND COALESCE(t.incognito, 0) = 0
+           AND e.occurred_at >= ?4 AND e.occurred_at < ?5
+         ORDER BY e.occurred_at LIMIT ?6",
+    )?;
+    let rows = stmt.query_map(
+        params![owner, crate::floor_autopilot::AUTOPILOT_ANSWER_EVENT, crate::floor_autopilot_eval::AUTOPILOT_DRAFT_EVENT, lo, hi, (limit * 2) as i64],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)),
+    )?;
+    for row in rows {
+        let (id, bot, at, payload) = row?;
+        let Some(ms) = ms_of(&at) else { continue };
+        if ms < since || ms > until {
+            continue;
+        }
+        let p: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
+        let mut ev = json!({ "id": format!("be:{id}"), "at": ms, "botId": bot, "kind": "autopilot", "ruleId": p["ruleId"], "need": p["need"], "outcome": p["outcome"] });
+        if let Some(t) = p["text"].as_str().map(|t| clip(t, 120)).filter(|t| !t.is_empty()) {
+            ev["text"] = json!(t);
         }
         out.push((ms, ev));
     }
