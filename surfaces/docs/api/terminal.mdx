@@ -165,6 +165,17 @@ Response:
 POST /terminal/f47ac10b-58cc-4372-a567-0e02b2c3d479/close
 ```
 
+The body is optional. With no body (older clients) the pane closes at once, as before.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `graceful` | boolean | `false` | Ask the terminal's program to quit before the pane closes: SIGTERM to the pid the engine reports (`factory.terminal.get`), then up to 10 s for it to exit, then the pane closes either way. Only for a terminal created with a `command` (an agent such as `claude --resume <id>`); a plain shell terminal closes as before. Never SIGKILL. |
+
+```bash
+curl -X POST http://127.0.0.1:<api port>/terminal/<id>/close \
+  -H 'content-type: application/json' -d '{"graceful":true}'
+```
+
 Response:
 
 ```json

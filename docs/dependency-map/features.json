@@ -3025,7 +3025,7 @@
       "label": "Live agent sessions and inferred doing status",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Discovers every live CLI agent session on a computer (Claude Code session files, the Codex thread index, Factory panes, Gizzi hook runs) and reads a no-token 'doing' line from each session's own transcript and task files. Each session lists its holders (every live pid and the app it runs under), carried flags and whether it can move into Allternit (`movable`), from one harness table and a read-only process scan covering Codex, Kimi, Grok, Antigravity, Gizzi, OpenCode and Qwen. Sessions ride the runtime presence heartbeat; `GET /api/v1/live-sessions` and `gizzi agents sessions` list them.",
+      "description": "Discovers every live CLI agent session on a computer (Claude Code session files, the Codex thread index, Factory panes, Gizzi hook runs) and reads a no-token 'doing' line from each session's own transcript and task files. Each session lists its holders (every live pid and the app it runs under), carried flags and whether it can move into Allternit (`movable`), from one harness table and a read-only process scan covering Codex, Kimi, Grok, Antigravity, Gizzi, OpenCode and Qwen. Sessions ride the runtime presence heartbeat; `GET /api/v1/live-sessions` and `gizzi agents sessions` list them. `POST /api/v1/live-sessions/adopt` moves a session from Terminal into an Allternit terminal (recheck, SIGTERM only, 15 s wait, nothing started on a timeout), opens a copy, or a new session in its folder; `POST /terminal/:id/close {graceful}` asks an agent terminal's program to quit first.",
       "touches": [
         "allternit/factory/engine",
         "allternit/cmd/allternit-api",
@@ -3038,6 +3038,8 @@
         "allternit/cmd/gizzi-code/src/cli/commands/factory/agents.ts",
         "allternit/factory/engine/src/agents/harness_table.rs",
         "allternit/factory/engine/src/agents/proc_scan.rs",
+        "allternit/factory/engine/src/agents/adopt.rs",
+        "allternit/cmd/allternit-api/src/terminal_routes.rs",
         "allternit/cmd/allternit-factory/src/bots.rs",
         "allternit/surfaces/docs/guides/live-sessions.mdx"
       ]

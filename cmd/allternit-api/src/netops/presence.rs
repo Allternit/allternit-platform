@@ -9,9 +9,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::{json, Value};
@@ -212,7 +213,11 @@ async fn live_sessions_route(Extension(user): Extension<AuthUser>) -> Response {
     let url = format!("{}/api/factory/sessions?person={}", crate::factory_proxy::engine_url(), urlencoding::encode(&person));
     let engine_err = match crate::net_client::client().get(url).timeout(Duration::from_secs(10)).send().await {
         Ok(r) if r.status().is_success() => match r.json::<Value>().await {
-            Ok(v) if v.is_array() => return Json(v).into_response(),
+            Ok(Value::Array(mut v)) => {
+                // Move jobs run in this process, not the engine's.
+                allternit_factory_engine::agents::adopt::annotate_json(&mut v);
+                return Json(Value::Array(v)).into_response();
+            }
             Ok(_) => "the Factory engine's reply was not a session list".to_string(),
             Err(e) => format!("the Factory engine's reply was not JSON: {e}"),
         },
@@ -221,7 +226,10 @@ async fn live_sessions_route(Extension(user): Extension<AuthUser>) -> Response {
     };
     tracing::debug!("live sessions: {engine_err}; discovering here");
     match discover_here(person).await {
-        Ok(list) => Json(Value::Array(list)).into_response(),
+        Ok(mut list) => {
+            allternit_factory_engine::agents::adopt::annotate_json(&mut list);
+            Json(Value::Array(list)).into_response()
+        }
         Err(e) => (
             StatusCode::BAD_GATEWAY,
             Json(json!({ "error": { "code": "transport", "fact": format!("{engine_err}, and session discovery here failed: {e}"), "action": "Start the Factory engine (allternit-factory serve; Allternit Desktop starts it) and retry." } })),
@@ -230,9 +238,54 @@ async fn live_sessions_route(Extension(user): Extension<AuthUser>) -> Response {
     }
 }
 
-/// The heartbeat goes out, not in; the only route is the local session list.
+/// `POST /live-sessions/adopt` (under `/api/v1`): move a session into an Allternit terminal, open a
+/// copy of it, or a new session in its folder (`allternit_factory_engine::agents::adopt`). Runs the
+/// job here as a library, so it works with the Factory engine's HTTP down. Move → 202
+/// `{jobId, state}` (the job runs on; it shows on `LiveSession.move`); copy and new → 200
+/// `{terminalId}`; cancel → 200 `{jobId, state, code}`. Errors → `{error: <code>, message}`.
+async fn adopt_route(State(state): State<Arc<AppState>>, body: axum::body::Bytes) -> Response {
+    use allternit_factory_engine::agents::adopt::{self, Adopted, CreateFuture, CreateSpec, Creator};
+    // Parsed here (not with the Json extractor) so a missing content-type or bad body is the same JSON error.
+    let req: adopt::AdoptRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => return adopt_error(400, "bad_request", &format!("Expected {{sessionId, harness, mode: move|copy|new|cancel, cols, rows}}: {e}")),
+    };
+    let store = state.terminal_sessions.clone();
+    let create: Creator = Arc::new(move |spec: CreateSpec| -> CreateFuture {
+        let store = store.clone();
+        Box::pin(async move {
+            let request = crate::terminal_routes::agent_request(&spec.argv, &spec.cwd, &spec.title, spec.cols, spec.rows);
+            crate::terminal_routes::create_with(&store, request, Some(spec.argv)).await.map_err(|(status, Json(body))| format!("terminal create answered {status}: {}", body.message))
+        })
+    });
+    match adopt::adopt(req, create).await {
+        Ok(Adopted::Job(j)) => (StatusCode::ACCEPTED, Json(json!({ "jobId": j.job_id, "state": j.state }))).into_response(),
+        Ok(Adopted::Terminal(id)) => Json(json!({ "terminalId": id })).into_response(),
+        Ok(Adopted::Cancelled(j)) => Json(json!({ "jobId": j.job_id, "state": j.state, "code": j.code })).into_response(),
+        Err(e) => adopt_error(e.status, e.code, &e.message),
+    }
+}
+
+/// `GET /live-sessions/adopt/:jobId`: a Move job's state (kept 10 min after it ends), for a client
+/// whose session left the list (a failed start).
+async fn adopt_job_route(Path(job_id): Path<String>) -> Response {
+    match allternit_factory_engine::agents::adopt::job(&job_id) {
+        Some(j) => Json(j).into_response(),
+        None => adopt_error(404, "no_job", "No Move job with that id (jobs are kept 10 minutes after they end)."),
+    }
+}
+
+fn adopt_error(status: u16, code: &str, message: &str) -> Response {
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (status, Json(json!({ "error": code, "message": message }))).into_response()
+}
+
+/// The heartbeat goes out, not in; the routes are the local session list and adopt.
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new().route("/live-sessions", get(live_sessions_route))
+    Router::new()
+        .route("/live-sessions", get(live_sessions_route))
+        .route("/live-sessions/adopt", post(adopt_route))
+        .route("/live-sessions/adopt/:job_id", get(adopt_job_route))
 }
 
 /// Send one heartbeat. `Ok(false)` = not paired (nothing to do).

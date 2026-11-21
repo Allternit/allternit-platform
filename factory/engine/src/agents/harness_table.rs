@@ -19,7 +19,7 @@
 //! | agy      | `agy --conversation <id>`  | none                    |
 //! | gizzi    | `gizzi --session <id>`     | `+ --fork`              |
 //! | opencode | `opencode --session <id>`  | `+ --fork`              |
-//! | qwen     | none (new session only)    | none                    |
+//! | qwen     | `qwen --resume <id>`       | `+ --fork-session`      |
 //!
 //! Carried flags go right after the command name (`claude
 //! --dangerously-skip-permissions --resume <id>`), in the order the holder
@@ -226,12 +226,13 @@ pub static HARNESSES: &[Harness] = &[
         id_flags: &["-s", "--session"],
         id_subcommands: &[],
     },
-    // S1-CHECKS (11-21): no resume-by-id was confirmed for qwen, so it gets "Open a new session here" only.
+    // `qwen --help` (installed CLI, 11-21): `-r/--resume <id>` and `--fork-session`. The id comes
+    // from argv only; there is no store lookup for qwen, so a qwen started without one is no_resume.
     Harness {
         id: "qwen",
         procs: &["qwen"],
-        move_argv: None,
-        copy_argv: None,
+        move_argv: Some(&["qwen", "{flags}", "--resume", "{id}"]),
+        copy_argv: Some(&["qwen", "{flags}", "--resume", "{id}", "--fork-session"]),
         strip_value: &["-r", "--resume", "--session-id", "-p", "--prompt", "-i", "--prompt-interactive"],
         strip_bare: &["-c", "--continue", "--fork-session", "--worktree"],
         strip_subcommands: &[],
@@ -467,6 +468,14 @@ fn expand(template: &[&str], session_id: &str, carried: &[String]) -> Vec<String
 pub fn move_argv(harness: &str, session_id: &str, carried: &[String]) -> Option<Vec<String>> {
     let t = self::harness(harness)?.move_argv?;
     valid_id(session_id).then(|| expand(t, session_id, carried))
+}
+
+/// The command that starts a new session of this harness with the carried flags ("Open a new
+/// session here"). `None`: not a known harness.
+pub fn new_argv(harness: &str, carried: &[String]) -> Option<Vec<String>> {
+    let h = self::harness(harness)?;
+    let program = h.move_argv.or(h.copy_argv).and_then(|t| t.first().copied()).unwrap_or(h.id);
+    Some(std::iter::once(program.to_string()).chain(carried.iter().cloned()).collect())
 }
 
 /// The command that forks `session_id` into a new session, with the carried flags.
@@ -749,7 +758,10 @@ mod tests {
         assert_eq!(move_argv("gizzi", "z1", &[]), Some(v(&["gizzi", "--session", "z1"])));
         assert_eq!(copy_argv("gizzi", "z1", &[]), Some(v(&["gizzi", "--session", "z1", "--fork"])));
         assert_eq!(copy_argv("opencode", "ses_1", &[]), Some(v(&["opencode", "--session", "ses_1", "--fork"])));
-        assert_eq!(move_argv("qwen", "q1", &[]), None);
+        assert_eq!(move_argv("qwen", "q1", &v(&["-y"])), Some(v(&["qwen", "-y", "--resume", "q1"])));
+        assert_eq!(copy_argv("qwen", "q1", &[]), Some(v(&["qwen", "--resume", "q1", "--fork-session"])));
+        assert_eq!(new_argv("gizzi", &v(&["--yolo"])), Some(v(&["gizzi", "--yolo"])));
+        assert_eq!(new_argv("qwen", &[]), Some(v(&["qwen"])));
         // No id, or one that could break out of an argv or a shell line: nothing to run.
         assert_eq!(move_argv("claude", "", &[]), None);
         assert_eq!(move_argv("claude", "a b", &[]), None);

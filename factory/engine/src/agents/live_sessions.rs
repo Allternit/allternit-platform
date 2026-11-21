@@ -88,6 +88,10 @@ pub struct LiveSession {
     /// A holder runs outside Allternit (Terminal, iTerm2, Ghostty, other).
     #[serde(default)]
     pub external: bool,
+    /// The Move job for this session (`POST /api/v1/live-sessions/adopt`), kept 10 min after it ends.
+    /// Filled in by allternit-api, which runs the jobs ([`super::adopt::annotate`]).
+    #[serde(rename = "move", default, skip_serializing_if = "Option::is_none")]
+    pub move_job: Option<super::adopt::MoveJob>,
 }
 
 /// One live process holding a session.
@@ -657,7 +661,17 @@ fn scan_processes(
 /// Every live session on this computer. `person` is the address prefix (the Clerk username);
 /// `panes` are the Factory panes (pass `None` to ask the installed pane engine).
 pub fn discover(person: &str, panes: Option<Vec<super::backend::LivePane>>) -> Vec<LiveSession> {
-    let share_paths = matches!(std::env::var("ALLTERNIT_SHARE_PATHS").as_deref(), Ok("1" | "true"));
+    discover_with(person, panes, false)
+}
+
+/// [`discover`] with each session's full working folder whatever `ALLTERNIT_SHARE_PATHS` says.
+/// For this computer's own use only (adopt starts the moved session in that folder); never upload it.
+pub fn discover_full_paths(person: &str, panes: Option<Vec<super::backend::LivePane>>) -> Vec<LiveSession> {
+    discover_with(person, panes, true)
+}
+
+fn discover_with(person: &str, panes: Option<Vec<super::backend::LivePane>>, full_paths: bool) -> Vec<LiveSession> {
+    let share_paths = full_paths || matches!(std::env::var("ALLTERNIT_SHARE_PATHS").as_deref(), Ok("1" | "true"));
     let (machine_id, machine_name) = machine();
     let panes = panes.unwrap_or_else(|| super::backend::backend().and_then(|b| b.list()).unwrap_or_default());
     let hooks = read_hooks();
@@ -956,8 +970,9 @@ mod tests {
         assert_eq!(both.len(), 1);
         assert_eq!(both[0].pid, Some(401));
         assert_eq!(moves(&both[0], None, "idle", false).movable, "open_elsewhere");
-        // No resume-by-id (qwen), or no session id found.
-        assert_eq!(moves(&held("qwen", "q1", 500, "Terminal", "", &["qwen"]), None, "idle", false).movable, "no_resume");
+        // qwen resumes by the id in its argv (`--resume`); with no id found it cannot.
+        assert_eq!(moves(&held("qwen", "q1", 500, "Terminal", "", &["qwen"]), None, "idle", false).movable, "now");
+        assert_eq!(moves(&held("qwen", "", 501, "Terminal", "", &["qwen"]), None, "idle", false).movable, "no_resume");
         let unknown = held("codex", "", 600, "Ghostty", "", &["codex"]);
         let m = moves(&unknown, None, "idle", false);
         assert_eq!((m.movable, m.can_copy), ("no_resume", false));

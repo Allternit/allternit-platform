@@ -441,8 +441,25 @@ async fn create_terminal(
     State(store): State<TerminalSessionStore>,
     Json(request): Json<CreateTerminalRequest>,
 ) -> impl IntoResponse {
+    match create_with(&store, request, None).await {
+        Ok(session_id) => {
+            debug!(%session_id, "Terminal session created (factory pane)");
+            ok("Terminal session created", Some(json!({ "session_id": session_id })))
+        }
+        Err(err) => err,
+    }
+}
+
+/// Create a terminal (what `POST /create` does) and return its id. `shown`: the command
+/// `GET /list` reports when the launched argv wraps it (adopt runs the agent through the
+/// user's login shell).
+pub(crate) async fn create_with(
+    store: &TerminalSessionStore,
+    request: CreateTerminalRequest,
+    shown: Option<Vec<String>>,
+) -> Result<String, (StatusCode, Json<TerminalMessageResponse>)> {
     if let Err(message) = validate_env(&request.env) {
-        return err_response(StatusCode::BAD_REQUEST, message);
+        return Err(err_response(StatusCode::BAD_REQUEST, message));
     }
     let session_id = Uuid::new_v4().to_string();
     let cwd = request.cwd.clone().or_else(|| {
@@ -450,7 +467,13 @@ async fn create_terminal(
             .ok()
             .map(|p| p.to_string_lossy().into_owned())
     });
-    let argv = match request.command.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+    let program = request
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
+    let custom_command = program.is_some();
+    let argv: Vec<String> = match program {
         Some(program) => std::iter::once(program.to_string())
             .chain(request.args.iter().cloned())
             .collect(),
@@ -470,7 +493,7 @@ async fn create_terminal(
         ("COLORTERM".to_string(), "truecolor".to_string()),
     ]);
     env.extend(request.env.clone());
-    let created = store
+    store
         .request(
             "factory.terminal.create",
             json!({
@@ -483,10 +506,8 @@ async fn create_terminal(
                 "env": env,
             }),
         )
-        .await;
-    if let Err(err) = created {
-        return pane_err(err);
-    }
+        .await
+        .map_err(pane_err)?;
     store
         .records
         .lock()
@@ -495,13 +516,40 @@ async fn create_terminal(
             session_id.clone(),
             TerminalRecord {
                 title,
-                command: argv,
+                command: shown.unwrap_or(argv),
                 cwd,
                 created_at: chrono::Utc::now().to_rfc3339(),
+                custom_command,
             },
         );
-    debug!(%session_id, "Terminal session created (factory pane)");
-    ok("Terminal session created", Some(json!({ "session_id": session_id })))
+    Ok(session_id)
+}
+
+/// The user's login shell, for running an agent command with the PATH their own
+/// terminal has (`$SHELL`, else zsh).
+pub(crate) fn login_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|p| p.starts_with('/') && std::path::Path::new(p).exists())
+        .unwrap_or_else(|| "/bin/zsh".to_string())
+}
+
+/// A create request that runs `argv` in `cwd` through the user's login shell
+/// (`$SHELL -lc 'exec "$0" "$@"' argv…`: no quoting, the agent replaces the
+/// shell, so the terminal's pid is the agent's).
+pub(crate) fn agent_request(argv: &[String], cwd: &str, title: &str, cols: u16, rows: u16) -> CreateTerminalRequest {
+    let mut args = vec!["-lc".to_string(), r#"exec "$0" "$@""#.to_string()];
+    args.extend(argv.iter().cloned());
+    CreateTerminalRequest {
+        shell: String::new(),
+        cwd: Some(cwd.to_string()),
+        cols,
+        rows,
+        command: Some(login_shell()),
+        args,
+        env: HashMap::new(),
+        title: Some(title.to_string()),
+    }
 }
 
 async fn terminal_input(
@@ -557,11 +605,78 @@ async fn terminal_resize(
     }
 }
 
+/// `POST /:id/close` body (optional; old clients send none).
+#[derive(Debug, Default, Deserialize)]
+pub struct TerminalCloseRequest {
+    /// Ask the terminal's program to quit (SIGTERM, up to 10 s) before the
+    /// pane closes. Only for a terminal created with a `command`; a shell
+    /// closes as before. Never SIGKILL.
+    #[serde(default)]
+    pub graceful: bool,
+}
+
+const GRACEFUL_WAIT: Duration = Duration::from_secs(10);
+
+/// The engine's view of a terminal: `(running, pid)`.
+async fn terminal_proc(store: &TerminalSessionStore, session_id: &str) -> Option<(bool, Option<u32>)> {
+    let got = store
+        .request("factory.terminal.get", json!({ "terminal_id": session_id }))
+        .await
+        .ok()?;
+    let t = &got["terminal"];
+    Some((
+        t["running"].as_bool().unwrap_or(false),
+        t["pid"].as_u64().and_then(|p| u32::try_from(p).ok()),
+    ))
+}
+
+/// SIGTERM the program of a terminal this API started with a `command`, and
+/// wait up to 10 s for the engine to report it exited. The pid is the
+/// engine's own child, read again right before the signal.
+async fn stop_program(store: &TerminalSessionStore, session_id: &str) {
+    let custom = store
+        .records
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(session_id)
+        .is_some_and(|r| r.custom_command);
+    if !custom {
+        return;
+    }
+    let Some((true, Some(pid))) = terminal_proc(store, session_id).await else { return };
+    #[cfg(unix)]
+    {
+        // SAFETY: plain SIGTERM to the terminal's own running program.
+        let r = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        if r != 0 {
+            return;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        return;
+    }
+    let deadline = tokio::time::Instant::now() + GRACEFUL_WAIT;
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        match terminal_proc(store, session_id).await {
+            Some((true, Some(p))) if p == pid => continue,
+            _ => return,
+        }
+    }
+    warn!(%session_id, pid, "terminal program did not exit within 10 s of SIGTERM; closing the pane");
+}
+
 async fn terminal_close(
     State(store): State<TerminalSessionStore>,
     Path(session_id): Path<String>,
+    body: Option<Json<TerminalCloseRequest>>,
 ) -> impl IntoResponse {
     if valid_session_id(&session_id) {
+        if body.is_some_and(|Json(b)| b.graceful) {
+            stop_program(&store, &session_id).await;
+        }
         match store
             .request("factory.terminal.close", json!({ "terminal_id": session_id }))
             .await
