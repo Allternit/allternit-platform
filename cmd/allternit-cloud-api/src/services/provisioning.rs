@@ -375,6 +375,138 @@ pub struct ProvisionSpec {
     pub instance_id: String,
     /// Routing class (Orgo size and auto-stop; Incus ignores it).
     pub class: ComputeClass,
+    /// Orgo city code (`nyc`, `chi`, `lon`, `syd`; Orgo's `region`). `None`
+    /// = Orgo's default (any US city). Incus ignores it.
+    pub region: Option<String>,
+    /// Orgo starter template ref (`template_ref`). `None` = default Ubuntu.
+    pub template: Option<String>,
+}
+
+/// Cities a cloud computer can be created in (contract `CloudComputerSettings.location`).
+pub const CLOUD_LOCATIONS: &[&str] = &["nyc", "chi", "lon", "syd"];
+
+/// How long ago the newest Orgo daily backup may be for a rebuild to run.
+/// Orgo backs up running computers once a day; 48 h leaves room for a
+/// backup that ran late, and anything older is refused.
+pub const REBUILD_BACKUP_MAX_AGE_HOURS: i64 = 48;
+
+/// One Orgo starter template a client may pick on create.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct StarterTemplate {
+    /// The Orgo `template_ref` (e.g. `system/coding@1.0.4`).
+    pub id: &'static str,
+    pub name: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'static str>,
+}
+
+/// Starter templates offered on create (Ubuntu only, Eoj gate G5). A
+/// template is added here only after our first-boot `setup.sh`
+/// (allternit-computer-cloud/guest/orgo/setup.sh) has passed on a computer
+/// made from it; custom template builds need Orgo's Scale plan and are out.
+/// Empty = clients show "default Ubuntu" only.
+pub const STARTER_TEMPLATES: &[StarterTemplate] = &[];
+
+/// The starter template with this id, if it is offered.
+pub fn starter_template(id: &str) -> Option<&'static StarterTemplate> {
+    STARTER_TEMPLATES.iter().find(|template| template.id == id)
+}
+
+/// A requested location, trimmed and lower-cased: `Ok(None)` when absent or
+/// blank, `Err(())` when it is not one of [`CLOUD_LOCATIONS`].
+pub fn normalize_location(raw: Option<&str>) -> Result<Option<String>, ()> {
+    match raw.map(|value| value.trim().to_ascii_lowercase()) {
+        None => Ok(None),
+        Some(value) if value.is_empty() => Ok(None),
+        Some(value) if CLOUD_LOCATIONS.contains(&value.as_str()) => Ok(Some(value)),
+        Some(_) => Err(()),
+    }
+}
+
+/// Where and from what a cloud computer is created (Orgo only).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CloudPlacement {
+    pub location: Option<String>,
+    pub template: Option<String>,
+    /// Orgo `Idempotency-Key` for this create when it must differ from the
+    /// instance id (a rebuild makes a second computer for the same row).
+    pub idempotency_key: Option<String>,
+}
+
+impl CloudPlacement {
+    /// True when nothing Orgo-specific was asked for.
+    pub fn is_empty(&self) -> bool {
+        self.location.is_none() && self.template.is_none()
+    }
+}
+
+/// Marker Orgo puts in a create refused for a full city (`code`), kept in
+/// the error text by `orgo_error`.
+pub const REGION_UNAVAILABLE_CODE: &str = "REGION_UNAVAILABLE";
+
+/// Prefix of the 400 when a location/template is asked of a class that is
+/// not routed to Orgo.
+pub const LOCATION_NOT_AVAILABLE: &str = "location_not_available";
+
+/// True when a create failed because the asked city has no room.
+pub fn is_region_unavailable(error: &ApiError) -> bool {
+    matches!(error, ApiError::ServiceUnavailable(message) if message.contains(REGION_UNAVAILABLE_CODE))
+}
+
+/// Errors of the console cloud-settings routes (restart, rebuild), each a
+/// plain `{ "error": <code> }` body clients branch on.
+#[derive(Debug)]
+pub enum CloudActionError {
+    /// The id is not one of the caller's cloud computers (paired/desktop ids too).
+    NotACloudComputer,
+    /// The computer is not running; nothing is woken implicitly.
+    Asleep { status: String },
+    /// The computer is mid-change (provisioning, waking, error, ...).
+    Busy { status: String },
+    /// The host or tier cannot do this (Incus standby, free computers).
+    NotSupported(&'static str),
+    /// No Orgo daily backup newer than [`REBUILD_BACKUP_MAX_AGE_HOURS`].
+    NoRecentBackup { latest: Option<DateTime<Utc>> },
+    /// The backup list could not be read; nothing destructive ran.
+    BackupCheckFailed(String),
+    /// The stored city has no room for the new computer.
+    RegionUnavailable { location: Option<String> },
+    Api(ApiError),
+}
+
+impl CloudActionError {
+    /// HTTP status and JSON body.
+    pub fn parts(&self) -> (u16, serde_json::Value) {
+        use serde_json::json;
+        match self {
+            Self::NotACloudComputer => (404, json!({ "error": "not_a_cloud_computer" })),
+            Self::Asleep { status } => (409, json!({ "error": "asleep", "status": status })),
+            Self::Busy { status } => (409, json!({ "error": "busy", "status": status })),
+            Self::NotSupported(what) => (501, json!({ "error": "not_supported", "action": what })),
+            Self::NoRecentBackup { latest } => (
+                409,
+                json!({
+                    "error": "no_recent_backup",
+                    "latestBackupAt": latest.map(|at| at.to_rfc3339()),
+                    "maxAgeHours": REBUILD_BACKUP_MAX_AGE_HOURS,
+                }),
+            ),
+            Self::BackupCheckFailed(_) => (503, json!({ "error": "backup_check_failed" })),
+            Self::RegionUnavailable { location } => {
+                (503, json!({ "error": "region_unavailable", "location": location }))
+            }
+            Self::Api(error) => match error {
+                ApiError::NotFound(_) => (404, json!({ "error": "not_a_cloud_computer" })),
+                other => (503, json!({ "error": "unavailable", "message": other.to_string() })),
+            },
+        }
+    }
+}
+
+impl From<ApiError> for CloudActionError {
+    fn from(error: ApiError) -> Self {
+        Self::Api(error)
+    }
 }
 
 /// Backend seam the scheduling/lifecycle logic programs against. Tests
@@ -436,6 +568,15 @@ pub trait ProvisionBackend: Send + Sync + std::fmt::Debug {
     /// meeting reaper to save a bot account's Chrome profile back.
     async fn pull_file(&self, _name: &str, _path: &str, _max_bytes: usize) -> Result<Option<Vec<u8>>, ProvisionError> {
         Err(unsupported("file reads"))
+    }
+    /// Reboot a running computer in place (Orgo `POST /computers/{id}/restart`).
+    async fn restart(&self, _name: &str) -> Result<(), ProvisionError> {
+        Err(unsupported("restarts"))
+    }
+    /// When the newest finished daily backup was taken; `Ok(None)` when
+    /// there is none. Read before a rebuild.
+    async fn latest_backup_at(&self, _name: &str) -> Result<Option<DateTime<Utc>>, ProvisionError> {
+        Err(unsupported("daily backups"))
     }
 
     // -- Customer restore points and downloadable copies -------------------
@@ -2438,7 +2579,20 @@ impl ProvisioningService {
         user_id: &str,
         subscription_id: Option<&str>,
     ) -> Result<InstanceView, ApiError> {
-        let view = self.create_tier(user_id, subscription_id, TIER_PAID).await?;
+        self.create_placed(user_id, subscription_id, &CloudPlacement::default())
+            .await
+    }
+
+    /// [`Self::create`] with a city and/or starter template (Orgo only).
+    pub async fn create_placed(
+        &self,
+        user_id: &str,
+        subscription_id: Option<&str>,
+        placement: &CloudPlacement,
+    ) -> Result<InstanceView, ApiError> {
+        let view = self
+            .create_tier_placed(user_id, subscription_id, TIER_PAID, placement)
+            .await?;
         // Upgrade path (decision 16): the paid computer replaces the
         // account's free one, which is kept sleeping until it is deleted.
         if let Err(error) = self.retire_free_on_upgrade(user_id, &view.id).await {
@@ -2465,14 +2619,35 @@ impl ProvisioningService {
         subscription_id: Option<&str>,
         tier: &str,
     ) -> Result<InstanceView, ApiError> {
+        self.create_tier_placed(user_id, subscription_id, tier, &CloudPlacement::default())
+            .await
+    }
+
+    /// [`Self::create_tier`] with a placement. A computer asked for a city or
+    /// template never falls back to the standby pool (which has neither).
+    pub(crate) async fn create_tier_placed(
+        &self,
+        user_id: &str,
+        subscription_id: Option<&str>,
+        tier: &str,
+        placement: &CloudPlacement,
+    ) -> Result<InstanceView, ApiError> {
         let class = ComputeClass::for_owner(user_id, tier);
         let routed_to_orgo = self.routing.provider_for(class) == ComputeProvider::Orgo;
-        match self.create_tier_on(user_id, subscription_id, tier, false).await {
+        match self
+            .create_tier_on(user_id, subscription_id, tier, false, placement)
+            .await
+        {
             Err(ApiError::ServiceUnavailable(message))
-                if routed_to_orgo && message.starts_with(orgo::CLOUD_POOL_FULL) =>
+                if routed_to_orgo
+                    && placement.is_empty()
+                    && message.starts_with(orgo::CLOUD_POOL_FULL) =>
             {
                 tracing::warn!(%user_id, ?class, "orgo at capacity; placing the computer on the standby pool");
-                match self.create_tier_on(user_id, subscription_id, tier, true).await {
+                match self
+                    .create_tier_on(user_id, subscription_id, tier, true, &CloudPlacement::default())
+                    .await
+                {
                     Ok(view) => Ok(view),
                     Err(fallback) => {
                         tracing::warn!(%user_id, ?class, error = %fallback, "standby pool has no room either");
@@ -2492,6 +2667,7 @@ impl ProvisioningService {
         subscription_id: Option<&str>,
         tier: &str,
         standby_only: bool,
+        placement: &CloudPlacement,
     ) -> Result<InstanceView, ApiError> {
         let free = tier == TIER_FREE;
         // Developer computers (the hosted driver) ride the free lane with
@@ -2513,6 +2689,11 @@ impl ProvisioningService {
         }
         let class = ComputeClass::for_owner(user_id, tier);
         let want_orgo = !standby_only && self.routing.provider_for(class) == ComputeProvider::Orgo;
+        if !placement.is_empty() && !want_orgo {
+            return Err(ApiError::BadRequest(format!(
+                "{LOCATION_NOT_AVAILABLE}: a location or template needs an Orgo cloud computer"
+            )));
+        }
         // A first boot that failed on Orgo minutes ago: wait before buying
         // another computer (a bad .deb URL would otherwise buy one per call).
         if want_orgo && self.orgo_first_boot_backoff(user_id, tier).await? {
@@ -2708,9 +2889,9 @@ impl ProvisioningService {
                 id, user_id, subscription_id, host_id, incus_name, status,
                 pairing_code_hash, pairing_expires_at,
                 cpu_cores, memory_mb, disk_gb, plan_id, restored_from, tier,
-                last_activity_at, last_owner_activity_at
+                last_activity_at, last_owner_activity_at, location, template
             ) VALUES ($1, $2, $3, $4, $5, 'provisioning', $6, $7, $8, $9, $10, $11, $12, $13,
-                      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $14, $15)
             "#,
         )
         .bind(&instance_id)
@@ -2726,6 +2907,8 @@ impl ProvisioningService {
         .bind(plan_id.as_deref())
         .bind(restore.as_ref().map(|(id, _, _)| id.as_str()))
         .bind(tier)
+        .bind(placement.location.as_deref())
+        .bind(placement.template.as_deref())
         .execute(&mut *transaction)
         .await;
         if let Err(error) = inserted {
@@ -2781,9 +2964,21 @@ impl ProvisioningService {
                 class,
                 cpu,
                 &bootstrap,
+                placement,
             )
             .await;
         if let Err(error) = result {
+            if is_region_unavailable(&error) {
+                // Orgo made nothing: drop the row instead of leaving an
+                // `error` computer the user never got.
+                tracing::info!(%instance_id, "asked city is full; create undone");
+                sqlx::query("DELETE FROM provisioned_instances WHERE id = $1 AND device_id IS NULL")
+                    .bind(&instance_id)
+                    .execute(&self.db)
+                    .await?;
+                self.release_allocation(&host_id, allocation).await;
+                return Err(error);
+            }
             tracing::warn!(%instance_id, %error, "provisioned instance create failed; marking error");
             let message = format!("{error}");
             sqlx::query(
@@ -3039,6 +3234,7 @@ impl ProvisioningService {
         class: ComputeClass,
         cpu: CpuShare,
         bootstrap: &BootstrapContract,
+        placement: &CloudPlacement,
     ) -> Result<(), ApiError> {
         let row: Option<(String, Option<String>)> = sqlx::query_as(
             "SELECT incus_endpoint, region FROM provisioned_hosts WHERE id = $1",
@@ -3097,8 +3293,15 @@ impl ProvisioningService {
                 (self.defaults.desktop_uid, self.defaults.desktop_gid),
                 node_init.as_ref(),
             ),
-            instance_id: instance_id.to_string(),
+            // The Orgo Idempotency-Key: the instance id, or a fresh key when
+            // the same row gets a second computer (rebuild).
+            instance_id: placement
+                .idempotency_key
+                .clone()
+                .unwrap_or_else(|| instance_id.to_string()),
             class,
+            region: placement.location.clone(),
+            template: placement.template.clone(),
         };
         backend.create(&spec).await.map_err(|error| error.to_api_error())?;
         let files = vec![InstanceFile {
@@ -4522,6 +4725,8 @@ mod tests {
             user_data: "#cloud-config\nruncmd: [init]\n".to_string(),
             instance_id: "pi_test".to_string(),
             class: ComputeClass::Paid,
+            region: None,
+            template: None,
         }
     }
 
@@ -6677,6 +6882,139 @@ pub(crate) mod pg_tests {
         async fn backend(&self, _host_id: &str, endpoint: &str) -> Result<Arc<dyn ProvisionBackend>, ApiError> {
             Ok(if is_orgo_endpoint(endpoint) { self.orgo.clone() } else { self.standby.clone() })
         }
+    }
+
+    fn console_service(pool: &PgPool, orgo: Arc<dyn ProvisionBackend>) -> Arc<ProvisioningService> {
+        Arc::new(
+            ProvisioningService::with_registry(
+                pool.clone(),
+                Arc::new(SplitRegistry { orgo, standby: Arc::new(MockBackend::default()) }),
+            )
+            .with_defaults(test_defaults())
+            .with_free_defaults(test_free_defaults())
+            .with_routing(orgo_routing(false, true)),
+        )
+    }
+
+    async fn stored_location(pool: &PgPool, id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT location FROM provisioned_instances WHERE id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_city_is_sent_and_stored_and_a_full_city_leaves_nothing() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, seen, _) = orgo::tests::console_orgo(false).await;
+        let service = console_service(&pool, orgo);
+        let placement = CloudPlacement { location: Some("lon".to_string()), ..Default::default() };
+        let view = service.create_placed("user_1", Some("sub_1"), &placement).await.unwrap();
+        assert_eq!(view.provider, "orgo");
+        assert_eq!(stored_location(&pool, &view.id).await.as_deref(), Some("lon"));
+        let create = seen().into_iter().find(|(m, p, _, _)| m == "POST" && p == "/computers").unwrap();
+        assert_eq!(create.3["region"], "lon");
+
+        // A full city: 503 region_unavailable, no row, no held allocation.
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (full, _, _) = orgo::tests::console_orgo(true).await;
+        let service = console_service(&pool, full);
+        let error = service.create_placed("user_1", Some("sub_1"), &placement).await.unwrap_err();
+        assert!(is_region_unavailable(&error), "{error:?}");
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM provisioned_instances")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "nothing is left half-created");
+        let allocated: i32 = sqlx::query_scalar("SELECT cpu_cores_allocated FROM provisioned_hosts WHERE id = 'host_o'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(allocated, 0);
+    }
+
+    #[tokio::test]
+    async fn restart_and_rebuild_act_only_on_the_owners_cloud_computer() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, seen, set_backups) = orgo::tests::console_orgo(false).await;
+        let service = console_service(&pool, orgo);
+        let placement = CloudPlacement { location: Some("chi".to_string()), ..Default::default() };
+        let view = service.create_placed("user_1", Some("sub_1"), &placement).await.unwrap();
+        let id = view.id.clone();
+        // Let the background first boot finish (the fake answers at once).
+        for _ in 0..200 {
+            if seen().iter().any(|(_, _, _, body)| {
+                body["command"].as_str().is_some_and(|c| c.contains("allternit-orgo-ensure"))
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        set_status(&pool, &id, "running").await;
+
+        // Paired/desktop ids and other users' computers: 404 not_a_cloud_computer.
+        for (computer, user) in [("pc_box", "user_1"), (id.as_str(), "user_2")] {
+            for error in [
+                service.restart_cloud(computer, user).await.unwrap_err(),
+                service.rebuild_cloud(computer, user).await.unwrap_err(),
+            ] {
+                assert_eq!(error.parts(), (404, serde_json::json!({ "error": "not_a_cloud_computer" })));
+            }
+        }
+
+        // Restart reaches Orgo while running; a stopped computer is asleep, not woken.
+        service.restart_cloud(&id, "user_1").await.unwrap();
+        assert!(seen().iter().any(|(m, p, _, _)| m == "POST" && p.ends_with("/restart")));
+        set_status(&pool, &id, "stopped").await;
+        let asleep = service.restart_cloud(&id, "user_1").await.unwrap_err();
+        assert_eq!(asleep.parts().0, 409);
+        assert_eq!(asleep.parts().1["error"], "asleep");
+        set_status(&pool, &id, "running").await;
+
+        // Rebuild with only an old backup: 409 no_recent_backup, nothing deleted.
+        let old = (Utc::now() - Duration::hours(72)).to_rfc3339();
+        set_backups(serde_json::json!({ "backups": [{ "id": "b1", "created_at": old }] }));
+        let held = service.rebuild_cloud(&id, "user_1").await.unwrap_err();
+        assert_eq!(held.parts().0, 409);
+        assert_eq!(held.parts().1["error"], "no_recent_backup");
+        assert!(!seen().iter().any(|(m, _, _, _)| m == "DELETE"), "no destructive call");
+        set_backups(serde_json::Value::Null);
+        let none = service.rebuild_cloud(&id, "user_1").await.unwrap_err();
+        assert_eq!(none.parts().1["error"], "no_recent_backup");
+        assert!(!seen().iter().any(|(m, _, _, _)| m == "DELETE"));
+
+        // A backup from 2 hours ago: delete + create in the same city, same row id.
+        sqlx::query("UPDATE provisioned_instances SET device_id = 'rt_old' WHERE id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let recent = (Utc::now() - Duration::hours(2)).to_rfc3339();
+        set_backups(serde_json::json!({ "backups": [{ "id": "b2", "created_at": recent }] }));
+        let rebuilt = service.rebuild_cloud(&id, "user_1").await.unwrap();
+        assert_eq!(rebuilt.id, id, "the console row id is kept");
+        assert_eq!(rebuilt.status, "provisioning");
+        let log = seen();
+        assert!(log.iter().any(|(m, _, _, _)| m == "DELETE"));
+        let creates: Vec<_> = log.iter().filter(|(m, p, _, _)| m == "POST" && p == "/computers").collect();
+        assert_eq!(creates.len(), 2);
+        assert_eq!(creates[1].3["region"], "chi");
+        assert_eq!(creates[1].3["name"], creates[0].3["name"]);
+        assert_ne!(creates[1].2, creates[0].2, "a second launch gets its own idempotency key");
+        assert_eq!(stored_location(&pool, &id).await.as_deref(), Some("chi"));
+        let (device, live): (Option<String>, i64) = sqlx::query_as(
+            "SELECT device_id, (SELECT COUNT(*) FROM provisioned_instances WHERE user_id = 'user_1' AND status <> 'deleted') FROM provisioned_instances WHERE id = $1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(device, None, "the new computer pairs again");
+        assert_eq!(live, 1, "still one computer");
     }
 
     #[tokio::test]
