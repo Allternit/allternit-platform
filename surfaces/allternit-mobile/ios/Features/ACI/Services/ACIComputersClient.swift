@@ -17,6 +17,7 @@ final class ACIComputersClient: Sendable {
         case signedOut
         case auth(Int)
         case server(String)
+        case notAvailable
 
         var errorDescription: String? {
             switch self {
@@ -26,6 +27,7 @@ final class ACIComputersClient: Sendable {
                     ? "Sign in to Allternit to see your phones."
                     : "This Allternit account can’t manage phones."
             case .server(let message): return message
+            case .notAvailable: return "Not available on your account yet."
             }
         }
     }
@@ -171,6 +173,70 @@ final class ACIComputersClient: Sendable {
         return (envelope?.specs ?? []).compactMap(\.value)
     }
 
+    // MARK: Computers console (GET /api/v1/computers/console, camelCase)
+
+    struct ConsoleSnapshot: Decodable, Sendable, Equatable {
+        struct CPU: Decodable, Sendable, Equatable { let percent: Double }
+        struct Memory: Decodable, Sendable, Equatable { let usedBytes: Double; let totalBytes: Double }
+        struct Disk: Decodable, Sendable, Equatable { let mount: String; let usedBytes: Double; let totalBytes: Double }
+        let sampledAt: String
+        let cpu: CPU
+        let memory: Memory
+        let disk: [Disk]
+
+        var memoryPercent: Double { memory.totalBytes > 0 ? memory.usedBytes / memory.totalBytes * 100 : 0 }
+        /// The fullest disk, as a percent.
+        var diskPercent: Double { disk.map { $0.totalBytes > 0 ? $0.usedBytes / $0.totalBytes * 100 : 0 }.max() ?? 0 }
+    }
+
+    /// One row of the console list (contract `ConsoleComputer`).
+    struct ConsoleComputer: Decodable, Sendable, Identifiable, Equatable {
+        let id: String
+        let kind: String          // cloud | paired | desktop
+        let group: String
+        let name: String
+        let provider: String
+        let region: String?
+        let os: String
+        let osFamily: String
+        let address: String?
+        let reach: String
+        let status: String
+        let lastSample: ConsoleSnapshot?
+        let servicesCount: Int?
+        let lastBackupAt: String?
+
+        var isOnline: Bool { !["offline", "asleep", "stopped"].contains(status.lowercased()) }
+        var isAsleep: Bool { status.lowercased() == "asleep" }
+
+        /// Plain reasons this computer needs a look (derived from the last sample).
+        var attention: [String] {
+            var out: [String] = []
+            if status.lowercased() == "offline" { out.append("Offline") }
+            if let s = lastSample {
+                if s.cpu.percent >= 90 { out.append("CPU at \(Int(s.cpu.percent))%") }
+                if s.memoryPercent >= 90 { out.append("Memory at \(Int(s.memoryPercent))%") }
+                if s.diskPercent >= 90 { out.append("Disk \(Int(s.diskPercent))% full") }
+            }
+            return out
+        }
+    }
+
+    private struct ConsoleEnvelope: Decodable {
+        let computers: [ACILossy<ConsoleComputer>]?
+    }
+
+    /// Throws `Failure.notAvailable` while the backend route does not exist for this account.
+    func listConsole() async throws -> [ConsoleComputer] {
+        let data = try await cloud("api/v1/computers/console")
+        let decoder = JSONDecoder()
+        if let rows = try? decoder.decode([ACILossy<ConsoleComputer>].self, from: data) {
+            return rows.compactMap(\.value)
+        }
+        let envelope = try? decoder.decode(ConsoleEnvelope.self, from: data)
+        return (envelope?.computers ?? []).compactMap(\.value)
+    }
+
     // MARK: Plumbing
 
     private func cloud(_ path: String, method: String = "GET", body: Data? = nil, authFailure: Bool = false) async throws -> Data {
@@ -205,6 +271,9 @@ final class ACIComputersClient: Sendable {
     private static func check(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { throw Failure.server("Couldn't load this. Try again.") }
         guard (200...299).contains(http.statusCode) else {
+            if [404, 501].contains(http.statusCode), http.url?.path.hasSuffix("computers/console") == true {
+                throw Failure.notAvailable
+            }
             struct Body: Decodable { let detail: String?; let message: String?; let error: String? }
             let body = try? JSONDecoder().decode(Body.self, from: data)
             if let text = body?.detail ?? body?.message ?? body?.error, !text.isEmpty {
