@@ -94,10 +94,14 @@ struct RuntimeEntry: Decodable, Identifiable, Equatable, Sendable {
     var liveUi: JSONValue?
     var legacy: Legacy?
     var docs: String?
+    /// Subscription plans this runtime may use (contract `runtimes[].plans`:
+    /// claude, chatgpt, kimi, gemini, copilot). nil on an older server; read
+    /// it through `RuntimeRegistry.plans(of:)`, which has the fallback table.
+    var plans: [String]?
 
     private enum CodingKeys: String, CodingKey {
         case id, name, vendor, category, tool, aliases, toolAliases, adapter, brains, access, more, status
-        case systemLayer, look, liveUi, legacy, docs
+        case systemLayer, look, liveUi, legacy, docs, plans
     }
     private struct SystemLayer: Decodable { var via: String? }
 
@@ -136,6 +140,7 @@ struct RuntimeEntry: Decodable, Identifiable, Equatable, Sendable {
         liveUi = try? c.decodeIfPresent(JSONValue.self, forKey: .liveUi)
         legacy = try? c.decodeIfPresent(Legacy.self, forKey: .legacy)
         docs = try? c.decodeIfPresent(String.self, forKey: .docs)
+        plans = try? c.decodeIfPresent([String].self, forKey: .plans)
     }
 
     /// `look.default`: terminal | desktop.
@@ -267,6 +272,29 @@ enum RuntimeRegistry {
     /// match, else custom. With a `runtime`, recompute mode/harness from it:
     /// `custom` keeps the stored mode/harness, and an id this build does not
     /// know is a native harness of that id (a newer client may know more).
+    /// PLAN_NAMES (ALLOWED-RULE.md).
+    static let planNames: [String: String] = [
+        "claude": "Claude", "chatgpt": "ChatGPT", "kimi": "Kimi", "gemini": "Gemini", "copilot": "Copilot",
+    ]
+
+    /// The built-in plans table for a server body without `plans`.
+    private static let fallbackPlans: [String: [String]] = [
+        "allternit": ["claude", "chatgpt", "kimi", "gemini", "copilot"],
+        "claude": ["claude"], "codex": ["chatgpt"], "kimi": ["kimi"],
+        "antigravity": ["gemini"], "copilot": ["copilot"],
+    ]
+
+    /// The plans a runtime may use: the registry's list, else the fallback table.
+    static func plans(of runtime: RuntimeEntry) -> [String] {
+        runtime.plans ?? fallbackPlans[runtime.id] ?? []
+    }
+
+    /// "Claude, ChatGPT" or nil when the runtime takes no plan.
+    static func plansLabel(_ runtime: RuntimeEntry) -> String? {
+        let names = plans(of: runtime).map { planNames[$0] ?? $0 }
+        return names.isEmpty ? nil : names.joined(separator: ", ")
+    }
+
     static func resolveRuntime(_ brain: [String: JSONValue], in runtimes: [RuntimeEntry]) -> [String: JSONValue] {
         var out = brain
         let mode = brain["mode"]?.jString
