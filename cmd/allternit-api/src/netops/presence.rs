@@ -87,6 +87,9 @@ pub async fn live_sessions(runtime_id: &str) -> Value {
         // The holder's own flags stay on this computer: they can name files, profiles or keys.
         if let Some(o) = s.as_object_mut() {
             o.remove("carriedFlags");
+            o.remove("moveCommand");
+            o.remove("copyCommand");
+            o.remove("newCommand");
         }
     }
     list.truncate(MAX_SESSIONS);

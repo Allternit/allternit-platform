@@ -80,6 +80,15 @@ pub struct LiveSession {
     /// The harness can fork this session into a new one (Copy).
     #[serde(default)]
     pub can_copy: bool,
+    /// The exact argv a Move, Copy or New session would run (from [`super::harness_table`]),
+    /// so clients show the command without knowing harness names. `None` when that mode is
+    /// not offered. They hold `carried_flags`, so they stay on this computer like it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_command: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_command: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_command: Option<Vec<String>>,
     /// Whether it can move into Allternit: `now` (one external holder, idle, resumable),
     /// `busy` (mid-turn), `open_elsewhere` (more than one live holder), `no_resume` (the
     /// harness cannot resume by id, or no id was found), `here` (already in an Allternit pane).
@@ -554,6 +563,9 @@ struct Moves {
     can_copy: bool,
     movable: &'static str,
     external: bool,
+    move_command: Option<Vec<String>>,
+    copy_command: Option<Vec<String>>,
+    new_command: Option<Vec<String>>,
 }
 
 /// `pane_id`: the Allternit pane this session was matched to. `unknown_holder`: a live process of
@@ -588,12 +600,22 @@ fn moves(f: &Found, pane_id: Option<&str>, status: &str, unknown_holder: bool) -
     } else {
         "now"
     };
+    // The commands shown before a click are the ones the adopt job runs (same table, same flags).
+    let offered = !external.is_empty() && movable != "here";
+    let move_command = (offered && matches!(movable, "now" | "busy"))
+        .then(|| super::harness_table::move_argv(&f.harness, &f.id, &carried_flags))
+        .flatten();
+    let copy_command = offered.then(|| super::harness_table::copy_argv(&f.harness, &f.id, &carried_flags)).flatten();
+    let new_command = offered.then(|| super::harness_table::new_argv(&f.harness, &carried_flags)).flatten();
     Moves {
         can_copy: super::harness_table::copy_argv(&f.harness, &f.id, &[]).is_some(),
         external: !external.is_empty(),
         holders,
         carried_flags,
         movable,
+        move_command,
+        copy_command,
+        new_command,
     }
 }
 
@@ -783,6 +805,9 @@ fn discover_with(person: &str, panes: Option<Vec<super::backend::LivePane>>, ful
             holders: m.holders,
             carried_flags: m.carried_flags,
             can_copy: m.can_copy,
+            move_command: m.move_command,
+            copy_command: m.copy_command,
+            new_command: m.new_command,
             movable: m.movable.into(),
             external: m.external,
             name: format!("{}-{}", base_name(&f.cwd), f.harness),
@@ -958,12 +983,17 @@ mod tests {
         let idle = held("claude", "s1", 101, "Terminal", "", &["claude", "--dangerously-skip-permissions"]);
         let m = moves(&idle, None, "idle", false);
         assert_eq!((m.movable, m.external, m.carried_flags.clone()), ("now", true, vec!["--dangerously-skip-permissions".to_string()]));
+        // The command shown before a Move is the one the adopt job runs.
+        assert!(m.move_command.is_some());
+        assert_eq!(m.move_command, crate::agents::harness_table::move_argv("claude", "s1", &m.carried_flags));
+        assert_eq!(m.new_command, crate::agents::harness_table::new_argv("claude", &m.carried_flags));
         assert_eq!(moves(&idle, None, "busy", false).movable, "busy");
         // Only inside an Allternit pane: already here; its pane id goes on the holder.
         let pane = held("claude", "s2", 300, "Allternit", "", &["claude"]);
         let m = moves(&pane, Some("w1:p2"), "idle", false);
         assert_eq!((m.movable, m.external), ("here", false));
         assert_eq!(m.holders[0].pane_id.as_deref(), Some("w1:p2"));
+        assert_eq!((m.move_command, m.copy_command, m.new_command), (None, None, None));
         assert!(m.carried_flags.is_empty());
         // A pane holder plus a Terminal holder (the 11-20 12:03 incident): refused, and the pane entry represents it.
         let both = group(vec![held("claude", "s3", 400, "Terminal", "2026-11-21T09:00:00+00:00", &["claude"]), held("claude", "s3", 401, "Allternit", "2026-11-21T01:00:00+00:00", &["claude"])]);
