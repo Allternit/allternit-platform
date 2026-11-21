@@ -412,6 +412,17 @@ pub fn starter_template(id: &str) -> Option<&'static StarterTemplate> {
     STARTER_TEMPLATES.iter().find(|template| template.id == id)
 }
 
+/// The plain name of a [`CLOUD_LOCATIONS`] code, for user-facing messages.
+pub fn city_name(code: &str) -> &str {
+    match code {
+        "nyc" => "New York",
+        "chi" => "Chicago",
+        "lon" => "London",
+        "syd" => "Sydney",
+        other => other,
+    }
+}
+
 /// A requested location, trimmed and lower-cased: `Ok(None)` when absent or
 /// blank, `Err(())` when it is not one of [`CLOUD_LOCATIONS`].
 pub fn normalize_location(raw: Option<&str>) -> Result<Option<String>, ()> {
@@ -485,7 +496,14 @@ impl CloudActionError {
         match self {
             Self::NotACloudComputer => (404, json!({ "error": "not_a_cloud_computer" })),
             Self::Asleep { status } => (409, json!({ "error": "asleep", "status": status })),
-            Self::Busy { status } => (409, json!({ "error": "busy", "status": status })),
+            Self::Busy { status } => (
+                409,
+                json!({
+                    "error": "busy",
+                    "status": status,
+                    "message": "This computer is in the middle of another change. Try again in a few minutes. Nothing was changed.",
+                }),
+            ),
             Self::NotSupported(what) => (501, json!({ "error": "not_supported", "action": what })),
             Self::NoRecentBackup { latest } => (
                 409,
@@ -493,18 +511,43 @@ impl CloudActionError {
                     "error": "no_recent_backup",
                     "latestBackupAt": latest.map(|at| at.to_rfc3339()),
                     "maxAgeHours": REBUILD_BACKUP_MAX_AGE_HOURS,
+                    "message": "Rebuild is held: there is no backup from the last 48 hours, and a rebuild erases the only copy of the disk. Nothing was changed.",
                 }),
             ),
-            Self::BackupCheckFailed(_) => (503, json!({ "error": "backup_check_failed" })),
-            Self::RegionUnavailable { location } => {
-                (503, json!({ "error": "region_unavailable", "location": location }))
-            }
-            Self::InvalidLocation => {
-                (400, json!({ "error": "invalid_location", "locations": CLOUD_LOCATIONS }))
-            }
-            Self::SameLocation { location } => {
-                (409, json!({ "error": "same_location", "location": location }))
-            }
+            Self::BackupCheckFailed(_) => (
+                503,
+                json!({
+                    "error": "backup_check_failed",
+                    "message": "Couldn't check this computer's backups, so the rebuild is held. Nothing was changed.",
+                }),
+            ),
+            Self::RegionUnavailable { location } => (
+                503,
+                json!({
+                    "error": "region_unavailable",
+                    "location": location,
+                    "message": format!(
+                        "{} has no room for a new computer right now. Try again later or pick another city. Nothing was changed.",
+                        location.as_deref().map(city_name).unwrap_or("That city")
+                    ),
+                }),
+            ),
+            Self::InvalidLocation => (
+                400,
+                json!({
+                    "error": "invalid_location",
+                    "locations": CLOUD_LOCATIONS,
+                    "message": "Pick New York, Chicago, London or Sydney.",
+                }),
+            ),
+            Self::SameLocation { location } => (
+                409,
+                json!({
+                    "error": "same_location",
+                    "location": location,
+                    "message": format!("This computer is already in {}.", city_name(location)),
+                }),
+            ),
             Self::Api(error) => match error {
                 ApiError::NotFound(_) => (404, json!({ "error": "not_a_cloud_computer" })),
                 other => (503, json!({ "error": "unavailable", "message": other.to_string() })),
@@ -7064,11 +7107,14 @@ pub(crate) mod pg_tests {
         // Not a city, or the city it is already in.
         assert_eq!(service.move_cloud(&id, "user_1", "dfw").await.unwrap_err().parts().1["error"], "invalid_location");
         let same = service.move_cloud(&id, "user_1", "chi").await.unwrap_err();
-        assert_eq!(same.parts(), (409, serde_json::json!({ "error": "same_location", "location": "chi" })));
+        assert_eq!((same.parts().0, same.parts().1["error"].clone()), (409, serde_json::json!("same_location")));
+        assert_eq!(same.parts().1["message"], "This computer is already in Chicago.");
 
         // London is full: 503 and the old computer is exactly as it was.
         let full = service.move_cloud(&id, "user_1", "lon").await.unwrap_err();
-        assert_eq!(full.parts(), (503, serde_json::json!({ "error": "region_unavailable", "location": "lon" })));
+        let (code, body) = full.parts();
+        assert_eq!((code, body["error"].as_str(), body["location"].as_str()), (503, Some("region_unavailable"), Some("lon")));
+        assert!(body["message"].as_str().unwrap().starts_with("London has no room"));
         assert!(!seen().iter().any(|(m, _, _, _)| m == "DELETE"), "nothing deleted");
         let (status, device, name, location): (String, Option<String>, String, Option<String>) = sqlx::query_as(
             "SELECT status, device_id, incus_name, location FROM provisioned_instances WHERE id = $1",

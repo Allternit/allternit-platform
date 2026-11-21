@@ -205,10 +205,7 @@ async fn create_instance(
     let Ok(location) = crate::services::provisioning::normalize_location(location.as_deref()) else {
         return Ok(create_refusal(
             StatusCode::BAD_REQUEST,
-            serde_json::json!({
-                "error": "invalid_location",
-                "locations": crate::services::provisioning::CLOUD_LOCATIONS,
-            }),
+            crate::services::provisioning::CloudActionError::InvalidLocation.parts().1,
         ));
     };
     let template = template
@@ -248,7 +245,9 @@ async fn create_instance(
         Err(error) if crate::services::provisioning::is_region_unavailable(&error) => {
             return Ok(create_refusal(
                 StatusCode::SERVICE_UNAVAILABLE,
-                serde_json::json!({ "error": "region_unavailable", "location": location }),
+                crate::services::provisioning::CloudActionError::RegionUnavailable { location: location.clone() }
+                    .parts()
+                    .1,
             ));
         }
         Err(ApiError::BadRequest(message))

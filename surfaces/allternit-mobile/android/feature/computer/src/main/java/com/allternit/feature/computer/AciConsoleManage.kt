@@ -668,7 +668,6 @@ private fun CloudSettings(computer: ConsoleComputer, busy: Boolean, perform: (St
     val c = AllternitTheme.colors
     val current = consoleLocationKey(computer.region)
     var location by remember { mutableStateOf(current.orEmpty()) }
-    var confirmMove by remember { mutableStateOf(false) }
     var confirmRestart by remember { mutableStateOf(false) }
     val backups = rememberHostLoad(computer.id) { consoleBackups(computer.id) }
     CCard {
@@ -683,9 +682,12 @@ private fun CloudSettings(computer: ConsoleComputer, busy: Boolean, perform: (St
                 }
             }
         }
-        CText("Moving restarts the computer and takes a few minutes.", false, 12)
-        Box(Modifier.alpha(if (busy || location.isEmpty() || location == current) 0.45f else 1f)) {
-            AciPillButton("Move", "aciConsoleMove") { if (!busy && location.isNotEmpty() && location != current) confirmMove = true }
+        CText("A cloud computer stays in the city it was made in. Moving makes a fresh computer in the city you pick and erases this one's files. Files you pinned on a device stay there. Save anything you need first.", false, 12)
+        val city = LOCATIONS.firstOrNull { it.first == location }?.second ?: location
+        AciHoldButton("Hold to move to $city", "aciConsoleMove", danger = true, enabled = !busy && location.isNotEmpty() && location != current) {
+            perform("Moving. A fresh computer is being set up in $city. This takes a few minutes.") {
+                AciApi.consoleWrite("POST", computer.id, "move", JsonObject(mapOf("location" to JsonPrimitive(location), "confirm" to JsonPrimitive(true))))
+            }
         }
     }
     CCard {
@@ -695,7 +697,7 @@ private fun CloudSettings(computer: ConsoleComputer, busy: Boolean, perform: (St
     }
     CCard {
         CTitle("Rebuild")
-        CText("Rebuild erases the disk and sets the computer up again from the Ubuntu image, in the same location. Your Files drive copy stays.")
+        CText("Rebuild erases the disk and sets the computer up again from the Ubuntu image, in the same location. Files you pinned on a device stay there.")
         RebuildGate(computer, backups, busy, perform)
     }
     CCard {
@@ -708,18 +710,6 @@ private fun CloudSettings(computer: ConsoleComputer, busy: Boolean, perform: (St
         }
         CText("Prices show before you confirm, once they are set.", false, 12)
     }
-    if (confirmMove) AlertDialog(
-        onDismissRequest = { confirmMove = false },
-        title = { Text("Move this computer?") },
-        text = { Text("It restarts, and anything running stops.") },
-        confirmButton = {
-            TextButton(onClick = {
-                confirmMove = false
-                perform("Moving. The computer restarts.") { AciApi.consoleWrite("POST", computer.id, "move", buildBody("location" to location)) }
-            }) { Text("Move to ${LOCATIONS.firstOrNull { it.first == location }?.second ?: location}") }
-        },
-        dismissButton = { TextButton(onClick = { confirmMove = false }) { Text("Cancel") } },
-    )
     if (confirmRestart) AlertDialog(
         onDismissRequest = { confirmRestart = false },
         title = { Text("Restart this computer?") },
@@ -743,7 +733,7 @@ private fun RebuildGate(computer: ConsoleComputer, backups: HostLoad<List<CloudB
             if (fresh != null) {
                 CText("Backup from ${consoleAgo(fresh.createdAt)}.")
                 AciHoldButton("Hold to rebuild", "aciConsoleHoldRebuild", danger = true, enabled = !busy) {
-                    perform("Rebuilding. This takes a few minutes.") { AciApi.consoleWrite("POST", computer.id, "rebuild", null) }
+                    perform("Rebuilding. This takes a few minutes.") { AciApi.consoleWrite("POST", computer.id, "rebuild", JsonObject(mapOf("confirm" to JsonPrimitive(true)))) }
                 }
             } else {
                 CText("Rebuild is held. There is no backup newer than 24 hours, and a rebuild erases the only copy of the disk.", color = warn)
