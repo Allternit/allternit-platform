@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import SwiftTerm
 
 // MARK: - Terminal sessions
@@ -22,9 +23,19 @@ final class CodeTerminalStore: ObservableObject {
     @Published private(set) var isStarting = false
     /// No computer answers: the terminal shows its offline state.
     @Published private(set) var isOffline = false
+    /// Tabs follow the coding agent running in them ("Claude Code"), else "Terminal N".
+    @Published private(set) var agentNames: [UUID: String] = [:]
     private var nextNumber = 1
 
     var selected: Tile? { tiles.first { $0.id == selectedId } ?? tiles.first }
+
+    func displayName(_ tile: Tile) -> String { agentNames[tile.id] ?? tile.name }
+
+    /// A tile's agent frame changed: keep the agent's name as the tab name (CodeTerminalCanvas `handleAgentFrame`).
+    func noteAgent(_ name: String?, for id: UUID) {
+        guard let name, agentNames[id] != name else { return }
+        agentNames[id] = name
+    }
 
     /// First open: start one shell, or land on the offline state.
     func startIfNeeded() async {
@@ -57,6 +68,7 @@ final class CodeTerminalStore: ObservableObject {
     func closeTile(_ id: UUID) {
         guard let index = tiles.firstIndex(where: { $0.id == id }) else { return }
         let tile = tiles.remove(at: index)
+        agentNames[id] = nil
         tile.session.close()
         if selectedId == id { selectedId = tiles.last?.id }
     }
@@ -244,7 +256,9 @@ struct PhoneCodeTerminal: View {
             if store.isOffline {
                 offline
             } else if let tile = store.selected {
-                TerminalSessionView(session: tile.session)
+                // A coding agent in the shell gets the native composer (AgentComposerBar).
+                TerminalSessionView(session: tile.session, agentMode: true,
+                                    onAgentFrame: { [weak store] frame in store?.noteAgent(frame?.agent, for: tile.id) })
                     .id(tile.id)
             } else if store.isStarting {
                 Text("Starting terminals…")
@@ -279,7 +293,7 @@ struct PhoneCodeTerminal: View {
                 ForEach(store.tiles) { tile in
                     let selected = store.selected?.id == tile.id
                     Button(action: { store.selectedId = tile.id }) {
-                        tabLabel { Text(tile.name).font(.system(size: 15, design: .monospaced)) }
+                        tabLabel { Text(store.displayName(tile)).font(.system(size: 15, design: .monospaced)) }
                             .background(selected ? TerminalPalette.keyPressed : TerminalPalette.key)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
@@ -302,7 +316,7 @@ struct PhoneCodeTerminal: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Close \(selected.name)")
+                    .accessibilityLabel("Close \(store.displayName(selected))")
                 }
             }
             .padding(4)
@@ -355,6 +369,243 @@ struct PhoneCodeTerminal: View {
         .task(id: isConnectPresented) {
             // Back from the computer picker: try again.
             if !isConnectPresented { await store.startIfNeeded() }
+        }
+    }
+}
+
+// MARK: - Agent composer
+
+/// The Code terminal's composer while a coding agent (Claude Code, Codex,
+/// Kimi, Antigravity, opencode, Gizzi, …) runs in the shell: the agent's own
+/// input box is hidden and this drives it (agent-composer.tsx, and the phone's
+/// `AgentKeys` in PhoneCodeTerminal.tsx). Its question as answer buttons,
+/// agent · status with Stop while it works, its mode (tap = shift+tab), and a
+/// message line in the Code prompt's look that pastes into the agent.
+/// The accessory keys under it still type into the agent.
+struct AgentComposerBar: View {
+    let frame: AgentFrame
+    @ObservedObject var session: PtySession
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let ink = CodeInk(terminal: true)
+    /// phone.css: prompt 15px and text 16px, both on a 22px line (CodeLaunchComposer).
+    private static let line: CGFloat = 22
+    private static let textFont = UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var agentName: String { frame.agent ?? "Agent" }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let dialog = frame.dialog {
+                question(dialog)
+            }
+            edge
+            DashedHairline(strong: isFocused, terminal: true)
+            prompt
+            DashedHairline(strong: isFocused, terminal: true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 4)
+        .background(TerminalPalette.background)
+        .overlay(alignment: .top) { Rectangle().fill(TerminalPalette.line).frame(height: 1) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(agentName) composer")
+    }
+
+    // MARK: Status edge
+
+    private var statusColor: Color {
+        switch frame.status {
+        case .idle: return Theme.statusSuccess
+        case .working: return GizziCodeWordmark.coral
+        case .needsYou: return Theme.statusWarning
+        }
+    }
+
+    /// Agent · status, Stop while it works; the agent's own mode on the right.
+    private var edge: some View {
+        HStack(spacing: 6) {
+            Text(agentName)
+                .foregroundColor(ink.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text("·").foregroundColor(ink.tertiary).accessibilityHidden(true)
+            HStack(spacing: 4) {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 6))
+                    .symbolEffect(.pulse, options: .repeating, isActive: frame.status == .working && !reduceMotion)
+                    .accessibilityHidden(true)
+                Text(AgentComposerText.status(frame.status))
+            }
+            .foregroundColor(statusColor)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(agentName): \(AgentComposerText.status(frame.status))")
+            .accessibilityAddTraits(.updatesFrequently)
+            if frame.status == .working {
+                Button(action: { session.send(AgentKeys.escape) }) {
+                    HStack(spacing: 6) {
+                        Text("Stop").font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        Text("esc").font(.system(size: 10, design: .monospaced)).foregroundColor(ink.tertiary)
+                    }
+                    .foregroundColor(ink.primary)
+                    .padding(.horizontal, 8)
+                    .frame(height: 26)
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(ink.border, lineWidth: 1))
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stop \(agentName)")
+                .accessibilityHint("Sends Escape")
+            }
+            Spacer(minLength: 8)
+            if let mode = frame.mode {
+                Button(action: { session.send(AgentKeys.cycleMode) }) {
+                    Text(AgentComposerText.shortMode(mode))
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(ink.accent)
+                        .lineLimit(1)
+                        .padding(.horizontal, 6)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Mode: \(mode)")
+                .accessibilityHint("Switches the agent's mode (shift+tab)")
+            }
+        }
+        .font(.system(size: 11, design: .monospaced))
+        .frame(minHeight: 44)
+    }
+
+    // MARK: Question
+
+    /// A permission / choice question from the agent, one button per answer.
+    private func question(_ dialog: AgentDialog) -> some View {
+        let isPermission = AgentComposerText.isPermission(dialog.question)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: isPermission ? "lock.fill" : "questionmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(ink.accent)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isPermission ? "Permission required" : "\(frame.agent ?? "The agent") asks")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(ink.primary)
+                    if !dialog.question.isEmpty {
+                        Text(dialog.question)
+                            .font(.system(size: 13))
+                            .foregroundColor(ink.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .accessibilityElement(children: .combine)
+            if dialog.options.count > 4 {
+                ScrollView { answers(dialog) }
+                    .frame(maxHeight: 196)
+            } else {
+                answers(dialog)
+            }
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(dialog.question.isEmpty ? "Agent question" : dialog.question)
+    }
+
+    private func answers(_ dialog: AgentDialog) -> some View {
+        VStack(spacing: 4) {
+            ForEach(dialog.options, id: \.index) { option in
+                Button(action: { session.send(AgentKeys.dialogKeys(dialog.options, pick: option)) }) {
+                    HStack(spacing: 8) {
+                        Text(AgentComposerText.shortLabel(option.label))
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(option.selected ? ink.primary : ink.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 4)
+                        if !option.key.isEmpty {
+                            Text(option.key)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(ink.tertiary)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .background(option.selected ? ink.accent.opacity(0.14) : ink.fill,
+                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(option.selected ? ink.accent.opacity(0.36) : ink.border, lineWidth: 1))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(option.label)
+                .accessibilityHint(option.key.isEmpty ? "Picks this answer" : "Picks this answer (\(option.key))")
+                .accessibilityAddTraits(option.selected ? .isSelected : [])
+            }
+        }
+    }
+
+    // MARK: Prompt
+
+    private var prompt: some View {
+        HStack(alignment: .bottom, spacing: 4) {
+            HStack(alignment: .top, spacing: 8) {
+                Text("❯")
+                    .font(.system(size: 15, weight: .bold, design: .monospaced))
+                    .foregroundColor(GizziCodeWordmark.coral)
+                    .frame(height: Self.line)
+                    .accessibilityHidden(true)
+                let placeholder = AgentComposerText.placeholder(frame)
+                TextField(placeholder, text: $text, prompt: Text(placeholder).foregroundColor(ink.tertiary), axis: .vertical)
+                    .font(Font(Self.textFont))
+                    .foregroundColor(ink.primary)
+                    .tint(GizziCodeWordmark.coral)
+                    .lineSpacing(Self.line - Self.textFont.lineHeight)
+                    .padding(.vertical, (Self.line - Self.textFont.lineHeight) / 2)
+                    .lineLimit(1...4)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.send)
+                    .focused($isFocused)
+                    .onSubmit(send)
+                    .accessibilityLabel(placeholder)
+            }
+            .padding(.vertical, 9)
+            .padding(.leading, 8)
+            .padding(.trailing, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if !trimmed.isEmpty {
+                Button(action: send) {
+                    Image(systemName: "return")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 40, height: 40)
+                        .background(GizziCodeWordmark.coral, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 6)
+                .accessibilityLabel("Send to \(agentName)")
+            }
+        }
+    }
+
+    /// Bracketed paste, then Enter 60 ms later (CodeTerminalCanvas `send`), so a
+    /// multi-line message stays one prompt.
+    private func send() {
+        let value = trimmed
+        guard !value.isEmpty else { return }
+        text = ""
+        let keys = AgentKeys.promptInput(value)
+        session.send(keys.paste)
+        Task { @MainActor [weak session] in
+            try? await Task.sleep(for: .milliseconds(60))
+            session?.send(keys.enter)
         }
     }
 }

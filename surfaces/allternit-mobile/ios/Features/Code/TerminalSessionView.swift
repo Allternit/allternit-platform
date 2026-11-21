@@ -91,9 +91,20 @@ struct TerminalAccessoryKeys: View {
 /// One shell tile: a pty on the computer's gizzi-code, drawn by SwiftTerm
 /// with the accessory keys under it. Detaches on disappear; the pty keeps
 /// running server-side and replays its scrollback on the next attach.
+///
+/// Agent mode (the Code terminal, UnifiedTerminal.tsx `onAgentFrame`): when a
+/// coding agent (Claude Code, Codex, …) runs in the shell, its own input box is
+/// hidden below the visible frame (the pty gets those rows on top of the
+/// visible ones, so the agent keeps its room) and `AgentComposerBar` drives it.
+/// An unrecognised screen shows the full terminal at its normal size.
 struct TerminalSessionView: View {
     @ObservedObject var session: PtySession
+    /// Read the screen for a coding agent and drive it from a native composer.
+    var agentMode = false
+    /// Called with the parsed frame whenever it changes (nil = plain shell).
+    var onAgentFrame: (@MainActor (AgentFrame?) -> Void)? = nil
     @StateObject private var latch = TerminalCtrlLatch()
+    @StateObject private var reader = AgentFrameReader()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -106,21 +117,25 @@ struct TerminalSessionView: View {
                 EmptyView()
             }
             ZStack {
-                TerminalSurfaceView(
-                    attach: { view in
-                        session.onOutput = { [weak view] text in view?.feed(text: text) }
-                    },
-                    onInput: { [weak session, weak latch] text in
-                        guard let session else { return }
-                        session.send(latch?.transform(text) ?? text)
-                    },
-                    onResize: { [weak session] cols, rows in session?.resize(cols: cols, rows: rows) }
-                )
-                .padding(8)
+                if agentMode {
+                    // Rows from the frame's `hideFrom` down sit below the clip.
+                    GeometryReader { geo in
+                        surface
+                            .frame(width: geo.size.width, height: geo.size.height + reader.hiddenHeight, alignment: .top)
+                    }
+                    .clipped()
+                    .padding(8)
+                } else {
+                    surface
+                        .padding(8)
+                }
                 if session.state == .connecting {
                     ProgressView()
                         .tint(TerminalPalette.secondary)
                 }
+            }
+            if agentMode, let frame = reader.frame {
+                AgentComposerBar(frame: frame, session: session)
             }
             TerminalAccessoryKeys(latch: latch) { data in session.send(data) }
         }
@@ -131,6 +146,27 @@ struct TerminalSessionView: View {
         .onDisappear {
             session.stop()
         }
+        .onChange(of: reader.frame) { _, frame in
+            onAgentFrame?(frame)
+        }
+    }
+
+    private var surface: some View {
+        TerminalSurfaceView(
+            attach: { [agentMode, weak reader] view in
+                if agentMode { reader?.view = view }
+                session.onOutput = { [weak view, weak reader] text in
+                    view?.feed(text: text)
+                    if agentMode { reader?.schedule() }
+                }
+            },
+            onInput: { [weak session, weak latch] text in
+                guard let session else { return }
+                session.send(latch?.transform(text) ?? text)
+            },
+            onResize: { [weak session] cols, rows in session?.resize(cols: cols, rows: rows) },
+            onTitle: { [weak reader] title in reader?.title = title }
+        )
     }
 
     /// `.phone-terminal-status`: the tile's error, in the status colours.
@@ -142,6 +178,71 @@ struct TerminalSessionView: View {
             .padding(8)
             .background(Theme.statusError.opacity(0.12))
             .accessibilityAddTraits(.isStaticText)
+    }
+}
+
+// MARK: - Agent frame
+
+/// Reads a coding agent's frame from the SwiftTerm screen after output
+/// settles, and how many rows of its input box to hide (UnifiedTerminal.tsx
+/// `parseAgentScreen`, same timing and caps).
+@MainActor
+final class AgentFrameReader: ObservableObject {
+    @Published private(set) var frame: AgentFrame?
+    /// Rows of the agent's own input box drawn below the visible frame.
+    @Published private(set) var hiddenRows = 0
+    /// The row height the hidden rows were sized with.
+    @Published private(set) var cellHeight: CGFloat = 0
+    weak var view: TerminalView?
+    var title = ""
+    private var pending = (rows: 0, seen: 0)
+    private var timer: Task<Void, Never>?
+
+    /// Extra height under the clip that holds the hidden rows.
+    var hiddenHeight: CGFloat { hiddenRows > 0 && cellHeight > 0 ? CGFloat(hiddenRows) * cellHeight : 0 }
+
+    /// After an output batch: read the screen 120 ms later (at most ~8 times a second).
+    func schedule() {
+        guard timer == nil else { return }
+        timer = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            self?.read()
+        }
+    }
+
+    private func read() {
+        timer = nil
+        guard let view else { return }
+        // Scrolled into history: leave it as it is.
+        if view.canScroll && view.scrollPosition < 1 { return }
+        let terminal = view.getTerminal()
+        let rowCount = terminal.rows
+        let rows = (0..<rowCount).map { Self.text(of: terminal.getLine(row: $0)) }
+        let next = AgentFrameParser.parse(rows, title: title)
+        if next != frame { frame = next }
+        // Hide the agent's box: rows from hideFrom down, capped so a misread can never hide much.
+        let want = next.map { max(0, min(rowCount - $0.hideFrom, 14, rowCount / 2)) } ?? 0
+        if want == hiddenRows {
+            pending = (want, 0)
+            return
+        }
+        // Change only after two reads agree, so a redraw mid-frame never makes it jump.
+        pending = (want, pending.rows == want ? pending.seen + 1 : 1)
+        if pending.seen < 2 {
+            schedule()
+            return
+        }
+        if rowCount > 0, view.bounds.height > 0 { cellHeight = view.bounds.height / CGFloat(rowCount) }
+        hiddenRows = want
+    }
+
+    /// One visible row as xterm's `translateToString(true)` gives it: trailing
+    /// blanks trimmed, one character per wide glyph, never-written cells as spaces.
+    static func text(of line: BufferLine?) -> String {
+        guard let line else { return "" }
+        return line.translateToString(trimRight: true, skipNullCellsFollowingWide: true)
+            .replacingOccurrences(of: "\u{0}", with: " ")
     }
 }
 
@@ -157,9 +258,11 @@ struct TerminalSurfaceView: UIViewRepresentable {
     let attach: @MainActor (TerminalView) -> Void
     let onInput: @MainActor (String) -> Void
     let onResize: @MainActor (Int, Int) -> Void
+    /// The terminal title (OSC 0/2), e.g. an agent naming itself.
+    var onTitle: (@MainActor (String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onInput: onInput, onResize: onResize)
+        Coordinator(onInput: onInput, onResize: onResize, onTitle: onTitle)
     }
 
     func makeUIView(context: Context) -> TerminalView {
@@ -183,10 +286,13 @@ struct TerminalSurfaceView: UIViewRepresentable {
     final class Coordinator: NSObject, @unchecked Sendable {
         let onInput: @MainActor (String) -> Void
         let onResize: @MainActor (Int, Int) -> Void
+        let onTitle: (@MainActor (String) -> Void)?
 
-        init(onInput: @escaping @MainActor (String) -> Void, onResize: @escaping @MainActor (Int, Int) -> Void) {
+        init(onInput: @escaping @MainActor (String) -> Void, onResize: @escaping @MainActor (Int, Int) -> Void,
+             onTitle: (@MainActor (String) -> Void)?) {
             self.onInput = onInput
             self.onResize = onResize
+            self.onTitle = onTitle
         }
     }
 }
@@ -203,7 +309,10 @@ extension TerminalSurfaceView.Coordinator: TerminalViewDelegate {
         Task { @MainActor in onResize(newCols, newRows) }
     }
 
-    func setTerminalTitle(source: TerminalView, title: String) {}
+    func setTerminalTitle(source: TerminalView, title: String) {
+        guard let onTitle else { return }
+        Task { @MainActor in onTitle(title) }
+    }
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 

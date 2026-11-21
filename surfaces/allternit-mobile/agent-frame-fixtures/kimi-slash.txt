@@ -1,0 +1,40 @@
+
+   ❯ Trust and continue
+     Exit
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+^C
+joe@joes-MacBook-Pro mockrepo %
+joe@joes-MacBook-Pro mockrepo % kimi
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │                                                                                                                    │
+ │  ▐█▛█▛█▌  Welcome to Kimi Code!                                                                                    │
+ │  ▐█████▌  Send /help for help information.                                                                         │
+ │                                                                                                                    │
+ │  Directory: /private/tmp/claude-501/-Users-joe/3280b1f9-af7a-40d3-884c-123934319c77/scratchpad/mockrepo            │
+ │  Session:                                                                                                          │
+ │  Model:     K2.8 Preview                                                                                           │
+ │  Version:   2.5.2                                                                                                  │
+ │                                                                                                                    │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ✦ Kimi K3.1 Pro is ready - use the model in a fresh session for the best results
+   Standard: Plus/Moderato and above; Highspeed: Pro/Allegretto and above
+
+   No session yet — one will be created on your first message.
+   [loop_control] 'max_retries_per_step' is deprecated and no longer used; rename it to 'max_attempts_per_step'. Run
+ /update-config to fix it.
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ > /                                                                                                                │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ │   → yolo                            Ask When Needed mode: routine edits and commands run automatically; risky      │
+ │                                     actions, questions, and plans still ask.                                       │
+ │     model                           Switch LLM model                                                               │
+ │     permission                      Select permission mode                                                         │
+ │     plan                            Toggle plan mode                                                               │
+ │     settings                        Open TUI settings                                                              │
+ │     (1/98)                                                                                                         │
+ K2.8 Preview thinking: max  …/3280b1f9-af7a-40d3-884c-123934319c77/scratchpad/mockrepo  main [±]
+                                                                                                     context: 0% (0/1M)
