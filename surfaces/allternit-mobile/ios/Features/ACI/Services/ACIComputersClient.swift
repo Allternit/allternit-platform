@@ -18,6 +18,8 @@ final class ACIComputersClient: Sendable {
         case auth(Int)
         case server(String)
         case notAvailable
+        /// 409 from the host relay: the computer is asleep and is never woken to be read.
+        case asleep(ConsoleSnapshot?)
 
         var errorDescription: String? {
             switch self {
@@ -28,6 +30,7 @@ final class ACIComputersClient: Sendable {
                     : "This Allternit account can’t manage phones."
             case .server(let message): return message
             case .notAvailable: return "Not available on your account yet."
+            case .asleep: return "Asleep, not woken."
             }
         }
     }
@@ -237,6 +240,142 @@ final class ACIComputersClient: Sendable {
         return (envelope?.computers ?? []).compactMap(\.value)
     }
 
+    // MARK: Console detail (GET /api/v1/computers/:id/host/* and /metrics)
+
+    /// Contract `HostSnapshot`: the live read behind the detail Overview.
+    struct HostSnapshot: Decodable, Sendable, Equatable {
+        struct OS: Decodable, Sendable, Equatable { let name: String; let version: String?; let family: String?; let arch: String? }
+        struct CPU: Decodable, Sendable, Equatable { let percent: Double; let cores: Int? }
+        struct Memory: Decodable, Sendable, Equatable { let usedBytes: Double; let totalBytes: Double }
+        struct Disk: Decodable, Sendable, Equatable { let mount: String; let usedBytes: Double; let totalBytes: Double }
+        struct Net: Decodable, Sendable, Equatable { let rxBytesPerSec: Double; let txBytesPerSec: Double }
+        let sampledAt: String?
+        let uptimeSec: Double?
+        let os: OS?
+        let cpu: CPU
+        let memory: Memory
+        let disk: [Disk]
+        let net: Net?
+
+        var memoryPercent: Double { memory.totalBytes > 0 ? memory.usedBytes / memory.totalBytes * 100 : 0 }
+        var diskPercent: Double { disk.map { $0.totalBytes > 0 ? $0.usedBytes / $0.totalBytes * 100 : 0 }.max() ?? 0 }
+    }
+
+    struct HostService: Decodable, Sendable, Identifiable, Equatable {
+        let name: String
+        let unit: String
+        let state: String          // running | stopped | failed | unknown
+        let enabled: Bool?
+        let description: String?
+        let memoryBytes: Double?
+        var id: String { unit }
+    }
+
+    struct HostPort: Decodable, Sendable, Identifiable, Equatable {
+        let port: Int
+        let `protocol`: String
+        let address: String?
+        let process: String?
+        let exposure: String       // loopback | lan | public
+        var id: String { "\(`protocol`)-\(port)-\(address ?? "")" }
+    }
+
+    struct LogLine: Decodable, Sendable, Identifiable, Equatable {
+        let ts: String
+        let unit: String
+        let level: String          // debug | info | warn | error
+        let message: String
+        var id: String { "\(ts)-\(unit)-\(message.hashValue)" }
+    }
+
+    /// Contract `MetricSeries`; `points` are `[ISO timestamp, value]` pairs, oldest first.
+    struct MetricSeries: Decodable, Sendable, Equatable {
+        let metric: String         // cpu | memory | disk | net_rx | net_tx
+        let values: [Double]
+
+        private enum CodingKeys: String, CodingKey { case metric, points }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            metric = try c.decode(String.self, forKey: .metric)
+            var out: [Double] = []
+            var list = try c.nestedUnkeyedContainer(forKey: .points)
+            while !list.isAtEnd {
+                var pair = try list.nestedUnkeyedContainer()
+                _ = try? pair.decode(String.self)
+                if let v = try? pair.decode(Double.self) { out.append(v) }
+            }
+            values = out
+        }
+    }
+
+    private struct ServicesEnvelope: Decodable { let services: [ACILossy<HostService>]? }
+    private struct PortsEnvelope: Decodable { let ports: [ACILossy<HostPort>]? }
+    private struct MetricsEnvelope: Decodable { let series: [ACILossy<MetricSeries>]? }
+
+    private func hostPath(_ id: String, _ tail: String) -> String {
+        "api/v1/computers/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)/\(tail)"
+    }
+
+    func hostSnapshot(id: String) async throws -> HostSnapshot {
+        try JSONDecoder().decode(HostSnapshot.self, from: try await cloud(hostPath(id, "host/snapshot")))
+    }
+
+    func hostServices(id: String) async throws -> [HostService] {
+        let env = try? JSONDecoder().decode(ServicesEnvelope.self, from: try await cloud(hostPath(id, "host/services")))
+        return (env?.services ?? []).compactMap(\.value)
+    }
+
+    func hostPorts(id: String) async throws -> [HostPort] {
+        let env = try? JSONDecoder().decode(PortsEnvelope.self, from: try await cloud(hostPath(id, "host/ports")))
+        return (env?.ports ?? []).compactMap(\.value)
+    }
+
+    func metrics(id: String) async throws -> [MetricSeries] {
+        let data = try await cloud(hostPath(id, "metrics?window=24h"))
+        let decoder = JSONDecoder()
+        if let rows = try? decoder.decode([ACILossy<MetricSeries>].self, from: data) { return rows.compactMap(\.value) }
+        let env = try? decoder.decode(MetricsEnvelope.self, from: data)
+        return (env?.series ?? []).compactMap(\.value)
+    }
+
+    /// Live log lines for one unit over SSE (`GET host/logs/stream?unit=`). The
+    /// stream ends when the caller's task is cancelled; lines are never stored.
+    func logStream(id: String, unit: String) -> AsyncThrowingStream<LogLine, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var comps = URLComponents(url: AppConfig.cloudAPIBaseURL.appendingPathComponent(hostPath(id, "host/logs/stream")), resolvingAgainstBaseURL: false)
+                    comps?.queryItems = [URLQueryItem(name: "unit", value: unit)]
+                    guard let url = comps?.url else { throw Failure.server("Couldn't load this. Try again.") }
+                    var request = URLRequest(url: url)
+                    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    request.timeoutInterval = 3600
+                    let token: String?
+                    if let clerk = try await AuthManager.shared.getToken() { token = clerk } else { token = try await AuthManager.shared.effectiveToken() }
+                    guard let token, !token.isEmpty else { throw Failure.signedOut }
+                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                        var body = Data()
+                        for try await b in bytes { body.append(b); if body.count > 4096 { break } }
+                        try Self.check(response, data: body)
+                    }
+                    for try await line in bytes.lines {
+                        guard line.hasPrefix("data:") else { continue }
+                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                        if let d = payload.data(using: .utf8), let l = try? JSONDecoder().decode(LogLine.self, from: d) {
+                            continuation.yield(l)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     // MARK: Plumbing
 
     private func cloud(_ path: String, method: String = "GET", body: Data? = nil, authFailure: Bool = false) async throws -> Data {
@@ -271,8 +410,14 @@ final class ACIComputersClient: Sendable {
     private static func check(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { throw Failure.server("Couldn't load this. Try again.") }
         guard (200...299).contains(http.statusCode) else {
-            if [404, 501].contains(http.statusCode), http.url?.path.hasSuffix("computers/console") == true {
+            let path = http.url?.path ?? ""
+            if [404, 501].contains(http.statusCode),
+               path.hasSuffix("computers/console") || path.contains("/host/") || path.hasSuffix("/metrics") {
                 throw Failure.notAvailable
+            }
+            if http.statusCode == 409, path.contains("/host/") || path.hasSuffix("/metrics") {
+                struct Asleep: Decodable { let lastSample: ConsoleSnapshot? }
+                throw Failure.asleep((try? JSONDecoder().decode(Asleep.self, from: data))?.lastSample)
             }
             struct Body: Decodable { let detail: String?; let message: String?; let error: String? }
             let body = try? JSONDecoder().decode(Body.self, from: data)
