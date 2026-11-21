@@ -11,6 +11,7 @@ struct BotHomeView: View {
     @StateObject private var hubStore = AgentHubStore.shared
     @StateObject private var modelStore = ModelStore.shared
     @StateObject private var artifactStore = ArtifactLibraryStore.shared
+    @StateObject private var runtimeRegistry = RuntimeRegistryStore.shared
     @EnvironmentObject private var agentModeStore: AgentModeStore
     @EnvironmentObject private var modeStore: AppModeStore
 
@@ -840,6 +841,19 @@ struct BotHomeView: View {
 
     // MARK: - Config card
 
+    /// "Codex · GPT-5", or "Run by <Vendor>" for a Connected bot.
+    private var brainSummary: String {
+        if let vendor = BotBrainPickerSheet.connectedVendor(agent.config) { return "Run by \(vendor)" }
+        let brain = RuntimeRegistry.resolveRuntime(agent.config?["botBrain"]?.jObject ?? [:], in: runtimeRegistry.runtimes)
+        let runtimeId = brain["runtime"]?.jString ?? "allternit"
+        let runtimeName = runtimeId == "custom" ? "Custom harness" : (runtimeRegistry.runtime(runtimeId)?.name ?? runtimeId)
+        let ref = brain["modelRef"]?.jObject
+        let provider = ref?["providerID"]?.jString ?? agent.provider
+        let model = ref?["modelID"]?.jString ?? agent.model
+        let brainName = model.isEmpty ? "Default" : (modelStore.models.first { $0.id == "\(provider)/\(model)" }?.name ?? model)
+        return "\(runtimeName) · \(brainName)"
+    }
+
     private var configCard: some View {
         BotCard(title: "Config", icon: "gearshape.fill", accent: accentColor) {
             VStack(spacing: 0) {
@@ -847,7 +861,7 @@ struct BotHomeView: View {
                     hapticLight()
                     isModelPickerPresented = true
                 }) {
-                    configRow(icon: "cpu", title: "Brain", value: agent.model.isEmpty ? "Default" : "\(agent.provider)/\(agent.model)")
+                    configRow(icon: "cpu", title: "Runtime · Brain", value: brainSummary)
                 }
 
                 Divider().background(Theme.borderWarmSubtle)
