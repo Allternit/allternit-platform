@@ -1,0 +1,7 @@
+allternit-api                    RUNNING   pid 142, uptime 1 day, 2:03:04
+browser:chrome                   RUNNING   pid 188, uptime 0:12:30
+novnc                            STOPPED   Nov 20 10:00 AM
+vnc                              FATAL     Exited too quickly (process log may have details)
+cleanup                          EXITED    Nov 20 09:00 AM
+worker                           BACKOFF   Exited too quickly (process log may have details)
+starter                          STARTING

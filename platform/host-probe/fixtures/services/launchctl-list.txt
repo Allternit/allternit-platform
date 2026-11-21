@@ -1,0 +1,9 @@
+PID	Status	Label
+412	0	com.allternit.desktop.helper
+-	0	com.apple.Spotlight
+501	0	com.apple.Finder
+-	78	homebrew.mxcl.postgresql@16
+-	0	com.docker.helper
+-	-9	com.example.crashy
+-	0	application.com.apple.Safari.1234.5678
+-	0	0x10005f0a0.anonymous.zsh
