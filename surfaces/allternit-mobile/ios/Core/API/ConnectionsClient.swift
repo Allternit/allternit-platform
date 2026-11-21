@@ -246,7 +246,93 @@ enum ConnTarget: Equatable, Sendable {
     case runtime(String)
 }
 
+/// One entry of `GET /api/v1/connections/catalog` (contract §11): a
+/// connection that isn't a row on the page yet. Lenient like `ConnectionWire`.
+struct ConnCatalogEntry: Decodable, Identifiable, Equatable, Sendable {
+    var id: String
+    var group: String
+    var name: String
+    var blurb: String?
+    var category: String?
+    var ways: [String] = []
+    var runsOn: String?
+    var connectorId: String?
+    var keyPage: String?
+    var logo: String?
+    var available: Bool = true
+    var unavailableReason: String?
+    var fallbacks: [String] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case id, group, name, blurb, category, ways, logo, available, fallbacks
+        case runsOn = "runs_on", connectorId = "connector_id", keyPage = "key_page", unavailableReason = "unavailable_reason"
+    }
+
+    init(id: String, group: String, name: String, blurb: String? = nil, category: String? = nil, ways: [String] = [],
+         connectorId: String? = nil, available: Bool = true, unavailableReason: String? = nil, fallbacks: [String] = []) {
+        self.id = id
+        self.group = group
+        self.name = name
+        self.blurb = blurb
+        self.category = category
+        self.ways = ways
+        self.connectorId = connectorId
+        self.available = available
+        self.unavailableReason = unavailableReason
+        self.fallbacks = fallbacks
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        group = ((try? c.decodeIfPresent(String.self, forKey: .group)) ?? nil) ?? ""
+        name = ((try? c.decodeIfPresent(String.self, forKey: .name)) ?? nil) ?? id
+        blurb = try? c.decodeIfPresent(String.self, forKey: .blurb)
+        category = try? c.decodeIfPresent(String.self, forKey: .category)
+        ways = ((try? c.decodeIfPresent([String].self, forKey: .ways)) ?? nil) ?? []
+        runsOn = try? c.decodeIfPresent(String.self, forKey: .runsOn)
+        connectorId = try? c.decodeIfPresent(String.self, forKey: .connectorId)
+        keyPage = try? c.decodeIfPresent(String.self, forKey: .keyPage)
+        logo = try? c.decodeIfPresent(String.self, forKey: .logo)
+        available = ((try? c.decodeIfPresent(Bool.self, forKey: .available)) ?? nil) ?? true
+        unavailableReason = try? c.decodeIfPresent(String.self, forKey: .unavailableReason)
+        fallbacks = ((try? c.decodeIfPresent([String].self, forKey: .fallbacks)) ?? nil) ?? []
+    }
+
+    /// A key provider: connects in the key sheet.
+    var isKey: Bool { id.hasSuffix("-key") }
+}
+
+/// One page of the catalog. `counts` follow `q` but not `group`; a
+/// `limit=0` call carries only `counts`.
+struct ConnCatalogPage: Decodable, Sendable {
+    var total: Int
+    var nextCursor: String?
+    var counts: [String: Int]
+    var entries: [ConnCatalogEntry]
+
+    private enum CodingKeys: String, CodingKey { case total, counts, entries, nextCursor = "next_cursor" }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        entries = ((try? c.decodeIfPresent([ConnCatalogEntry].self, forKey: .entries)) ?? nil) ?? []
+        total = ((try? c.decodeIfPresent(Int.self, forKey: .total)) ?? nil) ?? entries.count
+        nextCursor = try? c.decodeIfPresent(String.self, forKey: .nextCursor)
+        counts = ((try? c.decodeIfPresent([String: Int].self, forKey: .counts)) ?? nil) ?? [:]
+    }
+}
+
 enum ConnectionsMerge {
+    /// Contract §11 client rules: drop entries already on the page and
+    /// entries whose first way this app can't run.
+    static func catalogExtras(_ entries: [ConnCatalogEntry], listed: Set<String>) -> [ConnCatalogEntry] {
+        entries.filter { e in
+            guard !listed.contains(e.id), !listed.contains(e.connectorId ?? e.id) else { return false }
+            guard let first = e.ways.first else { return true }
+            return ConnWay(rawValue: first) != nil
+        }
+    }
+
     /// One list from both sources (contract §3): unknown ids are dropped, a
     /// runtime row replaces a cloud row with the same id only when it is
     /// `on`, and a runtime row with no cloud row is used as it is.
@@ -279,11 +365,12 @@ enum ConnectionsClient {
     /// ignore caps they don't know.
     static let cloudQuery = [URLQueryItem(name: "caps", value: "runner")]
 
-    private static func send(_ target: ConnTarget, _ rest: String = "", method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
+    private static func send(_ target: ConnTarget, _ rest: String = "", method: String = "GET", body: [String: Any]? = nil,
+                             query: [URLQueryItem] = []) async throws -> Data {
         let client = APIClient.shared
         var full = url(target, rest)
         if target == .cloud, var components = URLComponents(url: full, resolvingAgainstBaseURL: false) {
-            components.queryItems = cloudQuery
+            components.queryItems = cloudQuery + query
             full = components.url ?? full
         }
         var request = try await client.authorizedRequest(url: full, method: method)
@@ -316,6 +403,17 @@ enum ConnectionsClient {
 
     static func list(_ target: ConnTarget) async throws -> [ConnectionWire] {
         try decode(ConnectionsEnvelope.self, try await send(target)).connections
+    }
+
+    /// `GET /api/v1/connections/catalog` (contract §11), cloud-api only.
+    /// `limit: 0` answers only the per-group counts.
+    static func catalog(group: ConnGroup?, q: String = "", cursor: String? = nil, limit: Int = 24) async throws -> ConnCatalogPage {
+        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        if let group { query.append(URLQueryItem(name: "group", value: group.rawValue)) }
+        let trimmed = String(q.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().prefix(64))
+        if !trimmed.isEmpty { query.append(URLQueryItem(name: "q", value: trimmed)) }
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try decode(ConnCatalogPage.self, try await send(.cloud, "catalog", query: query))
     }
 
     /// `acceptDisclosure` is the version the person just accepted (runner rows).

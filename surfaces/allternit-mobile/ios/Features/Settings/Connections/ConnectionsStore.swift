@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import UIKit
 
 /// The live connect-kit list for Settings › Connections and first-run setup.
 /// Reads cloud-api and the active computer, merges them (contract §3), and
@@ -26,6 +27,13 @@ final class ConnectionsStore: ObservableObject {
     @Published private(set) var androidPhoneName: String?
 
     var computerOnline: Bool { runtimeId != nil }
+
+    /// Per-group catalog counts from one `limit=0` call (contract §11). nil
+    /// while unknown or when the call failed: then every More tile hides.
+    @Published private(set) var catalogCounts: [String: Int]?
+    /// Apps connected from More (connectors on the computer that aren't base
+    /// rows). Shown as normal rows in Apps so they don't vanish (D4).
+    @Published private(set) var promotedApps: [ConnEntry] = []
 
     private var deviceWatch: AnyCancellable?
 
@@ -70,7 +78,53 @@ final class ConnectionsStore: ObservableObject {
         }
         runtimeId = answered
         androidPhoneName = (try? await ACIComputersClient.shared.listPhones())?.first(where: \.isAndroidApp)?.name
+        // Counts don't hold up the page; a failure only hides the More tiles.
+        Task { await loadCatalogCounts() }
+        await refreshPromotedApps()
     }
+
+    // MARK: - Catalog ("More", contract §11)
+
+    func loadCatalogCounts() async {
+        catalogCounts = (try? await ConnectionsClient.catalog(group: nil, limit: 0))?.counts
+    }
+
+    /// Does this group have a More tile? Only when the server says it has extras.
+    func hasMore(_ group: ConnGroup) -> Bool {
+        (catalogCounts?[group.rawValue] ?? 0) > 0
+    }
+
+    /// Every id already on the page, so More never lists it twice. The
+    /// Gemini row is the Google AI Studio key.
+    var listedIds: Set<String> {
+        var ids = Set(ConnectionsCatalog.entries.map(\.id)).union(promotedApps.map(\.id))
+        if ids.contains("gemini") { ids.insert("google-key") }
+        return ids
+    }
+
+    /// One page of More for a group, minus what the page already lists.
+    func catalogPage(group: ConnGroup?, q: String, cursor: String?) async throws -> (entries: [ConnCatalogEntry], page: ConnCatalogPage) {
+        let page = try await ConnectionsClient.catalog(group: group, q: q, cursor: cursor)
+        return (ConnectionsMerge.catalogExtras(page.entries, listed: listedIds), page)
+    }
+
+    /// Connected connectors on the active computer that aren't base rows
+    /// become Apps rows. With no computer the last list stays.
+    func refreshPromotedApps() async {
+        guard runtimeId != nil, let connectors = try? await ConnectorsClient().listConnectors() else { return }
+        let baseNames = Set(ConnectionsCatalog.entries.map { $0.name.lowercased() })
+        promotedApps = connectors
+            .filter { $0.isConnected && !ConnectionsCatalog.knownIds.contains($0.id) && !baseNames.contains($0.name.lowercased()) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            .map { c in
+                let asset = "applogo-\(c.id)"
+                return ConnEntry(id: c.id, group: .apps, name: c.name,
+                                 logo: UIImage(named: asset) != nil ? .asset(asset) : .symbol("square.grid.2x2"),
+                                 blurb: c.category, ways: [.oauth])
+            }
+    }
+
+    func promotedApp(_ id: String) -> ConnEntry? { promotedApps.first { $0.id == id } }
 
     private static func capture<T>(_ work: @escaping @Sendable () async throws -> T) async -> Result<T, Error> {
         do { return .success(try await work()) } catch { return .failure(error) }
@@ -80,6 +134,9 @@ final class ConnectionsStore: ObservableObject {
 
     /// The merged row, or the catalog's fallback when the server sent none.
     func row(_ id: String) -> ConnectionWire {
+        if let app = promotedApp(id) {
+            return ConnectionWire(id: app.id, state: .on, found: app.blurb, source: runtimeId.map { "runtime:\($0)" })
+        }
         var row = rows[id] ?? ConnectionsCatalog.fallbackRow(id, computerOnline: computerOnline)
         applyDeviceFacts(&row)
         if connecting.contains(id), row.state != .on { row.state = .connecting }
