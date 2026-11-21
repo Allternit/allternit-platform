@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.Haptics
@@ -457,40 +458,73 @@ internal fun ConnectionRow(
     onFallback: (String) -> Unit,
 ) {
     val c = setupColors
-    val r = store.row(entry.id)
-    val available = store.isAvailable(entry.id)
-    val status = if (!available) store.unavailableReason(entry.id) else store.statusLine(entry)
     Row(
         Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 12.dp, vertical = 10.dp).testTag("conn-row-${entry.id}"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        val logoKey = ConnectionsCatalog.logoKey(entry.id)
-        if (logoKey != null) {
-            com.allternit.core.design.AppLogo(entry.name, id = logoKey, size = 34.dp)
-        } else Box(
-            Modifier.size(34.dp).background(c.card, RoundedCornerShape(9.dp)).border(1.dp, c.line, RoundedCornerShape(9.dp)),
-            contentAlignment = Alignment.Center,
-        ) { Text(entry.mono, style = mono(13.sp, FontWeight.Bold), color = c.ink) }
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(entry.name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.ink, maxLines = 1)
-                if (tag != null) Text(tag, fontSize = 11.sp, color = c.okFg, modifier = Modifier.background(c.okBg, CircleShape).padding(horizontal = 7.dp, vertical = 2.dp))
-                else if (entry.isNew && r.state != ConnState.On) Text("New", fontSize = 11.sp, color = c.sub, modifier = Modifier.background(c.fill2, CircleShape).padding(horizontal = 7.dp, vertical = 2.dp))
-            }
-            Text(status, fontSize = 12.5.sp, color = if (r.state == ConnState.Needs) c.errFg else c.sub)
-            if (entry.id == "claude-org" && available && r.state == ConnState.Off) {
-                Text(ConnectionsCatalog.CLAUDE_ORG_NOTE, fontSize = 12.sp, lineHeight = 16.sp, color = c.sub, modifier = Modifier.padding(top = 2.dp))
-            }
-        }
-        when {
-            trailing != null -> trailing()
-            r.state == ConnState.Connecting -> CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = c.sub)
-            !available -> r.fallbacks.firstOrNull()?.let { f -> SetupQuietButton(ConnectionsCatalog.fallbackLabel(f)) { onFallback(f) } }
-            entry.way == ConnWay.Included -> Text("Included", fontSize = 14.sp, color = c.sub, modifier = Modifier.clickable(onClick = onConnect).padding(8.dp))
-            r.state == ConnState.Needs -> SetupQuietButton("Reconnect", onClick = onConnect)
-            else -> SetupQuietButton("Connect", onClick = onConnect)
-        }
+        ConnLogo(entry)
+        Column(Modifier.weight(1f)) { ConnStatusLines(entry, store, tag) }
+        val wrapped: (@Composable (Modifier) -> Unit)? = if (trailing != null) { _ -> trailing() } else null
+        ConnRowTrailing(entry, store, wrapped, onConnect, onFallback)
+    }
+}
+
+/** The 34dp logo tile of a connection, or its monogram tile when it has no logo. */
+@Composable
+internal fun ConnLogo(entry: ConnEntry) {
+    val c = setupColors
+    val logoKey = ConnectionsCatalog.logoKey(entry.id)
+    if (logoKey != null) {
+        com.allternit.core.design.AppLogo(entry.name, id = logoKey, size = 34.dp)
+    } else Box(
+        Modifier.size(34.dp).background(c.card, RoundedCornerShape(9.dp)).border(1.dp, c.line, RoundedCornerShape(9.dp)),
+        contentAlignment = Alignment.Center,
+    ) { Text(entry.mono, style = mono(13.sp, FontWeight.Bold), color = c.ink) }
+}
+
+/** Name (with "New" or a tag) and the status line, shared by [ConnectionRow] and the Grid/Deck card (iOS ConnStatusLines). */
+@Composable
+internal fun ConnStatusLines(entry: ConnEntry, store: ConnectionsStore, tag: String?, maxLines: Int = Int.MAX_VALUE) {
+    val c = setupColors
+    val r = store.row(entry.id)
+    val available = store.isAvailable(entry.id)
+    val status = if (!available) store.unavailableReason(entry.id) else store.statusLine(entry)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(entry.name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        if (tag != null) Text(tag, fontSize = 11.sp, color = c.okFg, modifier = Modifier.background(c.okBg, CircleShape).padding(horizontal = 7.dp, vertical = 2.dp))
+        else if (entry.isNew && r.state != ConnState.On) Text("New", fontSize = 11.sp, color = c.sub, modifier = Modifier.background(c.fill2, CircleShape).padding(horizontal = 7.dp, vertical = 2.dp))
+    }
+    Text(status, fontSize = 12.5.sp, color = if (r.state == ConnState.Needs) c.errFg else c.sub, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+    if (entry.id == "claude-org" && available && r.state == ConnState.Off) {
+        Text(ConnectionsCatalog.CLAUDE_ORG_NOTE, fontSize = 12.sp, lineHeight = 16.sp, color = c.sub, maxLines = maxLines, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+/**
+ * The one action of a connection: Disconnect (the caller's [trailing]), progress, the fallback, Included, Reconnect or Connect.
+ * With [fill] the buttons take the full width of a card (iOS ConnRowTrailing(fill: true)).
+ */
+@Composable
+internal fun ConnRowTrailing(
+    entry: ConnEntry,
+    store: ConnectionsStore,
+    trailing: (@Composable (Modifier) -> Unit)?,
+    onConnect: () -> Unit,
+    onFallback: (String) -> Unit,
+    fill: Boolean = false,
+) {
+    val c = setupColors
+    val r = store.row(entry.id)
+    val available = store.isAvailable(entry.id)
+    val m = if (fill) Modifier.fillMaxWidth() else Modifier
+    when {
+        trailing != null -> trailing(m)
+        r.state == ConnState.Connecting -> CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = c.sub)
+        !available -> r.fallbacks.firstOrNull()?.let { f -> SetupQuietButton(ConnectionsCatalog.fallbackLabel(f), m) { onFallback(f) } }
+        entry.way == ConnWay.Included -> Text("Included", fontSize = 14.sp, color = c.sub, modifier = m.clickable(onClick = onConnect).padding(8.dp), textAlign = if (fill) androidx.compose.ui.text.style.TextAlign.Center else null)
+        r.state == ConnState.Needs -> SetupQuietButton("Reconnect", m, onClick = onConnect)
+        else -> SetupQuietButton("Connect", m, onClick = onConnect)
     }
 }
 
