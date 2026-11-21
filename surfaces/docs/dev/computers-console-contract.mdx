@@ -24,17 +24,26 @@ Status: contract agreed 2026-11-20. Routes are being built in lanes and are not 
 
 ## Node routes (loopback `/v1/host/*`)
 
-Served by `host-probe` on every runtime (allternit-api and the ao shim). Read routes need no approval. The one write route is `POST /v1/host/actions`.
+Served by the shared `host_probe::http` router (feature `http`). **Shipped in allternit-api** (step 1.8); the ao shim mounts the same router in a follow-up. Read routes need no approval. The one write route is `POST /v1/host/actions`.
 
 | Route | Returns |
 |---|---|
 | `GET /v1/host/snapshot` | `HostSnapshot` |
-| `GET /v1/host/services` | `{ services: HostService[] }` |
-| `GET /v1/host/ports` | `{ ports: HostPort[] }` |
-| `GET /v1/host/updates` | `{ updates: HostUpdate[] }` |
-| `GET /v1/host/findings` | `{ findings: HostFinding[] }` |
-| `GET /v1/host/logs/stream?unit=` | Server-sent events, one `LogLine` JSON object per `data:` line |
+| `GET /v1/host/services` | `{ services: HostService[], providers }` |
+| `GET /v1/host/ports` | `{ ports: HostPort[], sources }` |
+| `GET /v1/host/updates` | `{ updates: HostUpdate[], sources, lastRefreshed?, stale? }` |
+| `GET /v1/host/findings` | `{ findings: HostFinding[], sources?, generatedAt, ageSec, refreshing }` (cached, see below) |
+| `GET /v1/host/logs/stream?unit=&provider?=` | Server-sent events, one `LogLine` JSON object per `data:` line |
+| `GET /v1/host/logs/tail?unit=&lines=` | `{ lines: LogLine[] }` (default 100, at most 1000) |
 | `POST /v1/host/actions` | `HostActionResult` |
+| `GET /v1/host/elevation` | `ElevationStatus` (installed, outdated, missing, notNeeded, unsupported) |
+| `GET /v1/host/elevation/plan` | `SetupPlan`: every file, command and allowed action, shown before approval |
+| `POST /v1/host/elevation/setup` | `ElevationStatus` after one OS admin prompt. 409 `{ error: "needs_terminal", command }` on a headless Linux server, 409 `cancelled`, 503 `helper_missing` |
+| `GET /v1/host/forward?port=N` | WebSocket bridged to TCP `127.0.0.1:N` (see port forward below) |
+
+**Who may call.** A call that came over the relay (`x-allternit-relayed`) must carry the cloud's relay signature (`x-allternit-runtime-sig`, `-ts`, `x-allternit-owner`, keyed by the runtime's relay key, path without query). The cloud adds it only after its caller check and the pairing's `runtime:execute` check, so an unsigned or badly signed relayed call gets 401 `relay_unauthorized`, and an unpaired runtime 503 `not_paired`. A local call (the Desktop UI on loopback) passes the same auth as every other protected local route. The forward socket is the exception: the relay opens it with no headers, and the cloud's single-use ticket is its gate.
+
+**Findings cache.** The updates read alone takes 45 to 60 s on dnf and Windows, so findings are never computed inside a request. The node serves its cached report with `generatedAt` (ISO time of the scan) and `ageSec`, and starts a background rescan when the report is older than 10 minutes or an action ran (`refreshing: true`). Before the first scan finishes the answer is **202** with `findings: []` and `generatedAt: null`. Clients show that as "checking", never as "no problems".
 
 ### HostSnapshot
 
@@ -64,7 +73,9 @@ Linux uses systemd units, macOS uses launchd jobs, Windows uses services.
 
 ### HostFinding
 
-`{ id: string, severity: 'info' | 'warning' | 'critical', category: 'disk' | 'security' | 'service' | 'update' | 'config', title: string, detail: string, suggestedAction?: HostAction }`
+`{ id: string, severity: 'info' | 'warning' | 'critical', category: 'disk' | 'security' | 'service' | 'update' | 'config', title: string, detail: string, suggestedAction?: HostAction, reclaimBytes?: number }`
+
+`reclaimBytes` is set on `space.clean` findings (`disk-full:<mount>` and `space-clean:<item>`): the estimated bytes the suggested clean-up frees. It is only sent when there is an estimate.
 
 ### LogLine
 
@@ -83,12 +94,14 @@ The action list is fixed:
 | `service.start` | service unit name |
 | `service.stop` | service unit name |
 | `service.restart` | service unit name |
-| `port.free` | port number (stops the owning process) |
+| `port.free` | port number (stops the owning process; when the port belongs to a known service, it **stops that service**, and the approval sheet must say so) |
 | `updates.install` | update id, or `all-security` |
 | `space.clean` | clean-up item id from a finding |
 | `snippet.run` | saved snippet id |
 
-An unknown `type` returns 400. A missing or unapproved `approval_id` returns 403 and changes nothing.
+An unknown `type` returns 400. A missing or unapproved `approval_id` returns 403 `{ error: "not_approved" }` and changes nothing. The node accepts only the cloud's `ap1.<jti>.<exp>.<utag>.<sig>` ids: it recomputes the HMAC with its relay key, its runtime id and the request's `type` and `target`, rejects an expired id, and claims the id once in its change store, so a replay is 403. An unpaired node refuses every action. An action that needs admin rights the node does not have returns 403 `{ error: "needs_elevation" }` (set up admin access with `/v1/host/elevation/setup`).
+
+The runtime presence heartbeat (every 60 s) and the paired report carry the `/v1/host/snapshot` body as `hostSample`.
 
 ## Cloud routes (allternit-cloud-api)
 

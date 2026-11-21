@@ -243,6 +243,7 @@ dependencies = [
  "hex",
  "hkdf 0.12.4",
  "hmac 0.12.1",
+ "host-probe",
  "hostname",
  "http-body-util",
  "image",
@@ -7114,13 +7115,20 @@ dependencies = [
 name = "host-probe"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "chrono",
  "dirs 5.0.1",
+ "futures-util",
+ "hex",
+ "hmac 0.12.1",
  "regex",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sysinfo",
  "thiserror 1.0.69",
+ "tokio",
+ "tower 0.5.3",
  "uuid",
  "windows-sys 0.59.0",
 ]
