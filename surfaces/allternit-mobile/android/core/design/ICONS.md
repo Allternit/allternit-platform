@@ -112,6 +112,9 @@ The generator is `core/design/tools/gen-icons.mjs`.
 | `gearshape` | `gear` | `ph_gear` |
 | `globe` | `globe` | `ph_globe` |
 | `graduationcap` | `graduation-cap` | `ph_graduation_cap` |
+| `hand.point.up.left` | `hand-pointing` | `ph_hand_pointing` |
+| `scroll` | `scroll` | `ph_scroll` |
+| `square.split.diagonal.2x2` | `squares-four` | `ph_squares_four` |
 | `hand.raised` | `hand` | `ph_hand` |
 | `hand.raised.fill` | `hand-fill` | `ph_hand_fill` |
 | `hand.tap` | `hand-tap` | `ph_hand_tap` |
