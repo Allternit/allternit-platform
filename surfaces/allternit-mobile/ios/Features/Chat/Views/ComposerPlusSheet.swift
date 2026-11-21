@@ -575,7 +575,7 @@ struct ComposerPlusSheet: View {
             PlusGroup {
                 PlusRow(icon: "plus", title: "Add a computer", chevron: true) { isConnectComputerPresented = true }
             }
-            Text("Open Allternit Desktop and sign in with this account, or run `ao fabric pair` in a terminal.")
+            Text("Open Allternit Desktop and sign in with this account, or run `gizzi pair` in a terminal.")
                 .font(.system(size: 12))
                 .foregroundColor(Color("TextSecondary"))
                 .padding(.horizontal, 6)

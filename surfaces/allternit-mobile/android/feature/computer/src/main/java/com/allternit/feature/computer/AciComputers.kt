@@ -172,7 +172,7 @@ private fun AciPairComputerSheet(onDismiss: () -> Unit) {
                 Step(1, buildAnnotatedString { append("Install Allternit Desktop on the computer.") })
                 Step(2, buildAnnotatedString {
                     append("Open it and sign in with the same account you use on this phone. Or open a terminal on the computer and run ")
-                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp)) { append("ao fabric pair") }
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp)) { append("gizzi pair") }
                     append(".")
                 })
                 Step(3, buildAnnotatedString { append("Return to Computers on your phone. Tap your computer to open its live desktop.") })

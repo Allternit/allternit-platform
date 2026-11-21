@@ -417,7 +417,9 @@
               "reference/error-codes",
               "reference/status-enums",
               "reference/glossary",
-              "reference/changelog"
+              "reference/changelog",
+              "dev/computers-console-contract",
+              "dev/computer-pairing"
             ],
             "icon": "/icons/book.svg"
           },

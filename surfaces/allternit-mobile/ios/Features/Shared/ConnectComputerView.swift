@@ -33,7 +33,7 @@ struct ConnectComputerView: View {
 ///
 /// `showsPairPaths` (the Code sessions view's +, phone calm I9, A3): the top
 /// section becomes `ComputerConnectPanel`, the two real ways a computer pairs
-/// (Allternit Desktop sign-in, or `ao fabric pair` in a terminal). The list of
+/// (Allternit Desktop sign-in, or `gizzi pair` in a terminal). The list of
 /// computers under it stays the same.
 struct ConnectComputerSheet: View {
     var showsPairPaths: Bool = false
@@ -175,7 +175,7 @@ struct ConnectComputerSheet: View {
 enum ComputerPairing {
     /// The command the terminal path types. Real: the node's own pairing (A3,
     /// web `FABRIC_PAIR_COMMAND`).
-    static let fabricPairCommand = "ao fabric pair"
+    static let fabricPairCommand = "gizzi pair"
     /// Where Allternit Desktop downloads (the compute gate's default link).
     static let desktopDownloadURL = URL(string: "https://www.allternit.com/download")!
 }
@@ -184,7 +184,7 @@ enum ComputerPairing {
 /// `ComputerConnectPanel`):
 /// - From Allternit Desktop: open it on the computer and sign in with this
 ///   account. Signing in pairs it; there is no setting to turn on.
-/// - From a terminal: `ao fabric pair`, typed out once, with Copy.
+/// - From a terminal: `gizzi pair`, typed out once, with Copy.
 /// Then it watches `RuntimeRelayStore`: "Connected" shows only when the
 /// computer list gains an online computer, never from the animation.
 struct ComputerConnectPanel: View {
@@ -283,7 +283,7 @@ struct ComputerConnectPanel: View {
         }
     }
 
-    /// The dark terminal: traffic lights, Copy, and `~ $ ao fabric pair`.
+    /// The dark terminal: traffic lights, Copy, and `~ $ gizzi pair`.
     private var terminalCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
