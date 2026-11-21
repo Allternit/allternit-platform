@@ -794,6 +794,13 @@ struct ChatContentView: View {
             armedPhoneName: phoneRuns.armed?.name,
             onClearPhone: { phoneRuns.armed = nil }
         )
+        // Composer chip picks (runtime / brain) leave the save's warning or an
+        // unresolved refusal here, just above the composer.
+        .overlay(alignment: .top) {
+            if chatBot != nil {
+                BotSaveNoticeLayer().alignmentGuide(.top) { $0[.bottom] }
+            }
+        }
     }
 
     /// One feed row — extracted from `body` so the view stays under the

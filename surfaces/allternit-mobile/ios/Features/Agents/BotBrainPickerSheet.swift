@@ -59,6 +59,9 @@ struct BotBrainPickerSheet: View {
     @State private var note: String?
     @State private var isSaving = false
     @State private var saveError: String?
+    /// A 422 refusal still unresolved when the sheet closes: it moves to the
+    /// bot chat's toast so it isn't lost.
+    @State private var pendingRefusal: String?
     @State private var dirty = false
 
     /// Bot Home: picks save to the bot. The composer chips pass the layer
@@ -213,6 +216,11 @@ struct BotBrainPickerSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     header
+                        .onDisappear {
+                            if let pendingRefusal {
+                                BotSaveNotices.shared.post(.init(kind: .error, title: "Not saved", detail: pendingRefusal))
+                            }
+                        }
                     searchRow
                     rail
                     if let note {
@@ -627,16 +635,31 @@ struct BotBrainPickerSheet: View {
             config["botBrain"] = .object(finalBrain)
             config["agentView"] = .object(["view": .string(view), "look": .string(resolvedLook)])
             let ref = finalBrain["modelRef"]?.jObject
+            var body: [String: JSONValue] = ["config": .object(config)]
+            if let model = ref?["modelID"]?.jString { body["model"] = .string(model) }
+            if let provider = ref?["providerID"]?.jString { body["provider"] = .string(provider) }
             Task {
                 do {
-                    try await hubStore.updateAgent(id: agent.id, model: ref?["modelID"]?.jString,
-                                                   provider: ref?["providerID"]?.jString, config: config)
+                    // MeetAgentsAPI reads the response's `warnings`
+                    // (`runtime_not_installed`); the save stands and the
+                    // message shows as a toast in the bot chat.
+                    let warnings = try await MeetAgentsAPI.update(id: agent.id, body: body)
+                    _ = try? await hubStore.refreshAgent(id: agent.id)
                     agentModeStore.fetchAgentsIfNeeded(force: true)
+                    pendingRefusal = nil
+                    let lines = warnings.map(\.message).filter { !$0.isEmpty }
+                    if !lines.isEmpty {
+                        BotSaveNotices.shared.post(.init(kind: .info, title: "Saved", detail: lines.joined(separator: "\n")))
+                    }
                     dismiss()
-                } catch APIError.httpError(statusCode: 422, message: let message?) {
+                } catch let refusal as BotSaveRefusal {
                     // Server validation (plan_not_allowed_on_runtime, brain_not_fit,
                     // runtime_unknown): its `message` is the line to show.
+                    saveError = refusal.message
+                    pendingRefusal = refusal.message
+                } catch APIError.httpError(statusCode: 422, message: let message?) {
                     saveError = message
+                    pendingRefusal = message
                 } catch {
                     saveError = "Couldn't save. \(FriendlyErrorMessage.from(error.localizedDescription))"
                 }
@@ -858,5 +881,31 @@ struct BotBrainPickerSheet: View {
     /// `connectedVendor` for a bot record.
     static func connectedVendor(_ agent: AgentRecord) -> String? {
         connectedVendor(agent.config, botKind: agent.botKind)
+    }
+}
+
+
+// MARK: - Save notices (bot chat toast)
+
+/// What a layered-picker save leaves for the bot chat after the sheet closes:
+/// the server's `runtime_not_installed` warning, or a 422 refusal that was
+/// never resolved. Shown with the app's toast (`ACIToast`) above the composer.
+@MainActor
+final class BotSaveNotices: ObservableObject {
+    static let shared = BotSaveNotices()
+    @Published var message: ACIToast.Message?
+
+    func post(_ message: ACIToast.Message) {
+        withAnimation { self.message = message }
+    }
+}
+
+/// The bot chat's toast layer for `BotSaveNotices`.
+struct BotSaveNoticeLayer: View {
+    @ObservedObject private var notices = BotSaveNotices.shared
+
+    var body: some View {
+        ACIToast(message: $notices.message)
+            .animation(.easeOut(duration: 0.2), value: notices.message)
     }
 }
