@@ -5104,6 +5104,7 @@ pub(crate) mod pg_tests {
     const MIGRATION_081: &str = include_str!("../../migrations_pg/081_paired_cloud_computers.sql");
     const MIGRATION_CREDIT: &str = include_str!("../../migrations_pg/132_credit_computers.sql");
     const MIGRATION_PLAN_HOURS: &str = include_str!("../../migrations_pg/134_plan_computer_hours.sql");
+    const MIGRATION_153: &str = include_str!("../../migrations_pg/153_computers_console.sql");
 
     async fn test_pool() -> PgPool {
         let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
@@ -5196,6 +5197,9 @@ pub(crate) mod pg_tests {
         for sql in [MIGRATION_017, MIGRATION_066, MIGRATION_081] {
             apply_migration_sql(&pool, &schema, sql).await;
         }
+        // Computers console columns (location, template) the create path writes.
+        apply_migration_sql(&pool, &schema, MIGRATION_153).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_153).await;
         create_schedules_stub(&pool).await;
         sqlx::query("INSERT INTO users (id) VALUES ('user_1'), ('user_2')")
             .execute(&pool)
@@ -5385,6 +5389,14 @@ pub(crate) mod pg_tests {
         apply_migration_sql(pool, &schema, MIGRATION_014).await;
         apply_migration_sql(pool, &schema, MIGRATION_018).await;
         apply_migration_sql(pool, &schema, MIGRATION_019).await;
+        // Migration 153's provisioned_instances columns (location, template); its
+        // paired_computers half needs tables this helper does not create.
+        for col in ["location", "template"] {
+            sqlx::query(&format!("ALTER TABLE provisioned_instances ADD COLUMN IF NOT EXISTS {col} TEXT"))
+                .execute(pool)
+                .await
+                .unwrap();
+        }
         create_schedules_stub(pool).await;
         insert_host(pool, "host_a", 16, 32768, 200).await;
     }
