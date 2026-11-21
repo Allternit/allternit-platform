@@ -78,6 +78,9 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
     var openComputer by remember { mutableStateOf<ComputerRecord?>(null) }
     var detail by remember { mutableStateOf<AciDevice?>(null) }
     var refreshing by remember { mutableStateOf(false) }
+    // Account flag `computers_console` (iOS AccountFlagsClient): off = today's screen, unchanged.
+    var consoleOn by remember { mutableStateOf(false) }
+    LaunchedEffect(host.signedIn) { consoleOn = host.signedIn && AciApi.consoleFlag() }
     val workflowRuntime = devices?.firstOrNull { it.isOnline } ?: devices?.firstOrNull()
 
     suspend fun openDesktop(device: AciDevice) {
@@ -98,6 +101,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
             AciViewHeader("Computers")
             AciWideButton(DesignR.drawable.ph_plus, "Add a computer", "aciAddComputer") { pairOpen = true }
             AciWideButton(DesignR.drawable.ph_desktop, "View a computer's screen", "aciViewScreen") { pickerOpen = true }
+            if (consoleOn) AciConsoleSection()
             when {
                 devices == null -> Text("Loading computers…", color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp))

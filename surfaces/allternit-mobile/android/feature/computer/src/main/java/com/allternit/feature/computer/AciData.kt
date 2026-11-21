@@ -220,6 +220,31 @@ object AciApi {
         is RuntimeCall.Http -> Result.Failed(r.message?.takeIf { it.isNotBlank() } ?: if (r.status in 502..504) "This computer isn't responding." else "Could not load workflow specs.")
     }
 
+    /**
+     * `GET {cloud}/api/v1/computers/console` (Computers console contract). 404/501 means the backend
+     * is not live for this account yet: [CONSOLE_UNAVAILABLE].
+     */
+    suspend fun console(): Result<List<ConsoleComputer>> {
+        val url = config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/computers/console").build()
+        return when (val r = ApiCall.execute(okHttp, ApiJson.default, ApiCall.request("GET", url, null), JsonElement.serializer())) {
+            is ApiResult.Ok -> Result.Ok(r.value.listUnder("computers").mapNotNull { ConsoleComputer.parse(it) })
+            is ApiResult.Decode -> Result.Failed("Couldn't read the computers list. Try again.")
+            is ApiResult.HttpError -> when {
+                r.status == 404 || r.status == 501 -> Result.Failed(CONSOLE_UNAVAILABLE)
+                r.status == 401 -> Result.Failed("Sign in to Allternit to see your computers.")
+                else -> Result.Failed(r.message?.takeIf { it.isNotBlank() } ?: "Couldn't load your computers. Try again.")
+            }
+            is ApiResult.Network -> Result.Failed("You're offline. Check your connection and try again.")
+        }
+    }
+
+    /** Account flag `computers_console`: `GET {cloud}/api/v1/me/flags`, on when the key is present and not null (iOS AccountFlagsClient). */
+    suspend fun consoleFlag(): Boolean {
+        val url = config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/me/flags").build()
+        val r = ApiCall.execute(okHttp, ApiJson.default, ApiCall.request("GET", url, null), JsonElement.serializer())
+        return ((r as? ApiResult.Ok)?.value as? JsonObject)?.get("computers_console").let { it != null && it !is JsonNull }
+    }
+
     /** The account's cloud computers (`provisioned-instances`), for Restore points and backups. */
     suspend fun cloudComputers(): Result<List<CloudComputerSummary>> = when (val r = LibraryNet.get("provisioned-instances")) {
         is ApiResult.Ok -> Result.Ok(r.value.listUnder("instances").mapNotNull { o ->
