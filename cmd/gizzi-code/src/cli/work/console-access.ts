@@ -80,7 +80,7 @@ export function forwardSocketUrl(grant: ForwardGrant, base = cloudBase()): strin
   return u.toString()
 }
 
-type Conn = { ws?: WebSocket; pending: Uint8Array[] }
+type Conn = { ws?: WebSocket; pending: Uint8Array<ArrayBuffer>[] }
 
 /**
  * Listen on 127.0.0.1:localPort; each local connection mints a grant and
@@ -113,7 +113,7 @@ export async function runForward(id: string, remotePort: number, localPort: numb
           })
       },
       data(sock, chunk) {
-        if (sock.data.ws) sock.data.ws.send(chunk)
+        if (sock.data.ws) sock.data.ws.send(new Uint8Array(chunk))
         else sock.data.pending.push(new Uint8Array(chunk))
       },
       close(sock) {
