@@ -64,6 +64,12 @@ impl PlatformError {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request_error", code, message)
     }
 
+    /// 422 `invalid_request_error`: well-formed, but it breaks a rule (the
+    /// runtime rules: `runtime_unknown`, `brain_not_fit`, `plan_not_allowed_on_runtime`).
+    pub fn unprocessable(code: &str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request_error", code, message)
+    }
+
     pub fn authentication(code: &str, message: impl Into<String>) -> Self {
         Self::new(StatusCode::UNAUTHORIZED, "authentication_error", code, message)
     }

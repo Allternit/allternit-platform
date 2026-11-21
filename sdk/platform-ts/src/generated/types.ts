@@ -96,12 +96,35 @@ export type Agent = {
   transfer_targets: Array<string>;
   business_hours: (Record<string, unknown> | null);
   metadata: Record<string, unknown>;
+  runtime: AgentRuntime;
+  access: (AgentAccess | (unknown | null));
+  agent_view: (AgentView | (unknown | null));
   /**
    * `ready` once the project's hosted runtime holds the agent.
    */
   status: "pending" | "ready";
   created_at: string;
   updated_at: string;
+};
+
+/**
+ * The runtime that runs the agent: an id or alias from `GET /api/v1/runtimes`, stored as its id. Absent: `allternit`.
+ * Setting it checks the brain (`model`) against the runtime; a broken rule is `422` `runtime_unknown`,
+ * `brain_not_fit` or `plan_not_allowed_on_runtime`. Saves without it are never refused for it.
+ */
+export type AgentRuntime = string;
+
+/**
+ * How the agent's brain is paid for.
+ */
+export type AgentAccess = "plan" | "key" | "local" | "credits";
+
+/**
+ * How the agent's thread is shown. The request may also call it `agentView`.
+ */
+export type AgentView = {
+  view?: "allternit" | "runtime" | "split";
+  look?: "terminal" | "desktop";
 };
 
 export type KnowledgeFile = {
@@ -1118,6 +1141,9 @@ export type CreateAgentRequest = {
   transfer_targets?: Array<string>;
   business_hours?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  runtime?: AgentRuntime;
+  access?: AgentAccess;
+  agent_view?: AgentView;
 };
 
 export type CreateAgentResponse = Agent;
@@ -1135,6 +1161,9 @@ export type UpdateAgentRequest = {
   transfer_targets?: Array<string>;
   business_hours?: (Record<string, unknown> | null);
   metadata?: Record<string, unknown>;
+  runtime?: AgentRuntime;
+  access?: (AgentAccess | (unknown | null));
+  agent_view?: (AgentView | (unknown | null));
 };
 
 export type UpdateAgentResponse = Agent;
