@@ -731,6 +731,9 @@
 		C99E48C1FA052191753E2355 /* PauseControlIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CC9F781B0ADDE0BB8143AD /* PauseControlIntent.swift */; };
 		C9C85C7C7A13935A112A3B90 /* AllternitWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 68B1051892B0960972533D49 /* AllternitWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CA57CFBBCA4A665E137B9B0F /* ConnectionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BACE2EC435EF4B71CCFABF6A /* ConnectionsSettingsView.swift */; };
+		A4452EE08E2790BD8F99B6C3 /* ConnectionsMoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 574801A9C1E975C44963116C /* ConnectionsMoreView.swift */; };
+		D23753CB900FCFDB6EB693FC /* ConnectionsFilterPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBAA18FB9A9321626CCFBC74 /* ConnectionsFilterPopover.swift */; };
+		224C0159E199CFDF76F841B0 /* ConnectionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A4D14F637E7536D3E9DFA8 /* ConnectionCardView.swift */; };
 		CA807701EBE68F492B5E66FA /* PermissionPrimingSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE3CC250492B1313864FA19D /* PermissionPrimingSheet.swift */; };
 		CA99EF2AA35388EAAA43E977 /* BotWorkspaceFilesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F9086A857ADB6FDFADF8567 /* BotWorkspaceFilesSheet.swift */; };
 		CB75971075C518A40D5884CD /* ComputeGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AECD9F187CE85C55C5BED2 /* ComputeGateView.swift */; };
@@ -1649,6 +1652,9 @@
 		BA1F5C46AE2770C71DDB998A /* LoopDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopDetailView.swift; sourceTree = "<group>"; };
 		BA7A05D633BDBBDC4BBE5803 /* CustomizeScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomizeScreen.swift; sourceTree = "<group>"; };
 		BACE2EC435EF4B71CCFABF6A /* ConnectionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsSettingsView.swift; sourceTree = "<group>"; };
+		574801A9C1E975C44963116C /* ConnectionsMoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsMoreView.swift; sourceTree = "<group>"; };
+		BBAA18FB9A9321626CCFBC74 /* ConnectionsFilterPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsFilterPopover.swift; sourceTree = "<group>"; };
+		75A4D14F637E7536D3E9DFA8 /* ConnectionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionCardView.swift; sourceTree = "<group>"; };
 		BAFA87761BEFA07938710343 /* AccountSwitchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountSwitchModel.swift; sourceTree = "<group>"; };
 		BB1A0D0734D3D239827ECD6A /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		BB28044C9FF9A4AA4E34F6D4 /* MarketplaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketplaceStore.swift; sourceTree = "<group>"; };
@@ -2284,6 +2290,9 @@
 				8B46607C2326091D1F7A518E /* ConnectionRowView.swift */,
 				D3438C7C94D07CC1E6ADF7EA /* ConnectionsCatalog.swift */,
 				BACE2EC435EF4B71CCFABF6A /* ConnectionsSettingsView.swift */,
+				574801A9C1E975C44963116C /* ConnectionsMoreView.swift */,
+				BBAA18FB9A9321626CCFBC74 /* ConnectionsFilterPopover.swift */,
+				75A4D14F637E7536D3E9DFA8 /* ConnectionCardView.swift */,
 				166E02EACA2128AF485126BC /* ConnectionsStore.swift */,
 				F9DB5D5B70D22AF897292743 /* ConnectSheetView.swift */,
 			);
@@ -4585,6 +4594,9 @@
 				D41EE5F19C6E007BF0A26499 /* ConnectionsClient.swift in Sources */,
 				FCD226BE42D8C4C91A346B22 /* RuntimeRegistryClient.swift in Sources */,
 				CA57CFBBCA4A665E137B9B0F /* ConnectionsSettingsView.swift in Sources */,
+				A4452EE08E2790BD8F99B6C3 /* ConnectionsMoreView.swift in Sources */,
+				D23753CB900FCFDB6EB693FC /* ConnectionsFilterPopover.swift in Sources */,
+				224C0159E199CFDF76F841B0 /* ConnectionCardView.swift in Sources */,
 				7D9D90A5E6167D1FDB20CB36 /* ConnectionsStore.swift in Sources */,
 				D03140127825489A37768513 /* Connector.swift in Sources */,
 				91A9CC9F276FFA299E656E23 /* ConnectorsClient.swift in Sources */,
