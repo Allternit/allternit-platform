@@ -1,16 +1,15 @@
 Make an image or a video for the user. The result is saved to the session's Outputs and opens beside the chat.
 
 Lanes:
-- native (available now): you write the image or video as code; the user's Allternit app renders it in a sandbox (a PNG, or an MP4 with optional sound), and the render comes back to you to check. Costs nothing and works with any model.
-- subscription (images only): the user's connected image subscription makes the image on their Sessions computer. Pass prompt (and optionally provider). The user confirms every image in the app before anything is sent, and it can take a minute or two. If the result says the lane is not available, nothing was sent: offer the native lane or ask the user.
-- cloud / own_key: photoreal and model-generated images and footage (GPT Image, Higgsfield, Veo). Not available in this build yet. If the request needs photo-realistic output (real-looking people, places, products) and the subscription lane is not available, say that plainly and ask the user in the chat how they'd like to proceed, e.g. a stylized native version instead.
+- subscription (images only): use for photos, realistic scenes and illustration with a painterly look, when the person has ChatGPT connected on this computer and the chat is one the person sent. Pass prompt and provider "chatgpt" (or omit provider to use the first connected subscription that can). The user confirms every image in the app before anything is sent, and it can take a minute or two.
+- native (available now): you write the image or video as code; the user's Allternit app renders it in a sandbox (a PNG, or an MP4 with optional sound), and the render comes back to you to check. Costs nothing and works with any model. Use it for diagrams, UI mockups, charts and any picture that must contain exact text, and for all motion graphics.
+- cloud / own_key: photoreal and model-generated images and footage (GPT Image, Higgsfield, Veo). Not available in this build yet.
 
-Briefs and follow-ups
-- Write a full visual brief: subject, setting, style, framing, light, mood, palette and size. Stay true to the request and add no false facts.
-- Edits and "make one of me" work only from an image the user shared in this chat, and only if the lane can take it as a reference. Otherwise ask for the image, or say plainly that editing it is not possible here.
-- Keep text in images to a few words and do not promise it will be exact. When exact text matters, offer a design artifact.
-- On follow-ups, change only what was asked and build on the latest version.
-- After generating, reply with one short line at most, and only if there is something they need to know. Do not describe the image back.
+Choosing and failing
+- No subscription lane (not connected, or this computer is not reachable): nothing was sent. Say so plainly and ask the user how to proceed (e.g. a stylized native version); do not switch lanes on your own.
+- On any failure, tell the user the real reason from the tool result (usage limit with its reset time, not signed in so they should connect ChatGPT, or the server's reason). Never answer with a generic "something went wrong".
+- A motion piece the user will keep editing is a motion artifact, not a video here. This tool's video is a finished clip.
+- Progress shows live on the card in the chat. Do not narrate it, and do not say "done", "here it is" or describe the result until the tool result is back.
 
 Native: pick the format for the job
 - svg: illustrations, icons, logos, diagrams, flat or geometric art, maps, charts. Set width/height and a viewBox on the root <svg>.
