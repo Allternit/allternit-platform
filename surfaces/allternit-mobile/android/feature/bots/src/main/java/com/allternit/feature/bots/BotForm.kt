@@ -292,7 +292,9 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allte
     /** The botBrain to save: the picker's record, with the native session id when one was typed. */
     fun botBrainToSave(): JsonObject {
         val m = layers.current.toMutableMap()
-        m.remove("sessionId"); m.remove("harnessId") // old Android keys; the contract names are nativeSessionId / uhpHarnessId
+        // Old Android keys: carry them over to the contract names before dropping them.
+        if (m["uhpHarnessId"] == null && m["mode"] == JsonPrimitive("uhp_harness")) m["harnessId"]?.let { m["uhpHarnessId"] = it }
+        m.remove("sessionId"); m.remove("harnessId") // the contract names are nativeSessionId / uhpHarnessId
         if (m["mode"] == JsonPrimitive("native_harness") && nativeSessionId.isNotBlank()) m["nativeSessionId"] = JsonPrimitive(nativeSessionId.trim()) else m.remove("nativeSessionId")
         return JsonObject(m)
     }
