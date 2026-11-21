@@ -185,7 +185,7 @@ internal fun consoleFailureText(w: ConsoleWrite): String = when (w) {
 }
 
 /** A read mapped to the same shapes the tabs draw. */
-private suspend fun <T> readRows(id: String, tail: String, key: String, parse: (JsonObject) -> T?): HostRead<List<T>> =
+internal suspend fun <T> readRows(id: String, tail: String, key: String, parse: (JsonObject) -> T?): HostRead<List<T>> =
     when (val r = AciApi.consoleRead(id, tail)) {
         is HostRead.Ok -> HostRead.Ok(r.value.rows(key).mapNotNull(parse))
         is HostRead.Asleep -> r
@@ -215,18 +215,18 @@ internal fun buildBody(vararg pairs: Pair<String, String>): JsonObject = JsonObj
 // ---- Shared pieces ----
 
 @Composable
-private fun CTitle(text: String) {
+internal fun CTitle(text: String) {
     Text(text, color = AllternitTheme.colors.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
 }
 
 @Composable
-private fun CText(text: String, secondary: Boolean = true, size: Int = 13, color: androidx.compose.ui.graphics.Color? = null) {
+internal fun CText(text: String, secondary: Boolean = true, size: Int = 13, color: androidx.compose.ui.graphics.Color? = null) {
     val c = AllternitTheme.colors
     Text(text, color = color ?: if (secondary) c.textSecondary else c.textTertiary, fontSize = size.sp)
 }
 
 @Composable
-private fun CCode(text: String) {
+internal fun CCode(text: String) {
     val c = AllternitTheme.colors
     SelectionContainer {
         Text(text, color = c.textPrimary, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
@@ -240,10 +240,10 @@ private fun StatusLine(text: String?, error: Boolean = false) {
 }
 
 /** One loadable read: state + a reload. */
-private class HostLoad<T>(val state: HostRead<T>?, val reload: () -> Unit)
+internal class HostLoad<T>(val state: HostRead<T>?, val reload: () -> Unit)
 
 @Composable
-private fun <T> rememberHostLoad(key: Any?, load: suspend () -> HostRead<T>): HostLoad<T> {
+internal fun <T> rememberHostLoad(key: Any?, load: suspend () -> HostRead<T>): HostLoad<T> {
     var state by remember(key) { mutableStateOf<HostRead<T>?>(null) }
     var attempt by remember(key) { mutableIntStateOf(0) }
     LaunchedEffect(key, attempt) { state = null; state = load() }
@@ -252,7 +252,7 @@ private fun <T> rememberHostLoad(key: Any?, load: suspend () -> HostRead<T>): Ho
 
 /** The non-ready states every card shares (loading, asleep, not available, error + Try again). */
 @Composable
-private fun <T> HostNotReady(s: HostLoad<T>, unavailable: String, asleep: String, loading: String = "Loading…") {
+internal fun <T> HostNotReady(s: HostLoad<T>, unavailable: String, asleep: String, loading: String = "Loading…") {
     when (val st = s.state) {
         null -> CNote(loading)
         HostRead.Unavailable -> CNote(unavailable)
@@ -521,7 +521,7 @@ private sealed interface FixPhase {
 /** The approval sheet: what is wrong, the exact action, restore point status, then Hold to approve; after it ran, the change id and Hold to undo (its own approval). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FixSheet(computer: ConsoleComputer, finding: HostFinding, onDone: () -> Unit, onChanged: () -> Unit) {
+internal fun FixSheet(computer: ConsoleComputer, finding: HostFinding, onDone: () -> Unit, onChanged: () -> Unit, heading: String = "What is wrong", navTitle: String = "Approve a fix") {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     val action = finding.suggestedAction
@@ -547,12 +547,12 @@ private fun FixSheet(computer: ConsoleComputer, finding: HostFinding, onDone: ()
     ModalBottomSheet(onDismissRequest = onDone, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = c.bgPrimary) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.92f).testTag("aciConsoleFixSheet")) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Approve a fix", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(navTitle, color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 Box(Modifier.heightIn(min = 44.dp).clickable { onDone() }.padding(start = 12.dp).testTag("aciConsoleFixClose"), contentAlignment = Alignment.Center) { Text("Close", color = c.textPrimary, fontSize = 15.sp) }
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 CCard {
-                    CTitle("What is wrong")
+                    CTitle(heading)
                     Text(finding.title, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     CText(finding.detail)
                 }

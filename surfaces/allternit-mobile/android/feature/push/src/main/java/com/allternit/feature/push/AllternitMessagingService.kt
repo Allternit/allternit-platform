@@ -24,8 +24,29 @@ class AllternitMessagingService : FirebaseMessagingService() {
         }
     }
 
+    /**
+     * Backend step 2.8 sends `{type:"computer_alert", computerId, rule, value}` (value = percent for cpu/disk, minutes for
+     * offline). When the push has no title/body of its own, say it in plain words (same sentences as the console's
+     * Needs attention). One notification per computer and rule, so a newer one replaces the older.
+     */
+    private fun withComputerAlertText(data: Map<String, String>): Map<String, String> {
+        if (data["type"] != "computer_alert") return data
+        val value = data["value"]?.toDoubleOrNull()?.toInt()
+        val (title, body) = when (data["rule"]) {
+            "offline" -> "A computer is offline" to (if (value != null) "It has been offline for $value minutes." else "It is offline.")
+            "cpu" -> "A computer is busy" to (if (value != null) "CPU is at $value%." else "CPU is high.")
+            "disk" -> "A computer is running out of space" to (if (value != null) "Disk is $value% full." else "Disk is almost full.")
+            else -> "Computer alert" to "A computer needs a look."
+        }
+        return data.toMutableMap().apply {
+            if (get("title").isNullOrBlank()) put("title", title)
+            if (get("body").isNullOrBlank()) put("body", body)
+            if (get("tag").isNullOrBlank()) put("tag", "computer-alert-${data["computerId"].orEmpty()}-${data["rule"].orEmpty()}")
+        }
+    }
+
     override fun onMessageReceived(message: RemoteMessage) {
-        val data = message.data
+        val data = withComputerAlertText(message.data)
         // Wave I2: every push also refreshes the status snapshot (widget, tiles, shortcuts) and the ongoing run notification.
         refreshSystemSurfaces()
         if (data["event"] == "notification.revoke") {

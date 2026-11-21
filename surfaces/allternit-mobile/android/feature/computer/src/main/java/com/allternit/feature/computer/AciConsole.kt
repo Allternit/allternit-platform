@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,7 +67,12 @@ internal data class ConsoleComputer(
     val status: String, val lastSample: ConsoleSnapshot?, val servicesCount: Int?, val address: String? = null,
     /** cloud | paired | desktop */ val kind: String = "", /** "Allternit Cloud", "On your desk", "Your servers", "Shared with you" */ val group: String = "",
     val lastBackupAt: String? = null,
+    /** The runtime device behind this row (contract 2.3); the relay target for Terminal and Files. Null for rows without one. */
+    val runtimeId: String? = null,
 ) {
+    /** What `allternit-relay://` and the Files drive use: `row.runtimeId ?: row.id`, never just row.id. */
+    val relayId: String get() = runtimeId?.takeIf { it.isNotBlank() } ?: id
+
     // online, offline, asleep, starting, stopped, suspended, error
     val isOnline: Boolean get() = status.lowercase() !in setOf("offline", "asleep", "stopped")
     val isAsleep: Boolean get() = status.lowercase() == "asleep"
@@ -89,7 +96,7 @@ internal data class ConsoleComputer(
             val status = o.str("status") ?: return null
             val sample = ConsoleSnapshot.parse(o.child("lastSample"))
             return ConsoleComputer(id, name, o.str("provider").orEmpty(), o.str("region"), o.str("os").orEmpty(), status, sample, o.num("servicesCount")?.toInt(), o.str("address"),
-                o.str("kind").orEmpty(), o.str("group").orEmpty(), o.str("lastBackupAt"))
+                o.str("kind").orEmpty(), o.str("group").orEmpty(), o.str("lastBackupAt"), o.str("runtimeId"))
         }
     }
 }
@@ -118,7 +125,19 @@ internal fun AciConsoleSection(restorePoints: (@Composable (onDone: () -> Unit) 
             is AciApi.Result.Failed -> if (r.message == CONSOLE_UNAVAILABLE) ConsolePhase.Unavailable else ConsolePhase.Failed(r.message)
         }
     }
+    // A computer_alert tap or allternit://computers/<id> (AciNav.openComputer): open that row once the list is in.
+    val wanted = AciNav.openComputerId
+    var missing by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(wanted, phase) {
+        val ready = phase as? ConsolePhase.Ready ?: return@LaunchedEffect
+        if (wanted == null) return@LaunchedEffect
+        val row = ready.rows.firstOrNull { it.id == wanted || it.runtimeId == wanted }
+        if (row != null) selected = row else missing = wanted
+        AciNav.openComputerId = null
+    }
     selected?.let { AciConsoleDetail(it, restorePoints, onChanged = { attempt++ }) { selected = null } }
+    if (missing != null) AlertDialog(onDismissRequest = { missing = null }, confirmButton = { TextButton(onClick = { missing = null }) { Text("OK") } },
+        title = { Text("This computer isn't in your console") }, text = { Text("It may have been removed, or it belongs to another account.") })
     val c = AllternitTheme.colors
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).testTag("aciConsole"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when (val p = phase) {

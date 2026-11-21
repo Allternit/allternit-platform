@@ -20,6 +20,7 @@ import com.allternit.core.design.R as DesignR
  * - `messages`: BOT_REPLY (Reply, Open) and AGENT_MESSAGE (Reply, Open), plus plain bot messages. High.
  * - `runs`: RUN_DONE (Open) and NEEDS_FIX (Retry, Snooze). Default.
  * - `calls`: rings and missed calls. High.
+ * - `computer_alerts`: COMPUTER_ALERT (Open) and `type: computer_alert` data pushes. Default.
  * - `general`: everything else (summaries, follow-ups). Default.
  *
  * Approve, Deny, Reply, Retry and Snooze run in [NotificationActionReceiver] without opening the app and need the
@@ -33,6 +34,7 @@ object PushNotifications {
     const val CHANNEL_RUNS = "runs"
     const val CHANNEL_CALLS = "calls"
     const val CHANNEL_GENERAL = "general"
+    const val CHANNEL_COMPUTER_ALERTS = "computer_alerts"
 
     /** Category identifiers the cloud puts in `data.category` (iOS NotificationCategoryID). */
     const val APPROVAL_INLINE = "APPROVAL_INLINE"
@@ -41,6 +43,7 @@ object PushNotifications {
     const val RUN_DONE = "RUN_DONE"
     const val NEEDS_FIX = "NEEDS_FIX"
     const val AGENT_MESSAGE = "AGENT_MESSAGE"
+    const val COMPUTER_ALERT = "COMPUTER_ALERT"
 
     /** Button identifiers (iOS NotificationActionID). */
     const val ACTION_APPROVE = "APPROVE"
@@ -65,6 +68,7 @@ object PushNotifications {
                 channel(CHANNEL_MESSAGES, "Bot messages", NotificationManager.IMPORTANCE_HIGH, "Replies from your bots and agents."),
                 channel(CHANNEL_RUNS, "Runs", NotificationManager.IMPORTANCE_DEFAULT, "A task finished or needs a fix."),
                 channel(CHANNEL_CALLS, "Calls", NotificationManager.IMPORTANCE_HIGH, "Rings and missed calls."),
+                channel(CHANNEL_COMPUTER_ALERTS, "Computer alerts", NotificationManager.IMPORTANCE_DEFAULT, "A computer went offline or is running out of CPU or disk."),
                 channel(CHANNEL_GENERAL, "Other", NotificationManager.IMPORTANCE_DEFAULT, "Summaries and everything else."),
             ),
         )
@@ -75,6 +79,7 @@ object PushNotifications {
         category == APPROVAL_INLINE || category == APPROVAL_REVIEW -> CHANNEL_APPROVALS
         category == BOT_REPLY || category == AGENT_MESSAGE -> CHANNEL_MESSAGES
         category == RUN_DONE || category == NEEDS_FIX -> CHANNEL_RUNS
+        category == COMPUTER_ALERT || type == "computer_alert" -> CHANNEL_COMPUTER_ALERTS
         type == "call" || type == "missed_call" || type == "meeting.waiting_admit" -> CHANNEL_CALLS
         type == "message" || type == "channel_message" -> CHANNEL_MESSAGES
         else -> CHANNEL_GENERAL
@@ -91,7 +96,7 @@ object PushNotifications {
         if (!AllternitPush.notificationsAllowed(context)) return
         ensureChannels(context)
         val tag = data["tag"]?.takeIf { it.isNotBlank() } ?: "push-${System.currentTimeMillis()}"
-        val category = data["category"]
+        val category = data["category"] ?: if (data["type"] == "computer_alert") COMPUTER_ALERT else null
         val title = data["title"].orEmpty().ifBlank { "Allternit" }
         val body = data["body"].orEmpty()
         val builder = Notification.Builder(context, channelFor(category, data["type"]))
@@ -152,14 +157,14 @@ object PushNotifications {
             APPROVAL_REVIEW -> listOfNotNull(foreground(ACTION_REVIEW, "Review"), background(ACTION_DENY, "Deny"), background(ACTION_REPLY, "Reply", "Message the bot"))
             BOT_REPLY -> listOfNotNull(background(ACTION_REPLY, "Reply", "Message the bot"), foreground(ACTION_OPEN, "Open"))
             AGENT_MESSAGE -> listOfNotNull(background(ACTION_REPLY, "Reply", "Reply to your agent"), foreground(ACTION_OPEN, "Open"))
-            RUN_DONE -> listOfNotNull(foreground(ACTION_OPEN, "Open"))
+            RUN_DONE, COMPUTER_ALERT -> listOfNotNull(foreground(ACTION_OPEN, "Open"))
             NEEDS_FIX -> listOf(background(ACTION_RETRY, "Retry"), background(ACTION_SNOOZE, "Snooze"))
             else -> emptyList()
         }
     }
 
     /** The data keys a button needs (iOS reads them from `userInfo["data"]`). */
-    val PASSED_KEYS = setOf("inboxId", "contentHash", "runtimeId", "sessionId", "threadSessionId", "url", "event", "botId")
+    val PASSED_KEYS = setOf("inboxId", "contentHash", "runtimeId", "sessionId", "threadSessionId", "url", "event", "botId", "computerId")
 
     internal fun openIntent(context: Context, key: String, data: Map<String, String>): PendingIntent? {
         val intent = AllternitPush.tapIntent(context, data) ?: return null

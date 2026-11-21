@@ -46,6 +46,8 @@ dependencies {
     implementation(project(":core:files"))
     // SseParser for the console's live service logs (okhttp stream, no new HTTP library).
     implementation(project(":core:stream"))
+    // PtySession + PtyTerminalView: the console Terminal tab reuses the Code shell over the relay (computers-console step 5.4).
+    implementation(project(":feature:code"))
     implementation(libs.okhttp)
     // BackHandler (the browser and a run go back like the system Back on iOS swipe).
     implementation(libs.activity.compose)
