@@ -187,6 +187,11 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allte
     var layersDirty by remember { mutableStateOf(false) }
     var layersNote by remember { mutableStateOf<String?>(null) }
     var layersQuery by remember { mutableStateOf("") }
+    // Server answers about the runtime (contract "Backend gaps 1-3"): a 422 refusal message, and the
+    // runtime-not-installed warnings of a save that went through (the form stays open to show them).
+    var runtimeError by remember { mutableStateOf<String?>(null) }
+    var runtimeWarnings by remember { mutableStateOf<List<String>>(emptyList()) }
+    var savedIds by remember { mutableStateOf<List<String>?>(null) }
     var nativeSessionId by remember { mutableStateOf("") }
     var brains by remember { mutableStateOf<List<BrainOption>>(emptyList()) }
     var brainsLoading by remember { mutableStateOf(true) }
@@ -345,8 +350,11 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allte
             }
             return
         }
+        savedIds?.let { onDone(it); return }
         saving = true
         error = null
+        runtimeError = null
+        runtimeWarnings = emptyList()
         scope.launch {
             if (editBotId != null) {
                 val profile = JsonObject(storedProfile + mapOf(
@@ -363,15 +371,19 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allte
                     if (layersDirty && modelId.isNotEmpty() && provider.isNotEmpty()) { put("model", modelId); put("provider", provider) }
                     (tagline.trim().ifEmpty { description.trim() }).takeIf { it.isNotEmpty() }?.let { put("description", it) }
                 }
-                when (val r = BotsApi.updateAgent(editBotId, body)) {
-                    is BotsResult.Ok -> onDone(listOf(editBotId))
-                    is BotsResult.Failed -> error = "Failed to update bot. ${r.message}"
+                when (val r = BotsApi.updateAgentSaved(editBotId, body)) {
+                    is BotsResult.Ok -> if (r.value.isEmpty()) onDone(listOf(editBotId)) else { runtimeWarnings = r.value; savedIds = listOf(editBotId) }
+                    is BotsResult.Failed -> if (r.isRuntimeRefusal) runtimeError = r.message else error = "Failed to update bot. ${r.message}"
                 }
             } else {
                 val makeMain = BotFormData.needsMain()
-                when (val r = BotsApi.createAgent(createBody(makeMain))) {
-                    is BotsResult.Ok -> { look.syncAsset(r.value); onDone(listOf(r.value)) }
-                    is BotsResult.Failed -> error = "Couldn’t create the bot: ${r.message}"
+                when (val r = BotsApi.createAgentSaved(createBody(makeMain))) {
+                    is BotsResult.Ok -> {
+                        val (id, warnings) = r.value
+                        look.syncAsset(id)
+                        if (warnings.isEmpty()) onDone(listOf(id)) else { runtimeWarnings = warnings; savedIds = listOf(id) }
+                    }
+                    is BotsResult.Failed -> if (r.isRuntimeRefusal) { runtimeError = r.message; moreOpen = true } else error = "Couldn’t create the bot: ${r.message}"
                 }
             }
             saving = false
@@ -387,6 +399,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allte
                 agentViewDraft = ch.agentView
                 layersNote = ch.note
                 layersDirty = true
+                runtimeError = null
             },
             note = layersNote,
             runtimesLoading = registry is RegistryState.Loading,
@@ -399,12 +412,17 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allte
             onOpenConnections = host?.openConnections,
             botFace = editRecord?.let { rec -> @Composable { size: androidx.compose.ui.unit.Dp -> BotAvatar(rec, size) } },
         )
+        runtimeError?.let { ErrorLine(it, Modifier.padding(0.dp).testTag("botFormRuntimeError")) }
+        if (runtimeWarnings.isNotEmpty()) Column(Modifier.testTag("botFormRuntimeWarning"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Saved.", color = AllternitTheme.colors.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            runtimeWarnings.forEach { Note(it) }
+        }
     }
 
     LibrarySheet(
         title = if (editing) "Edit bot" else "Create bot", testTag = if (editing) "editBotSheet" else "newBotSheet", onDismiss = onDismiss,
         leading = LibrarySheetAction("Cancel", enabled = !saving, testTag = "botFormCancel", onClick = onDismiss),
-        trailing = LibrarySheetAction(if (editing) (if (saving) "Saving…" else "Save bot") else (if (saving) "Creating…" else "Create"), enabled = canSave || !saving, bold = true, testTag = "botFormSave", onClick = ::submit),
+        trailing = LibrarySheetAction(if (savedIds != null) "Done" else if (editing) (if (saving) "Saving…" else "Save bot") else (if (saving) "Creating…" else "Create"), enabled = savedIds != null || canSave || !saving, bold = true, testTag = "botFormSave", onClick = ::submit),
     ) {
         Column(Modifier.fillMaxWidth().heightIn(max = 680.dp).verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             if (host?.signedIn == false) Text(if (editing) "Sign in to edit this bot." else "Sign in to make a bot.", color = c.textSecondary, fontSize = 14.sp)

@@ -41,6 +41,7 @@ import com.allternit.feature.bots.BotAvatar
 import com.allternit.feature.bots.BotRecord
 import com.allternit.feature.bots.BotsApi
 import com.allternit.feature.bots.BotsResult
+import com.allternit.feature.bots.isRuntimeRefusal
 import com.allternit.feature.bots.VendorGroupTurn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -90,9 +91,10 @@ class BotAgentState internal constructor(val bot: BotRecord, private val scope: 
             if (change.layer != null && ref != null) { ref.s("modelID")?.let { put("model", it) }; ref.s("providerID")?.let { put("provider", it) } }
         }
         scope.launch {
-            when (val r = BotsApi.updateAgent(bot.id, body)) {
-                is BotsResult.Ok -> Unit
-                is BotsResult.Failed -> { config = old; note = null; error = "Couldn't save the change. ${r.message}" }
+            when (val r = BotsApi.updateAgentSaved(bot.id, body)) {
+                // A runtime-not-installed warning keeps the save and is shown with the switch note.
+                is BotsResult.Ok -> r.value.takeIf { it.isNotEmpty() }?.let { w -> note = (listOfNotNull(note) + w).joinToString(" ") }
+                is BotsResult.Failed -> { config = old; note = null; error = if (r.isRuntimeRefusal) r.message else "Couldn't save the change. ${r.message}" }
             }
         }
     }

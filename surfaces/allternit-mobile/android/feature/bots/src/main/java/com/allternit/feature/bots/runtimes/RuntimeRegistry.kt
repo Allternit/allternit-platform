@@ -91,6 +91,8 @@ data class RuntimeEntry(
     val legacyHarness: String?,
     val legacyUhp: List<String>,
     val docs: String?,
+    /** Subscription providers (plan ids: claude, chatgpt, kimi, gemini, copilot) whose plan this runtime may use. */
+    val plans: List<String> = fallbackPlans(id),
 ) {
     /** The tokens for [look] (falls back to the other look, like web `runtimeTokens`). */
     fun tokens(look: String? = null): LookTokens? {
@@ -115,6 +117,7 @@ val BUILT_IN_ALLTERNIT = RuntimeEntry(
     id = "allternit", name = "Allternit", vendor = "Allternit", category = "native", tool = null, aliases = emptyList(), toolAliases = emptyList(),
     adapterKind = "native", brains = null, access = listOf("plan", "key", "local", "credits"), more = false, statusLabel = null, statusTone = null,
     lookDefault = "terminal", terminal = null, desktop = null, liveUi = null, legacyHarness = null, legacyUhp = emptyList(), docs = null,
+    plans = fallbackPlans("allternit"),
 )
 
 object RuntimeRegistry {
@@ -234,6 +237,8 @@ object RuntimeRegistry {
             desktop = (look?.get("desktop") as? JsonObject)?.let(::parseTokens),
             liveUi = live?.let { LiveUi(it.s("label") ?: "${o.s("name") ?: id} web app", it.i("port")) },
             legacyHarness = legacy.s("harness"), legacyUhp = legacy.strs("uhp"), docs = o.s("docs"),
+            // An older server has no `plans`: use the built-in table.
+            plans = (o["plans"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: fallbackPlans(id),
         )
     }
 
@@ -311,6 +316,64 @@ fun fits(runtime: RuntimeEntry?, providerId: String): Boolean {
     if (p == tool || p == r.id || p in r.aliases) return true
     return p in (r.toolAliases.ifEmpty { KNOWN_TOOL_ALIASES[tool].orEmpty() })
 }
+
+// ─── The `allowed` rule (plan per runtime; gizzi runtime-registry.ts, platform PR #2785) ──────────
+
+/** Built-in `plans` table for registry bodies that do not carry `plans` yet. */
+private val FALLBACK_PLANS = mapOf(
+    "allternit" to listOf("claude", "chatgpt", "kimi", "gemini", "copilot"),
+    "claude" to listOf("claude"), "codex" to listOf("chatgpt"), "kimi" to listOf("kimi"),
+    "antigravity" to listOf("gemini"), "copilot" to listOf("copilot"),
+)
+
+fun fallbackPlans(runtimeId: String): List<String> = FALLBACK_PLANS[runtimeId].orEmpty()
+
+private val PLAN_OF_VENDOR = mapOf(
+    "anthropic" to "claude", "openai" to "chatgpt", "google" to "gemini", "moonshot" to "kimi", "microsoft" to "copilot",
+)
+
+val PLAN_NAMES = mapOf("claude" to "Claude", "chatgpt" to "ChatGPT", "kimi" to "Kimi", "gemini" to "Gemini", "copilot" to "Copilot")
+
+/**
+ * The plan a brain from [providerId] uses, or null when it is not a plan (API key, local, credits).
+ * `subs-<vendor|plan>` maps through PLAN_OF_VENDOR; a CLI plan sign-in (claude-cli, codex-cli) is the
+ * plan of the runtime whose tool it is, when that runtime has exactly one plan.
+ */
+fun planProvider(providerId: String, runtimes: List<RuntimeEntry> = RuntimeRegistry.runtimes): String? {
+    if (providerId.startsWith("subs-")) {
+        val rest = providerId.removePrefix("subs-")
+        return PLAN_OF_VENDOR[rest] ?: rest
+    }
+    return runtimes.firstOrNull { it.tool == providerId && it.plans.size == 1 }?.plans?.first()
+}
+
+/** Is [providerId] the runtime's own CLI sign-in (its tool, id, aliases or the tool's aliases)? */
+fun isOwnCli(runtime: RuntimeEntry, providerId: String): Boolean {
+    if (providerId == runtime.tool || providerId == runtime.id || providerId in runtime.aliases) return true
+    val tool = runtime.tool ?: return false
+    return providerId in runtime.toolAliases.ifEmpty { KNOWN_TOOL_ALIASES[tool].orEmpty() }
+}
+
+/** fits AND (not a plan, or the runtime's own CLI, or the plan is in runtime.plans). */
+fun allowed(runtime: RuntimeEntry?, providerId: String, runtimes: List<RuntimeEntry> = RuntimeRegistry.runtimes): Boolean {
+    val r = runtime ?: return false
+    if (!fits(r, providerId)) return false
+    val plan = planProvider(providerId, runtimes) ?: return true
+    return isOwnCli(r, providerId) || plan in r.plans
+}
+
+/** The line shown for a brain that fits but is not allowed; null otherwise. */
+fun planRefusal(runtime: RuntimeEntry?, providerId: String, runtimes: List<RuntimeEntry> = RuntimeRegistry.runtimes): String? {
+    val r = runtime ?: return null
+    if (!fits(r, providerId) || allowed(r, providerId, runtimes)) return null
+    val plan = planProvider(providerId, runtimes) ?: return null
+    val own = runtimes.firstOrNull { it.id != "allternit" && plan in it.plans }?.name ?: "Allternit"
+    return "${PLAN_NAMES[plan] ?: plan}'s plan can't be used inside ${r.name}. Use an API key, or pick $own."
+}
+
+/** The first brain whose provider is allowed on [runtime] (the auto-switch target). */
+fun <T> firstAllowedBrain(runtime: RuntimeEntry?, brains: List<T>, runtimes: List<RuntimeEntry> = RuntimeRegistry.runtimes, providerOf: (T) -> String): T? =
+    brains.firstOrNull { allowed(runtime, providerOf(it), runtimes) }
 
 /**
  * Normalizer rule (contract), on a raw `botBrain` object; unknown keys are kept. With no `runtime`,

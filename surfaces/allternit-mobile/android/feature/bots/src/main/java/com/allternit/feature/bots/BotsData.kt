@@ -229,8 +229,21 @@ data class BotSummary(val model: String?, val sessions: Int?, val messages: Int?
 /** What a call returns to a screen: the value, or product copy for the failure. */
 sealed interface BotsResult<out T> {
     data class Ok<T>(val value: T) : BotsResult<T>
-    data class Failed(val message: String, val status: Int? = null) : BotsResult<Nothing>
+    /** [code] is the server's error code when it sent one (e.g. `plan_not_allowed_on_runtime`). */
+    data class Failed(val message: String, val status: Int? = null, val code: String? = null) : BotsResult<Nothing>
 }
+
+/** Agent-save 422s (contract "Server validation"): the server's `message` is shown as is. */
+internal val RUNTIME_SAVE_ERRORS = setOf("plan_not_allowed_on_runtime", "brain_not_fit", "runtime_unknown")
+
+/** A runtime-rule refusal on an agent save (show its message inline by the Runtime row). */
+val BotsResult.Failed.isRuntimeRefusal: Boolean get() = status == 422 && code in RUNTIME_SAVE_ERRORS
+
+/** `warnings[].message` on a bot create/update response (`runtime_not_installed`); read optionally. */
+internal fun saveWarnings(body: JsonElement?): List<String> =
+    ((body as? JsonObject)?.get("warnings") as? JsonArray).orEmpty().mapNotNull { w ->
+        (w as? JsonObject)?.str("message")?.takeIf { it.isNotBlank() }
+    }
 
 internal fun <T> BotsResult<T>.orNull(): T? = (this as? BotsResult.Ok)?.value
 
@@ -247,7 +260,11 @@ object BotsApi {
     private suspend fun send(method: String, path: String, body: JsonElement?, doing: String): BotsResult<JsonElement> =
         when (val r = LibraryNet.send(method, path, body)) {
             is ApiResult.Ok -> BotsResult.Ok(r.value)
-            else -> BotsResult.Failed(r.friendly(doing), (r as? ApiResult.HttpError)?.status)
+            is ApiResult.HttpError -> {
+                val refusal = r.status == 422 && r.code in RUNTIME_SAVE_ERRORS && !r.message.isNullOrBlank()
+                BotsResult.Failed(if (refusal) r.message!! else r.friendly(doing), r.status, r.code)
+            }
+            else -> BotsResult.Failed(r.friendly(doing), null)
         }
 
     // Agents (AgentClient)
@@ -258,26 +275,41 @@ object BotsApi {
         get("agents/${esc(id)}", "load this bot") { j -> BotRecord(j.obj?.child("agent") ?: j.obj ?: JsonObject(emptyMap())) }
 
     /** `POST agents`; a runtime that rejects the full body gets the minimal fields (iOS MeetAgentsAPI.create). */
-    suspend fun createAgent(body: JsonObject): BotsResult<String> {
+    suspend fun createAgent(body: JsonObject): BotsResult<String> =
+        when (val r = createAgentSaved(body)) {
+            is BotsResult.Ok -> BotsResult.Ok(r.value.first)
+            is BotsResult.Failed -> r
+        }
+
+    /** [createAgent] plus the response's `warnings[].message` (the runtime-not-installed note). */
+    suspend fun createAgentSaved(body: JsonObject): BotsResult<Pair<String, List<String>>> {
         when (val r = send("POST", "agents", body, "create the bot")) {
-            is BotsResult.Ok -> r.value.obj?.child("agent")?.str("id")?.let { return BotsResult.Ok(it) }
-            is BotsResult.Failed -> if (r.status != 400 && r.status != 422) return r
+            is BotsResult.Ok -> r.value.obj?.child("agent")?.str("id")?.let { return BotsResult.Ok(it to saveWarnings(r.value)) }
+            // A runtime-rule refusal is the answer; the minimal body would be refused the same way.
+            is BotsResult.Failed -> if ((r.status != 400 && r.status != 422) || r.isRuntimeRefusal) return r
         }
         val keys = listOf("name", "description", "type", "model", "provider", "harness_config", "enabled_modes", "trust_tier", "is_bot", "bot_profile", "config", "system_prompt")
         val minimal = JsonObject(body.filterKeys { it in keys })
         return when (val r = send("POST", "agents", minimal, "create the bot")) {
-            is BotsResult.Ok -> r.value.obj?.child("agent")?.str("id")?.let { BotsResult.Ok(it) } ?: BotsResult.Failed("The bot wasn't created.")
+            is BotsResult.Ok -> r.value.obj?.child("agent")?.str("id")?.let { BotsResult.Ok(it to saveWarnings(r.value)) } ?: BotsResult.Failed("The bot wasn't created.")
             is BotsResult.Failed -> r
         }
     }
 
     /** `PATCH agents/:id`, falling back to PUT on runtimes without PATCH (iOS MeetAgentsAPI.update). */
     suspend fun updateAgent(id: String, body: JsonObject): BotsResult<Unit> =
-        when (val r = send("PATCH", "agents/${esc(id)}", body, "save the bot")) {
+        when (val r = updateAgentSaved(id, body)) {
             is BotsResult.Ok -> BotsResult.Ok(Unit)
+            is BotsResult.Failed -> r
+        }
+
+    /** [updateAgent] returning the response's `warnings[].message` (the runtime-not-installed note). */
+    suspend fun updateAgentSaved(id: String, body: JsonObject): BotsResult<List<String>> =
+        when (val r = send("PATCH", "agents/${esc(id)}", body, "save the bot")) {
+            is BotsResult.Ok -> BotsResult.Ok(saveWarnings(r.value))
             is BotsResult.Failed -> if (r.status == 404 || r.status == 405) {
                 when (val p = send("PUT", "agents/${esc(id)}", body, "save the bot")) {
-                    is BotsResult.Ok -> BotsResult.Ok(Unit)
+                    is BotsResult.Ok -> BotsResult.Ok(saveWarnings(p.value))
                     is BotsResult.Failed -> p
                 }
             } else r

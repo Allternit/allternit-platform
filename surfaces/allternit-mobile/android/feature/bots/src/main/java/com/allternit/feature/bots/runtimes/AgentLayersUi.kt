@@ -339,7 +339,7 @@ private fun ChoiceRowItem(ch: LayerChoice, botFace: @Composable (com.allternit.f
         Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) { ch.bot?.let { botFace(it, 30.dp) } ?: Mark(ch.mark, 30.dp) }
         Column(Modifier.weight(1f)) {
             Text(ch.name, color = if (ch.ok) c.textPrimary else c.textTertiary, fontSize = 14.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(ch.detail, color = c.textTertiary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(ch.detail, color = c.textTertiary, fontSize = 12.sp, maxLines = if (ch.ok) 1 else 3, overflow = TextOverflow.Ellipsis)
         }
         ch.badges.lastOrNull()?.let { Badge(it.first, it.second) }
         if (ch.selected) Icon(painterResource(DesignR.drawable.ph_check), null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
@@ -369,7 +369,7 @@ private fun ChoiceCard(ch: LayerChoice, botFace: @Composable (com.allternit.feat
             }
         }
         Text(ch.name, color = if (ch.ok) c.textPrimary else c.textTertiary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(ch.detail, color = c.textTertiary, fontSize = 11.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(ch.detail, color = c.textTertiary, fontSize = 11.5.sp, maxLines = if (ch.ok) 2 else 3, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.weight(1f))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             ch.badges.forEach { Badge(it.first, it.second) }

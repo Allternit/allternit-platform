@@ -173,14 +173,16 @@ class AgentLayersModel(
         var access: String? = current.s("access")
         var autoSwitchedFrom: String? = null
         var note: String? = null
-        if (brainProvider != null && brainKey != null && !fits(r, brainProvider)) {
+        if (brainProvider != null && brainKey != null && !allowed(r, brainProvider, runtimes)) {
             autoSwitchedFrom = brainKey
-            val fb = brains.firstOrNull { fits(r, it.providerId) }
+            val refusal = planRefusal(r, brainProvider, runtimes)
+            val fb = firstAllowedBrain(r, brains, runtimes) { it.providerId }
             if (fb != null) {
                 nextRef = modelRefOf(fb.providerId, fb.modelId)
                 access = fb.access
                 val provider = if (r.brains == null) fb.providerId else r.brains.firstOrNull() ?: fb.providerId
-                note = "${r.name} runs ${providerName(provider)} models only, so the brain changed to ${fb.name}."
+                note = if (refusal != null) "$refusal The brain changed to ${fb.name}."
+                else "${r.name} runs ${providerName(provider)} models only, so the brain changed to ${fb.name}."
             } else {
                 nextRef = null
                 access = null
@@ -219,11 +221,12 @@ class AgentLayersModel(
 
     private val brainMatches = brains.filter { matches(query, it.name, providerName(it.providerId), ACCESS_LABEL[it.access]) }
     val brainChoices: List<LayerChoice> = brainMatches.take(48).map { b ->
-        val ok = runtime?.let { fits(it, b.providerId) } ?: true
+        val ok = runtime?.let { allowed(it, b.providerId, runtimes) } ?: true
+        val refusal = if (ok) null else planRefusal(runtime, b.providerId, runtimes)
         val phrase = accessPhrase(b.access, b.providerId)
         val tone = when (b.access) { "plan" -> BadgeTone.Plan; "local" -> BadgeTone.Local; "credits" -> BadgeTone.Credits; else -> BadgeTone.Key }
         LayerChoice(
-            id = b.key, name = b.name, detail = if (ok) phrase.replaceFirstChar { it.uppercase() } else "Not with $runtimeName",
+            id = b.key, name = b.name, detail = when { ok -> phrase.replaceFirstChar { it.uppercase() }; refusal != null -> refusal; else -> "Not with $runtimeName" },
             mark = b.providerId, badges = listOf((ACCESS_LABEL[b.access] ?: b.access) to tone), ok = ok, selected = b.key == brainKey,
         )
     }
