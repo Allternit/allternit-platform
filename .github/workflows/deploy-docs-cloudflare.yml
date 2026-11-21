@@ -55,6 +55,12 @@ jobs:
           mkdir -p dist
           unzip -o export.zip -d dist
 
+      # mint export has no robots.txt or sitemap.xml (Pages answered both with
+      # the home page HTML). Also drops in the IndexNow key file.
+      - name: Write robots.txt, sitemap.xml and IndexNow key
+        working-directory: surfaces/docs
+        run: node scripts/post-export.cjs dist
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
@@ -69,3 +75,9 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -H "Content-Type: application/json" \
             --data '{"name":"docs.allternit.com"}' || true
+
+      # Tell IndexNow (Bing, which ChatGPT search and Copilot read, plus
+      # Yandex, Seznam, Naver) about every docs page. Never fails the deploy.
+      - name: Ping IndexNow
+        continue-on-error: true
+        run: node surfaces/docs/scripts/indexnow.mjs docs.allternit.com

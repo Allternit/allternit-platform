@@ -22,15 +22,20 @@ mintlify dev
 
 ### Option 2: Cloudflare Pages (Current)
 
-Build locally and upload to Cloudflare Pages:
+`.github/workflows/deploy-docs-cloudflare.yml` deploys on every push to main
+that touches `surfaces/docs/`:
 
-```bash
-# Build static site
-mintlify build
+1. `mint export` → `dist/`
+2. `node scripts/post-export.cjs dist` writes `robots.txt`, `sitemap.xml`
+   (every exported page in `docs.json` navigation, trailing-slash URLs) and the
+   IndexNow key file `<key>.txt` (key in `scripts/indexnow.key`). The export has
+   none of these; without them Pages answers `/sitemap.xml` with the home page.
+3. `wrangler pages deploy dist --project-name=allternit-docs`
+4. `node scripts/indexnow.mjs docs.allternit.com` sends the sitemap URLs to
+   IndexNow (Bing and the engines that share it). It never fails the deploy;
+   `INDEXNOW_DRY_RUN=1` prints what it would send.
 
-# Upload dist/ folder to Cloudflare Pages
-# Via dashboard: https://dash.cloudflare.com → Pages → docs-allternit
-```
+The same key and script are used by allternit-websites for the other sites.
 
 ## Structure
 
