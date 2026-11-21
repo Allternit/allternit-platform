@@ -59,6 +59,8 @@ class SettingsHost(
     val openModels: () -> Unit,
     /** Files & devices → "Open Cowork workspace" (iOS sets the mode to Cowork). */
     val openCowork: () -> Unit = {},
+    /** A page to open on top of the root, e.g. "subscriptions" (Connections) from a chat refusal card. Back returns to the root. */
+    val startPage: String? = null,
 )
 
 /** One page in Settings (iOS SettingsPageID + `phone: {section, order}`). */
@@ -159,7 +161,7 @@ private const val STATUS_URL = "https://status.allternit.com"
  */
 @Composable
 fun SettingsRoot(host: SettingsHost) {
-    val stack = remember { mutableStateListOf<String>() }
+    val stack = remember { mutableStateListOf<String>().apply { host.startPage?.let { add(it) } } }
     val top = stack.lastOrNull()
     BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
     val back: () -> Unit = { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex) }
@@ -173,7 +175,8 @@ fun SettingsRoot(host: SettingsHost) {
             "profile" -> ProfilePage(host, back, push)
             "signin" -> ProfilePage(host, back, push)
             "organization" -> OrganizationPage(host, back)
-            "privacy" -> PrivacyPage(host, back)
+            "privacy" -> PrivacyPage(host, back, push)
+            "connected-apps" -> ConnectedAppsPage(back)
             "notifications" -> NotificationsPage(host, back)
             "subscriptions" -> host.connections(back)
             "device-access" -> DeviceAccessPage(back)

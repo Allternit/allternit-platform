@@ -239,7 +239,14 @@ private sealed interface LoginPhase {
 private fun LoginSheet(id: String, store: ConnectionsStore, onConnected: (String) -> Unit, onFallback: (String) -> Unit) {
     val c = setupColors
     val entry = ConnectionsCatalog.entry(id)
-    val vendor = entry?.name ?: id
+    // The Claude organization link signs in on Claude's own page (iOS ConnectSheetView vendor).
+    val claudeOrg = id == "claude-org"
+    val vendor = if (claudeOrg) "Claude" else entry?.name ?: id
+    // Read before the sheet marks the row connecting: "Link again" for a row that needs you.
+    val relinkReason = remember {
+        val r = store.row(id)
+        if (r.state == ConnState.Needs) r.reason ?: ConnectionsCatalog.reasonText(r.reasonCode, vendor) ?: "" else null
+    }
     val uri = LocalUriHandler.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -260,7 +267,7 @@ private fun LoginSheet(id: String, store: ConnectionsStore, onConnected: (String
         // Computer rows connect on that computer; the rest on cloud-api (iOS store.target(for:)).
         val target = store.target(id)
         try {
-            val (state, login) = ConnectionsClient.connect(id, target, accepted)
+            val (state, login) = ConnectionsClient.connect(id, target, accepted, way = if (claudeOrg) "oauth" else "code")
             if (state == ConnState.On && login == null) {
                 store.markOn(id)
                 phase = LoginPhase.Done
@@ -338,11 +345,17 @@ private fun LoginSheet(id: String, store: ConnectionsStore, onConnected: (String
         }
     }
 
-    SheetTitle("Connect $vendor")
+    SheetTitle(if (claudeOrg) (if (relinkReason != null) "Link again" else "Link your Claude organization") else "Connect $vendor")
+    if (claudeOrg) {
+        relinkReason?.takeIf { it.isNotEmpty() }?.let { Text("$it.", fontSize = 13.sp, color = c.ink, modifier = Modifier.testTag("conn-relink-reason")) }
+        if (phase !is LoginPhase.Disclosure) {
+            SheetNote("Chats you send on this model are billed to your Claude organization, not to Allternit credits. ${ConnectionsCatalog.CLAUDE_ORG_NOTE} Allternit never sees your password.")
+        }
+    }
     when (val p = phase) {
         LoginPhase.Starting -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = c.sub)
-            Text("Getting your $vendor sign-in ready…", fontSize = 13.5.sp, color = c.sub)
+            Text(if (claudeOrg) "Getting your link ready…" else "Getting your $vendor sign-in ready…", fontSize = 13.5.sp, color = c.sub)
         }
         is LoginPhase.Disclosure -> Column(Modifier.testTag("conn-disclosure"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(p.disclosure.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = c.ink)
@@ -435,7 +448,7 @@ private fun Retry(message: String, id: String, onRetry: () -> Unit, onFallback: 
         SetupPrimaryButton("Try again", onClick = onRetry)
         if (id in ConnectionsCatalog.runnerIds || id == "chatgpt") {
             SetupQuietButton("Use a key instead") { onFallback(ConnectionsCatalog.keyFallback(id)) }
-        } else {
+        } else if (id != "claude-org") {
             SetupQuietButton("Add a computer") { onFallback("this-mac") }
         }
     }

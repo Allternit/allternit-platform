@@ -60,6 +60,8 @@ import com.allternit.core.design.ThinkingOrbState
 internal class RowActions(
     val onChooseModel: () -> Unit,
     val onRetry: (String) -> Unit,
+    val availableErrorActions: Set<ChatErrorAction> = emptySet(),
+    val onErrorAction: (String, ChatErrorAction) -> Unit = { _, _ -> },
     val onRegenerate: () -> Unit,
     val onEdit: (MessageRecord) -> Unit,
     val onReplyPermission: (PermissionAsk, String, (String) -> Unit) -> Unit,
@@ -203,7 +205,9 @@ internal fun MessageRow(
                         PermissionAskCard(p) { reply, err -> actions.onReplyPermission(p, reply, err) }
                     }
                 }
-                message.error?.let { ChatErrorCard(it, actions.onChooseModel) { actions.onRetry(message.id) } }
+                message.error?.let {
+                    ChatErrorCard(it, actions.onChooseModel, { actions.onRetry(message.id) }, actions.availableErrorActions) { a -> actions.onErrorAction(message.id, a) }
+                }
                 message.artifacts.forEach { a -> ArtifactChip(a, actions.onOpenArtifact) }
                 if (!isUser && !message.isStreaming && message.error == null && message.role == "assistant") {
                     MessageActionBar(message, isLastAssistant, actions.onRegenerate, actions.onShareLink)

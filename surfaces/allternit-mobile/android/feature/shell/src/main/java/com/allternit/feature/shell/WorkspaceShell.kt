@@ -105,6 +105,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     var mode by remember { mutableStateOf(launch.mode ?: ShellModePrefs.load(context)) }
     // The home composer's voice button opens a new chat that starts voice mode once.
     var voiceOnOpen by remember { mutableStateOf(false) }
+    /** A Settings page to open on top of the root ("subscriptions" = Connections); cleared when Settings closes. */
+    var settingsStart by remember { mutableStateOf<String?>(null) }
     // A first-run checklist fix opens Settings once the workspace is up (iOS DeepLinkRouter);
     // a debug `open-tab` extra opens a section (iOS AppModeStore `-open-tab`).
     var page by remember {
@@ -118,6 +120,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             },
         )
     }
+    LaunchedEffect(page) { if (page != ShellPage.Settings) settingsStart = null }
     val store = remember {
         ShellSessionsStore().also { it.seenPrefs = context.getSharedPreferences("allternit_shell", android.content.Context.MODE_PRIVATE) }
     }
@@ -352,6 +355,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             onDeleted = { page = ShellPage.Home },
             onOpenSection = { row -> page = ShellPage.Section(row) },
             onOpenSettings = { page = ShellPage.Settings },
+            onOpenConnections = { settingsStart = "subscriptions"; page = ShellPage.Settings },
         )
     }
 
@@ -551,6 +555,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             onDeleted = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
                             onOpenSettings = { page = ShellPage.Settings },
+                            onOpenConnections = { settingsStart = "subscriptions"; page = ShellPage.Settings },
                             startVoice = voiceOnOpen,
                             onVoiceStarted = { voiceOnOpen = false },
                             playGamesAnytime = mode == ShellMode.Code,
@@ -709,6 +714,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 backend = chatBackend,
                                 versionName = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() },
                                 onClose = { page = ShellPage.Home },
+                                startPage = settingsStart,
                                 connections = { onBack ->
                                     com.allternit.feature.shell.firstrun.ConnectionsSettingsScreen(
                                         onBack = onBack,
