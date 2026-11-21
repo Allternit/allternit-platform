@@ -182,9 +182,16 @@ Dropping a `LogStream` kills the child process and stops the threads.
 accepted too; optional `restorePoint`), answer `{ changeId, undo?, note? }`.
 
 ```rust
-let engine = host_probe::ActionEngine::system(); // real host, store in the runtime home
-let res = engine.run(&req)?;                     // blocking: use spawn_blocking
+// Approvals: the cloud's signed `ap1.<jti>.<exp>.<utag>.<sig>` ids, checked
+// with this runtime's relay key (sha256_hex(device_token)) and runtime id.
+let verifier = host_probe::RelayKeyApproval::new(relay_key, runtime_id);
+let engine = host_probe::ActionEngine::system(Box::new(verifier)); // store in the runtime home
+let res = engine.run(&req)?;                                       // blocking: use spawn_blocking
 ```
+
+`ActionEngine::new` refuses every approval until `with_verifier` plugs in a
+check. The id is single use: the engine claims it in the change store after
+the signature passes, so a replay is a 403.
 
 | `type` | `target` | Runs | Undo |
 |---|---|---|---|

@@ -327,16 +327,21 @@ fn detect_elevated() -> bool {
     false
 }
 
-/// Checks that the cloud issued `approval_id` for this action. The default
-/// accepts any well-formed id (the relay is loopback and the cloud checks the
-/// user); the mounting runtime can plug in a signature check.
+/// Checks that the cloud issued `approval_id` for this action. The engine's
+/// default ([`crate::approval::DenyApprovals`]) refuses everything; the
+/// mounting runtime plugs in [`crate::approval::RelayKeyApproval`], which
+/// checks the cloud's signed `ap1.*` ids with this runtime's relay key.
 pub trait ApprovalVerifier: Send + Sync {
     fn verify(&self, approval_id: &str, action: ActionType, target: &str) -> Result<(), String>;
 }
 
-/// Accepts any well-formed approval id.
+/// Accepts any well-formed approval id. Tests only: no mounted route may use
+/// it (the cloud's signature is the approval).
+#[cfg(test)]
 #[derive(Debug, Default, Clone, Copy)]
-pub struct WellFormedApproval;
+pub(crate) struct WellFormedApproval;
+
+#[cfg(test)]
 
 impl ApprovalVerifier for WellFormedApproval {
     fn verify(&self, _approval_id: &str, _action: ActionType, _target: &str) -> Result<(), String> {
@@ -434,15 +439,19 @@ pub struct ActionEngine<E: Executor> {
 }
 
 impl ActionEngine<SystemExecutor> {
-    /// Real host, store at the runtime home, well-formed approvals.
-    pub fn system() -> Self {
-        ActionEngine::new(SystemExecutor, ChangeStore::open_default())
+    /// Real host, store at the runtime home, approvals checked by `verifier`
+    /// (in production [`crate::approval::RelayKeyApproval`]).
+    pub fn system(verifier: Box<dyn ApprovalVerifier>) -> Self {
+        ActionEngine::new(SystemExecutor, ChangeStore::open_default()).with_verifier(verifier)
     }
 }
 
 /// Run one action on this host with [`ActionEngine::system`]. Blocking.
-pub fn run_action(req: &ActionRequest) -> Result<ActionResult, ActionError> {
-    ActionEngine::system().run(req)
+pub fn run_action(
+    req: &ActionRequest,
+    verifier: Box<dyn ApprovalVerifier>,
+) -> Result<ActionResult, ActionError> {
+    ActionEngine::system(verifier).run(req)
 }
 
 /// How a step's success is judged.
@@ -520,11 +529,13 @@ impl Plan {
 }
 
 impl<E: Executor> ActionEngine<E> {
+    /// Approvals are refused until [`ActionEngine::with_verifier`] plugs in
+    /// a real check.
     pub fn new(exec: E, store: ChangeStore) -> Self {
         ActionEngine {
             exec,
             store,
-            approvals: Box::new(WellFormedApproval),
+            approvals: Box::new(crate::approval::DenyApprovals),
         }
     }
 
@@ -1650,7 +1661,7 @@ mod tests {
 
     fn engine(f: Fake) -> ActionEngine<Fake> {
         let store = ChangeStore::new(&f.root);
-        ActionEngine::new(f, store)
+        ActionEngine::new(f, store).with_verifier(Box::new(WellFormedApproval))
     }
 
     fn nginx_linux(tag: &str, state: ServiceState) -> ActionEngine<Fake> {
@@ -1709,6 +1720,58 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ActionError::NotApproved(ref m) if m.contains("another computer")));
         assert!(e.exec.calls().is_empty());
+        cleanup(&e);
+    }
+
+    #[test]
+    fn the_default_verifier_refuses_every_id() {
+        let root = temp_root("deny-default");
+        let f = Fake::new(OsFamily::Linux, &root);
+        let store = ChangeStore::new(&f.root);
+        let e = ActionEngine::new(f, store);
+        let err = e
+            .run(&req("service.stop", "nginx.service", Some("ap-any")))
+            .unwrap_err();
+        assert_eq!(err.http_status(), 403);
+        assert!(e.exec.calls().is_empty());
+        cleanup(&e);
+    }
+
+    #[test]
+    fn cloud_approval_runs_once_and_a_replay_is_refused() {
+        use crate::approval::{mint_for_test, relay_key_from_device_token, RelayKeyApproval};
+        let key = relay_key_from_device_token("tok");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let id = mint_for_test(
+            &key,
+            "rt_box",
+            "service.stop",
+            "nginx.service",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            now + 120,
+        );
+        let e = nginx_linux("cloud-approval", ServiceState::Running)
+            .with_verifier(Box::new(RelayKeyApproval::new(key.clone(), "rt_box")));
+        // Bound to another target: refused, nothing ran, the id is not spent.
+        let err = e
+            .run(&req("service.stop", "sshd.service", Some(&id)))
+            .unwrap_err();
+        assert_eq!(err.code(), "not_approved");
+        assert!(e.exec.calls().is_empty());
+        // The real action passes once.
+        e.run(&req("service.stop", "nginx.service", Some(&id)))
+            .unwrap();
+        assert_eq!(e.exec.calls(), vec!["systemctl stop nginx.service"]);
+        // A second use of the same id is refused by the store claim.
+        let err = e
+            .run(&req("service.stop", "nginx.service", Some(&id)))
+            .unwrap_err();
+        assert_eq!(err.http_status(), 403);
+        assert!(err.to_string().contains("already used"), "{err}");
+        assert_eq!(e.exec.calls().len(), 1);
         cleanup(&e);
     }
 
