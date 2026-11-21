@@ -94,9 +94,13 @@ struct RuntimeEntry: Decodable, Identifiable, Equatable, Sendable {
     var liveUi: JSONValue?
     var legacy: Legacy?
     var docs: String?
+    /// `plans`: the subscription providers (claude, chatgpt, kimi, gemini,
+    /// copilot) whose plan this runtime may use. nil on an older server:
+    /// `RuntimeRegistry.plans(of:)` then reads the built-in table.
+    var plans: [String]?
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, vendor, category, tool, aliases, toolAliases, adapter, brains, access, more, status
+        case id, name, vendor, category, tool, aliases, toolAliases, adapter, brains, access, more, status, plans
         case systemLayer, look, liveUi, legacy, docs
     }
     private struct SystemLayer: Decodable { var via: String? }
@@ -136,6 +140,7 @@ struct RuntimeEntry: Decodable, Identifiable, Equatable, Sendable {
         liveUi = try? c.decodeIfPresent(JSONValue.self, forKey: .liveUi)
         legacy = try? c.decodeIfPresent(Legacy.self, forKey: .legacy)
         docs = try? c.decodeIfPresent(String.self, forKey: .docs)
+        plans = try? c.decodeIfPresent([String].self, forKey: .plans)
     }
 
     /// `look.default`: terminal | desktop.
@@ -301,6 +306,67 @@ enum RuntimeRegistry {
             out["runtime"] = .string("allternit")
         }
         return out
+    }
+
+    // MARK: Plans (the shared `allowed` rule, gizzi runtime-registry.ts)
+
+    /// Built-in `plans` table, used when the registry body has none (older server).
+    static let fallbackPlans: [String: [String]] = [
+        "allternit": ["claude", "chatgpt", "kimi", "gemini", "copilot"],
+        "claude": ["claude"], "codex": ["chatgpt"], "kimi": ["kimi"],
+        "antigravity": ["gemini"], "copilot": ["copilot"],
+    ]
+    static let planOfVendor: [String: String] = [
+        "anthropic": "claude", "openai": "chatgpt", "google": "gemini", "moonshot": "kimi", "microsoft": "copilot",
+    ]
+    static let planNames: [String: String] = [
+        "claude": "Claude", "chatgpt": "ChatGPT", "kimi": "Kimi", "gemini": "Gemini", "copilot": "Copilot",
+    ]
+
+    static func plans(of runtime: RuntimeEntry) -> [String] {
+        runtime.plans ?? fallbackPlans[runtime.id] ?? []
+    }
+
+    /// The plan a brain from this provider is paid by: `subs-<vendor|plan>`,
+    /// or a CLI plan sign-in (the runtime whose tool is this id and has exactly
+    /// one plan). nil for an API key, local model or credits.
+    static func planProvider(_ providerId: String, in runtimes: [RuntimeEntry]) -> String? {
+        if providerId.hasPrefix("subs-") {
+            let rest = String(providerId.dropFirst("subs-".count))
+            return planOfVendor[rest] ?? rest
+        }
+        if let r = runtimes.first(where: { $0.tool == providerId && plans(of: $0).count == 1 }) {
+            return plans(of: r).first
+        }
+        return nil
+    }
+
+    /// The runtime's own CLI sign-in (always allowed).
+    static func isOwnCli(_ runtime: RuntimeEntry, providerId: String) -> Bool {
+        providerId == runtime.tool || providerId == runtime.id
+            || (runtime.aliases ?? []).contains(providerId) || toolAliases(of: runtime).contains(providerId)
+    }
+
+    /// `fits` AND, for a plan brain, the plan is the runtime's own CLI sign-in
+    /// or in `runtime.plans`.
+    static func allowed(_ runtime: RuntimeEntry?, providerId: String, in runtimes: [RuntimeEntry]) -> Bool {
+        guard let r = runtime, fits(r, providerId: providerId) else { return false }
+        guard let plan = planProvider(providerId, in: runtimes) else { return true }
+        return isOwnCli(r, providerId: providerId) || plans(of: r).contains(plan)
+    }
+
+    /// The line for a brain that fits but is not allowed; nil otherwise.
+    static func planRefusal(_ runtime: RuntimeEntry?, providerId: String, in runtimes: [RuntimeEntry]) -> String? {
+        guard let r = runtime, fits(r, providerId: providerId), !allowed(r, providerId: providerId, in: runtimes),
+              let plan = planProvider(providerId, in: runtimes) else { return nil }
+        let own = runtimes.first { $0.id != "allternit" && plans(of: $0).contains(plan) }?.name ?? "Allternit"
+        return "\(planNames[plan] ?? ModelProviderNames.name(plan))'s plan can't be used inside \(r.name). Use an API key, or pick \(own)."
+    }
+
+    /// The auto-switch target: the first brain this runtime allows.
+    static func firstAllowedBrain<T>(_ brains: [T], runtime: RuntimeEntry?, in runtimes: [RuntimeEntry],
+                                     provider: (T) -> String) -> T? {
+        brains.first { allowed(runtime, providerId: provider($0), in: runtimes) }
     }
 
     /// The one-line note after an automatic brain switch (web `switchNote`).

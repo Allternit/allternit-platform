@@ -97,6 +97,26 @@ final class BotFormModel: ObservableObject {
     @Published private(set) var loadError: String?
     @Published private(set) var saving = false
     @Published var error: String?
+    /// After a successful save: `warnings[].message` (`runtime_not_installed`),
+    /// shown under the Runtime row. The save stands.
+    @Published private(set) var runtimeWarning: String?
+    /// A save that came back with a warning: the sheet stays open on it and
+    /// the primary button finishes (`finishAfterWarning`).
+    @Published private(set) var savedOutcome: BotSetupOutcome?
+    @Published private(set) var savedEdit = false
+    var awaitingWarningDone: Bool { runtimeWarning != nil && (savedOutcome != nil || savedEdit) }
+
+    private func noteWarnings(_ warnings: [MeetAgentsAPI.SaveWarning]) {
+        let lines = warnings.map(\.message).filter { !$0.isEmpty }
+        runtimeWarning = lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    /// The line for a failed save: a 422 refusal's own `message`, else the usual copy.
+    private static func saveFailure(_ error: Error, prefix: String) -> String {
+        if let refusal = error as? BotSaveRefusal { return refusal.message }
+        if case APIError.httpError(statusCode: 422, message: let message?) = error { return message }
+        return "\(prefix)\(FriendlyErrorMessage.from(error.localizedDescription))"
+    }
     @Published private(set) var describing = false
     @Published private(set) var describeError: String?
     @Published private(set) var refining = false
@@ -642,11 +662,14 @@ final class BotFormModel: ObservableObject {
         }
         saving = true
         error = nil
+        runtimeWarning = nil
         defer { saving = false }
         let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             let makeMain = await BotSetupMaker.needsMain()
-            let botId = try await MeetAgentsAPI.create(body: createBody(name: name, makeMain: makeMain))
+            let created = try await MeetAgentsAPI.createWithWarnings(body: createBody(name: name, makeMain: makeMain))
+            let botId = created.id
+            noteWarnings(created.warnings)
             // The create route takes no voice (agent.service): it goes on right after, best effort.
             if voiceEnabled {
                 try? await MeetAgentsAPI.update(id: botId, body: ["voice": .object(["voice_id": .string(voiceId), "enabled": .bool(true)])])
@@ -660,9 +683,11 @@ final class BotFormModel: ObservableObject {
             await look.syncAsset(botId: botId)
             AgentHubStore.shared.fetchAgentsIfNeeded(force: true)
             if makeMain { Task { await MainBotReachOut.run(botId: botId, botName: name) } }
-            return BotSetupOutcome(botIds: [botId], mainBotId: makeMain ? botId : nil, summary: "\(name) created")
+            let outcome = BotSetupOutcome(botIds: [botId], mainBotId: makeMain ? botId : nil, summary: "\(name) created")
+            if runtimeWarning != nil { savedOutcome = outcome }
+            return outcome
         } catch {
-            self.error = "Couldn’t create the bot: \(FriendlyErrorMessage.from(error.localizedDescription))"
+            self.error = Self.saveFailure(error, prefix: "Couldn’t create the bot: ")
             return nil
         }
     }
@@ -675,6 +700,7 @@ final class BotFormModel: ObservableObject {
         }
         saving = true
         error = nil
+        runtimeWarning = nil
         defer { saving = false }
         let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         var profile = storedProfile
@@ -707,11 +733,12 @@ final class BotFormModel: ObservableObject {
             body["provider"] = .string(provider)
         }
         do {
-            try await MeetAgentsAPI.update(id: botId, body: body)
+            noteWarnings(try await MeetAgentsAPI.update(id: botId, body: body))
             _ = try? await AgentHubStore.shared.refreshAgent(id: botId)
+            savedEdit = runtimeWarning != nil
             return true
         } catch {
-            self.error = "Failed to update bot. \(FriendlyErrorMessage.from(error.localizedDescription))"
+            self.error = Self.saveFailure(error, prefix: "Failed to update bot. ")
             return false
         }
     }

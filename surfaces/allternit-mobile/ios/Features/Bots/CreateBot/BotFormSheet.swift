@@ -150,12 +150,19 @@ private struct BotFormSheet: View {
     private var footer: some View {
         Button {
             Task {
+                // A save that came back with a runtime warning stays open on it;
+                // this press finishes (the save already stands).
+                if model.awaitingWarningDone {
+                    if let outcome = model.savedOutcome { onCreated?(outcome) } else { onSaved?() }
+                    dismiss()
+                    return
+                }
                 if model.isEditing {
-                    if await model.saveEdit() {
+                    if await model.saveEdit(), !model.awaitingWarningDone {
                         onSaved?()
                         dismiss()
                     }
-                } else if let outcome = await model.create() {
+                } else if let outcome = await model.create(), !model.awaitingWarningDone {
                     onCreated?(outcome)
                     dismiss()
                 }
@@ -177,11 +184,12 @@ private struct BotFormSheet: View {
     }
 
     private var primaryLabel: String {
+        if model.awaitingWarningDone { return "Done" }
         if model.isEditing { return model.saving ? "Saving…" : "Save bot" }
         return model.saving ? "Creating…" : "Create"
     }
 
-    private var primaryEnabled: Bool { auth.isSignedIn && model.canSave }
+    private var primaryEnabled: Bool { model.awaitingWarningDone || (auth.isSignedIn && model.canSave) }
 
     private func errorBanner(_ message: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
@@ -501,8 +509,22 @@ private struct BotFormSheet: View {
         }
     }
 
-    /// Runtime · Brain summary; opens the layered picker.
+    /// Runtime · Brain summary; opens the layered picker. After a save, the
+    /// server's `runtime_not_installed` warning shows under it.
     private var layersRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            layersButton
+            if let warning = model.runtimeWarning {
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextSecondary"))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("botForm-runtimeWarning")
+            }
+        }
+    }
+
+    private var layersButton: some View {
         Button { layersOpen = true } label: {
             HStack(spacing: 10) {
                 ModelProviderMark(providerId: model.runtimeId.isEmpty ? "allternit" : model.runtimeId, size: 28)

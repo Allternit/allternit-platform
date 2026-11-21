@@ -516,12 +516,15 @@ struct BotBrainPickerSheet: View {
             emptyLine("No brains match “\(query)”.")
         } else {
             choices(brainChoices.prefix(48).map { b in
-                let ok = runtime.map { RuntimeRegistry.fits($0, providerId: b.provider) } ?? true
+                // Shared `allowed` rule: a brain that fits but whose plan this
+                // runtime may not use stays listed, disabled, with the refusal line.
+                let ok = runtime.map { RuntimeRegistry.allowed($0, providerId: b.provider, in: registry.runtimes) } ?? true
+                let refusal = runtime.flatMap { RuntimeRegistry.planRefusal($0, providerId: b.provider, in: registry.runtimes) }
                 var badges = [Badge(text: b.access.label, tone: .access(b.access))]
                 if b.needsSignIn { badges.append(Badge(text: "Needs sign-in", tone: .warn)) }
                 let phrase = RuntimeRegistry.accessPhrase(b.access, providerId: b.provider)
                 return Choice(id: b.id, name: b.name,
-                              detail: ok ? phrase.prefix(1).uppercased() + phrase.dropFirst() : "Not with \(runtimeName)",
+                              detail: ok ? phrase.prefix(1).uppercased() + phrase.dropFirst() : (refusal ?? "Not with \(runtimeName)"),
                               mark: .provider(b.provider), badges: badges, ok: ok,
                               selected: modelRef.map { "\($0.provider)/\($0.model)" == b.id } ?? false)
             }) { id in
@@ -558,13 +561,15 @@ struct BotBrainPickerSheet: View {
         next = RuntimeRegistry.resolveRuntime(next, in: registry.runtimes)
         next.removeValue(forKey: "autoSwitchedFrom")
         var message: String?
-        if let ref = modelRef, !RuntimeRegistry.fits(r, providerId: ref.provider) {
+        if let ref = modelRef, !RuntimeRegistry.allowed(r, providerId: ref.provider, in: registry.runtimes) {
             next["autoSwitchedFrom"] = .string("\(ref.provider)/\(ref.model)")
-            if let fb = brains.first(where: { RuntimeRegistry.fits(r, providerId: $0.provider) }) {
+            let refusal = RuntimeRegistry.planRefusal(r, providerId: ref.provider, in: registry.runtimes)
+            if let fb = RuntimeRegistry.firstAllowedBrain(brains, runtime: r, in: registry.runtimes, provider: { $0.provider }) {
                 next["modelRef"] = .object(["providerID": .string(fb.provider), "modelID": .string(fb.model)])
                 next["access"] = .string(fb.access.rawValue)
                 let provider: String = { if case .list(let ids) = r.brains, let first = ids.first { return first } else { return fb.provider } }()
-                message = RuntimeRegistry.switchNote(runtime: r, provider: provider, brainName: fb.name)
+                message = refusal.map { "\($0) The brain changed to \(fb.name)." }
+                    ?? RuntimeRegistry.switchNote(runtime: r, provider: provider, brainName: fb.name)
             } else {
                 next.removeValue(forKey: "modelRef")
                 next.removeValue(forKey: "access")
@@ -628,6 +633,10 @@ struct BotBrainPickerSheet: View {
                                                    provider: ref?["providerID"]?.jString, config: config)
                     agentModeStore.fetchAgentsIfNeeded(force: true)
                     dismiss()
+                } catch APIError.httpError(statusCode: 422, message: let message?) {
+                    // Server validation (plan_not_allowed_on_runtime, brain_not_fit,
+                    // runtime_unknown): its `message` is the line to show.
+                    saveError = message
                 } catch {
                     saveError = "Couldn't save. \(FriendlyErrorMessage.from(error.localizedDescription))"
                 }

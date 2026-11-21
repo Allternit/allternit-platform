@@ -733,6 +733,13 @@ struct ComposerAgentChips: View {
         runtimeId == "custom" ? "Custom harness" : (registry.runtime(runtimeId)?.name ?? runtimeId)
     }
     private var providerId: String? { brain["modelRef"]?.jObject?["providerID"]?.jString }
+    /// Shared `allowed` rule: the saved brain's plan can't be used inside this
+    /// runtime (an older save). The brain chip says so; the picker it opens
+    /// offers only allowed brains.
+    private var brainRefusal: String? {
+        guard vendor == nil, let pid = providerId else { return nil }
+        return RuntimeRegistry.planRefusal(registry.runtime(runtimeId), providerId: pid, in: registry.runtimes)
+    }
     private var brainName: String {
         guard let ref = brain["modelRef"]?.jObject,
               let p = ref["providerID"]?.jString, let m = ref["modelID"]?.jString else { return "Default model" }
@@ -813,6 +820,12 @@ struct ComposerAgentChips: View {
                         .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
                 }
+                if layer == .brain, brainRefusal != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Color.orange)
+                        .accessibilityHidden(true)
+                }
                 if !locked {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
@@ -826,7 +839,7 @@ struct ComposerAgentChips: View {
         }
         .buttonStyle(.plain)
         .disabled(locked)
-        .accessibilityLabel("\(layer.rawValue): \(label)\(locked ? ", locked" : "")")
+        .accessibilityLabel("\(layer.rawValue): \(label)\(locked ? ", locked" : "")\(layer == .brain ? brainRefusal.map { ". \($0)" } ?? "" : "")")
         .accessibilityHint(locked ? "" : "Shows the \(layer.rawValue.lowercased()) choices")
         .accessibilityIdentifier("composerChip-\(layer.rawValue.lowercased())")
     }

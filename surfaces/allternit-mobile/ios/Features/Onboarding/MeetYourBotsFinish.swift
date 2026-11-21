@@ -138,6 +138,14 @@ struct MeetRosterBot: Sendable {
 
 /// The raw agent routes the meet flow needs (`/api/v1/agents`, agent_routes.rs),
 /// with the web agent.service's wire shapes.
+/// A bot save the server refused (422 `plan_not_allowed_on_runtime`,
+/// `brain_not_fit`, `runtime_unknown`): `message` is shown as it is.
+struct BotSaveRefusal: Error, LocalizedError, Sendable {
+    let code: String
+    let message: String
+    var errorDescription: String? { message }
+}
+
 enum MeetAgentsAPI {
     private struct ListEnvelope: Decodable { let agents: [[String: JSONValue]] }
     private struct CreateResponse: Decodable {
@@ -162,12 +170,57 @@ enum MeetAgentsAPI {
         }
     }
 
+    /// Server validation of an explicit runtime (contract "Backend gaps 1-3"):
+    /// 422 `{error, message}`. Never retried with another body or verb; the
+    /// form shows `message` as it is.
+    static let refusalCodes: Set<String> = ["plan_not_allowed_on_runtime", "brain_not_fit", "runtime_unknown"]
+
+    /// A save's response, read loosely: `warnings` is optional
+    /// (`runtime_not_installed` from allternit-api) and other keys are ignored.
+    struct SaveWarning: Decodable, Equatable, Sendable {
+        var code: String?
+        var runtime: String?
+        var message: String
+    }
+    private struct WarningsEnvelope: Decodable { var warnings: [SaveWarning]? }
+
+    static func warnings(in data: Data) -> [SaveWarning] {
+        ((try? JSONDecoder().decode(WarningsEnvelope.self, from: data))?.warnings) ?? []
+    }
+
+    /// Sends one JSON request. A 422 refusal throws `BotSaveRefusal`; any
+    /// other failure throws the usual `APIError`.
+    private static func send(_ method: String, path: String, body: [String: JSONValue]) async throws -> Data {
+        var request = try await APIClient.shared.authorizedRequest(path: path, method: method)
+        request.httpBody = try JSONEncoder().encode(body)
+        let (data, response) = try await APIClient.shared.send(request)
+        if let http = response as? HTTPURLResponse, http.statusCode == 422 {
+            let parsed = APIErrorBody.parse(data)
+            if let code = parsed.code, refusalCodes.contains(code) {
+                throw BotSaveRefusal(code: code, message: parsed.message ?? plainErrorText(message: nil, status: 422))
+            }
+        }
+        try APIClient.shared.validate(response, data: data, method: method)
+        return data
+    }
+
     /// `POST /api/v1/agents` → the new id. A 422 retries once with the web's
-    /// minimal bot body (agent.service createAgent).
+    /// minimal bot body (agent.service createAgent), except a runtime refusal.
     static func create(body: [String: JSONValue]) async throws -> String {
+        try await createWithWarnings(body: body).id
+    }
+
+    /// `create`, plus the response's `warnings` (the save still succeeded).
+    static func createWithWarnings(body: [String: JSONValue]) async throws -> (id: String, warnings: [SaveWarning]) {
+        func decode(_ data: Data) throws -> (id: String, warnings: [SaveWarning]) {
+            do {
+                return (try JSONDecoder().decode(CreateResponse.self, from: data).agent.id, warnings(in: data))
+            } catch {
+                throw APIError.decoding(error)
+            }
+        }
         do {
-            let response: CreateResponse = try await APIClient.shared.post(path: "agents", body: body)
-            return response.agent.id
+            return try decode(try await send("POST", path: "agents", body: body))
         } catch APIError.httpError(statusCode: let status, message: _) where status == 422 {
             var minimal: [String: JSONValue] = [:]
             for key in ["name", "description", "type", "model", "provider", "harness_config", "enabled_modes", "trust_tier", "is_bot", "bot_profile"] {
@@ -177,18 +230,19 @@ enum MeetAgentsAPI {
             if let profile = body["bot_profile"] { config["botProfile"] = profile }
             if case .object(let full)? = body["config"], let avatar = full["avatar"] { config["avatar"] = avatar }
             minimal["config"] = .object(config)
-            let response: CreateResponse = try await APIClient.shared.post(path: "agents", body: minimal)
-            return response.agent.id
+            return try decode(try await send("POST", path: "agents", body: minimal))
         }
     }
 
     /// web agent.service `updateAgent`: PATCH (merge), PUT on gateways that refuse it.
-    static func update(id: String, body: [String: JSONValue]) async throws {
+    /// Returns the response's `warnings` (empty when it has none).
+    @discardableResult
+    static func update(id: String, body: [String: JSONValue]) async throws -> [SaveWarning] {
         let path = "agents/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
         do {
-            try await APIClient.shared.patch(path: path, body: body)
+            return warnings(in: try await send("PATCH", path: path, body: body))
         } catch APIError.httpError(statusCode: let status, message: _) where [404, 405, 422].contains(status) {
-            try await APIClient.shared.put(path: path, body: body)
+            return warnings(in: try await send("PUT", path: path, body: body))
         }
     }
 
