@@ -84,7 +84,7 @@ export namespace ToolFamilies {
     "notebook-graph": ["notebook_edit", "mdx_graph"],
     threads: ["thread_update", "thread_close", "thread_search"],
     projects: ["project_list", "project_send", "project_status"],
-    computers: ["computers"],
+    computers: ["computers", "computers_console_list", "computer_snapshot", "computer_services", "computer_ports", "computer_logs_tail"],
     context: ["get_context_remaining", "history_recall"],
     // Prompt-gap tools (G3). A family only matters once its tools are
     // registered (each stub's `available`); until then nothing is listed.

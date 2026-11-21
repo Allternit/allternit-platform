@@ -49,7 +49,7 @@ import { Log } from "@/shared/util/log"
 import { LspTool } from "@/runtime/tools/builtins/lsp"
 import { SymbolEditTool } from "@/runtime/tools/builtins/symbol-edit"
 import { BrowserToolsetTool, ComputerToolsetTool, ComputerV2ToolsetTool } from "@/runtime/tools/computer-toolset"
-import { ComputersTool } from "@/runtime/tools/builtins/computers"
+import { ComputersTool, ComputersConsoleTools, consoleEnabled } from "@/runtime/tools/builtins/computers"
 import { Truncate } from "@/runtime/tools/builtins/truncation"
 import { PlanExitTool, PlanEnterTool } from "@/runtime/tools/builtins/plan"
 import { ApplyPatchTool } from "@/runtime/tools/builtins/apply_patch"
@@ -369,6 +369,9 @@ export namespace ToolRegistry {
       // rides the same opt-in as `computer`. A turn can also opt in on its own
       // (`metadata.tools.computer`, contracts/pet-offers): this turn only.
       ...(Flag.GIZZI_ENABLE_COMPUTER_TOOL || turn?.computer === true ? [ComputerToolsetTool, ComputerV2ToolsetTool, ComputersTool] : []),
+      // Computers console read tools (health, services, ports, log tail): read-only,
+      // behind the computers_console flag.
+      ...(consoleEnabled() ? ComputersConsoleTools : []),
       // Subscription capabilities (presentations, documents, deep research)
       // the user's connected subscriptions can run now; every call is
       // confirmed by the user (D16). Empty when the fabric is not set up.
