@@ -19,6 +19,42 @@ eoj/allternit-claude   busy    push  Allternit/allternit-platform@main  · Auth 
 
 If nothing is running, the command says so. It never invents a session.
 
+## Move a session into Allternit
+
+`gizzi agents adopt` takes a session that is running in macOS Terminal (or iTerm2, Ghostty) and resumes it in an Allternit terminal.
+
+```bash
+gizzi agents adopt <session> [--copy | --new] [--cancel] [--yes] [--json]
+```
+
+`<session>` is a session id, an address, or a name or prefix from `gizzi agents sessions`. If more than one session matches, the command lists them and stops.
+
+| Flag | What it does |
+|---|---|
+| (none) | Move: wait for the agent to go idle, stop the old process, resume the same session in Allternit. |
+| `--copy` | Open a copy in Allternit. The old session keeps running and nothing is signalled. |
+| `--new` | Start a fresh session in the same folder. The old one is untouched. |
+| `--cancel` | Cancel a move that is still waiting for the agent to go idle. Ctrl-C does the same. |
+| `--yes` | Don't ask first. Needed when there is no terminal to ask on. |
+| `--json` | Print the raw result. |
+
+Before a move, the command shows who holds the session and what it will resume with, and asks first:
+
+```
+$ gizzi agents adopt adopt-probe
+adopt-probe (claude) is open in Terminal pid 48211 on ttys004.
+It will resume in Allternit with: claude --resume 7f3c0e1a-... --model opus
+The old Terminal window stays open and shows the exit.
+Move? [y/N] y
+Move started (job 5d2e...).
+Waiting for adopt-probe to go idle…
+Stopping pid 48211…
+Starting in Allternit…
+Done: terminal term-31
+```
+
+The command refuses without asking when the session is already in Allternit, when it is open in more than one place (it lists every holder; close the others first), or when its tool can't resume (use `--new`). A runtime without the adopt route says: "This Allternit runtime is too old for adopt; update Allternit Desktop." The command exits non-zero on any failure.
+
 ## What each field means
 
 | Field | Meaning |
