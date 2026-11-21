@@ -211,6 +211,12 @@ final class ACIComputersClient: Sendable {
         let lastSample: ConsoleSnapshot?
         let servicesCount: Int?
         let lastBackupAt: String?
+        /// The runtime device behind this row (console 2.3). Relay
+        /// (`allternit-relay://`), Terminal and the Files drive are keyed by it;
+        /// the row id stays the key for every `/computers/:id/*` route.
+        let runtimeId: String?
+
+        var relayId: String { runtimeId ?? id }
 
         var isOnline: Bool { !["offline", "asleep", "stopped"].contains(status.lowercased()) }
         var isAsleep: Bool { status.lowercased() == "asleep" }
