@@ -3,9 +3,10 @@
  *
  * Two layers in the terminal's shape: first Runtime (how it works: the
  * registry's `runtimes[]`, grouped by category, "More" ones behind a row),
- * then Brain (how it thinks: the shared model list, only brains that fit the
- * runtime, each with its access badge). Picking a runtime that can't run the
- * current brain switches the brain to the first one that fits and says so in
+ * then Brain (how it thinks: the shared model list, only brains the runtime
+ * may run (registry `allowed`: fits + plan rule), each with its access badge).
+ * Picking a runtime that can't run the current brain switches the brain to
+ * the first allowed one and says so in
  * one line. A Connected bot shows both layers locked: "Run by <Vendor>".
  *
  * The compatibility rule, the auto-switch and the record write all come from
@@ -21,7 +22,7 @@ import { getModelListSections, refreshModelListSections, type ModelListSection }
 import { visibleWindow } from '../utils/model/modelPickerModel';
 import { Pane } from './design-system/Pane';
 import {
-  fits,
+  allowed,
   getRuntime,
   listRuntimes,
   type AccessKind,
@@ -168,7 +169,9 @@ export function RuntimePicker({ initialRuntime, focusRuntime, initialBrain, subj
       const access = ACCESS_OF_KIND[section.kind];
       const inSection: BrainRow[] = [];
       for (const provider of section.providers) {
-        if (!fits(runtime, provider.id)) continue;
+        // Only brains the runtime may run: fits, and a plan only where the
+        // runtime's `plans` allow it (registry `allowed`).
+        if (!allowed(runtime, provider.id)) continue;
         for (const m of provider.models) {
           if (m.hidden) continue;
           if (!matches(filter, [m.ref, m.name, provider.name])) continue;

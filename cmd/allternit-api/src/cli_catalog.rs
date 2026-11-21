@@ -267,6 +267,10 @@ pub(crate) struct RuntimeEntry {
     pub brains: Value,
     #[serde(default)]
     pub access: Vec<String>,
+    /// Subscription providers (`claude`, `chatgpt`, `kimi`, `gemini`,
+    /// `copilot`) whose plan this runtime may use (`bot_brain::allowed`).
+    #[serde(default)]
+    pub plans: Vec<String>,
     #[serde(default)]
     pub more: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

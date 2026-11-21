@@ -1,6 +1,6 @@
 ---
 title: "Runtimes API"
-description: "GET /api/v1/runtimes on cloud-api and on a computer's runtime: the runtime registry, its caching, the installed map on your own computer, starting a runtime's own web app on your computer, and the bot record fields that name a runtime."
+description: "GET /api/v1/runtimes on cloud-api and on a computer's runtime: the runtime registry, its caching, the installed map on your own computer, which brains a runtime may use (plans), bot save errors and warnings, starting a runtime's own web app on your computer, and the bot record fields that name a runtime."
 ---
 
 A runtime is the program a bot runs in: Allternit itself, or a coding CLI such as Claude Code, Codex, Kimi or Antigravity. The brain is the model that runtime uses. Every picker (Desktop, ai.allternit.com, the phone apps and Gizzi Code) reads the same list of runtimes from this endpoint, so they always offer the same choices.
@@ -30,8 +30,9 @@ curl https://<cloud-api>/api/v1/runtimes
       "tool": "claude-cli",
       "aliases": ["claude-cli"],
       "adapter": { "kind": "stream-json" },
-      "brains": ["anthropic"],
+      "brains": ["anthropic", "claude"],
       "access": ["plan", "key"],
+      "plans": ["claude"],
       "more": false,
       "systemLayer": { "via": "append-flag" },
       "look": { "default": "terminal", "terminal": { "kind": "tui", "bg": "#1a1918" } },
@@ -51,6 +52,7 @@ The example is shortened. A real `look` carries the full set of tokens.
 | `adapter.kind` | How Allternit drives it: `native`, `acp`, `stream-json`, `codex-app-server`, `gateway`, `one-shot-json`, `text` or `unsupported`. |
 | `brains` | `"any"`, or the provider ids whose models this runtime can run. |
 | `access` | How a user pays for it: `plan`, `key`, `local`, `credits`. |
+| `plans` | The subscription providers whose plan this runtime may use: any of `claude`, `chatgpt`, `kimi`, `gemini`, `copilot` (the `subs-` provider ids without the prefix). `[]` means plan brains from other companies are never offered. See [Which brains a runtime may use](#which-brains-a-runtime-may-use). |
 | `more` | `true` puts it under "More" in the picker. |
 | `status` | An optional note to show, such as "API key or Enterprise only". |
 | `systemLayer.via` | How Allternit adds its rules to the runtime's own prompt. It only ever appends. |
@@ -87,6 +89,63 @@ When the caller owns the computer, allternit-api adds one more key. Ownership me
 - `version` is `null` for now: that check does not read the CLI's version yet.
 - This response is per computer and per person, so it is sent with `Cache-Control: private, no-cache` and no ETag.
 - cloud-api never sends `installed`. Only your computer knows what is installed on it.
+
+## Which brains a runtime may use
+
+A plan login (a Claude, ChatGPT, Kimi, Gemini or Copilot subscription) belongs to that provider's own app. Most providers do not allow it inside another company's agent, so each runtime lists the plans it may use in `plans`:
+
+| Runtime | `plans` |
+|---|---|
+| `allternit` | `claude`, `chatgpt`, `kimi`, `gemini`, `copilot` (Allternit's Subscription Fabric drives the provider's own app session) |
+| `claude` (Claude Code) | `claude` |
+| `codex` (Codex) | `chatgpt` |
+| `kimi` (Kimi Code) | `kimi` |
+| `antigravity` (Antigravity) | `gemini` |
+| `copilot` (GitHub Copilot CLI) | `copilot` |
+| every other runtime | none |
+
+Every client (Desktop, ai.allternit.com, the phone apps, Gizzi Code) and the server use one rule, `allowed(runtime, brain)`. The reference is `allowed` in `cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts`; the server copy is `allowed` in `cmd/allternit-api/src/bot_brain.rs`.
+
+1. **The brain fits.** `brains` is `"any"`, or the brain's provider is listed (a `subs-` prefix is stripped), or the provider is the runtime's own CLI (its `tool`, its id, its aliases or the tool's aliases).
+2. **A plan brain needs the plan.** A brain is a plan brain when its provider id starts with `subs-` (vendor ids map to their plan: `subs-anthropic` is `claude`, `subs-openai` is `chatgpt`), or when it is a CLI sign-in whose runtime holds exactly one plan (`claude-cli`, `codex-cli`, `kimi-cli`, `antigravity`, `copilot`). The plan must be in the runtime's `plans`.
+3. **A runtime's own CLI sign-in always passes.** `claude-cli` on Claude Code is allowed whatever `plans` says.
+
+Clients never offer a brain that fails `allowed`. When a new runtime can't use the current brain, the picker switches to the first allowed brain (the runtime CLI's default model) and shows a one-line note. Gizzi Code refuses an explicit `--brain` that is a plan the runtime can't use, with the `plan_not_allowed_on_runtime` message below.
+
+## Saving a bot: errors and warnings
+
+### 422 errors
+
+allternit-api checks the runtime and brain on `POST /api/v1/agents`, `PUT` and `PATCH /api/v1/agents/:id`, **only when the request sets `config.botBrain.runtime` itself**. A save in the old shape (no `runtime`) is normalized as described below and never rejected. The brain is `botBrain.modelRef` (a `provider/model` string or a `{providerID, modelID}` object), else the request's `model` when it is `provider/model`. A brain with no provider is not checked. `runtime: "custom"` is not checked either.
+
+```json
+{ "error": "plan_not_allowed_on_runtime", "message": "Claude's plan can't be used inside Hermes. Use an API key, or pick Claude Code." }
+```
+
+| `error` | `message` | When |
+|---|---|---|
+| `runtime_unknown` | No runtime called `<id>`. | `runtime` is not a registry id or alias. |
+| `brain_not_fit` | `<Runtime>` runs `<Vendor>` models only. | The brain fails rule 1. |
+| `plan_not_allowed_on_runtime` | `<Provider>`'s plan can't be used inside `<Runtime>`. Use an API key, or pick `<own runtime>`. | The brain fits but fails rule 2. `<own runtime>` is the runtime whose `plans` hold that provider. |
+
+### Install warning
+
+When a create or update that carries `config.botBrain` succeeds and its runtime (after normalizing) is not `allternit`, allternit-api checks whether the runtime's CLI is on this computer, with the same check that fills `installed` in [What is installed](#what-is-installed). When it is not, the response gets `warnings`. The save still succeeds.
+
+```json
+{
+  "agent": { "id": "…" },
+  "warnings": [
+    {
+      "code": "runtime_not_installed",
+      "runtime": "opencode",
+      "message": "OpenCode isn't installed on this computer. The bot will fail to start until it is."
+    }
+  ]
+}
+```
+
+`warnings` is added to the usual body of each route (`{agent}` on `POST` and `PATCH`, `{success}` on `PUT`) and is absent when there is nothing to say. Clients show the message under the Runtime layer.
 
 ## A runtime's own web app
 
@@ -199,7 +258,7 @@ Each create, `PUT` or `PATCH` that carries `config.botBrain` passes through one 
   - `native_harness` with harness h becomes the runtime whose `legacy.harness`, id or alias is h, or `custom` when there is none.
   - `uhp_harness` becomes the runtime whose `legacy.uhp` holds `uhpHarnessId`, or `custom`.
 - **With `runtime`.** `mode` and `harness` are worked out from it. The Allternit runtime sets `mode: "allternit_cloud"`. A runtime with adapter `unsupported` sets `uhp_harness`. Any other runtime sets `native_harness` with its harness id.
-- **A runtime this server does not know** (a newer client may know more runtimes) is kept and treated as a native harness with that id. `custom` keeps the stored `mode` and `harness` as they are.
+- **A runtime this server does not know** is rejected with `422 runtime_unknown` when the request names it (see [422 errors](#422-errors)). A stored record that already holds one is read as a native harness with that id. `custom` keeps the stored `mode` and `harness` as they are.
 - Every other key in `botBrain` is kept. An empty or missing `botBrain` is left alone.
 
 Config is merged one top-level key at a time. A client that saves only `botBrain` replaces that object, which is why `agentView` is a separate key.

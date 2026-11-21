@@ -988,6 +988,19 @@ async fn create_agent(
     if let Err(err) = validate_agent_against_checklist(&body) {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))).into_response();
     }
+    // Runtime + brain rules, only when the request names a runtime itself.
+    if let Err(rejection) = crate::bot_brain::validate_explicit_runtime(
+        body.config.as_ref(),
+        Some(body.model.as_str()),
+        crate::cli_catalog::runtime_registry(),
+    ) {
+        return (StatusCode::UNPROCESSABLE_ENTITY, Json(rejection.body())).into_response();
+    }
+    let install_warnings = crate::bot_brain::install_warnings(
+        body.config.as_ref(),
+        crate::cli_catalog::runtime_registry(),
+        crate::bot_brain::tool_installed,
+    );
 
     let requested_id: Option<String> = body
         .id
@@ -1198,6 +1211,9 @@ async fn create_agent(
             if let Some(token) = principal_token {
                 // Fabric-transport bearer token — surfaced exactly once.
                 resp["principal_token"] = json!(token);
+            }
+            if !install_warnings.is_empty() {
+                resp["warnings"] = json!(install_warnings);
             }
             (StatusCode::CREATED, Json(resp)).into_response()
         }
@@ -2435,6 +2451,14 @@ fn apply_agent_update(
 
 /// Field-level validation shared by PUT and PATCH.
 fn validate_agent_update_body(body: &UpdateAgentBody) -> Result<(), axum::response::Response> {
+    // Runtime + brain rules, only when the request names a runtime itself.
+    if let Err(rejection) = crate::bot_brain::validate_explicit_runtime(
+        body.config.as_ref(),
+        body.model.as_deref(),
+        crate::cli_catalog::runtime_registry(),
+    ) {
+        return Err((StatusCode::UNPROCESSABLE_ENTITY, Json(rejection.body())).into_response());
+    }
     if let Some(ref name) = body.name {
         if name.trim().len() < 3 {
             return Err((
@@ -2481,6 +2505,11 @@ async fn update_agent(
     if let Err(response) = validate_agent_update_body(&body) {
         return response;
     }
+    let install_warnings = crate::bot_brain::install_warnings(
+        body.config.as_ref(),
+        crate::cli_catalog::runtime_registry(),
+        crate::bot_brain::tool_installed,
+    );
 
     let db = state.db.clone();
     let user_id = user.user_id;
@@ -2510,7 +2539,11 @@ async fn update_agent(
                 json!({"agent_id": webhook_agent_id, "name": webhook_name}),
             )
             .await;
-            Json(json!({"success": true})).into_response()
+            let mut resp = json!({"success": true});
+            if !install_warnings.is_empty() {
+                resp["warnings"] = json!(install_warnings);
+            }
+            Json(resp).into_response()
         }
         Ok(Err(e)) => {
             warn!("DB error updating agent: {}", e);
@@ -2546,6 +2579,11 @@ async fn patch_agent(
     if let Err(response) = validate_agent_update_body(&body) {
         return response;
     }
+    let install_warnings = crate::bot_brain::install_warnings(
+        body.config.as_ref(),
+        crate::cli_catalog::runtime_registry(),
+        crate::bot_brain::tool_installed,
+    );
 
     let db = state.db.clone();
     let user_id = user.user_id;
@@ -2577,7 +2615,11 @@ async fn patch_agent(
                 json!({"agent_id": webhook_agent_id, "name": agent.name}),
             )
             .await;
-            Json(json!({"agent": agent})).into_response()
+            let mut resp = json!({"agent": agent});
+            if !install_warnings.is_empty() {
+                resp["warnings"] = json!(install_warnings);
+            }
+            Json(resp).into_response()
         }
         Ok(Err(rusqlite::Error::QueryReturnedNoRows)) => {
             (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response()

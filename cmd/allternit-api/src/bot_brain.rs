@@ -32,7 +32,7 @@ use std::collections::HashSet;
 use rusqlite::{params, Connection};
 use serde_json::Value;
 
-use crate::cli_catalog::{runtime_registry, RuntimeRegistry};
+use crate::cli_catalog::{runtime_registry, RuntimeEntry, RuntimeRegistry};
 
 pub(crate) const MODE_CLOUD: &str = "allternit_cloud";
 pub(crate) const MODE_NATIVE: &str = "native_harness";
@@ -145,6 +145,216 @@ pub(crate) fn merge_config(stored: Option<Value>, patch: Option<Value>) -> Optio
         }
     }
     merged
+}
+
+// ─── Plan rules and save validation (contract: "Backend gaps 1-3") ────────────
+//
+// The same rule as `fits` / `allowed` in gizzi's `runtime-registry.ts`; web,
+// iOS and Android mirror it. Validation runs only when the request sets
+// `botBrain.runtime` itself: old-shape saves are normalized, never rejected.
+
+/// A 422 body for a bot save: `{ error: code, message }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BrainRejection {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl BrainRejection {
+    pub(crate) fn body(&self) -> Value {
+        serde_json::json!({ "error": self.code, "message": self.message })
+    }
+}
+
+pub(crate) const RUNTIME_UNKNOWN: &str = "runtime_unknown";
+pub(crate) const BRAIN_NOT_FIT: &str = "brain_not_fit";
+pub(crate) const PLAN_NOT_ALLOWED: &str = "plan_not_allowed_on_runtime";
+pub(crate) const RUNTIME_NOT_INSTALLED: &str = "runtime_not_installed";
+
+/// A runtime's own CLI: its `tool`, its id, its aliases, the tool's aliases.
+fn is_own_cli(entry: &RuntimeEntry, provider: &str) -> bool {
+    let Some(tool) = entry.tool.as_deref() else {
+        return false;
+    };
+    provider == tool
+        || provider == entry.id
+        || entry.aliases.as_deref().unwrap_or(&[]).iter().any(|a| a == provider)
+        || crate::cli_catalog::find(tool).is_some_and(|t| t.aliases.iter().any(|a| a == provider))
+}
+
+/// Brain fits runtime: `brains == "any"`, the provider (a `subs-` prefix
+/// stripped) is listed, or it is the runtime's own CLI.
+pub(crate) fn fits(entry: &RuntimeEntry, provider: &str) -> bool {
+    if entry.brains.as_str() == Some("any") {
+        return true;
+    }
+    let p = provider.strip_prefix("subs-").unwrap_or(provider);
+    let listed = entry
+        .brains
+        .as_array()
+        .is_some_and(|list| list.iter().any(|b| b.as_str() == Some(p)));
+    listed || is_own_cli(entry, p)
+}
+
+/// The subscription provider whose plan a brain uses, if it is a plan:
+/// `subs-<p>` (vendor ids map to their plan: anthropic → claude, …), or a CLI
+/// sign-in whose runtime holds exactly one plan (`claude-cli` → claude,
+/// `codex-cli` → chatgpt, `kimi-cli` → kimi, `antigravity` → gemini,
+/// `copilot` → copilot).
+pub(crate) fn plan_provider(provider: &str, registry: &RuntimeRegistry) -> Option<String> {
+    if let Some(rest) = provider.strip_prefix("subs-") {
+        let plan = match rest {
+            "anthropic" => "claude",
+            "openai" => "chatgpt",
+            "google" => "gemini",
+            "moonshot" => "kimi",
+            "github" => "copilot",
+            other => other,
+        };
+        return Some(plan.to_string());
+    }
+    registry
+        .runtimes
+        .iter()
+        .find(|r| r.tool.as_deref() == Some(provider) && r.plans.len() == 1)
+        .map(|r| r.plans[0].clone())
+}
+
+/// `fits`, and a plan brain only where the runtime's `plans` list its
+/// provider. A runtime's own CLI sign-in always passes.
+pub(crate) fn allowed(entry: &RuntimeEntry, provider: &str, registry: &RuntimeRegistry) -> bool {
+    if !fits(entry, provider) {
+        return false;
+    }
+    match plan_provider(provider, registry) {
+        None => true,
+        Some(plan) => is_own_cli(entry, provider) || entry.plans.iter().any(|p| *p == plan),
+    }
+}
+
+/// A subscription provider's display name (ChatGPT, Claude, Kimi, Gemini, Copilot).
+fn plan_name(plan: &str) -> String {
+    crate::subscription_routes::provider_disclosure(plan)
+        .map(|p| p.name.to_string())
+        .unwrap_or_else(|| {
+            let mut c = plan.chars();
+            c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+        })
+}
+
+/// The `provider` of a `provider/model` ref, when it has one.
+fn ref_provider(model_ref: &str) -> Option<&str> {
+    let (p, m) = model_ref.split_once('/')?;
+    (!p.is_empty() && !m.is_empty()).then_some(p)
+}
+
+/// The provider of `botBrain.modelRef`: a `provider/model` string, or an
+/// object `{providerID, modelID}` (web clients write that shape).
+fn brain_ref_provider(brain: &serde_json::Map<String, Value>) -> Option<&str> {
+    match brain.get("modelRef")? {
+        Value::String(s) => ref_provider(s),
+        Value::Object(o) => str_field(o, "providerID").or_else(|| str_field(o, "providerId")),
+        _ => None,
+    }
+}
+
+/// Check a bot save. Returns the 422 to send, or `Ok` — always `Ok` when the
+/// request's `botBrain` has no `runtime` of its own (old shape) or the runtime
+/// is `custom`. The brain is `botBrain.modelRef` (string or object), else a
+/// `provider/model` `model` in the same request; a brain without a provider prefix is not judged.
+pub(crate) fn validate_explicit_runtime(
+    config: Option<&Value>,
+    model: Option<&str>,
+    registry: &RuntimeRegistry,
+) -> Result<(), BrainRejection> {
+    let Some(brain) = config.and_then(|c| c.get("botBrain")).and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let Some(runtime_id) = str_field(brain, "runtime") else {
+        return Ok(());
+    };
+    if runtime_id == RUNTIME_CUSTOM {
+        return Ok(());
+    }
+    let Some(entry) = registry.get(runtime_id) else {
+        return Err(BrainRejection {
+            code: RUNTIME_UNKNOWN,
+            message: format!("No runtime called {runtime_id}."),
+        });
+    };
+    let provider = brain_ref_provider(brain).or_else(|| model.and_then(ref_provider));
+    let Some(provider) = provider else {
+        return Ok(());
+    };
+    if !fits(entry, provider) {
+        return Err(BrainRejection {
+            code: BRAIN_NOT_FIT,
+            message: format!("{} runs {} models only.", entry.name, entry.vendor),
+        });
+    }
+    if !allowed(entry, provider, registry) {
+        let plan = plan_provider(provider, registry).unwrap_or_default();
+        let own = registry
+            .runtimes
+            .iter()
+            .find(|r| r.id != RUNTIME_ALLTERNIT && r.plans.iter().any(|p| *p == plan))
+            .map(|r| r.name.clone())
+            .unwrap_or_else(|| "Allternit".to_string());
+        return Err(BrainRejection {
+            code: PLAN_NOT_ALLOWED,
+            message: format!(
+                "{}'s plan can't be used inside {}. Use an API key, or pick {own}.",
+                plan_name(&plan),
+                entry.name
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// `warnings` for a successful bot save: `runtime_not_installed` when the
+/// request's `botBrain` (normalized) runs on a runtime other than `allternit`
+/// whose CLI `installed` says is not on this computer. `installed` gets the
+/// catalog tool id (the check `GET /api/v1/runtimes` uses: the tool's binary
+/// on PATH). No `botBrain` in the request, or an unknown runtime: no warning.
+pub(crate) fn install_warnings(
+    config: Option<&Value>,
+    registry: &RuntimeRegistry,
+    installed: impl Fn(&str) -> bool,
+) -> Vec<Value> {
+    let Some(brain) = config.and_then(|c| c.get("botBrain")) else {
+        return Vec::new();
+    };
+    let mut brain = brain.clone();
+    normalize_bot_brain(&mut brain, registry);
+    let Some(entry) = brain
+        .get("runtime")
+        .and_then(Value::as_str)
+        .and_then(|id| registry.get(id))
+    else {
+        return Vec::new();
+    };
+    let Some(tool) = entry.tool.as_deref() else {
+        return Vec::new();
+    };
+    if entry.id == RUNTIME_ALLTERNIT || installed(tool) {
+        return Vec::new();
+    }
+    vec![serde_json::json!({
+        "code": RUNTIME_NOT_INSTALLED,
+        "runtime": entry.id,
+        "message": format!(
+            "{} isn't installed on this computer. The bot will fail to start until it is.",
+            entry.name
+        ),
+    })]
+}
+
+/// The live install check: the catalog tool's binary is on PATH (the same
+/// test `provider_routes::subprocess_provider_rows` uses for `installed`).
+pub(crate) fn tool_installed(tool: &str) -> bool {
+    crate::cli_catalog::find(tool)
+        .is_some_and(|t| crate::provider_routes::command_on_path(&t.bin).is_some())
 }
 
 /// `botKind` for one agent: `connected` when it has a vendor execution
@@ -302,6 +512,120 @@ mod tests {
         assert_eq!(merged["isBot"], true);
         assert_eq!(merged["botBrain"]["harness"], "claude");
         assert_eq!(merged["botBrain"]["runtime"], "claude");
+    }
+
+    fn check(config: Value) -> Result<(), BrainRejection> {
+        validate_explicit_runtime(Some(&config), None, runtime_registry())
+    }
+
+    #[test]
+    fn bot_save_unknown_runtime_is_422() {
+        let err = check(json!({"botBrain": {"runtime": "not-a-runtime"}})).unwrap_err();
+        assert_eq!(err.code, "runtime_unknown");
+        assert_eq!(err.message, "No runtime called not-a-runtime.");
+        assert_eq!(err.body()["error"], "runtime_unknown");
+    }
+
+    #[test]
+    fn bot_save_brain_not_fit_is_422() {
+        let err = check(json!({"botBrain": {"runtime": "claude", "modelRef": "openai/gpt-5.5"}})).unwrap_err();
+        assert_eq!(err.code, "brain_not_fit");
+        assert_eq!(err.message, "Claude Code runs Anthropic models only.");
+        // The request's `provider/model` counts when botBrain has no modelRef.
+        let config = json!({"botBrain": {"runtime": "codex"}});
+        let err = validate_explicit_runtime(Some(&config), Some("anthropic/claude-sonnet-5-5"), runtime_registry())
+            .unwrap_err();
+        assert_eq!(err.code, "brain_not_fit");
+    }
+
+    #[test]
+    fn bot_save_plan_on_foreign_runtime_is_422() {
+        let err = check(json!({"botBrain": {"runtime": "hermes", "modelRef": "subs-claude/claude-sonnet-5-5"}}))
+            .unwrap_err();
+        assert_eq!(err.code, "plan_not_allowed_on_runtime");
+        assert_eq!(
+            err.message,
+            "Claude's plan can't be used inside Hermes. Use an API key, or pick Claude Code."
+        );
+        // A CLI plan sign-in is a plan too.
+        let err = check(json!({"botBrain": {"runtime": "opencode", "modelRef": "codex-cli/gpt-5.5"}})).unwrap_err();
+        assert_eq!(err.code, "plan_not_allowed_on_runtime");
+        assert!(err.message.starts_with("ChatGPT's plan can't be used inside OpenCode."), "{}", err.message);
+    }
+
+    #[test]
+    fn bot_save_allowed_brains_pass() {
+        for (runtime, model_ref) in [
+            ("claude", "subs-claude/claude-sonnet-5-5"),
+            ("claude", "claude-cli/claude-sonnet-5-5"),
+            ("codex", "codex-cli/gpt-5.5"),
+            ("antigravity", "subs-gemini/gemini-3-pro"),
+            ("allternit", "subs-chatgpt/gpt-5.5"),
+            ("allternit", "claude-cli/claude-opus-5-5"),
+            // An API key brain fits any "any" runtime.
+            ("hermes", "anthropic/claude-sonnet-5-5"),
+            ("opencode", "openrouter/qwen/qwen3-coder"),
+        ] {
+            assert_eq!(
+                check(json!({"botBrain": {"runtime": runtime, "modelRef": model_ref}})),
+                Ok(()),
+                "{runtime} + {model_ref}"
+            );
+        }
+        // The object form of modelRef is read the same way.
+        let err = check(json!({"botBrain": {"runtime": "hermes",
+            "modelRef": {"providerID": "subs-kimi", "modelID": "kimi-k3"}}}))
+        .unwrap_err();
+        assert_eq!(err.code, "plan_not_allowed_on_runtime");
+        assert!(err.message.ends_with("Use an API key, or pick Kimi Code."), "{}", err.message);
+        // A brain with no provider prefix is not judged.
+        assert_eq!(check(json!({"botBrain": {"runtime": "claude", "modelRef": "gpt-5.5"}})), Ok(()));
+    }
+
+    #[test]
+    fn bot_save_old_shape_is_never_rejected() {
+        // No explicit runtime: normalized on save, never a 422, whatever the brain.
+        assert_eq!(
+            check(json!({"botBrain": {"mode": "native_harness", "harness": "hermes", "modelRef": "subs-claude/x"}})),
+            Ok(())
+        );
+        assert_eq!(check(json!({"botBrain": {"mode": "native_harness", "harness": "not-a-runtime"}})), Ok(()));
+        assert_eq!(check(json!({"botBrain": {"runtime": "", "mode": "allternit_cloud"}})), Ok(()));
+        assert_eq!(check(json!({"avatar": {"type": "mascot"}})), Ok(()));
+        assert_eq!(validate_explicit_runtime(None, Some("openai/gpt-5.5"), runtime_registry()), Ok(()));
+        // `custom` is what derivation writes; echoing it back is fine.
+        assert_eq!(check(json!({"botBrain": {"runtime": "custom", "harness": "my-cli"}})), Ok(()));
+    }
+
+    #[test]
+    fn bot_save_install_warning_only_when_cli_missing() {
+        let config = json!({"botBrain": {"runtime": "opencode"}});
+        let warnings = install_warnings(Some(&config), runtime_registry(), |_| false);
+        assert_eq!(
+            warnings,
+            vec![json!({
+                "code": "runtime_not_installed",
+                "runtime": "opencode",
+                "message": "OpenCode isn't installed on this computer. The bot will fail to start until it is.",
+            })]
+        );
+        // The check gets the catalog tool id.
+        let asked = std::cell::RefCell::new(Vec::new());
+        assert!(install_warnings(Some(&config), runtime_registry(), |tool| {
+            asked.borrow_mut().push(tool.to_string());
+            true
+        })
+        .is_empty());
+        assert_eq!(asked.into_inner(), vec!["opencode".to_string()]);
+        // Old shape is normalized first: native_harness + claude warns for Claude Code.
+        let old = json!({"botBrain": {"mode": "native_harness", "harness": "claude"}});
+        assert_eq!(install_warnings(Some(&old), runtime_registry(), |_| false)[0]["runtime"], "claude");
+        // Allternit, no botBrain, or an unknown runtime: no warning.
+        let cloud = json!({"botBrain": {"runtime": "allternit"}});
+        assert!(install_warnings(Some(&cloud), runtime_registry(), |_| false).is_empty());
+        assert!(install_warnings(Some(&json!({"isBot": true})), runtime_registry(), |_| false).is_empty());
+        let custom = json!({"botBrain": {"runtime": "custom", "harness": "my-cli"}});
+        assert!(install_warnings(Some(&custom), runtime_registry(), |_| false).is_empty());
     }
 
     #[test]
