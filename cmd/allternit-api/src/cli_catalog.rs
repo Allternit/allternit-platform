@@ -37,6 +37,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/cli-tools/catalog", get(get_catalog))
         .route("/cli-tools/custom", post(create_custom))
         .route("/cli-tools/custom/:custom_id", delete(delete_custom))
+        // POST/GET/DELETE /api/v1/runtimes/:id/live (owner only).
+        .merge(crate::runtime_live::router())
 }
 
 /// `GET /api/v1/runtimes`: the runtime registry. Public (no sign-in), so it
@@ -376,7 +378,7 @@ pub(crate) fn etag_matches(headers: &HeaderMap, etag: &str) -> bool {
 /// The caller owns this gateway: the runtime belongs to one person (Desktop
 /// sidecar or self-hosted, the same test custom tools use) and the request
 /// proves it — the Desktop access token, or a verified Clerk session.
-async fn caller_is_owner(state: &AppState, headers: &HeaderMap) -> bool {
+pub(crate) async fn caller_is_owner(state: &AppState, headers: &HeaderMap) -> bool {
     if !custom_tools_allowed(state) {
         return false;
     }

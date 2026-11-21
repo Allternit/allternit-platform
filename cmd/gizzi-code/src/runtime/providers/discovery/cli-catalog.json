@@ -2935,10 +2935,7 @@
         "via": "agents-md"
       },
       "liveUi": {
-        "argv": [
-          "opencode",
-          "web"
-        ],
+        "argv": ["opencode", "serve"],
         "port": 4096,
         "health": "/",
         "label": "OpenCode web app"
@@ -3756,10 +3753,7 @@
         "via": "agents-md"
       },
       "liveUi": {
-        "argv": [
-          "openclaw",
-          "dashboard"
-        ],
+        "argv": ["openclaw", "gateway", "run"],
         "port": 18789,
         "health": "/",
         "label": "OpenClaw Control UI"
@@ -6621,9 +6615,9 @@
           "openhands",
           "serve"
         ],
-        "port": 8000,
+        "port": 3000,
         "health": "/",
-        "label": "OpenHands web app"
+        "label": "OpenHands web app (Docker, not started by Allternit)"
       },
       "look": {
         "default": "desktop",

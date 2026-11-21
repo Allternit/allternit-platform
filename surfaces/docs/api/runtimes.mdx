@@ -1,6 +1,6 @@
 ---
 title: "Runtimes API"
-description: "GET /api/v1/runtimes on cloud-api and on a computer's runtime: the runtime registry, its caching, the installed map on your own computer, and the bot record fields that name a runtime."
+description: "GET /api/v1/runtimes on cloud-api and on a computer's runtime: the runtime registry, its caching, the installed map on your own computer, starting a runtime's own web app on your computer, and the bot record fields that name a runtime."
 ---
 
 A runtime is the program a bot runs in: Allternit itself, or a coding CLI such as Claude Code, Codex, Kimi or Antigravity. The brain is the model that runtime uses. Every picker (Desktop, ai.allternit.com, the phone apps and Gizzi Code) reads the same list of runtimes from this endpoint, so they always offer the same choices.
@@ -87,6 +87,78 @@ When the caller owns the computer, allternit-api adds one more key. Ownership me
 - `version` is `null` for now: that check does not read the CLI's version yet.
 - This response is per computer and per person, so it is sent with `Cache-Control: private, no-cache` and no ETag.
 - cloud-api never sends `installed`. Only your computer knows what is installed on it.
+
+## A runtime's own web app
+
+Some runtimes ship a web app of their own: the registry entry carries `liveUi`. Your computer's runtime (allternit-api) can start that app, keep it to your computer, and stop it again. cloud-api has no such routes: the app always runs on your own computer.
+
+All three routes are **owner only**: the same check as [What is installed](#what-is-installed). Anyone else gets `403 owner_only`. They take an optional session id (`sessionId` in the POST body, `?sessionId=` on GET and DELETE). The app runs in that session's workspace folder, or in your home folder when there is none.
+
+### POST /api/v1/runtimes/:id/live
+
+`:id` is a runtime id or alias. The answer:
+
+```json
+{
+  "running": true,
+  "runtime": "opencode",
+  "url": "http://127.0.0.1:4096",
+  "resourceUri": "ui://allternit/live-app?runtime=opencode&port=4096",
+  "port": 4096,
+  "label": "OpenCode web app",
+  "external": false,
+  "reused": false,
+  "startedAt": "2026-11-20T18:02:11Z",
+  "stopsAfterIdleSeconds": 1800
+}
+```
+
+- The app listens on `127.0.0.1` only, never on your network.
+- The registry's `port` is used when it is free; otherwise a free local port is picked.
+- It never opens a browser window. `BROWSER` points at a command that does nothing, and the usual browser openers on its `PATH` (`open`, `xdg-open`, `*-browser`) do nothing either. A command the app's agent runs that calls `open` does nothing while the app runs.
+- The route waits up to 20 seconds for the app's `liveUi.health` path to answer. If it does not, the app is stopped and the route answers `504 live_timeout`.
+- There is one app per person, runtime and folder. A second POST returns the running one with `reused: true`.
+- Clients frame the app through `resourceUri` (the MCP Apps frame, see [MCP servers](/api/mcp-servers)), not with a plain iframe of `url`.
+
+How each runtime's app is started:
+
+| Runtime | Command | Notes |
+|---|---|---|
+| `opencode` | `opencode serve --hostname 127.0.0.1 --port <port>` | The web UI comes from the same server as the TUI. `opencode web` is not used because it always opens a browser. |
+| `openclaw` | `openclaw gateway run --port <port> --bind loopback` | The Control UI is served by the Gateway. If your own Gateway already answers on port 18789, that one is returned with `external: true` and is never stopped by Allternit. The Control UI asks for your Gateway token the first time. |
+| `aider` | `aider --browser` | Port, address and headless mode are set through `STREAMLIT_SERVER_PORT`, `STREAMLIT_SERVER_ADDRESS` and `STREAMLIT_SERVER_HEADLESS`. |
+| `openhands` | not started | `openhands serve` runs in Docker on a fixed port that cannot be kept to your computer. The route answers `501 live_unsupported` and apps show the runtime's look instead. |
+
+Errors:
+
+| Status | `error` | When |
+|---|---|---|
+| 403 | `owner_only` | The caller does not own this computer. |
+| 404 | `unknown_runtime` / `no_live_ui` | No such runtime, or it has no web app. |
+| 409 | `not_installed` | The runtime's CLI is not installed on this computer (the same check as [What is installed](#what-is-installed)). |
+| 409 | `port_in_use` | A runtime with no known port flag finds its port taken. |
+| 501 | `live_unsupported` | The app cannot be kept to this computer (OpenHands). |
+| 502 | `live_exited` | The app stopped while it was starting. `message` has the end of its error output. |
+| 504 | `live_timeout` | No answer within 20 seconds. The app was stopped. |
+
+### GET /api/v1/runtimes/:id/live
+
+Returns the same body as POST with `reused: true`, or `{"running": false, "runtime": "<id>"}`. Each GET counts as a heartbeat.
+
+### DELETE /api/v1/runtimes/:id/live
+
+Stops the app and answers `{"stopped": true|false, "runtime": "<id>"}`. The app's whole process group gets SIGTERM, then SIGKILL after 3 seconds.
+
+### When an app stops
+
+- You send DELETE.
+- The session that started it is deleted (`DELETE /api/v1/agent-sessions/:id`) and no other session still uses it.
+- Nobody sends a POST or GET for 30 minutes.
+- The runtime shuts down (Desktop quits). On Linux the app also stops if the runtime crashes.
+
+### From the web and phones
+
+ai.allternit.com and the PWA reach your computer through the Cloud relay. The POST, GET and DELETE calls are ordinary `/api` paths, so the relay already carries them. To show the app itself, the web frame needs a forward to the app's port on your computer (`POST /api/v1/computers/:id/forward` with `remotePort` set to `port`). Until the web and PWA frame uses that forward, they show the runtime's look with a note to open it on your computer.
 
 ## Bot record fields
 
