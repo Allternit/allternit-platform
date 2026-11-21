@@ -1,0 +1,10 @@
+Software Update Tool
+
+Finding available software
+Software Update found the following new or updated software:
+* Label: macOS Sequoia 15.1-24B83
+	Title: macOS Sequoia 15.1, Version: 15.1, Size: 3000000KiB, Recommended: YES, Action: restart, 
+* Label: Safari17.6CatalinaAuto
+	Title: Safari, Version: 17.6, Size: 150000KiB, Recommended: YES, 
+* Label: macOS Sequoia 15.1.1 Security Response-24B91
+	Title: macOS Sequoia 15.1.1 Security Response, Version: 15.1.1, Size: 90000KiB, Recommended: NO, Action: restart, 

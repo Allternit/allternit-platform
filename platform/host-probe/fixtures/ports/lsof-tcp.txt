@@ -1,0 +1,6 @@
+COMMAND     PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+ControlCe   612  joe    8u  IPv4 0x6f1c2a3b4d5e6f70      0t0  TCP *:7000 (LISTEN)
+cupsd       301 root    6u  IPv6 0x6f1c2a3b4d5e6f71      0t0  TCP [::1]:631 (LISTEN)
+Google\x20Chrome  4410  joe   45u  IPv4 0x6f1c2a3b4d5e6f72      0t0  TCP 127.0.0.1:8080 (LISTEN)
+node       5120  joe   22u  IPv4 0x6f1c2a3b4d5e6f73      0t0  TCP *:3000 (LISTEN)
+rapportd    450  joe    8u  IPv4 0x6f1c2a3b4d5e6f74      0t0  TCP *:49152 (LISTEN)

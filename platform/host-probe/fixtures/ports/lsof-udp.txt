@@ -1,0 +1,4 @@
+COMMAND     PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+mDNSRespo   301 _mdnsresponder   22u  IPv6 0x6f1c2a3b4d5e6f80      0t0  UDP *:5353
+netbiosd    390 _netbios         10u  IPv4 0x6f1c2a3b4d5e6f81      0t0  UDP *:137
+Slack      7001  joe   30u  IPv4 0x6f1c2a3b4d5e6f82      0t0  UDP 192.168.1.5:57000->1.1.1.1:443

@@ -1,0 +1,5 @@
+RHSA-2024:1234 Important/Sec. openssl-3.0.7-28.el9_4.x86_64
+CVE-2024-0727 Moderate/Sec. openssl-3.0.7-28.el9_4.x86_64
+CVE-2024-5535 Critical/Sec. openssl-3.0.7-28.el9_4.x86_64
+RHSA-2024:5101 Important/Sec. kernel-5.14.0-503.14.1.el9_5.x86_64
+RHBA-2024:0999 bugfix bash-5.1.8-9.el9.x86_64

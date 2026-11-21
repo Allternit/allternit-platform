@@ -1,0 +1,6 @@
+Software Update Tool
+
+Finding available software
+Software Update found the following new or updated software:
+   * macOS Ventura 13.6.1-22G313
+	macOS Ventura 13.6.1 (22G313), 3000000K [recommended] [restart]
