@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.19.0 (2026-11-21)
+
+- **Runtimes, brains and bots.** Gizzi reads the shared runtime registry (`GET /api/v1/runtimes`, v3): every coding CLI is a runtime with its own look, brains and options, the same list Desktop, web and the phone apps show. `gizzi runtime` lists them.
+- **Antigravity over ACP.** `agy` runs over ACP (`agy acp`) with attachments, model and thinking level; an append-only system layer and the tool broker keep Allternit's rules on top of each runtime's own.
+- **Live runtime web apps.** A runtime that has its own web app can open it on the local gateway (`/api/v1/runtimes/:id/live`, owner only).
+- **Computers console.** `gizzi computers console` lists your computers with meters and Needs attention; `/computers` opens the view in the TUI; forward a port, manage SSH keys and run a saved snippet on a computer.
+- **Autopilot and away.** `/autopilot` and `/away` for the Workspace: let your bots act on suggestions within your limits while you're away, with a digest when you're back.
+- **More connections.** `gizzi connect more` browses the live connections catalog.
+- **Fixes.** New terminal panes no longer inherit a parent Claude Code session.
+
 ## 2.18.0 (2026-11-20)
 
 - **Allternit Sleep.** Gizzi sends Sleep signals (idle, resume, before compaction, session end) when Sleep is on, and local autoDream stays off so only one consolidator runs. `gizzi memory sleep status|run|report|undo|on|off`, `gizzi memory disputes [resolve]` and `gizzi memory pages`; Sleep rows in the TUI `/memory` view.
