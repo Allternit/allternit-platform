@@ -51,6 +51,14 @@ struct CodeSessionsOpening: Equatable {
 /// - Sessions with their C6 status icon (spinner Working, hand Needs input,
 ///   eye Ready for review, check Done) and the unread dot. Opening one goes
 ///   to Code, where `CodeModeView.open` clears Ready for review (9a).
+/// - Terminal sessions: every Allternit terminal on the computer with its
+///   last screen rows and the agent's state read off them (web
+///   terminal-overview.ts). A row opens that exact terminal.
+/// - On your computer: Claude Code and other CLI sessions running outside
+///   Allternit, with Move here / Open a copy / New session here
+///   (`OnYourComputerRow`). Both come from `TerminalSessionsStore`, polled
+///   only while this screen is up and the app is active, and are hidden on a
+///   runtime without the routes.
 /// - A floating glass "+ New session": the start screen (`CodeStartScreen`).
 struct CodeSessionsOverview: View {
     /// Every Code-surface session, archived ones too.
@@ -62,7 +70,12 @@ struct CodeSessionsOverview: View {
     let onArchive: (AgentSession) -> Void
     let onStart: (String) -> Void
     let onRefresh: () async -> Void
+    /// Opens a terminal on the computer by its session id (and title) in
+    /// the Code terminal. nil hides the terminal sections.
+    var onOpenTerminal: ((String, String) -> Void)? = nil
 
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var terminalSessions = TerminalSessionsStore()
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var shellSessions = ShellSessionsStore.shared
     @ReducedMotion private var reduced
@@ -188,6 +201,10 @@ struct CodeSessionsOverview: View {
             }
             List {
                 computersSection
+                if onOpenTerminal != nil {
+                    terminalsSection
+                    onYourComputerSection
+                }
                 Section {
                     if items.isEmpty {
                         Text(q.isEmpty ? filter.emptyText : "No code sessions match.")
@@ -231,6 +248,7 @@ struct CodeSessionsOverview: View {
             .refreshable {
                 await onRefresh()
                 await relay.refresh()
+                if onOpenTerminal != nil { await terminalSessions.refresh() }
             }
             .animation(reduced ? nil : .spring(response: 0.3, dampingFraction: 0.86), value: filter)
         }
@@ -238,6 +256,77 @@ struct CodeSessionsOverview: View {
             CodeFloatingAction(label: "New session") { go(.start) }
                 .padding(.bottom, 12)
         }
+        // Poll the computer's terminals only while this screen is up and the
+        // app is in front (web: only while visible).
+        .onAppear { terminalSessions.setActive(onOpenTerminal != nil && scenePhase == .active) }
+        .onDisappear { terminalSessions.setActive(false) }
+        .onChange(of: scenePhase) { _, phase in
+            terminalSessions.setActive(onOpenTerminal != nil && phase == .active)
+        }
+    }
+
+    // MARK: Terminals on the computer
+
+    @ViewBuilder
+    private var terminalsSection: some View {
+        let terminals = terminalSessions.terminals
+        if terminalSessions.listSupport == .yes, !terminals.isEmpty {
+            Section {
+                switch layout {
+                case .list:
+                    ForEach(terminals) { terminal in
+                        terminalRow(terminal).plainCodeRow()
+                    }
+                case .grid:
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                        ForEach(terminals) { terminalRow($0) }
+                    }
+                    .padding(.vertical, 4)
+                    .plainCodeRow()
+                case .deck:
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(terminals) { terminalRow($0).frame(width: OverviewDeck.width, height: 220) }
+                        }
+                        .padding(.vertical, 8)
+                        .scrollTargetLayout()
+                    }
+                    .scrollTargetBehavior(.viewAligned)
+                    .plainCodeRow()
+                }
+            } header: {
+                sectionLabel("Terminal sessions")
+            }
+        }
+    }
+
+    private func terminalRow(_ terminal: TerminalListItem) -> some View {
+        CodeTerminalPreviewRow(terminal: terminal, layout: layout) {
+            onOpenTerminal?(terminal.sessionId, TerminalPreview.title(terminal))
+        }
+    }
+
+    @ViewBuilder
+    private var onYourComputerSection: some View {
+        let external = terminalSessions.externalSessions
+        if terminalSessions.adoptSupport == .yes, !external.isEmpty {
+            Section {
+                ForEach(external) { session in
+                    OnYourComputerRow(session: session, store: terminalSessions) { id, title in
+                        onOpenTerminal?(id, title)
+                    }
+                    .plainCodeRow()
+                }
+            } header: {
+                sectionLabel(onYourComputerTitle)
+            }
+        }
+    }
+
+    /// "On Joe's MacBook Pro" when the computer's name is known, else "On your computer" (web sectionTitle).
+    private var onYourComputerTitle: String {
+        let name = terminalSessions.machineName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? "On your computer" : "On \(name)"
     }
 
     /// Back · centered title · the shared glass pill (search + sliders), as

@@ -467,7 +467,17 @@ struct CodeModeView: View {
                 shellOpen = false
                 startFromSessionsView(prompt)
             },
-            onRefresh: { await loadSessions() }
+            onRefresh: { await loadSessions() },
+            onOpenTerminal: { sessionId, title in
+                // Open that exact terminal (attach by session id; nothing new
+                // starts on the computer) in the Code shell.
+                Task { @MainActor in
+                    if await terminalStore.attach(sessionId: sessionId, title: title) {
+                        closeSessionsView()
+                        shellOpen = true
+                    }
+                }
+            }
         )
     }
 
