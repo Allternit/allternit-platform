@@ -1859,51 +1859,38 @@
           "banner": [
             [
               [
-                "✻ ",
+                "▗ ▗   ▖ ▖  ",
                 "ac"
               ],
               [
-                "Welcome to ",
-                "fg"
-              ],
-              [
-                "Claude Code",
+                "Claude Code v2.1",
                 "b"
+              ]
+            ],
+            [
+              [
+                "           ",
+                "fg"
               ],
               [
-                "!",
-                "fg"
-              ]
-            ],
-            [
-              [
-                "",
-                "fg"
-              ]
-            ],
-            [
-              [
-                "  /help for help, /status for your current setup",
+                "Opus 5.5 · Claude Pro",
                 "mu"
               ]
             ],
             [
               [
-                "",
-                "fg"
-              ]
-            ],
-            [
+                " ▘▘   ▝▝   ",
+                "ac"
+              ],
               [
-                "  cwd: ~/project",
+                "~/project",
                 "mu"
               ]
             ]
           ],
-          "bannerBox": true,
-          "boxRole": "ac",
+          "bannerBox": false,
           "userStyle": "plain",
-          "prompt": ">",
+          "prompt": "❯",
           "answerGlyph": "⏺",
           "steps": {
             "Read": [
@@ -1997,13 +1984,27 @@
               ]
             ]
           },
-          "input": "round",
-          "inputGlyph": ">",
-          "placeholder": "",
+          "input": "line",
+          "inputGlyph": "❯",
+          "placeholder": "Try \"refactor <filepath>\"",
           "footer": {
             "l": [
               [
                 "  ? for shortcuts",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "● ",
+                "mu"
+              ],
+              [
+                "high",
+                "fg"
+              ],
+              [
+                " · /effort",
                 "mu"
               ]
             ]
@@ -2050,7 +2051,7 @@
             "ok": "#1a7f37",
             "err": "#cf222e",
             "ac": "#1d1d1b",
-            "ac2": "#7fb3e6"
+            "ac2": "#2676c4"
           },
           "banner": [
             [
@@ -2061,40 +2062,20 @@
               [
                 "OpenAI Codex",
                 "b"
-              ]
-            ],
-            [
-              [
-                "",
-                "fg"
-              ]
-            ],
-            [
-              [
-                "model:     ",
-                "mu"
               ],
               [
-                "gpt-5-codex",
-                "fg"
-              ],
-              [
-                "   /model to change",
+                " (v0.171)",
                 "mu"
               ]
             ],
             [
               [
-                "directory: ",
+                "   ~/project",
                 "mu"
-              ],
-              [
-                "~/project",
-                "fg"
               ]
             ]
           ],
-          "bannerBox": true,
+          "bannerBox": false,
           "userStyle": "shade",
           "prompt": "›",
           "answerGlyph": "•",
@@ -2184,7 +2165,13 @@
           "footer": {
             "l": [
               [
-                "  100% context left · ? for shortcuts",
+                "  gpt-5-codex · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "← for agents · ? for shortcuts",
                 "mu"
               ]
             ]
@@ -2233,30 +2220,48 @@
           "banner": [
             [
               [
-                "Tips for getting started:",
+                ">_ ",
+                "mu"
+              ],
+              [
+                "Qwen Code",
+                "b"
+              ],
+              [
+                " (v0.21)",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "",
                 "fg"
               ]
             ],
             [
               [
-                "1. Ask questions, edit files, or run commands.",
+                "API Key | qwen3-coder",
+                "fg"
+              ],
+              [
+                " (/model to change)",
                 "mu"
               ]
             ],
             [
               [
-                "2. Be specific for the best results.",
+                "~/project",
                 "mu"
               ]
             ]
           ],
-          "bannerBox": false,
+          "bannerBox": true,
           "big": {
             "text": "QWEN",
             "grad": [
-              "#615ced",
-              "#8b6cf0",
-              "#c084fc"
+              "#9a9a9a",
+              "#c8c8c8",
+              "#9a9a9a"
             ]
           },
           "userStyle": "plain",
@@ -2314,7 +2319,7 @@
             ]
           },
           "stepBox": true,
-          "input": "round",
+          "input": "line",
           "inputRole": "ac",
           "inputGlyph": ">",
           "placeholder": "Type your message or @path/to/file",
@@ -2323,12 +2328,6 @@
               [
                 "~/project (main)",
                 "ac"
-              ]
-            ],
-            "m": [
-              [
-                "no sandbox",
-                "err"
               ]
             ],
             "r": [
@@ -2341,7 +2340,8 @@
                 "mu"
               ]
             ]
-          }
+          },
+          "boxRole": "mu"
         }
       },
       "docs": "https://github.com/QwenLM/qwen-code"
@@ -2378,7 +2378,7 @@
           "banner": [
             [
               [
-                "Welcome to Kimi CLI!",
+                "Welcome to Kimi Code!",
                 "b"
               ]
             ],
@@ -2404,7 +2404,7 @@
           "bannerBox": true,
           "boxRole": "ac",
           "userStyle": "plain",
-          "prompt": ">",
+          "prompt": "❯",
           "steps": {
             "Read": [
               [
@@ -2468,7 +2468,7 @@
             ]
           },
           "input": "round",
-          "inputGlyph": ">",
+          "inputGlyph": "❯",
           "placeholder": "Ask anything",
           "footer": {
             "l": [
@@ -2483,6 +2483,15 @@
                 "mu"
               ]
             ]
+          },
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#006eed",
+            "ac2": "#006eed"
           }
         }
       },
@@ -2520,8 +2529,8 @@
           "banner": [
             [
               [
-                "{name}",
-                "ac"
+                "Antigravity CLI",
+                "b"
               ]
             ],
             [
@@ -2602,16 +2611,33 @@
           "footer": {
             "l": [
               [
-                "gemini · ~/project",
+                "↑/↓ ",
                 "mu"
+              ],
+              [
+                "Navigate",
+                "fg"
               ]
             ],
             "r": [
               [
-                "? help",
+                "auto",
+                "b"
+              ],
+              [
+                " · Gemini 3.1 Pro",
                 "mu"
               ]
             ]
+          },
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#0068fd",
+            "ac2": "#0068fd"
           }
         }
       },
@@ -2641,9 +2667,17 @@
           "kind": "tui",
           "bg": "#181713",
           "fg": "#ececec",
-          "mu": "#8a8a8a",
-          "ac": "#edece6",
-          "light": "#26251e",
+          "mu": "#8a8980",
+          "ac": "#b57bee",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#26251e",
+            "ac2": "#7458f1"
+          },
           "banner": [
             [
               [
@@ -2725,21 +2759,23 @@
           },
           "input": "round",
           "inputGlyph": "→",
-          "placeholder": "Plan, search, build anything",
+          "placeholder": "Ask, plan, build anything",
           "footer": {
             "l": [
               [
-                "Auto",
-                "fg"
+                "Auto · 0% · 0 files edited",
+                "mu"
               ]
             ],
             "r": [
               [
-                "/ commands · @ files",
+                "/ commands · @ files · ! shell",
                 "mu"
               ]
             ]
-          }
+          },
+          "ac2": "#9b87f5",
+          "glyphRole": "ac"
         }
       },
       "docs": "https://cursor.com/"
@@ -2770,11 +2806,19 @@
           "fg": "#ececec",
           "mu": "#8a8a8a",
           "ac": "#f2f2f2",
-          "light": "#111111",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#111111",
+            "ac2": "#111111"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "Grok Build",
                 "ac"
               ]
             ],
@@ -2914,7 +2958,7 @@
             "mu": "#74746f",
             "ok": "#1a7f37",
             "err": "#cf222e",
-            "ac": "#c26b1f",
+            "ac": "#ac5f1b",
             "ac2": "#2f6fd6"
           },
           "banner": [
@@ -3014,11 +3058,20 @@
                 "fg"
               ],
               [
-                "switch agent",
+                "agents  ",
+                "mu"
+              ],
+              [
+                "ctrl+p ",
+                "fg"
+              ],
+              [
+                "commands",
                 "mu"
               ]
             ]
-          }
+          },
+          "inputRole": "fg"
         }
       },
       "docs": "https://opencode.ai/"
@@ -3049,11 +3102,19 @@
           "fg": "#ececec",
           "mu": "#8a8a8a",
           "ac": "#8b74ff",
-          "light": "#6c4dff",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#6c4dff",
+            "ac2": "#6c4dff"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "CodeBuddy",
                 "ac"
               ]
             ],
@@ -3175,42 +3236,68 @@
           "bg": "#0e0f10",
           "fg": "#ececec",
           "mu": "#8a8a8a",
-          "ac": "#d0d0d0",
-          "light": "#333333",
+          "ac": "#5db85d",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#2f7d32",
+            "ac2": "#2f7d32"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "✦ ",
+                "ac"
+              ],
+              [
+                "Welcome to Qoder CLI!",
                 "ac"
               ]
             ],
             [
               [
-                "~/project",
+                "cwd: ~/project",
                 "mu"
               ]
             ]
           ],
           "bannerBox": true,
-          "userStyle": "plain",
+          "userStyle": "shade",
           "prompt": ">",
           "steps": {
             "Read": [
               [
                 [
-                  "● ",
-                  "ac"
+                  "■ ",
+                  "ok"
                 ],
                 [
-                  "Read ",
-                  "fg"
+                  "Read (",
+                  "b"
                 ],
                 [
                   "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
                   "mu"
                 ],
                 [
-                  "  {r}",
+                  "{r}",
+                  "ok"
+                ],
+                [
+                  " (Ctrl+O to expand)",
                   "mu"
                 ]
               ]
@@ -3218,19 +3305,33 @@
             "Edit": [
               [
                 [
-                  "● ",
-                  "ac"
+                  "■ ",
+                  "ok"
                 ],
                 [
-                  "Edit ",
-                  "fg"
+                  "Edit (",
+                  "b"
                 ],
                 [
                   "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
                   "mu"
                 ],
                 [
-                  "  {r}",
+                  "{r}",
+                  "ok"
+                ],
+                [
+                  " (Ctrl+O to expand)",
                   "mu"
                 ]
               ]
@@ -3238,27 +3339,41 @@
             "Run": [
               [
                 [
-                  "● ",
-                  "ac"
+                  "■ ",
+                  "ok"
                 ],
                 [
-                  "Run ",
-                  "fg"
+                  "Bash (",
+                  "b"
                 ],
                 [
                   "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
                   "mu"
                 ],
                 [
-                  "  {r}",
+                  "{r}",
+                  "ok"
+                ],
+                [
+                  " (Ctrl+O to expand)",
                   "mu"
                 ]
               ]
             ]
           },
-          "input": "round",
+          "input": "shade",
           "inputGlyph": ">",
-          "placeholder": "Ask anything",
+          "placeholder": "Type your message or @path/to/file",
           "footer": {
             "l": [
               [
@@ -3272,7 +3387,9 @@
                 "mu"
               ]
             ]
-          }
+          },
+          "ok": "#5db85d",
+          "boxRole": "mu"
         }
       },
       "docs": "https://qoder.com/cli"
@@ -3302,42 +3419,68 @@
           "bg": "#0e0f10",
           "fg": "#ececec",
           "mu": "#8a8a8a",
-          "ac": "#d0d0d0",
-          "light": "#333333",
+          "ac": "#5db85d",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#2f7d32",
+            "ac2": "#2f7d32"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "✦ ",
+                "ac"
+              ],
+              [
+                "Welcome to Qoder CN!",
                 "ac"
               ]
             ],
             [
               [
-                "~/project",
+                "cwd: ~/project",
                 "mu"
               ]
             ]
           ],
           "bannerBox": true,
-          "userStyle": "plain",
+          "userStyle": "shade",
           "prompt": ">",
           "steps": {
             "Read": [
               [
                 [
-                  "● ",
-                  "ac"
+                  "■ ",
+                  "ok"
                 ],
                 [
-                  "Read ",
-                  "fg"
+                  "Read (",
+                  "b"
                 ],
                 [
                   "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
                   "mu"
                 ],
                 [
-                  "  {r}",
+                  "{r}",
+                  "ok"
+                ],
+                [
+                  " (Ctrl+O to expand)",
                   "mu"
                 ]
               ]
@@ -3345,19 +3488,33 @@
             "Edit": [
               [
                 [
-                  "● ",
-                  "ac"
+                  "■ ",
+                  "ok"
                 ],
                 [
-                  "Edit ",
-                  "fg"
+                  "Edit (",
+                  "b"
                 ],
                 [
                   "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
                   "mu"
                 ],
                 [
-                  "  {r}",
+                  "{r}",
+                  "ok"
+                ],
+                [
+                  " (Ctrl+O to expand)",
                   "mu"
                 ]
               ]
@@ -3365,27 +3522,41 @@
             "Run": [
               [
                 [
-                  "● ",
-                  "ac"
+                  "■ ",
+                  "ok"
                 ],
                 [
-                  "Run ",
-                  "fg"
+                  "Bash (",
+                  "b"
                 ],
                 [
                   "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
                   "mu"
                 ],
                 [
-                  "  {r}",
+                  "{r}",
+                  "ok"
+                ],
+                [
+                  " (Ctrl+O to expand)",
                   "mu"
                 ]
               ]
             ]
           },
-          "input": "round",
+          "input": "shade",
           "inputGlyph": ">",
-          "placeholder": "Ask anything",
+          "placeholder": "Type your message or @path/to/file",
           "footer": {
             "l": [
               [
@@ -3399,7 +3570,9 @@
                 "mu"
               ]
             ]
-          }
+          },
+          "ok": "#5db85d",
+          "boxRole": "mu"
         }
       },
       "docs": "https://qoder.com/cli"
@@ -3426,10 +3599,10 @@
         "default": "terminal",
         "terminal": {
           "kind": "tui",
-          "bg": "#0f0a17",
-          "fg": "#ececec",
-          "mu": "#8a8a8a",
-          "ac": "#9046ff",
+          "bg": "#1b1920",
+          "fg": "#f2f2f2",
+          "mu": "#8c8996",
+          "ac": "#b79cf2",
           "banner": [
             [
               [
@@ -3522,8 +3695,44 @@
           "input": "plain",
           "inputGlyph": ">",
           "glyphRole": "ac",
-          "placeholder": "",
-          "footer": null
+          "placeholder": "ask a question or describe a task ↵",
+          "footer": {
+            "l": [
+              [
+                "Default",
+                "ac"
+              ],
+              [
+                " · auto · ",
+                "mu"
+              ],
+              [
+                "◔ 3%",
+                "ok"
+              ]
+            ],
+            "r": [
+              [
+                "~/project",
+                "ac"
+              ],
+              [
+                " · (main)",
+                "fg"
+              ]
+            ]
+          },
+          "ac2": "#1f5bff",
+          "ok": "#1ed68a",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#8354e9",
+            "ac2": "#1f5bff"
+          }
         }
       },
       "docs": "https://kiro.dev/"
@@ -3605,7 +3814,16 @@
           },
           "header": "Control UI",
           "status": "Gateway connected",
-          "radius": 12
+          "radius": 12,
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#e60000",
+            "ac2": "#007f71"
+          }
         }
       },
       "docs": "https://github.com/openclaw/openclaw"
@@ -3783,6 +4001,14 @@
                 "mu"
               ]
             ]
+          },
+          "big": {
+            "text": "HERMES-AGENT",
+            "grad": [
+              "#ffda00",
+              "#ffc000",
+              "#c98030"
+            ]
           }
         }
       },
@@ -3939,11 +4165,19 @@
           "fg": "#ececec",
           "mu": "#8a8a8a",
           "ac": "#d4d4d8",
-          "light": "#3f3f46",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#3f3f46",
+            "ac2": "#3f3f46"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "Oh-My-Pi",
                 "ac"
               ]
             ],
@@ -4069,7 +4303,7 @@
           "banner": [
             [
               [
-                "{name}",
+                "DevEco Code",
                 "ac"
               ]
             ],
@@ -4161,6 +4395,15 @@
                 "mu"
               ]
             ]
+          },
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#cf0a2c",
+            "ac2": "#cf0a2c"
           }
         }
       },
@@ -4192,11 +4435,19 @@
           "fg": "#ececec",
           "mu": "#8a8a8a",
           "ac": "#d0d0d0",
-          "light": "#333333",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#333333",
+            "ac2": "#333333"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "Trae CLI",
                 "ac"
               ]
             ],
@@ -4315,28 +4566,46 @@
         "default": "terminal",
         "terminal": {
           "kind": "tui",
-          "bg": "#120e0a",
-          "fg": "#ececec",
-          "mu": "#8a8a8a",
-          "ac": "#ff9d4d",
-          "light": "#c46a1e",
+          "bg": "#2a1f1b",
+          "fg": "#e8e0d8",
+          "mu": "#8f857c",
+          "ac": "#ffbf80",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#a8601c",
+            "ac2": "#9b48e7"
+          },
           "banner": [
             [
               [
-                "{name}",
-                "ac"
-              ]
-            ],
-            [
+                "QwenPaw 2.0 ",
+                "b"
+              ],
               [
-                "~/project",
+                "agent:",
                 "mu"
+              ],
+              [
+                "default",
+                "b"
+              ],
+              [
+                "  qwen3.7-max",
+                "ac2"
+              ],
+              [
+                "  ● ready",
+                "ok"
               ]
             ]
           ],
-          "bannerBox": true,
+          "bannerBox": false,
           "userStyle": "plain",
-          "prompt": ">",
+          "prompt": "❱",
           "steps": {
             "Read": [
               [
@@ -4400,22 +4669,19 @@
             ]
           },
           "input": "round",
-          "inputGlyph": ">",
-          "placeholder": "Ask anything",
-          "footer": {
-            "l": [
-              [
-                "qwen · ~/project",
-                "mu"
-              ]
-            ],
-            "r": [
-              [
-                "? help",
-                "mu"
-              ]
+          "inputGlyph": "❱",
+          "placeholder": "type a message  (/ commands · enter send · esc interrupt)",
+          "footer": null,
+          "ac2": "#c08cf0",
+          "ok": "#5fe08a",
+          "big": {
+            "text": "QwenPaw",
+            "grad": [
+              "#ffd0a0",
+              "#e0a060"
             ]
-          }
+          },
+          "inputRole": "ac"
         }
       },
       "docs": "https://qwen.ai/"
@@ -4446,11 +4712,19 @@
           "fg": "#ececec",
           "mu": "#8a8a8a",
           "ac": "#d0d0d0",
-          "light": "#333333",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#333333",
+            "ac2": "#333333"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "Reasonix",
                 "ac"
               ]
             ],
@@ -4573,11 +4847,19 @@
           "fg": "#ececec",
           "mu": "#8a8a8a",
           "ac": "#d0d0d0",
-          "light": "#333333",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#333333",
+            "ac2": "#333333"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "MiniMax Code",
                 "ac"
               ]
             ],
@@ -4700,11 +4982,19 @@
           "fg": "#ececec",
           "mu": "#8a8a8a",
           "ac": "#6b85ff",
-          "light": "#4d6bfe",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#4363fe",
+            "ac2": "#4363fe"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "DeepSeek Harness",
                 "ac"
               ]
             ],
@@ -4826,20 +5116,20 @@
         "default": "terminal",
         "terminal": {
           "kind": "tui",
-          "bg": "#0f1015",
-          "fg": "#e6e6e6",
-          "mu": "#7f8590",
-          "ac": "#4796e3",
-          "ac2": "#c3677f",
-          "ok": "#5fd38d",
+          "bg": "#0b0b0c",
+          "fg": "#e8e8ea",
+          "mu": "#6b6f80",
+          "ac": "#4d8fe8",
+          "ac2": "#c8a7ff",
+          "ok": "#8fd48f",
           "light": {
             "bg": "#fbfbfa",
             "fg": "#1d1d1b",
             "mu": "#74746f",
             "ok": "#1a7f37",
             "err": "#cf222e",
-            "ac": "#4796e3",
-            "ac2": "#c3677f"
+            "ac": "#1f75c9",
+            "ac2": "#7a4fd0"
           },
           "banner": [
             [
@@ -4859,21 +5149,35 @@
                 "2. Be specific for the best results.",
                 "mu"
               ]
+            ],
+            [
+              [
+                "3. ",
+                "mu"
+              ],
+              [
+                "/help",
+                "ac2"
+              ],
+              [
+                " for more information.",
+                "mu"
+              ]
             ]
           ],
           "bannerBox": false,
           "big": {
-            "text": "GEMINI",
+            "text": "> GEMINI",
             "grad": [
-              "#4796E3",
-              "#847ACE",
-              "#C3677F"
+              "#4a90e2",
+              "#9a7fd4",
+              "#d0607a"
             ]
           },
           "userStyle": "plain",
           "prompt": ">",
           "answerGlyph": "✦",
-          "agentGlyph": "ac",
+          "agentGlyph": "ac2",
           "steps": {
             "Read": [
               [
@@ -4882,11 +5186,17 @@
                   "ok"
                 ],
                 [
-                  "ReadFile ",
+                  "ReadFile",
                   "b"
                 ],
                 [
-                  "{a}",
+                  " {a}",
+                  "mu"
+                ]
+              ],
+              [
+                [
+                  "{r}",
                   "mu"
                 ]
               ]
@@ -4898,11 +5208,17 @@
                   "ok"
                 ],
                 [
-                  "Edit ",
+                  "Edit",
                   "b"
                 ],
                 [
-                  "{a}",
+                  " {a}",
+                  "mu"
+                ]
+              ],
+              [
+                [
+                  "{r}",
                   "mu"
                 ]
               ]
@@ -4914,11 +5230,17 @@
                   "ok"
                 ],
                 [
-                  "Shell ",
+                  "Shell",
                   "b"
                 ],
                 [
-                  "{a}",
+                  " {a}",
+                  "mu"
+                ]
+              ],
+              [
+                [
+                  "{r}",
                   "mu"
                 ]
               ]
@@ -4932,7 +5254,7 @@
           "footer": {
             "l": [
               [
-                "~/project (main)",
+                "~/project",
                 "ac"
               ]
             ],
@@ -4940,19 +5262,21 @@
               [
                 "no sandbox",
                 "err"
+              ],
+              [
+                " (see /docs)",
+                "mu"
               ]
             ],
             "r": [
               [
-                "gemini-2.5-pro ",
-                "ac"
-              ],
-              [
-                "(99% context left)",
-                "mu"
+                "auto",
+                "ac2"
               ]
             ]
-          }
+          },
+          "err": "#e0607e",
+          "glyphRole": "ac2"
         }
       },
       "docs": "https://geminicli.com"
@@ -4979,36 +5303,53 @@
         "default": "terminal",
         "terminal": {
           "kind": "tui",
-          "bg": "#0d1117",
-          "fg": "#ececec",
+          "bg": "#181818",
+          "fg": "#e6e6e6",
           "mu": "#8a8a8a",
-          "ac": "#a371f7",
+          "ac": "#64a5c9",
           "banner": [
             [
               [
-                "GitHub Copilot",
-                "b"
-              ],
-              [
-                " CLI",
-                "mu"
-              ]
-            ],
-            [
-              [
-                "Welcome to GitHub Copilot CLI",
+                "Welcome to GitHub",
                 "fg"
               ]
             ],
             [
               [
-                "~/project",
+                "Command-line interface",
                 "mu"
+              ]
+            ],
+            [
+              [
+                "",
+                "fg"
+              ]
+            ],
+            [
+              [
+                "Copilot can write, test and debug code right from your terminal.",
+                "fg"
+              ]
+            ],
+            [
+              [
+                "● ",
+                "ac"
+              ],
+              [
+                "Logged in as user: you",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "~/project [⎇ main]",
+                "b"
               ]
             ]
           ],
-          "bannerBox": true,
-          "boxRole": "ac",
+          "bannerBox": false,
           "userStyle": "plain",
           "prompt": ">",
           "answerGlyph": "●",
@@ -5077,20 +5418,45 @@
           },
           "input": "round",
           "inputGlyph": ">",
-          "placeholder": "Ask anything",
+          "placeholder": "Enter @ to mention files or / for commands",
           "footer": {
             "l": [
               [
-                "~/project [main]",
+                "Ctrl+c",
+                "b"
+              ],
+              [
+                " Exit · ",
+                "mu"
+              ],
+              [
+                "Ctrl+r",
+                "b"
+              ],
+              [
+                " Collapse all",
                 "mu"
               ]
-            ],
-            "r": [
-              [
-                "claude-sonnet",
-                "ac"
-              ]
             ]
+          },
+          "ac2": "#b97ccc",
+          "ok": "#7fcf9a",
+          "big": {
+            "text": "COPILOT",
+            "grad": [
+              "#64a5c9",
+              "#72b4d6",
+              "#64a5c9"
+            ]
+          },
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#377a9f",
+            "ac2": "#a150bb"
           }
         }
       },
@@ -5141,7 +5507,7 @@
             "ok": "#1a7f37",
             "err": "#cf222e",
             "ac": "#16803c",
-            "ac2": "#0088ff"
+            "ac2": "#0072d6"
           },
           "banner": [
             [
@@ -5236,7 +5602,8 @@
           "inputGlyph": ">",
           "glyphRole": "ac",
           "placeholder": "",
-          "footer": null
+          "footer": null,
+          "answerRole": "ac2"
         }
       },
       "docs": "https://aider.chat"
@@ -5270,7 +5637,7 @@
           "banner": [
             [
               [
-                "{name}",
+                "Amp",
                 "ac"
               ]
             ],
@@ -5366,6 +5733,15 @@
                 "mu"
               ]
             ]
+          },
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#8452f5",
+            "ac2": "#8452f5"
           }
         }
       },
@@ -5473,15 +5849,21 @@
         "default": "terminal",
         "terminal": {
           "kind": "tui",
-          "bg": "#0f0b1c",
-          "fg": "#ececec",
-          "mu": "#8a8a8a",
-          "ac": "#6b50ff",
+          "bg": "#201f26",
+          "fg": "#dfdbdd",
+          "mu": "#858392",
+          "ac": "#ff5fdb",
           "banner": [
             [
               [
-                "{name}",
+                "Charm™",
                 "ac"
+              ]
+            ],
+            [
+              [
+                "New Session",
+                "mu"
               ]
             ],
             [
@@ -5489,10 +5871,20 @@
                 "~/project",
                 "mu"
               ]
+            ],
+            [
+              [
+                "◇ ",
+                "mu"
+              ],
+              [
+                "Claude Sonnet",
+                "fg"
+              ]
             ]
           ],
-          "bannerBox": true,
-          "userStyle": "plain",
+          "bannerBox": false,
+          "userStyle": "bar",
           "prompt": ">",
           "steps": {
             "Read": [
@@ -5556,22 +5948,63 @@
               ]
             ]
           },
-          "input": "round",
+          "input": "plain",
           "inputGlyph": ">",
-          "placeholder": "Ask anything",
+          "placeholder": "Tell me more about this project...",
           "footer": {
             "l": [
               [
-                "auto · ~/project",
-                "mu"
-              ]
-            ],
-            "r": [
+                "esc ",
+                "fg"
+              ],
               [
-                "? help",
+                "cancel · ",
+                "mu"
+              ],
+              [
+                "tab ",
+                "fg"
+              ],
+              [
+                "focus chat · ",
+                "mu"
+              ],
+              [
+                "ctrl+p ",
+                "fg"
+              ],
+              [
+                "commands · ",
+                "mu"
+              ],
+              [
+                "ctrl+c ",
+                "fg"
+              ],
+              [
+                "quit",
                 "mu"
               ]
             ]
+          },
+          "ac2": "#6b50ff",
+          "ok": "#12c78f",
+          "big": {
+            "text": "CRUSH",
+            "grad": [
+              "#ff5fdb",
+              "#6b50ff"
+            ]
+          },
+          "glyphRole": "ok",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#d400a5",
+            "ac2": "#6b50ff"
           }
         }
       },
@@ -5603,11 +6036,19 @@
           "fg": "#ececec",
           "mu": "#8a8a8a",
           "ac": "#e5e5e5",
-          "light": "#1d1d1b",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#1d1d1b",
+            "ac2": "#1d1d1b"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "Cline",
                 "ac"
               ]
             ],
@@ -5726,26 +6167,21 @@
         "default": "terminal",
         "terminal": {
           "kind": "tui",
-          "bg": "#0d0d08",
-          "fg": "#ececec",
-          "mu": "#8a8a8a",
-          "ac": "#f8f675",
-          "light": "#8a7d00",
-          "banner": [
-            [
-              [
-                "{name}",
-                "ac"
-              ]
-            ],
-            [
-              [
-                "~/project",
-                "mu"
-              ]
-            ]
-          ],
-          "bannerBox": true,
+          "bg": "#0b0a09",
+          "fg": "#f2f2f2",
+          "mu": "#9a9894",
+          "ac": "#f5f06a",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#807400",
+            "ac2": "#807400"
+          },
+          "banner": [],
+          "bannerBox": false,
           "userStyle": "plain",
           "prompt": ">",
           "steps": {
@@ -5810,21 +6246,48 @@
               ]
             ]
           },
-          "input": "round",
-          "inputGlyph": ">",
-          "placeholder": "Ask anything",
+          "input": "bar",
+          "inputGlyph": "",
+          "placeholder": "Ask anything... \"Fix broken tests\"",
           "footer": {
             "l": [
               [
-                "auto · ~/project",
+                "Code ",
+                "mu"
+              ],
+              [
+                "· GPT-5.5 ",
+                "fg"
+              ],
+              [
+                "OpenAI",
                 "mu"
               ]
             ],
             "r": [
               [
-                "? help",
+                "tab ",
+                "fg"
+              ],
+              [
+                "agents   ",
+                "mu"
+              ],
+              [
+                "ctrl+p ",
+                "fg"
+              ],
+              [
+                "commands",
                 "mu"
               ]
+            ]
+          },
+          "big": {
+            "text": "KILO CLI",
+            "grad": [
+              "#f5f06a",
+              "#f5f06a"
             ]
           }
         }
@@ -5852,26 +6315,58 @@
         "default": "terminal",
         "terminal": {
           "kind": "tui",
-          "bg": "#020202",
-          "fg": "#ececec",
+          "bg": "#121212",
+          "fg": "#eeeeee",
           "mu": "#8a8a8a",
-          "ac": "#fafafa",
-          "light": "#111111",
+          "ac": "#e8760a",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#b35a00",
+            "ac2": "#b35a00"
+          },
           "banner": [
             [
               [
-                "{name}",
-                "ac"
+                "v1.16",
+                "mu"
               ]
             ],
             [
               [
-                "~/project",
+                "TIP: Use /help to see all available commands",
+                "b"
+              ]
+            ],
+            [
+              [
+                "shift+tab to cycle modes · ctrl+N to cycle models",
                 "mu"
+              ]
+            ],
+            [
+              [
+                "Skills ✓  ",
+                "fg"
+              ],
+              [
+                "MCPs ✗  ",
+                "fg"
+              ],
+              [
+                "AGENTS.md ",
+                "fg"
+              ],
+              [
+                "✓",
+                "ok"
               ]
             ]
           ],
-          "bannerBox": true,
+          "bannerBox": false,
           "userStyle": "plain",
           "prompt": ">",
           "steps": {
@@ -5942,17 +6437,27 @@
           "footer": {
             "l": [
               [
-                "auto · ~/project",
+                "? for help | ← for droids",
                 "mu"
               ]
             ],
             "r": [
               [
-                "? help",
-                "mu"
+                "Auto (Med)",
+                "ac"
+              ],
+              [
+                "  Opus 5.5 (Medium)",
+                "fg"
               ]
             ]
-          }
+          },
+          "ok": "#22dd22",
+          "err": "#e85050",
+          "big": {
+            "text": "DROID"
+          },
+          "glyphRole": "ac"
         }
       },
       "docs": "https://factory.ai"
@@ -5983,11 +6488,19 @@
           "fg": "#ececec",
           "mu": "#8a8a8a",
           "ac": "#58d6a8",
-          "light": "#1a7f5a",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#1a7f5a",
+            "ac2": "#1a7f5a"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "Augment Auggie",
                 "ac"
               ]
             ],
@@ -6116,11 +6629,11 @@
         "default": "desktop",
         "desktop": {
           "kind": "app",
-          "bg": "#0d0f11",
-          "fg": "#ececec",
-          "mu": "#8b8f96",
-          "ac": "#ffe165",
-          "ac2": "#4ade80",
+          "bg": "#0d0d0d",
+          "fg": "#f2f2f2",
+          "mu": "#8c8c8c",
+          "ac": "#f2f2f2",
+          "ac2": "#22c55e",
           "banner": [],
           "userStyle": "bubble",
           "prompt": "",
@@ -6155,15 +6668,24 @@
           "footer": {
             "l": [
               [
-                "Sandbox running",
+                "● Local",
                 "mu"
               ]
             ]
           },
           "header": "Agent Canvas",
-          "status": "Sandbox running",
-          "radius": 12,
-          "sendSquare": true
+          "status": "● Local",
+          "radius": 10,
+          "sendSquare": true,
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#1d1d1b",
+            "ac2": "#17843f"
+          }
         }
       },
       "docs": "https://docs.openhands.dev"
@@ -6190,45 +6712,50 @@
         "default": "terminal",
         "terminal": {
           "kind": "tui",
-          "bg": "#0e0f10",
-          "fg": "#ececec",
-          "mu": "#8a8a8a",
-          "ac": "#ff6a3d",
-          "light": "#c24a1f",
-          "banner": [
-            [
-              [
-                "{name}",
-                "ac"
-              ]
-            ],
-            [
-              [
-                "~/project",
-                "mu"
-              ]
-            ]
-          ],
-          "bannerBox": true,
+          "bg": "#0b0f14",
+          "fg": "#e6e6e6",
+          "mu": "#6b7280",
+          "ac": "#3ba3e8",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#1b6fae",
+            "ac2": "#1b6fae"
+          },
+          "banner": [],
+          "bannerBox": false,
           "userStyle": "plain",
-          "prompt": ">",
+          "prompt": "●",
           "steps": {
             "Read": [
               [
                 [
                   "● ",
-                  "ac"
+                  "ok"
                 ],
                 [
-                  "Read ",
-                  "fg"
+                  "Read(",
+                  "b"
                 ],
                 [
                   "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
                   "mu"
                 ],
                 [
-                  "  {r}",
+                  "{r}",
                   "mu"
                 ]
               ]
@@ -6237,18 +6764,28 @@
               [
                 [
                   "● ",
-                  "ac"
+                  "ok"
                 ],
                 [
-                  "Edit ",
-                  "fg"
+                  "Edit(",
+                  "b"
                 ],
                 [
                   "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
                   "mu"
                 ],
                 [
-                  "  {r}",
+                  "{r}",
                   "mu"
                 ]
               ]
@@ -6257,40 +6794,53 @@
               [
                 [
                   "● ",
-                  "ac"
+                  "ok"
                 ],
                 [
-                  "Run ",
-                  "fg"
+                  "Run(",
+                  "b"
                 ],
                 [
                   "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
                   "mu"
                 ],
                 [
-                  "  {r}",
+                  "{r}",
                   "mu"
                 ]
               ]
             ]
           },
           "input": "round",
-          "inputGlyph": ">",
-          "placeholder": "Ask anything",
+          "inputGlyph": "●",
+          "placeholder": "Ask anything, @ for context, / for slash commands, ! for shell mode",
           "footer": {
             "l": [
               [
-                "auto · ~/project",
-                "mu"
+                "Press Ctrl+V to paste image",
+                "ac"
               ]
             ],
             "r": [
               [
-                "? help",
+                "● Continue CLI",
                 "mu"
               ]
             ]
-          }
+          },
+          "ok": "#4caf50",
+          "glyphRole": "ac",
+          "answerGlyph": "●"
         }
       },
       "docs": "https://continue.dev"
@@ -6321,11 +6871,19 @@
           "fg": "#ececec",
           "mu": "#8a8a8a",
           "ac": "#01a9db",
-          "light": "#0a6f91",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#0a6f91",
+            "ac2": "#0a6f91"
+          },
           "banner": [
             [
               [
-                "{name}",
+                "Warp Oz",
                 "ac"
               ]
             ],
