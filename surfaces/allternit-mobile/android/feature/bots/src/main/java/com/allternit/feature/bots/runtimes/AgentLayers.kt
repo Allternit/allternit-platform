@@ -105,10 +105,10 @@ fun accessPhrase(access: String?, pid: String?): String = when (access) {
     else -> "with its own default model"
 }
 
-private fun runtimeBrainsLabel(r: RuntimeEntry): String =
+internal fun runtimeBrainsLabel(r: RuntimeEntry): String =
     r.brains?.let { list -> "${list.map(::providerName).distinct().joinToString(", ")} models" } ?: "Any brain"
 
-private fun matches(q: String, vararg parts: String?): Boolean =
+internal fun matches(q: String, vararg parts: String?): Boolean =
     q.isBlank() || parts.filterNotNull().joinToString(" ").lowercase().contains(q.trim().lowercase())
 
 /** "claude-sonnet-5" → "Claude Sonnet 5" (web `readableModelId`). */

@@ -73,9 +73,15 @@ class ChatBackend(
         agentModeId: String?,
         permissionMode: String?,
         sessionMode: String,
+        /** Harness & Bots 2.0: the runtime this chat runs on (`metadata.runtime` + `metadata.botBrain`). */
+        botBrain: JsonObject? = null,
     ): ApiResult<AgentSession> {
         val metadata = buildJsonObject {
             put("session_mode", sessionMode)
+            botBrain?.let { bb ->
+                (bb["runtime"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.let { put("runtime", it) }
+                put("botBrain", bb)
+            }
             agentModeId?.let { put("agentModeId", it) }
             permissionMode?.let { put("permissionMode", it) }
         }
