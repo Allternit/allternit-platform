@@ -921,6 +921,7 @@ struct ACIConsoleDetailView: View {
 
     private enum Section: String, CaseIterable, Identifiable {
         case overview = "Overview", services = "Services", usage = "Usage", ports = "Ports"
+        case terminal = "Terminal", files = "Files"
         case access = "Access", backups = "Backups", health = "Health", settings = "Settings"
         var id: String { rawValue }
     }
@@ -947,9 +948,15 @@ struct ACIConsoleDetailView: View {
                     }
                     .padding(.horizontal, 16).padding(.vertical, 10)
                 }
+                if section == .terminal {
+                    ACIConsoleTerminalTab(computer: computer)
+                } else if section == .files {
+                    ACIConsoleFilesTab(computer: computer)
+                } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         switch section {
+                        case .terminal, .files: EmptyView()
                         case .overview: ACIConsoleOverviewTab(computer: computer)
                         case .services: ACIConsoleServicesTab(computer: computer)
                         case .usage: ACIConsoleUsageTab(computer: computer)
@@ -962,6 +969,7 @@ struct ACIConsoleDetailView: View {
                     }
                     .padding(16)
                 }
+                }
             }
             .background(Color("BgPrimary"))
             .navigationTitle(computer.name)
@@ -972,7 +980,7 @@ struct ACIConsoleDetailView: View {
 }
 
 /// Loads one host read and exposes the five states every tab shares.
-private enum ACIConsoleLoad<T> {
+enum ACIConsoleLoad<T> {
     case loading
     case ready(T)
     case asleep(ACIComputersClient.ConsoleSnapshot?)
@@ -988,14 +996,14 @@ private enum ACIConsoleLoad<T> {
     }
 }
 
-private func consoleNote(_ text: String) -> some View {
+func consoleNote(_ text: String) -> some View {
     Text(text)
         .font(.system(size: 14)).foregroundColor(Color("TextSecondary"))
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity).padding(.vertical, 24)
 }
 
-private func consoleCard<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+func consoleCard<C: View>(@ViewBuilder _ content: () -> C) -> some View {
     VStack(alignment: .leading, spacing: 10) { content() }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1022,7 +1030,7 @@ private func consoleMeter(_ label: String, _ percent: Double) -> some View {
     .accessibilityLabel("\(label) \(Int(p)) percent")
 }
 
-private func consoleRow(_ k: String, _ v: String) -> some View {
+func consoleRow(_ k: String, _ v: String) -> some View {
     HStack(alignment: .firstTextBaseline) {
         Text(k).font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
         Spacer(minLength: 12)
@@ -1039,7 +1047,7 @@ private func consoleDuration(_ sec: Double) -> String {
     return "\(max(m, 1))m"
 }
 
-private func consoleBytes(_ b: Double) -> String {
+func consoleBytes(_ b: Double) -> String {
     ByteCountFormatter.string(fromByteCount: Int64(b), countStyle: .binary)
 }
 
@@ -1379,7 +1387,7 @@ private struct ACIHoldButton: View {
 }
 
 /// Plain sentence for a failed change. Never a status code.
-private func consoleFailureText(_ error: Error) -> String {
+func consoleFailureText(_ error: Error) -> String {
     switch error {
     case ACIComputersClient.Failure.notAvailable: return "This isn't available for this computer yet."
     case ACIComputersClient.Failure.asleep: return "This computer is asleep. It is not woken for this. Nothing was changed."
@@ -1703,10 +1711,13 @@ private struct ACIConsoleHealthTab: View {
 }
 
 /// The approval sheet: the exact action, the restore point status, then Hold to approve.
-private struct ACIConsoleFixSheet: View {
+struct ACIConsoleFixSheet: View {
     let computer: ACIComputersClient.ConsoleComputer
     let finding: ACIComputersClient.HostFinding
     let onChanged: () -> Void
+    /// Words for the review card and title (the Space and snippet runs reuse this sheet).
+    var heading = "What is wrong"
+    var navTitle = "Approve a fix"
     @Environment(\.dismiss) private var dismiss
 
     private enum Phase: Equatable {
@@ -1727,7 +1738,7 @@ private struct ACIConsoleFixSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     consoleCard {
-                        Text("What is wrong").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                        Text(heading).font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
                         Text(finding.title).font(.system(size: 15, weight: .semibold)).foregroundColor(Color("TextPrimary"))
                         Text(finding.detail).font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
                     }
@@ -1757,7 +1768,7 @@ private struct ACIConsoleFixSheet: View {
                 .padding(16)
             }
             .background(Color("BgPrimary"))
-            .navigationTitle("Approve a fix").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(navTitle).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Close") { dismiss() } } }
         }
         .task {

@@ -15,6 +15,8 @@ enum NotificationCategoryID {
     static let needsFix = "NEEDS_FIX"
     /// An agent's message to its owner (`agent.message.sent`, send_user_message).
     static let agentMessage = "AGENT_MESSAGE"
+    /// A Computers console alert (offline, cpu, disk): tap opens that computer.
+    static let computerAlert = "COMPUTER_ALERT"
 }
 
 /// Button identifiers. Fixed, like the categories.
@@ -85,6 +87,8 @@ enum NotificationCategories {
             // Open (and a plain tap) opens its thread or chat.
             UNNotificationCategory(identifier: NotificationCategoryID.agentMessage,
                                    actions: [reply(NotificationStrings.replyAgentPlaceholder), open], intentIdentifiers: []),
+            UNNotificationCategory(identifier: NotificationCategoryID.computerAlert,
+                                   actions: [open], intentIdentifiers: []),
             UNNotificationCategory(identifier: NotificationCategoryID.needsFix,
                                    actions: [button(.retry, NotificationStrings.retry, auth),
                                              button(.snooze, NotificationStrings.snooze, auth)],

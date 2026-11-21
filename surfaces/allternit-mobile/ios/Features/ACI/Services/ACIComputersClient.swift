@@ -447,6 +447,24 @@ final class ACIComputersClient: Sendable {
         return result
     }
 
+    /// A saved command (contract: `GET /api/v1/computers/snippets` → `{ snippets: [...] }`).
+    struct Snippet: Decodable, Sendable, Identifiable, Equatable {
+        let id: String
+        let name: String
+        let command: String
+        let description: String?
+    }
+
+    private struct SnippetsEnvelope: Decodable { let snippets: [ACILossy<Snippet>]? }
+
+    func snippets() async throws -> [Snippet] {
+        let data = try await cloud("api/v1/computers/snippets")
+        let decoder = JSONDecoder()
+        if let rows = try? decoder.decode([ACILossy<Snippet>].self, from: data) { return rows.compactMap(\.value) }
+        let env = try? decoder.decode(SnippetsEnvelope.self, from: data)
+        return (env?.snippets ?? []).compactMap(\.value)
+    }
+
     func sshKeys(id: String) async throws -> [SSHKey] {
         let data = try await cloud(hostPath(id, "ssh-keys"))
         let decoder = JSONDecoder()
@@ -530,7 +548,7 @@ final class ACIComputersClient: Sendable {
             let consolePath = path.hasSuffix("computers/console") || path.contains("/host/") || path.hasSuffix("/metrics")
                 || path.contains("/ssh-keys") || path.hasSuffix("/backups") || path.hasSuffix("/backups/restore")
                 || path.hasSuffix("/approvals") || path.hasSuffix("/restart") || path.hasSuffix("/move")
-                || path.hasSuffix("/rebuild") || path.contains("/computers/paired/")
+                || path.hasSuffix("/rebuild") || path.contains("/computers/paired/") || path.hasSuffix("/computers/snippets")
             if [404, 405, 501].contains(http.statusCode), consolePath {
                 throw Failure.notAvailable
             }

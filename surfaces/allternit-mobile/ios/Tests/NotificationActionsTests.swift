@@ -77,6 +77,7 @@ final class NotificationActionsTests: XCTestCase {
         XCTAssertEqual(byId["BOT_REPLY"]?.actions.map(\.identifier), ["REPLY", "OPEN"])
         XCTAssertEqual(byId["RUN_DONE"]?.actions.map(\.identifier), ["OPEN"])
         XCTAssertEqual(byId["NEEDS_FIX"]?.actions.map(\.identifier), ["RETRY", "SNOOZE"])
+        XCTAssertEqual(byId["COMPUTER_ALERT"]?.actions.map(\.identifier), ["OPEN"])
         // An agent's message: Reply runs in the background, Open brings the app up.
         XCTAssertEqual(byId["AGENT_MESSAGE"]?.actions.map(\.identifier), ["REPLY", "OPEN"])
         XCTAssertTrue(byId["AGENT_MESSAGE"]?.actions.first is UNTextInputNotificationAction)
