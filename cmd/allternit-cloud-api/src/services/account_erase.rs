@@ -172,6 +172,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("cloud_phones", USER),
     ("computer_pairing_codes", USER),
     ("paired_computers", USER),
+    // Computers console alert rules (migration 154): the owner's own settings.
+    ("computer_alert_rules", USER),
     ("code_environments", USER),
     ("gizzi_instances", USER),
     ("byo_bootstrap_tokens", USER),
