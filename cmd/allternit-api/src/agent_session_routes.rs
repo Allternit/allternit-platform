@@ -604,6 +604,37 @@ fn session_runtime_of(bag: &serde_json::Map<String, serde_json::Value>) -> Strin
     crate::bot_brain::RUNTIME_ALLTERNIT.to_string()
 }
 
+/// Store a checked runtime change on a session's metadata bag, over the
+/// client's raw keys: the canonical `runtime` and normalized `botBrain` (and
+/// `agent_session` from `nativeSessionId`; the old runtime's native session is
+/// dropped). `Cleared` stores `runtime: "allternit"` (and drops a stale
+/// `botBrain` the update did not replace). Turns then follow the bag through
+/// `plain_runtime_turn_model`, the way they do after create.
+fn apply_runtime_patch(
+    bag: &mut serde_json::Map<String, serde_json::Value>,
+    change: &crate::bot_brain::RuntimePatch,
+    update_had_brain: bool,
+) {
+    use crate::bot_brain::RuntimePatch;
+    match change {
+        RuntimePatch::Unchanged => {}
+        RuntimePatch::Set(rt) => {
+            match rt.brain.get("nativeSessionId").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                Some(native) => bag.insert("agent_session".to_string(), json!(native)),
+                None => bag.remove("agent_session"),
+            };
+            bag.insert("runtime".to_string(), json!(rt.runtime));
+            bag.insert("botBrain".to_string(), rt.brain.clone());
+        }
+        RuntimePatch::Cleared => {
+            bag.insert("runtime".to_string(), json!(crate::bot_brain::RUNTIME_ALLTERNIT));
+            if !update_had_brain {
+                bag.remove("botBrain");
+            }
+        }
+    }
+}
+
 /// The model a plain chat's turn runs on when the session was created on a
 /// runtime other than `allternit` (`runtime` stored by `create_session`): the
 /// runtime CLI's provider with the asked model when that CLI knows it, else
@@ -1468,6 +1499,24 @@ async fn update_session(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
     });
+    // A plain chat moved to another runtime (`metadata.runtime` /
+    // `metadata.botBrain`): the same checks and errors as create, before
+    // anything changes, and only when the runtime or brain really changes.
+    let runtime_patch = match body.metadata.as_ref() {
+        Some(patch) => match crate::bot_brain::plain_session_runtime_patch(
+            state.db.get_session_metadata(&session_id).ok().flatten().as_ref(),
+            patch,
+            crate::cli_catalog::runtime_registry(),
+            crate::bot_brain::tool_installed,
+        ) {
+            Ok(change) => change,
+            Err((status, error)) => {
+                let status = StatusCode::from_u16(status).unwrap_or(StatusCode::UNPROCESSABLE_ENTITY);
+                return (status, Json(error)).into_response();
+            }
+        },
+        None => crate::bot_brain::RuntimePatch::Unchanged,
+    };
     let mut payload = serde_json::Map::new();
     if let Some(name) = body.name {
         payload.insert("title".to_string(), json!(name));
@@ -1508,10 +1557,12 @@ async fn update_session(
                 if let Some(object) = metadata.as_object() {
                     let mut object = object.clone();
                     crate::code_session_status::strip_server_owned(&mut object);
+                    let had_brain = object.contains_key("botBrain");
                     crate::code_session_status::update_bag(&state.db, &session.id, |bag| {
                         for (key, value) in object {
                             bag.insert(key, value);
                         }
+                        apply_runtime_patch(bag, &runtime_patch, had_brain);
                         true
                     });
                 }
@@ -4592,6 +4643,58 @@ mod tests {
         db.set_session_metadata("s-code", &json!({"sessionMode": "code"})).unwrap();
         assert!(session_bot_marker(&db, "s-code").is_none());
         assert!(session_bot_marker(&db, "missing").is_none());
+    }
+
+    #[test]
+    fn plain_session_runtime_patch_is_checked_and_rerouted() {
+        use crate::bot_brain::{plain_session_runtime_patch, RuntimePatch};
+        let temp = std::env::temp_dir().join(format!("plain-runtime-patch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let registry = crate::cli_catalog::runtime_registry();
+        let stored = json!({ "runtime": "claude", "agent_session": "n-claude", "botBrain": { "runtime": "claude", "mode": "native_harness", "harness": "claude", "modelRef": "anthropic/claude-sonnet-5-5" } });
+        db.set_session_metadata("s-plain", &stored).unwrap();
+        let check = |patch: serde_json::Value, installed: bool| {
+            plain_session_runtime_patch(db.get_session_metadata("s-plain").unwrap().as_ref(), &patch, registry, |_| installed)
+        };
+
+        // The same runtime and brain sent back: never checked, even with the CLI gone.
+        assert_eq!(check(stored.clone(), false), Ok(RuntimePatch::Unchanged));
+        assert_eq!(check(json!({ "title": "x", "permission": {} }), false), Ok(RuntimePatch::Unchanged));
+        // A change is checked like create: 422s and 409, same bodies.
+        let (status, body) = check(json!({ "botBrain": { "runtime": "hermes", "modelRef": "subs-claude/claude-sonnet-5-5" } }), true).unwrap_err();
+        assert_eq!((status, body["error"].as_str()), (422, Some(crate::bot_brain::PLAN_NOT_ALLOWED)));
+        let (status, body) = check(json!({ "runtime": "nope" }), true).unwrap_err();
+        assert_eq!((status, body["error"].as_str()), (422, Some(crate::bot_brain::RUNTIME_UNKNOWN)));
+        let (status, body) = check(json!({ "runtime": "codex" }), false).unwrap_err();
+        assert_eq!(status, 409);
+        assert_eq!(body["message"], "Codex isn't installed on this computer.");
+
+        // Moved to Codex: stored, and the next turn runs on the Codex CLI.
+        let change = check(json!({ "runtime": "codex" }), true).unwrap();
+        assert!(matches!(change, RuntimePatch::Set(ref rt) if rt.runtime == "codex"));
+        let mut bag = db.get_session_metadata("s-plain").unwrap().unwrap().as_object().cloned().unwrap();
+        bag.insert("runtime".into(), json!("codex"));
+        apply_runtime_patch(&mut bag, &change, false);
+        assert!(bag.get("agent_session").is_none(), "the Claude native session is dropped");
+        assert_eq!(bag["botBrain"]["harness"], "codex");
+        db.set_session_metadata("s-plain", &serde_json::Value::Object(bag)).unwrap();
+        let codex = crate::cli_catalog::find("codex-cli").unwrap().default_model().to_string();
+        assert_eq!(plain_runtime_turn_model(&db, "s-plain", None, None), Some(("codex-cli".to_string(), codex)));
+
+        // Back to Allternit: turns leave the CLI path, list/get say allternit.
+        let change = check(json!({ "runtime": "allternit" }), false).unwrap();
+        assert_eq!(change, RuntimePatch::Cleared);
+        let mut bag = db.get_session_metadata("s-plain").unwrap().unwrap().as_object().cloned().unwrap();
+        apply_runtime_patch(&mut bag, &change, false);
+        assert_eq!(session_runtime_of(&bag), "allternit");
+        db.set_session_metadata("s-plain", &serde_json::Value::Object(bag)).unwrap();
+        assert_eq!(plain_runtime_turn_model(&db, "s-plain", Some("anthropic"), Some("x")), None);
+
+        // Bot sessions are never checked or rerouted by an update.
+        db.set_session_metadata("s-bot", &json!({ "isBot": true, "agentId": "b1" })).unwrap();
+        let bot = plain_session_runtime_patch(db.get_session_metadata("s-bot").unwrap().as_ref(), &json!({ "runtime": "nope" }), registry, |_| false);
+        assert_eq!(bot, Ok(RuntimePatch::Unchanged));
     }
 
     #[test]

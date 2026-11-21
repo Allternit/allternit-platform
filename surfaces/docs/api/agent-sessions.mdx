@@ -223,6 +223,11 @@ Updates the session title, archived state, permission, or surface.
 | `origin_surface` | string | New original surface. |
 | `metadata.permission` | object | Permission policy. |
 | `metadata` | object | Client keys merged into the stored metadata bag. The server-owned status keys (below) are dropped from it. |
+| `metadata.runtime` / `metadata.botBrain` | string / object | Move a plain chat to another runtime. Same shape as on create. |
+
+#### Changing a plain chat's runtime
+
+When an update to a plain chat (not a bot or agent session) carries `metadata.runtime` or `metadata.botBrain`, and the runtime or the brain (`modelRef`) differs from what the session stores, the gateway runs the same checks as [create](#plain-chats-on-a-picked-runtime) before it changes anything. It returns the same `422` (`runtime_unknown`, `brain_not_fit`, `plan_not_allowed_on_runtime`) and `409 runtime_not_installed` bodies. If the checks pass, it stores the new `runtime` and normalized `botBrain`, and the next turn runs on the new runtime's CLI. The old runtime's `agent_session` is dropped unless the new brain names a `nativeSessionId`. Moving to `allternit` stores `runtime: "allternit"`, and turns go back to the default path. An update that sends back the same runtime and brain (for example the whole bag) is not checked. Bot and agent sessions are never checked or moved this way.
 | `markReviewed` | boolean | `true` clears `readyForReview`. Clients send it when the user opens a session. |
 
 #### Session status flags

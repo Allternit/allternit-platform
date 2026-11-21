@@ -511,6 +511,69 @@ pub(crate) fn plain_session_runtime(
     Ok(Some(SessionRuntime { runtime: entry.id.clone(), brain }))
 }
 
+/// What a session metadata update (PATCH/PUT) means for a plain chat's runtime.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum RuntimePatch {
+    /// Nothing to check: no runtime/brain in the update, the same runtime and
+    /// brain as stored, or a bot/agent session (those keep their own path).
+    Unchanged,
+    /// A new runtime that passed the rules.
+    Set(SessionRuntime),
+    /// Back to `allternit` (or an old-shape brain this server can't map).
+    Cleared,
+}
+
+/// Check a metadata update on a session against its stored bag. The rules
+/// (422s, 409 not installed) run only when the update's `runtime` or brain
+/// (the `modelRef` provider/model) differs from what the session stores, so a
+/// client that sends the whole bag back never trips them. Same error bodies
+/// as [`plain_session_runtime`].
+pub(crate) fn plain_session_runtime_patch(
+    stored: Option<&Value>,
+    patch: &Value,
+    registry: &RuntimeRegistry,
+    installed: impl Fn(&str) -> bool,
+) -> Result<RuntimePatch, (u16, Value)> {
+    let Some(p) = patch.as_object() else {
+        return Ok(RuntimePatch::Unchanged);
+    };
+    if !p.contains_key("runtime") && !p.contains_key("botBrain") {
+        return Ok(RuntimePatch::Unchanged);
+    }
+    let empty = serde_json::Map::new();
+    let s = stored.and_then(Value::as_object).unwrap_or(&empty);
+    let is_bot = |m: &serde_json::Map<String, Value>| {
+        m.get("isBot").and_then(Value::as_bool) == Some(true) || str_field(m, "agentId").is_some()
+    };
+    if is_bot(s) || is_bot(p) {
+        return Ok(RuntimePatch::Unchanged);
+    }
+    let mut asked = p.get("botBrain").and_then(Value::as_object).cloned().unwrap_or_default();
+    if str_field(&asked, "runtime").is_none() {
+        if let Some(runtime) = str_field(p, "runtime") {
+            asked.insert("runtime".into(), runtime.into());
+        }
+    }
+    let mut asked = Value::Object(asked);
+    let asked_pair = brain_model_pair(&asked);
+    normalize_bot_brain(&mut asked, registry);
+    let canon = |id: &str| registry.get(id).map(|r| r.id.clone()).unwrap_or_else(|| id.to_string());
+    let asked_runtime = asked
+        .get("runtime")
+        .and_then(Value::as_str)
+        .map(canon)
+        .unwrap_or_else(|| RUNTIME_ALLTERNIT.to_string());
+    let stored_runtime = str_field(s, "runtime").map(canon).unwrap_or_else(|| RUNTIME_ALLTERNIT.to_string());
+    let stored_pair = s.get("botBrain").and_then(brain_model_pair);
+    if asked_runtime == stored_runtime && (asked_pair.is_none() || asked_pair == stored_pair) {
+        return Ok(RuntimePatch::Unchanged);
+    }
+    Ok(match plain_session_runtime(Some(patch), None, registry, installed)? {
+        Some(rt) => RuntimePatch::Set(rt),
+        None => RuntimePatch::Cleared,
+    })
+}
+
 /// The `provider/model` of a `botBrain.modelRef` (string or object), as a
 /// pair. A ref without a provider prefix gives `None`.
 pub(crate) fn brain_model_pair(brain: &Value) -> Option<(String, String)> {
