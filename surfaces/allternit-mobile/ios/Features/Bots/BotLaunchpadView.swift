@@ -25,6 +25,7 @@ struct BotLaunchpadView: View {
     @State private var busy = false
     @State private var hint: String?
     @State private var isNewBotPresented = false
+    @State private var isPickHowPresented = false
     @State private var isTemplatesPresented = false
     @State private var templateError: String?
 
@@ -37,6 +38,7 @@ struct BotLaunchpadView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                if showsPickHow { pickHowCard }
                 roster
                 header
             }
@@ -83,6 +85,15 @@ struct BotLaunchpadView: View {
                 }
             }
         }
+        .sheet(isPresented: $isPickHowPresented) {
+            // Harness & Bots 2.0: no bots yet → Create bot opens on the Runtime · Brain picker.
+            NewBotSheet(onBrowseTemplates: { isTemplatesPresented = true }, opensRuntimePicker: true) { outcome in
+                Task {
+                    await refresh()
+                    if let botId = outcome.botIds.first { store.pendingOpenBotId = botId }
+                }
+            }
+        }
         .sheet(isPresented: $isTemplatesPresented) {
             AgentTemplateSheet(onConfirm: createFromTemplate)
         }
@@ -91,6 +102,54 @@ struct BotLaunchpadView: View {
         )) {
             Button("OK", role: .cancel) { templateError = nil }
         } message: { Text(templateError ?? "") }
+    }
+
+    // MARK: - Empty state
+
+    /// No bots yet (and not still loading, not searching).
+    private var showsPickHow: Bool {
+        bots.isEmpty && !hub.isLoading && searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// "Pick how your bot works": the first step of Create bot, the runtime
+    /// (Allternit, Claude Code, Codex, …) and the brain it thinks with.
+    private var pickHowCard: some View {
+        Button {
+            Haptics.selection()
+            isPickHowPresented = true
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "square.stack.3d.up")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 40, height: 40)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Pick how your bot works")
+                        .font(.headline)
+                        .foregroundColor(Color("TextPrimary"))
+                    Text("Choose its runtime (Allternit, Claude Code, Codex and more) and the brain it thinks with.")
+                        .font(.subheadline)
+                        .foregroundColor(Color("TextSecondary"))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(Color("TextTertiary"))
+                    .accessibilityHidden(true)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color("BgPanel")))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle")))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens Create bot on the runtime choices")
+        .accessibilityIdentifier("bots-pick-how")
     }
 
     // MARK: - Roster
