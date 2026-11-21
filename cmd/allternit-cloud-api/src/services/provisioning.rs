@@ -471,6 +471,10 @@ pub enum CloudActionError {
     BackupCheckFailed(String),
     /// The stored city has no room for the new computer.
     RegionUnavailable { location: Option<String> },
+    /// A move target that is not one of [`CLOUD_LOCATIONS`].
+    InvalidLocation,
+    /// A move to the city the computer is already in.
+    SameLocation { location: String },
     Api(ApiError),
 }
 
@@ -494,6 +498,12 @@ impl CloudActionError {
             Self::BackupCheckFailed(_) => (503, json!({ "error": "backup_check_failed" })),
             Self::RegionUnavailable { location } => {
                 (503, json!({ "error": "region_unavailable", "location": location }))
+            }
+            Self::InvalidLocation => {
+                (400, json!({ "error": "invalid_location", "locations": CLOUD_LOCATIONS }))
+            }
+            Self::SameLocation { location } => {
+                (409, json!({ "error": "same_location", "location": location }))
             }
             Self::Api(error) => match error {
                 ApiError::NotFound(_) => (404, json!({ "error": "not_a_cloud_computer" })),
@@ -7014,6 +7024,84 @@ pub(crate) mod pg_tests {
         .await
         .unwrap();
         assert_eq!(device, None, "the new computer pairs again");
+        assert_eq!(live, 1, "still one computer");
+    }
+
+    #[tokio::test]
+    async fn move_creates_in_the_new_city_first_and_a_full_city_keeps_the_old_computer() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, seen, _) = orgo::tests::console_orgo_full_city("lon").await;
+        let service = console_service(&pool, orgo);
+        let placement = CloudPlacement { location: Some("chi".to_string()), ..Default::default() };
+        let view = service.create_placed("user_1", Some("sub_1"), &placement).await.unwrap();
+        let id = view.id.clone();
+        for _ in 0..200 {
+            if seen().iter().any(|(_, _, _, body)| {
+                body["command"].as_str().is_some_and(|c| c.contains("allternit-orgo-ensure"))
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        set_status(&pool, &id, "running").await;
+        sqlx::query("UPDATE provisioned_instances SET device_id = 'rt_old' WHERE id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let old_name: String = sqlx::query_scalar("SELECT incus_name FROM provisioned_instances WHERE id = $1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        // Paired/desktop ids and other users' computers: 404.
+        for (computer, user) in [("pc_box", "user_1"), (id.as_str(), "user_2")] {
+            let error = service.move_cloud(computer, user, "syd").await.unwrap_err();
+            assert_eq!(error.parts(), (404, serde_json::json!({ "error": "not_a_cloud_computer" })));
+        }
+        // Not a city, or the city it is already in.
+        assert_eq!(service.move_cloud(&id, "user_1", "dfw").await.unwrap_err().parts().1["error"], "invalid_location");
+        let same = service.move_cloud(&id, "user_1", "chi").await.unwrap_err();
+        assert_eq!(same.parts(), (409, serde_json::json!({ "error": "same_location", "location": "chi" })));
+
+        // London is full: 503 and the old computer is exactly as it was.
+        let full = service.move_cloud(&id, "user_1", "lon").await.unwrap_err();
+        assert_eq!(full.parts(), (503, serde_json::json!({ "error": "region_unavailable", "location": "lon" })));
+        assert!(!seen().iter().any(|(m, _, _, _)| m == "DELETE"), "nothing deleted");
+        let (status, device, name, location): (String, Option<String>, String, Option<String>) = sqlx::query_as(
+            "SELECT status, device_id, incus_name, location FROM provisioned_instances WHERE id = $1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((status.as_str(), device.as_deref()), ("running", Some("rt_old")));
+        assert_eq!((name.as_str(), location.as_deref()), (old_name.as_str(), Some("chi")));
+
+        // Sydney has room: the new computer is created, then the old one deleted.
+        let moved = service.move_cloud(&id, "user_1", "syd").await.unwrap();
+        assert_eq!(moved.id, id, "the console row id is kept");
+        assert_eq!(moved.status, "provisioning");
+        let log = seen();
+        let syd_create = log
+            .iter()
+            .position(|(m, p, _, b)| m == "POST" && p == "/computers" && b["region"] == "syd")
+            .expect("a create in Sydney");
+        let delete = log.iter().position(|(m, _, _, _)| m == "DELETE").expect("the old computer is deleted");
+        assert!(syd_create < delete, "create before delete");
+        assert_eq!(log[syd_create].3["name"], format!("{old_name}-syd"));
+        let (device, name, location, live): (Option<String>, String, Option<String>, i64) = sqlx::query_as(
+            "SELECT device_id, incus_name, location, (SELECT COUNT(*) FROM provisioned_instances WHERE user_id = 'user_1' AND status <> 'deleted') FROM provisioned_instances WHERE id = $1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(device, None, "the new computer pairs again");
+        assert_eq!(name, format!("{old_name}-syd"));
+        assert_eq!(location.as_deref(), Some("syd"));
         assert_eq!(live, 1, "still one computer");
     }
 

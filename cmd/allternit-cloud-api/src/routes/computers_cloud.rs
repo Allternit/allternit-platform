@@ -11,9 +11,13 @@
 //!   (the starter allow-list; empty = default Ubuntu only).
 //! - `POST /api/v1/computers/:id/restart` → `{ instance }`; 409 `asleep` when
 //!   it is not running (never woken), 409 `busy` mid-change.
-//! - `POST /api/v1/computers/:id/move` `{ location }` → 501 `move_not_supported`:
-//!   Orgo keeps a computer in the city it was created in (its
-//!   `PATCH /computers/{id}/move` changes workspace, not city).
+//! - `POST /api/v1/computers/:id/move` `{ location, confirm: true }` → 202
+//!   `{ instance }`: Orgo keeps a computer in the city it was created in (its
+//!   `PATCH /computers/{id}/move` changes workspace, not city), so a move is a
+//!   fresh computer in the new city and erases the disk (Eoj, 2026-11-21).
+//!   The new one is created before the old one is deleted. 400
+//!   `confirm_required` / `invalid_location`; 409 `same_location`; 503
+//!   `region_unavailable` `{ location }` (old computer untouched).
 //! - `POST /api/v1/computers/:id/rebuild` `{ confirm: true }` → 202 `{ instance }`
 //!   (status `provisioning` while first boot runs); 400 `confirm_required`;
 //!   409 `no_recent_backup` (no Orgo daily backup in the last 48 h; nothing
@@ -32,7 +36,7 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::services::provisioning::{CloudActionError, CLOUD_LOCATIONS, STARTER_TEMPLATES};
+use crate::services::provisioning::{CloudActionError, STARTER_TEMPLATES};
 use crate::{ApiError, ApiState};
 
 pub fn routes() -> Router<Arc<ApiState>> {
@@ -83,6 +87,8 @@ async fn restart(
 pub struct MoveRequest {
     #[serde(default)]
     location: Option<String>,
+    #[serde(default)]
+    confirm: bool,
 }
 
 async fn move_computer(
@@ -99,17 +105,34 @@ async fn move_computer(
     {
         return Ok(action_error_response(&error));
     }
-    let location = body.and_then(|Json(request)| request.location);
-    Ok((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({
-            "error": "move_not_supported",
-            "location": location,
-            "locations": CLOUD_LOCATIONS,
-            "message": "A cloud computer stays in the city it was created in.",
-        })),
+    let request = body.map(|Json(request)| request).unwrap_or_default();
+    let Some(location) = request.location.filter(|l| !l.trim().is_empty()) else {
+        return Ok(action_error_response(&CloudActionError::InvalidLocation));
+    };
+    if !request.confirm {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "confirm_required",
+                "message": "Moving starts a fresh computer in the new city and erases this one's files. Send {\"confirm\": true}.",
+            })),
+        )
+            .into_response());
+    }
+    Ok(
+        match state
+            .provisioning_service
+            .move_cloud(&id, &user.id, &location)
+            .await
+        {
+            Ok(instance) => (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({ "instance": instance })),
+            )
+                .into_response(),
+            Err(error) => action_error_response(&error),
+        },
     )
-        .into_response())
 }
 
 #[derive(Debug, Default, Deserialize)]

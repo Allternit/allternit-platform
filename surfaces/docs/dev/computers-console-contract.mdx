@@ -207,7 +207,7 @@ Errors:
 | `GET /api/v1/computers/snippets` | `{ snippets: [{ id, name, command, description? }] }` (a bare array is also accepted) | planned (step 2.9) |
 | `POST /api/v1/computers/snippets/:id/run` | `{ computers: [], approvalConfirmed }` returns `{ runs: [{ computerId, approvalId, changeId, status, error }] }` | planned (step 2.9) |
 | `POST /api/v1/computers/:id/restart` | No body. `{ instance }`. 409 `{ error: "asleep", status }` when it is not running (never woken), 409 `{ error: "busy", status }` mid-change | built (step 2.4) |
-| `POST /api/v1/computers/:id/move` | `{ location }` returns 501 `{ error: "move_not_supported", location, locations }`: Orgo keeps a computer in the city it was created in (its own move endpoint changes workspace, not city) | not available (step 2.4) |
+| `POST /api/v1/computers/:id/move` | `{ location, confirm: true }` returns 202 `{ instance }` (status `provisioning`, same row id). It starts a fresh computer in the new city and erases this one's files: Orgo keeps a computer in the city it was created in, and backups restore only there. The new computer is created first and the old one deleted after, so a refusal changes nothing. 400 `{ error: "confirm_required" }`, 400 `{ error: "invalid_location", locations }`, 409 `{ error: "same_location", location }`, 503 `{ error: "region_unavailable", location }` (old computer kept) | built (step 2.4) |
 | `POST /api/v1/computers/:id/rebuild` | `{ confirm: true }` returns 202 `{ instance }` (status `provisioning` during first boot, same row id). 400 `{ error: "confirm_required" }`. 409 `{ error: "no_recent_backup", latestBackupAt, maxAgeHours: 48 }`: nothing was deleted. 503 `{ error: "region_unavailable", location }`, 503 `{ error: "backup_check_failed" }` | built (step 2.4) |
 | `GET /api/v1/computers/:id/backups` | `{ backups: [{ id, createdAt, sizeBytes? }] }` | planned (step 2.6) |
 | `POST /api/v1/computers/:id/backups/restore` | `{ backupId }` | planned (step 2.6) |
@@ -265,7 +265,8 @@ Each computer gets its own key. Agents get short-lived keys. The probe writes a 
 
 `CloudComputerSettings`: `{ location, sizeId, diskGb, sleepAfterMin, wakePolicy, image }`.
 
-- Location is chosen on create: `nyc`, `chi`, `lon` or `syd`. Restart and rebuild are built. Resize, grow disk and clone come in step 2.5. Moving to another city is not possible: Orgo keeps a computer where it was created.
+- Location is chosen on create: `nyc`, `chi`, `lon` or `syd`. Restart, rebuild and move are built. Resize, grow disk and clone come in step 2.5.
+- Move (Eoj, 2026-11-21): Orgo keeps a computer in the city it was created in, and its backups restore only there, so moving makes a fresh computer in the new city and erases the old one's files. Clients show a hold-to-confirm sheet that says so in plain words ("Its files are erased and it starts fresh in London"). The new computer is created before the old one is deleted. It gets the Orgo name `<base>-<city>` on the same row id, and pairs on first boot. There is no backup gate, because a backup cannot follow it.
 - Rebuild is delete, create and first boot in the same location, size and template. It is held until an Orgo daily backup newer than 48 hours exists, because it destroys the only disk copy. The row id stays the same. The old runtime device is revoked, and the new computer pairs on first boot.
 - Daily backups are on.
 - Image is Ubuntu only (`image: 'ubuntu'`). Starter templates ship only if their `setup.sh` passes.

@@ -1475,6 +1475,19 @@ pub(crate) async fn fail_background_create(
     }
 }
 
+/// The Orgo name of a computer moved to `city`: the base name (any earlier
+/// `-<city>` suffix dropped) plus `-<city>`. Names are unique in a workspace
+/// and the old computer still exists while the new one is created. Base
+/// names end in 12 hex chars, so a city suffix is never mistaken for one;
+/// the longest base (58) plus 4 stays under Orgo's and Incus's 63.
+pub(crate) fn moved_computer_name(current: &str, city: &str) -> String {
+    let base = CLOUD_LOCATIONS
+        .iter()
+        .find_map(|c| current.strip_suffix(&format!("-{c}")))
+        .unwrap_or(current);
+    format!("{base}-{city}")
+}
+
 impl ProvisioningService {
     /// The caller's live cloud computer for a console route. The console row
     /// id of a cloud computer is `provisioned_instances.id`; a paired or
@@ -1642,6 +1655,144 @@ impl ProvisioningService {
             });
         }
         tracing::info!(id = %row.id, "cloud computer rebuilt; first boot running");
+        Ok(self.get_for_user(&row.id, user_id).await?)
+    }
+
+    /// `POST /api/v1/computers/:id/move` `{ location, confirm: true }`: put
+    /// the computer in another city (Eoj, 2026-11-21).
+    ///
+    /// Orgo keeps a computer in the city it was created in, and copies and
+    /// backups restore only there, so a move is a fresh computer in the new
+    /// city: the disk is erased (clients say so on a hold-to-confirm sheet).
+    /// The new computer is created FIRST, under `<base name>-<city>`, and the
+    /// old one is deleted only once that create succeeds, so a full city
+    /// (503 `region_unavailable`) or any other refusal leaves the old
+    /// computer exactly as it was. The row id stays the same (console row
+    /// ids, metrics and approvals keep pointing at it); the old runtime
+    /// device is revoked and the new computer pairs on first boot.
+    pub async fn move_cloud(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+        location: &str,
+    ) -> Result<InstanceView, CloudActionError> {
+        let row = self.console_cloud_row(instance_id, user_id).await?;
+        if row.is_free() {
+            return Err(CloudActionError::NotSupported("move"));
+        }
+        let Ok(Some(target)) = normalize_location(Some(location)) else {
+            return Err(CloudActionError::InvalidLocation);
+        };
+        if !matches!(row.status.as_str(), "running" | "stopped" | "sleeping") {
+            return Err(CloudActionError::Busy { status: row.status });
+        }
+        let Some(host_id) = row.host_id.clone() else {
+            return Err(CloudActionError::Busy { status: row.status });
+        };
+        let backend = self.backend_for_row(&row).await?;
+        if backend.provider() != ORGO_SCHEME {
+            return Err(CloudActionError::NotSupported("move"));
+        }
+        let (current, template): (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT location, template FROM provisioned_instances WHERE id = $1")
+                .bind(&row.id)
+                .fetch_one(&self.db)
+                .await
+                .map_err(ApiError::from)?;
+        if current.as_deref() == Some(target.as_str()) {
+            return Err(CloudActionError::SameLocation { location: target });
+        }
+        let new_name = moved_computer_name(&row.incus_name, &target);
+
+        // The new computer's one-time pairing code goes on the row before it
+        // boots; the old computer is already paired and does not use it.
+        let pairing_code = crate::routes::runtime_pairing::random_secret(24);
+        let pairing_code_hash = crate::routes::runtime_pairing::sha256_hex(pairing_code.as_bytes());
+        let pairing_expires_at = Utc::now() + self.defaults.pairing_ttl;
+        sqlx::query(
+            "UPDATE provisioned_instances SET pairing_code_hash = $2, pairing_expires_at = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        )
+        .bind(&row.id)
+        .bind(&pairing_code_hash)
+        .bind(pairing_expires_at)
+        .execute(&self.db)
+        .await
+        .map_err(ApiError::from)?;
+        let bootstrap = BootstrapContract {
+            api: self.defaults.api_base.clone(),
+            token: pairing_code,
+            instance_id: row.id.clone(),
+            user_id: row.user_id.clone(),
+            expires_at: pairing_expires_at.to_rfc3339(),
+        };
+        let placement = CloudPlacement {
+            location: Some(target.clone()),
+            template,
+            idempotency_key: Some(Uuid::new_v4().to_string()),
+        };
+        // Create first: on any refusal nothing of the old computer changed.
+        if let Err(error) = self
+            .drive_create(
+                &row.id,
+                &host_id,
+                &new_name,
+                &self.defaults.image,
+                row.size(),
+                row.allocation(),
+                ComputeClass::for_owner(&row.user_id, &row.tier),
+                CpuShare::default(),
+                &bootstrap,
+                &placement,
+            )
+            .await
+        {
+            tracing::warn!(id = %row.id, %error, location = %target, "move: create in the new city refused; old computer kept");
+            return Err(if is_region_unavailable(&error) {
+                CloudActionError::RegionUnavailable { location: Some(target) }
+            } else {
+                CloudActionError::Api(error)
+            });
+        }
+
+        // The new computer exists: retire the old one.
+        match backend.delete(&row.incus_name).await {
+            Ok(()) | Err(ProvisionError::NotFound(_)) => {}
+            Err(error) => {
+                tracing::error!(id = %row.id, old = %row.incus_name, %error, "move: old computer not deleted");
+                crate::services::ops_alert::send_once(
+                    &format!("move-delete:{}", row.id),
+                    "A moved cloud computer left its old computer behind".to_string(),
+                    format!(
+                        "Instance: {}\nOld Orgo computer: {}\nNew: {new_name} ({target})\nError: {error}\n\n\
+                         The row now points at the new computer. Delete the old one in Orgo so it stops billing.",
+                        row.id, row.incus_name
+                    ),
+                );
+            }
+        }
+        // Revoke first: revoke_device finds the paired link through the
+        // row's device_id, which the update below clears.
+        if let Some(device_id) = &row.device_id {
+            revoke_device(&self.db, device_id).await?;
+        }
+        sqlx::query(
+            r#"
+            UPDATE provisioned_instances
+            SET status = 'provisioning', device_id = NULL, incus_name = $2, location = $3,
+                error_message = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            "#,
+        )
+        .bind(&row.id)
+        .bind(&new_name)
+        .bind(&target)
+        .execute(&self.db)
+        .await
+        .map_err(ApiError::from)?;
+        if row.status == "running" {
+            record_instance_stopped(&self.db, &row.id, "move").await?;
+        }
+        tracing::info!(id = %row.id, from = ?current, to = %target, "cloud computer moved; first boot running");
         Ok(self.get_for_user(&row.id, user_id).await?)
     }
 
@@ -1979,6 +2130,8 @@ pub(crate) mod tests {
         create_refusal_status: u16,
         /// The `GET /computers/{id}/backups` answer (Null = no backups).
         backups: serde_json::Value,
+        /// Refuse creates in this city only (503 REGION_UNAVAILABLE).
+        full_city: Option<String>,
     }
 
     type FakeState = Arc<Mutex<Fake>>;
@@ -2038,6 +2191,17 @@ pub(crate) mod tests {
                 )
             }
             ("POST", ["computers"]) => {
+                if fake.full_city.is_some() && json_body["region"].as_str() == fake.full_city.as_deref() {
+                    return reply(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        serde_json::json!({
+                            "error": "No server in that city has room right now.",
+                            "code": "REGION_UNAVAILABLE",
+                            "region": fake.full_city.clone(),
+                            "retryable": true
+                        }),
+                    );
+                }
                 if let Some(body) = fake.create_refusal.clone() {
                     let status = match fake.create_refusal_status {
                         0 => StatusCode::INTERNAL_SERVER_ERROR,
@@ -2314,7 +2478,7 @@ pub(crate) mod tests {
     pub(crate) async fn console_orgo(
         city_full: bool,
     ) -> (Arc<dyn ProvisionBackend>, impl Fn() -> SeenLog, impl Fn(serde_json::Value)) {
-        let (base, fake) = serve(Fake {
+        console_orgo_with(Fake {
             setup_result: "done".to_string(),
             create_refusal: city_full.then(|| {
                 serde_json::json!({
@@ -2327,7 +2491,25 @@ pub(crate) mod tests {
             create_refusal_status: if city_full { 503 } else { 0 },
             ..Fake::default()
         })
-        .await;
+        .await
+    }
+
+    /// Like [`console_orgo`], but only creates in `city` are refused.
+    pub(crate) async fn console_orgo_full_city(
+        city: &str,
+    ) -> (Arc<dyn ProvisionBackend>, impl Fn() -> SeenLog, impl Fn(serde_json::Value)) {
+        console_orgo_with(Fake {
+            setup_result: "done".to_string(),
+            full_city: Some(city.to_string()),
+            ..Fake::default()
+        })
+        .await
+    }
+
+    async fn console_orgo_with(
+        fake: Fake,
+    ) -> (Arc<dyn ProvisionBackend>, impl Fn() -> SeenLog, impl Fn(serde_json::Value)) {
+        let (base, fake) = serve(fake).await;
         let reader = fake.clone();
         let seen = move || {
             reader
@@ -2429,6 +2611,15 @@ pub(crate) mod tests {
         assert_eq!(normalize_location(Some("us")), Err(()));
         assert!(STARTER_TEMPLATES.iter().all(|t| starter_template(t.id).is_some()));
         assert!(starter_template("default/claude-code@1.0.0").is_none());
+    }
+
+    #[test]
+    fn a_moved_computer_takes_its_base_name_and_the_new_city() {
+        let base = "allternit-credit-abcdefghijklmnopqrstuvwxyz01-0123456789ab";
+        assert_eq!(moved_computer_name(base, "lon"), format!("{base}-lon"));
+        // A second move replaces the city, it does not stack suffixes.
+        assert_eq!(moved_computer_name(&format!("{base}-lon"), "syd"), format!("{base}-syd"));
+        assert!(moved_computer_name(base, "nyc").len() <= 63);
     }
 
     pub(crate) async fn capacity_refusing_orgo() -> (Arc<dyn ProvisionBackend>, impl Fn() -> usize) {
