@@ -1,13 +1,13 @@
 ---
-title: How vendor bots connect
-description: How a task reaches a vendor bot (Claude, ChatGPT, Grok and others) on your own subscription, and how the result gets back to Allternit.
+title: How connected bots connect
+description: How a task reaches a connected bot (Claude, ChatGPT, Grok and others) on your own subscription, and how the result gets back to Allternit.
 ---
 
-A vendor bot does its work in the vendor's own product, on your subscription. Allternit hands it work as a **ticket** and gets the answer back through a **connector**, so the vendor's chat only has to carry one short line.
+A connected bot does its work in the vendor's own product, on your subscription. Allternit hands it work as a **ticket** and gets the answer back through a **connector**, so the vendor's chat only has to carry one short line.
 
 ## Tickets
 
-A ticket is a task your bot gives a vendor bot: what to do, which Allternit tools it may use, and a deadline. Tickets are numbered `T-1`, `T-2` and so on. The ticket's instructions travel through the connector; the vendor's chat only sees `Run Allternit ticket T-3.`
+A ticket is a task your bot gives a connected bot: what to do, which Allternit tools it may use, and a deadline. Tickets are numbered `T-1`, `T-2` and so on. The ticket's instructions travel through the connector; the vendor's chat only sees `Run Allternit ticket T-3.`
 
 When the vendor finishes it posts the result back. The result shows up in the thread as a result card with a summary, any data, and any links. If the vendor never posts a result by the deadline, Allternit reads the vendor's reply instead and marks the card as read from the reply. With neither, the ticket expires, and nothing is made up.
 
@@ -42,7 +42,7 @@ Vendors set their own terms for using a consumer subscription from automated too
 
 On the account's **Account** tab choose **Connect Allternit to** the app. Allternit:
 
-1. Makes a key that works for that one vendor bot's connector and nothing else.
+1. Makes a key that works for that one connected bot's connector and nothing else.
 2. Adds Allternit's local server to the app's own settings, next to what is already there. It never touches your other entries.
 3. Saves a copy of the settings file first, named `<file>.allternit-backup-<time>`, in the same folder.
 4. Checks that the app's settings list the connector and that Allternit answers on it. If the check fails, the change is undone.
@@ -61,8 +61,8 @@ All under `/api/v1`, for the signed-in owner. Anything that isn't yours answers 
 | `GET /vendor-bots/:id/tickets`, `GET /vendor-bots/:id/tickets/:ticketId` | List and read tickets. |
 | `POST /vendor-bots/:id/tickets/:ticketId/cancel` | Cancel an open or sent ticket. |
 | `GET /provider-accounts/:id/lanes` | `{selected, lanes: [{lane, rank, label, available}], localApp}`. |
-| `GET /vendor-bots?directingBotId=` | `{deployed: [...], found: [...], discoveryErrors}`: vendor bots deployed for a directing bot, and agents found on your accounts that aren't deployed yet. |
-| `GET /vendor-bots/:id/threads` | The threads this vendor bot took part in (from tickets and connector tool calls). |
+| `GET /vendor-bots?directingBotId=` | `{deployed: [...], found: [...], discoveryErrors}`: connected bots deployed for a directing bot, and agents found on your accounts that aren't deployed yet. |
+| `GET /vendor-bots/:id/threads` | The threads this connected bot took part in (from tickets and connector tool calls). |
 | `GET /vendor-local-connectors` | Which apps are installed and which are connected. |
 | `POST /vendor-bots/:id/local-connectors/:app`, `…/check`, `DELETE …` | Connect, health-check, undo. `:app` is `claude_desktop`, `claude_code`, `codex`, `gemini_cli` or `hermes`. |
 
@@ -74,7 +74,7 @@ A ticket goes `open` → `sent` → `done` | `expired` | `failed` | `cancelled`.
 
 The vendor-bot connector (`/mcp/bots/:vendorBotId`) gained three tools:
 
-- `get_ticket {id}` returns the ticket for that vendor bot only.
+- `get_ticket {id}` returns the ticket for that connected bot only.
 - `post_result {id, summary, data?, attachments?}` finishes it once. Summary up to 4,000 characters, data up to 64 KB, up to 10 attachments, attachment URLs must be https.
 - `list_open_tickets {}`.
 
@@ -88,7 +88,7 @@ The local connector's key is an access token whose only scope is `vendor-bot:<ve
 
 ### Signing in from Claude, ChatGPT or Claude Code
 
-When a vendor app connects to the public connector URL it signs you in with Allternit (Clerk) and registers itself. The first call is then refused with `approval_required` and a link, because you have to approve that app for that bot once. After that it works until you revoke it. Details and routes are in [Use your vendor bots on the phone](/guides/vendor-bots-use-your-phone).
+When a vendor app connects to the public connector URL it signs you in with Allternit (Clerk) and registers itself. The first call is then refused with `approval_required` and a link, because you have to approve that app for that bot once. After that it works until you revoke it. Details and routes are in [Use your connected bots on the phone](/guides/connected-bots-use-your-phone).
 
 ### App settings that Allternit writes
 

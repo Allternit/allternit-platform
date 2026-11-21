@@ -78,7 +78,7 @@ On top of the place level, `evaluate_ctx` applies three guards that can only tig
 | Channel replies and starts, SMS text | `channel_gateway::send` |
 | Phone calls | `phone_outbound::call` |
 | Email sends and bot replies | `agent_email_routes::send_email_inner` and the reply plan |
-| AI app and vendor bot tools (`send_text`, `start_call`, `send_email`, `post_message`) | They run through the paths above |
+| AI app and connected bot tools (`send_text`, `start_call`, `send_email`, `post_message`) | They run through the paths above |
 
 Email only reads an explicit policy; with none set, the mailbox's reply mode stays in charge. A policy can tighten any email send and can loosen a bot reply to direct only on a verified domain, under the reply caps.
 

@@ -1,16 +1,16 @@
 ---
-title: Keep vendor bots online with a cloud computer
+title: Keep connected bots online with a cloud computer
 description: Run a vendor account's browser on your Allternit cloud computer so its bots keep answering while your Mac sleeps.
 ---
 
-A vendor bot that uses your **browser sign-in** (Grok, ChatGPT, Claude, Gemini, Copilot) works by driving the vendor's website in a browser. By default that browser lives on the computer you use, so when your Mac sleeps or is closed, those bots go quiet. Give the account a **host** on your Allternit cloud computer and its browser runs there instead, with its own saved sign-in.
+A connected bot that uses your **browser sign-in** (Grok, ChatGPT, Claude, Gemini, Copilot) works by driving the vendor's website in a browser. By default that browser lives on the computer you use, so when your Mac sleeps or is closed, those bots go quiet. Give the account a **host** on your Allternit cloud computer and its browser runs there instead, with its own saved sign-in.
 
 Your cloud computer sleeps when idle and wakes by itself when a message arrives. The first message after a long quiet spell can take about 20 seconds while it wakes; Allternit retries for you.
 
 ## What you need
 
 - An Allternit plan with a cloud computer, paired to your account. It shows up as a runtime in **Settings → Computers**.
-- A vendor account connected with **Browser sign-in** (see [Vendor bots](/guides/vendor-bots)). API-key accounts do not use a browser and cannot move.
+- A vendor account connected with **Browser sign-in** (see [Connected bots](/guides/connected-bots)). API-key accounts do not use a browser and cannot move.
 
 ## Move an account to the cloud computer
 
@@ -28,9 +28,9 @@ Moving the account back to **this device** works the same way: you sign in again
 - **Status:** `GET /api/v1/gateway/provider-accounts/:id` includes a `host` block with `kind`, `runtimeId`, `online`, `lastSeen`, `needsSignIn` and `wakeable`. `online: false` with `wakeable: true` means the computer is asleep and will wake on the next message.
 - **Needs sign-in:** if the vendor signs you out, the account moves to **Expired** and its bots show **Needs sign-in**. Sign in again from step 2.
 - **A vendor check or restriction** (a bot check, a limited account) is never worked around. The account stays blocked until you resolve it in the viewer.
-- Vendor terms still apply. Running a subscription in a browser can conflict with a vendor's terms, exactly as it can on your own computer. See the disclosure in [Vendor bots](/guides/vendor-bots).
+- Vendor terms still apply. Running a subscription in a browser can conflict with a vendor's terms, exactly as it can on your own computer. See the disclosure in [Connected bots](/guides/connected-bots).
 
-## Know when a vendor bot goes quiet
+## Know when a connected bot goes quiet
 
 A signed-in account that stops working (signed out, a bot check, the vendor's page changed) used to be found when a message failed. Your Sessions computer now re-checks each account every 3 minutes with the free sign-in check, and Allternit opens a **Lane down** item in [Needs you](/guides/needs-you-inbox) within about five minutes. It is critical when one of the affected bots has a phone number or takes texts. See [Lane status](/guides/lane-status) for the **Settings → Status** panel and what is checked.
 

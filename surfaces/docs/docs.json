@@ -110,12 +110,7 @@
               "guides/project-appearance",
               "architecture/project-appearance",
               "guides/bot-templates",
-              "guides/vendor-bots",
-              "guides/how-vendor-bots-connect",
-              "guides/local-vendor-bots",
-              "guides/vendor-bots-use-your-phone",
               "guides/allternit-bot-cli",
-              "guides/keep-vendor-bots-online",
               "guides/bot-avatars",
               "guides/bot-home-screen",
               "guides/allternit-bots-app",
@@ -130,13 +125,12 @@
               "guides/connections",
               "guides/use-your-plan",
               "guides/subscriptions",
-              "guides/connect-vendor-from-chat",
               "guides/open-models",
               "guides/run-a-model-on-your-phone",
               "guides/lane-status",
               "guides/system-status",
               "guides/always-on-bots",
-              "plugins/guides/vendor-packs",
+              "plugins/guides/bot-packs",
               "guides/artifacts",
               "guides/guard",
               "guides/pinned-artifacts",
@@ -182,7 +176,6 @@
               "guides/app-screens",
               "guides/connectors-in-other-apps",
               "guides/managed-authorization",
-              "guides/vendor-bots-on-the-phone",
               "guides/bot-phone",
               "guides/people",
               "guides/your-twin",
@@ -216,6 +209,26 @@
               "guides/wake-a-bot-from-app-events"
             ],
             "icon": "/icons/window.svg"
+          },
+          {
+            "group": "Runtimes, brains and bots",
+            "pages": [
+              "concepts/agent-model",
+              "concepts/control-layer",
+              "concepts/system-layers",
+              "guides/runtimes",
+              "guides/runtime-views",
+              "guides/brains-and-access",
+              "guides/agent-card",
+              "guides/connected-bots",
+              "guides/how-connected-bots-connect",
+              "guides/local-connected-bots",
+              "guides/connected-bots-use-your-phone",
+              "guides/keep-connected-bots-online",
+              "guides/connected-bots-on-the-phone",
+              "guides/connect-from-chat"
+            ],
+            "icon": "/icons/agent.svg"
           },
           {
             "group": "Code mode",
@@ -260,13 +273,6 @@
               "architecture/ui-components"
             ],
             "icon": "/icons/stack.svg"
-          },
-          {
-            "group": "Concepts",
-            "pages": [
-              "concepts/system-layers"
-            ],
-            "icon": "/icons/book.svg"
           },
           {
             "group": "Work Runtime",
@@ -387,6 +393,7 @@
               "build-on-allternit/policy",
               "build-on-allternit/executor",
               "build-on-allternit/add-a-connection",
+              "build-on-allternit/add-a-runtime",
               "build-on-allternit/conformance-checklist"
             ],
             "icon": "/icons/code.svg"
@@ -1042,7 +1049,7 @@
             "group": "Guides",
             "pages": [
               "plugins/guides/selling",
-              "plugins/guides/vendor-packs",
+              "plugins/guides/bot-packs",
               "plugins/guides/porting",
               "plugins/guides/troubleshooting"
             ],
@@ -1220,12 +1227,40 @@
       "destination": "/factory/migration"
     },
     {
-      "source": "/cli/runtime",
-      "destination": "/factory/agents"
-    },
-    {
       "source": "/api/orchestrator",
       "destination": "/factory/api-reference"
+    },
+    {
+      "source": "/guides/vendor-bots",
+      "destination": "/guides/connected-bots"
+    },
+    {
+      "source": "/guides/how-vendor-bots-connect",
+      "destination": "/guides/how-connected-bots-connect"
+    },
+    {
+      "source": "/guides/local-vendor-bots",
+      "destination": "/guides/local-connected-bots"
+    },
+    {
+      "source": "/guides/keep-vendor-bots-online",
+      "destination": "/guides/keep-connected-bots-online"
+    },
+    {
+      "source": "/guides/vendor-bots-on-the-phone",
+      "destination": "/guides/connected-bots-on-the-phone"
+    },
+    {
+      "source": "/guides/vendor-bots-use-your-phone",
+      "destination": "/guides/connected-bots-use-your-phone"
+    },
+    {
+      "source": "/guides/connect-vendor-from-chat",
+      "destination": "/guides/connect-from-chat"
+    },
+    {
+      "source": "/plugins/guides/vendor-packs",
+      "destination": "/plugins/guides/bot-packs"
     }
   ],
   "footer": {

@@ -29,7 +29,7 @@ With no main bot, `BotModeRail` still opens **Set up your main bot** first; the 
 
 Nothing is created before **Start the job**. `runFinish()` then runs in order, recording each item as `ok`, `skipped` or `failed` with the reason:
 
-1. **Main bot**: `setUpPrimaryBot` (A://, dressed with the picked look) or the vendor bot the picker connected, then `setMainBot`.
+1. **Main bot**: `setUpPrimaryBot` (A://, dressed with the picked look) or the connected bot the picker connected, then `setMainBot`.
 2. **Team bots**: each template through the same apply path as the template gallery, skipping templates already on the account (`config.templateId`). Each wears its template's `look` (`castAvatarConfig`). `skipRoutines` stops the template from installing its own routines.
 3. **Routines**: each kept draft with its edited cron and on/off state.
 4. **Thread #1**: the bot's main chat, with the edited job text sent once as the user's message.

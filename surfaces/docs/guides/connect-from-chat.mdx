@@ -1,9 +1,9 @@
 ---
-title: Connect a vendor from chat
+title: Connect a coding tool from chat
 description: "A bot brings up the setup card for any coding CLI, and the CLI's own sign-in runs on the card."
 ---
 
-Ask a bot to connect a vendor ("connect Codex", "sign in to OpenCode on my cloud computer"), or let it offer when a brain it needs isn't connected. The bot calls its `vendor_connect` tool and a setup card appears in the chat. Every tool in the CLI catalog works this way, not only Codex, plus key-only providers such as Z.ai.
+Ask a bot to connect a coding tool ("connect Codex", "sign in to OpenCode on my cloud computer"), or let it offer when a brain it needs isn't connected. The bot calls its `vendor_connect` tool and a setup card appears in the chat. Every tool in the CLI catalog works this way, not only Codex, plus key-only providers such as Z.ai.
 
 ## What the card does
 
@@ -16,7 +16,7 @@ The card runs the same install and sign-in as Settings → Connections › Codin
    - **Vendor's own sign-in.** Qwen Code and Continue have no sign-in command now. Antigravity signs in only inside its own interactive screen, so sign in there once. Qwen Code takes an API key in its settings; the card links to the vendor's sign-in page.
    - **Link and paste.** Other tools show a link. Sign in there; if the vendor's page shows a code afterwards (Claude Code does), paste it into the box on the card.
    - **Key.** Key-only tools ask for an API key on the card, never in chat.
-3. When the card says **Connected**, the tool is a brain in the model picker and for [worker bots](/guides/worker-bots).
+3. When the card says **Connected**, the tool can be picked as a [runtime](/guides/runtimes) or a [brain](/guides/brains-and-access) in the [agent card](/guides/agent-card), and for [worker bots](/guides/worker-bots).
 
 OpenCode is a vendor like the others. Its sign-in runs `opencode auth login`, which signs OpenCode in to the model providers you pick, and OpenCode runs as a brain through `opencode run`.
 
@@ -27,6 +27,9 @@ OpenCode is a vendor like the others. Its sign-in runs `opencode auth login`, wh
 - A bot never pastes a sign-in link or a code into chat and never asks you for a code or a key there. If one does, don't use it.
 
 ## For developers
+
+This page used to live at `/guides/connect-vendor-from-chat`; the old link redirects here. The tool and route keep the wire name `vendor` (`vendor_connect`, `/bot-routing/vendor/connect`).
+
 
 `POST /api/v1/bot-routing/vendor/connect` with `{sessionId, provider, computer?}` checks the caller's session and the provider (catalog id, alias or binary name), starts nothing, and returns exactly:
 
