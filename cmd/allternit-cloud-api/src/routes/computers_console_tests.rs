@@ -92,6 +92,8 @@ fn a_stored_link_wins_and_a_shared_row_never_matches_by_name() {
     assert_eq!((rows[0].id.as_str(), rows[0].kind, rows[0].group.as_str()), ("pc_1", "desktop", GROUP_DESK));
     assert_eq!((rows[0].os.as_str(), rows[0].os_family), ("macOS", "macos"));
     assert_eq!((rows[1].id.as_str(), rows[1].group.as_str()), ("pc_2", GROUP_SHARED));
+    assert_eq!(rows[0].runtime_id.as_deref(), Some("rt_desk"));
+    assert_eq!(rows[1].runtime_id, None, "a shared row never matches by name");
     assert_eq!((rows[2].id.as_str(), rows[2].kind, rows[2].reach), ("rt_box", "paired", "relay"));
 }
 
@@ -124,6 +126,7 @@ fn json_is_camel_case_and_leaves_unknowns_out() {
     assert_eq!(v["osFamily"], "linux");
     assert_eq!(v["providerLogo"], "allternit");
     assert_eq!(v["reach"], "relay");
+    assert!(v["runtimeId"].is_null(), "runtimeId is always sent, null when there is no runtime");
     for absent in ["lastSample", "servicesCount", "lastBackupAt", "address"] {
         assert!(v.get(absent).is_none(), "{absent} is left out until it is known");
     }
@@ -226,6 +229,10 @@ async fn the_console_lists_only_the_callers_computers_once_each() {
     assert_eq!(rows[2]["os"], "Debian 12");
     assert_eq!(rows[2]["address"], "100.64.0.7");
     assert_eq!(rows[2]["status"], "offline");
+    // The relay key of each row (step 2.3), not the row id.
+    assert_eq!(rows[0]["runtimeId"], "rt_cloud");
+    assert_eq!(rows[1]["runtimeId"], "rt_desk");
+    assert_eq!(rows[2]["runtimeId"], "rt_box");
 
     // The instance row is untouched: no wake was started.
     let after: String = sqlx::query_scalar("SELECT status FROM provisioned_instances WHERE id = 'pi_1'")
