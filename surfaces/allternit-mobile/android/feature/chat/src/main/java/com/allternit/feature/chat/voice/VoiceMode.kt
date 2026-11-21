@@ -438,10 +438,11 @@ private fun rememberStateTint(state: TurnState): Pair<Color, Color> {
  * - A bot's chat ([bot] set, iOS botStage): "Talking with <bot>", the bot's avatar as the speaker's face at 148 in the
  *   bot's own live mode look (Settings › Voice › Live mode, a bot's own pick winning), the bot's colour, the state in
  *   words, the captions band and the controls.
- * - A plain chat (iOS plainStage): no speaker. The soft ambient light tinted by the turn state (blue listening, warm
- *   speaking), the reply in serif in the middle (else the state in words, "Listening…"), "Tap to interrupt" while a
- *   tap would act, your words in italics, the engine ("On this device") just above the controls, and the glow behind
- *   the mic.
+ * - A plain chat (iOS plainStage): the Allternit thinking mark as the speaker's face at 148 in the default live mode
+ *   look and colour (Settings › Voice › Live mode; Eoj 2026-11-20: the pick shows in every voice chat; "Bot's colour"
+ *   keeps the spectrum here), over the soft ambient light tinted by the turn state (blue listening, warm speaking).
+ *   Under it the reply in serif (else the state in words, "Listening…"), "Tap to interrupt" while a tap would act,
+ *   your words in italics, the engine ("On this device") just above the controls, and the glow behind the mic.
  *
  * Controls (both stages): settings, minimize to the bar, the mic (tap mutes; hold talks in push to talk) and end. The
  * ambient glows are full-screen radial gradients, not blurred boxes: `Modifier.blur` clips to its box (hard-edged
@@ -453,7 +454,7 @@ fun VoiceModeView(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
     var settingsOpen by remember { mutableStateOf(false) }
     val tint = rememberStateTint(viewModel.state)
     val controls: @Composable () -> Unit = { ControlsRow(host, viewModel, onEnd, tint.first) { settingsOpen = true } }
-    if (bot != null) BotStage(host, viewModel, bot, controls) else PlainStage(viewModel, tint, controls)
+    if (bot != null) BotStage(host, viewModel, bot, controls) else PlainStage(host, viewModel, tint, controls)
     if (settingsOpen) VoiceSettingsSheet(host.speaker, bot, kokoro = host.repliesInKokoro) { settingsOpen = false }
 }
 
@@ -513,17 +514,28 @@ private fun BotStage(host: VoiceHost, viewModel: VoiceModeViewModel, bot: VoiceB
     }
 }
 
-/** iOS plainStage: the ambient light, the reply (or the state) in serif, your words in italics, the engine, the controls. */
+/**
+ * iOS plainStage: the ambient light, the thinking mark in the default live mode look, the reply (or the state) in
+ * serif, your words in italics, the engine, the controls.
+ */
 @Composable
-private fun PlainStage(vm: VoiceModeViewModel, tint: Pair<Color, Color>, controls: @Composable () -> Unit) {
+private fun PlainStage(host: VoiceHost, vm: VoiceModeViewModel, tint: Pair<Color, Color>, controls: @Composable () -> Unit) {
     val c = AllternitTheme.colors
     val state = vm.state
+    val (style, palette) = SpeakerLookStore.look(null)
     val interrupt = interruptModifier(vm)
     Box(Modifier.fillMaxSize().background(c.bgPrimary).testTag("voiceMode")) {
         AmbientLight(state, tint)
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
             // iOS centerContent between two spacers.
             Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                // The speaker: no bot, so no bot colour ("Bot's colour" keeps the spectrum).
+                VoiceSpeakerView(
+                    phase = state.speakerPhase(vm.isConnecting), muted = vm.isMuted, style = style, palette = palette,
+                    botColor = null, sizeDp = 148f, level = { host.listener.micLevel },
+                    modifier = interrupt.testTag("voiceSpeaker"),
+                ) { PlainVoiceFace(state, 148f) }
+                Spacer(Modifier.height(8.dp))
                 if (vm.replyText.isNotEmpty()) {
                     // The reply in serif (Claude voice-mode parity), scrollable; a tap while thinking or speaking interrupts.
                     Text(
@@ -555,6 +567,26 @@ private fun PlainStage(vm: VoiceModeViewModel, tint: Pair<Color, Color>, control
             controls()
         }
     }
+}
+
+/**
+ * A plain chat's speaker face: the Allternit thinking mark (the web's brand orb), drawn at [sizeDp]. ThinkingOrb has
+ * two tuned sizes, so it is laid out at Avatar (64) and scaled; the speaker centres it in the face box.
+ */
+@Composable
+private fun PlainVoiceFace(state: TurnState, sizeDp: Float) {
+    ThinkingOrb(
+        modifier = Modifier.requiredSize(ThinkingOrbSize.Avatar.dimension.dp).graphicsLayer {
+            val k = sizeDp / ThinkingOrbSize.Avatar.dimension
+            scaleX = k; scaleY = k
+        },
+        state = when (state) {
+            TurnState.Idle, TurnState.Listening -> ThinkingOrbState.Listening
+            TurnState.Thinking -> ThinkingOrbState.Breathing
+            TurnState.Speaking -> ThinkingOrbState.Composing
+        },
+        size = ThinkingOrbSize.Avatar, paused = state == TurnState.Idle, label = "",
+    )
 }
 
 /** iOS "Tap to interrupt": a small capsule under the reply. */
@@ -761,8 +793,8 @@ fun VoiceSpeakerRing(state: TurnState, muted: Boolean, level: Float, size: Int, 
 
 /**
  * iOS VoiceQuickBar: the minimized session above the composer. A bot's chat shows the bot's face in a small version
- * of its live mode look; a plain chat shows the Allternit thinking mark at half size. Then the status (your words
- * while you talk), the engine or the warning, and mute, expand and end.
+ * of its live mode look; a plain chat shows the Allternit thinking mark in a small version of the default look. Then
+ * the status (your words while you talk), the engine or the warning, and mute, expand and end.
  */
 @Composable
 fun VoiceQuickBar(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -> Unit, bot: VoiceBot? = null) {
@@ -793,15 +825,11 @@ fun VoiceQuickBar(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
                     botColor = bot.color, sizeDp = 28f, compact = true, level = { host.listener.micLevel },
                 ) { bot.face(28f) }
             } else {
-                ThinkingOrb(
-                    modifier = Modifier.requiredSize(ThinkingOrbSize.Avatar.dimension.dp).graphicsLayer { scaleX = 0.5f; scaleY = 0.5f },
-                    state = when (state) {
-                        TurnState.Idle, TurnState.Listening -> ThinkingOrbState.Listening
-                        TurnState.Thinking -> ThinkingOrbState.Breathing
-                        TurnState.Speaking -> ThinkingOrbState.Composing
-                    },
-                    size = ThinkingOrbSize.Avatar, paused = state == TurnState.Idle, label = "",
-                )
+                val (style, palette) = SpeakerLookStore.look(null)
+                VoiceSpeakerView(
+                    phase = state.speakerPhase(viewModel.isConnecting), muted = viewModel.isMuted, style = style, palette = palette,
+                    botColor = null, sizeDp = 28f, compact = true, level = { host.listener.micLevel },
+                ) { PlainVoiceFace(state, 28f) }
             }
         }
         Column(Modifier.weight(1f).semantics(mergeDescendants = true) { contentDescription = "Voice chat, $status" }, verticalArrangement = Arrangement.spacedBy(1.dp)) {

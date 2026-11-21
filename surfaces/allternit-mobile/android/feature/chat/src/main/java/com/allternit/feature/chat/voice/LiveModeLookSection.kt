@@ -72,7 +72,7 @@ fun LiveModeLookSection(bot: VoiceBot? = null, modifier: Modifier = Modifier, in
     Column(modifier.fillMaxWidth().padding(horizontal = inset).testTag(tagBase), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(bot?.let { "${it.name}'s live mode look" } ?: "Live mode", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Text("What moves around a bot's avatar while you talk by voice.", color = c.textSecondary, fontSize = 12.sp)
+            Text("What moves around the A:// mark or a bot's avatar while you talk by voice.", color = c.textSecondary, fontSize = 12.sp)
         }
 
         Segmented(listOf(true to "Motion", false to "Allternit"), showMotion, "${tagBase}_set", Modifier.widthIn(max = 260.dp)) { showMotion = it }
