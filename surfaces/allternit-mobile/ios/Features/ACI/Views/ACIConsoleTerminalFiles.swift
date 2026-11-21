@@ -9,7 +9,7 @@ import AllternitFilesKit
 
 /// A shell on this computer through the same terminal service the Code tab
 /// uses (`TerminalServiceClient` over the relay placeholder
-/// `allternit-relay://<computerId>`), drawn by the existing SwiftTerm view.
+/// `allternit-relay://<runtimeId ?? row id>`), drawn by the existing SwiftTerm view.
 /// Foreground only: leaving the tab or backgrounding the app detaches; the
 /// shell keeps running on the computer and is picked up again from Open.
 struct ACIConsoleTerminalTab: View {
@@ -69,7 +69,7 @@ struct ACIConsoleTerminalTab: View {
 
     private func open() {
         session = PtySession(
-            service: TerminalServiceClient(baseURL: RuntimeRelayClient.relayBaseURL(runtimeId: computer.id)),
+            service: TerminalServiceClient(baseURL: RuntimeRelayClient.relayBaseURL(runtimeId: computer.relayId)),
             attachedInstanceName: computer.name)
     }
 
@@ -130,8 +130,8 @@ struct ACIConsoleFilesTab: View {
             .padding(.horizontal, 16).padding(.bottom, 8)
             switch view {
             case .browse:
-                if drive.hasFiles(computer.id) {
-                    ACIConsoleFilesPanes(computerId: computer.id, name: computer.name)
+                if drive.hasFiles(computer.relayId) {
+                    ACIConsoleFilesPanes(computerId: computer.relayId, name: computer.name)
                 } else {
                     ScrollView {
                         consoleNote("The Files drive isn't on for \(computer.name) yet. Turn it on in Settings, Files, and this computer's folders show here.")
