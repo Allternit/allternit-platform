@@ -206,6 +206,14 @@ fn upsert_agent(conn: &rusqlite::Connection, id: &str, user_id: &str, agent: &Ma
             }
         }
     }
+    // Imported bots go through the same bot brain normalizer as create/update
+    // (Harness & Bots 2.0), so a package from an older build gets `runtime`.
+    let mut config_value = Value::Object(config);
+    crate::bot_brain::normalize_config(&mut config_value);
+    let config = match config_value {
+        Value::Object(m) => m,
+        _ => Map::new(),
+    };
     fields.insert("config".into(), Value::Object(config.clone()));
     let is_bot = config.get("isBot").and_then(Value::as_bool).unwrap_or(true);
     let name = fields.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string();

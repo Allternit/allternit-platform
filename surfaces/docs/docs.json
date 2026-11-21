@@ -822,6 +822,7 @@
                   "api/agents-v1",
                   "api/agent-operations",
                   "api/agent-runtimes",
+                  "api/runtimes",
                   "api/agent-workspaces",
                   "api/agent-preferences",
                   "api/subagent-types",

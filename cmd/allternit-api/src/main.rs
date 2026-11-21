@@ -1509,6 +1509,9 @@ async fn main() {
         .merge(allternit_api::meeting_bot_host::meeting_bot_host_router(data_dir.clone(), app_config.api_port()))
         // Desktop Cloud host self-registration from bootstrap cloud-init.
         .merge(allternit_api::desktop_host_admin::public_router())
+        // Runtime registry (GET /api/v1/runtimes): public; owner auth, checked
+        // in the handler, adds `installed`.
+        .merge(allternit_api::cli_catalog::runtimes_public_router())
         // Private Fabric node daemon enrollment and heartbeat.
         .merge(allternit_api::fabric_node_routes::public_router())
         // Brain git smart-HTTP: git clients carry no Clerk JWT — they use

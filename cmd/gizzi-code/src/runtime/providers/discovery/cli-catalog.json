@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "_doc": "The one list of coding CLIs Allternit supports. Read by gizzi (src/runtime/providers/discovery/subprocess.ts — its subprocess brains) and embedded by allternit-api (src/cli_catalog.rs — CLI provider rows, sign-in, GET /api/v1/cli-tools/catalog). adapter: builtin = a protocol adapter in local-cli-driver.ts CLI_ADAPTERS; text = one-shot argv from headless.args ({prompt} is exactly one argv element, never a shell string; {model} from headless.modelArgs); unsupported = listed, not runnable as a brain yet. install.harness = the Factory installs it (pin + licence in factory/pane/src/ao/harness/harness.json); otherwise method npm|uv|brew|script with the pin verified against the registry on the date in _verified. Logos are paths in the web app's public dir. Version 2 adds model order and defaults as data: the order of a tool's models[] is the vendor's order (best/newest first) and is meaningful; a model with default: true is the tool's default model (at most one per tool; a tool whose only model is the placeholder \"default\" needs none, otherwise the first model is the default); defaultRank (lower = preferred) ranks the tools that may be picked automatically as the default CLI brain, mirroring Desktop's CLI_DEFAULT_ORDER (allternit-ai src/lib/default-brain.ts) - a tool without it is never an automatic default; liveModels {args, parser: codex-json|tsv|grok|ollama} is the command that prints the CLI's own model list, and models[] is the fallback when it fails; retired maps an old model id to its current id so saved choices keep working.",
+  "version": 3,
+  "_doc": "The one list of coding CLIs Allternit supports. Read by gizzi (src/runtime/providers/discovery/subprocess.ts — its subprocess brains) and embedded by allternit-api (src/cli_catalog.rs — CLI provider rows, sign-in, GET /api/v1/cli-tools/catalog). adapter: builtin = a protocol adapter in local-cli-driver.ts CLI_ADAPTERS; text = one-shot argv from headless.args ({prompt} is exactly one argv element, never a shell string; {model} from headless.modelArgs); unsupported = listed, not runnable as a brain yet. install.harness = the Factory installs it (pin + licence in factory/pane/src/ao/harness/harness.json); otherwise method npm|uv|brew|script with the pin verified against the registry on the date in _verified. Logos are paths in the web app's public dir. Version 2 adds model order and defaults as data: the order of a tool's models[] is the vendor's order (best/newest first) and is meaningful; a model with default: true is the tool's default model (at most one per tool; a tool whose only model is the placeholder \"default\" needs none, otherwise the first model is the default); defaultRank (lower = preferred) ranks the tools that may be picked automatically as the default CLI brain, mirroring Desktop's CLI_DEFAULT_ORDER (allternit-ai src/lib/default-brain.ts) - a tool without it is never an automatic default; liveModels {args, parser: codex-json|tsv|grok|ollama} is the command that prints the CLI's own model list, and models[] is the fallback when it fails; retired maps an old model id to its current id so saved choices keep working. Version 3 adds runtimes[]: the one list of runtimes a bot can run on (see CONTRACT-harness-bots-2.md). A runtime points to a tool with tool (null for allternit); adapter.kind says how it is driven; brains is \"any\" or a list of provider ids; look holds data-only terminal/desktop tokens; liveUi is the runtime's own web app. Run script/check-runtime-registry.ts after editing.",
   "_verified": "2026-10-19 (npm registry, PyPI, formulae.brew.sh, vendor CLI docs)",
   "tools": [
     {
@@ -1790,6 +1790,4637 @@
       "login": [],
       "icon": "ollama",
       "install": null
+    }
+  ],
+  "runtimes": [
+    {
+      "id": "allternit",
+      "name": "Allternit",
+      "vendor": "Allternit",
+      "category": "native",
+      "tool": null,
+      "adapter": {
+        "kind": "native"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key",
+        "local",
+        "credits"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "none"
+      },
+      "look": {
+        "default": "terminal"
+      }
+    },
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "vendor": "Anthropic",
+      "category": "coding",
+      "tool": "claude-cli",
+      "aliases": [
+        "claude-cli"
+      ],
+      "adapter": {
+        "kind": "stream-json"
+      },
+      "brains": ["anthropic", "claude"],
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "append-flag"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#1a1918",
+          "fg": "#e8e6e1",
+          "mu": "#8d8a84",
+          "ac": "#d97757",
+          "ok": "#5fb57a",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#d97757",
+            "ac2": "#d97757"
+          },
+          "banner": [
+            [
+              [
+                "✻ ",
+                "ac"
+              ],
+              [
+                "Welcome to ",
+                "fg"
+              ],
+              [
+                "Claude Code",
+                "b"
+              ],
+              [
+                "!",
+                "fg"
+              ]
+            ],
+            [
+              [
+                "",
+                "fg"
+              ]
+            ],
+            [
+              [
+                "  /help for help, /status for your current setup",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "",
+                "fg"
+              ]
+            ],
+            [
+              [
+                "  cwd: ~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "boxRole": "ac",
+          "userStyle": "plain",
+          "prompt": ">",
+          "answerGlyph": "⏺",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "⏺ ",
+                  "ok"
+                ],
+                [
+                  "Read(",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  ⎿  ",
+                  "mu"
+                ],
+                [
+                  "Read {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "⏺ ",
+                  "ok"
+                ],
+                [
+                  "Update(",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  ⎿  ",
+                  "mu"
+                ],
+                [
+                  "Updated {a} with {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "⏺ ",
+                  "ok"
+                ],
+                [
+                  "Bash(",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  ")",
+                  "b"
+                ]
+              ],
+              [
+                [
+                  "  ⎿  ",
+                  "mu"
+                ],
+                [
+                  "{r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "",
+          "footer": {
+            "l": [
+              [
+                "  ? for shortcuts",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://code.claude.com/docs"
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "vendor": "OpenAI",
+      "category": "coding",
+      "tool": "codex-cli",
+      "aliases": [
+        "codex-cli"
+      ],
+      "adapter": {
+        "kind": "codex-app-server"
+      },
+      "brains": ["openai", "chatgpt"],
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0c0c0c",
+          "fg": "#e6e6e6",
+          "mu": "#8a8a8a",
+          "ac": "#e6e6e6",
+          "ac2": "#7fb3e6",
+          "ok": "#4ec98a",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#1d1d1b",
+            "ac2": "#7fb3e6"
+          },
+          "banner": [
+            [
+              [
+                ">_ ",
+                "mu"
+              ],
+              [
+                "OpenAI Codex",
+                "b"
+              ]
+            ],
+            [
+              [
+                "",
+                "fg"
+              ]
+            ],
+            [
+              [
+                "model:     ",
+                "mu"
+              ],
+              [
+                "gpt-5-codex",
+                "fg"
+              ],
+              [
+                "   /model to change",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "directory: ",
+                "mu"
+              ],
+              [
+                "~/project",
+                "fg"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "shade",
+          "prompt": "›",
+          "answerGlyph": "•",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "• ",
+                  "ok"
+                ],
+                [
+                  "Explored ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "ac2"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
+                  "mu"
+                ],
+                [
+                  "{r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "• ",
+                  "ok"
+                ],
+                [
+                  "Edited ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "ac2"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
+                  "mu"
+                ],
+                [
+                  "{r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "• ",
+                  "ok"
+                ],
+                [
+                  "Ran ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "ac2"
+                ]
+              ],
+              [
+                [
+                  "  └ ",
+                  "mu"
+                ],
+                [
+                  "{r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "shade",
+          "inputGlyph": "›",
+          "placeholder": "Ask Codex to do anything",
+          "footer": {
+            "l": [
+              [
+                "  100% context left · ? for shortcuts",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://github.com/openai/codex"
+    },
+    {
+      "id": "qwen-cli",
+      "name": "Qwen Code",
+      "vendor": "Alibaba",
+      "category": "coding",
+      "tool": "qwen-cli",
+      "adapter": {
+        "kind": "stream-json"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0f0d17",
+          "fg": "#e6e6e6",
+          "mu": "#7f8590",
+          "ac": "#8b6cf0",
+          "ac2": "#c084fc",
+          "ok": "#5fd38d",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#6d44e8",
+            "ac2": "#6d44e8"
+          },
+          "banner": [
+            [
+              [
+                "Tips for getting started:",
+                "fg"
+              ]
+            ],
+            [
+              [
+                "1. Ask questions, edit files, or run commands.",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "2. Be specific for the best results.",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": false,
+          "big": {
+            "text": "QWEN",
+            "grad": [
+              "#615ced",
+              "#8b6cf0",
+              "#c084fc"
+            ]
+          },
+          "userStyle": "plain",
+          "prompt": ">",
+          "answerGlyph": "✦",
+          "agentGlyph": "ac",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "✓  ",
+                  "ok"
+                ],
+                [
+                  "ReadFile ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "✓  ",
+                  "ok"
+                ],
+                [
+                  "Edit ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "✓  ",
+                  "ok"
+                ],
+                [
+                  "Shell ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "stepBox": true,
+          "input": "round",
+          "inputRole": "ac",
+          "inputGlyph": ">",
+          "placeholder": "Type your message or @path/to/file",
+          "footer": {
+            "l": [
+              [
+                "~/project (main)",
+                "ac"
+              ]
+            ],
+            "m": [
+              [
+                "no sandbox",
+                "err"
+              ]
+            ],
+            "r": [
+              [
+                "qwen3-coder ",
+                "ac"
+              ],
+              [
+                "(99% context left)",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://github.com/QwenLM/qwen-code"
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi Code",
+      "vendor": "Moonshot AI",
+      "category": "coding",
+      "tool": "kimi-cli",
+      "aliases": [
+        "kimi-cli"
+      ],
+      "adapter": {
+        "kind": "acp"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "acp-session"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#131314",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#1783ff",
+          "banner": [
+            [
+              [
+                "Welcome to Kimi CLI!",
+                "b"
+              ]
+            ],
+            [
+              [
+                "Send /help for help information.",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "Directory: ~/project",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "Model: kimi-k2",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "boxRole": "ac",
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "• ",
+                  "ac"
+                ],
+                [
+                  "Used ",
+                  "fg"
+                ],
+                [
+                  "ReadFile",
+                  "b"
+                ],
+                [
+                  " ({a})",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "• ",
+                  "ac"
+                ],
+                [
+                  "Used ",
+                  "fg"
+                ],
+                [
+                  "StrReplaceFile",
+                  "b"
+                ],
+                [
+                  " ({a})",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "• ",
+                  "ac"
+                ],
+                [
+                  "Used ",
+                  "fg"
+                ],
+                [
+                  "Shell",
+                  "b"
+                ],
+                [
+                  " ({a})",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "kimi-k2 · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://www.kimi.com/"
+    },
+    {
+      "id": "antigravity",
+      "name": "Antigravity",
+      "vendor": "Google",
+      "category": "coding",
+      "tool": "antigravity",
+      "aliases": [
+        "agy"
+      ],
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0e1117",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#3186ff",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "gemini · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://antigravity.google/"
+    },
+    {
+      "id": "cursor-agent",
+      "name": "Cursor Agent",
+      "vendor": "Cursor",
+      "category": "coding",
+      "tool": "cursor-agent",
+      "adapter": {
+        "kind": "stream-json"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#181713",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#edece6",
+          "light": "#26251e",
+          "banner": [
+            [
+              [
+                "Cursor Agent",
+                "b"
+              ]
+            ],
+            [
+              [
+                "~/project · main",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": false,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "⬢ ",
+                  "mu"
+                ],
+                [
+                  "Read ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "⬢ ",
+                  "mu"
+                ],
+                [
+                  "Edited ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "⬢ ",
+                  "mu"
+                ],
+                [
+                  "Ran ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": "→",
+          "placeholder": "Plan, search, build anything",
+          "footer": {
+            "l": [
+              [
+                "Auto",
+                "fg"
+              ]
+            ],
+            "r": [
+              [
+                "/ commands · @ files",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://cursor.com/"
+    },
+    {
+      "id": "grok",
+      "name": "Grok Build",
+      "vendor": "xAI",
+      "category": "general",
+      "tool": "grok",
+      "adapter": {
+        "kind": "acp"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "acp-session"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#000000",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#f2f2f2",
+          "light": "#111111",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "grok · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://grok.com/"
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "vendor": "Anomaly",
+      "category": "coding",
+      "tool": "opencode",
+      "adapter": {
+        "kind": "stream-json"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key",
+        "local"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "liveUi": {
+        "argv": [
+          "opencode",
+          "web"
+        ],
+        "port": 4096,
+        "health": "/",
+        "label": "OpenCode web app"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0a0a0a",
+          "fg": "#eeeeee",
+          "mu": "#808080",
+          "ac": "#fab283",
+          "ac2": "#5c9cf5",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#c26b1f",
+            "ac2": "#2f6fd6"
+          },
+          "banner": [
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": false,
+          "big": {
+            "parts": [
+              [
+                "open",
+                "mu"
+              ],
+              [
+                "code",
+                "fg"
+              ]
+            ]
+          },
+          "userStyle": "bar",
+          "prompt": "",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "→ Read ",
+                  "mu"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "← Edit ",
+                  "mu"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "$ ",
+                  "mu"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "bar",
+          "inputGlyph": "",
+          "placeholder": "Ask anything…",
+          "footer": {
+            "l": [
+              [
+                " Build ",
+                "pill"
+              ],
+              [
+                "  Claude Sonnet",
+                "fg"
+              ],
+              [
+                "  Anthropic",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "tab ",
+                "fg"
+              ],
+              [
+                "switch agent",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://opencode.ai/"
+    },
+    {
+      "id": "codebuddy",
+      "name": "CodeBuddy",
+      "vendor": "Tencent",
+      "category": "coding",
+      "tool": "codebuddy",
+      "adapter": {
+        "kind": "stream-json"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0d0b1a",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#8b74ff",
+          "light": "#6c4dff",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://www.codebuddy.ai/"
+    },
+    {
+      "id": "qodercli",
+      "name": "Qoder CLI",
+      "vendor": "Qoder",
+      "category": "coding",
+      "tool": "qodercli",
+      "adapter": {
+        "kind": "acp"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "acp-session"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0e0f10",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#d0d0d0",
+          "light": "#333333",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://qoder.com/cli"
+    },
+    {
+      "id": "qoderclicn",
+      "name": "Qoder CN",
+      "vendor": "Qoder",
+      "category": "coding",
+      "tool": "qoderclicn",
+      "adapter": {
+        "kind": "acp"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "acp-session"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0e0f10",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#d0d0d0",
+          "light": "#333333",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://qoder.com/cli"
+    },
+    {
+      "id": "kiro-cli",
+      "name": "Kiro CLI",
+      "vendor": "Amazon",
+      "category": "coding",
+      "tool": "kiro-cli",
+      "adapter": {
+        "kind": "acp"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "acp-session"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0f0a17",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#9046ff",
+          "banner": [
+            [
+              [
+                "Kiro",
+                "ac"
+              ],
+              [
+                " CLI",
+                "b"
+              ]
+            ],
+            [
+              [
+                "Did you know? /context shows what is in your context.",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": false,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "🛠️  Using tool: ",
+                  "fg"
+                ],
+                [
+                  "fs_read",
+                  "ac"
+                ],
+                [
+                  "  {a}",
+                  "mu"
+                ]
+              ],
+              [
+                [
+                  " ● Completed in 0.1s",
+                  "ok"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "🛠️  Using tool: ",
+                  "fg"
+                ],
+                [
+                  "fs_write",
+                  "ac"
+                ],
+                [
+                  "  {a}",
+                  "mu"
+                ]
+              ],
+              [
+                [
+                  " ● Completed in 0.1s",
+                  "ok"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "🛠️  Using tool: ",
+                  "fg"
+                ],
+                [
+                  "execute_bash",
+                  "ac"
+                ],
+                [
+                  "  {a}",
+                  "mu"
+                ]
+              ],
+              [
+                [
+                  " ● Completed in 0.1s",
+                  "ok"
+                ]
+              ]
+            ]
+          },
+          "input": "plain",
+          "inputGlyph": ">",
+          "glyphRole": "ac",
+          "placeholder": "",
+          "footer": null
+        }
+      },
+      "docs": "https://kiro.dev/"
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "vendor": "OpenClaw",
+      "category": "personal",
+      "tool": "openclaw",
+      "adapter": {
+        "kind": "gateway"
+      },
+      "brains": "any",
+      "access": [
+        "key",
+        "local"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "liveUi": {
+        "argv": [
+          "openclaw",
+          "dashboard"
+        ],
+        "port": 18789,
+        "health": "/",
+        "label": "OpenClaw Control UI"
+      },
+      "look": {
+        "default": "desktop",
+        "desktop": {
+          "kind": "app",
+          "bg": "#0b0d14",
+          "fg": "#e7e9ee",
+          "mu": "#8a90a0",
+          "ac": "#ff4d4d",
+          "ac2": "#00e5cc",
+          "banner": [],
+          "userStyle": "bubble",
+          "prompt": "",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "read {a}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "edit {a}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "run {a}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "placeholder": "Message OpenClaw",
+          "footer": {
+            "l": [
+              [
+                "Gateway connected",
+                "mu"
+              ]
+            ]
+          },
+          "header": "Control UI",
+          "status": "Gateway connected",
+          "radius": 12
+        }
+      },
+      "docs": "https://github.com/openclaw/openclaw"
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes",
+      "vendor": "Nous Research",
+      "category": "personal",
+      "tool": "hermes",
+      "adapter": {
+        "kind": "acp"
+      },
+      "brains": "any",
+      "access": [
+        "key",
+        "local"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "acp-session"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0d1117",
+          "fg": "#e6edf3",
+          "mu": "#7d8590",
+          "ac": "#3fb950",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#1a7f37",
+            "ac2": "#1a7f37"
+          },
+          "banner": [
+            [
+              [
+                "☤ Hermes Agent",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "model ",
+                "mu"
+              ],
+              [
+                "claude-sonnet",
+                "fg"
+              ],
+              [
+                "   backend ",
+                "mu"
+              ],
+              [
+                "local",
+                "fg"
+              ]
+            ],
+            [
+              [
+                "cwd ",
+                "mu"
+              ],
+              [
+                "~/project",
+                "fg"
+              ],
+              [
+                "   tools ",
+                "mu"
+              ],
+              [
+                "24",
+                "fg"
+              ],
+              [
+                "   skills ",
+                "mu"
+              ],
+              [
+                "6",
+                "fg"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "boxRole": "ac",
+          "userStyle": "plain",
+          "prompt": ">",
+          "answerGlyph": "☤",
+          "agentGlyph": "ac",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "📖 Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "🔧 Patch ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ]
+              ],
+              [
+                [
+                  "│ ",
+                  "mu"
+                ],
+                [
+                  "- const m = parts[1];",
+                  "err"
+                ]
+              ],
+              [
+                [
+                  "│ ",
+                  "mu"
+                ],
+                [
+                  "+ const m = parts[1] - 1;",
+                  "ok"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "✓ ",
+                  "ok"
+                ],
+                [
+                  "$ {a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "pre": [
+            [
+              [
+                "∴ Thought for 3s",
+                "mu"
+              ]
+            ]
+          ],
+          "input": "rule",
+          "inputGlyph": ">",
+          "placeholder": "",
+          "footer": {
+            "l": [
+              [
+                "☤ claude-sonnet │ 12.4K/200K │ [██░░░░░░░░] 6% │ $0.06 │ 15m",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://pypi.org/project/hermes-agent/"
+    },
+    {
+      "id": "pi",
+      "name": "Pi",
+      "vendor": "Earendil",
+      "category": "coding",
+      "tool": "pi",
+      "adapter": {
+        "kind": "one-shot-json"
+      },
+      "brains": "any",
+      "access": [
+        "key",
+        "local"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#09090b",
+          "fg": "#fafafa",
+          "mu": "#71717a",
+          "ac": "#d4d4d8",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#3f3f46",
+            "ac2": "#3f3f46"
+          },
+          "banner": [
+            [
+              [
+                "π ",
+                "b"
+              ],
+              [
+                "pi",
+                "fg"
+              ],
+              [
+                "   ~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": false,
+          "userStyle": "shade",
+          "prompt": "›",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "read ",
+                  "ac"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "edit ",
+                  "ac"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "run ",
+                  "ac"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "line",
+          "inputGlyph": "›",
+          "placeholder": "",
+          "footer": {
+            "l": [
+              [
+                "~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "claude-sonnet · ↑2.1k ↓640 · 4%",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://github.com/earendil-works/pi"
+    },
+    {
+      "id": "omp",
+      "name": "Oh-My-Pi",
+      "vendor": "Oh-My-Pi",
+      "category": "coding",
+      "tool": "omp",
+      "adapter": {
+        "kind": "one-shot-json"
+      },
+      "brains": "any",
+      "access": [
+        "key",
+        "local"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#09090b",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#d4d4d8",
+          "light": "#3f3f46",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://oh-my-pi.dev/"
+    },
+    {
+      "id": "deveco",
+      "name": "DevEco Code",
+      "vendor": "Huawei",
+      "category": "coding",
+      "tool": "deveco",
+      "adapter": {
+        "kind": "stream-json"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#140a0c",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#cf0a2c",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://developer.huawei.com/"
+    },
+    {
+      "id": "traecli",
+      "name": "Trae CLI",
+      "vendor": "ByteDance",
+      "category": "coding",
+      "tool": "traecli",
+      "adapter": {
+        "kind": "acp"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "acp-session"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0e0f10",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#d0d0d0",
+          "light": "#333333",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://www.trae.ai/"
+    },
+    {
+      "id": "qwenpaw",
+      "name": "QwenPaw",
+      "vendor": "Alibaba",
+      "category": "coding",
+      "tool": "qwenpaw",
+      "adapter": {
+        "kind": "acp"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "acp-session"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#120e0a",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#ff9d4d",
+          "light": "#c46a1e",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "qwen · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://qwen.ai/"
+    },
+    {
+      "id": "reasonix",
+      "name": "Reasonix",
+      "vendor": "Reasonix",
+      "category": "coding",
+      "tool": "reasonix",
+      "adapter": {
+        "kind": "acp"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "acp-session"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0e0f10",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#d0d0d0",
+          "light": "#333333",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://reasonix.ai/"
+    },
+    {
+      "id": "mcode",
+      "name": "MiniMax Code",
+      "vendor": "MiniMax",
+      "category": "coding",
+      "tool": "mcode",
+      "adapter": {
+        "kind": "acp"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "acp-session"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0e0f10",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#d0d0d0",
+          "light": "#333333",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "minimax · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://minimaxi.com/"
+    },
+    {
+      "id": "dsh",
+      "name": "DeepSeek Harness",
+      "vendor": "DeepSeek",
+      "category": "experimental",
+      "tool": "dsh",
+      "adapter": {
+        "kind": "unsupported"
+      },
+      "brains": "any",
+      "access": [
+        "key",
+        "local"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "none"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0b0e1a",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#6b85ff",
+          "light": "#4d6bfe",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "deepseek · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://deepseek.com/"
+    },
+    {
+      "id": "gemini-cli",
+      "name": "Gemini CLI",
+      "vendor": "Google",
+      "category": "coding",
+      "tool": "gemini-cli",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "key"
+      ],
+      "more": true,
+      "status": {
+        "label": "API key or Enterprise only",
+        "tone": "warn"
+      },
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0f1015",
+          "fg": "#e6e6e6",
+          "mu": "#7f8590",
+          "ac": "#4796e3",
+          "ac2": "#c3677f",
+          "ok": "#5fd38d",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#4796e3",
+            "ac2": "#c3677f"
+          },
+          "banner": [
+            [
+              [
+                "Tips for getting started:",
+                "fg"
+              ]
+            ],
+            [
+              [
+                "1. Ask questions, edit files, or run commands.",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "2. Be specific for the best results.",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": false,
+          "big": {
+            "text": "GEMINI",
+            "grad": [
+              "#4796E3",
+              "#847ACE",
+              "#C3677F"
+            ]
+          },
+          "userStyle": "plain",
+          "prompt": ">",
+          "answerGlyph": "✦",
+          "agentGlyph": "ac",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "✓  ",
+                  "ok"
+                ],
+                [
+                  "ReadFile ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "✓  ",
+                  "ok"
+                ],
+                [
+                  "Edit ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "✓  ",
+                  "ok"
+                ],
+                [
+                  "Shell ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "stepBox": true,
+          "input": "round",
+          "inputRole": "ac",
+          "inputGlyph": ">",
+          "placeholder": "Type your message or @path/to/file",
+          "footer": {
+            "l": [
+              [
+                "~/project (main)",
+                "ac"
+              ]
+            ],
+            "m": [
+              [
+                "no sandbox",
+                "err"
+              ]
+            ],
+            "r": [
+              [
+                "gemini-2.5-pro ",
+                "ac"
+              ],
+              [
+                "(99% context left)",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://geminicli.com"
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot CLI",
+      "vendor": "GitHub",
+      "category": "coding",
+      "tool": "copilot",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0d1117",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#a371f7",
+          "banner": [
+            [
+              [
+                "GitHub Copilot",
+                "b"
+              ],
+              [
+                " CLI",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "Welcome to GitHub Copilot CLI",
+                "fg"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "boxRole": "ac",
+          "userStyle": "plain",
+          "prompt": ">",
+          "answerGlyph": "●",
+          "agentGlyph": "ac",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "✓ ",
+                  "ok"
+                ],
+                [
+                  "Read ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "✓ ",
+                  "ok"
+                ],
+                [
+                  "Edit ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "✓ ",
+                  "ok"
+                ],
+                [
+                  "$ ",
+                  "b"
+                ],
+                [
+                  "{a}",
+                  "fg"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "~/project [main]",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "claude-sonnet",
+                "ac"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli"
+    },
+    {
+      "id": "aider",
+      "name": "Aider",
+      "vendor": "Aider",
+      "category": "coding",
+      "tool": "aider",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "key",
+        "local"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "liveUi": {
+        "argv": [
+          "aider",
+          "--browser"
+        ],
+        "port": 8501,
+        "health": "/",
+        "label": "Aider browser UI (experimental)"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#000000",
+          "fg": "#dddddd",
+          "mu": "#888888",
+          "ac": "#00cc00",
+          "ac2": "#0088ff",
+          "ok": "#00cc00",
+          "err": "#ff5f5f",
+          "light": {
+            "bg": "#fbfbfa",
+            "fg": "#1d1d1b",
+            "mu": "#74746f",
+            "ok": "#1a7f37",
+            "err": "#cf222e",
+            "ac": "#16803c",
+            "ac2": "#0088ff"
+          },
+          "banner": [
+            [
+              [
+                "Aider",
+                "b"
+              ]
+            ],
+            [
+              [
+                "Main model: claude-sonnet with diff edit format",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "Git repo: .git with 258 files",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "Repo-map: using 1024 tokens",
+                "mu"
+              ]
+            ],
+            [
+              [
+                "────────────────────────────────────────────",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": false,
+          "userStyle": "color",
+          "prompt": ">",
+          "steps": {
+            "Read": [],
+            "Run": [],
+            "Edit": [
+              [
+                [
+                  "{a}",
+                  "fg"
+                ]
+              ],
+              [
+                [
+                  "<<<<<<< SEARCH",
+                  "mu"
+                ]
+              ],
+              [
+                [
+                  "  const m = parts[1];",
+                  "err"
+                ]
+              ],
+              [
+                [
+                  "=======",
+                  "mu"
+                ]
+              ],
+              [
+                [
+                  "  const m = parts[1] - 1;",
+                  "ok"
+                ]
+              ],
+              [
+                [
+                  ">>>>>>> REPLACE",
+                  "mu"
+                ]
+              ],
+              [
+                [
+                  "Applied edit to {a}",
+                  "fg"
+                ]
+              ],
+              [
+                [
+                  "Commit 1a2b3c4 fix: parse month as 0-based",
+                  "ac2"
+                ]
+              ]
+            ]
+          },
+          "input": "plain",
+          "inputGlyph": ">",
+          "glyphRole": "ac",
+          "placeholder": "",
+          "footer": null
+        }
+      },
+      "docs": "https://aider.chat"
+    },
+    {
+      "id": "amp",
+      "name": "Amp",
+      "vendor": "Sourcegraph",
+      "category": "coding",
+      "tool": "amp",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0c0a14",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#8b5cf6",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                " smart ",
+                "pill"
+              ],
+              [
+                "  ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://ampcode.com"
+    },
+    {
+      "id": "goose",
+      "name": "Goose",
+      "vendor": "Block",
+      "category": "general",
+      "tool": "goose",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "key",
+        "local"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "desktop",
+        "desktop": {
+          "kind": "app",
+          "bg": "#ffffff",
+          "fg": "#1f2937",
+          "mu": "#6b7280",
+          "ac": "#1f2937",
+          "ac2": "#f59e0b",
+          "dark": {
+            "bg": "#16181d",
+            "fg": "#e5e7eb",
+            "mu": "#9ca3af",
+            "ac": "#e5e7eb"
+          },
+          "banner": [],
+          "userStyle": "bubble",
+          "prompt": "",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "developer__text_editor view",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "developer__text_editor str_replace",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "developer__shell",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "placeholder": "What can goose help with?",
+          "footer": {
+            "l": [
+              [
+                "Ready",
+                "mu"
+              ]
+            ]
+          },
+          "header": "Desktop",
+          "status": "Ready",
+          "radius": 16,
+          "userFill": "#f3f4f6"
+        }
+      },
+      "docs": "https://goose-docs.ai"
+    },
+    {
+      "id": "crush",
+      "name": "Crush",
+      "vendor": "Charm",
+      "category": "coding",
+      "tool": "crush",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "key",
+        "local"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0f0b1c",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#6b50ff",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://charm.sh/crush"
+    },
+    {
+      "id": "cline",
+      "name": "Cline",
+      "vendor": "Cline",
+      "category": "coding",
+      "tool": "cline",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0e0f10",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#e5e5e5",
+          "light": "#1d1d1b",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://cline.bot"
+    },
+    {
+      "id": "kilo",
+      "name": "Kilo Code CLI",
+      "vendor": "Kilo Code",
+      "category": "coding",
+      "tool": "kilo",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0d0d08",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#f8f675",
+          "light": "#8a7d00",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://kilo.ai"
+    },
+    {
+      "id": "droid",
+      "name": "Factory Droid",
+      "vendor": "Factory",
+      "category": "coding",
+      "tool": "droid",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "key"
+      ],
+      "more": false,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#020202",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#fafafa",
+          "light": "#111111",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://factory.ai"
+    },
+    {
+      "id": "auggie",
+      "name": "Augment Auggie",
+      "vendor": "Augment Code",
+      "category": "coding",
+      "tool": "auggie",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#08110e",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#58d6a8",
+          "light": "#1a7f5a",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://augmentcode.com"
+    },
+    {
+      "id": "openhands",
+      "name": "OpenHands CLI",
+      "vendor": "All Hands AI",
+      "category": "general",
+      "tool": "openhands",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key",
+        "local"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "liveUi": {
+        "argv": [
+          "openhands",
+          "serve"
+        ],
+        "port": 8000,
+        "health": "/",
+        "label": "OpenHands web app"
+      },
+      "look": {
+        "default": "desktop",
+        "desktop": {
+          "kind": "app",
+          "bg": "#0d0f11",
+          "fg": "#ececec",
+          "mu": "#8b8f96",
+          "ac": "#ffe165",
+          "ac2": "#4ade80",
+          "banner": [],
+          "userStyle": "bubble",
+          "prompt": "",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "Read file · {a}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "Edit file · {a}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "Run command · {a}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "placeholder": "What do you want to build?",
+          "footer": {
+            "l": [
+              [
+                "Sandbox running",
+                "mu"
+              ]
+            ]
+          },
+          "header": "Agent Canvas",
+          "status": "Sandbox running",
+          "radius": 12,
+          "sendSquare": true
+        }
+      },
+      "docs": "https://docs.openhands.dev"
+    },
+    {
+      "id": "continue-cli",
+      "name": "Continue CLI",
+      "vendor": "Continue",
+      "category": "coding",
+      "tool": "continue-cli",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#0e0f10",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#ff6a3d",
+          "light": "#c24a1f",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://continue.dev"
+    },
+    {
+      "id": "warp-oz",
+      "name": "Warp Oz",
+      "vendor": "Warp",
+      "category": "coding",
+      "tool": "warp-oz",
+      "adapter": {
+        "kind": "text"
+      },
+      "brains": "any",
+      "access": [
+        "plan",
+        "key"
+      ],
+      "more": true,
+      "systemLayer": {
+        "via": "agents-md"
+      },
+      "look": {
+        "default": "terminal",
+        "terminal": {
+          "kind": "tui",
+          "bg": "#08121a",
+          "fg": "#ececec",
+          "mu": "#8a8a8a",
+          "ac": "#01a9db",
+          "light": "#0a6f91",
+          "banner": [
+            [
+              [
+                "{name}",
+                "ac"
+              ]
+            ],
+            [
+              [
+                "~/project",
+                "mu"
+              ]
+            ]
+          ],
+          "bannerBox": true,
+          "userStyle": "plain",
+          "prompt": ">",
+          "steps": {
+            "Read": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Read ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Edit": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Edit ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ],
+            "Run": [
+              [
+                [
+                  "● ",
+                  "ac"
+                ],
+                [
+                  "Run ",
+                  "fg"
+                ],
+                [
+                  "{a}",
+                  "mu"
+                ],
+                [
+                  "  {r}",
+                  "mu"
+                ]
+              ]
+            ]
+          },
+          "input": "round",
+          "inputGlyph": ">",
+          "placeholder": "Ask anything",
+          "footer": {
+            "l": [
+              [
+                "auto · ~/project",
+                "mu"
+              ]
+            ],
+            "r": [
+              [
+                "? help",
+                "mu"
+              ]
+            ]
+          }
+        }
+      },
+      "docs": "https://warp.dev"
     }
   ]
 }

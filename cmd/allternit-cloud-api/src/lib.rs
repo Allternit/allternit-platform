@@ -392,6 +392,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // like an OAuth device authorization endpoint.
         .merge(routes::runtime_pairing::routes())
         .merge(routes::runtime_relay::routes())
+        // Runtime registry (static, public; same JSON allternit-api embeds).
+        .merge(routes::runtimes::routes())
         // Files drive: wake consent, wake settings, endpoints, token keys
         // (each handler resolves the user itself).
         .merge(routes::computer_files::routes())
