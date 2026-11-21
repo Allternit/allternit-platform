@@ -31,6 +31,24 @@ Until a node is paired, the Cloud API has nowhere to run agents, sessions, vault
 2. Approve the pairing at `https://platform.allternit.com/pair`.
 3. Create and run agents through the normal API; they execute on your node.
 
+## Runtime and brain
+
+Each agent has two picks, and the console's agent form (**Agents › New** or **Edit**) shows both:
+
+- **Runtime** is how the agent works: Allternit, or another agent program such as Claude Code, Codex or Hermes. Allternit is the default. Each runtime shows its category and, where it applies, a status such as "API key or Enterprise only". A runtime other than Allternit runs on a computer that has that program installed.
+- **Brain** is the model the agent thinks with, from the Cloud model list. Leave it on **Cloud default** to use the model Cloud recommends.
+- **Access** is how the brain is paid for: Allternit credits, your API key, or a plan (for example a Claude or ChatGPT plan).
+
+Some runtimes run only their own company's models; the form greys out brains a runtime can't run. Most companies don't allow their plan sign-in inside another company's agent, so a plan works only with Allternit or with that company's own runtime (a Claude plan with Claude Code, a ChatGPT plan with Codex). When you pick a runtime that can't use the current brain or plan, the form switches to one it can use and says what changed.
+
+The agent record stores these as `runtime`, `access` and `model` (see [Agents API](/api/agents)); records saved before runtimes existed read as `runtime: "allternit"`. If a save breaks a rule, the API answers `422` with one of these codes, and the console shows the message under the field:
+
+| Code | Message |
+|---|---|
+| `runtime_unknown` | No runtime called `<id>`. |
+| `brain_not_fit` | `<Runtime>` runs `<Provider>` models only. |
+| `plan_not_allowed_on_runtime` | `<Provider>`'s plan can't be used inside `<Runtime>`. Use an API key, or pick `<own runtime>`. |
+
 ## Security
 
 - The daemon authenticates with a device token obtained from `POST /api/v1/runtime-pairings/exchange`, after signing a challenge with its device identity.

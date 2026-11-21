@@ -23,6 +23,7 @@ import {
   toolNames,
 } from "@/lib/managed-agents";
 import { MonoChip, Badge, SkeletonCard } from "@/components/console-ui";
+import { RuntimeLabel, agentAccess, agentRuntimeId, useRuntimes } from "./RuntimeBrainPicker";
 
 function StatusBadge({ status }: { status: string }): React.ReactNode {
   const cls =
@@ -43,6 +44,7 @@ export function AgentDetailPage(): React.ReactNode {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
+  const runtimes = useRuntimes();
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -160,7 +162,11 @@ export function AgentDetailPage(): React.ReactNode {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <MonoChip>{agent.id}</MonoChip>
-            <span className="font-mono text-[12px] text-[var(--text-secondary)]">{agent.model}</span>
+            <span className="text-[12px] text-[var(--text-secondary)]">
+              <RuntimeLabel runtimes={runtimes} runtimeId={agentRuntimeId(agent)} access={agentAccess(agent)} />
+            </span>
+            <span aria-hidden className="text-[12px] text-[var(--text-tertiary)]">·</span>
+            <span className="font-mono text-[12px] text-[var(--text-secondary)]" title="Brain">{agent.model}</span>
           </div>
           {agent.description && (
             <p className="m-0 text-[13px] text-[var(--text-secondary)]">{agent.description}</p>

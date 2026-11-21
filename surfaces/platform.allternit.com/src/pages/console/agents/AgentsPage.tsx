@@ -23,6 +23,7 @@ import {
   SETTINGS_SELECT_CLASS,
 } from "@/components/console-ui";
 import { QuickStartPanel } from "./QuickStartPanel";
+import { RuntimeLabel, agentAccess, agentRuntimeId, useRuntimes } from "./RuntimeBrainPicker";
 
 const PAGE_SIZE = 25;
 
@@ -50,6 +51,7 @@ export function AgentsPage(): React.ReactNode {
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const runtimes = useRuntimes();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [kindFilter, setKindFilter] = useState<"all" | "cloud" | "bot">("all");
@@ -101,7 +103,7 @@ export function AgentsPage(): React.ReactNode {
     <div className="space-y-4">
       <ListPage
         title="Agents"
-        subtitle="Managed agents — durable configurations with a model, system prompt, toolset, and skills. Bot agents additionally appear in the Hub."
+        subtitle="Managed agents — durable configurations with a runtime, a brain (model), system prompt, toolset, and skills. Bot agents additionally appear in the Hub."
         searchPlaceholder="Search by name or ID…"
         onSearch={setSearch}
         primaryAction={{ label: "+ Create agent", to: "/agents/new" }}
@@ -180,7 +182,8 @@ export function AgentsPage(): React.ReactNode {
                   </th>
                   <th className={TH_CLASS}>ID</th>
                   <th className={TH_CLASS}>Name</th>
-                  <th className={TH_CLASS}>Model</th>
+                  <th className={TH_CLASS}>Runtime</th>
+                  <th className={TH_CLASS}>Brain</th>
                   <th className={TH_CLASS}>Status</th>
                   <th className={TH_CLASS}>Kind</th>
                   <th className={TH_CLASS}>Created</th>
@@ -202,6 +205,9 @@ export function AgentsPage(): React.ReactNode {
                       <MonoChip>{agent.id.slice(0, 8)}</MonoChip>
                     </td>
                     <td className={cn(TD_CLASS, "font-medium")}>{agent.name}</td>
+                    <td className={cn(TD_CLASS, "text-[12px] text-[var(--text-secondary)]")}>
+                      <RuntimeLabel runtimes={runtimes} runtimeId={agentRuntimeId(agent)} access={agentAccess(agent)} />
+                    </td>
                     <td className={cn(TD_CLASS, "font-mono text-[12px] text-[var(--text-secondary)]")}>
                       {agent.model}
                     </td>

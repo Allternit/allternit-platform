@@ -55,8 +55,21 @@ async function toApiError(response: Response): Promise<AllternitApiError> {
   const errorData = await response.json().catch(() => ({}));
   // Platform API errors nest as { error: { type, code, message, param } }.
   const nested = errorData.error && typeof errorData.error === 'object' ? errorData.error : null;
+  // cloud-api field errors are flat { error: "<code>", message: "<sentence>" }
+  // (e.g. 422 runtime_unknown): the sentence is the message, the code the code.
+  const flatCode =
+    !nested &&
+    typeof errorData.error === 'string' &&
+    /^[a-z][a-z0-9_]*$/.test(errorData.error) &&
+    typeof errorData.message === 'string' &&
+    errorData.message
+      ? (errorData.error as string)
+      : undefined;
   const message =
-    (nested ? nested.message : errorData.error) || errorData.message || `HTTP ${response.status}`;
+    (flatCode ? errorData.message : undefined) ||
+    (nested ? nested.message : errorData.error) ||
+    errorData.message ||
+    `HTTP ${response.status}`;
   if (response.status === 428) {
     return new AllternitApiError(NO_RUNTIME_MESSAGE, 428, NO_RUNTIME_CODE, {
       ...(errorData.details ?? {}),
@@ -66,7 +79,7 @@ async function toApiError(response: Response): Promise<AllternitApiError> {
   return new AllternitApiError(
     message,
     response.status,
-    (nested ? nested.code : undefined) ?? errorData.code,
+    (nested ? nested.code : undefined) ?? errorData.code ?? flatCode,
     errorData.details
   );
 }

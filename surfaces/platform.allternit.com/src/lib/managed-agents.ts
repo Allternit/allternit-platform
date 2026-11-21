@@ -30,8 +30,14 @@ export interface AgentRecord {
   description?: string | null;
   type?: string;
   parent_agent_id?: string | null;
+  /** The brain (model id). */
   model: string;
   provider: string;
+  /** Runtime registry id (Harness & Bots 2.0); absent on old records = "allternit". */
+  runtime?: string | null;
+  /** How the brain is paid for. */
+  access?: "plan" | "key" | "local" | "credits" | null;
+  agentView?: { view?: string; look?: string } | null;
   capabilities?: unknown;
   system_prompt?: string | null;
   tools?: unknown;

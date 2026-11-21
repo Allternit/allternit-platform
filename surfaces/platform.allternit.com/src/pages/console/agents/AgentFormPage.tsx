@@ -9,7 +9,7 @@ import {
   LayoutIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
-import { formatApiError } from "@/lib/api-client";
+import { AllternitApiError, formatApiError } from "@/lib/api-client";
 import {
   TOOL_PERMISSIONS,
   type AgentRecord,
@@ -29,6 +29,23 @@ import {
 } from "@/lib/managed-agents";
 import { fetchConsoleModels, type ConsoleModel } from "@/lib/console-models";
 import { FormPage } from "@/components/console-ui";
+import {
+  ALLTERNIT_RUNTIME,
+  DEFAULT_RUNTIME_ID,
+  cachedRuntimes,
+  fetchRuntimes,
+  isPlanProvider,
+  isRuntimeErrorCode,
+  providerFor,
+  type AccessKind,
+  type RuntimeEntry,
+} from "@/lib/runtimes";
+import {
+  FIELD_OF_CODE,
+  RuntimeBrainPicker,
+  modelProvider,
+  type RuntimeFieldError,
+} from "./RuntimeBrainPicker";
 
 // Sent when the form leaves the model blank: the Cloud default (the
 // `default: true` row of GET /v1/models; it moves to a funded model when an
@@ -72,6 +89,13 @@ export function AgentFormPage(): React.ReactNode {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const defaultModelId = models.find((m) => m.default)?.id ?? models[0]?.id ?? FALLBACK_MODEL_ID;
 
+  // Runtime (how it works) + access (how the brain is paid for). The brain is `model`.
+  const [runtimes, setRuntimes] = useState<RuntimeEntry[]>(() => cachedRuntimes() ?? [ALLTERNIT_RUNTIME]);
+  const [runtimesError, setRuntimesError] = useState<string | null>(null);
+  const [runtimeId, setRuntimeId] = useState<string>(DEFAULT_RUNTIME_ID);
+  const [access, setAccess] = useState<AccessKind>("credits");
+  const [fieldError, setFieldError] = useState<RuntimeFieldError | null>(null);
+
   // Tools section.
   const [tools, setTools] = useState<unknown[]>([]);
   const [toolPermissions, setToolPermissions] = useState<Record<string, ToolPermission>>({});
@@ -105,6 +129,20 @@ export function AgentFormPage(): React.ReactNode {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    fetchRuntimes()
+      .then((list) => {
+        if (active) setRuntimes(list);
+      })
+      .catch((err) => {
+        if (active) setRuntimesError(formatApiError(err, "runtime list"));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!id) return;
     let active = true;
     void (async () => {
@@ -118,6 +156,11 @@ export function AgentFormPage(): React.ReactNode {
         setAgent(loaded);
         setName(loaded.name);
         setModel(loaded.model);
+        const cfg = (loaded.config ?? {}) as { runtime?: unknown; access?: unknown };
+        const loadedRuntime = loaded.runtime ?? (typeof cfg.runtime === "string" ? cfg.runtime : null);
+        setRuntimeId(loadedRuntime || DEFAULT_RUNTIME_ID);
+        const loadedAccess = loaded.access ?? (typeof cfg.access === "string" ? (cfg.access as AccessKind) : null);
+        setAccess(loadedAccess ?? (isPlanProvider(loaded.provider ?? "") ? "plan" : "credits"));
         setDescription(loaded.description ?? "");
         setSystemPrompt(loaded.system_prompt ?? "");
         setTemperature(String(loaded.temperature ?? 0.7));
@@ -174,6 +217,8 @@ export function AgentFormPage(): React.ReactNode {
             name,
             description: description || undefined,
             model,
+            runtime: runtimeId,
+            access,
             system_prompt: systemPrompt || undefined,
             temperature: Number(temperature) || 0.7,
             max_iterations: Number(maxIterations) || 10,
@@ -192,6 +237,8 @@ export function AgentFormPage(): React.ReactNode {
           {
             name: name || "my-agent",
             model: model || defaultModelId,
+            runtime: runtimeId,
+            access,
             description: description || undefined,
             system_prompt: systemPrompt || undefined,
             temperature: Number(temperature) || 0.7,
@@ -204,7 +251,7 @@ export function AgentFormPage(): React.ReactNode {
         )
       );
     }
-  }, [view, isEdit, agent, name, model, defaultModelId, description, systemPrompt, temperature, maxIterations, tools, allowedSkills, toolPermissions, boundMcpIds]);
+  }, [view, isEdit, agent, name, model, runtimeId, access, defaultModelId, description, systemPrompt, temperature, maxIterations, tools, allowedSkills, toolPermissions, boundMcpIds]);
 
   const addTool = useCallback(() => {
     const trimmed = newToolName.trim();
@@ -252,6 +299,7 @@ export function AgentFormPage(): React.ReactNode {
       event.preventDefault();
       setSaving(true);
       setError(null);
+      setFieldError(null);
       try {
         let agentId = id;
         if (view === "code") {
@@ -279,11 +327,16 @@ export function AgentFormPage(): React.ReactNode {
           }
         } else {
           if (!name.trim()) throw new Error("Name is required.");
-          if (!model.trim()) throw new Error("Model is required.");
+          // A blank brain saves the Cloud default (`default: true` row, else FALLBACK_MODEL_ID).
+          const brain = model.trim() || defaultModelId;
+          const vendor = modelProvider(models.find((m) => m.id === brain), brain);
           const agentBody: Record<string, unknown> = {
             name: name.trim(),
-            model: model.trim(),
-            provider: deriveProvider(model.trim()),
+            model: brain,
+            // Same provider as before for Cloud brains; a plan brain sends `subs-<vendor>`.
+            provider: access === "plan" ? providerFor(vendor, "plan") : deriveProvider(brain),
+            runtime: runtimeId,
+            access,
             description: description.trim() || undefined,
             system_prompt: systemPrompt.trim() || undefined,
             temperature: Number(temperature) || 0.7,
@@ -310,6 +363,13 @@ export function AgentFormPage(): React.ReactNode {
         }
         navigate(agentId ? `/agents/${agentId}` : "/agents");
       } catch (err) {
+        // 422 runtime_unknown / brain_not_fit / plan_not_allowed_on_runtime:
+        // the server's sentence goes under its field, not the page banner.
+        if (err instanceof AllternitApiError && err.statusCode === 422 && isRuntimeErrorCode(err.code)) {
+          setFieldError({ field: FIELD_OF_CODE[err.code], message: err.message });
+          if (view === "code") setError(err.message);
+          return;
+        }
         setError(
           err instanceof SyntaxError
             ? err.message
@@ -326,6 +386,10 @@ export function AgentFormPage(): React.ReactNode {
       id,
       name,
       model,
+      models,
+      defaultModelId,
+      runtimeId,
+      access,
       description,
       systemPrompt,
       temperature,
@@ -352,7 +416,7 @@ export function AgentFormPage(): React.ReactNode {
     {
       id: "general",
       title: "General",
-      description: "Identity, model, and instructions. Raw mode exposes the whole config as JSON.",
+      description: "Identity, runtime, brain, and instructions. Raw mode exposes the whole config as JSON.",
       children: (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
@@ -403,57 +467,34 @@ export function AgentFormPage(): React.ReactNode {
             </div>
           ) : (
             <>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <label htmlFor="agent-name" className="text-[12px] font-semibold text-[var(--text-secondary)]">
-                    Name
-                  </label>
-                  <input
-                    id="agent-name"
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Competitor scan"
-                    className={INPUT_CLASS}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label htmlFor="agent-model" className="text-[12px] font-semibold text-[var(--text-secondary)]">
-                    Model
-                  </label>
-                  {models.length > 0 ? (
-                    <select
-                      id="agent-model"
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                      className={INPUT_CLASS}
-                    >
-                      {!models.some((m) => m.id === model) && model && (
-                        <option value={model}>{model} (current)</option>
-                      )}
-                      {models.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.display_name ?? m.id} ({m.id})
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      id="agent-model"
-                      type="text"
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                      placeholder="model id, e.g. deepseek-v4.1-flash"
-                      className={INPUT_CLASS}
-                    />
-                  )}
-                  {modelsError && (
-                    <p className="m-0 text-[12px] text-[var(--status-warning)]">
-                      Live model catalog unavailable — enter a model id manually.
-                    </p>
-                  )}
-                </div>
+              <div className="space-y-1">
+                <label htmlFor="agent-name" className="text-[12px] font-semibold text-[var(--text-secondary)]">
+                  Name
+                </label>
+                <input
+                  id="agent-name"
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Competitor scan"
+                  className={INPUT_CLASS}
+                />
               </div>
+              <RuntimeBrainPicker
+                runtimes={runtimes}
+                runtimesError={runtimesError}
+                runtimeId={runtimeId}
+                onRuntimeChange={setRuntimeId}
+                models={models}
+                modelsError={modelsError}
+                model={model}
+                onModelChange={setModel}
+                defaultModelId={defaultModelId}
+                access={access}
+                onAccessChange={setAccess}
+                fieldError={fieldError}
+                onClearFieldError={() => setFieldError(null)}
+              />
               <div className="space-y-1">
                 <label htmlFor="agent-description" className="text-[12px] font-semibold text-[var(--text-secondary)]">
                   Description
