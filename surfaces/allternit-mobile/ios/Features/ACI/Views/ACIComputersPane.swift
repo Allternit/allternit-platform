@@ -987,7 +987,7 @@ enum ACIConsoleLoad<T> {
     case unavailable
     case failed(String)
 
-    static func run(_ work: () async throws -> T) async -> ACIConsoleLoad<T> {
+    @MainActor static func run(_ work: @MainActor () async throws -> T) async -> ACIConsoleLoad<T> {
         do { return .ready(try await work()) }
         catch ACIComputersClient.Failure.notAvailable { return .unavailable }
         catch ACIComputersClient.Failure.asleep(let s) { return .asleep(s) }
@@ -1580,7 +1580,7 @@ private struct ACIConsoleAddKeySheet: View {
                 id: computer.id, label: label.trimmingCharacters(in: .whitespaces),
                 publicKey: publicKey.trimmingCharacters(in: .whitespacesAndNewlines))
             onAdded(); dismiss()
-        } catch { error = consoleFailureText(error) }
+        } catch { self.error = consoleFailureText(error) }
     }
 }
 

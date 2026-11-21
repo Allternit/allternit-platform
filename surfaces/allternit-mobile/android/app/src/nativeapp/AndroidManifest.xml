@@ -67,6 +67,7 @@
              with ShareActivity below: drop the SEND filter and the share-target metadata, keep the launcher and the App Link. -->
         <activity
             android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
+            android:exported="true"
             tools:node="merge">
             <meta-data
                 android:name="android.support.customtabs.trusted.METADATA_SHARE_TARGET"

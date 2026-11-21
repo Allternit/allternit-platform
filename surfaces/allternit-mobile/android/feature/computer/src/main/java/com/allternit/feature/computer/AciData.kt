@@ -241,7 +241,7 @@ object AciApi {
      * `GET {cloud}/api/v1/computers/console` (Computers console contract). 404/501 means the backend
      * is not live for this account yet: [CONSOLE_UNAVAILABLE].
      */
-    suspend fun console(): Result<List<ConsoleComputer>> {
+    internal suspend fun console(): Result<List<ConsoleComputer>> {
         val url = config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/computers/console").build()
         return when (val r = ApiCall.execute(okHttp, ApiJson.default, ApiCall.request("GET", url, null), JsonElement.serializer())) {
             is ApiResult.Ok -> Result.Ok(r.value.listUnder("computers").mapNotNull { ConsoleComputer.parse(it) })
@@ -263,7 +263,7 @@ object AciApi {
     }
 
     /**
-     * One read of `GET {cloud}/api/v1/computers/:id/<tail>` for the console detail (host/* and metrics).
+     * One read of `GET {cloud}/api/v1/computers/:id/<tail>` for the console detail (the host routes and metrics).
      * 409 = asleep (the body may carry `lastSample`; the computer is never woken and nothing is retried),
      * 404/501 = not available yet. Mirrors iOS ACIComputersClient.check().
      */
