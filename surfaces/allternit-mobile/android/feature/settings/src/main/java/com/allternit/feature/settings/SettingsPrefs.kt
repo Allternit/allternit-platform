@@ -29,8 +29,9 @@ object SettingsPrefs {
     fun saveDrafts(context: Context): Boolean = prefs(context).getBoolean("allternit.saveDrafts", true)
     fun setSaveDrafts(context: Context, on: Boolean) = prefs(context).edit().putBoolean("allternit.saveDrafts", on).apply()
 
-    fun waitingGames(context: Context): Boolean = prefs(context).getBoolean("allternit.waitingGames", true)
-    fun setWaitingGames(context: Context, on: Boolean) = prefs(context).edit().putBoolean("allternit.waitingGames", on).apply()
+    /** Waiting games (iOS `appearance.waitingGames`): the store owns the key so every Play button follows the switch. */
+    fun waitingGames(context: Context): Boolean = com.allternit.feature.chat.games.WaitingGamesStore.isEnabled(context)
+    fun setWaitingGames(context: Context, on: Boolean) = com.allternit.feature.chat.games.WaitingGamesStore.setEnabled(context, on)
 
     /** Privacy: "Improve the model for everyone" (saved on this device, like iOS). */
     fun improveModel(context: Context): Boolean = prefs(context).getBoolean("allternit.improveModel", false)

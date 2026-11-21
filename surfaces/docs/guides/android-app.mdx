@@ -374,6 +374,14 @@ Code mode opens on a greeting with **Show usage**. Its composer is a terminal pr
 
 Every "A://" in the app is drawn as the pixel A:// mark, and every icon comes from the Phosphor set the desktop app uses. The mapping from the iPhone's icons is in `surfaces/allternit-mobile/android/core/design/ICONS.md`.
 
+### Waiting games
+
+A **Play** button (a game controller) is in the bot chat and Code composers from the moment the session opens, and on the Code launch screen. It steps aside while you type and comes back when the box is empty. In a plain chat it shows beside Stop when a reply takes longer than 5 seconds. Tap it to open a small game window above the message box. **Full screen** makes it fill the screen; ✕ or the back gesture closes it (from full screen, back makes it small first). Pick from ten games: Big Fish, Bot Race (your first four bots race you; the keyboard opens so you can type), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory, Gizzi RPG and Gizzi Brawl. They are the same games as the iPhone, Desktop and the web. Every game picks up where you left it when you close the window or switch games. Gizzi RPG and Gizzi Brawl are the full live games and need a connection; Brawl turns sideways, so hold the phone sideways to play it. A link inside those games opens in your browser.
+
+When the reply lands, the window says **Reply ready** and pauses the game: tap **Back to chat** or **Keep playing**. Only the chat that started the reply can mark it ready. Your best scores and the last game you played are kept on the phone. Turn the button off in **Settings → Advanced → Waiting games**. With **Reduce motion** on (in Settings or Android's Remove animations), the window and the button appear without animating ([Waiting games](/surfaces/waiting-games#the-games)).
+
+For developers: `feature/chat/.../games/` in `surfaces/allternit-mobile/android`. `WaitingGamesEngine.kt` is a line-for-line port of the iPhone's eight canvas games, drawn on a Compose canvas; `WaitingGamesStore.kt` holds the store (switch `allternit.waitingGames` in `allternit_settings`) and the Play button; `WaitingGamesWindow.kt` is the window, mounted once in `WorkspaceShell`, and the site-game `WebView`.
+
 ### Switching modes
 
 Two ways, the same as the iPhone app:

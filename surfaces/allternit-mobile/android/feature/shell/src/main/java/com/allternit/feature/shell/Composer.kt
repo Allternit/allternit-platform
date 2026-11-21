@@ -214,6 +214,8 @@ internal fun Composer(
     onVoiceMode: (() -> Unit)? = null,
     /** iOS ComposerView `deck`: Full (Home, rotating hints), Compact (a chat, "Reply…"), None (Bots). */
     deck: ComposerDeck = ComposerDeck.Full,
+    /** iOS ComposerView `playGamesAnytime`: Play shows from the start (Bots, Code threads), not only after 5 s of work. */
+    playGamesAnytime: Boolean = false,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -456,6 +458,8 @@ internal fun Composer(
                 }
                 Spacer(Modifier.weight(1f))
                 ModelChip(models = models, open = pickerOpen) { pickerOpen = true }
+                // Play (the waiting games) sits beside Stop; it stays composed so it can tell an open game the reply is ready.
+                com.allternit.feature.chat.games.WaitingGamesPlayButton(busy = isStreaming, anytime = playGamesAnytime, hidden = hasDraft)
                 if (isStreaming) {
                     StreamingBars()
                     // Stop while a reply runs (iOS: square.fill on the neutral circle, label "Stop").
@@ -1033,6 +1037,8 @@ internal fun CodeLaunchComposer(
                     Modifier.size(40.dp).testTag("codeVoice").clickable(role = Role.Button, onClickLabel = if (dictation.isRecording) "Stop voice input" else "Start voice mode") { toggleDictation() },
                     contentAlignment = Alignment.Center,
                 ) { Icon(painterResource(DesignR.drawable.ph_waveform), contentDescription = null, tint = if (dictation.isRecording) CodeCoral else c.textSecondary, modifier = Modifier.size(16.dp)) }
+                // Play shows before typing starts, never over a draft (iOS CodeLaunchComposer). Nothing runs on the launch screen.
+                com.allternit.feature.chat.games.WaitingGamesPlayButton(busy = false, anytime = true, hidden = trimmed.isNotEmpty())
                 if (trimmed.isNotEmpty()) {
                     // A terminal runs on Enter: the run key is the Return key.
                     Box(

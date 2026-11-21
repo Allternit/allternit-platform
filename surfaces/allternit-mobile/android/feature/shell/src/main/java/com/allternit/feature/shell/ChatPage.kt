@@ -61,6 +61,8 @@ internal fun ChatPage(
     /** Opened from the home composer's voice button: start voice mode once, then [onVoiceStarted]. */
     startVoice: Boolean = false,
     onVoiceStarted: () -> Unit = {},
+    /** A Code thread: the waiting games' Play button shows from the start (iOS Code threads pass `anytime: true`). */
+    playGamesAnytime: Boolean = false,
 ) {
     val c = AllternitTheme.colors
     var editingId by remember { mutableStateOf<String?>(null) }
@@ -169,6 +171,7 @@ internal fun ChatPage(
                     onVoiceMode = {
                         voiceHost.start(chat, models.selectedId, models.selected?.let { models.level(it) })
                     },
+                    playGamesAnytime = playGamesAnytime,
                 )
             },
             modifier = Modifier.weight(1f),

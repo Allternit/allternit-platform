@@ -379,6 +379,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 placeholderOverride = spec.placeholder,
                 deck = ComposerDeck.None,
                 onVoiceMode = spec.onVoiceMode,
+                // iOS bot composers pass playGamesAnytime: true.
+                playGamesAnytime = true,
             )
         },
         currentModel = { models.selectedId to models.selected?.let { models.level(it) } },
@@ -550,6 +552,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             onOpenSettings = { page = ShellPage.Settings },
                             startVoice = voiceOnOpen,
                             onVoiceStarted = { voiceOnOpen = false },
+                            playGamesAnytime = mode == ShellMode.Code,
                             onOpenArtifact = { a ->
                                 page = ShellPage.Artifact(com.allternit.feature.artifacts.ArtifactRecordInput(a.id, a.kind, a.title, a.url, a.content), back = current)
                             },
@@ -879,6 +882,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 onDismiss = { cliPickerSurface = null },
             )
         }
+        // The waiting games window, over every mode (iOS WorkspaceShell .overlay { WaitingGamesLayer() }).
+        // Bot Race lanes are the first four bots.
+        com.allternit.feature.chat.games.WaitingGamesLayer(racers = {
+            botsStore.bots.map { com.allternit.feature.chat.games.WaitingGameRacer(it.displayName, it.accentHex) }
+        })
     }
     }
 }
