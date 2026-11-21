@@ -140,6 +140,20 @@ pub struct CreateInstanceRequest {
     /// the caller is an admin.
     #[serde(default)]
     subscription_id: Option<String>,
+    /// Orgo city: `nyc`, `chi`, `lon` or `syd`; omitted = any US city.
+    /// Anything else is 400 `invalid_location`. Stored in
+    /// `provisioned_instances.location` (the console row's `region`).
+    #[serde(default)]
+    location: Option<String>,
+    /// A starter template id from `GET /api/v1/computers/templates`
+    /// (Orgo `template_ref`); omitted = default Ubuntu. Anything not on that
+    /// list is 400 `invalid_template`.
+    #[serde(default)]
+    template: Option<String>,
+}
+
+fn create_refusal(status: StatusCode, body: serde_json::Value) -> Response {
+    (status, Json(body)).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -182,9 +196,37 @@ async fn create_instance(
     body: Option<Json<CreateInstanceRequest>>,
 ) -> Result<Response, ApiError> {
     let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
-    let subscription_id = body
-        .and_then(|Json(request)| request.subscription_id)
-        .filter(|value| !value.trim().is_empty());
+    let request = body.map(|Json(request)| request);
+    let (subscription_id, location, template) = match request {
+        Some(request) => (request.subscription_id, request.location, request.template),
+        None => (None, None, None),
+    };
+    let subscription_id = subscription_id.filter(|value| !value.trim().is_empty());
+    let Ok(location) = crate::services::provisioning::normalize_location(location.as_deref()) else {
+        return Ok(create_refusal(
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({
+                "error": "invalid_location",
+                "locations": crate::services::provisioning::CLOUD_LOCATIONS,
+            }),
+        ));
+    };
+    let template = template
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Some(template) = &template {
+        if crate::services::provisioning::starter_template(template).is_none() {
+            return Ok(create_refusal(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({ "error": "invalid_template", "template": template }),
+            ));
+        }
+    }
+    let placement = crate::services::provisioning::CloudPlacement {
+        location: location.clone(),
+        template,
+        idempotency_key: None,
+    };
 
     match subscription_id.as_deref() {
         Some(subscription_id) => ensure_active_subscription(
@@ -197,10 +239,28 @@ async fn create_instance(
         None => require_admin(&user.id)?,
     }
 
-    let view = state
+    let view = match state
         .provisioning_service
-        .create(&user.id, subscription_id.as_deref())
-        .await?;
+        .create_placed(&user.id, subscription_id.as_deref(), &placement)
+        .await
+    {
+        Ok(view) => view,
+        Err(error) if crate::services::provisioning::is_region_unavailable(&error) => {
+            return Ok(create_refusal(
+                StatusCode::SERVICE_UNAVAILABLE,
+                serde_json::json!({ "error": "region_unavailable", "location": location }),
+            ));
+        }
+        Err(ApiError::BadRequest(message))
+            if message.starts_with(crate::services::provisioning::LOCATION_NOT_AVAILABLE) =>
+        {
+            return Ok(create_refusal(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({ "error": "location_not_available", "location": location }),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
     Ok((StatusCode::CREATED, Json(serde_json::json!({ "instance": view }))).into_response())
 }
 

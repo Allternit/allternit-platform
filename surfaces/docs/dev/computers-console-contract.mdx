@@ -206,16 +206,20 @@ Errors:
 | `DELETE /api/v1/computers/:id/ssh-keys/:keyId` | Remove a key | planned (step 2.7) |
 | `GET /api/v1/computers/snippets` | `{ snippets: [{ id, name, command, description? }] }` (a bare array is also accepted) | planned (step 2.9) |
 | `POST /api/v1/computers/snippets/:id/run` | `{ computers: [], approvalConfirmed }` returns `{ runs: [{ computerId, approvalId, changeId, status, error }] }` | planned (step 2.9) |
-| `POST /api/v1/computers/:id/restart` | Restart a cloud computer | planned (step 2.4) |
-| `POST /api/v1/computers/:id/move` | `{ location }` | planned (step 2.4) |
-| `POST /api/v1/computers/:id/rebuild` | Held until the backup check passes | planned (step 2.4) |
+| `POST /api/v1/computers/:id/restart` | No body. `{ instance }`. 409 `{ error: "asleep", status }` when it is not running (never woken), 409 `{ error: "busy", status }` mid-change | built (step 2.4) |
+| `POST /api/v1/computers/:id/move` | `{ location }` returns 501 `{ error: "move_not_supported", location, locations }`: Orgo keeps a computer in the city it was created in (its own move endpoint changes workspace, not city) | not available (step 2.4) |
+| `POST /api/v1/computers/:id/rebuild` | `{ confirm: true }` returns 202 `{ instance }` (status `provisioning` during first boot, same row id). 400 `{ error: "confirm_required" }`. 409 `{ error: "no_recent_backup", latestBackupAt, maxAgeHours: 48 }`: nothing was deleted. 503 `{ error: "region_unavailable", location }`, 503 `{ error: "backup_check_failed" }` | built (step 2.4) |
 | `GET /api/v1/computers/:id/backups` | `{ backups: [{ id, createdAt, sizeBytes? }] }` | planned (step 2.6) |
 | `POST /api/v1/computers/:id/backups/restore` | `{ backupId }` | planned (step 2.6) |
-| `GET /api/v1/computers/templates` | Starter templates | planned (step 2.4) |
+| `GET /api/v1/computers/templates` | `{ templates: [{ id, name, description? }] }`. An empty list means default Ubuntu only | built (step 2.4) |
 | `PATCH /api/v1/computers/paired/:id` | `{ name }` renames a paired computer | planned (step 2.10) |
 | `DELETE /api/v1/computers/paired/:id` | Remove a paired computer | exists |
 
 Snippet runs reuse the approval mint above, one approval per computer.
+
+For the routes above that act on cloud computers (restart, move, rebuild), `:id` must be one of the caller's cloud rows. A paired or desktop id is 404 `{ error: "not_a_cloud_computer" }`, and a computer on a host that cannot do the action is 501 `{ error: "not_supported", action }`.
+
+Location and template are picked on create: `POST /api/v1/provisioned-instances` takes optional `location` (`nyc`, `chi`, `lon` or `syd`) and `template` (an id from `GET /api/v1/computers/templates`). A location outside those four is 400 `{ error: "invalid_location", locations }`, and a template not on the list is 400 `{ error: "invalid_template" }`. A location asked of a computer that is not routed to Orgo is 400 `{ error: "location_not_available" }`. A full city is 503 `{ error: "region_unavailable", location }`, and no computer or row is left behind. The location is stored in `provisioned_instances.location` and shown as the console row's `region`.
 
 ## Alert push
 
@@ -261,8 +265,8 @@ Each computer gets its own key. Agents get short-lived keys. The probe writes a 
 
 `CloudComputerSettings`: `{ location, sizeId, diskGb, sleepAfterMin, wakePolicy, image }`.
 
-- Location is chosen on create: `nyc`, `chi`, `lon` or `syd`. Move, restart, resize, grow disk, clone and rebuild are supported.
-- Rebuild is delete, create and first boot in the same location. It is held until a backup check passes, because it destroys the only disk copy.
+- Location is chosen on create: `nyc`, `chi`, `lon` or `syd`. Restart and rebuild are built. Resize, grow disk and clone come in step 2.5. Moving to another city is not possible: Orgo keeps a computer where it was created.
+- Rebuild is delete, create and first boot in the same location, size and template. It is held until an Orgo daily backup newer than 48 hours exists, because it destroys the only disk copy. The row id stays the same. The old runtime device is revoked, and the new computer pairs on first boot.
 - Daily backups are on.
 - Image is Ubuntu only (`image: 'ubuntu'`). Starter templates ship only if their `setup.sh` passes.
 - Public URLs are out of scope.
