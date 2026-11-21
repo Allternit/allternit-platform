@@ -1,0 +1,70 @@
+# Table for mask.rs. Sections are separated by blank lines. Each section gets
+# one Masker (so private key blocks carry across lines). OPTS|ips=false,keep_mesh=true
+# is optional. IN| is the raw line, OUT| the expected masked line.
+
+IN|Accepted publickey for root from 203.0.113.7 port 52211 ssh2
+OUT|Accepted publickey for root from [ip] port 52211 ssh2
+IN|connect from 10.0.0.5:8080 refused
+OUT|connect from [ip]:8080 refused
+IN|peer 100.64.1.9 joined
+OUT|peer [ip] joined
+
+OPTS|keep_mesh=true
+IN|100.64.0.1 and 100.127.255.254 and 100.128.0.1 and 8.8.4.4
+OUT|100.64.0.1 and 100.127.255.254 and [ip] and [ip]
+
+IN|listening on 127.0.0.1:3000 and [::1]:3000
+OUT|listening on 127.0.0.1:3000 and [::1]:3000
+IN|client 2001:db8::1 connected
+OUT|client [ip] connected
+IN|src=fe80::1ff:fe23:4567:890a dst=::1
+OUT|src=[ip] dst=::1
+
+IN|user alice@example.com logged in
+OUT|user [email]@example.com logged in
+IN|Started user@1000.service - User Manager for UID 1000.
+OUT|Started user@1000.service - User Manager for UID 1000.
+
+IN|Authorization: Bearer abcdef1234567890xyz
+OUT|Authorization: Bearer [token]
+IN|token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk sent
+OUT|token [token] sent
+
+IN|connecting with password=hunter2 user=bob
+OUT|connecting with password=[secret] user=bob
+IN|{"api_key": "sk_live_abc123", "ok": true}
+OUT|{"api_key": "[secret]", "ok": true}
+IN|token: abc123xyz
+OUT|token: [secret]
+IN|client_secret=abc
+OUT|client_secret=[secret]
+
+IN|key AKIAIOSFODNN7EXAMPLE used
+OUT|key [key] used
+IN|session=0123456789abcdef0123456789abcdef0123 end
+OUT|session=[secret] end
+IN|file=/var/lib/application/data/some/long/directory/name1234
+OUT|file=/var/lib/application/data/some/long/directory/name1234
+IN|commit 0123456789abcdef0123456789abcdef01234567 merged
+OUT|commit 0123456789abcdef0123456789abcdef01234567 merged
+
+IN|-----BEGIN RSA PRIVATE KEY----- MIIEabc -----END RSA PRIVATE KEY-----
+OUT|[private key]
+
+IN|-----BEGIN PRIVATE KEY-----
+OUT|[private key]
+IN|MIIEvQIBADANBgkqhkiG9w0BAQEFAASC
+OUT|[private key]
+IN|-----END PRIVATE KEY-----
+OUT|[private key]
+IN|after the key 10.1.1.1
+OUT|after the key [ip]
+
+OPTS|ips=false
+IN|from 8.8.8.8 user a@b.io
+OUT|from 8.8.8.8 user [email]@b.io
+
+IN|GET /api?token=abc123&user=alice@example.com from 198.51.100.4
+OUT|GET /api?token=[secret]&user=[email]@example.com from [ip]
+IN|Nov 20 12:30:45 host sshd[812]: ok
+OUT|Nov 20 12:30:45 host sshd[812]: ok
