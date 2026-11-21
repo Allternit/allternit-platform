@@ -14,6 +14,7 @@ import {
   TOOL_PERMISSIONS,
   type AgentRecord,
   type AgentToolset,
+  type AgentSaveWarning,
   type CloudSkillRef,
   type SubagentRecord,
   type ToolPermission,
@@ -34,7 +35,6 @@ import {
   DEFAULT_RUNTIME_ID,
   cachedRuntimes,
   fetchRuntimes,
-  isPlanProvider,
   isRuntimeErrorCode,
   providerFor,
   type AccessKind,
@@ -43,6 +43,8 @@ import {
 import {
   FIELD_OF_CODE,
   RuntimeBrainPicker,
+  agentAccess,
+  agentRuntimeId,
   modelProvider,
   type RuntimeFieldError,
 } from "./RuntimeBrainPicker";
@@ -95,6 +97,24 @@ export function AgentFormPage(): React.ReactNode {
   const [runtimeId, setRuntimeId] = useState<string>(DEFAULT_RUNTIME_ID);
   const [access, setAccess] = useState<AccessKind>("credits");
   const [fieldError, setFieldError] = useState<RuntimeFieldError | null>(null);
+
+  // The agent's config with the runtime written like bots do: merged into the
+  // existing config (other keys and botBrain fields kept), never replaced.
+  const buildConfig = useCallback(
+    (brain: string): Record<string, unknown> => {
+      const existing = (agent?.config ?? {}) as Record<string, unknown>;
+      const prevBrain =
+        existing.botBrain && typeof existing.botBrain === "object" ? (existing.botBrain as Record<string, unknown>) : {};
+      const prevView =
+        existing.agentView && typeof existing.agentView === "object" ? (existing.agentView as Record<string, unknown>) : null;
+      return {
+        ...existing,
+        botBrain: { ...prevBrain, runtime: runtimeId, access, modelRef: brain },
+        agentView: prevView ?? { view: "allternit", look: "terminal" },
+      };
+    },
+    [agent, runtimeId, access]
+  );
 
   // Tools section.
   const [tools, setTools] = useState<unknown[]>([]);
@@ -156,11 +176,9 @@ export function AgentFormPage(): React.ReactNode {
         setAgent(loaded);
         setName(loaded.name);
         setModel(loaded.model);
-        const cfg = (loaded.config ?? {}) as { runtime?: unknown; access?: unknown };
-        const loadedRuntime = loaded.runtime ?? (typeof cfg.runtime === "string" ? cfg.runtime : null);
-        setRuntimeId(loadedRuntime || DEFAULT_RUNTIME_ID);
-        const loadedAccess = loaded.access ?? (typeof cfg.access === "string" ? (cfg.access as AccessKind) : null);
-        setAccess(loadedAccess ?? (isPlanProvider(loaded.provider ?? "") ? "plan" : "credits"));
+        // allternit-api keeps runtime/access in config.botBrain, like bots.
+        setRuntimeId(agentRuntimeId(loaded));
+        setAccess(agentAccess(loaded, cachedRuntimes() ?? []));
         setDescription(loaded.description ?? "");
         setSystemPrompt(loaded.system_prompt ?? "");
         setTemperature(String(loaded.temperature ?? 0.7));
@@ -217,8 +235,7 @@ export function AgentFormPage(): React.ReactNode {
             name,
             description: description || undefined,
             model,
-            runtime: runtimeId,
-            access,
+            config: buildConfig(model || defaultModelId),
             system_prompt: systemPrompt || undefined,
             temperature: Number(temperature) || 0.7,
             max_iterations: Number(maxIterations) || 10,
@@ -237,8 +254,7 @@ export function AgentFormPage(): React.ReactNode {
           {
             name: name || "my-agent",
             model: model || defaultModelId,
-            runtime: runtimeId,
-            access,
+            config: buildConfig(model || defaultModelId),
             description: description || undefined,
             system_prompt: systemPrompt || undefined,
             temperature: Number(temperature) || 0.7,
@@ -251,7 +267,7 @@ export function AgentFormPage(): React.ReactNode {
         )
       );
     }
-  }, [view, isEdit, agent, name, model, runtimeId, access, defaultModelId, description, systemPrompt, temperature, maxIterations, tools, allowedSkills, toolPermissions, boundMcpIds]);
+  }, [view, isEdit, agent, name, model, buildConfig, defaultModelId, description, systemPrompt, temperature, maxIterations, tools, allowedSkills, toolPermissions, boundMcpIds]);
 
   const addTool = useCallback(() => {
     const trimmed = newToolName.trim();
@@ -302,6 +318,7 @@ export function AgentFormPage(): React.ReactNode {
       setFieldError(null);
       try {
         let agentId = id;
+        let warnings: AgentSaveWarning[] = [];
         if (view === "code") {
           // Raw mode: the textarea IS the payload. tool_permissions and
           // mcp_connector_ids are not agent-body fields — they ride the
@@ -335,8 +352,7 @@ export function AgentFormPage(): React.ReactNode {
             model: brain,
             // Same provider as before for Cloud brains; a plan brain sends `subs-<vendor>`.
             provider: access === "plan" ? providerFor(vendor, "plan") : deriveProvider(brain),
-            runtime: runtimeId,
-            access,
+            config: buildConfig(brain),
             description: description.trim() || undefined,
             system_prompt: systemPrompt.trim() || undefined,
             temperature: Number(temperature) || 0.7,
@@ -344,12 +360,12 @@ export function AgentFormPage(): React.ReactNode {
             tools,
             allowed_skills: allowedSkills,
           };
-          if (isEdit && agentId) {
-            await patchAgent(agentId, agentBody);
-          } else {
-            const created = await createAgent(agentBody as { name: string; model: string });
-            agentId = created.id;
-          }
+          const saved =
+            isEdit && agentId
+              ? await patchAgent(agentId, agentBody)
+              : await createAgent(agentBody as { name: string; model: string });
+          agentId = saved.id ?? agentId;
+          warnings = saved.warnings ?? [];
           // Toolset surface (edit or the post-create binding for new agents):
           // per-tool permissions and MCP bindings only exist on PUT toolset.
           if (agentId) {
@@ -361,7 +377,8 @@ export function AgentFormPage(): React.ReactNode {
             });
           }
         }
-        navigate(agentId ? `/agents/${agentId}` : "/agents");
+        // runtime_not_installed etc.: the save succeeded; the detail page shows the note.
+        navigate(agentId ? `/agents/${agentId}` : "/agents", warnings.length > 0 ? { state: { warnings } } : undefined);
       } catch (err) {
         // 422 runtime_unknown / brain_not_fit / plan_not_allowed_on_runtime:
         // the server's sentence goes under its field, not the page banner.
@@ -388,8 +405,7 @@ export function AgentFormPage(): React.ReactNode {
       model,
       models,
       defaultModelId,
-      runtimeId,
-      access,
+      buildConfig,
       description,
       systemPrompt,
       temperature,

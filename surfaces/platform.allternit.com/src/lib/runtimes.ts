@@ -146,34 +146,25 @@ export function findRuntime(list: readonly RuntimeEntry[], id: string | null | u
   return list.find((r) => r.id === key || (r.aliases ?? []).includes(key));
 }
 
-// ─── Rules ──────────────────────────────────────────────────────────────────
+// ─── Rules (shared rule: handoffs/harness-bots-2-2026-11-20/ALLOWED-RULE.md,
+//     reference gizzi runtime-registry.ts / platform #2785) ──────────────────
 
-/**
- * Plan id (registry `plans` value) for a provider id: a vendor id, a
- * subscription id (`subs-anthropic`) or a CLI sign-in (`claude-cli`).
- */
-const PLAN_OF: Record<string, string> = {
+/** Built-in `plans` table, used when the registry body has no `plans` yet (older server). */
+const PLANS_FALLBACK: Record<string, string[]> = {
+  allternit: ["claude", "chatgpt", "kimi", "gemini", "copilot"],
+  claude: ["claude"],
+  codex: ["chatgpt"],
+  kimi: ["kimi"],
+  antigravity: ["gemini"],
+  copilot: ["copilot"],
+};
+
+export const PLAN_OF_VENDOR: Record<string, string> = {
   anthropic: "claude",
-  claude: "claude",
-  "claude-cli": "claude",
-  "claude-code": "claude",
   openai: "chatgpt",
-  chatgpt: "chatgpt",
-  codex: "chatgpt",
-  "codex-cli": "chatgpt",
-  moonshot: "kimi",
-  moonshotai: "kimi",
-  kimi: "kimi",
-  "kimi-cli": "kimi",
-  "kimi-code": "kimi",
   google: "gemini",
-  gemini: "gemini",
-  "gemini-cli": "gemini",
-  antigravity: "gemini",
-  agy: "gemini",
-  copilot: "copilot",
-  "github-copilot": "copilot",
-  "copilot-cli": "copilot",
+  moonshot: "kimi",
+  microsoft: "copilot",
 };
 
 export const PLAN_NAME: Record<string, string> = {
@@ -184,92 +175,94 @@ export const PLAN_NAME: Record<string, string> = {
   copilot: "Copilot",
 };
 
-/** The subscription vendor id used for a plan brain's provider (`subs-<vendor>`). */
-const PLAN_VENDOR: Record<string, string> = {
-  claude: "anthropic",
-  chatgpt: "openai",
-  kimi: "moonshot",
-  gemini: "google",
-  copilot: "github-copilot",
-};
+const VENDOR_OF_PLAN: Record<string, string> = Object.fromEntries(
+  Object.entries(PLAN_OF_VENDOR).map(([vendor, plan]) => [plan, vendor])
+);
 
-const CLI_PLAN_IDS = new Set(["claude-cli", "codex-cli", "kimi-cli", "gemini-cli", "copilot-cli", "agy", "antigravity"]);
-
-function bare(providerId: string): string {
-  return providerId.toLowerCase().replace(/^subs-/, "");
+/** The plans a runtime may use: the registry's `plans`, else the built-in table. */
+export function plansOf(runtime: RuntimeEntry): string[] {
+  if (Array.isArray(runtime.plans)) return runtime.plans;
+  return PLANS_FALLBACK[runtime.id] ?? [];
 }
 
-/** Plan id for a provider, or undefined when the provider has no consumer plan. */
-export function planOf(providerId: string): string | undefined {
-  return PLAN_OF[bare(providerId)];
+/** Plan id a vendor (or plan id) has, for the console's Access › plan button. */
+export function planOf(vendorOrPlan: string): string | undefined {
+  const v = vendorOrPlan.toLowerCase();
+  return PLAN_OF_VENDOR[v] ?? (PLAN_NAME[v] ? v : undefined);
 }
 
-/** True when a brain from this provider id is a plan brain (subscription or CLI plan sign-in). */
-export function isPlanProvider(providerId: string): boolean {
-  const p = providerId.toLowerCase();
-  return p.startsWith("subs-") || CLI_PLAN_IDS.has(p);
+/**
+ * The plan a provider id signs in with, or undefined (API key, local, credits):
+ * `subs-<rest>` → PLAN_OF_VENDOR[rest] ?? rest; a CLI plan sign-in (the
+ * runtime whose `tool` is the id and has exactly one plan) → that plan.
+ */
+export function planProvider(providerId: string, runtimes: readonly RuntimeEntry[] = []): string | undefined {
+  if (providerId.startsWith("subs-")) {
+    const rest = providerId.slice(5);
+    return PLAN_OF_VENDOR[rest] ?? rest;
+  }
+  const owner = runtimes.find((r) => r.tool === providerId && plansOf(r).length === 1);
+  return owner ? plansOf(owner)[0] : undefined;
+}
+
+/** Provider id equals the runtime's tool, id, one of its aliases, or one of the tool's aliases. */
+export function isOwnCli(runtime: RuntimeEntry, providerId: string): boolean {
+  if (providerId === runtime.id) return true;
+  if (!runtime.tool) return false;
+  return (
+    providerId === runtime.tool ||
+    (runtime.aliases ?? []).includes(providerId) ||
+    (runtime.toolAliases ?? []).includes(providerId)
+  );
 }
 
 /** The provider id sent for a brain: `subs-<vendor>` when it runs on a plan. */
 export function providerFor(vendorProvider: string, access: AccessKind): string {
   if (access !== "plan") return vendorProvider;
   const plan = planOf(vendorProvider);
-  return plan ? `subs-${PLAN_VENDOR[plan]}` : vendorProvider;
-}
-
-/** Ids a runtime's own CLI answers to (its tool, id and aliases). */
-function ownIds(r: RuntimeEntry): string[] {
-  if (!r.tool) return [];
-  return [r.tool, r.id, ...(r.aliases ?? []), ...(r.toolAliases ?? [])].map((s) => s.toLowerCase());
+  return plan ? `subs-${VENDOR_OF_PLAN[plan] ?? plan}` : vendorProvider;
 }
 
 /** Does a brain from `providerId` fit this runtime? (contract "Compatibility: provider ids") */
 export function fits(runtime: RuntimeEntry, providerId: string): boolean {
   if (runtime.brains === "any") return true;
-  const p = bare(providerId);
-  if (runtime.brains.map((b) => b.toLowerCase()).includes(p)) return true;
-  return ownIds(runtime).includes(p);
+  const p = providerId.replace(/^subs-/, "");
+  if (runtime.brains.includes(p)) return true;
+  if (!runtime.tool) return false;
+  return isOwnCli(runtime, p);
 }
 
-/** The plans a runtime may use, with the contract's fallback when the registry has no `plans`. */
-export function plansOf(runtime: RuntimeEntry): string[] {
-  if (Array.isArray(runtime.plans)) return runtime.plans;
-  if (runtime.id === DEFAULT_RUNTIME_ID) return ALLTERNIT_RUNTIME.plans ?? [];
-  const own = ownIds(runtime).map((id) => PLAN_OF[id]).filter((p): p is string => Boolean(p));
-  return [...new Set(own)];
-}
-
-/**
- * fits AND, for a plan brain, the plan's provider is in `runtime.plans`.
- * A runtime's own CLI sign-in always passes.
- */
-export function allowed(runtime: RuntimeEntry, providerId: string): boolean {
+/** fits AND (not a plan, or the runtime's own CLI, or the plan is in `runtime.plans`). */
+export function allowed(runtime: RuntimeEntry, providerId: string, runtimes: readonly RuntimeEntry[] = []): boolean {
   if (!fits(runtime, providerId)) return false;
-  if (!isPlanProvider(providerId)) return true;
-  if (ownIds(runtime).includes(providerId.toLowerCase())) return true;
-  const plan = planOf(providerId);
-  return plan ? plansOf(runtime).includes(plan) : false;
+  const plan = planProvider(providerId, runtimes);
+  return plan === undefined || isOwnCli(runtime, providerId) || plansOf(runtime).includes(plan);
 }
 
 /** The first brain (in the caller's order) that `allowed` accepts. */
 export function firstAllowedBrain<T>(
   runtime: RuntimeEntry,
   brains: readonly T[],
-  providerOf: (brain: T) => string
+  providerOf: (brain: T) => string,
+  runtimes: readonly RuntimeEntry[] = []
 ): T | undefined {
-  return brains.find((b) => allowed(runtime, providerOf(b)));
+  return brains.find((b) => allowed(runtime, providerOf(b), runtimes));
 }
 
-/** The runtime that owns a plan (Claude plan → Claude Code), for the plan message. */
-export function ownRuntimeForPlan(list: readonly RuntimeEntry[], plan: string): RuntimeEntry | undefined {
-  return list.find((r) => r.id !== DEFAULT_RUNTIME_ID && r.tool && ownIds(r).some((id) => PLAN_OF[id] === plan));
-}
-
-/** Same text the server sends for `plan_not_allowed_on_runtime`. */
-export function planNotAllowedMessage(list: readonly RuntimeEntry[], runtime: RuntimeEntry, plan: string): string {
-  const own = ownRuntimeForPlan(list, plan);
-  const pick = own ? `, or pick ${own.name}` : `, or pick ${ALLTERNIT_RUNTIME.name}`;
-  return `${PLAN_NAME[plan] ?? plan}'s plan can't be used inside ${runtime.name}. Use an API key${pick}.`;
+/**
+ * Same text the server sends for `plan_not_allowed_on_runtime` (only when the
+ * brain fits but is not allowed); null otherwise.
+ */
+export function planRefusal(
+  runtimes: readonly RuntimeEntry[],
+  runtime: RuntimeEntry,
+  providerId: string
+): string | null {
+  if (!fits(runtime, providerId) || allowed(runtime, providerId, runtimes)) return null;
+  const plan = planProvider(providerId, runtimes);
+  if (!plan) return null;
+  const own = runtimes.find((r) => r.id !== DEFAULT_RUNTIME_ID && plansOf(r).includes(plan));
+  return `${PLAN_NAME[plan] ?? plan}'s plan can't be used inside ${runtime.name}. Use an API key, or pick ${own?.name ?? "Allternit"}.`;
 }
 
 /** Field errors the server returns as 422 `{error, message}`. */

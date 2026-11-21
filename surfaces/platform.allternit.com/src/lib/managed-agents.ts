@@ -33,16 +33,15 @@ export interface AgentRecord {
   /** The brain (model id). */
   model: string;
   provider: string;
-  /** Runtime registry id (Harness & Bots 2.0); absent on old records = "allternit". */
-  runtime?: string | null;
-  /** How the brain is paid for. */
-  access?: "plan" | "key" | "local" | "credits" | null;
-  agentView?: { view?: string; look?: string } | null;
   capabilities?: unknown;
   system_prompt?: string | null;
   tools?: unknown;
   max_iterations?: number;
   temperature?: number;
+  /**
+   * Free-form config. Harness & Bots 2.0 keeps the runtime here like bots do:
+   * `botBrain: { runtime, access, modelRef, ... }` and `agentView: { view, look }`.
+   */
   config?: Record<string, unknown> | null;
   status: string;
   workspace_id?: string | null;
@@ -112,17 +111,32 @@ export async function getAgent(id: string): Promise<AgentRecord> {
   return data.agent;
 }
 
-export async function createAgent(body: Record<string, unknown>): Promise<AgentRecord> {
-  const data = await api.post<{ agent: AgentRecord }>("/api/v1/agents", body);
-  return data.agent;
+/** Save-time notes from allternit-api, e.g. `runtime_not_installed` (the save still succeeded). */
+export interface AgentSaveWarning {
+  code: string;
+  runtime?: string;
+  message: string;
 }
 
-export async function patchAgent(id: string, body: Record<string, unknown>): Promise<AgentRecord> {
-  const data = await api.patch<{ agent: AgentRecord }>(
+export type SavedAgent = AgentRecord & { warnings?: AgentSaveWarning[] };
+
+function withWarnings(data: { agent: AgentRecord; warnings?: AgentSaveWarning[] }): SavedAgent {
+  return Array.isArray(data.warnings) && data.warnings.length > 0
+    ? { ...data.agent, warnings: data.warnings }
+    : data.agent;
+}
+
+export async function createAgent(body: Record<string, unknown>): Promise<SavedAgent> {
+  const data = await api.post<{ agent: AgentRecord; warnings?: AgentSaveWarning[] }>("/api/v1/agents", body);
+  return withWarnings(data);
+}
+
+export async function patchAgent(id: string, body: Record<string, unknown>): Promise<SavedAgent> {
+  const data = await api.patch<{ agent: AgentRecord; warnings?: AgentSaveWarning[] }>(
     `/api/v1/agents/${encodeURIComponent(id)}`,
     body
   );
-  return data.agent;
+  return withWarnings(data);
 }
 
 export async function archiveAgent(id: string): Promise<void> {

@@ -12,12 +12,12 @@ import {
   DEFAULT_RUNTIME_ID,
   cachedRuntimes,
   fetchRuntimes,
-  isPlanProvider,
+  planProvider,
   PLAN_NAME,
   allowed,
   findRuntime,
   fits,
-  planNotAllowedMessage,
+  planRefusal,
   planOf,
   providerFor,
   type AccessKind,
@@ -113,18 +113,24 @@ export function useRuntimes(): RuntimeEntry[] {
   return list;
 }
 
-/** An agent's runtime id: the field, else `config.runtime`, else allternit. */
-export function agentRuntimeId(agent: AgentRecord): string {
-  const cfg = (agent.config ?? {}) as { runtime?: unknown };
-  return agent.runtime || (typeof cfg.runtime === "string" ? cfg.runtime : "") || DEFAULT_RUNTIME_ID;
+/** `config.botBrain` of an agent record (allternit-api stores runtime/access there, like bots). */
+export function agentBotBrain(agent: Pick<AgentRecord, "config">): { runtime?: string; access?: string } {
+  const cfg = (agent.config ?? {}) as { botBrain?: unknown };
+  const bb = cfg.botBrain;
+  return bb && typeof bb === "object" ? (bb as { runtime?: string; access?: string }) : {};
 }
 
-/** An agent's access: the field, else `config.access`, else plan for a `subs-`/CLI provider, else credits. */
-export function agentAccess(agent: AgentRecord): AccessKind {
-  const cfg = (agent.config ?? {}) as { access?: unknown };
-  const raw = agent.access ?? (typeof cfg.access === "string" ? cfg.access : null);
+/** An agent's runtime id: `config.botBrain.runtime`, else allternit. */
+export function agentRuntimeId(agent: AgentRecord): string {
+  const rt = agentBotBrain(agent).runtime;
+  return typeof rt === "string" && rt ? rt : DEFAULT_RUNTIME_ID;
+}
+
+/** An agent's access: `config.botBrain.access`, else plan for a plan provider, else credits. */
+export function agentAccess(agent: AgentRecord, runtimes: readonly RuntimeEntry[] = []): AccessKind {
+  const raw = agentBotBrain(agent).access;
   if (raw === "plan" || raw === "key" || raw === "local" || raw === "credits") return raw;
-  return isPlanProvider(agent.provider ?? "") ? "plan" : "credits";
+  return planProvider(agent.provider ?? "", runtimes) ? "plan" : "credits";
 }
 
 /** Runtime name + access badge, for the agent list and detail pages. */
@@ -226,7 +232,7 @@ export function RuntimeBrainPicker({
     const notes: string[] = [];
     let nextProvider = provider;
     if (!fits(next, provider) && orderedModels.length > 0) {
-      const first = orderedModels.find((m) => allowed(next, modelProvider(m)));
+      const first = orderedModels.find((m) => allowed(next, modelProvider(m), runtimes));
       if (first) {
         onModelChange(first.id);
         nextProvider = modelProvider(first);
@@ -237,7 +243,7 @@ export function RuntimeBrainPicker({
       }
     }
     const choices = accessChoices(next, nextProvider);
-    const planBlocked = access === "plan" && !allowed(next, providerFor(nextProvider, "plan"));
+    const planBlocked = access === "plan" && !allowed(next, providerFor(nextProvider, "plan"), runtimes);
     if (planBlocked || !choices.includes(access)) {
       const fallback = choices.find((a) => a !== "plan") ?? choices[0];
       if (fallback && fallback !== access) {
@@ -260,7 +266,7 @@ export function RuntimeBrainPicker({
     onModelChange(id);
     const p = modelProvider(models.find((m) => m.id === id), id);
     const choices = accessChoices(runtime, p);
-    if (!choices.includes(access) || (access === "plan" && !allowed(runtime, providerFor(p, "plan")))) {
+    if (!choices.includes(access) || (access === "plan" && !allowed(runtime, providerFor(p, "plan"), runtimes))) {
       const fallback = choices.find((a) => a !== "plan") ?? choices[0];
       if (fallback) onAccessChange(fallback);
     }
@@ -268,9 +274,9 @@ export function RuntimeBrainPicker({
 
   const pickAccess = (a: AccessKind): void => {
     onClearFieldError();
-    if (a === "plan" && !allowed(runtime, providerFor(provider, "plan"))) {
+    if (a === "plan" && !allowed(runtime, providerFor(provider, "plan"), runtimes)) {
       const plan = planOf(provider);
-      setPlanHint(plan ? planNotAllowedMessage(runtimes, runtime, plan) : null);
+      setPlanHint(plan ? planRefusal(runtimes, runtime, providerFor(provider, "plan")) : null);
       return;
     }
     setPlanHint(null);
@@ -301,7 +307,7 @@ export function RuntimeBrainPicker({
         >
           {visibleRuntimes.map((r) => {
             const selected = r.id === runtime.id;
-            const canRun = fits(r, provider) || orderedModels.some((m) => allowed(r, modelProvider(m)));
+            const canRun = fits(r, provider) || orderedModels.some((m) => allowed(r, modelProvider(m), runtimes));
             return (
               <button
                 key={r.id}
@@ -421,7 +427,7 @@ export function RuntimeBrainPicker({
             className="flex flex-wrap gap-1.5"
           >
             {choices.map((a) => {
-              const blocked = a === "plan" && !allowed(runtime, providerFor(provider, "plan"));
+              const blocked = a === "plan" && !allowed(runtime, providerFor(provider, "plan"), runtimes);
               const selected = access === a;
               return (
                 <button

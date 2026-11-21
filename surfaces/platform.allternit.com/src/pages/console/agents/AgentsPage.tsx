@@ -206,7 +206,7 @@ export function AgentsPage(): React.ReactNode {
                     </td>
                     <td className={cn(TD_CLASS, "font-medium")}>{agent.name}</td>
                     <td className={cn(TD_CLASS, "text-[12px] text-[var(--text-secondary)]")}>
-                      <RuntimeLabel runtimes={runtimes} runtimeId={agentRuntimeId(agent)} access={agentAccess(agent)} />
+                      <RuntimeLabel runtimes={runtimes} runtimeId={agentRuntimeId(agent)} access={agentAccess(agent, runtimes)} />
                     </td>
                     <td className={cn(TD_CLASS, "font-mono text-[12px] text-[var(--text-secondary)]")}>
                       {agent.model}
