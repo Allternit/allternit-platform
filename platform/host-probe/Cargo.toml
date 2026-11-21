@@ -14,3 +14,15 @@ regex = { workspace = true }
 dirs = { workspace = true }
 uuid = { workspace = true }
 sysinfo = "0.30"
+
+[target.'cfg(windows)'.dependencies]
+# Named pipe channel to the SYSTEM helper (elevation/win.rs).
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
