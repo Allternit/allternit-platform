@@ -3,8 +3,9 @@
 //! `runtime_events`) carrying the routines due in the next 24 h, so the cloud
 //! (which is awake when this computer is not) can tell the owner when a
 //! scheduled run is missed because this computer is asleep. It also carries the
-//! live agent sessions on this computer (`sessions`, contract C6/C7), and the
-//! Files drive's storage discovery (`filesStorage`, Files SPEC section 15).
+//! live agent sessions on this computer (`sessions`, contract C6/C7), the
+//! Files drive's storage discovery (`filesStorage`, Files SPEC section 15),
+//! and the Computers console `hostSample` (the `/v1/host/snapshot` body).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +22,9 @@ use crate::runtime_events::EventSink;
 use crate::AppState;
 
 pub const HEARTBEAT_PATH: &str = "/api/v1/runtime-presence/heartbeat";
+/// The heartbeat field cloud-api stores as this runtime's metrics sample
+/// (`computer_metrics::SAMPLE_FIELD`).
+pub const HOST_SAMPLE_KEY: &str = "hostSample";
 const EVERY: Duration = Duration::from_secs(60);
 const HORIZON_HOURS: i64 = 24;
 const MAX_DUE: usize = 50;
@@ -234,6 +238,10 @@ pub async fn beat_once(state: &AppState, sink: &dyn EventSink, cloud: &str) -> R
     if let Some(storage) = crate::files_v2::heartbeat_report().await {
         body[crate::files_v2::HEARTBEAT_KEY] = storage;
     }
+    // Computers console (D4): this computer's HostSnapshot, sampled off the async runtime.
+    if let Some(sample) = crate::host_routes::host_api().host_sample().await {
+        body[HOST_SAMPLE_KEY] = sample;
+    }
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
     let headers = sign(&token, &owner, &runtime_id, &bytes);
     match sink.post(&format!("{cloud}{HEARTBEAT_PATH}"), headers, bytes).await {
@@ -272,6 +280,10 @@ async fn beat_and_reconcile(state: &AppState, cloud: &str) -> Result<bool, Strin
     // Files drive (SPEC section 15): storage discovery, kept by the cloud while this computer sleeps.
     if let Some(storage) = crate::files_v2::heartbeat_report().await {
         body[crate::files_v2::HEARTBEAT_KEY] = storage;
+    }
+    // Computers console (D4): this computer's HostSnapshot, sampled off the async runtime.
+    if let Some(sample) = crate::host_routes::host_api().host_sample().await {
+        body[HOST_SAMPLE_KEY] = sample;
     }
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
     let mut req = crate::net_client::client().post(format!("{cloud}{HEARTBEAT_PATH}")).timeout(Duration::from_secs(20)).header("content-type", "application/json");
