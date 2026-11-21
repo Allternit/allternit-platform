@@ -31,6 +31,9 @@ struct CodeModeView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
     @StateObject private var terminalStore = CodeTerminalStore()
+    /// Lives for the whole Code screen so a Move started in the sessions sheet
+    /// finishes and opens its terminal even after the sheet is closed.
+    @State private var terminalSessions = TerminalSessionsStore()
     @StateObject private var instanceStore = InstanceStore.shared
 
     @State private var sessions: [AgentSession] = []
@@ -477,7 +480,8 @@ struct CodeModeView: View {
                         shellOpen = true
                     }
                 }
-            }
+            },
+            terminalSessions: terminalSessions
         )
     }
 

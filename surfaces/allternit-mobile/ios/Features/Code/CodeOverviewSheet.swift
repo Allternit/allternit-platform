@@ -73,9 +73,12 @@ struct CodeSessionsOverview: View {
     /// Opens a terminal on the computer by its session id (and title) in
     /// the Code terminal. nil hides the terminal sections.
     var onOpenTerminal: ((String, String) -> Void)? = nil
+    /// Owned by the Code screen, not this sheet, so a Move keeps being followed
+    /// (and opens its terminal) after the sheet closes. This view only starts
+    /// and stops its polling with its own visibility.
+    let terminalSessions: TerminalSessionsStore
 
     @Environment(\.scenePhase) private var scenePhase
-    @State private var terminalSessions = TerminalSessionsStore()
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var shellSessions = ShellSessionsStore.shared
     @ReducedMotion private var reduced
