@@ -220,8 +220,8 @@ private struct InboxRow: View {
     ]
 
     private static let trust: [String: String] = [
-        "owner": "you", "team": "your team", "contact": "a contact", "vendorbot": "a vendor bot",
-        "vendor_bot": "a vendor bot", "tooloutput": "a tool result", "tool_output": "a tool result",
+        "owner": "you", "team": "your team", "contact": "a contact", "vendorbot": "a Connected bot",
+        "vendor_bot": "a Connected bot", "tooloutput": "a tool result", "tool_output": "a tool result",
         "web": "a web page", "stranger": "someone you do not know",
     ]
 

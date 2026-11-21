@@ -576,6 +576,7 @@
 		A075B3D831E5FDF27BB0FC86 /* VoiceVendorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FF8439A3F3C79E73644ECB4 /* VoiceVendorClient.swift */; };
 		A076803F5886FF12CF36A054 /* BrowserChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15E60D739E1ED3BAF445214F /* BrowserChatView.swift */; };
 		A090D4B8B38519F6EDE6E4A7 /* BotBrainPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA43476B92F337EA35B155C9 /* BotBrainPickerSheet.swift */; };
+		5C1E7A2B9D4F6E8A3B0C1D2E /* RuntimeLookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D2F8B3CAE5071F94C1D2E3F /* RuntimeLookView.swift */; };
 		A0D56A46C6A07C804FF7524F /* MemoryScheduleIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 496F7255316E63C24986718B /* MemoryScheduleIntents.swift */; };
 		A0E902A0BCA9A816AB835DAE /* RFBProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F3B251D17F9A362A634A44 /* RFBProtocol.swift */; };
 		A13EBC26EEE05FA56A9BC433 /* ACIWebBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E44F010D96E6FC76D3CE571 /* ACIWebBrowserView.swift */; };
@@ -769,6 +770,7 @@
 		D3F8D1E73F813E13DAAFF1D2 /* LiveActivityManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D3988B903632B3ADBE8074A /* LiveActivityManagerTests.swift */; };
 		D41B86E3A8C7EBF626DCFA16 /* PaneRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26C1FE61EB3B6564221C4A7F /* PaneRender.swift */; };
 		D41EE5F19C6E007BF0A26499 /* ConnectionsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E623F9D8BFAA2483B34AF3C9 /* ConnectionsClient.swift */; };
+		FCD226BE42D8C4C91A346B22 /* RuntimeRegistryClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 911196A39D8A67BB5E5EA66C /* RuntimeRegistryClient.swift */; };
 		D47A155869D164B09E98752D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABBB4775FDD12CEECFBA773E /* Assets.xcassets */; };
 		D4C0BC72A8FE70696C148CD2 /* UsageMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E6361085053EA4E5F0A9B2A /* UsageMathTests.swift */; };
 		D4FEDC20AB6135E84B005FE8 /* ChannelConnectFlows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 769A45F0D8CAFD27DA0864DA /* ChannelConnectFlows.swift */; };
@@ -1787,6 +1789,7 @@
 		E60A99D58765EBD570CC5278 /* PlanThreadClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanThreadClient.swift; sourceTree = "<group>"; };
 		E6156CCE9808D4C6377A5FB6 /* BotOperationalState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotOperationalState.swift; sourceTree = "<group>"; };
 		E623F9D8BFAA2483B34AF3C9 /* ConnectionsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsClient.swift; sourceTree = "<group>"; };
+		911196A39D8A67BB5E5EA66C /* RuntimeRegistryClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeRegistryClient.swift; sourceTree = "<group>"; };
 		E66DB66683E422366E768FD2 /* BotProjectClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotProjectClient.swift; sourceTree = "<group>"; };
 		E6A6DD2F486807FB808A6E74 /* InappCallViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InappCallViews.swift; sourceTree = "<group>"; };
 		E6C7EB2085F5640346E6BE42 /* McpOfficialServers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpOfficialServers.swift; sourceTree = "<group>"; };
@@ -1850,6 +1853,7 @@
 		F9BFA89B2B0BDE51BCBFEB30 /* ProjectsLibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsLibraryStore.swift; sourceTree = "<group>"; };
 		F9DB5D5B70D22AF897292743 /* ConnectSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectSheetView.swift; sourceTree = "<group>"; };
 		FA43476B92F337EA35B155C9 /* BotBrainPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotBrainPickerSheet.swift; sourceTree = "<group>"; };
+		6D2F8B3CAE5071F94C1D2E3F /* RuntimeLookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeLookView.swift; sourceTree = "<group>"; };
 		FA9B60709ECB866C3F332F96 /* BotDesktop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotDesktop.swift; sourceTree = "<group>"; };
 		FAAAE8EF948075A8D59CD534 /* AppearanceAndNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceAndNotifications.swift; sourceTree = "<group>"; };
 		FAB32C871938973FAA140F19 /* AsciiScenes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsciiScenes.swift; sourceTree = "<group>"; };
@@ -2459,6 +2463,7 @@
 				DD574C98131DFBECE1E91F54 /* CloudInstancesClient.swift */,
 				5B425580E480D60109FCC8F9 /* CodeLanguage.swift */,
 				E623F9D8BFAA2483B34AF3C9 /* ConnectionsClient.swift */,
+				911196A39D8A67BB5E5EA66C /* RuntimeRegistryClient.swift */,
 				0D5F1CC189FE9D76750FA4E6 /* ConnectorsClient.swift */,
 				F17503E3E3D46F39CC1ED000 /* CoworkSessionsClient.swift */,
 				AFA993E3D323D4735226C5F4 /* CoworkTasksClient.swift */,
@@ -3188,6 +3193,7 @@
 				97879A6011085454783C2713 /* AgentIdenticonView.swift */,
 				2FF498E05254A11171F8A560 /* AgentWorkspaceLayout.swift */,
 				FA43476B92F337EA35B155C9 /* BotBrainPickerSheet.swift */,
+				6D2F8B3CAE5071F94C1D2E3F /* RuntimeLookView.swift */,
 				91572463CAB3A25D69FEABED /* BotHomeView.swift */,
 				3AA5109B09B22DD656D14814 /* BotWebhooksSheet.swift */,
 				1F9086A857ADB6FDFADF8567 /* BotWorkspaceFilesSheet.swift */,
@@ -4457,6 +4463,7 @@
 				FD8EDC6D571088159DE61BE9 /* BotActivityAttributes.swift in Sources */,
 				592220CC018F51F070A3D292 /* BotAvatarView.swift in Sources */,
 				A090D4B8B38519F6EDE6E4A7 /* BotBrainPickerSheet.swift in Sources */,
+				5C1E7A2B9D4F6E8A3B0C1D2E /* RuntimeLookView.swift in Sources */,
 				2D620AD53CC5BC6F2AA1CDA9 /* BotCallButton.swift in Sources */,
 				DEF472FF19D7BA3549DA9FE6 /* BotChatSessionView.swift in Sources */,
 				4FDEEB8B0BE658FD8B6F7576 /* BotChatStage.swift in Sources */,
@@ -4576,6 +4583,7 @@
 				E5B24635CF91689E4AEB7886 /* ConnectionRowView.swift in Sources */,
 				DC5CA00CA83D0BDA04F99EE4 /* ConnectionsCatalog.swift in Sources */,
 				D41EE5F19C6E007BF0A26499 /* ConnectionsClient.swift in Sources */,
+				FCD226BE42D8C4C91A346B22 /* RuntimeRegistryClient.swift in Sources */,
 				CA57CFBBCA4A665E137B9B0F /* ConnectionsSettingsView.swift in Sources */,
 				7D9D90A5E6167D1FDB20CB36 /* ConnectionsStore.swift in Sources */,
 				D03140127825489A37768513 /* Connector.swift in Sources */,

@@ -722,7 +722,7 @@ struct BotLaunchComposer: View {
                     }
                 }
                 Section {
-                    Button(action: onAddBot) { Label("Add a vendor bot…", systemImage: "powerplug") }
+                    Button(action: onAddBot) { Label("Add a Connected bot…", systemImage: "powerplug") }
                 }
             } label: {
                 Image(systemName: "chevron.down")
