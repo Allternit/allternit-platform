@@ -116,7 +116,12 @@ Clients never offer a brain that fails `allowed`. When a new runtime can't use t
 
 ### 422 errors
 
-allternit-api checks the runtime and brain on `POST /api/v1/agents`, `PUT` and `PATCH /api/v1/agents/:id`, **only when the request sets `config.botBrain.runtime` itself**. A save in the old shape (no `runtime`) is normalized as described below and never rejected. The brain is `botBrain.modelRef` (a `provider/model` string or a `{providerID, modelID}` object), else the request's `model` when it is `provider/model`. A brain with no provider is not checked. `runtime: "custom"` is not checked either.
+allternit-api checks the runtime and brain only when the request sets `config.botBrain.runtime` itself:
+
+- **`POST /api/v1/agents`** (create): always checked.
+- **`PUT` and `PATCH /api/v1/agents/:id`** (update): checked when the runtime or brain changes. The request's runtime and brain provider are compared with the stored record's normalized `botBrain` (and its `model` when `modelRef` is absent). When both are the same, the save is never rejected, even if that pair would fail today's rules. Bots saved before these rules keep working, and clients that send the whole config back on a rename are not refused. A request with no brain keeps the stored brain.
+
+A save in the old shape (no `runtime`) is normalized as described below and never rejected. The brain is `botBrain.modelRef` (a `provider/model` string or a `{providerID, modelID}` object), else the request's `model` when it is `provider/model`. A brain with no provider is not checked. `runtime: "custom"` is not checked either.
 
 ```json
 { "error": "plan_not_allowed_on_runtime", "message": "Claude's plan can't be used inside Hermes. Use an API key, or pick Claude Code." }
@@ -258,7 +263,7 @@ Each create, `PUT` or `PATCH` that carries `config.botBrain` passes through one 
   - `native_harness` with harness h becomes the runtime whose `legacy.harness`, id or alias is h, or `custom` when there is none.
   - `uhp_harness` becomes the runtime whose `legacy.uhp` holds `uhpHarnessId`, or `custom`.
 - **With `runtime`.** `mode` and `harness` are worked out from it. The Allternit runtime sets `mode: "allternit_cloud"`. A runtime with adapter `unsupported` sets `uhp_harness`. Any other runtime sets `native_harness` with its harness id.
-- **A runtime this server does not know** is rejected with `422 runtime_unknown` when the request names it (see [422 errors](#422-errors)). A stored record that already holds one is read as a native harness with that id. `custom` keeps the stored `mode` and `harness` as they are.
+- **A runtime this server does not know** is rejected with `422 runtime_unknown` when a create, or an update that changes the runtime, names it (see [422 errors](#422-errors)). A stored record that already holds one is read as a native harness with that id. `custom` keeps the stored `mode` and `harness` as they are.
 - Every other key in `botBrain` is kept. An empty or missing `botBrain` is left alone.
 
 Config is merged one top-level key at a time. A client that saves only `botBrain` replaces that object, which is why `agentView` is a separate key.

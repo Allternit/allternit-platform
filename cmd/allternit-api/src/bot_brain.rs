@@ -258,7 +258,8 @@ fn brain_ref_provider(brain: &serde_json::Map<String, Value>) -> Option<&str> {
     }
 }
 
-/// Check a bot save. Returns the 422 to send, or `Ok` — always `Ok` when the
+/// Check a bot create (and the changed part of an update, see
+/// [`validate_bot_brain_change`]). Returns the 422 to send, or `Ok` — always `Ok` when the
 /// request's `botBrain` has no `runtime` of its own (old shape) or the runtime
 /// is `custom`. The brain is `botBrain.modelRef` (string or object), else a
 /// `provider/model` `model` in the same request; a brain without a provider prefix is not judged.
@@ -310,6 +311,48 @@ pub(crate) fn validate_explicit_runtime(
         });
     }
     Ok(())
+}
+
+/// Check a bot update (PUT/PATCH) against the stored record. The rules run
+/// only when the request's `botBrain.runtime` or brain (the `modelRef`
+/// provider, else a `provider/model` `model`) differs from the stored,
+/// normalized botBrain: an existing bot that keeps its runtime and brain is
+/// never rejected, even when the pair would fail today's rules (bots saved
+/// before the rules, and clients that send the whole config back on a
+/// rename). A request with no brain keeps the stored one. A stored record with
+/// no botBrain is checked like a create.
+pub(crate) fn validate_bot_brain_change(
+    config: Option<&Value>,
+    model: Option<&str>,
+    stored_config: Option<&Value>,
+    stored_model: Option<&str>,
+    registry: &RuntimeRegistry,
+) -> Result<(), BrainRejection> {
+    let Some(brain) = config.and_then(|c| c.get("botBrain")).and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let Some(runtime_id) = str_field(brain, "runtime") else {
+        return Ok(());
+    };
+    let stored_brain = stored_config
+        .and_then(|c| c.get("botBrain"))
+        .filter(|b| b.as_object().is_some_and(|m| !m.is_empty()));
+    if let Some(stored_brain) = stored_brain {
+        let mut stored_brain = stored_brain.clone();
+        normalize_bot_brain(&mut stored_brain, registry);
+        let canon = |id: &str| registry.get(id).map(|r| r.id.clone()).unwrap_or_else(|| id.to_string());
+        let same_runtime = stored_brain.get("runtime").and_then(Value::as_str).map(canon) == Some(canon(runtime_id));
+        let asked = brain_ref_provider(brain).or_else(|| model.and_then(ref_provider));
+        let stored = stored_brain
+            .as_object()
+            .and_then(brain_ref_provider)
+            .or_else(|| stored_model.and_then(ref_provider));
+        let same_brain = asked.is_none() || asked == stored;
+        if same_runtime && same_brain {
+            return Ok(());
+        }
+    }
+    validate_explicit_runtime(config, model, registry)
 }
 
 /// `warnings` for a successful bot save: `runtime_not_installed` when the
@@ -595,6 +638,53 @@ mod tests {
         assert_eq!(validate_explicit_runtime(None, Some("openai/gpt-5.5"), runtime_registry()), Ok(()));
         // `custom` is what derivation writes; echoing it back is fine.
         assert_eq!(check(json!({"botBrain": {"runtime": "custom", "harness": "my-cli"}})), Ok(()));
+    }
+
+    #[test]
+    fn bot_save_unchanged_disallowed_combo_is_not_rejected() {
+        // Saved before the rules: Hermes on a Claude plan. A rename that sends
+        // the whole config back keeps runtime + brain, so it is never a 422.
+        let stored = json!({"botBrain": {"runtime": "hermes", "mode": "native_harness", "harness": "hermes",
+            "modelRef": "subs-claude/claude-sonnet-5-5"}});
+        let request = stored.clone();
+        assert_eq!(validate_bot_brain_change(Some(&request), None, Some(&stored), None, runtime_registry()), Ok(()));
+        // Old-shape stored record, alias runtime, object modelRef, same provider: unchanged.
+        let old = json!({"botBrain": {"mode": "native_harness", "harness": "hermes", "modelRef": "subs-claude/x"}});
+        let request = json!({"botBrain": {"runtime": "hermes",
+            "modelRef": {"providerID": "subs-claude", "modelID": "claude-opus-5-5"}}});
+        assert_eq!(validate_bot_brain_change(Some(&request), None, Some(&old), None, runtime_registry()), Ok(()));
+        // No brain in the request keeps the stored one.
+        let request = json!({"botBrain": {"runtime": "hermes"}});
+        assert_eq!(validate_bot_brain_change(Some(&request), None, Some(&stored), None, runtime_registry()), Ok(()));
+        // The stored brain may live in the agent's `model` column.
+        let stored_bare = json!({"botBrain": {"runtime": "hermes"}});
+        let request = json!({"botBrain": {"runtime": "hermes"}});
+        assert_eq!(
+            validate_bot_brain_change(Some(&request), Some("subs-claude/x"), Some(&stored_bare), Some("subs-claude/x"), runtime_registry()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn bot_save_changed_to_disallowed_plan_is_422() {
+        // Brain changes to a plan the runtime can't use.
+        let stored = json!({"botBrain": {"runtime": "hermes", "modelRef": "anthropic/claude-sonnet-5-5"}});
+        let request = json!({"botBrain": {"runtime": "hermes", "modelRef": "subs-claude/claude-sonnet-5-5"}});
+        let err = validate_bot_brain_change(Some(&request), None, Some(&stored), None, runtime_registry()).unwrap_err();
+        assert_eq!(err.code, "plan_not_allowed_on_runtime");
+        // Runtime changes under an existing plan brain.
+        let stored = json!({"botBrain": {"runtime": "claude", "modelRef": "subs-claude/claude-sonnet-5-5"}});
+        let request = json!({"botBrain": {"runtime": "hermes", "modelRef": "subs-claude/claude-sonnet-5-5"}});
+        let err = validate_bot_brain_change(Some(&request), None, Some(&stored), None, runtime_registry()).unwrap_err();
+        assert_eq!(err.message, "Claude's plan can't be used inside Hermes. Use an API key, or pick Claude Code.");
+        // A record with no botBrain yet is checked like a create.
+        let err = validate_bot_brain_change(Some(&request), None, Some(&json!({"isBot": true})), None, runtime_registry())
+            .unwrap_err();
+        assert_eq!(err.code, "plan_not_allowed_on_runtime");
+        // An unknown runtime is still refused when it is new.
+        let request = json!({"botBrain": {"runtime": "not-a-runtime"}});
+        let err = validate_bot_brain_change(Some(&request), None, Some(&stored), None, runtime_registry()).unwrap_err();
+        assert_eq!(err.code, "runtime_unknown");
     }
 
     #[test]

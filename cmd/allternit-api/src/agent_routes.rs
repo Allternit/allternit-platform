@@ -2450,15 +2450,56 @@ fn apply_agent_update(
 }
 
 /// Field-level validation shared by PUT and PATCH.
-fn validate_agent_update_body(body: &UpdateAgentBody) -> Result<(), axum::response::Response> {
-    // Runtime + brain rules, only when the request names a runtime itself.
-    if let Err(rejection) = crate::bot_brain::validate_explicit_runtime(
+/// Runtime + brain rules for PUT/PATCH: only when the request names a runtime
+/// itself AND its runtime or brain differs from the stored record, so an
+/// existing bot that keeps both is never rejected
+/// (`bot_brain::validate_bot_brain_change`).
+async fn check_bot_brain_change(
+    state: &AppState,
+    id: &str,
+    user_id: &str,
+    body: &UpdateAgentBody,
+) -> Result<(), axum::response::Response> {
+    let names_runtime = body
+        .config
+        .as_ref()
+        .and_then(|c| c.get("botBrain"))
+        .and_then(|b| b.get("runtime"))
+        .and_then(|r| r.as_str())
+        .is_some_and(|r| !r.is_empty());
+    if !names_runtime {
+        return Ok(());
+    }
+    let db = state.db.clone();
+    let (id, user_id) = (id.to_string(), user_id.to_string());
+    let stored: Option<(Option<serde_json::Value>, Option<String>)> = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().ok()?;
+        conn.query_row(
+            "SELECT config, model FROM agents WHERE id = ?1 AND user_id = ?2",
+            params![id, user_id],
+            |row| {
+                let raw: Option<String> = row.get(0)?;
+                let model: Option<String> = row.get(1)?;
+                Ok((raw.and_then(|s| serde_json::from_str(&s).ok()), model))
+            },
+        )
+        .ok()
+    })
+    .await
+    .ok()
+    .flatten();
+    let (stored_config, stored_model) = stored.unwrap_or((None, None));
+    crate::bot_brain::validate_bot_brain_change(
         body.config.as_ref(),
         body.model.as_deref(),
+        stored_config.as_ref(),
+        stored_model.as_deref(),
         crate::cli_catalog::runtime_registry(),
-    ) {
-        return Err((StatusCode::UNPROCESSABLE_ENTITY, Json(rejection.body())).into_response());
-    }
+    )
+    .map_err(|rejection| (StatusCode::UNPROCESSABLE_ENTITY, Json(rejection.body())).into_response())
+}
+
+fn validate_agent_update_body(body: &UpdateAgentBody) -> Result<(), axum::response::Response> {
     if let Some(ref name) = body.name {
         if name.trim().len() < 3 {
             return Err((
@@ -2503,6 +2544,9 @@ async fn update_agent(
     Json(body): Json<UpdateAgentBody>,
 ) -> impl IntoResponse {
     if let Err(response) = validate_agent_update_body(&body) {
+        return response;
+    }
+    if let Err(response) = check_bot_brain_change(&state, &id, &user.user_id, &body).await {
         return response;
     }
     let install_warnings = crate::bot_brain::install_warnings(
@@ -2577,6 +2621,9 @@ async fn patch_agent(
     Json(body): Json<UpdateAgentBody>,
 ) -> impl IntoResponse {
     if let Err(response) = validate_agent_update_body(&body) {
+        return response;
+    }
+    if let Err(response) = check_bot_brain_change(&state, &id, &user.user_id, &body).await {
         return response;
     }
     let install_warnings = crate::bot_brain::install_warnings(
