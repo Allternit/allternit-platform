@@ -93,7 +93,8 @@ internal fun ChatPage(
     }
 
     val title = store.sessions.firstOrNull { it.id == chat.currentSessionId }?.title.orEmpty()
-    // Wave H2: voice mode (iOS ChatView voiceHost): full screen or the bar over the composer.
+    // Wave H2: voice mode (iOS ChatView voiceHost): the bar over the composer, expanding to full screen. Like iOS,
+    // the composer's voice button (and the home's, which opens this chat) starts it as the bar.
     val voiceContext = androidx.compose.ui.platform.LocalContext.current
     val voiceHost = remember(chat) { com.allternit.feature.chat.voice.VoiceHost(voiceContext) }
     com.allternit.feature.chat.voice.VoiceHostWiring(voiceHost, chat)
@@ -142,10 +143,7 @@ internal fun ChatPage(
             },
             greeting = { LaunchGreeting() },
             composer = {
-                val voiceVm = voiceHost.viewModel
-                if (voiceHost.presentation == com.allternit.feature.chat.voice.VoiceHost.Presentation.Bar && voiceVm != null) {
-                    com.allternit.feature.chat.voice.VoiceQuickBar(voiceHost, voiceVm, onEnd = endVoice)
-                }
+                com.allternit.feature.chat.voice.VoiceBarSlot(voiceHost, onEnd = endVoice)
                 Composer(
                     models = models,
                     noComputer = store.noComputer,
@@ -176,11 +174,7 @@ internal fun ChatPage(
             modifier = Modifier.weight(1f),
         )
     }
-    val fullVoice = voiceHost.viewModel
-    if (voiceHost.presentation == com.allternit.feature.chat.voice.VoiceHost.Presentation.Full && fullVoice != null) {
-        androidx.activity.compose.BackHandler { voiceHost.presentation = com.allternit.feature.chat.voice.VoiceHost.Presentation.Bar }
-        com.allternit.feature.chat.voice.VoiceModeView(voiceHost, fullVoice, onEnd = endVoice)
-    }
+    com.allternit.feature.chat.voice.VoiceFullSlot(voiceHost, onEnd = endVoice)
     }
     if (shareOpen) {
         ThreadShareSheet(backend = backend, sessionId = chat.currentSessionId, title = title.ifEmpty { "Allternit" }, messages = chat.messages, onDismiss = { shareOpen = false })

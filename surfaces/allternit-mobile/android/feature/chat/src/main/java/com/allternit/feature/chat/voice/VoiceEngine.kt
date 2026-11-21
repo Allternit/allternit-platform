@@ -286,15 +286,16 @@ class Speaker(context: Context) : ReplySpeaker {
         VoicePrefs.voiceIdentifier?.let { id -> runCatching { tts.voices?.firstOrNull { it.name == id }?.let { tts.voice = it } } }
     }
 
-    /** The phone's voices, best match for the language first (iOS VoiceSettingsSheet.onDeviceVoices). */
-    fun voices(): List<Pair<String, String>> {
+    /**
+     * The phone's voices for voice mode's Voice carousel (iOS VoiceSettingsSheet.onDeviceVoices): the speech
+     * language's voices first, then the better ones, at most 12. Voices the engine hasn't downloaded are left out.
+     */
+    fun voices(): List<PhoneVoice> {
         if (!ready) return emptyList()
-        val prefix = VoicePrefs.locale().language
         val all = runCatching { tts.voices?.toList() }.getOrNull().orEmpty()
-        return all.filter { !it.isNetworkConnectionRequired }
-            .sortedByDescending { (if (it.locale.language == prefix) 10 else 0) + it.quality / 100 }
-            .take(12)
-            .map { v -> v.name to listOfNotNull(v.locale.toLanguageTag(), if (v.quality >= 400) "Enhanced" else null).joinToString(" · ") }
+            .filter { v -> v.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) != true }
+            .map { v -> PhoneVoiceFacts(v.name, v.locale, v.quality, v.isNetworkConnectionRequired) }
+        return phoneVoiceOptions(all, VoicePrefs.locale().language)
     }
 
     override fun speakChunk(text: String) {
@@ -332,5 +333,48 @@ class Speaker(context: Context) : ReplySpeaker {
         if (!isSpeaking) return
         isSpeaking = false
         onFinished?.invoke()
+    }
+}
+
+/** One card in voice mode's Voice carousel (iOS VoiceSettingsSheet.VoiceOption): [id] is the TTS voice name. */
+data class PhoneVoice(val id: String, val name: String, val detail: String)
+
+/** What the carousel reads from an android.speech.tts.Voice. */
+internal data class PhoneVoiceFacts(val id: String, val locale: Locale, val quality: Int, val network: Boolean)
+
+/**
+ * Readable labels for the phone's voices. Android voices have no human name (iOS shows "Samantha"), only ids such as
+ * "en-us-x-tpf-local", so a card is named by its language and region ("English (Australia)"), numbered when several
+ * share one ("English (Australia) · Voice 2"), with a caption of its quality: "Enhanced" at QUALITY_HIGH or better,
+ * and "Offline" or "Network" (Voice.isNetworkConnectionRequired).
+ *
+ * Ranked as iOS ranks them: +10 for the speech language, +3 very high (iOS premium), +2 high (iOS enhanced); Android
+ * adds +1 for a voice that works offline, since voice mode should not stop when the network does. Top 12.
+ */
+internal fun phoneVoiceOptions(all: List<PhoneVoiceFacts>, preferredLanguage: String, display: Locale = Locale.getDefault()): List<PhoneVoice> {
+    fun rank(v: PhoneVoiceFacts): Int {
+        var score = if (v.locale.language == preferredLanguage) 10 else 0
+        score += when {
+            v.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH -> 3
+            v.quality >= android.speech.tts.Voice.QUALITY_HIGH -> 2
+            else -> 0
+        }
+        if (!v.network) score += 1
+        return score
+    }
+    val top = all.sortedWith(compareByDescending<PhoneVoiceFacts> { rank(it) }.thenBy { it.locale.toLanguageTag() }.thenBy { it.id }).take(12)
+    val perLocale = top.groupingBy { it.locale.toLanguageTag() }.eachCount()
+    val seen = HashMap<String, Int>()
+    return top.map { v ->
+        val tag = v.locale.toLanguageTag()
+        val base = v.locale.getDisplayName(display).ifBlank { tag }
+        val n = (seen[tag] ?: 0) + 1
+        seen[tag] = n
+        val name = if ((perLocale[tag] ?: 0) > 1) "$base · Voice $n" else base
+        val detail = listOfNotNull(
+            if (v.quality >= android.speech.tts.Voice.QUALITY_HIGH) "Enhanced" else null,
+            if (v.network) "Network" else "Offline",
+        ).joinToString(" · ")
+        PhoneVoice(v.id, name, detail)
     }
 }

@@ -5,7 +5,24 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import com.allternit.core.design.AllternitSerif
+import com.allternit.core.design.AllternitStatic
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -339,11 +356,18 @@ class VoiceHost(private val context: Context) {
         private set
     private var replySpeaker: ReplySpeaker? = null
     val isActive: Boolean get() = viewModel != null
+    /** True while replies are read by the on-phone Kokoro voice (the voice settings sheet then lists Kokoro's voices). */
+    val repliesInKokoro: Boolean get() = replySpeaker is KokoroSpeaker
 
-    fun start(chat: ChatViewModel, runtimeModelId: String?, effort: String?, presentation: Presentation = Presentation.Full) {
+    /**
+     * iOS VoiceHost.start: starts a voice conversation in [presentation] (a no-op when one is live: it only changes
+     * the presentation). Like iOS, the composer starts it as the bar over the composer; the bar expands to full.
+     * [bot] is the bot this chat is with: its own Kokoro voice reads the replies on the on-phone engine.
+     */
+    fun start(chat: ChatViewModel, runtimeModelId: String?, effort: String?, bot: VoiceBot? = null, presentation: Presentation = Presentation.Bar) {
         VoicePrefs.load(context)
         if (viewModel == null) {
-            val choice = VoiceEngines.choose(context, VoicePrefs.interactionMode == VoiceInteractionMode.PushToTalk, dictation, speaker)
+            val choice = VoiceEngines.choose(context, VoicePrefs.interactionMode == VoiceInteractionMode.PushToTalk, dictation, speaker, botVoice = bot?.voiceId)
             replySpeaker?.takeIf { it !== choice.speaker && it !== speaker }?.shutdown()
             listener = choice.listener
             replySpeaker = choice.speaker
@@ -393,25 +417,59 @@ private fun TurnState.statusLabel(vm: VoiceModeViewModel): String = when (this) 
     TurnState.Speaking -> "Speaking…"
 }
 
+/** iOS stateTint: the turn state's two colours (blue family listening, warm speaking), eased over 0.8 s like iOS. */
+@Composable
+private fun rememberStateTint(state: TurnState): Pair<Color, Color> {
+    val c = AllternitTheme.colors
+    val target = when (state) {
+        TurnState.Idle -> c.bgTertiary to c.bgSecondary
+        TurnState.Listening -> AllternitStatic.StatusInfo to Color(0xFF1E3A8A)
+        TurnState.Thinking -> Color(0xFF7C8DB0) to Color(0xFF2E3A52)
+        TurnState.Speaking -> c.accentPrimary to Color(0xFF7C3A1E)
+    }
+    val primary by animateColorAsState(target.first, tween(800), label = "voiceTint1")
+    val secondary by animateColorAsState(target.second, tween(800), label = "voiceTint2")
+    return primary to secondary
+}
+
 /**
- * iOS VoiceModeView: full-screen voice mode laid out like iOS's live stage. The speaker sits in the middle (the
- * bot's face, or the Allternit mark in a plain chat) in the look picked in Settings › Voice › Live mode (a bot's own
- * look wins), then the state in words, the captions band at the chosen size (your words while you talk, the reply
- * while it speaks) and the controls row: settings, minimize, the mic (tap mutes; hold talks in push to talk) and end.
+ * iOS VoiceModeView: full-screen voice mode. Like iOS it has two stages:
  *
- * A plain chat keeps iOS's ambient light behind it, tinted by the turn state (blue listening, warm speaking). The two
- * glows are painted as full-screen radial gradients, not blurred boxes: `Modifier.blur` clips to its box (hard-edged
+ * - A bot's chat ([bot] set, iOS botStage): "Talking with <bot>", the bot's avatar as the speaker's face at 148 in the
+ *   bot's own live mode look (Settings › Voice › Live mode, a bot's own pick winning), the bot's colour, the state in
+ *   words, the captions band and the controls.
+ * - A plain chat (iOS plainStage): no speaker. The soft ambient light tinted by the turn state (blue listening, warm
+ *   speaking), the reply in serif in the middle (else the state in words, "Listening…"), "Tap to interrupt" while a
+ *   tap would act, your words in italics, the engine ("On this device") just above the controls, and the glow behind
+ *   the mic.
+ *
+ * Controls (both stages): settings, minimize to the bar, the mic (tap mutes; hold talks in push to talk) and end. The
+ * ambient glows are full-screen radial gradients, not blurred boxes: `Modifier.blur` clips to its box (hard-edged
  * rectangles on Android 12+) and does nothing below API 31.
  */
 @Composable
 fun VoiceModeView(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -> Unit, bot: VoiceBot? = null) {
-    val c = AllternitTheme.colors
-    val context = LocalContext.current
-    SpeakerLookStore.load(context)
+    SpeakerLookStore.load(LocalContext.current)
     var settingsOpen by remember { mutableStateOf(false) }
-    val (style, palette) = SpeakerLookStore.look(bot?.id)
-    val botColor = bot?.color
-    val name = bot?.name ?: "Allternit"
+    val tint = rememberStateTint(viewModel.state)
+    val controls: @Composable () -> Unit = { ControlsRow(host, viewModel, onEnd, tint.first) { settingsOpen = true } }
+    if (bot != null) BotStage(host, viewModel, bot, controls) else PlainStage(viewModel, tint, controls)
+    if (settingsOpen) VoiceSettingsSheet(host.speaker, bot, kokoro = host.repliesInKokoro) { settingsOpen = false }
+}
+
+/** A tap that interrupts the reply (iOS onTapGesture { viewModel.interrupt() }); no ripple, like iOS. */
+@Composable
+private fun interruptModifier(vm: VoiceModeViewModel): Modifier = Modifier.clickable(
+    interactionSource = remember { MutableInteractionSource() }, indication = null,
+    enabled = vm.canInterrupt, onClickLabel = "Interrupt",
+) { vm.interrupt() }
+
+/** iOS botStage. */
+@Composable
+private fun BotStage(host: VoiceHost, viewModel: VoiceModeViewModel, bot: VoiceBot, controls: @Composable () -> Unit) {
+    val c = AllternitTheme.colors
+    val (style, palette) = SpeakerLookStore.look(bot.id)
+    val botColor = bot.color
     val state = viewModel.state
     val statusLabel = state.statusLabel(viewModel)
     val youTalking = state == TurnState.Listening && viewModel.liveTranscript.isNotEmpty()
@@ -422,96 +480,119 @@ fun VoiceModeView(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -
     }
     val quiet = when {
         viewModel.isConnecting -> "Connecting"
-        state == TurnState.Thinking && viewModel.replyText.isEmpty() -> "$name is thinking"
+        state == TurnState.Thinking && viewModel.replyText.isEmpty() -> "${bot.name} is thinking"
         else -> null
     }
-    val interrupt = Modifier.clickable(
-        interactionSource = remember { MutableInteractionSource() }, indication = null,
-        enabled = viewModel.canInterrupt, onClickLabel = "Interrupt",
-    ) { viewModel.interrupt() }
-
+    val interrupt = interruptModifier(viewModel)
     Box(Modifier.fillMaxSize().background(c.bgPrimary).testTag("voiceMode")) {
-        if (bot == null) AmbientLight(state)
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (bot != null) {
-                Text("Talking with ${bot.name}", color = c.textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 12.dp))
-            }
+            Text("Talking with ${bot.name}", color = c.textSecondary, fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 12.dp).testTag("voiceTalkingWith"))
             Spacer(Modifier.weight(1f))
             VoiceSpeakerView(
                 phase = state.speakerPhase(viewModel.isConnecting), muted = viewModel.isMuted, style = style, palette = palette,
                 botColor = botColor, sizeDp = 148f, level = { host.listener.micLevel },
                 modifier = interrupt.testTag("voiceSpeaker"),
-            ) { VoiceFace(bot, state, 148f) }
+            ) { bot.face(148f) }
             Text(
                 statusLabel.uppercase(), color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.6.sp,
                 modifier = Modifier.padding(top = 8.dp).semantics { contentDescription = statusLabel }.testTag("voiceStatus"),
             )
-            viewModel.engineLabel?.let { Text(it, color = c.textSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp)) }
+            viewModel.engineLabel?.let { Text(it, color = c.textSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp).testTag("voiceEngine")) }
             viewModel.statusLine?.let {
-                Text(it, color = Color(0xFFD97706), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp).padding(top = 6.dp))
+                Text(it, color = AllternitStatic.StatusWarning, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp).padding(top = 6.dp))
             }
             Spacer(Modifier.weight(1f))
             Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(bottom = 14.dp).then(interrupt), contentAlignment = Alignment.Center) {
                 VoiceCaptions(
-                    you = youTalking, name = name, text = captionText, quiet = quiet, sizeSp = SpeakerLookStore.captionSize.sp, color = botColor,
-                    avatar = { VoiceFace(bot, state, 18f, small = true) },
+                    you = youTalking, name = bot.name, text = captionText, quiet = quiet, sizeSp = SpeakerLookStore.captionSize.sp, color = botColor,
+                    avatar = { bot.face(18f) },
                 )
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 36.dp).padding(bottom = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                RoundControl(com.allternit.core.design.R.drawable.ph_gear, "Voice settings", "voiceSettings") { settingsOpen = true }
-                Spacer(Modifier.size(12.dp))
-                RoundControl(com.allternit.core.design.R.drawable.ph_arrows_in, "Minimize to voice bar", "voiceMinimize") { host.presentation = VoiceHost.Presentation.Bar }
-                Spacer(Modifier.weight(1f))
-                MicButton(viewModel)
-                Spacer(Modifier.weight(1f))
-                Spacer(Modifier.size(56.dp))
-                RoundControl(DesignR.drawable.ph_x, "End voice chat", "voiceEnd") { host.end()?.let(onEnd) }
-            }
+            controls()
         }
     }
-    if (settingsOpen) VoiceSettingsSheet(host.speaker, bot) { settingsOpen = false }
 }
 
-/**
- * The speaker's face: the bot's avatar, or, in a plain chat, the Allternit thinking mark on a disc (iOS shows the
- * same mark in the quick bar when there is no bot). [small] is the captions chip's version.
- */
+/** iOS plainStage: the ambient light, the reply (or the state) in serif, your words in italics, the engine, the controls. */
 @Composable
-internal fun VoiceFace(bot: VoiceBot?, state: TurnState, sizeDp: Float, small: Boolean = false) {
-    if (bot != null) { bot.face(sizeDp); return }
+private fun PlainStage(vm: VoiceModeViewModel, tint: Pair<Color, Color>, controls: @Composable () -> Unit) {
     val c = AllternitTheme.colors
-    Box(Modifier.size(sizeDp.dp).clip(CircleShape).background(if (small) Color.White.copy(alpha = 0.92f) else c.bgSecondary), contentAlignment = Alignment.Center) {
-        if (small) {
-            Icon(painterResource(com.allternit.core.design.R.drawable.ph_waveform), null, tint = Color.Black, modifier = Modifier.size((sizeDp * 0.6f).dp))
-        } else {
-            val orb = when (state) {
-                TurnState.Idle, TurnState.Listening -> ThinkingOrbState.Listening
-                TurnState.Thinking -> ThinkingOrbState.Breathing
-                TurnState.Speaking -> ThinkingOrbState.Composing
+    val state = vm.state
+    val interrupt = interruptModifier(vm)
+    Box(Modifier.fillMaxSize().background(c.bgPrimary).testTag("voiceMode")) {
+        AmbientLight(state, tint)
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
+            // iOS centerContent between two spacers.
+            Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                if (vm.replyText.isNotEmpty()) {
+                    // The reply in serif (Claude voice-mode parity), scrollable; a tap while thinking or speaking interrupts.
+                    Text(
+                        vm.replyText, color = c.textPrimary, fontSize = 22.sp, lineHeight = 29.sp, fontWeight = FontWeight.Medium, fontFamily = AllternitSerif,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState()).then(interrupt)
+                            .padding(horizontal = 36.dp).testTag("voiceReply"),
+                    )
+                } else {
+                    Text(
+                        state.statusLabel(vm), color = c.textSecondary, fontSize = 22.sp, lineHeight = 29.sp, fontWeight = FontWeight.Medium, fontFamily = AllternitSerif,
+                        textAlign = TextAlign.Center, modifier = Modifier.then(interrupt).padding(horizontal = 40.dp).testTag("voiceStatus"),
+                    )
+                }
+                // Barge-in affordance, only while a tap would act.
+                AnimatedVisibility(vm.canInterrupt, enter = fadeIn(tween(200)), exit = fadeOut(tween(200))) { InterruptHint() }
             }
-            ThinkingOrb(
-                modifier = Modifier.graphicsLayer { val k = sizeDp * 0.55f / ThinkingOrbSize.Avatar.dimension; scaleX = k; scaleY = k },
-                state = orb, size = ThinkingOrbSize.Avatar, paused = state == TurnState.Idle, label = "",
+            // Live transcript (Claude parity: italics, bottom); a blank line keeps the height while it's empty.
+            Text(
+                vm.liveTranscript.ifEmpty { " " }, color = c.textPrimary.copy(alpha = 0.85f), fontSize = 17.sp, fontStyle = FontStyle.Italic,
+                textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp).padding(bottom = 6.dp).testTag("voiceTranscript"),
             )
+            vm.engineLabel?.let { Text(it, color = c.textSecondary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 4.dp).testTag("voiceEngine")) }
+            // In-place error / status line: no alerts.
+            vm.statusLine?.let {
+                Text(it, color = AllternitStatic.StatusWarning, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp).padding(bottom = 6.dp))
+            }
+            controls()
         }
     }
 }
 
+/** iOS "Tap to interrupt": a small capsule under the reply. */
+@Composable
+private fun InterruptHint() {
+    val c = AllternitTheme.colors
+    Row(
+        Modifier.padding(top = 10.dp, bottom = 10.dp).clip(CircleShape).background(c.fillNeutral).padding(horizontal = 12.dp, vertical = 6.dp).testTag("voiceInterruptHint"),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(painterResource(DesignR.drawable.ph_hand_tap), null, tint = c.textSecondary, modifier = Modifier.size(11.dp))
+        Text("Tap to interrupt", color = c.textSecondary, fontSize = 12.sp)
+    }
+}
+
+/** iOS controlsRow: settings, minimize to the bar, the mic in the middle, end. */
+@Composable
+private fun ControlsRow(host: VoiceHost, vm: VoiceModeViewModel, onEnd: (Int) -> Unit, glow: Color, onSettings: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 36.dp).padding(bottom = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        RoundControl(DesignR.drawable.ph_gear, "Voice settings", "voiceSettings", onClick = onSettings)
+        Spacer(Modifier.size(12.dp))
+        RoundControl(DesignR.drawable.ph_arrows_in, "Minimize to voice bar", "voiceMinimize") { host.presentation = VoiceHost.Presentation.Bar }
+        Spacer(Modifier.weight(1f))
+        MicButton(vm, glow)
+        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.size(56.dp))
+        RoundControl(DesignR.drawable.ph_x, "End voice chat", "voiceEnd") { host.end()?.let(onEnd) }
+    }
+}
+
 /**
- * iOS ambientBackground: two soft glows tinted by the turn state, breathing while listening or speaking. Painted as
- * radial gradients over the whole screen (same look on every API level), centred where iOS centres its circles.
+ * iOS ambientBackground: two soft glows tinted by the turn state, breathing while listening or speaking (held still
+ * with reduce motion). Painted as radial gradients over the whole screen (same look on every API level), centred
+ * where iOS centres its circles.
  */
 @Composable
-private fun AmbientLight(state: TurnState) {
-    val c = AllternitTheme.colors
-    val tintTarget = when (state) {
-        TurnState.Idle -> c.bgTertiary to c.bgSecondary
-        TurnState.Listening -> Color(0xFF3B82F6) to Color(0xFF1E3A8A)
-        TurnState.Thinking -> Color(0xFF7C8DB0) to Color(0xFF2E3A52)
-        TurnState.Speaking -> c.accentPrimary to Color(0xFF7C3A1E)
-    }
-    val primary by animateColorAsState(tintTarget.first, tween(800), label = "voiceTint1")
-    val secondary by animateColorAsState(tintTarget.second, tween(800), label = "voiceTint2")
+private fun AmbientLight(state: TurnState, tint: Pair<Color, Color>) {
+    val (primary, secondary) = tint
     val animating = state == TurnState.Listening || state == TurnState.Speaking
     val reduce = rememberReduceMotion()
     val pulse by rememberInfiniteTransition(label = "voicePulse").animateFloat(0f, 1f, infiniteRepeatable(tween(2200), RepeatMode.Reverse), label = "pulse")
@@ -538,14 +619,32 @@ private fun DrawScope.glow(color: Color, alpha: Float, at: Offset, radius: Float
     )
 }
 
+/**
+ * iOS micButton: a white disc (grey when muted) with the turn state's glow behind it, stronger while listening (iOS
+ * `.shadow(color: tint.opacity(listening ? 0.6 : 0.2), radius: listening ? 16 : 6)`), painted as a radial gradient.
+ * Hands free: a tap toggles mute. Push to talk: hold to record, release to send; a short tap still toggles mute.
+ */
 @Composable
-private fun MicButton(vm: VoiceModeViewModel) {
+private fun MicButton(vm: VoiceModeViewModel, glow: Color) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val listening = vm.state == TurnState.Listening
     Box(
-        Modifier.size(72.dp).clip(CircleShape).background(if (vm.isMuted) c.bgSecondary else Color.White)
-            .border(if (listening) 3.dp else 0.dp, Color(0xFF3B82F6).copy(alpha = 0.5f), CircleShape)
+        Modifier.size(72.dp)
+            .drawBehind {
+                val r = size.minDimension / 2f
+                val outer = r + (if (listening) 16.dp else 6.dp).toPx() * 2f
+                val a = glow.alpha * (if (listening) 0.6f else 0.2f)
+                val k = r / outer
+                drawCircle(
+                    Brush.radialGradient(
+                        0f to glow.copy(alpha = a), k to glow.copy(alpha = a * 0.6f), (k + 1f) / 2f to glow.copy(alpha = a * 0.18f), 1f to glow.copy(alpha = 0f),
+                        center = center, radius = outer,
+                    ),
+                    radius = outer,
+                )
+            }
+            .clip(CircleShape).background(if (vm.isMuted) c.bgSecondary else Color.White)
             .testTag("voiceMic")
             .semantics { contentDescription = if (vm.isMuted) "Unmute microphone" else "Mute microphone" }
             .pointerInput(vm) {
@@ -561,7 +660,7 @@ private fun MicButton(vm: VoiceModeViewModel) {
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(painterResource(if (vm.isMuted) com.allternit.core.design.R.drawable.ph_microphone_slash else com.allternit.core.design.R.drawable.ph_microphone), null,
+        Icon(painterResource(if (vm.isMuted) DesignR.drawable.ph_microphone_slash else DesignR.drawable.ph_microphone_fill), null,
             tint = if (vm.isMuted) c.textSecondary else Color.Black, modifier = Modifier.size(26.dp))
     }
 }
@@ -577,6 +676,46 @@ internal fun RoundControl(icon: Int, label: String, tag: String, onClick: () -> 
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) { Icon(painterResource(icon), null, tint = c.textPrimary, modifier = Modifier.size(18.dp)) }
+}
+
+/**
+ * iOS ChatView's quick voice bar slot: the bar above the composer while a voice conversation runs in the bar
+ * presentation. It moves in from the bottom with a fade (iOS `.move(edge: .bottom)` + `.opacity`, ease-out 0.2 s);
+ * with reduce motion it appears in place.
+ */
+@Composable
+fun VoiceBarSlot(host: VoiceHost, onEnd: (Int) -> Unit, bot: VoiceBot? = null) {
+    val vm = host.viewModel
+    // The last session stays on screen while the bar animates out after the session ends.
+    val last = remember { arrayOfNulls<VoiceModeViewModel>(1) }
+    if (vm != null) last[0] = vm
+    val reduce = rememberReduceMotion()
+    AnimatedVisibility(
+        visible = host.presentation == VoiceHost.Presentation.Bar && vm != null,
+        enter = if (reduce) EnterTransition.None else expandVertically(tween(200, easing = LinearOutSlowInEasing), expandFrom = Alignment.Top) +
+            slideInVertically(tween(200, easing = LinearOutSlowInEasing)) { it / 2 } + fadeIn(tween(200)),
+        exit = if (reduce) ExitTransition.None else shrinkVertically(tween(200, easing = LinearOutSlowInEasing), shrinkTowards = Alignment.Top) +
+            slideOutVertically(tween(200, easing = LinearOutSlowInEasing)) { it / 2 } + fadeOut(tween(200)),
+    ) { last[0]?.let { VoiceQuickBar(host, it, onEnd, bot) } }
+}
+
+/**
+ * iOS ChatView's fullScreenCover for voice mode: it slides up over the whole chat (a fade with reduce motion), and
+ * Back returns to the bar, as iOS's dismiss does.
+ */
+@Composable
+fun VoiceFullSlot(host: VoiceHost, onEnd: (Int) -> Unit, bot: VoiceBot? = null) {
+    val vm = host.viewModel
+    val last = remember { arrayOfNulls<VoiceModeViewModel>(1) }
+    if (vm != null) last[0] = vm
+    val visible = host.presentation == VoiceHost.Presentation.Full && vm != null
+    BackHandler(enabled = visible) { host.presentation = if (host.isActive) VoiceHost.Presentation.Bar else VoiceHost.Presentation.None }
+    val reduce = rememberReduceMotion()
+    AnimatedVisibility(
+        visible = visible,
+        enter = if (reduce) fadeIn(tween(150)) else slideInVertically(tween(320, easing = FastOutSlowInEasing)) { it },
+        exit = if (reduce) fadeOut(tween(150)) else slideOutVertically(tween(260, easing = FastOutSlowInEasing)) { it },
+    ) { last[0]?.let { VoiceModeView(host, it, onEnd, bot) } }
 }
 
 /**
@@ -620,41 +759,78 @@ fun VoiceSpeakerRing(state: TurnState, muted: Boolean, level: Float, size: Int, 
     }
 }
 
-/** iOS VoiceQuickBar: the minimized session above the composer: a small speaker in the live mode look, status, mute, expand, end. */
+/**
+ * iOS VoiceQuickBar: the minimized session above the composer. A bot's chat shows the bot's face in a small version
+ * of its live mode look; a plain chat shows the Allternit thinking mark at half size. Then the status (your words
+ * while you talk), the engine or the warning, and mute, expand and end.
+ */
 @Composable
 fun VoiceQuickBar(host: VoiceHost, viewModel: VoiceModeViewModel, onEnd: (Int) -> Unit, bot: VoiceBot? = null) {
     val c = AllternitTheme.colors
     SpeakerLookStore.load(LocalContext.current)
-    val status = when (viewModel.state) {
+    val state = viewModel.state
+    val status = when (state) {
         TurnState.Idle -> if (viewModel.isMuted) "Muted" else "Voice paused"
         TurnState.Listening -> viewModel.liveTranscript.ifEmpty { "Listening…" }
         TurnState.Thinking -> "Thinking…"
         TurnState.Speaking -> "Speaking…"
     }
+    val secondary = viewModel.statusLine ?: viewModel.engineLabel
+    val shape = RoundedCornerShape(AllternitRadii.MD)
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).clip(RoundedCornerShape(AllternitRadii.MD))
-            .background(c.bgPrimary).border(1.dp, c.borderSubtle, RoundedCornerShape(AllternitRadii.MD))
-            .padding(horizontal = 12.dp, vertical = 8.dp).testTag("voiceQuickBar")
-            .semantics { contentDescription = "Voice chat, $status" },
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 6.dp).clip(shape)
+            // iOS BgSecondary with Theme.borderWarmDefault (TextPrimary at 11%).
+            .background(c.bgSecondary).border(1.dp, c.textPrimary.copy(alpha = 0.11f), shape)
+            .padding(horizontal = 14.dp, vertical = 8.dp).testTag("voiceQuickBar"),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        val (style, palette) = SpeakerLookStore.look(bot?.id)
         Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
-            VoiceSpeakerView(
-                phase = viewModel.state.speakerPhase(viewModel.isConnecting), muted = viewModel.isMuted, style = style, palette = palette,
-                botColor = bot?.color, sizeDp = 28f, compact = true, level = { host.listener.micLevel },
-            ) { VoiceFace(bot, viewModel.state, 28f) }
+            if (bot != null) {
+                val (style, palette) = SpeakerLookStore.look(bot.id)
+                VoiceSpeakerView(
+                    phase = state.speakerPhase(viewModel.isConnecting), muted = viewModel.isMuted, style = style, palette = palette,
+                    botColor = bot.color, sizeDp = 28f, compact = true, level = { host.listener.micLevel },
+                ) { bot.face(28f) }
+            } else {
+                ThinkingOrb(
+                    modifier = Modifier.requiredSize(ThinkingOrbSize.Avatar.dimension.dp).graphicsLayer { scaleX = 0.5f; scaleY = 0.5f },
+                    state = when (state) {
+                        TurnState.Idle, TurnState.Listening -> ThinkingOrbState.Listening
+                        TurnState.Thinking -> ThinkingOrbState.Breathing
+                        TurnState.Speaking -> ThinkingOrbState.Composing
+                    },
+                    size = ThinkingOrbSize.Avatar, paused = state == TurnState.Idle, label = "",
+                )
+            }
         }
-        Column(Modifier.weight(1f)) {
-            Text(status, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            (viewModel.statusLine ?: viewModel.engineLabel)?.let { Text(it, color = c.textSecondary, fontSize = 11.sp, maxLines = 1) }
+        Column(Modifier.weight(1f).semantics(mergeDescendants = true) { contentDescription = "Voice chat, $status" }, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(status, color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            secondary?.let {
+                Text(it, color = if (viewModel.statusLine != null) AllternitStatic.StatusWarning else c.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
-        RoundControl(if (viewModel.isMuted) com.allternit.core.design.R.drawable.ph_microphone_slash else com.allternit.core.design.R.drawable.ph_microphone,
-            if (viewModel.isMuted) "Unmute microphone" else "Mute microphone", "voiceBarMute") { viewModel.toggleMute() }
-        RoundControl(com.allternit.core.design.R.drawable.ph_arrows_out, "Open full-screen voice", "voiceBarExpand") { host.presentation = VoiceHost.Presentation.Full }
-        RoundControl(DesignR.drawable.ph_x, "End voice chat", "voiceBarEnd") { host.end()?.let(onEnd) }
+        BarButton(
+            if (viewModel.isMuted) DesignR.drawable.ph_microphone_slash else DesignR.drawable.ph_microphone_fill,
+            if (viewModel.isMuted) "Unmute microphone" else "Mute microphone", "voiceBarMute",
+            tint = if (viewModel.isMuted) AllternitStatic.StatusError else null,
+        ) { viewModel.toggleMute() }
+        BarButton(DesignR.drawable.ph_arrows_out, "Open full-screen voice", "voiceBarExpand") { host.presentation = VoiceHost.Presentation.Full }
+        BarButton(DesignR.drawable.ph_x, "End voice chat", "voiceBarEnd") { host.end()?.let(onEnd) }
     }
+}
+
+/** iOS barButton: a 36 pt glass circle with a 14 pt glyph. */
+@Composable
+private fun BarButton(icon: Int, label: String, tag: String, tint: Color? = null, onClick: () -> Unit) {
+    val c = AllternitTheme.colors
+    val view = LocalView.current
+    Box(
+        Modifier.size(36.dp).clip(CircleShape).background(c.fillNeutral).testTag(tag)
+            .clickable(role = Role.Button, onClickLabel = label) { Haptics.perform(view, Haptics.Kind.Tap); onClick() }
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) { Icon(painterResource(icon), null, tint = tint ?: c.textPrimary, modifier = Modifier.size(15.dp)) }
 }
 
 /** iOS VoiceSummaryCardView: "Voice chat ended · 2m 5s" with thumbs up / down (local, like iOS). */

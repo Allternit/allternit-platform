@@ -86,6 +86,8 @@ data class BotComposerSpec(
     val onStop: () -> Unit = {},
     /** Bumped to open the model picker (a `no_brain` send, "Choose a model"). */
     val pickerRequest: Int = 0,
+    /** The composer's voice button (iOS ComposerView onVoiceMode in a bot's ChatView); null leaves it disabled. */
+    val onVoiceMode: (() -> Unit)? = null,
 )
 
 /**

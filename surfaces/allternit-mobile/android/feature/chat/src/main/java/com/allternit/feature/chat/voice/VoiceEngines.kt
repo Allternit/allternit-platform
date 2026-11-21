@@ -120,12 +120,15 @@ object DeviceVoice {
         return if (VoicePrefs.listening == VoicePrefs.LISTENING_AUTOMATIC && onDevice) Dictation(context, onDevice = true) else LocalListener(context)
     }
 
-    /** Kokoro when its pack is on the phone, else the system voice; a missing pack starts downloading on Wi-Fi (iOS). */
-    fun speaker(context: Context, system: Speaker): ReplySpeaker {
+    /**
+     * Kokoro when its pack is on the phone, else the system voice; a missing pack starts downloading on Wi-Fi (iOS).
+     * [botVoice] is the bot's own Kokoro voice (iOS VoiceModeViewModel.botVoice), else this phone's pick.
+     */
+    fun speaker(context: Context, system: Speaker, botVoice: String? = null): ReplySpeaker {
         if (!KOKORO_ALLOWED) return system
         val kokoro = VoicePackManager.kokoro
         if (!kokoro.isInstalled(context)) { kokoro.install(context, cellular = false); return system }
-        return KokoroSpeaker(context, KokoroVoices.resolve(null, VoicePrefs.kokoroVoice), system)
+        return KokoroSpeaker(context, KokoroVoices.resolve(botVoice, VoicePrefs.kokoroVoice), system)
     }
 }
 
@@ -135,7 +138,14 @@ class VoiceEngineChoice(val listener: VoiceListener, val speaker: ReplySpeaker, 
 object VoiceEngines {
     private const val DEVICE_FALLBACK = "On-device voice is not available on this build. Using the phone's built-in voice for now."
 
-    fun choose(context: Context, pushToTalk: Boolean, dictation: Dictation, system: Speaker, keys: VoiceKeySource = SealedVoiceKeys): VoiceEngineChoice {
+    fun choose(
+        context: Context,
+        pushToTalk: Boolean,
+        dictation: Dictation,
+        system: Speaker,
+        keys: VoiceKeySource = SealedVoiceKeys,
+        botVoice: String? = null,
+    ): VoiceEngineChoice {
         var notice: String? = null
         for (route in VoiceRouter.candidates(keys.route(context), pushToTalk)) {
             when (route) {
@@ -153,7 +163,7 @@ object VoiceEngines {
                 }
                 VoiceRoute.Device -> {
                     if (!DeviceVoice.linked) { notice = notice ?: DEVICE_FALLBACK; continue }
-                    return VoiceEngineChoice(DeviceVoice.listener(context, dictation), DeviceVoice.speaker(context, system), "On this device", notice)
+                    return VoiceEngineChoice(DeviceVoice.listener(context, dictation), DeviceVoice.speaker(context, system, botVoice), "On this device", notice)
                 }
                 VoiceRoute.Legacy -> return VoiceEngineChoice(dictation, system, notice?.let { "Phone voice" }, notice)
             }

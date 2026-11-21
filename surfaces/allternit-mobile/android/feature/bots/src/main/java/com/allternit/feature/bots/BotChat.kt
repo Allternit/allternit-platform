@@ -72,6 +72,11 @@ import com.allternit.feature.chat.ChatScreen
 import com.allternit.feature.chat.ChatSendRequest
 import com.allternit.feature.chat.ChatViewModel
 import com.allternit.feature.chat.SessionContext
+import com.allternit.feature.chat.voice.VoiceBarSlot
+import com.allternit.feature.chat.voice.VoiceBot
+import com.allternit.feature.chat.voice.VoiceFullSlot
+import com.allternit.feature.chat.voice.VoiceHost
+import com.allternit.feature.chat.voice.VoiceHostWiring
 import kotlinx.coroutines.launch
 import com.allternit.core.design.R as DesignR
 
@@ -182,6 +187,20 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
         }
     }
 
+    // Voice mode with this bot (iOS ChatView in the bot's environment: the composer's voice button calls
+    // voiceHost.start(..., bot: chatBot, presentation: .bar)). Voice turns go through this thread's ChatViewModel, the
+    // same send the composer makes, so the spoken conversation lands in the bot's thread; the "Voice chat ended" card
+    // is filed there too. The stage shows the bot's face in its own live mode look, in its colour.
+    val voiceContext = LocalContext.current
+    val voiceHost = remember(vm) { VoiceHost(voiceContext) }
+    VoiceHostWiring(voiceHost, vm)
+    val voiceBot = remember(bot) {
+        VoiceBot(bot.id, bot.displayName, bot.accentHex, bot.kokoroVoiceId) { sizeDp -> BotAvatar(bot, sizeDp.dp, live = sizeDp >= 48f) }
+    }
+    val endVoice: (Int) -> Unit = { seconds -> vm.appendVoiceSummary(seconds) }
+    // Leaving the thread ends the call, as iOS does when the bot's ChatView goes away (the mic is the engine's).
+    LaunchedEffect(deck) { if (deck != DeckTab.Thread) voiceHost.end() }
+
     val deckRow: @Composable () -> Unit = {
         val waiting = store.waitingCount(bot.id)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -191,12 +210,18 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
             DeckButton("Bot", deck == DeckTab.Bot, "botDeckBot") { deck = DeckTab.Bot }
         }
     }
-    val composer: @Composable (onSend: (ChatSendRequest) -> Unit) -> Unit = { send ->
+    // [voice]: the thread's composer, with the voice bar over it and the voice button on.
+    val composer: @Composable (voice: Boolean, onSend: (ChatSendRequest) -> Unit) -> Unit = { voice, send ->
         Column {
+            if (voice) VoiceBarSlot(voiceHost, onEnd = endVoice, bot = voiceBot)
             deckRow()
             host.composer(BotComposerSpec(
                 placeholder = placeholder, isStreaming = vm.isStreaming && deck == DeckTab.Thread, sendDisabled = vm.isCreatingSession,
                 prefill = prefill, onPrefillConsumed = { prefill = null }, onSend = send, onStop = vm::stopStreaming, pickerRequest = pickerRequest,
+                onVoiceMode = if (voice) ({
+                    val (model, effort) = host.currentModel()
+                    voiceHost.start(vm, model, effort, bot = voiceBot)
+                }) else null,
             ))
         }
     }
@@ -242,7 +267,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                                     editing = editingId != null, onCancelEdit = { editingId = null; prefill = "" },
                                     greeting = { BotGreeting(bot) { prefill = it } },
                                     composer = {
-                                        composer { req ->
+                                        composer(true) { req ->
                                             val e = editingId
                                             if (e != null) { editingId = null; vm.resendEdited(e, req) } else vm.send(req)
                                         }
@@ -262,11 +287,11 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                     }
                     DeckTab.Threads -> Column(Modifier.fillMaxSize()) {
                         BotThreadsOverview(store, bot.id, modifier = Modifier.weight(1f)) { open(it) }
-                        composer { startThread(it.text) }
+                        composer(false) { startThread(it.text) }
                     }
                     DeckTab.Tasks -> Column(Modifier.fillMaxSize()) {
                         Box(Modifier.weight(1f)) { BotThreadTasks(store, bot, sessionId) { open(it) } }
-                        composer { req -> deck = DeckTab.Thread; vm.send(req) }
+                        composer(false) { req -> deck = DeckTab.Thread; vm.send(req) }
                     }
                     DeckTab.Bot -> Column(Modifier.fillMaxSize()) {
                         Box(Modifier.weight(1f)) { BotPageView(bot, store, nav, onOpenThreads = { deck = DeckTab.Threads }, onOpenTasks = { deck = DeckTab.Tasks }, backend = host.backend) }
@@ -275,6 +300,8 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                 }
             }
         }
+        // Full-screen voice mode on the bot stage (iOS fullScreenCover), over the whole bot chat.
+        VoiceFullSlot(voiceHost, onEnd = endVoice, bot = voiceBot)
     }
 
     if (menuOpen) LibrarySheet(title = bot.displayName, testTag = "botThreadMenuSheet", onDismiss = { menuOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { menuOpen = false }) {

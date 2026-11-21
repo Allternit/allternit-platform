@@ -378,6 +378,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 pickerRequest = spec.pickerRequest,
                 placeholderOverride = spec.placeholder,
                 deck = ComposerDeck.None,
+                onVoiceMode = spec.onVoiceMode,
             )
         },
         currentModel = { models.selectedId to models.selected?.let { models.level(it) } },
