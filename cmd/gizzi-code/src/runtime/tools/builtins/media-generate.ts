@@ -16,6 +16,8 @@ interface Meta {
   width?: number
   height?: number
   video?: PaneRender.Video
+  /** Last preview frame of a native video (data:image URL), for the card's blur-up. */
+  poster?: string
 }
 const meta = (m: Meta): Meta => m
 
@@ -93,6 +95,14 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
   const motionBlur = Math.min(8, Math.max(1, Math.round(params.motionBlur ?? 4)))
   const frames = Math.round(duration * fps)
 
+  // Newest preview frame, kept before throttling so the final result carries the latest one.
+  let poster: string | undefined
+  const forward = reportProgress(ctx, `Video: ${title}`, { lane: "native" })
+  const onProgress = (detail: PaneRender.ProgressDetail) => {
+    if (detail.preview) poster = detail.preview
+    forward(detail)
+  }
+
   const result = await PaneRender.request(
     {
       sessionID: ctx.sessionID,
@@ -108,7 +118,7 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
       title,
       toolCall: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
     },
-    { abort: ctx.abort, timeoutMs: videoTimeoutMs(frames, motionBlur), onProgress: reportProgress(ctx, `Video: ${title}`, { lane: "native" }) },
+    { abort: ctx.abort, timeoutMs: videoTimeoutMs(frames, motionBlur), onProgress },
   )
 
   if (!result.ok || !result.video) {
@@ -122,7 +132,7 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
   return {
     title: `Video: ${title}`,
     output: `Rendered "${title}" (${width}×${height}, ${duration}s at ${fps}fps${sound}). Video: ${result.video.url}. It's in the session's Outputs. The contact sheet (six stills across the video, timestamped) is attached: check motion, framing and text against the request, and if anything is off, call again with the same title and fixed code.`,
-    metadata: meta({ ok: true, lane: "native", format: "canvas", width, height, video: result.video }),
+    metadata: meta({ ok: true, lane: "native", format: "canvas", width, height, video: result.video, ...(poster && poster.length <= 400_000 ? { poster } : {}) }),
     ...(result.image
       ? { attachments: [{ type: "file" as const, mime: "image/png", url: result.image, filename: `${title} contact sheet.png` }] }
       : {}),
