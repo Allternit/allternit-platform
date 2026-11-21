@@ -1945,6 +1945,14 @@
       ]
     },
     {
+      "source": "allternit/cmd/allternit-api/src/runtime_live.rs",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "reads runtimes[].liveUi: POST/GET/DELETE /api/v1/runtimes/:id/live starts the runtime's own web app on 127.0.0.1 (owner auth)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/runtime_live.rs"
+      ]
+    },
+    {
       "source": "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
       "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
       "kind": "include_str! embed: public GET /api/v1/runtimes for web and phones",

@@ -5334,6 +5334,7 @@
       "description": "Every runtime gets its own view of a bot's work: the View switch (Allternit / Runtime / Split, Split hidden below 900 px) draws the runtime's terminal or app look from the registry's data-only look tokens, or frames its live web app from the user's computer. The runtime/brain picker sits beside it. Same feature on Desktop, web, PWA, iOS, Android and Gizzi.",
       "touches": [
         "allternit/cmd/allternit-api/src/cli_*",
+        "allternit/cmd/allternit-api/src/runtime_live.rs",
         "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
         "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
         "allternit/cmd/allternit-api/src/bot_*",
@@ -5353,7 +5354,8 @@
       "evidence": [
         "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts",
         "allternit/cmd/allternit-cloud-api/src/routes/runtimes.rs",
-        "allternit/cmd/allternit-api/src/bot_brain.rs"
+        "allternit/cmd/allternit-api/src/bot_brain.rs",
+        "allternit/cmd/allternit-api/src/runtime_live.rs"
       ]
     }
   ],

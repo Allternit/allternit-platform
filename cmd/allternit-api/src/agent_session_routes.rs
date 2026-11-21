@@ -1440,6 +1440,8 @@ async fn delete_session(
     match gizzi_no_content(&client, reqwest::Method::DELETE, &path, None).await {
         Ok(()) => {
             let _ = state.db.clear_session_ephemeral(&session_id);
+            // A runtime web app this session was the last user of stops now.
+            crate::runtime_live::release_session(&session_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(response) => response,

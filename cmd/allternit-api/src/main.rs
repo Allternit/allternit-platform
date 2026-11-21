@@ -1833,6 +1833,9 @@ async fn main() {
         // Meetings bot runners live in their own process groups; stop them
         // (and the PulseAudio the host started) before the process exits.
         allternit_api::meeting_bot_host::shutdown().await;
+        // Runtime web apps (POST /api/v1/runtimes/:id/live) run in their own
+        // process groups too: SIGTERM, SIGKILL after 3 s.
+        allternit_api::runtime_live::shutdown().await;
         // Files drive: SIGTERM is the sleep notice (a cloud computer being
         // stopped, Desktop quitting). Leave the asleep snapshot current so the
         // computer still lists while it sleeps. Bounded to a few seconds.
