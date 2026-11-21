@@ -57,6 +57,8 @@ export interface RuntimeEntry {
   adapter: { kind: AdapterKind; argv?: string[] }
   brains: "any" | string[]
   access: AccessKind[]
+  /** Subscription providers (claude, chatgpt, kimi, gemini, copilot) whose plan this runtime may use. */
+  plans: string[]
   more: boolean
   status?: { label: string; tone: "warn" | "info" }
   systemLayer: { via: SystemLayerVia }
@@ -101,7 +103,6 @@ function byHarness(harness: string): RuntimeEntry | undefined {
   return RUNTIMES.find((r) => r.legacy?.harness === harness) ?? getRuntime(harness)
 }
 
-/** Brain fits runtime when brains is "any" or the brain's provider is listed. */
 /**
  * Does a brain's provider fit this runtime? `providerId` may be a vendor id
  * (`anthropic`), a subscription id (`subs-anthropic`) or a CLI provider id
@@ -118,6 +119,73 @@ export function fits(runtime: RuntimeEntry | string, providerId: string): boolea
   if (p === r.tool || p === r.id || (r.aliases ?? []).includes(p)) return true
   const tool = (catalog as { tools?: { id: string; aliases?: string[] }[] }).tools?.find((t) => t.id === r.tool)
   return (tool?.aliases ?? []).includes(p)
+}
+
+/** A runtime's own CLI: its tool, its id, its aliases, the tool's aliases. */
+function isOwnCli(r: RuntimeEntry, providerId: string): boolean {
+  if (!r.tool) return false
+  if (providerId === r.tool || providerId === r.id || (r.aliases ?? []).includes(providerId)) return true
+  const tool = (catalog as { tools?: { id: string; aliases?: string[] }[] }).tools?.find((t) => t.id === r.tool)
+  return (tool?.aliases ?? []).includes(providerId)
+}
+
+const PLAN_OF_VENDOR: Record<string, string> = {
+  anthropic: "claude",
+  openai: "chatgpt",
+  google: "gemini",
+  moonshot: "kimi",
+  github: "copilot",
+}
+
+/** Display names of the subscription providers (same as the server's disclosure list). */
+export const PLAN_NAMES: Record<string, string> = {
+  claude: "Claude",
+  chatgpt: "ChatGPT",
+  kimi: "Kimi",
+  gemini: "Gemini",
+  copilot: "Copilot",
+}
+
+/**
+ * The subscription provider whose plan a brain uses, if it is a plan:
+ * `subs-<p>` (vendor ids map to their plan: anthropic -> claude, ...), or a CLI
+ * sign-in whose runtime holds exactly one plan (claude-cli -> claude,
+ * codex-cli -> chatgpt, kimi-cli -> kimi, antigravity -> gemini, copilot -> copilot).
+ */
+export function planProvider(providerId: string): string | undefined {
+  if (providerId.startsWith("subs-")) {
+    const rest = providerId.slice("subs-".length)
+    return PLAN_OF_VENDOR[rest] ?? rest
+  }
+  const r = RUNTIMES.find((x) => x.tool === providerId && (x.plans ?? []).length === 1)
+  return r?.plans[0]
+}
+
+/**
+ * The brain rule every client uses to offer a brain (contract: "Shared rule
+ * allowed"): `fits`, and a plan brain only where the runtime's `plans` list
+ * its provider. A runtime's own CLI sign-in always passes.
+ */
+export function allowed(runtime: RuntimeEntry | string, providerId: string): boolean {
+  const r = typeof runtime === "string" ? getRuntime(runtime) : runtime
+  if (!r || !fits(r, providerId)) return false
+  const plan = planProvider(providerId)
+  if (!plan) return true
+  return isOwnCli(r, providerId) || (r.plans ?? []).includes(plan)
+}
+
+/**
+ * Why a fitting brain is not allowed: the contract's
+ * `plan_not_allowed_on_runtime` message, or undefined when it is allowed (or
+ * does not fit at all; that is the auto-switch's job).
+ */
+export function planRefusal(runtime: RuntimeEntry | string, providerId: string): string | undefined {
+  const r = typeof runtime === "string" ? getRuntime(runtime) : runtime
+  if (!r || !fits(r, providerId) || allowed(r, providerId)) return undefined
+  const plan = planProvider(providerId) ?? ""
+  const own = RUNTIMES.find((x) => x.id !== "allternit" && (x.plans ?? []).includes(plan))?.name ?? "Allternit"
+  const name = PLAN_NAMES[plan] ?? plan.charAt(0).toUpperCase() + plan.slice(1)
+  return `${name}'s plan can't be used inside ${r.name}. Use an API key, or pick ${own}.`
 }
 
 /**
