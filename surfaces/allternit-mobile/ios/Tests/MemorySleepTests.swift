@@ -66,7 +66,7 @@ final class MemorySleepTests: XCTestCase {
     func testRelayAnswersSortIntoNoComputerAndOffline() {
         let none = MemorySleepError.from(status: 503, data: Data(#"{"error":"runtime_unavailable"}"#.utf8))
         XCTAssertEqual(MemorySleep.unavailable(from: none), .noComputer)
-        XCTAssertEqual(none.message, "Memory still works. Sleep runs on your computer: open Allternit Desktop or pair one to use it.")
+        XCTAssertEqual(none.message, "Memory and Sleep run on your computer. Open Allternit Desktop or pair a computer to use them.")
         let asleep = MemorySleepError.from(status: 503, data: Data(#"{"error":"runtime_offline"}"#.utf8))
         XCTAssertEqual(MemorySleep.unavailable(from: asleep), .computerOffline)
     }

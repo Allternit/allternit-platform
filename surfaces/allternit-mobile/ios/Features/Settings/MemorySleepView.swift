@@ -303,7 +303,7 @@ struct MemorySleepSection: View {
         case .noComputer:
             sleepToggle(isOn: false, description: "Needs a computer.", disabled: true)
             VStack(alignment: .leading, spacing: 10) {
-                Text("Memory still works. Sleep runs on your computer: open Allternit Desktop or pair one to use it.")
+                Text("Memory and Sleep run on your computer. Open Allternit Desktop or pair a computer to use them.")
                     .font(.subheadline)
                     .foregroundColor(Color("TextPrimary"))
                     .fixedSize(horizontal: false, vertical: true)
