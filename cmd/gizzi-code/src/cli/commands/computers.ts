@@ -8,7 +8,28 @@ import type { Argv } from "yargs"
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import {
+  Asleep,
+  consoleEnabled,
+  formatLogLine,
+  formatPorts,
+  formatServices,
+  formatStatus,
+  formatUpdates,
+  hostGet,
+  NOT_AVAILABLE,
+  resolveRow,
+  streamLogs,
+  Unavailable,
+  type HostPort,
+  type HostService,
+  type HostSnapshot,
+  type HostUpdate,
+} from "@/cli/work/console"
+import {
   cloudBase,
+  createRestorePoint,
+  listRestorePoints,
+  restoreRestorePoint,
   findRuntime,
   listComputers,
   listRuntimes,
@@ -135,6 +156,10 @@ async function guard(fn: () => Promise<void>): Promise<void> {
   try {
     await fn()
   } catch (e) {
+    if (e instanceof Unavailable) {
+      process.stdout.write(NOT_AVAILABLE + "\n")
+      return
+    }
     UI.error(computeRequiredMessage((e as Error).message) ?? (e as Error).message)
     process.exitCode = 1
   }
@@ -171,10 +196,29 @@ export async function printComputeStatusAfterLogin(): Promise<void> {
 }
 
 const ComputersStatusCommand = cmd({
-  command: "status",
-  describe: "show whether this account has a computer for agents, and the ways to get one",
-  builder: (y: Argv) => y.option("json", { type: "boolean", describe: "print JSON" }),
+  command: "status [computer]",
+  describe: "show whether this account has a computer for agents; with a computer, its health",
+  builder: (y: Argv) =>
+    y.positional("computer", { type: "string", describe: "id or name: show CPU, memory, disk, uptime (Computers console)" }).option("json", { type: "boolean", describe: "print JSON" }),
   handler: (args) => guard(async () => {
+    if (args.computer) {
+      if (!consoleEnabled()) {
+        process.stdout.write(NOT_AVAILABLE + "\n")
+        return
+      }
+      const row = await resolveRow(String(args.computer))
+      let snap: HostSnapshot | undefined
+      let asleep = false
+      try {
+        snap = await hostGet<HostSnapshot>(row.id, "snapshot")
+      } catch (e) {
+        if (!(e instanceof Asleep)) throw e
+        asleep = true
+        snap = e.lastSample ?? row.lastSample
+      }
+      process.stdout.write((args.json ? JSON.stringify({ computer: row, asleep, snapshot: snap ?? null }, null, 2) : formatStatus(row, snap, asleep)) + "\n")
+      return
+    }
     const s = await fetchComputeStatus()
     process.stdout.write((args.json ? JSON.stringify(s, null, 2) : formatComputeStatus(s)) + "\n")
   }),
@@ -257,6 +301,151 @@ function lifecycle(verb: "start" | "stop") {
   })
 }
 
+
+// ── Computers console (hidden unless GIZZI_COMPUTERS_CONSOLE=1) ─────────────
+// Contract: surfaces/docs/dev/computers-console-contract.mdx.
+
+/** Console subcommands do nothing unless the `computers_console` flag (GIZZI_COMPUTERS_CONSOLE=1) is on. */
+function gated(fn: () => Promise<void>): Promise<void> {
+  if (!consoleEnabled()) {
+    process.stdout.write(NOT_AVAILABLE + "\n")
+    return Promise.resolve()
+  }
+  return guard(fn)
+}
+
+function hostList<T>(name: string, key: string, describe: string, format: (rows: T[]) => string) {
+  return cmd({
+    command: `${name} <computer>`,
+    describe: consoleEnabled() ? describe : false,
+    builder: (y: Argv) => y.positional("computer", { type: "string", demandOption: true }).option("json", { type: "boolean", describe: "print JSON" }),
+    handler: (args) => gated(async () => {
+      const row = await resolveRow(String(args.computer))
+      const body = await hostGet<Record<string, T[]>>(row.id, name)
+      const rows = body[key] ?? []
+      process.stdout.write((args.json ? JSON.stringify(rows, null, 2) : format(rows)) + "\n")
+    }),
+  })
+}
+
+const ComputersLogsCommand = cmd({
+  command: "logs <computer> <unit>",
+  describe: consoleEnabled() ? "service logs (masked on the computer; --errors, --lines N, --follow)" : false,
+  builder: (y: Argv) =>
+    y
+      .positional("computer", { type: "string", demandOption: true })
+      .positional("unit", { type: "string", demandOption: true })
+      .option("errors", { type: "boolean", describe: "only warnings and errors" })
+      .option("lines", { type: "number", default: 100, describe: "how many recent lines to print" })
+      .option("follow", { type: "boolean", alias: "f", describe: "keep streaming new lines" })
+      .option("json", { type: "boolean", describe: "print one JSON object per line" }),
+  handler: (args) => gated(async () => {
+    const row = await resolveRow(String(args.computer))
+    const ctl = new AbortController()
+    process.once("SIGINT", () => ctl.abort())
+    // Without --follow, take what the stream replays in 8 seconds, then stop.
+    const timer = args.follow ? undefined : setTimeout(() => ctl.abort(), 8_000)
+    const keep = (l: { level: string }) => !args.errors || l.level === "error" || l.level === "warn"
+    const out = (l: Parameters<typeof formatLogLine>[0]) => process.stdout.write((args.json ? JSON.stringify(l) : formatLogLine(l)) + "\n")
+    const limit = Math.max(1, Math.floor(args.lines as number))
+    const tail: Parameters<typeof formatLogLine>[0][] = []
+    try {
+      // The stream replays recent history first, then goes live. Without --follow, stop after `lines`.
+      for await (const l of streamLogs(row.id, String(args.unit), ctl.signal)) {
+        if (!keep(l)) continue
+        if (args.follow) out(l)
+        else {
+          tail.push(l)
+          if (tail.length >= limit) break
+        }
+      }
+    } catch (e) {
+      if (!ctl.signal.aborted) throw e
+    }
+    clearTimeout(timer)
+    ctl.abort()
+    if (!args.follow) tail.slice(-limit).forEach(out)
+  }),
+})
+
+function ask(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return Promise.resolve(false)
+  return new Promise((resolve) => {
+    process.stdout.write(`${question} [y/N] `)
+    process.stdin.setEncoding("utf8")
+    process.stdin.once("data", (d) => {
+      process.stdin.pause()
+      resolve(/^y(es)?$/i.test(String(d).trim()))
+    })
+  })
+}
+
+async function localComputer(key: string) {
+  const target = pick(await listComputers(), key)
+  if (!target) throw new Error(`No computer named or with id "${key}". Run \`gizzi computers ls\`.`)
+  return target
+}
+
+const ComputersSleepCommand = cmd({
+  command: "sleep <computer>",
+  describe: consoleEnabled() ? "put a computer to sleep" : false,
+  builder: (y: Argv) => y.positional("computer", { type: "string", demandOption: true }).option("yes", { type: "boolean", alias: "y", describe: "skip the question" }),
+  handler: (args) => gated(async () => {
+    const t = await localComputer(String(args.computer))
+    if (!args.yes && !(await ask(`Put ${t.name} to sleep? Running work on it stops.`))) {
+      process.stdout.write("Not put to sleep. Pass --yes to skip the question.\n")
+      return
+    }
+    process.stdout.write(`${t.name}: ${(await stopComputer(t.id)).status}\n`)
+  }),
+})
+
+const ComputersWakeCommand = cmd({
+  command: "wake <computer>",
+  describe: consoleEnabled() ? "wake a sleeping computer (asks first; a wake can use credits)" : false,
+  builder: (y: Argv) => y.positional("computer", { type: "string", demandOption: true }).option("yes", { type: "boolean", alias: "y", describe: "skip the question" }),
+  handler: (args) => gated(async () => {
+    const t = await localComputer(String(args.computer))
+    if (!args.yes && !(await ask(`Wake ${t.name}?`))) {
+      process.stdout.write("Not woken. Pass --yes to wake without the question.\n")
+      return
+    }
+    process.stdout.write(`${t.name}: ${(await startComputer(t.id)).status}\n`)
+  }),
+})
+
+const ComputersSnapshotCommand = cmd({
+  command: "snapshot <computer>",
+  describe: consoleEnabled() ? "make a restore point (with no point id, list them)" : false,
+  builder: (y: Argv) => y.positional("computer", { type: "string", demandOption: true }).option("list", { type: "boolean", describe: "list restore points instead" }).option("json", { type: "boolean", describe: "print JSON" }),
+  handler: (args) => gated(async () => {
+    const t = await localComputer(String(args.computer))
+    if (args.list) {
+      const pts = await listRestorePoints(t.id)
+      process.stdout.write((args.json ? JSON.stringify(pts, null, 2) : pts.length ? pts.map((p) => `${pad(p.id, 40)} ${p.created_at ?? ""}`).join("\n") : "No restore points.") + "\n")
+      return
+    }
+    const r = await createRestorePoint(t.id)
+    process.stdout.write(args.json ? JSON.stringify(r) + "\n" : `Restore point ${r.snapshot_id} made on ${t.name}.\n`)
+  }),
+})
+
+const ComputersRestoreCommand = cmd({
+  command: "restore <computer> <point>",
+  describe: consoleEnabled() ? "restore a computer to a restore point (asks first)" : false,
+  builder: (y: Argv) =>
+    y.positional("computer", { type: "string", demandOption: true }).positional("point", { type: "string", demandOption: true }).option("yes", { type: "boolean", alias: "y", describe: "skip the question" }),
+  handler: (args) => gated(async () => {
+    const t = await localComputer(String(args.computer))
+    if (!args.yes && !(await ask(`Restore ${t.name} to ${args.point}? Changes made since then are lost.`))) {
+      process.stdout.write("Not restored.\n")
+      return
+    }
+    await restoreRestorePoint(t.id, String(args.point))
+    process.stdout.write(`${t.name}: restored to ${args.point}.\n`)
+  }),
+})
+
 export const ComputersCommand = cmd({
   command: "computers",
   describe: "your computers: list, start, stop (run a session on one with `gizzi run --on`)",
@@ -267,6 +456,14 @@ export const ComputersCommand = cmd({
       .command(lifecycle("stop"))
       .command(ComputersStatusCommand)
       .command(ComputersLinkCommand)
+      .command(hostList<HostService>("services", "services", "services on a computer", formatServices))
+      .command(hostList<HostPort>("ports", "ports", "listening ports on a computer", formatPorts))
+      .command(hostList<HostUpdate>("updates", "updates", "available updates on a computer", formatUpdates))
+      .command(ComputersLogsCommand)
+      .command(ComputersSleepCommand)
+      .command(ComputersWakeCommand)
+      .command(ComputersSnapshotCommand)
+      .command(ComputersRestoreCommand)
       .demandCommand(1, "Specify a computers command (ls, start, stop, status, link)"),
   handler: () => {},
 })
