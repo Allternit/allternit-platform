@@ -1,5 +1,13 @@
 package com.allternit.feature.bots
 
+import androidx.compose.runtime.collectAsState
+import com.allternit.feature.bots.runtimes.AgentLayersModel
+import com.allternit.feature.bots.runtimes.BUILT_IN_ALLTERNIT
+import com.allternit.feature.bots.runtimes.RuntimeLookView
+import com.allternit.feature.bots.runtimes.RuntimeRegistry
+import com.allternit.feature.bots.runtimes.ViewSegmented
+import com.allternit.feature.bots.runtimes.lookItems
+import com.allternit.feature.bots.runtimes.rememberBotAgentState
 import com.allternit.core.design.AllternitSerif
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -130,6 +138,12 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
     var editingId by remember { mutableStateOf<String?>(null) }
     var pickerRequest by remember { mutableStateOf(0) }
     val isMainChat = explicitSessionId == null
+    // Runtime · Brain · Bot (Harness & Bots 2.0): the composer chips and the View switch share this.
+    val agent = rememberBotAgentState(bot) { id -> nav.open(BotRoute.Chat(id, null)) }
+    val registry by RuntimeRegistry.state.collectAsState()
+    val agentRuntime = remember(agent.config, registry) {
+        AgentLayersModel(agent.botBrain, agent.agentView, registry.runtimes.ifEmpty { listOf(BUILT_IN_ALLTERNIT) }, emptyList(), emptyList(), bot.id, bot.displayName, agent.connected, agent.vendor)
+    }
 
     suspend fun resolve() {
         resolveError = null
@@ -217,7 +231,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
             deckRow()
             host.composer(BotComposerSpec(
                 placeholder = placeholder, isStreaming = vm.isStreaming && deck == DeckTab.Thread, sendDisabled = vm.isCreatingSession,
-                prefill = prefill, onPrefillConsumed = { prefill = null }, onSend = send, onStop = vm::stopStreaming, pickerRequest = pickerRequest,
+                prefill = prefill, onPrefillConsumed = { prefill = null }, onSend = send, onStop = vm::stopStreaming, pickerRequest = pickerRequest, agent = agent,
                 onVoiceMode = if (voice) ({
                     val (model, effort) = host.currentModel()
                     voiceHost.start(vm, model, effort, bot = voiceBot)
@@ -248,11 +262,24 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                 Spacer(Modifier.weight(1f))
                 LibraryIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Thread options", "botThreadMenu", enabled = !acting) { menuOpen = true }
             }
+            // View: Allternit / Runtime (plan D9; Split is desktop-only). Shown for a runtime with a look of its own.
+            val lookRuntime = agentRuntime.runtime?.takeIf { it.tokens(agentRuntime.look) != null }
+            if (deck == DeckTab.Thread && lookRuntime != null) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp).testTag("botViewRow"), verticalAlignment = Alignment.CenterVertically) {
+                    Text(lookRuntime.name, color = c.textSecondary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    ViewSegmented(agent.view, runtimeLabel = if (agent.connected) "${bot.displayName} view" else "Runtime view") { v -> agent.apply(agentRuntime.pickView(v)) }
+                }
+            }
+            agent.error?.let { ErrorLine(it) }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (deck) {
                     DeckTab.Thread -> {
                         val sid = sessionId
                         when {
+                            sid != null && lookRuntime != null && agent.view == "runtime" -> RuntimeLookView(
+                                runtime = lookRuntime, look = agentRuntime.look, items = lookItems(vm.messages), isStreaming = vm.isStreaming,
+                                onSend = { text -> vm.send(ChatSendRequest(text)) }, onStop = vm::stopStreaming, botName = bot.displayName,
+                            )
                             sid != null -> Column(Modifier.fillMaxSize()) {
                                 if (onStage) BotChatStage(
                                     bot, live.first.takeIf { live.third }, working = live.third && !live.second,
@@ -325,7 +352,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
         }
         Gap(12.dp)
     }
-    if (editOpen) EditBotSheet(bot.id, onDismiss = { editOpen = false }) { editOpen = false; scope.launch { store.refreshAll() } }
+    if (editOpen) EditBotSheet(bot.id, onDismiss = { editOpen = false }, backend = host.backend) { editOpen = false; scope.launch { store.refreshAll() } }
     if (deleteOpen) ConfirmSheet(
         title = "Delete ${bot.displayName}?", message = "Its chats, routines and files go with it. This can't be undone.",
         action = "Delete bot", testTag = "botDeleteConfirm", onDismiss = { deleteOpen = false },

@@ -112,7 +112,7 @@ internal fun BotPageView(bot: BotRecord, store: BotModeStore, nav: BotNavigator,
             NavRow("Channels", com.allternit.core.design.R.drawable.ph_link, channelNames?.let { if (it.isEmpty()) "None" else it.joinToString(", ") }, "botPageChannels") { nav.open(BotRoute.Channels(bot.id)) }
         }
     }
-    if (editOpen) EditBotSheet(bot.id, onDismiss = { editOpen = false }) { editOpen = false; scope.launch { store.refreshAll() } }
+    if (editOpen) EditBotSheet(bot.id, onDismiss = { editOpen = false }, backend = backend) { editOpen = false; scope.launch { store.refreshAll() } }
 }
 
 /** iOS BotSummaryTiles: sessions, messages, tokens, spend. */

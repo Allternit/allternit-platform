@@ -345,8 +345,8 @@ private val kindWords = mapOf(
 )
 
 private val trustWords = mapOf(
-    "owner" to "you", "team" to "your team", "contact" to "a contact", "vendorbot" to "a vendor bot",
-    "vendor_bot" to "a vendor bot", "tooloutput" to "a tool result", "tool_output" to "a tool result",
+    "owner" to "you", "team" to "your team", "contact" to "a contact", "vendorbot" to "a Connected bot",
+    "vendor_bot" to "a Connected bot", "tooloutput" to "a tool result", "tool_output" to "a tool result",
     "web" to "a web page", "stranger" to "someone you do not know",
 )
 

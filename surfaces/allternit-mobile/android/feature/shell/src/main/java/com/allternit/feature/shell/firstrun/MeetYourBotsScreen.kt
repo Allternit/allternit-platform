@@ -647,7 +647,7 @@ internal fun MainStep(model: MeetYourBotsModel) {
     Spacer(Modifier.height(12.dp))
     MonoLabel("Bring your own")
     PickGrid {
-        Pick("Vendor bot", false, { leadSheet = "vendor" }) { ActionTile("⇄") }
+        Pick("Connected bot", false, { leadSheet = "vendor" }) { ActionTile("⇄") }
         Pick("New bot", false, { leadSheet = "new" }) { ActionTile("+") }
         Pick("Import", false, { leadSheet = "import" }) { ActionTile("↓") }
     }

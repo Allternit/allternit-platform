@@ -57,6 +57,17 @@ import com.allternit.feature.artifacts.list
 import com.allternit.feature.artifacts.listUnder
 import com.allternit.feature.artifacts.obj
 import com.allternit.feature.artifacts.str
+import androidx.compose.runtime.collectAsState
+import com.allternit.feature.bots.runtimes.AgentLayersModel
+import com.allternit.feature.bots.runtimes.AgentLayersPicker
+import com.allternit.feature.bots.runtimes.BUILT_IN_ALLTERNIT
+import com.allternit.feature.bots.runtimes.BotChoice
+import com.allternit.feature.bots.runtimes.BrainOption
+import com.allternit.feature.bots.runtimes.RegistryNotice
+import com.allternit.feature.bots.runtimes.RegistryState
+import com.allternit.feature.bots.runtimes.RuntimeRegistry
+import com.allternit.feature.bots.runtimes.isConnected
+import com.allternit.feature.bots.runtimes.vendorName
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
@@ -84,18 +95,17 @@ object BotFormData {
         DesktopPreset("medium", "Medium", "4", "8192", "40960"),
         DesktopPreset("large", "Large", "8", "16384", "81920"),
     )
-    val harnessModes = listOf("cloud" to "Cloud", "byok" to "BYOK", "local" to "Local", "subprocess" to "Subprocess")
-    val providers = listOf("openai" to "OpenAI", "anthropic" to "Anthropic", "google" to "Google", "local" to "Local", "custom" to "Custom")
-    val nativeHarnesses = listOf(
-        "codex" to "Codex", "claude" to "Claude", "kimi" to "Kimi", "grok" to "Grok", "hermes" to "Hermes", "kiro-cli" to "Kiro",
-        "mcode" to "MiniMax Code", "qodercli" to "Qoder", "qoderclicn" to "Qoder CN", "qwenpaw" to "QwenPaw", "reasonix" to "Reasonix", "traecli" to "Trae",
-    )
-    data class BrainMode(val id: String, val label: String, val hint: String)
-    val brainModes = listOf(
-        BrainMode("allternit_cloud", "Allternit cloud", "Runs on Allternit cloud. Model is the one you pick below."),
-        BrainMode("native_harness", "Native harness", "Resumes a local Codex, Claude, or Kimi session. Does not fall back to cloud."),
-        BrainMode("uhp_harness", "UHP harness", "Binds a UHP harness id. Does not fall back to cloud."),
-    )
+    /**
+     * The agent's `harness_config.mode`, from the picked runtime and how its brain is paid for (the
+     * layered picker replaced the Cloud/BYOK/Local/Subprocess pills): another runtime runs as a
+     * subprocess on the computer; on Allternit, a local brain is local, an API key is BYOK, else cloud.
+     */
+    fun harnessMode(runtime: String, access: String?): String = when {
+        runtime != "allternit" -> "subprocess"
+        access == "local" -> "local"
+        access == "key" -> "byok"
+        else -> "cloud"
+    }
 
     /** iOS BotFormModel.deriveHandle: lowercase, dashes, at most 64. */
     fun deriveHandle(name: String): String = BotModeStore.slugify(name).take(64).ifEmpty { "my-bot" }
@@ -125,15 +135,17 @@ object BotFormData {
 /** A model the pickers list (iOS ModelStore option). */
 private data class ModelOption(val id: String, val name: String, val provider: String, val description: String?)
 
-private suspend fun loadModels(host: BotsHost?): Pair<List<ModelOption>, String?> {
-    val api = host?.backend?.api ?: return emptyList<ModelOption>() to null
+private suspend fun loadModels(host: BotsHost?): Pair<List<ModelOption>, String?> = loadModels(host?.backend)
+
+private suspend fun loadModels(backend: com.allternit.feature.chat.ChatBackend?): Pair<List<ModelOption>, String?> {
+    val api = backend?.api ?: return emptyList<ModelOption>() to "Open this bot's chat to change its brain."
     return when (val r = api.listModels()) {
         is ApiResult.Ok -> r.value.map { ModelOption(it.id, it.name, it.provider, it.description) } to null
         else -> emptyList<ModelOption>() to "Couldn't load models. Check your connection and try again."
     }
 }
 
-/** New bot (iOS NewBotSheet): the bot form in create mode, with vendor bots, templates and Import. */
+/** New bot (iOS NewBotSheet): the bot form in create mode, with Connected bots, templates and Import. */
 @Composable
 fun NewBotSheet(store: BotModeStore, host: BotsHost? = null, onBrowseTemplates: (() -> Unit)?, onDismiss: () -> Unit, onCreated: (List<String>) -> Unit) {
     BotFormSheet(editBotId = null, host = host, onBrowseTemplates = onBrowseTemplates, onDismiss = onDismiss, onDone = onCreated)
@@ -141,8 +153,8 @@ fun NewBotSheet(store: BotModeStore, host: BotsHost? = null, onBrowseTemplates: 
 
 /** Edit bot (iOS EditBotSheet). */
 @Composable
-fun EditBotSheet(botId: String, onDismiss: () -> Unit, onSaved: () -> Unit) {
-    BotFormSheet(editBotId = botId, host = null, onBrowseTemplates = null, onDismiss = onDismiss, onDone = { onSaved() })
+fun EditBotSheet(botId: String, onDismiss: () -> Unit, backend: com.allternit.feature.chat.ChatBackend? = null, onSaved: () -> Unit) {
+    BotFormSheet(editBotId = botId, host = null, backend = backend, onBrowseTemplates = null, onDismiss = onDismiss, onDone = { onSaved() })
 }
 
 /**
@@ -152,7 +164,7 @@ fun EditBotSheet(botId: String, onDismiss: () -> Unit, onSaved: () -> Unit) {
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates: (() -> Unit)?, onDismiss: () -> Unit, onDone: (List<String>) -> Unit) {
+private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allternit.feature.chat.ChatBackend? = host?.backend, onBrowseTemplates: (() -> Unit)?, onDismiss: () -> Unit, onDone: (List<String>) -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     val editing = editBotId != null
@@ -167,13 +179,23 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
     val tools = remember { mutableStateListOf<String>() }
     var desktopEnabled by remember { mutableStateOf(false) }
     var desktopPreset by remember { mutableStateOf("small") }
-    var brainMode by remember { mutableStateOf("allternit_cloud") }
-    var harnessId by remember { mutableStateOf("codex") }
+    // Runtime · Brain · Bot (Harness & Bots 2.0): the draft botBrain and agentView the layered picker
+    // edits. Saved as config.botBrain (runtime/access/autoSwitchedFrom/modelRef + legacy mode/harness)
+    // and config.agentView; on edit, every other stored key is kept.
+    var botBrainDraft by remember { mutableStateOf(JsonObject(mapOf("runtime" to JsonPrimitive("allternit")))) }
+    var agentViewDraft by remember { mutableStateOf<JsonObject?>(null) }
+    var layersDirty by remember { mutableStateOf(false) }
+    var layersNote by remember { mutableStateOf<String?>(null) }
+    var layersQuery by remember { mutableStateOf("") }
     var nativeSessionId by remember { mutableStateOf("") }
-    var uhpHarnessId by remember { mutableStateOf("") }
-    var modelId by remember { mutableStateOf("") }
-    var provider by remember { mutableStateOf("anthropic") }
-    var harnessMode by remember { mutableStateOf("cloud") }
+    var brains by remember { mutableStateOf<List<BrainOption>>(emptyList()) }
+    var brainsLoading by remember { mutableStateOf(true) }
+    var brainsError by remember { mutableStateOf<String?>(null) }
+    var connectedVendor by remember { mutableStateOf<String?>(null) }
+    var connected by remember { mutableStateOf(false) }
+    var editRecord by remember { mutableStateOf<BotRecord?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val registry by RuntimeRegistry.state.collectAsState()
     var maxIterations by remember { mutableStateOf(10) }
     var temperature by remember { mutableStateOf(0.7f) }
     var knowledgeBrains by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
@@ -187,7 +209,6 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
     var error by remember { mutableStateOf<String?>(null) }
     var moreOpen by remember { mutableStateOf(false) }
     var advancedOpen by remember { mutableStateOf(false) }
-    var modelPickerOpen by remember { mutableStateOf(false) }
     var vendorOpen by remember { mutableStateOf(false) }
     var importOpen by remember { mutableStateOf(false) }
     val look = remember { BotLookModel() }
@@ -212,12 +233,29 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
                 tools.clear()
                 val allowed = (b.raw["allowed_tools"] as? JsonArray ?: b.raw["tools"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty()
                 tools.addAll(allowed)
+                editRecord = b
+                (b.config["botBrain"] as? JsonObject)?.let { botBrainDraft = it }
+                agentViewDraft = b.config["agentView"] as? JsonObject
+                nativeSessionId = botBrainDraft.str("nativeSessionId") ?: botBrainDraft.str("sessionId").orEmpty()
+                connected = b.isConnected
+                connectedVendor = VendorGroupTurn.binding(id)?.takeIf { it.isVendor }?.let { connected = true; b.vendorName(it.vendor) } ?: b.vendorName()
                 // The Look editor opens on what the bot has saved (iOS formFromBot).
                 look.configure(b.config["avatar"], accent, displayName, VendorGroupTurn.binding(id)?.takeIf { it.isVendor }?.vendor)
             }
             is BotsResult.Failed -> loadError = r.message
         }
         loading = false
+    }
+    // The registry (cached copy first) and the brains the picker lists, default model first.
+    LaunchedEffect(Unit) { RuntimeRegistry.load(context) }
+    LaunchedEffect(Unit) {
+        val (m, e) = loadModels(backend)
+        brains = m.filter { !it.provider.startsWith("openrouter") }.map { o ->
+            val parts = o.id.split("/", limit = 2)
+            BrainOption(o.provider.ifEmpty { parts.first() }, if (parts.size == 2) parts[1] else o.id, o.name)
+        }
+        brainsError = e
+        brainsLoading = false
     }
     LaunchedEffect(editBotId) {
         if (editing) loadBot() else {
@@ -239,9 +277,28 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
     }
 
     val nameValid = displayName.trim().length >= 2
-    val brainMissing = brainMode == "allternit_cloud" && modelId.isEmpty() && !editing
-    val uhpMissing = brainMode == "uhp_harness" && uhpHarnessId.isBlank()
-    val canSave = host?.signedIn != false && nameValid && !saving && !look.busy && !look.blocked && (editing || (!brainMissing && !uhpMissing))
+    val layers = AgentLayersModel(
+        botBrain = botBrainDraft, agentView = agentViewDraft, runtimes = registry.runtimes.ifEmpty { listOf(BUILT_IN_ALLTERNIT) }, brains = brains,
+        bots = listOfNotNull(editRecord?.let { BotChoice(it, connected, connectedVendor) }), botId = editBotId,
+        botName = displayName.trim().ifEmpty { "This bot" }, locked = connected, vendorName = connectedVendor, query = layersQuery,
+    )
+    val modelRef = layers.current["modelRef"] as? JsonObject
+    val modelId = modelRef.str("modelID").orEmpty()
+    val provider = modelRef.str("providerID").orEmpty()
+    // The native runtime needs a brain to answer; another runtime falls back to its own default model.
+    val brainMissing = layers.runtimeId == "allternit" && modelId.isEmpty() && !editing
+    val canSave = host?.signedIn != false && nameValid && !saving && !look.busy && !look.blocked && (editing || !brainMissing)
+
+    /** The botBrain to save: the picker's record, with the native session id when one was typed. */
+    fun botBrainToSave(): JsonObject {
+        val m = layers.current.toMutableMap()
+        // Old Android keys: carry them over to the contract names before dropping them.
+        if (m["uhpHarnessId"] == null && m["mode"] == JsonPrimitive("uhp_harness")) m["harnessId"]?.let { m["uhpHarnessId"] = it }
+        m.remove("sessionId"); m.remove("harnessId") // the contract names are nativeSessionId / uhpHarnessId
+        if (m["mode"] == JsonPrimitive("native_harness") && nativeSessionId.isNotBlank()) m["nativeSessionId"] = JsonPrimitive(nativeSessionId.trim()) else m.remove("nativeSessionId")
+        return JsonObject(m)
+    }
+    fun agentViewToSave(): JsonObject = agentViewDraft ?: buildJsonObject { put("view", "allternit"); put("look", layers.look) }
 
     fun createBody(makeMain: Boolean): JsonObject {
         val name = displayName.trim()
@@ -253,11 +310,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
             put("accentColor", accent); put("groupChatEnabled", true); put("botCategory", category)
             if (makeMain) put("chiefOfStaff", true)
         }
-        val botBrain = buildJsonObject {
-            put("mode", brainMode)
-            if (brainMode == "native_harness") { put("harness", harnessId); if (nativeSessionId.isNotBlank()) put("sessionId", nativeSessionId.trim()) }
-            if (brainMode == "uhp_harness") put("harnessId", uhpHarnessId.trim())
-        }
+        val botBrain = botBrainToSave()
         val preset = BotFormData.desktopPresets.first { it.id == desktopPreset }
         val vm = buildJsonObject {
             put("enabled", desktopEnabled)
@@ -266,7 +319,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
         val config = buildJsonObject {
             // The Look editor's avatar; the wizard's Gizzi default when the looks couldn't load.
             put("avatar", look.avatar ?: buildJsonObject { put("type", "mascot"); put("mascotTemplate", "gizzi") })
-            put("isBot", true); put("botProfile", profile); put("botBrain", botBrain); put("vmOperator", vm)
+            put("isBot", true); put("botProfile", profile); put("botBrain", botBrain); put("agentView", agentViewToSave()); put("vmOperator", vm)
             if (knowledgeBrainId.isNotEmpty()) put("brainId", knowledgeBrainId)
         }
         return buildJsonObject {
@@ -276,7 +329,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
             put("capabilities", JsonArray(emptyList())); put("system_prompt", systemPrompt); put("tools", JsonArray(emptyList()))
             put("max_iterations", maxIterations); put("temperature", (temperature * 10).toInt() / 10.0)
             put("config", config); put("trust_tier", "standard")
-            put("harness_config", buildJsonObject { put("mode", harnessMode) })
+            put("harness_config", buildJsonObject { put("mode", BotFormData.harnessMode(layers.runtimeId, botBrain.str("access"))) })
             put("enabled_modes", JsonArray(listOf(JsonPrimitive("chat")))); put("allowed_skills", JsonArray(emptyList()))
             put("allowed_tools", JsonArray(tools.map { JsonPrimitive(it) })); put("category", "general"); put("tags", JsonArray(emptyList()))
             put("data_classification", "internal"); put("write_scope", "workspace"); put("is_bot", true); put("bot_profile", profile); put("vm_operator", vm)
@@ -287,7 +340,6 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
         if (!canSave) {
             error = when {
                 !nameValid -> "Add a display name (at least 2 characters) to continue."
-                uhpMissing -> "Add the UHP harness id, or pick another brain."
                 brainMissing -> "Pick a brain first."
                 else -> null
             }
@@ -305,7 +357,10 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
                     put("system_prompt", systemPrompt); put("allowed_tools", JsonArray(tools.map { JsonPrimitive(it) }))
                     // An untouched look stays as saved.
                     val lookAvatar = look.avatar?.takeIf { look.dirty }
-                    put("bot_profile", profile); put("config", JsonObject(storedConfig + ("botProfile" to profile) + (if (lookAvatar != null) mapOf("avatar" to lookAvatar) else emptyMap())))
+                    // Runtime/brain/view only when the picker changed them: an untouched record stays as saved.
+                    val layerKeys = if (layersDirty) mapOf("botBrain" to botBrainToSave(), "agentView" to agentViewToSave()) else emptyMap()
+                    put("bot_profile", profile); put("config", JsonObject(storedConfig + ("botProfile" to profile) + layerKeys + (if (lookAvatar != null) mapOf("avatar" to lookAvatar) else emptyMap())))
+                    if (layersDirty && modelId.isNotEmpty() && provider.isNotEmpty()) { put("model", modelId); put("provider", provider) }
                     (tagline.trim().ifEmpty { description.trim() }).takeIf { it.isNotEmpty() }?.let { put("description", it) }
                 }
                 when (val r = BotsApi.updateAgent(editBotId, body)) {
@@ -321,6 +376,29 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
             }
             saving = false
         }
+    }
+
+    @Composable
+    fun AgentPicker() {
+        AgentLayersPicker(
+            model = layers, query = layersQuery, onQuery = { layersQuery = it },
+            onChange = { ch ->
+                botBrainDraft = ch.botBrain
+                agentViewDraft = ch.agentView
+                layersNote = ch.note
+                layersDirty = true
+            },
+            note = layersNote,
+            runtimesLoading = registry is RegistryState.Loading,
+            registryNotice = when (val st = registry) {
+                is RegistryState.Stale -> RegistryNotice("Couldn't load the latest runtimes. Showing the saved list.") { scope.launch { RuntimeRegistry.load(context, force = true) } }
+                is RegistryState.Error -> RegistryNotice("Couldn't load the runtimes. ${st.message}") { scope.launch { RuntimeRegistry.load(context, force = true) } }
+                else -> null
+            },
+            brainsLoading = brainsLoading, brainsError = brainsError.takeIf { brains.isEmpty() },
+            onOpenConnections = host?.openConnections,
+            botFace = editRecord?.let { rec -> @Composable { size: androidx.compose.ui.unit.Dp -> BotAvatar(rec, size) } },
+        )
     }
 
     LibrarySheet(
@@ -345,10 +423,12 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
                         LibraryField("Welcome message", welcome, "Shown at the top of a fresh chat", "botFormWelcome", singleLine = false, minHeight = 64) { welcome = it }
                         LibraryField("Job instructions", systemPrompt, "Your job: …", "botFormPrompt", singleLine = false, minHeight = 140) { systemPrompt = it }
                         ToolsChips(tools)
+                        SectionTitle("Runtime, brain and bot", "How it works, how it thinks and who it is.")
+                        AgentPicker()
                     } else {
                         Row(Modifier.clickable { moreOpen = !moreOpen }.testTag("botFormMore").padding(vertical = 6.dp)) {
                             Text("More options", color = c.textSecondary, fontSize = 14.sp)
-                            Text(" · accent, role, brain, computer", color = c.textTertiary, fontSize = 14.sp)
+                            Text(" · role, runtime, brain, computer", color = c.textTertiary, fontSize = 14.sp)
                         }
                         if (moreOpen) Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
                             Label("What it does")
@@ -368,29 +448,12 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
                                 quotaLine?.let { Note(it) }
                                 Note("The desktop starts provisioning when you hit Create bot. You can watch its status here and on the bot card.")
                             }
-                            SectionTitle("Intelligence", "Pick how this bot runs and the model it uses.")
-                            Label("Brain")
-                            Note("How this bot runs. Separate from the Gizzi knowledge brain.")
-                            BotFormData.brainModes.forEach { m -> ChoiceRow(m.label, m.hint, brainMode == m.id, "botFormBrain${m.id}") { brainMode = m.id } }
-                            if (brainMissing) ErrorLine("Pick a model below to create this bot", Modifier.padding(0.dp))
-                            if (brainMode == "native_harness") {
-                                Label("Native harness")
-                                PillRow(BotFormData.nativeHarnesses, BotFormData.nativeHarnesses.first { it.first == harnessId }, { it.second }, { "botFormHarness${it.first}" }) { harnessId = it.first }
-                                LibraryField("Native session id", nativeSessionId, "Leave empty to bind on first start", "botFormNativeSession") { nativeSessionId = it }
-                            }
-                            if (brainMode == "uhp_harness") {
-                                LibraryField("UHP harness id", uhpHarnessId, "e.g. uhp-claude-desktop-01", "botFormUhp") { uhpHarnessId = it }
-                                if (uhpMissing) ErrorLine("Required to start this bot", Modifier.padding(0.dp)) else Note("Bound when you save. Does not fall back to cloud.")
-                            }
+                            SectionTitle("Runtime, brain and bot", "How it works, how it thinks and who it is. Allternit keeps the policy, approvals, memory and record.")
+                            AgentPicker()
+                            if (brainMissing) ErrorLine("Pick a brain to create this bot", Modifier.padding(0.dp))
                             Label("Gizzi knowledge")
-                            if (knowledgeBrains.isEmpty()) Note("No Gizzi knowledge brains found. Select a platform model below.")
+                            if (knowledgeBrains.isEmpty()) Note("No Gizzi knowledge brains found. The bot uses its brain alone.")
                             else PillRow(listOf("" to "Platform model") + knowledgeBrains, (listOf("" to "Platform model") + knowledgeBrains).first { it.first == knowledgeBrainId }, { it.second }, { "botFormKnowledge${it.first}" }) { knowledgeBrainId = it.first }
-                            Label("Model")
-                            ChoiceRow(if (modelId.isEmpty()) "Pick a brain" else "$provider/$modelId", null, false, "botFormModel") { modelPickerOpen = true }
-                            Label("Provider")
-                            PillRow(BotFormData.providers, BotFormData.providers.firstOrNull { it.first == provider } ?: BotFormData.providers.first(), { it.second }, { "botFormProvider${it.first}" }) { provider = it.first }
-                            Label("Harness")
-                            PillRow(BotFormData.harnessModes, BotFormData.harnessModes.first { it.first == harnessMode }, { it.second }, { "botFormHarnessMode${it.first}" }) { harnessMode = it.first }
                             Text(if (advancedOpen) "▾ Advanced" else "▸ Advanced", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.clickable { advancedOpen = !advancedOpen }.testTag("botFormAdvanced"))
                             if (advancedOpen) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -399,11 +462,15 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
                                     Pill("+", "botFormIterMore", enabled = maxIterations < 50) { maxIterations++ }
                                 }
                                 Note("Tool calls a bot may take on one task.")
+                                if (layers.runtimeId != "allternit") {
+                                    LibraryField("Native session id", nativeSessionId, "Leave empty to bind on first start", "botFormNativeSession") { nativeSessionId = it }
+                                    Note("Resumes this ${layers.runtimeName} session. Does not fall back to cloud.")
+                                }
                                 Text("Temperature: ${String.format(java.util.Locale.US, "%.1f", temperature)}", color = c.textPrimary, fontSize = 14.sp)
                                 Slider(temperature, { temperature = (it * 10).toInt() / 10f }, valueRange = 0f..2f, steps = 19, modifier = Modifier.testTag("botFormTemperature").semantics { contentDescription = "Temperature" })
                             }
                             RowGroup(Modifier.padding(horizontal = 0.dp)) {
-                                NavRow("Bring a vendor’s bot instead", DesignR.drawable.ph_plugs_connected, null, "botFormVendor", last = false) { vendorOpen = true }
+                                NavRow("Bring a Connected bot instead", DesignR.drawable.ph_plugs_connected, null, "botFormVendor", last = false) { vendorOpen = true }
                                 NavRow("Import a bot", DesignR.drawable.ph_upload_simple, null, "botFormImport", last = onBrowseTemplates == null) { importOpen = true }
                                 if (onBrowseTemplates != null) NavRow("Browse team templates", com.allternit.core.design.R.drawable.ph_squares_four, null, "botFormTemplates") { onBrowseTemplates() }
                             }
@@ -413,12 +480,6 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, onBrowseTemplates:
             }
             Gap(12.dp)
         }
-    }
-    if (modelPickerOpen) ModelPickerSheet(host, "Model", "$provider/$modelId", onDismiss = { modelPickerOpen = false }) { m ->
-        val parts = m.id.split("/", limit = 2)
-        modelId = if (parts.size == 2) parts[1] else m.id
-        provider = if (parts.size == 2) parts[0] else m.provider
-        modelPickerOpen = false
     }
     if (vendorOpen) VendorConnectSheet(offerMain = false, onDismiss = { vendorOpen = false }) { first, main ->
         vendorOpen = false
@@ -610,7 +671,7 @@ private fun connectProduct(o: JsonObject): ConnectProduct? {
 }
 
 /**
- * Bring a vendor's bot (iOS VendorConnectView + VendorProductView): the products your computer can
+ * Bring a Connected bot (iOS VendorConnectView + VendorProductView): the products your computer can
  * connect, then one-step connect with sign-in polling, consent, extra fields and "Make it my main bot".
  */
 @Composable
@@ -632,12 +693,12 @@ fun VendorConnectSheet(offerMain: Boolean, onDismiss: () -> Unit, onConnected: (
     LaunchedEffect(Unit) { load() }
     val p = open
     if (p != null) { VendorProductSheet(p, offerMain, onDismiss = { open = null }, onConnected = onConnected); return }
-    LibrarySheet(title = "Connect a vendor bot", testTag = "vendorConnectSheet", onDismiss = onDismiss, leading = LibrarySheetAction("Close", onClick = onDismiss)) {
+    LibrarySheet(title = "Add a Connected bot", testTag = "vendorConnectSheet", onDismiss = onDismiss, leading = LibrarySheetAction("Close", onClick = onDismiss)) {
         Column(Modifier.fillMaxWidth().heightIn(max = 620.dp).verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
             val list = products
             when {
                 unsupported -> Text("One-step connect needs a newer Allternit on your computer. Update it, then try again.", color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(20.dp))
-                loadError != null -> ListState(false, "Vendor bots connect through it. $loadError", true, "Couldn’t reach your computer", "") { scope.launch { load() } }
+                loadError != null -> ListState(false, "Connected bots connect through it. $loadError", true, "Couldn’t reach your computer", "") { scope.launch { load() } }
                 list == null -> LibrarySpinner("Loading")
                 else -> {
                     RowGroup {

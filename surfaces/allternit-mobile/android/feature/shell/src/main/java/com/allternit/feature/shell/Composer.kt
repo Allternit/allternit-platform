@@ -216,6 +216,8 @@ internal fun Composer(
     deck: ComposerDeck = ComposerDeck.Full,
     /** iOS ComposerView `playGamesAnytime`: Play shows from the start (Bots, Code threads), not only after 5 s of work. */
     playGamesAnytime: Boolean = false,
+    /** A bot chat's Runtime · Brain · Bot chips (Harness & Bots 2.0), drawn where the model chip sits. */
+    agentChips: (@Composable () -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
@@ -457,7 +459,7 @@ internal fun Composer(
                     Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp).rotate(plusTurn))
                 }
                 Spacer(Modifier.weight(1f))
-                ModelChip(models = models, open = pickerOpen) { pickerOpen = true }
+                if (agentChips != null) agentChips() else ModelChip(models = models, open = pickerOpen) { pickerOpen = true }
                 // Play (the waiting games) sits beside Stop; it stays composed so it can tell an open game the reply is ready.
                 com.allternit.feature.chat.games.WaitingGamesPlayButton(busy = isStreaming, anytime = playGamesAnytime, hidden = hasDraft)
                 if (isStreaming) {
