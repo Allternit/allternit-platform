@@ -252,6 +252,17 @@ internal object MeetMainBot {
         MainBotReachOut.run(botId, target.displayName)
     }
 
+    /**
+     * Makes the "Who leads your team?" choice the main bot and returns its id: an existing bot, A:// in a look, or
+     * A:// itself. Used by the first-run finish and the Office's main-bot picker ([MainBotPickerSheet]).
+     */
+    suspend fun applyChoice(choice: MeetMainChoice, catalog: MeetBotCatalog, models: SelectedModel, primaryName: String?, roster: List<MeetRosterBot>): String =
+        when (choice) {
+            is MeetMainChoice.Bot -> { set(choice.id, roster); choice.id }
+            is MeetMainChoice.Look -> setUpPrimary(catalog, models, choice.name, catalog.looks.firstOrNull { it.id == choice.id }?.avatar, false, roster)
+            MeetMainChoice.Primary -> setUpPrimary(catalog, models, primaryName, null, true, roster)
+        }
+
     /** A:// as the main bot: made from the primary template when missing, then named and dressed. */
     suspend fun setUpPrimary(catalog: MeetBotCatalog, models: SelectedModel, name: String?, avatar: JsonElement?, dropLook: Boolean, bots: List<MeetRosterBot>): String {
         val clean = name?.trim()?.takeIf { it.isNotEmpty() }
@@ -391,11 +402,7 @@ internal object MeetFinish {
             try {
                 val mainId = when (input.entry) {
                     MeetEntry.BotMode -> MeetMainBot.find(roster)?.id ?: throw SetupError(null, null, "No main bot found. Set one up from the Bots rail, then try again.")
-                    MeetEntry.Setup -> when (val m = input.main) {
-                        is MeetMainChoice.Bot -> { MeetMainBot.set(m.id, roster); m.id }
-                        is MeetMainChoice.Look -> MeetMainBot.setUpPrimary(catalog, models, m.name, catalog.looks.firstOrNull { it.id == m.id }?.avatar, false, roster)
-                        MeetMainChoice.Primary -> MeetMainBot.setUpPrimary(catalog, models, input.primaryName, null, true, roster)
-                    }
+                    MeetEntry.Setup -> MeetMainBot.applyChoice(input.main, catalog, models, input.primaryName, roster)
                 }
                 roster = runCatching { MeetAgentsApi.roster() }.getOrDefault(roster)
                 state.mainBotId = mainId
