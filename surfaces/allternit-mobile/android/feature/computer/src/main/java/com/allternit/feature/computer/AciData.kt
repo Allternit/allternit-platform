@@ -15,6 +15,7 @@ import com.allternit.core.auth.AllternitAuth
 import com.allternit.feature.artifacts.LibraryNet
 import com.allternit.feature.artifacts.arr
 import com.allternit.feature.artifacts.bool
+import com.allternit.feature.artifacts.child
 import com.allternit.feature.artifacts.list
 import com.allternit.feature.artifacts.listUnder
 import com.allternit.feature.artifacts.obj
@@ -22,7 +23,10 @@ import com.allternit.feature.artifacts.str
 import com.allternit.feature.chat.ChatBackend
 import com.allternit.feature.chat.NoComputerException
 import com.allternit.feature.chat.RuntimeCall
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -34,7 +38,14 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
+import com.allternit.core.stream.SseParser
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -244,6 +255,82 @@ object AciApi {
         val r = ApiCall.execute(okHttp, ApiJson.default, ApiCall.request("GET", url, null), JsonElement.serializer())
         return ((r as? ApiResult.Ok)?.value as? JsonObject)?.get("computers_console").let { it != null && it !is JsonNull }
     }
+
+    /**
+     * One read of `GET {cloud}/api/v1/computers/:id/<tail>` for the console detail (host/* and metrics).
+     * 409 = asleep (the body may carry `lastSample`; the computer is never woken and nothing is retried),
+     * 404/501 = not available yet. Mirrors iOS ACIComputersClient.check().
+     */
+    internal suspend fun consoleRead(id: String, tail: String, query: Map<String, String> = emptyMap()): HostRead<JsonElement> {
+        val request = ApiCall.request("GET", consoleUrl(id, tail, query), null)
+        val raw = suspendCancellableCoroutine<Pair<Int, String>?> { cont ->
+            val call = okHttp.newCall(request)
+            cont.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) { if (cont.isActive) cont.resume(null) }
+                override fun onResponse(call: Call, response: Response) {
+                    val out = try { response.use { it.code to it.body?.string().orEmpty() } } catch (e: IOException) { null }
+                    if (cont.isActive) cont.resume(out)
+                }
+            })
+        } ?: return HostRead.Failed("You're offline. Check your connection and try again.")
+        val (status, body) = raw
+        return when {
+            status in 200..299 -> runCatching { ApiJson.default.parseToJsonElement(body) }
+                .fold({ HostRead.Ok(it) }, { HostRead.Failed("Couldn't read this. Try again.") })
+            status == 409 -> HostRead.Asleep(runCatching { ConsoleSnapshot.parse((ApiJson.default.parseToJsonElement(body) as? JsonObject).child("lastSample")) }.getOrNull())
+            status == 404 || status == 501 -> HostRead.Unavailable
+            status == 401 -> HostRead.Failed("Sign in to Allternit to see this computer.")
+            else -> HostRead.Failed(ApiCall.httpError(status, body).message?.takeIf { it.isNotBlank() } ?: "Couldn't load this. Try again.")
+        }
+    }
+
+    /**
+     * Live log lines for one unit over SSE (`GET host/logs/stream?unit=`, one LogLine JSON per `data:` line).
+     * The flow ends and the call is cancelled when the collector goes away; lines are never stored here.
+     * Failures arrive as [ConsoleStreamException].
+     */
+    internal fun consoleLogStream(id: String, unit: String): Flow<ConsoleLogLine> = callbackFlow {
+        val client = okHttp.newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).callTimeout(0, TimeUnit.MILLISECONDS).build()
+        val call = client.newCall(ApiCall.request("GET", consoleUrl(id, "host/logs/stream", mapOf("unit" to unit)), null, accept = "text/event-stream"))
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                close(if (call.isCanceled()) null else ConsoleStreamException(ConsoleStreamException.Kind.Network, "The log stream stopped."))
+            }
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    response.use { r ->
+                        if (!r.isSuccessful) {
+                            val body = r.body?.string().orEmpty()
+                            val kind = when (r.code) {
+                                409 -> ConsoleStreamException.Kind.Asleep
+                                404, 501 -> ConsoleStreamException.Kind.Unavailable
+                                else -> ConsoleStreamException.Kind.Network
+                            }
+                            close(ConsoleStreamException(kind, ApiCall.httpError(r.code, body).message?.takeIf { it.isNotBlank() } ?: "The log stream stopped."))
+                            return
+                        }
+                        val source = r.body?.source() ?: run { close(); return }
+                        val parser = SseParser()
+                        val buf = ByteArray(4096)
+                        while (true) {
+                            val n = source.read(buf)
+                            if (n < 0) break
+                            for (event in parser.feed(buf.copyOf(n))) ConsoleLogLine.parse(event.data)?.let { trySend(it) }
+                        }
+                        close()
+                    }
+                } catch (e: IOException) {
+                    close(if (call.isCanceled()) null else ConsoleStreamException(ConsoleStreamException.Kind.Network, "The log stream stopped."))
+                }
+            }
+        })
+        awaitClose { call.cancel() }
+    }
+
+    private fun consoleUrl(id: String, tail: String, query: Map<String, String>) =
+        config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/computers").addPathSegment(id).addPathSegments(tail)
+            .apply { query.forEach { (k, v) -> addQueryParameter(k, v) } }.build()
 
     /** The account's cloud computers (`provisioned-instances`), for Restore points and backups. */
     suspend fun cloudComputers(): Result<List<CloudComputerSummary>> = when (val r = LibraryNet.get("provisioned-instances")) {

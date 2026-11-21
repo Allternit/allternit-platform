@@ -2,6 +2,7 @@ package com.allternit.feature.computer
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,12 +45,24 @@ import kotlinx.serialization.json.JsonObject
 internal const val CONSOLE_UNAVAILABLE = "Computers console isn't available on your account yet."
 
 /** Last health sample (contract HostSnapshot subset), as percents. */
-internal data class ConsoleSnapshot(val cpuPercent: Double, val memoryPercent: Double, val diskPercent: Double)
+internal data class ConsoleSnapshot(val cpuPercent: Double, val memoryPercent: Double, val diskPercent: Double) {
+    companion object {
+        /** Contract HostSnapshot subset to percents; null when cpu or memory is missing (same rule as iOS decoding). */
+        fun parse(s: JsonObject?): ConsoleSnapshot? {
+            val cpu = s.child("cpu").num("percent") ?: return null
+            val mem = s.child("memory")
+            val memTotal = mem.num("totalBytes") ?: return null
+            val memUsed = mem.num("usedBytes") ?: return null
+            val disks = s.list("disk").map { d -> d.num("totalBytes")?.let { t -> if (t > 0) (d.num("usedBytes") ?: 0.0) / t * 100 else 0.0 } ?: 0.0 }
+            return ConsoleSnapshot(cpu, if (memTotal > 0) memUsed / memTotal * 100 else 0.0, disks.maxOrNull() ?: 0.0)
+        }
+    }
+}
 
 /** One row of `GET /api/v1/computers/console` (contract ConsoleComputer). Same rules as iOS `ConsoleComputer`. */
 internal data class ConsoleComputer(
     val id: String, val name: String, val provider: String, val region: String?, val os: String,
-    val status: String, val lastSample: ConsoleSnapshot?, val servicesCount: Int?,
+    val status: String, val lastSample: ConsoleSnapshot?, val servicesCount: Int?, val address: String? = null,
 ) {
     // online, offline, asleep, starting, stopped, suspended, error
     val isOnline: Boolean get() = status.lowercase() !in setOf("offline", "asleep", "stopped")
@@ -72,15 +85,8 @@ internal data class ConsoleComputer(
             val id = o.str("id") ?: return null
             val name = o.str("name") ?: return null
             val status = o.str("status") ?: return null
-            val sample = o.child("lastSample")?.let { s ->
-                val cpu = s.child("cpu").num("percent") ?: return@let null
-                val mem = s.child("memory")
-                val memTotal = mem.num("totalBytes") ?: return@let null
-                val memUsed = mem.num("usedBytes") ?: return@let null
-                val disks = s.list("disk").map { d -> d.num("totalBytes")?.let { t -> if (t > 0) (d.num("usedBytes") ?: 0.0) / t * 100 else 0.0 } ?: 0.0 }
-                ConsoleSnapshot(cpu, if (memTotal > 0) memUsed / memTotal * 100 else 0.0, disks.maxOrNull() ?: 0.0)
-            }
-            return ConsoleComputer(id, name, o.str("provider").orEmpty(), o.str("region"), o.str("os").orEmpty(), status, sample, o.num("servicesCount")?.toInt())
+            val sample = ConsoleSnapshot.parse(o.child("lastSample"))
+            return ConsoleComputer(id, name, o.str("provider").orEmpty(), o.str("region"), o.str("os").orEmpty(), status, sample, o.num("servicesCount")?.toInt(), o.str("address"))
         }
     }
 }
@@ -101,6 +107,7 @@ private sealed interface ConsolePhase {
 internal fun AciConsoleSection() {
     var phase by remember { mutableStateOf<ConsolePhase>(ConsolePhase.Loading) }
     var attempt by remember { mutableIntStateOf(0) }
+    var selected by remember { mutableStateOf<ConsoleComputer?>(null) }
     LaunchedEffect(attempt) {
         phase = ConsolePhase.Loading
         phase = when (val r = AciApi.console()) {
@@ -108,6 +115,7 @@ internal fun AciConsoleSection() {
             is AciApi.Result.Failed -> if (r.message == CONSOLE_UNAVAILABLE) ConsolePhase.Unavailable else ConsolePhase.Failed(r.message)
         }
     }
+    selected?.let { AciConsoleDetail(it) { selected = null } }
     val c = AllternitTheme.colors
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).testTag("aciConsole"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when (val p = phase) {
@@ -131,7 +139,7 @@ internal fun AciConsoleSection() {
                         }
                     }
                 }
-                p.rows.forEach { ConsoleCard(it) }
+                p.rows.forEach { ConsoleCard(it) { selected = it } }
             }
         }
     }
@@ -143,10 +151,11 @@ private fun Note(text: String) {
 }
 
 @Composable
-private fun ConsoleCard(cp: ConsoleComputer) {
+private fun ConsoleCard(cp: ConsoleComputer, onOpen: () -> Unit) {
     val c = AllternitTheme.colors
     val shape = RoundedCornerShape(16.dp)
-    Column(Modifier.fillMaxWidth().clip(shape).background(c.fillNeutral).border(1.dp, c.borderSubtle, shape).padding(16.dp).testTag("aciConsoleRow"),
+    Column(Modifier.fillMaxWidth().clip(shape).background(c.fillNeutral).border(1.dp, c.borderSubtle, shape)
+        .clickable(onClickLabel = "Opens details") { onOpen() }.padding(16.dp).testTag("aciConsoleRow"),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.size(8.dp).clip(CircleShape).background(if (cp.isOnline) AllternitStatic.StatusSuccess else c.textTertiary))
@@ -167,7 +176,7 @@ private fun ConsoleCard(cp: ConsoleComputer) {
 
 /** Neutral grey capsule, amber at 85% or more, percent at the right. */
 @Composable
-private fun Meter(label: String, percent: Double) {
+internal fun Meter(label: String, percent: Double) {
     val c = AllternitTheme.colors
     val p = percent.coerceIn(0.0, 100.0)
     Row(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = "$label ${p.toInt()} percent" },

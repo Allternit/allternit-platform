@@ -44,6 +44,8 @@ dependencies {
     implementation(project(":core:auth"))
     // FilesPins (Keep on this phone) and the Files device id.
     implementation(project(":core:files"))
+    // SseParser for the console's live service logs (okhttp stream, no new HTTP library).
+    implementation(project(":core:stream"))
     implementation(libs.okhttp)
     // BackHandler (the browser and a run go back like the system Back on iOS swipe).
     implementation(libs.activity.compose)
