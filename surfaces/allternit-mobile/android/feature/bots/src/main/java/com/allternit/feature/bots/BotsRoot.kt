@@ -88,6 +88,8 @@ data class BotComposerSpec(
     val pickerRequest: Int = 0,
     /** The composer's voice button (iOS ComposerView onVoiceMode in a bot's ChatView); null leaves it disabled. */
     val onVoiceMode: (() -> Unit)? = null,
+    /** A bot chat's Runtime · Brain · Bot state: the composer shows the three agent chips in place of the model chip. */
+    val agent: com.allternit.feature.bots.runtimes.BotAgentState? = null,
 )
 
 /**
@@ -508,7 +510,7 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
             }
         }
         RowGroup(Modifier.padding(vertical = 12.dp)) {
-            NavRow("Add a vendor bot…", DesignR.drawable.ph_plugs_connected, null, "botsToVendor") { toPickerOpen = false; newBotOpen = true }
+            NavRow("Add a Connected bot…", DesignR.drawable.ph_plugs_connected, null, "botsToVendor") { toPickerOpen = false; newBotOpen = true }
         }
     }
     if (newBotOpen) NewBotSheet(

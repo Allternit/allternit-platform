@@ -385,6 +385,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 onVoiceMode = spec.onVoiceMode,
                 // iOS bot composers pass playGamesAnytime: true.
                 playGamesAnytime = true,
+                agentChips = spec.agent?.let { agent ->
+                    @Composable { BotAgentChips(models, agent, onOpenConnections = { page = ShellPage.Section(RailRow("models", "Models", DesignR.drawable.ph_brain)) }) }
+                },
             )
         },
         currentModel = { models.selectedId to models.selected?.let { models.level(it) } },

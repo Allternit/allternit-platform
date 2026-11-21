@@ -73,7 +73,7 @@ data class BotRecord(val raw: JsonObject) {
     val isMainBot: Boolean
         get() = config.child("botProfile").bool("chiefOfStaff") == true || config.child("bot_profile").bool("chiefOfStaff") == true ||
             raw.child("bot_profile").bool("chiefOfStaff") == true
-    /** A vendor bot (Hermes, OpenClaw, …) brought in from a pack. */
+    /** A Connected bot (Hermes, OpenClaw, …) brought in from a vendor pack. */
     val vendorPackId: String? get() = profile.str("vendorPackId")
     val canonicalThreadId: String? get() = config.str("canonicalThreadId")?.takeIf { it.isNotEmpty() }
     /** iOS isPrimaryTemplateBot: the account's primary bot can't be deleted from the phone. */
