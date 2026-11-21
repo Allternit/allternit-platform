@@ -77,6 +77,14 @@ Both versions put each of your Allternit computers in Android's file picker and 
 - **Ask my agent to read it:** in **Save to computer**, tick **Ask my agent to read it** and save into the computer's **Inbox**. The file waits there as a task. Your agent reads nothing until you open **Inbox tasks** (the row on the computer list in **Save to computer**) and tap **Approve**; **Reject** leaves it unread. A finished task shows an AI-generated label with the agent and who approved it. The routes are in the Files drive Inbox API page (PR 2445).
 - **Badges:** a file waiting to upload, a file waiting for its computer to wake, a failed upload, a conflict copy and a file made by an agent each get a coloured icon.
 
+## Runtime and brain in every chat
+
+Every chat's composer shows two chips where the model pill was: **Runtime** (how it works, default Allternit) and **Brain** (how it thinks). A bot chat adds the **Bot** chip. Picking another runtime, such as Claude Code or Codex, checks your computer first. When a computer with that runtime answers, a new chat starts on it. Otherwise the choices stay open with the reason: "Claude Code runs on a computer. Pair a computer to use it." (with a button to the computers screen) or "Claude Code isn't installed on your computer." If the runtime can't use the current brain, the brain changes to the first one that fits and the sheet says so.
+
+**Settings → Connections → Runtimes** lists every runtime in the same List, Grid or Deck view as the rest of Connections. Each one opens a page with its look (a sample session), the brains it takes, the plans allowed inside it, its live web app, and **New chat on** and **New bot on** buttons. New bot opens the bot form with that runtime already picked. On the Bots screen with no bots, **Pick how your bot works** opens the bot form on the Runtime, Brain and Bot picker.
+
+For developers: the chip and pages live in `feature/bots/.../runtimes/` (`ChatRuntime.kt`, `RuntimeDetail.kt`). A chat started on another runtime sends `metadata.runtime` and `metadata.botBrain` (the normalized bot-record shape from the Harness & Bots 2.0 contract) on `POST agent-sessions`. The runtime check uses the chat relay, then `GET /api/v1/native-sessions/harnesses` on the computer.
+
 ## Rating the app
 
 If you installed Allternit from Google Play, the app may show Google Play's in-app review card when you open it, after you have used it several times over a few days. The app opens right after, whether or not you rate. Google Play decides whether the card shows. The app installed from allternit.com/android has no rating prompt.

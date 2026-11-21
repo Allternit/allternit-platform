@@ -433,15 +433,36 @@ private fun CurrentModel(m: PickerModel, models: ModelStore) {
 @Composable
 internal fun BotAgentChips(models: ModelStore, agent: com.allternit.feature.bots.runtimes.BotAgentState, onOpenConnections: () -> Unit) {
     LaunchedEffect(Unit) { models.load() }
-    val brains = rankOrdered(models.chatModels.filter { !it.hidden && !it.provider.startsWith("openrouter") })
+    val brains = brainOptions(models).map { it.first }
+    com.allternit.feature.bots.runtimes.AgentChipsRow(
+        agent = agent, brains = brains, brainsLoading = models.isLoading && models.chatModels.isEmpty(), onOpenConnections = onOpenConnections,
+    )
+}
+
+/**
+ * The catalog as runtime-picker brains, default model first, each paired with its ModelStore id
+ * (bot chips and the plain chat's Runtime chip share it). OpenRouter is how Cloud routes, never a pick.
+ */
+internal fun brainOptions(models: ModelStore): List<Pair<com.allternit.feature.bots.runtimes.BrainOption, String>> =
+    rankOrdered(models.chatModels.filter { !it.hidden && !it.provider.startsWith("openrouter") })
         .sortedBy { if (it.isDefault) 0 else 1 }
         .map { m ->
             val parts = m.id.split("/", limit = 2)
             val model = if (m.provider == "ondevice" || parts.size < 2) m.id else parts[1]
-            com.allternit.feature.bots.runtimes.BrainOption(m.provider, model, m.name.ifEmpty { model })
+            com.allternit.feature.bots.runtimes.BrainOption(m.provider, model, m.name.ifEmpty { model }) to m.id
         }
-        .distinctBy { it.key }
-    com.allternit.feature.bots.runtimes.AgentChipsRow(
-        agent = agent, brains = brains, brainsLoading = models.isLoading && models.chatModels.isEmpty(), onOpenConnections = onOpenConnections,
+        .distinctBy { it.first.key }
+
+/**
+ * A plain chat's Runtime chip (Harness & Bots 2.0 fix): beside the brain chip, default Allternit.
+ * An automatic brain change (the runtime can't run the current brain) selects that model here.
+ */
+@Composable
+internal fun PlainChatRuntimeChip(models: ModelStore) {
+    val options = brainOptions(models)
+    val current = options.firstOrNull { it.second == models.selectedId }?.first?.key
+    com.allternit.feature.bots.runtimes.ChatRuntimeChip(
+        brains = options.map { it.first }, brainKey = current,
+        onBrainSwitch = { b -> options.firstOrNull { it.first.key == b.key }?.let { models.select(it.second) } },
     )
 }

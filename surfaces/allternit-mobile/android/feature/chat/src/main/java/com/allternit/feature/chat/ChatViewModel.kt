@@ -42,6 +42,11 @@ data class SessionContext(
     val agentName: String? = null,
     val agentModeId: String? = null,
     val permissionMode: String? = null,
+    /**
+     * Harness & Bots 2.0: a plain chat started on another runtime (Claude Code, Codex…) sends the
+     * normalized `botBrain` (runtime, mode, harness) as `metadata.botBrain`; null on Allternit.
+     */
+    val botBrain: JsonObject? = null,
 )
 
 /**
@@ -546,7 +551,7 @@ class ChatViewModel(
             "code" -> "New Code Thread"
             else -> "New Chat"
         }
-        return when (val r = backend.createSession(name, ctx.originSurface, ctx.agentId, ctx.agentName, agentModeId ?: ctx.agentModeId, ctx.permissionMode, ctx.sessionMode)) {
+        return when (val r = backend.createSession(name, ctx.originSurface, ctx.agentId, ctx.agentName, agentModeId ?: ctx.agentModeId, ctx.permissionMode, ctx.sessionMode, botBrain = ctx.botBrain)) {
             is ApiResult.Ok -> {
                 currentSessionId = r.value.id
                 onSessionsChanged()

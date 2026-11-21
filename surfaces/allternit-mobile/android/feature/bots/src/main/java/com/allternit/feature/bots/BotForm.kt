@@ -147,8 +147,18 @@ private suspend fun loadModels(backend: com.allternit.feature.chat.ChatBackend?)
 
 /** New bot (iOS NewBotSheet): the bot form in create mode, with Connected bots, templates and Import. */
 @Composable
-fun NewBotSheet(store: BotModeStore, host: BotsHost? = null, onBrowseTemplates: (() -> Unit)?, onDismiss: () -> Unit, onCreated: (List<String>) -> Unit) {
-    BotFormSheet(editBotId = null, host = host, onBrowseTemplates = onBrowseTemplates, onDismiss = onDismiss, onDone = onCreated)
+fun NewBotSheet(
+    store: BotModeStore?,
+    host: BotsHost? = null,
+    onBrowseTemplates: (() -> Unit)?,
+    onDismiss: () -> Unit,
+    onCreated: (List<String>) -> Unit,
+    /** Harness & Bots 2.0: the runtime picked before the form (Connections > Runtimes "New bot on"). */
+    initialRuntime: String? = null,
+    /** Open with the Runtime · Brain · Bot picker showing (Bots empty state "Pick how your bot works"). */
+    openPicker: Boolean = false,
+) {
+    BotFormSheet(editBotId = null, host = host, onBrowseTemplates = onBrowseTemplates, onDismiss = onDismiss, onDone = onCreated, initialRuntime = initialRuntime, openPicker = openPicker)
 }
 
 /** Edit bot (iOS EditBotSheet). */
@@ -164,7 +174,7 @@ fun EditBotSheet(botId: String, onDismiss: () -> Unit, backend: com.allternit.fe
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allternit.feature.chat.ChatBackend? = host?.backend, onBrowseTemplates: (() -> Unit)?, onDismiss: () -> Unit, onDone: (List<String>) -> Unit) {
+private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allternit.feature.chat.ChatBackend? = host?.backend, onBrowseTemplates: (() -> Unit)?, onDismiss: () -> Unit, onDone: (List<String>) -> Unit, initialRuntime: String? = null, openPicker: Boolean = false) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     val editing = editBotId != null
@@ -182,7 +192,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allte
     // Runtime · Brain · Bot (Harness & Bots 2.0): the draft botBrain and agentView the layered picker
     // edits. Saved as config.botBrain (runtime/access/autoSwitchedFrom/modelRef + legacy mode/harness)
     // and config.agentView; on edit, every other stored key is kept.
-    var botBrainDraft by remember { mutableStateOf(JsonObject(mapOf("runtime" to JsonPrimitive("allternit")))) }
+    var botBrainDraft by remember { mutableStateOf(JsonObject(mapOf("runtime" to JsonPrimitive(initialRuntime ?: "allternit")))) }
     var agentViewDraft by remember { mutableStateOf<JsonObject?>(null) }
     var layersDirty by remember { mutableStateOf(false) }
     var layersNote by remember { mutableStateOf<String?>(null) }
@@ -207,7 +217,7 @@ private fun BotFormSheet(editBotId: String?, host: BotsHost?, backend: com.allte
     var loadError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var moreOpen by remember { mutableStateOf(false) }
+    var moreOpen by remember { mutableStateOf(openPicker || initialRuntime != null) }
     var advancedOpen by remember { mutableStateOf(false) }
     var vendorOpen by remember { mutableStateOf(false) }
     var importOpen by remember { mutableStateOf(false) }
