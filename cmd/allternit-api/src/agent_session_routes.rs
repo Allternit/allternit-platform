@@ -1440,6 +1440,8 @@ async fn delete_session(
     match gizzi_no_content(&client, reqwest::Method::DELETE, &path, None).await {
         Ok(()) => {
             let _ = state.db.clear_session_ephemeral(&session_id);
+            // A runtime web app this session was the last user of stops now.
+            crate::runtime_live::release_session(&session_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
         Err(response) => response,
@@ -2117,18 +2119,31 @@ async fn list_permissions(
             if !rows.is_empty() {
                 let db = state.db.clone();
                 let uid = user.user_id.clone();
-                let _ = tokio::task::spawn_blocking(move || -> Result<(), rusqlite::Error> {
+                let ap_db = state.db.clone();
+                let ap_uid = user.user_id.clone();
+                let fresh = tokio::task::spawn_blocking(move || -> Result<Vec<(String, String)>, rusqlite::Error> {
                     let conn = db.connect()?;
+                    let mut fresh = Vec::new();
                     for (id, content) in rows {
-                        conn.execute(
+                        let n = conn.execute(
                             "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source) \
                              VALUES (?1, ?2, ?3, 'gizzi-permission')",
                             params![id, uid, content],
                         )?;
+                        if n == 1 {
+                            fresh.push((id, content));
+                        }
                     }
-                    Ok(())
+                    Ok(fresh)
                 })
                 .await;
+                // Autopilot (floor_autopilot_eval): asks first seen here get the same
+                // evaluation as streamed ones. Never blocks this list.
+                if let Ok(Ok(fresh)) = fresh {
+                    for (id, content) in fresh {
+                        tokio::spawn(crate::floor_autopilot_eval::after_permission_ask(ap_db.clone(), ap_uid.clone(), id, content));
+                    }
+                }
             }
             Json(json!({ "permissions": filtered })).into_response()
         }

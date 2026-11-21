@@ -9,7 +9,7 @@ You can play a small game in Bot mode and Code mode at any time, or while a repl
 
 A **Play** button (a game controller) is in the message box. In Bot mode (bot chats, group chats, Bots home) and Code mode it shows as soon as the session opens, whether or not anything is running. In Chat it shows beside **Stop** after about five seconds of work, so quick replies never show it. While you type in the message box, the Play button steps aside; it comes back when the box is empty again.
 
-The game opens in a small window over the app. On Desktop it sits at the bottom right, and you can drag it by its top bar. On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` app) it sits just above the message box. The iPhone app works the same way: the Play button is always in the bot, group and Code composers, and beside Stop after five seconds on Home, and **Settings → Appearance → Waiting games** turns the games off ([iPhone app → Waiting games](/guides/iphone-app#waiting-games)). The message box stays usable, so you can still steer or queue a message.
+The game opens in a small window over the app. On Desktop it sits at the bottom right, and you can drag it by its top bar. On phones (the `ai.allternit.com` phone layout and the `m.allternit.com` app) it sits just above the message box. The iPhone app works the same way: the Play button is always in the bot, group and Code composers, and beside Stop after five seconds on Home, and **Settings → Advanced → Waiting games** turns the games off ([iPhone app → Waiting games](/guides/iphone-app#waiting-games)). The message box stays usable, so you can still steer or queue a message.
 
 The top bar of the window has:
 
@@ -43,7 +43,7 @@ Gizzi RPG and Gizzi Brawl are the live games from [gizzirpg.allternit.com](https
 
 ## Turning it off
 
-**Settings → Appearance → Background → Waiting games** turns the Play button on or off everywhere. It is on by default.
+**Settings → Appearance → Background → Waiting games** turns the Play button on or off everywhere on Desktop and the web. In the iPhone and Android apps the switch is **Settings → Advanced → Waiting games**. It is on by default.
 
 ## For developers
 
@@ -55,4 +55,5 @@ Gizzi RPG and Gizzi Brawl are the live games from [gizzirpg.allternit.com](https
 - The Play button is placed in `ThreadComposer` (bot and group chats) and `ChatComposer` (Chat and Code; full, compact and terminal layouts).
 - The site games' hosts are in the CSP `frame-src` in `public/_headers` (ai.allternit.com) and `fabric-session-pwa-functions/_site-headers.js` (m.allternit.com). Desktop already allows `https:` frames (`surfaces/allternit-desktop/src/main/security.ts`). A new site game needs its host in both files.
 - iPhone: `Features/WaitingGames/` in `surfaces/allternit-mobile/ios`. `WaitingGameID.site` gives the URL and hint, and `WaitingSiteGameView` shows it in a `WKWebView`, turned in UIKit for a landscape game so touches line up. The window stays mounted once opened, and the web view posts the same pause and resume messages on the page itself.
+- Android (native app): `feature/chat/src/main/java/com/allternit/feature/chat/games/` in `surfaces/allternit-mobile/android`. The same eight canvas games, ported from the iPhone's Swift, the same store rules (`WaitingGamesStore.report`), and the window mounted once in `WorkspaceShell`. The site games load in a locked-down `WebView` (JavaScript only there, no file access, only `*.allternit.com` pages; other links open in the browser) that is turned in a `FrameLayout` for a landscape game, and it posts the same pause and resume messages tagged `from: "allternit-ios"`, the tag the games accept from the page itself. The switch is **Settings → Advanced → Waiting games** ([Android app → Waiting games](/guides/android-app#waiting-games)).
 - Bot Race uses the first four of your bots (`isBot` agents) as racers. With none, it uses four stand-in names.

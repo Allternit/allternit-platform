@@ -67,11 +67,13 @@ data class BotRecord(val raw: JsonObject) {
     val displayName: String get() = profile.str("displayName")?.takeIf { it.isNotEmpty() } ?: name
     val tagline: String get() = profile.str("tagline")?.takeIf { it.isNotEmpty() } ?: (description ?: "@$name")
     val accentHex: String? get() = profile.str("accentColor")?.takeIf { it.isNotEmpty() }
+    /** iOS AgentRecord.kokoroVoiceId: the bot's Kokoro voice (`config.voice.voice_id`, `config.voice` as a string, or `config.voice_id`). */
+    val kokoroVoiceId: String? get() = (config.child("voice").str("voice_id") ?: config.str("voice") ?: config.str("voice_id"))?.takeIf { it.isNotEmpty() }
     /** iOS AgentRecord.isMainBot: the chief of staff. */
     val isMainBot: Boolean
         get() = config.child("botProfile").bool("chiefOfStaff") == true || config.child("bot_profile").bool("chiefOfStaff") == true ||
             raw.child("bot_profile").bool("chiefOfStaff") == true
-    /** A vendor bot (Hermes, OpenClaw, …) brought in from a pack. */
+    /** A Connected bot (Hermes, OpenClaw, …) brought in from a vendor pack. */
     val vendorPackId: String? get() = profile.str("vendorPackId")
     val canonicalThreadId: String? get() = config.str("canonicalThreadId")?.takeIf { it.isNotEmpty() }
     /** iOS isPrimaryTemplateBot: the account's primary bot can't be deleted from the phone. */

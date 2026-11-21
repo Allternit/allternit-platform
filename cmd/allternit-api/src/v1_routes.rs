@@ -2879,12 +2879,18 @@ async fn agent_chat_bridge(
                             // INSERT OR IGNORE: gizzi may re-publish the ask
                             // (e.g. after an SSE reconnect replay); the row is
                             // keyed by the request id so it stays idempotent.
-                            let _ = tokio::task::spawn_blocking(
+                            let (ap_db, ap_uid, ap_rid, ap_content) = (db.clone(), uid.clone(), rid.clone(), content.clone());
+                            let fresh = tokio::task::spawn_blocking(
                                 move || -> Result<bool, rusqlite::Error> {
                                     record_gizzi_permission_ask(&db.connect()?, &uid, &rid, &content)
                                 },
                             )
                             .await;
+                            // Autopilot (floor_autopilot_eval): a fresh ask from a bot thread may be
+                            // approved once by the main bot under the user's rules. Never blocks the stream.
+                            if matches!(fresh, Ok(Ok(true))) {
+                                tokio::spawn(crate::floor_autopilot_eval::after_permission_ask(ap_db, ap_uid, ap_rid, ap_content));
+                            }
 
                             yield Ok(sse_frame(trace_cursor).data(json!({
                                 "type": "tool_permission",

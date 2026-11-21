@@ -399,6 +399,11 @@ struct AgentRow {
     mcp_connector_ids: Option<serde_json::Value>,
     /// Worker bots (V282): kinds of tasks this bot owns. Always a JSON array.
     owns: serde_json::Value,
+    /// Read-only, computed: `connected` when the bot has a vendor execution
+    /// binding, else `allternit` (`bot_brain::bot_kind`). Set by GET and
+    /// list; never stored, and left out of version snapshots.
+    #[serde(rename = "botKind", skip_serializing_if = "Option::is_none")]
+    bot_kind: Option<&'static str>,
 }
 
 fn parse_json_column(value: Option<String>) -> Option<serde_json::Value> {
@@ -457,6 +462,7 @@ fn read_agent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRow> {
         tool_permissions: parse_json_column(row.get(36)?),
         mcp_connector_ids: parse_json_column(row.get(37)?),
         owns: parse_json_column(row.get(38)?).unwrap_or_else(|| json!([])),
+        bot_kind: None,
     })
 }
 
@@ -465,11 +471,13 @@ fn load_agent_row(
     id: &str,
     user_id: &str,
 ) -> rusqlite::Result<AgentRow> {
-    conn.query_row(
+    let mut agent = conn.query_row(
         &format!("{AGENT_SELECT} WHERE id = ?1 AND user_id = ?2"),
         params![id, user_id],
         read_agent_row,
-    )
+    )?;
+    agent.bot_kind = Some(crate::bot_brain::bot_kind(conn, id, user_id));
+    Ok(agent)
 }
 
 /// Insert an `agent_versions` snapshot of the agent's full JSON at its
@@ -530,6 +538,7 @@ async fn list_agents(
         let conn = db.connect()?;
         let mut sql = AGENT_SELECT.to_string();
         sql.push_str(" WHERE user_id = ?1 AND type != 'project-worker'");
+        let connected = crate::bot_brain::connected_bot_ids(&conn, &user_id);
         let mut params_vec: Vec<String> = vec![user_id];
 
         if let Some(ws) = &q.workspace_id {
@@ -558,9 +567,12 @@ async fn list_agents(
             .iter()
             .map(|s| s as &dyn rusqlite::ToSql)
             .collect();
-        let rows = stmt
+        let mut rows = stmt
             .query_map(rusqlite::params_from_iter(params_ref), read_agent_row)?
             .collect::<Result<Vec<_>, _>>()?;
+        for agent in &mut rows {
+            agent.bot_kind = Some(crate::bot_brain::kind_for(connected.contains(&agent.id)));
+        }
 
         Ok::<_, rusqlite::Error>(rows)
     })
@@ -929,7 +941,10 @@ fn persist_agent(
             json_to_string(body.tools),
             body.max_iterations.unwrap_or(10),
             body.temperature.unwrap_or(0.7),
-            json_to_string(body.config),
+            json_to_string(body.config.map(|mut config| {
+                crate::bot_brain::normalize_config(&mut config);
+                config
+            })),
             body.status.unwrap_or_else(|| "idle".to_string()),
             body.workspace_id,
             body.avatar,
@@ -992,7 +1007,7 @@ async fn create_agent(
     let ledger_workspace_id = body.workspace_id.clone();
     let ledger_trust_tier = body.trust_tier.clone();
 
-    let merged_config = merge_autonomous_primitives_into_config(
+    let mut merged_config = merge_autonomous_primitives_into_config(
         body.config.clone(),
         body.is_bot,
         body.bot_profile.clone(),
@@ -1001,6 +1016,10 @@ async fn create_agent(
         body.identity_channels.clone(),
         body.vm_operator.clone(),
     );
+    // Bot brain: fill in `runtime` or `mode`/`harness`, whichever is missing.
+    if let Some(config) = merged_config.as_mut() {
+        crate::bot_brain::normalize_config(config);
+    }
     let secret_refs = body.secret_refs.clone();
     let identity_channels = body.identity_channels.clone();
     let webhook_org = user.organization_id.clone();
@@ -2331,14 +2350,8 @@ fn apply_agent_update(
             )
             .ok()
             .flatten();
-        let base_config = match (stored_config, config_from_body) {
-            (Some(serde_json::Value::Object(mut stored)), Some(serde_json::Value::Object(patch))) => {
-                stored.extend(patch);
-                Some(serde_json::Value::Object(stored))
-            }
-            (stored, None) => stored,
-            (_, body) => body,
-        };
+        // A patch with `botBrain` is normalized here, before it is saved.
+        let base_config = crate::bot_brain::merge_config(stored_config, config_from_body);
         merge_autonomous_primitives_into_config(
             base_config,
             is_bot,

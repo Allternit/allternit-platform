@@ -17,6 +17,8 @@ pub mod files_tokens;
 pub mod hosted_runtime_lifecycle;
 pub mod inference_keys;
 pub mod connections;
+/// The connect kit's "More" list: `GET /api/v1/connections/catalog` (contract section 11).
+pub mod connections_catalog;
 pub mod copilot;
 /// Link your Claude organization: profile, PAR, code exchange, status, revoke (oauth-linked-billing B2).
 pub mod claude_link;

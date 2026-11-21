@@ -91,6 +91,8 @@ struct ComposerView: View {
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
+    /// A bot chat: the runtime, brain and bot chips take the model chip's place.
+    @Environment(\.chatBot) private var chatBot
     @StateObject private var modelStore = ModelStore.shared
     @ObservedObject private var usageStore = UsageStore.shared
     @ObservedObject private var storefront = StorefrontGate.shared
@@ -400,7 +402,11 @@ struct ComposerView: View {
             Spacer(minLength: 0)
 
             HStack(spacing: 8) {
-                modelChip
+                if let chatBot {
+                    ComposerAgentChips(bot: chatBot)
+                } else {
+                    modelChip
+                }
                 // How full this chat's context is, and the plan's usage.
                 ComposerUsageMeter(sessionId: sessionId, refreshKey: isStreaming ? "streaming" : "idle")
                 sendSlot

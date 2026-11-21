@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Allternit Matrix construct mark (iOS Assets.xcassets/MatrixLogo.svg): the pixel A, tan blocks, coral core. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+    <path android:fillColor="#FFD4B08C" android:pathData="M45,7h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD4B08C" android:pathData="M27,25h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD4B08C" android:pathData="M63,25h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD4B08C" android:pathData="M9,43h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD4B08C" android:pathData="M27,43h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD4B08C" android:pathData="M63,43h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD4B08C" android:pathData="M81,43h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD4B08C" android:pathData="M9,61h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD4B08C" android:pathData="M81,61h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD4B08C" android:pathData="M9,79h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD4B08C" android:pathData="M81,79h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+    <path android:fillColor="#FFD97757" android:pathData="M45,43h10a2,2 0,0 1,2,2v10a2,2 0,0 1,-2,2h-10a2,2 0,0 1,-2,-2v-10a2,2 0,0 1,2,-2z" />
+</vector>

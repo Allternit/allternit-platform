@@ -1509,6 +1509,9 @@ async fn main() {
         .merge(allternit_api::meeting_bot_host::meeting_bot_host_router(data_dir.clone(), app_config.api_port()))
         // Desktop Cloud host self-registration from bootstrap cloud-init.
         .merge(allternit_api::desktop_host_admin::public_router())
+        // Runtime registry (GET /api/v1/runtimes): public; owner auth, checked
+        // in the handler, adds `installed`.
+        .merge(allternit_api::cli_catalog::runtimes_public_router())
         // Private Fabric node daemon enrollment and heartbeat.
         .merge(allternit_api::fabric_node_routes::public_router())
         // Brain git smart-HTTP: git clients carry no Clerk JWT — they use
@@ -1830,6 +1833,9 @@ async fn main() {
         // Meetings bot runners live in their own process groups; stop them
         // (and the PulseAudio the host started) before the process exits.
         allternit_api::meeting_bot_host::shutdown().await;
+        // Runtime web apps (POST /api/v1/runtimes/:id/live) run in their own
+        // process groups too: SIGTERM, SIGKILL after 3 s.
+        allternit_api::runtime_live::shutdown().await;
         // Files drive: SIGTERM is the sleep notice (a cloud computer being
         // stopped, Desktop quitting). Leave the asleep snapshot current so the
         // computer still lists while it sleeps. Bounded to a few seconds.

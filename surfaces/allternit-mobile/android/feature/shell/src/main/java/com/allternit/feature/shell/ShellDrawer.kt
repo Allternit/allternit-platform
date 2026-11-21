@@ -470,7 +470,7 @@ internal fun RecentRow(session: AgentSession, onClick: () -> Unit) {
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
-                    .background(c.borderStrong.copy(alpha = 0.5f))
+                    .background(c.borderStrong.copy(alpha = c.borderStrong.alpha * 0.5f))
                     .padding(horizontal = 5.dp, vertical = 1.dp),
             )
         }

@@ -23,6 +23,7 @@ struct DeepLinkHost: ViewModifier {
     @State private var botSheet: AgentRecord?
     @State private var isSettingsPresented = false
     @State private var isComputersPresented = false
+    @State private var consoleComputer: ConsoleComputerLink?
     @State private var isDecisionsPresented = false
     @State private var isInboxPresented = false
     @State private var routineSheet: Routine?
@@ -88,6 +89,7 @@ struct DeepLinkHost: ViewModifier {
                         }
                 }
             }
+            .sheet(item: $consoleComputer) { ACIConsoleDeepLinkSheet(computerId: $0.id) }
             .sheet(isPresented: $isDecisionsPresented) {
                 DecisionsScreen()
             }
@@ -127,6 +129,7 @@ struct DeepLinkHost: ViewModifier {
         botSheet = nil
         isSettingsPresented = false
         isComputersPresented = false
+        consoleComputer = nil
         isDecisionsPresented = false
         isInboxPresented = false
         routineSheet = nil
@@ -157,6 +160,8 @@ struct DeepLinkHost: ViewModifier {
             inviteURL = IdentifiableURL(url: url)
         case .computers:
             isComputersPresented = true
+        case .computerConsole(let id):
+            consoleComputer = ConsoleComputerLink(id: id)
         case .decisions:
             isDecisionsPresented = true
         case .inbox:

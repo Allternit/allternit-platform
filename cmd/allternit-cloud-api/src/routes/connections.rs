@@ -2,6 +2,8 @@
 //! rules in services::connections).
 //!
 //! - `GET    /api/v1/connections`               → `{version, connections:[row]}`
+//! - `GET    /api/v1/connections/catalog`       → the "More" list (contract 11;
+//!   rules in services::connections_catalog). `catalog` is a reserved id.
 //! - `POST   /api/v1/connections/:id/connect`   `{way?}` → `{login}` or `{state:"on"}`
 //! - `POST   /api/v1/connections/:id/submit`    `{value}` → the updated row
 //! - `GET    /api/v1/connections/:id/login`     → `{status, row}`
@@ -85,6 +87,20 @@ struct CallbackQuery {
     error: Option<String>,
 }
 
+/// Raw `GET /catalog` values; services::connections_catalog::parse_query
+/// checks and clamps them (a bad value is its 400, never an extractor error).
+#[derive(Deserialize, Default)]
+struct CatalogQuery {
+    #[serde(default)]
+    group: Option<String>,
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(default)]
+    limit: Option<String>,
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
 #[derive(Deserialize, Default)]
 struct ListQuery {
     #[serde(default)]
@@ -115,6 +131,8 @@ pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/connections", get(list))
         .route("/api/v1/connections/copilot/callback", get(copilot_callback))
+        // A static segment: matched before `:id`, so `catalog` is never an id.
+        .route("/api/v1/connections/catalog", get(catalog))
         .route("/api/v1/connections/:id", axum::routing::delete(remove))
         .route("/api/v1/connections/:id/connect", post(connect))
         .route("/api/v1/connections/:id/submit", post(submit))
@@ -315,6 +333,47 @@ async fn list(
         Ok(Json(json!({ "version": conn::VERSION, "connections": rows })).into_response())
     }
     .await)
+}
+
+/// `GET /api/v1/connections/catalog` (contract 11). Session only, like
+/// `list`. Reads the database only when the page holds apps (their
+/// `available` follows whether a computer is online); a failed read lists
+/// them as unavailable rather than failing the page.
+async fn catalog(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<CatalogQuery>,
+) -> Response {
+    use crate::services::connections_catalog as catalog;
+    let mut response = reply(async {
+        let user = session_user(&state, &headers).await?;
+        let query = match catalog::parse_query(
+            query.group.as_deref(),
+            query.q.as_deref(),
+            query.limit.as_deref(),
+            query.cursor.as_deref(),
+        ) {
+            Ok(query) => query,
+            Err(error) => return Ok((StatusCode::BAD_REQUEST, Json(json!({ "error": error.code() }))).into_response()),
+        };
+        let online = if catalog::needs_computer_fact(&query) {
+            let connected = crate::routes::runtime_relay::connected_runtime_ids().await;
+            catalog::computer_online(&state.db, &user, &connected, Utc::now()).await.unwrap_or_else(|error| {
+                tracing::warn!(%error, "computer status unavailable; listing catalog apps as unavailable");
+                false
+            })
+        } else {
+            false
+        };
+        Ok(Json(catalog::page(&query, online)).into_response())
+    }
+    .await);
+    if response.status() == StatusCode::OK {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=300"));
+    }
+    response
 }
 
 /// The account's runtime a channel binds to: the default node when it is one

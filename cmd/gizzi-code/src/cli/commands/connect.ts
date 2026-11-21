@@ -256,13 +256,17 @@ export const ConnectCommand = cmd({
       .command(AuthListCommand)
       .command(AuthLoginCommand)
       .command(AuthLogoutCommand)
-      .positional("id", { describe: "what to connect, e.g. claude, chatgpt, anthropic-key, slack; or status / disconnect", type: "string" })
-      .positional("target", { describe: "with status or disconnect: the connection, e.g. chatgpt", type: "string" })
+      .positional("id", { describe: "what to connect, e.g. claude, chatgpt, anthropic-key, slack; or status / disconnect / more", type: "string" })
+      .positional("target", { describe: "with status or disconnect: the connection, e.g. chatgpt; with more: a group, e.g. apps", type: "string" })
       .option("disconnect", { type: "boolean", describe: "remove this connection" })
+      .option("search", { type: "string", describe: "with `more`: narrow the list, e.g. --search air" })
+      .option("status", { type: "string", choices: ["connected", "needs"], describe: "list only connections that are connected or need you" })
       .option("json", { type: "boolean", describe: "print JSON (rows, or JSON lines for chatgpt sign-in)" })
       .option("accept-disclosure", { type: "string", describe: "chatgpt --json: the disclosure version the person accepted in the app" })
       .option("open", { type: "boolean", describe: "chatgpt: open the sign-in page in the browser (default: on, off with --json)" })
       .example("gizzi connect", "list every connection")
+      .example("gizzi connect more apps --search air", "browse the live catalog of more connections")
+      .example("gizzi connect --status needs", "list only the connections that need you")
       .example("gizzi connect claude", "connect your Claude plan (shows the disclosure first)")
       .example("gizzi connect chatgpt", "sign in with ChatGPT on this computer")
       .example("gizzi connect status chatgpt --json", "the ChatGPT sign-in state as JSON")
@@ -276,6 +280,8 @@ export const ConnectCommand = cmd({
       json: !!args.json,
       acceptDisclosure: args.acceptDisclosure as string | undefined,
       open: args.open as boolean | undefined,
+      search: args.search as string | undefined,
+      status: args.status as string | undefined,
     })
   },
 })

@@ -1,0 +1,79 @@
+---
+title: "Computer pairing"
+description: "The three pairing paths that exist today, and the single runtime pairing model they will share."
+---
+
+<Warning>
+Design — waiting on Eoj review. Nothing on this page except "Today" is built.
+</Warning>
+
+## Today: three paths
+
+| Path | Command | Where it lands | Code |
+|---|---|---|---|
+| Computer pairing code | `allternit computer pair <code>` | `paired_computers` (mesh IP, screen sharing) | `cmd/allternit-cloud-api/src/routes/paired_computers.rs:52` (routes), `:135` (create code), `:165` (redeem), `:220` (pair self); `cmd/cli` `computer-pair.ts` |
+| Runtime pairing | `allternit-factory pane fabric pair` (shown to users as `ao fabric pair`), and `gizzi pair` | `runtime_pairings`, then `runtime_devices` | `factory/pane/src/ao/fabric/cloud.rs:94`; `cmd/allternit-cloud-api/src/routes/runtime_pairing.rs:218` (routes) |
+| Fabric node enroll | `allternit fabric node enroll` | `/v1/fabric/nodes/enroll` | `cmd/cli/src/commands/fabric.ts:50` |
+
+`ao` is not on users' machines, and the `allternit` npm CLI has no publish step. The command that ships to users with Gizzi Code is `gizzi pair`.
+
+### `gizzi pair` uses the runtime pairing model
+
+- `cmd/gizzi-code/src/cli/commands/pair.ts:86` defines `gizzi pair` ("pair this machine as an Allternit runtime device"), with `--status`, `--force` and `--name`.
+- `cmd/gizzi-code/src/runtime/services/pairing/pairing.ts:261` posts `/api/v1/runtime-pairings`, and `:299` posts `/api/v1/runtime-pairings/exchange`. Token rotation uses `/api/v1/runtime-devices/:id/rotate` (`:192`). These are the same endpoints `ao fabric pair` calls (`cloud.rs:94`).
+
+## Target model
+
+Runtime pairing is the model. A paired computer is a `runtime_devices` row. Screen sharing (mesh plus VNC) becomes an optional step after pairing, not part of it. `paired_computers` stays for the mesh and screen-share data and gains `runtime_device_id`, so the console joins the two.
+
+The visible command is **`gizzi pair`**. Install line (from `surfaces/docs/cli/installation.mdx`):
+
+```bash
+npm install -g @allternit/gizzi-code
+# or
+brew tap allternit/tap
+brew trust --formula allternit/tap/gizzi-code
+brew install allternit/tap/gizzi-code
+```
+
+### Aliases (old commands keep working)
+
+| Old command | Becomes |
+|---|---|
+| `allternit computer pair <code>` | Alias. Redeems the code, creates or links the runtime device, then offers screen sharing. |
+| `ao fabric pair` / `allternit-factory pane fabric pair` | Alias of `gizzi pair`. Same endpoints. |
+| `allternit fabric node enroll` | Unchanged for fabric nodes. It also creates the runtime device row when a user is signed in. |
+
+No hard cutover: nothing is removed in the first release.
+
+### State machine
+
+```text
+unpaired -> code_issued -> approved -> device_token_issued -> online
+                |              |                                 |
+             expired        denied                      offline (heartbeat lost)
+                                                               |
+                                              rotating <-> online
+                                              revoked (user removes the computer)
+```
+
+Optional, after `online`: `screen_share_off` to `screen_share_on` (mesh IP assigned, VNC enabled).
+
+### Draft SQL for migration 153 (not a migration file)
+
+```sql
+ALTER TABLE public.paired_computers
+  ADD COLUMN IF NOT EXISTS runtime_device_id TEXT NULL;
+CREATE INDEX IF NOT EXISTS paired_computers_runtime_device_idx
+  ON public.paired_computers (runtime_device_id);
+
+ALTER TABLE public.provisioned_instances
+  ADD COLUMN IF NOT EXISTS location TEXT NULL,
+  ADD COLUMN IF NOT EXISTS template TEXT NULL;
+```
+
+The table name for cloud instances must be confirmed against `migrations_pg` before the real file is written. Never drop a column in the same train that stops using it.
+
+## Related
+
+- [Computers console contract](/dev/computers-console-contract)

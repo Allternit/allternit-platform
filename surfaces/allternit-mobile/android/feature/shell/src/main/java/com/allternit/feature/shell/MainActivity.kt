@@ -216,6 +216,8 @@ class MainActivity : ComponentActivity() {
             "call" -> ShellLaunch(mode = ShellMode.Bots, openMain = true, nonce = nonce)
             "handoff" -> ShellLaunch(mode = ShellMode.Bots, nonce = nonce)
             "routines", "routine" -> ShellLaunch(tab = "automation-tasks", nonce = nonce)
+            // iOS DeepLink.computerConsole: allternit://computers/<id> opens that computer's console detail.
+            "computers" -> ShellLaunch(mode = ShellMode.Aci, tab = "computers", computerId = segments.getOrNull(1), nonce = nonce)
             else -> ShellLaunch(mode = ShellMode.Home, nonce = nonce)
         }
         intent.data = null
@@ -231,6 +233,8 @@ class MainActivity : ComponentActivity() {
         val nonce = System.nanoTime()
         val url = tap.url.orEmpty()
         shellLaunch = when {
+            // A computer_alert push (or a /computers/<id> url): that computer's console detail.
+            tap.computer != null -> ShellLaunch(mode = ShellMode.Aci, tab = "computers", computerId = tap.computer, nonce = nonce)
             tap.inboxItem != null -> ShellLaunch(sheet = "inbox", inboxItem = tap.inboxItem, nonce = nonce)
             tap.event == "approval.requested" -> ShellLaunch(sheet = "inbox", nonce = nonce)
             url.contains("settings") -> ShellLaunch(tab = "settings", nonce = nonce)

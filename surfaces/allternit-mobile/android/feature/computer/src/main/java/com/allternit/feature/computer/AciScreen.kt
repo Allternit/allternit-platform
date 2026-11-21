@@ -77,6 +77,8 @@ data class AciHost(
     val openSignIn: () -> Unit,
     /** Opens a linked phone's live view (iOS ACIComputersPane fullScreenCover PhoneLiveView); wave F4a. */
     val openPhoneLive: ((CloudPhone) -> Unit)? = null,
+    /** The existing cloud restore points page (feature:settings), opened from the console Backups tab. */
+    val restorePoints: (@Composable (onDone: () -> Unit) -> Unit)? = null,
 )
 
 private sealed interface AciDestination {
@@ -111,22 +113,13 @@ fun AciRoot(host: AciHost) {
         if (tab != AciTab.Agent || landing) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) { host.menuButton() }
         }
-        if (!teachSeen && AciNav.teachOpen.not() && (tab != AciTab.Agent || landing)) {
-            AciNudgeCard(
-                title = "Teach the agent a site",
-                message = "Record a site once in Allternit Desktop and the agent saves the path as a skill it can replay. On your phone you can see what's been taught and import a recording.",
-                closeLabel = "Dismiss Teach suggestion",
-                actionTitle = "Open Teach",
-                onClose = { AciOnceNudge.remember(context, "teach"); teachSeen = true },
-                onAction = { AciOnceNudge.remember(context, "teach"); teachSeen = true; AciNav.openTeach() },
-            )
-        }
         val list = devices.orEmpty()
         if (tab == AciTab.Agent && landing && list.isNotEmpty()) {
             AciTargetPicker(host.backend, list, Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 10.dp))
         }
         if (showPair && (tab != AciTab.Agent || landing)) {
             AciNudgeCard(
+                hero = AciHero.Pair,
                 title = "Pair a computer",
                 message = "Connect Allternit Desktop with this account so the computer agent can work on your computer.",
                 closeLabel = "Dismiss pairing suggestion",
@@ -140,6 +133,18 @@ fun AciRoot(host: AciHost) {
                     pairSeen = true
                     AciNav.open(AciTab.Computers)
                 },
+            )
+        }
+        // iOS ACITabView showTeachNudge: on the Agent landing only, after the pair card, and never with it.
+        if (tab == AciTab.Agent && landing && !showPair && !teachSeen && AciNav.teachOpen.not()) {
+            AciNudgeCard(
+                hero = AciHero.Setup,
+                title = "Teach the agent a site",
+                message = "It's in the browser bar's ⋮ menu, under Teach. Record a site once in Allternit Desktop and the agent saves the path as a skill it can replay. On your phone you can see what's been taught and import a recording.",
+                closeLabel = "Dismiss Teach suggestion",
+                actionTitle = "Open Teach",
+                onClose = { AciOnceNudge.remember(context, "teach"); teachSeen = true },
+                onAction = { AciOnceNudge.remember(context, "teach"); teachSeen = true; AciNav.openTeach() },
             )
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -266,7 +271,8 @@ private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> U
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 560.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                com.allternit.core.design.AProtocolMark(height = 30.dp, ink = c.textPrimary, modifier = Modifier.padding(bottom = 24.dp))
+                // iOS ACIBrowserLanding: the Matrix construct mark, 84pt.
+                androidx.compose.foundation.Image(painterResource(DesignR.drawable.matrix_logo), contentDescription = "Allternit", modifier = Modifier.padding(bottom = 24.dp).size(84.dp))
                 Text(title, color = c.textPrimary, fontSize = 32.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(bottom = 32.dp)) {
                     Box(Modifier.width(32.dp).height(1.dp).background(c.borderStrong))
@@ -433,9 +439,12 @@ internal fun AciPrimaryButton(title: String, testTag: String, onClick: () -> Uni
     }
 }
 
+/** iOS ACIPromoHero.Kind: pair shows the Matrix mark, setup shows Gizzi. */
+internal enum class AciHero { Pair, Setup }
+
 /** The promo hero: neutral fill, a 22 dp grid, two tilted cards and the mark. */
 @Composable
-internal fun AciPromoHero(height: Dp = 132.dp, topRadius: Dp = 16.dp) {
+internal fun AciPromoHero(kind: AciHero = AciHero.Pair, height: Dp = 132.dp, imageHeight: Dp = 64.dp, topRadius: Dp = 16.dp) {
     val c = AllternitTheme.colors
     val line = c.borderStrong
     val card = c.bgPrimary
@@ -452,7 +461,11 @@ internal fun AciPromoHero(height: Dp = 132.dp, topRadius: Dp = 16.dp) {
                 rotateCard(deg, o, cw, ch, card, line)
             }
         }
-        com.allternit.core.design.AProtocolMark(height = 26.dp, ink = c.textPrimary)
+        androidx.compose.foundation.Image(
+            painterResource(if (kind == AciHero.Pair) DesignR.drawable.matrix_logo else DesignR.drawable.gizzi_mascot),
+            contentDescription = null,
+            modifier = Modifier.height(imageHeight),
+        )
     }
 }
 
@@ -466,14 +479,14 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.rotateCard(deg: Flo
 
 /** A suggestion card (iOS ACINudgeCard): hero with × over it, title, line, one primary action. */
 @Composable
-internal fun AciNudgeCard(title: String, message: String, closeLabel: String, actionTitle: String, onClose: () -> Unit, onAction: () -> Unit) {
+internal fun AciNudgeCard(hero: AciHero, title: String, message: String, closeLabel: String, actionTitle: String, onClose: () -> Unit, onAction: () -> Unit) {
     val c = AllternitTheme.colors
     Column(
         Modifier.padding(12.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.bgPanel).padding(bottom = 20.dp).testTag("aciNudge"),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box {
-            AciPromoHero()
+            AciPromoHero(hero)
             Box(
                 Modifier.padding(start = 16.dp, top = 16.dp).size(40.dp).clip(CircleShape).background(c.bgPrimary).clickable(onClickLabel = closeLabel) { onClose() }.testTag("aciNudgeClose"),
                 contentAlignment = Alignment.Center,

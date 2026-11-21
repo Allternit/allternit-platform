@@ -56,8 +56,15 @@ internal fun ChatPage(
     onDeleted: () -> Unit,
     onOpenSection: (RailRow) -> Unit,
     onOpenSettings: () -> Unit,
+    /** Settings › Connections (the Claude organization row), from a refusal card. */
+    onOpenConnections: () -> Unit = onOpenSettings,
     /** Wave D: an artifact card opens the artifact screens. */
     onOpenArtifact: ((com.allternit.feature.chat.ArtifactRecord) -> Unit)? = null,
+    /** Opened from the home composer's voice button: start voice mode once, then [onVoiceStarted]. */
+    startVoice: Boolean = false,
+    onVoiceStarted: () -> Unit = {},
+    /** A Code thread: the waiting games' Play button shows from the start (iOS Code threads pass `anytime: true`). */
+    playGamesAnytime: Boolean = false,
 ) {
     val c = AllternitTheme.colors
     var editingId by remember { mutableStateOf<String?>(null) }
@@ -83,17 +90,26 @@ internal fun ChatPage(
                 prefill = ChatViewModel.strippedText(m.content)
             },
             onOpenSettings = onOpenSettings,
+            onOpenConnections = onOpenConnections,
+            creditsModelId = { models.cloudModels.let { cloud -> cloud.firstOrNull { it.id == models.selectedId } ?: cloud.firstOrNull() }?.id },
             onConnectConnector = { onOpenSection(RailRow("connectors", "Connectors", com.allternit.core.design.R.drawable.ph_lightning)) },
             onShareLink = { shareOpen = true },
             onOpenArtifact = onOpenArtifact,
         )
     }
 
-    val title = store.sessions.firstOrNull { it.id == chat.currentSessionId }?.title ?: "Allternit"
-    // Wave H2: voice mode (iOS ChatView voiceHost): full screen or the bar over the composer.
+    val title = store.sessions.firstOrNull { it.id == chat.currentSessionId }?.title.orEmpty()
+    // Wave H2: voice mode (iOS ChatView voiceHost): the bar over the composer, expanding to full screen. Like iOS,
+    // the composer's voice button (and the home's, which opens this chat) starts it as the bar.
     val voiceContext = androidx.compose.ui.platform.LocalContext.current
     val voiceHost = remember(chat) { com.allternit.feature.chat.voice.VoiceHost(voiceContext) }
     com.allternit.feature.chat.voice.VoiceHostWiring(voiceHost, chat)
+    LaunchedEffect(startVoice) {
+        if (startVoice) {
+            voiceHost.start(chat, models.selectedId, models.selected?.let { models.level(it) })
+            onVoiceStarted()
+        }
+    }
     val endVoice: (Int) -> Unit = { seconds -> chat.appendVoiceSummary(seconds) }
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().statusBarsPadding().testTag("chatScreen")) {
@@ -133,10 +149,7 @@ internal fun ChatPage(
             },
             greeting = { LaunchGreeting() },
             composer = {
-                val voiceVm = voiceHost.viewModel
-                if (voiceHost.presentation == com.allternit.feature.chat.voice.VoiceHost.Presentation.Bar && voiceVm != null) {
-                    com.allternit.feature.chat.voice.VoiceQuickBar(voiceHost, voiceVm, onEnd = endVoice)
-                }
+                com.allternit.feature.chat.voice.VoiceBarSlot(voiceHost, onEnd = endVoice)
                 Composer(
                     models = models,
                     noComputer = store.noComputer,
@@ -162,18 +175,15 @@ internal fun ChatPage(
                     onVoiceMode = {
                         voiceHost.start(chat, models.selectedId, models.selected?.let { models.level(it) })
                     },
+                    playGamesAnytime = playGamesAnytime,
                 )
             },
             modifier = Modifier.weight(1f),
         )
     }
-    val fullVoice = voiceHost.viewModel
-    if (voiceHost.presentation == com.allternit.feature.chat.voice.VoiceHost.Presentation.Full && fullVoice != null) {
-        androidx.activity.compose.BackHandler { voiceHost.presentation = com.allternit.feature.chat.voice.VoiceHost.Presentation.Bar }
-        com.allternit.feature.chat.voice.VoiceModeView(voiceHost, fullVoice, onEnd = endVoice)
-    }
+    com.allternit.feature.chat.voice.VoiceFullSlot(voiceHost, onEnd = endVoice)
     }
     if (shareOpen) {
-        ThreadShareSheet(backend = backend, sessionId = chat.currentSessionId, title = title, messages = chat.messages, onDismiss = { shareOpen = false })
+        ThreadShareSheet(backend = backend, sessionId = chat.currentSessionId, title = title.ifEmpty { "Allternit" }, messages = chat.messages, onDismiss = { shareOpen = false })
     }
 }

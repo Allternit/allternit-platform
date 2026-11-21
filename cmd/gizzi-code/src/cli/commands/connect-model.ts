@@ -182,9 +182,60 @@ function line(entry: Entry, row: Row): string {
   return `  ${name}${row.available === false ? unavailableText(entry, row) : statusText(entry, row)}`
 }
 
+export type StatusFilter = "connected" | "needs"
+
+/** `--status connected` keeps rows that are on; `--status needs` keeps rows that need the person. */
+export function matchesStatus(row: Row, status?: StatusFilter): boolean {
+  if (!status) return true
+  return status === "connected" ? row.state === "on" : row.state === "needs"
+}
+
+/** One entry of `GET /api/v1/connections/catalog` (contract §11). */
+export type CatalogEntry = {
+  id: string
+  group: Group
+  name: string
+  blurb?: string
+  category?: string
+  ways?: string[]
+  runs_on?: RunsOn
+  connector_id?: string | null
+  key_page?: string | null
+  available?: boolean
+  unavailable_reason?: string | null
+  fallbacks?: string[]
+}
+export type CatalogResponse = {
+  version: number
+  group?: Group
+  q?: string
+  total: number
+  next_cursor?: string | null
+  counts: Partial<Record<Group, number>>
+  entries: CatalogEntry[]
+}
+
+/** The catalog as terminal lines: grouped, name · blurb · status. */
+export function renderCatalog(res: CatalogResponse): string[] {
+  const out: string[] = []
+  for (const g of GROUP_ORDER) {
+    const items = res.entries.filter((x) => x.group === g)
+    if (!items.length) continue
+    out.push(GROUP_TITLE[g])
+    for (const x of items) {
+      const status = x.available === false ? x.unavailable_reason || "Runs on a computer." : "Not connected"
+      out.push(`  ${x.name.padEnd(30)}${[x.blurb, status].filter(Boolean).join(" · ")}`)
+    }
+    out.push("")
+  }
+  if (!out.length) out.push("Nothing matches.", "")
+  if (res.next_cursor) out.push(`Showing ${res.entries.length} of ${res.total} \u2014 use --search to narrow`, "")
+  return out
+}
+
 /** The hub as terminal lines, grouped like the web page (Brains split in three). */
-export function renderHub(rows: Row[]): string[] {
-  const all = resolve(rows).filter((x) => !x.entry.hidden)
+export function renderHub(rows: Row[], status?: StatusFilter): string[] {
+  const all = resolve(rows).filter((x) => !x.entry.hidden && matchesStatus(x.row, status))
   const out: string[] = []
   for (const g of GROUP_ORDER) {
     const items = all.filter((x) => x.entry.group === g)

@@ -32,7 +32,7 @@ enum TwinKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// all = every bot and their vendor bots; bot = one bot; owner = only you.
+/// all = every bot and their Connected bots; bot = one bot; owner = only you.
 enum TwinVisibility: String, Codable, Sendable {
     case all, bot, owner
 

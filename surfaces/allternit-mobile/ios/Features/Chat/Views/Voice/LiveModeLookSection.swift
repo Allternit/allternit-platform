@@ -25,7 +25,7 @@ struct LiveModeLookSection: View {
             Text(bot.map { "\($0.botDisplayName)'s live mode look" } ?? "Live mode")
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(Color("TextPrimary"))
-            Text("What moves around a bot's avatar while you talk by voice.")
+            Text("What moves around the A:// mark or a bot's avatar while you talk by voice.")
                 .font(.caption)
                 .foregroundColor(Color("TextSecondary"))
 

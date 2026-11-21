@@ -1,0 +1,72 @@
+---
+title: gizzi agents bot
+description: "Create and edit terminal bots, including the runtime and brain each bot runs on"
+---
+
+## Overview
+
+`gizzi agents bot` (short form `gizzi bot`) manages bot profiles. A bot lives in `~/.gizzi/bots/<name>/`: `bot.json` holds its identity, `SOUL.md` its persona and `memory/` its notes. When you open a bot's chat, Gizzi registers it on your Allternit account so Desktop, the web app and the terminal share one conversation.
+
+| Command | What it does |
+|---|---|
+| `create <name>` | Create a bot profile |
+| `list` | List bots |
+| `show <name>` | Show a bot's identity, runtime, SOUL preview and memory count |
+| `edit <name>` | Change the title, description, runtime or brain |
+| `clone <source> <new-name>` | Copy a bot (never its chat) |
+| `delete <name>` | Delete a bot profile |
+| `chat <name>` | Open the bot's chat |
+| `pause` / `resume` | Pause or resume all bots (see [Work](/cli/work)) |
+
+## Runtime and brain
+
+Each bot has a **runtime** (the agent program it runs on, such as Allternit, Claude Code or Codex) and a **brain** (the model, written `provider/model`). List the runtimes with [`gizzi runtime catalog`](/cli/runtime).
+
+```bash
+gizzi agents bot create coder --runtime codex
+gizzi agents bot create reviewer --runtime claude --brain claude-cli/claude-sonnet-5-5
+gizzi agents bot edit reviewer --runtime allternit
+gizzi agents bot edit reviewer --brain ""      # clear the brain; the runtime picks its default
+```
+
+| Flag | On | What it does |
+|---|---|---|
+| `--runtime <id>` | create, edit | The runtime id or alias, for example `allternit`, `claude`, `codex`, `kimi`, `agy` |
+| `--brain <provider/model>` | create, edit | The model. On `edit`, an empty string clears it |
+| `--model <provider/model>` | create, edit | The same as `--brain`, kept for older scripts. If you pass both and they differ, the command stops with an error |
+| `--title`, `--description` | create, edit | Display title and description |
+| `--soul <file>` | create | A SOUL.md file to start the persona from |
+
+Without `--runtime`, `--brain` (or `--model`) only sets the model, the same as before runtimes existed.
+
+### When the brain doesn't fit the runtime
+
+Some runtimes run one vendor's models only. Claude Code runs Anthropic models and Codex runs OpenAI models; most others take any brain (see the BRAINS column of `gizzi runtime catalog`). If you pick a runtime that can't run the bot's brain, Gizzi switches to the runtime's default model and prints one line, for example:
+
+```text
+Codex runs OpenAI models only, so the brain changed to codex-cli/gpt-6.1-sol.
+```
+
+The bot record keeps the old brain in `autoSwitchedFrom`, and `show` prints it. If Gizzi can't find a model for that runtime, the command stops and asks you to pass `--brain`.
+
+### Unknown runtime
+
+An id that isn't in the catalog stops the command and lists close matches:
+
+```text
+unknown runtime 'codx'. Did you mean: codex? See `gizzi runtime catalog --all`.
+```
+
+### Connected bots
+
+A **Connected bot** is one an outside service runs (for example a ChatGPT GPT or another vendor's agent connected to your account). The vendor picks its runtime and brain, so `--runtime`, `--brain` and `--model` are refused:
+
+```text
+This is a Connected bot. OpenAI runs its runtime and brain.
+```
+
+Gizzi checks this with your Allternit account (the bot's `botKind`). A bot that was never registered on your account, or a check made while signed out or offline, is treated as a normal bot.
+
+## What is stored
+
+`bot.json` keeps the runtime in `botBrain` (`runtime`, `modelRef`, `access` when Gizzi can tell, `autoSwitchedFrom` after a switch), and the old `model` field stays equal to the brain. When the bot syncs to your account, `botBrain` is sent as the agent's `config.botBrain`, the same record Desktop and the phone apps edit.

@@ -124,7 +124,7 @@ struct TwinSettingsView: View {
                     if let listError {
                         Text(listError).foregroundColor(Theme.statusError)
                     } else {
-                        Text("Shared by all your bots and their vendor bots, unless you limit a fact to one bot or to yourself.")
+                        Text("Shared by all your bots and their Connected bots, unless you limit a fact to one bot or to yourself.")
                     }
                 }
             }

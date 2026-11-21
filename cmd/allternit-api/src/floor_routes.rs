@@ -2,17 +2,21 @@
 //! draws them, shapes matching `FloorBotState`, `FloorEvent` and `PublicFloor` in
 //! allternit-ai `src/lib/office/floor-types.ts` (camelCase).
 //!
-//! - `GET /floor/state` -> `{ bots: FloorBotState[] }`. Status comes from the
+//! - `GET /floor/state` -> `{ v: 2, mainBotId, pods, bots }` (v1 fields unchanged; see
+//!   `floor_state` for the v2 additions). Bots: `FloorBotState[]`. Status comes from the
 //!   bot's non-incognito threads (`needs_you` = waiting, `working`/`planning` =
 //!   working, else idle); `lastKind`/`lastText`/`updatedAt` from its newest
 //!   thread event. `meeting` is never set: nothing on this runtime records one.
 //! - `GET /floor/events?since=&until=&limit=` -> `{ events: FloorEvent[] }`, oldest
 //!   first: `bot_events` (thread.started/completed/failed/needs_user, incognito
-//!   threads left out) merged with `agent_hops` as `handoff`. Hops carry no text.
+//!   threads left out) merged with `agent_hops` as `handoff`. Hops carry no text; a handoff gets a
+//!   `label` (the receiving thread's title) only when the hop links a thread.
 //! - `GET|PUT /floor/share` -> `{ enabled, url }`. Enabling asks the cloud for a
 //!   token (relay-signed like `runtime_events`) and starts a 60 s push of the
 //!   public projection only: id, name, role, color, avatar sheet, status,
 //!   updated time. The cloud drops anything else at write time too.
+//! - `GET|PUT /floor/autopilot`, `GET /floor/digest`, `POST /floor/seen`: see
+//!   `floor_autopilot` (merged into this router).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,6 +41,10 @@ const PUSH_EVERY: Duration = Duration::from_secs(60);
 const TEXT_MAX: usize = 240;
 const MAX_LIMIT: usize = 2000;
 const DAY_MS: i64 = 86_400_000;
+const MAX_PROJECT_PODS: usize = 8;
+const POD_NAME_MAX: usize = 40;
+const LAST_RESULT_MAX: usize = 120;
+const LABEL_MAX: usize = 60;
 const KINDS_SQL: &str = "'thread.started','thread.completed','thread.failed','thread.needs_user'";
 
 pub fn floor_router() -> Router<Arc<AppState>> {
@@ -44,6 +52,7 @@ pub fn floor_router() -> Router<Arc<AppState>> {
         .route("/floor/state", get(state_route))
         .route("/floor/events", get(events_route))
         .route("/floor/share", get(share_get).put(share_put))
+        .merge(crate::floor_autopilot::floor_autopilot_router())
 }
 
 fn err(status: StatusCode, code: &str) -> Response {
@@ -60,15 +69,15 @@ fn kind_of(event_type: &str) -> Option<&'static str> {
     }
 }
 
-fn ms_of(rfc: &str) -> Option<i64> {
+pub(crate) fn ms_of(rfc: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(rfc).ok().map(|d| d.timestamp_millis())
 }
 
-fn preview(payload: &Value) -> Option<String> {
+pub(crate) fn preview(payload: &Value) -> Option<String> {
     payload["statusLine"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.chars().take(TEXT_MAX).collect())
 }
 
-fn second_floor(ms: i64) -> String {
+pub(crate) fn second_floor(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default().format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
@@ -110,10 +119,207 @@ pub fn bot_states(conn: &Connection, owner: &str) -> rusqlite::Result<Vec<Value>
     Ok(out)
 }
 
+// ------------------------------------------------------------------ pods (v2)
+
+/// A bot as the pod rule sees it. `memberships` are project ids (any order).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PodBot {
+    pub id: String,
+    /// Project of the bot's newest working/planning thread, if it has one.
+    pub working_project: Option<String>,
+    pub memberships: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PodProject {
+    pub id: String,
+    pub name: String,
+    /// Newest thread activity (RFC 3339 text sorts correctly); empty when none.
+    pub last_activity: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pod {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub kind: &'static str,
+    pub bot_ids: Vec<String>,
+}
+
+pub(crate) fn clip(s: &str, max: usize) -> String {
+    s.trim().chars().take(max).collect()
+}
+
+/// Deterministic `#rrggbb` from an id (FNV-1a over a fixed palette).
+pub fn pod_color(id: &str) -> String {
+    // Cool colours only: no orange, gold or tan tints (Allternit no-tan rule).
+    const PALETTE: [&str; 10] = ["#2F80ED", "#27AE60", "#14B8A6", "#9B51E0", "#EB5757", "#2D9CDB", "#BB6BD9", "#219653", "#6366F1", "#56CCF2"];
+    let mut h: u32 = 0x811c9dc5;
+    for b in id.bytes() {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    PALETTE[(h as usize) % PALETTE.len()].to_string()
+}
+
+/// Plan D4/D5. A bot's pod is the project of its working thread, else its first
+/// project membership (by project id) among the kept project pods, else "team".
+/// The main bot sits alone in the "chief" pod. At most 8 project pods (newest
+/// activity first); the rest fold into "team". Pods with no bots are left out.
+/// Pod order: chief, projects (activity order), team.
+pub fn assign_pods(bots: &[PodBot], projects: &[PodProject], main: Option<&str>) -> Vec<Pod> {
+    let mut ranked: Vec<&PodProject> = projects.iter().collect();
+    ranked.sort_by(|a, b| b.last_activity.cmp(&a.last_activity).then_with(|| a.id.cmp(&b.id)));
+    ranked.truncate(MAX_PROJECT_PODS);
+    let kept = |id: &str| ranked.iter().any(|p| p.id == id);
+
+    let mut chief: Vec<String> = vec![];
+    let mut team: Vec<String> = vec![];
+    let mut by_project: Vec<Vec<String>> = vec![vec![]; ranked.len()];
+    for bot in bots {
+        if Some(bot.id.as_str()) == main {
+            chief.push(bot.id.clone());
+            continue;
+        }
+        let mut members: Vec<&String> = bot.memberships.iter().collect();
+        members.sort();
+        let pick = bot.working_project.as_deref().filter(|p| kept(p)).or_else(|| members.into_iter().map(|m| m.as_str()).find(|m| kept(m)));
+        match pick.and_then(|id| ranked.iter().position(|p| p.id == id)) {
+            Some(i) => by_project[i].push(bot.id.clone()),
+            None => team.push(bot.id.clone()),
+        }
+    }
+
+    let mut pods = vec![];
+    if !chief.is_empty() {
+        pods.push(Pod { id: "chief".into(), name: "Chief".into(), color: pod_color("chief"), kind: "chief", bot_ids: chief });
+    }
+    for (p, ids) in ranked.iter().zip(by_project) {
+        if ids.is_empty() {
+            continue;
+        }
+        let name = clip(&p.name, POD_NAME_MAX);
+        let name = if name.is_empty() { "Project".to_string() } else { name };
+        pods.push(Pod { id: p.id.clone(), name, color: pod_color(&p.id), kind: "project", bot_ids: ids });
+    }
+    if !team.is_empty() {
+        pods.push(Pod { id: "team".into(), name: "Team".into(), color: pod_color("team"), kind: "team", bot_ids: team });
+    }
+    pods
+}
+
+/// Same rule as `agent_session_routes::is_main_bot` (chiefOfStaff flag or the
+/// primary template), applied to a config already in hand: that function opens a
+/// connection per bot, which would be one query per bot here.
+pub(crate) fn config_is_main_bot(config: &Value) -> bool {
+    config["botProfile"]["chiefOfStaff"].as_bool() == Some(true) || config["templateId"].as_str() == Some("primary-a")
+}
+
+/// `GET /floor/state` v2: the v1 bots plus `v`, `mainBotId`, `pods`, and per bot
+/// `pod`, `needs` and `lastResult`. One query per source, none per bot.
+pub fn floor_state(conn: &Connection, owner: &str, now_ms: i64) -> rusqlite::Result<Value> {
+    use std::collections::HashMap;
+    let mut bots = bot_states(conn, owner)?;
+
+    // Main bot (agents order: name, as bot_states).
+    let mut stmt = conn.prepare("SELECT id, COALESCE(config, '{}') FROM agents WHERE user_id = ?1 AND is_bot = 1 AND archived_at IS NULL ORDER BY name")?;
+    let cfgs: Vec<(String, String)> = stmt.query_map(params![owner], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+    let main_id = cfgs.iter().find(|(_, c)| config_is_main_bot(&serde_json::from_str(c).unwrap_or(Value::Null))).map(|(id, _)| id.clone());
+
+    // Newest working thread's project per bot.
+    let mut working: HashMap<String, String> = HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT bot_id, project_id FROM bot_threads
+         WHERE user_id = ?1 AND incognito = 0 AND project_id IS NOT NULL AND status IN ('working','planning')
+         ORDER BY last_activity_at DESC",
+    )?;
+    for row in stmt.query_map(params![owner], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+        let (bot, project) = row?;
+        working.entry(bot).or_insert(project);
+    }
+
+    // Memberships.
+    let mut members: HashMap<String, Vec<String>> = HashMap::new();
+    let mut stmt = conn.prepare("SELECT pb.bot_id, pb.project_id FROM project_bots pb JOIN agents a ON a.id = pb.bot_id WHERE a.user_id = ?1")?;
+    for row in stmt.query_map(params![owner], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+        let (bot, project) = row?;
+        members.entry(bot).or_default().push(project);
+    }
+
+    // Projects with newest activity.
+    let mut stmt = conn.prepare(
+        "SELECT p.id, p.title, COALESCE((SELECT MAX(t.last_activity_at) FROM bot_threads t WHERE t.project_id = p.id AND t.user_id = ?1), CAST(p.updated_at AS TEXT), '')
+         FROM cowork_projects p WHERE p.user_id = ?1",
+    )?;
+    let projects: Vec<PodProject> = stmt
+        .query_map(params![owner], |r| Ok(PodProject { id: r.get(0)?, name: r.get(1)?, last_activity: r.get(2)? }))?
+        .collect::<Result<_, _>>()?;
+
+    // needs: question = needs_you threads, suggestion = proposed threads.
+    let mut question: HashMap<String, i64> = HashMap::new();
+    let mut suggestion: HashMap<String, i64> = HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT bot_id, status, COUNT(*) FROM bot_threads
+         WHERE user_id = ?1 AND incognito = 0 AND status IN ('needs_you','proposed') GROUP BY bot_id, status",
+    )?;
+    for row in stmt.query_map(params![owner], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))? {
+        let (bot, status, n) = row?;
+        if status == "needs_you" { question.insert(bot, n) } else { suggestion.insert(bot, n) };
+    }
+
+    // lastResult: newest finished thread event per bot within 24 h.
+    let mut last: HashMap<String, Value> = HashMap::new();
+    let lo = second_floor(now_ms - DAY_MS);
+    let mut stmt = conn.prepare(
+        "SELECT e.bot_id, e.occurred_at, COALESCE(e.payload, '{}'), COALESCE(e.thread_id, '')
+         FROM bot_events e JOIN agents a ON a.id = e.bot_id LEFT JOIN bot_threads t ON t.id = e.thread_id
+         WHERE a.user_id = ?1 AND e.event_type = 'thread.completed' AND COALESCE(t.incognito, 0) = 0 AND e.occurred_at >= ?2
+         ORDER BY e.occurred_at DESC LIMIT 2000",
+    )?;
+    for row in stmt.query_map(params![owner, lo], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))? {
+        let (bot, at, payload, thread) = row?;
+        if last.contains_key(&bot) {
+            continue;
+        }
+        let (Some(ms), Some(text)) = (ms_of(&at), preview(&serde_json::from_str(&payload).unwrap_or(Value::Null))) else { continue };
+        last.insert(bot, json!({ "text": clip(&text, LAST_RESULT_MAX), "at": ms, "threadId": thread }));
+    }
+
+    let pod_bots: Vec<PodBot> = cfgs
+        .iter()
+        .map(|(id, _)| PodBot { id: id.clone(), working_project: working.get(id).cloned(), memberships: members.remove(id).unwrap_or_default() })
+        .collect();
+    let pods = assign_pods(&pod_bots, &projects, main_id.as_deref());
+    let mut pod_of: HashMap<&str, &str> = HashMap::new();
+    for p in &pods {
+        for b in &p.bot_ids {
+            pod_of.insert(b.as_str(), p.id.as_str());
+        }
+    }
+
+    for bot in bots.iter_mut() {
+        let id = bot["id"].as_str().unwrap_or("").to_string();
+        if let Some(p) = pod_of.get(id.as_str()) {
+            bot["pod"] = json!(p);
+        }
+        bot["needs"] = json!({
+            // TODO: cowork_approvals has no bot_id column, so approvals can't be tied to a
+            // bot cheaply. Count 0 until approvals record the asking bot.
+            "approval": 0,
+            "question": question.get(&id).copied().unwrap_or(0),
+            "suggestion": suggestion.get(&id).copied().unwrap_or(0),
+        });
+        bot["lastResult"] = last.get(&id).cloned().unwrap_or(Value::Null);
+    }
+    let pods_json: Vec<Value> = pods.iter().map(|p| json!({ "id": p.id, "name": p.name, "color": p.color, "kind": p.kind, "botIds": p.bot_ids })).collect();
+    Ok(json!({ "v": 2, "mainBotId": main_id, "pods": pods_json, "bots": bots }))
+}
+
 async fn state_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
     let db = state.db.clone();
-    match tokio::task::spawn_blocking(move || db.connect().and_then(|c| bot_states(&c, &user.user_id))).await {
-        Ok(Ok(bots)) => Json(json!({ "bots": bots })).into_response(),
+    match tokio::task::spawn_blocking(move || db.connect().and_then(|c| floor_state(&c, &user.user_id, chrono::Utc::now().timestamp_millis()))).await {
+        Ok(Ok(state)) => Json(state).into_response(),
         _ => err(StatusCode::INTERNAL_SERVER_ERROR, "floor_state_failed"),
     }
 }
@@ -157,22 +363,56 @@ pub fn floor_events(conn: &Connection, owner: &str, since: i64, until: i64, limi
     }
 
     let mut stmt = conn.prepare(
-        "SELECT h.id, h.from_id, h.to_bot_id, h.created_at FROM agent_hops h
+        "SELECT h.id, h.from_id, h.to_bot_id, h.created_at,
+                (SELECT t.title FROM bot_threads t WHERE t.id = h.thread_id AND t.incognito = 0)
+         FROM agent_hops h
          WHERE h.owner = ?1 AND h.from_kind = 'bot' AND h.created_at >= ?2 AND h.created_at < ?3
            AND EXISTS (SELECT 1 FROM agents a WHERE a.id = h.from_id AND a.user_id = ?1)
            AND EXISTS (SELECT 1 FROM agents a WHERE a.id = h.to_bot_id AND a.user_id = ?1)
          ORDER BY h.created_at LIMIT ?4",
     )?;
     let rows = stmt.query_map(params![owner, lo, hi, (limit * 2) as i64], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?))
     })?;
     for row in rows {
-        let (id, from, to, at) = row?;
+        let (id, from, to, at, title) = row?;
         let Some(ms) = ms_of(&at) else { continue };
         if ms < since || ms > until {
             continue;
         }
-        out.push((ms, json!({ "id": format!("hop:{id}"), "at": ms, "botId": from, "kind": "handoff", "toBotId": to })));
+        let mut ev = json!({ "id": format!("hop:{id}"), "at": ms, "botId": from, "kind": "handoff", "toBotId": to });
+        // Hops carry no text; the receiving thread's title is the label when the hop links one.
+        if let Some(label) = title.as_deref().map(|t| clip(t, LABEL_MAX)).filter(|t| !t.is_empty()) {
+            ev["label"] = json!(label);
+        }
+        out.push((ms, ev));
+    }
+
+    // Autopilot answers and drafts (`floor_autopilot_eval`): kind `autopilot` with
+    // `{ruleId, need, outcome}`. Kept out of KINDS_SQL so they never change a bot's status.
+    let mut stmt = conn.prepare(
+        "SELECT e.id, e.bot_id, e.occurred_at, e.payload
+         FROM bot_events e JOIN agents a ON a.id = e.bot_id LEFT JOIN bot_threads t ON t.id = e.thread_id
+         WHERE a.user_id = ?1 AND e.event_type IN (?2, ?3) AND COALESCE(t.incognito, 0) = 0
+           AND e.occurred_at >= ?4 AND e.occurred_at < ?5
+         ORDER BY e.occurred_at LIMIT ?6",
+    )?;
+    let rows = stmt.query_map(
+        params![owner, crate::floor_autopilot::AUTOPILOT_ANSWER_EVENT, crate::floor_autopilot_eval::AUTOPILOT_DRAFT_EVENT, lo, hi, (limit * 2) as i64],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)),
+    )?;
+    for row in rows {
+        let (id, bot, at, payload) = row?;
+        let Some(ms) = ms_of(&at) else { continue };
+        if ms < since || ms > until {
+            continue;
+        }
+        let p: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
+        let mut ev = json!({ "id": format!("be:{id}"), "at": ms, "botId": bot, "kind": "autopilot", "ruleId": p["ruleId"], "need": p["need"], "outcome": p["outcome"] });
+        if let Some(t) = p["text"].as_str().map(|t| clip(t, 120)).filter(|t| !t.is_empty()) {
+            ev["text"] = json!(t);
+        }
+        out.push((ms, ev));
     }
 
     out.sort_by_key(|(ms, _)| *ms);
@@ -399,7 +639,7 @@ mod tests {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(
             "CREATE TABLE agents (id TEXT PRIMARY KEY, user_id TEXT, name TEXT, description TEXT, config TEXT, is_bot INTEGER, archived_at TEXT);
-             CREATE TABLE bot_threads (id TEXT PRIMARY KEY, bot_id TEXT, incognito INTEGER DEFAULT 0, status TEXT);
+             CREATE TABLE bot_threads (id TEXT PRIMARY KEY, bot_id TEXT, incognito INTEGER DEFAULT 0, status TEXT, title TEXT);
              CREATE TABLE bot_events (id TEXT PRIMARY KEY, bot_id TEXT, event_type TEXT, occurred_at TEXT, payload TEXT, thread_id TEXT);",
         )
         .unwrap();
@@ -413,7 +653,7 @@ mod tests {
         for (id, u) in [("a", "u"), ("b", "u"), ("z", "other")] {
             c.execute("INSERT INTO agents VALUES (?1, ?2, ?1, '', '{}', 1, NULL)", params![id, u]).unwrap();
         }
-        c.execute("INSERT INTO bot_threads VALUES ('t1','a',0,'working'), ('t2','a',1,'working')", []).unwrap();
+        c.execute("INSERT INTO bot_threads (id, bot_id, incognito, status) VALUES ('t1','a',0,'working'), ('t2','a',1,'working')", []).unwrap();
         let ev = |id: &str, bot: &str, ty: &str, at: &str, th: &str| {
             c.execute("INSERT INTO bot_events (id, bot_id, event_type, occurred_at, payload, thread_id) VALUES (?1,?2,?3,?4,'{\"statusLine\":\"Ship the report\"}',?5)", params![id, bot, ty, at, th]).unwrap();
         };
@@ -440,7 +680,7 @@ mod tests {
     fn projection_has_no_task_text_and_filters_avatars() {
         let c = conn();
         c.execute("INSERT INTO agents VALUES ('a','u','Ada','Support','{\"botProfile\":{\"accentColor\":\"#112233\"},\"avatar\":{\"pet\":{\"spriteUrl\":\"https://evil.example/x.png\"}}}',1,NULL)", []).unwrap();
-        c.execute("INSERT INTO bot_threads VALUES ('t1','a',0,'needs_you')", []).unwrap();
+        c.execute("INSERT INTO bot_threads (id, bot_id, incognito, status) VALUES ('t1','a',0,'needs_you')", []).unwrap();
         c.execute("INSERT INTO bot_events (id, bot_id, event_type, occurred_at, payload, thread_id) VALUES ('e1','a','thread.needs_user','2026-10-30T10:00:00Z','{\"statusLine\":\"Pay Acme invoice 4411?\"}','t1')", []).unwrap();
         let p = build_projection(&c, "u", 5).unwrap();
         let text = p.to_string();
@@ -450,6 +690,94 @@ mod tests {
         assert!(p["bots"][0].get("avatarSheet").is_none());
         assert_eq!(safe_sheet("/sprites/a.png").unwrap(), "https://ai.allternit.com/sprites/a.png");
         assert!(safe_sheet("//evil.example/x").is_none());
+    }
+
+    fn pb(id: &str, working: Option<&str>, members: &[&str]) -> PodBot {
+        PodBot { id: id.into(), working_project: working.map(String::from), memberships: members.iter().map(|m| m.to_string()).collect() }
+    }
+    fn pp(id: &str, at: &str) -> PodProject {
+        PodProject { id: id.into(), name: format!("Project {id}"), last_activity: at.into() }
+    }
+    fn pod_of<'a>(pods: &'a [Pod], bot: &str) -> &'a str {
+        &pods.iter().find(|p| p.bot_ids.iter().any(|b| b == bot)).unwrap().id
+    }
+
+    #[test]
+    fn no_projects_puts_everyone_in_team() {
+        let pods = assign_pods(&[pb("a", None, &[]), pb("b", None, &[])], &[], None);
+        assert_eq!(pods.len(), 1);
+        assert_eq!((pods[0].id.as_str(), pods[0].kind), ("team", "team"));
+        assert_eq!(pods[0].bot_ids, ["a", "b"]);
+        assert!(assign_pods(&[], &[pp("p1", "")], None).is_empty());
+    }
+
+    #[test]
+    fn two_projects_group_bots_by_membership() {
+        let projects = [pp("p1", "2026-11-01T00:00:00Z"), pp("p2", "2026-11-02T00:00:00Z")];
+        let bots = [pb("a", None, &["p1"]), pb("b", None, &["p2"]), pb("c", None, &[]), pb("d", None, &["p2", "p1"])];
+        let pods = assign_pods(&bots, &projects, None);
+        let ids: Vec<_> = pods.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["p2", "p1", "team"]); // newest activity first, team last
+        assert_eq!(pod_of(&pods, "a"), "p1");
+        assert_eq!(pod_of(&pods, "b"), "p2");
+        assert_eq!(pod_of(&pods, "c"), "team");
+        assert_eq!(pod_of(&pods, "d"), "p1"); // first membership by project id
+        assert!(pods.iter().all(|p| p.color.len() == 7 && p.color.starts_with('#') && p.name.chars().count() <= 40));
+    }
+
+    #[test]
+    fn main_bot_gets_its_own_chief_pod() {
+        let pods = assign_pods(&[pb("m", None, &["p1"]), pb("a", None, &["p1"])], &[pp("p1", "x")], Some("m"));
+        assert_eq!(pods[0].id, "chief");
+        assert_eq!((pods[0].kind, pods[0].bot_ids.as_slice()), ("chief", ["m".to_string()].as_slice()));
+        assert_eq!(pod_of(&pods, "a"), "p1");
+    }
+
+    #[test]
+    fn ten_projects_keep_eight_and_fold_the_rest_into_team() {
+        let projects: Vec<PodProject> = (0..10).map(|i| pp(&format!("p{i}"), &format!("2026-11-{:02}T00:00:00Z", i + 1))).collect();
+        let bots: Vec<PodBot> = (0..10).map(|i| pb(&format!("b{i}"), None, &[&format!("p{i}")])).collect();
+        let pods = assign_pods(&bots, &projects, None);
+        assert_eq!(pods.iter().filter(|p| p.kind == "project").count(), 8);
+        // p0 and p1 are the two oldest: folded.
+        assert_eq!(pod_of(&pods, "b0"), "team");
+        assert_eq!(pod_of(&pods, "b1"), "team");
+        assert_eq!(pod_of(&pods, "b9"), "p9");
+        assert_eq!(pods.last().unwrap().id, "team");
+    }
+
+    #[test]
+    fn working_thread_project_beats_membership_order() {
+        let projects = [pp("p1", "1"), pp("p2", "2")];
+        let pods = assign_pods(&[pb("a", Some("p2"), &["p1", "p2"])], &projects, None);
+        assert_eq!(pod_of(&pods, "a"), "p2");
+        // A working project that is not a known project falls back to membership.
+        let pods = assign_pods(&[pb("a", Some("gone"), &["p1"])], &projects, None);
+        assert_eq!(pod_of(&pods, "a"), "p1");
+    }
+
+    #[test]
+    fn pod_color_is_stable_hex() {
+        assert_eq!(pod_color("p1"), pod_color("p1"));
+        assert!(pod_color("x").starts_with('#') && pod_color("x").len() == 7);
+    }
+
+    #[test]
+    fn handoff_label_is_the_receiving_thread_title() {
+        let c = conn();
+        for id in ["a", "b"] {
+            c.execute("INSERT INTO agents VALUES (?1, 'u', ?1, '', '{}', 1, NULL)", params![id]).unwrap();
+        }
+        c.execute("INSERT INTO bot_threads (id, bot_id, incognito, status, title) VALUES ('t1','b',0,'working','Draft the Q4 report')", []).unwrap();
+        let hop = |id: &str, thread: &str| {
+            c.execute("INSERT INTO agent_hops (id, owner, trace_id, span_id, via, from_kind, from_id, to_bot_id, thread_id, created_at) VALUES (?1,'u','tr',?1,'message_agent','bot','a','b',?2,'2026-10-30T10:03:00Z')", params![id, thread]).unwrap();
+        };
+        hop("h1", "t1");
+        hop("h2", "");
+        let got = floor_events(&c, "u", ms_of("2026-10-30T09:00:00Z").unwrap(), ms_of("2026-10-30T11:00:00Z").unwrap(), 10).unwrap();
+        let label = |id: &str| got.iter().find(|e| e["id"] == id).unwrap().get("label").cloned();
+        assert_eq!(label("hop:h1"), Some(json!("Draft the Q4 report")));
+        assert_eq!(label("hop:h2"), None);
     }
 
     /// A fake cloud with the real upsert rule: a new token whenever the share was off.

@@ -266,7 +266,9 @@
         "allternit-ai/src/views/tasks",
         "allternit/cmd/allternit-api",
         "allternit/cmd/gizzi-code",
-        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding"
+        "allternit/surfaces/allternit-mobile/ios/Features/Onboarding",
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/gizzi-code/src/runtime/drivers"
       ],
       "decisions": [
         {
@@ -384,6 +386,10 @@
         {
           "on": "2026-10-27",
           "note": "Threads carry a purpose, icon and colour (V281). With a purpose the bot greets and offers three starter tasks (POST /threads/:id/starters); runs started there wear the thread's colour tag. Borrowed from OpenDuet channels (MIT)."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Harness & Bots 2.0: a bot picks a runtime (how it works) and a brain (how it thinks); botBrain gains runtime/access/autoSwitchedFrom, normalized server-side from the registry (see Runtime registry and runtimes API, Runtime views)."
         }
       ],
       "evidence": [
@@ -2506,7 +2512,10 @@
         "allternit-ai/src/views/agent-view",
         "allternit/cmd/allternit-api",
         "allternit/services/subscription-gateway",
-        "allternit-ai/src/lib/bots"
+        "allternit-ai/src/lib/bots",
+        "allternit/cmd/allternit-api/src/agent_*",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts"
       ],
       "decisions": [
         {
@@ -2532,10 +2541,14 @@
         {
           "on": "2026-10-27",
           "note": "Eoj approved dropping the last CopilotKit code dependency: OpenDots and OpenBot (CopilotKit) now run through the gateway's own Intelligence client (adapters/_shared/copilotkit-intelligence.ts, wire-compatible with @copilotkit/core 1.75.0 IntelligenceAgent run mode: POST /agent/:id/run receipt, Phoenix channel join with stream_mode run, ag_ui_event pushes). No /connect replay or reconnect; a dropped socket is reported as unconfirmed. @copilotkit/core is removed. The OpenBot default realtime origin is now wss:// (the old https:// default could never match a wss endpoint)."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "User-facing name is Connected bot (wire name stays vendor). GET /agents/:id adds botKind connected when a vendor binding exists; runtime and brain pickers show 'Run by <Vendor>' and gizzi bot edit refuses --runtime/--brain."
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx",
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx",
         "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
         "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
@@ -3358,7 +3371,7 @@
       "label": "Waiting games (Play in the message box)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "A Play button in the message box (ThreadComposer, ChatComposer) shows from session open in Bot and Code mode and after about 5 s of work in Chat; it opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory; plus the two full Gizzi games shown from their live sites in a frame: Gizzi RPG (gizzirpg.allternit.com) and Gizzi Brawl (brawl.allternit.com, turned sideways in a tall window because it is landscape-only). The iPhone app has the same ten (WKWebView for the two Gizzi games). When the bot that opened it finishes, the game pauses and says the reply is ready. Closing the window or switching games pauses a game; reopening picks up where you left it. Settings \u2192 Appearance \u2192 Background \u2192 Waiting games (on by default).",
+      "description": "A Play button in the message box (ThreadComposer, ChatComposer) shows from session open in Bot and Code mode and after about 5 s of work in Chat; it opens a floating game window (Desktop: bottom right, draggable; phone layout and m.allternit.com PWA: above the message box) with a Full screen button. Eight ASCII games on one canvas: Big Fish, Bot Race (your bots, ~200 dev words), Token Catch, Meteor Dodge, Bug Bash, Stack Deploy, Context Snake, Bot Memory; plus the two full Gizzi games shown from their live sites in a frame: Gizzi RPG (gizzirpg.allternit.com) and Gizzi Brawl (brawl.allternit.com, turned sideways in a tall window because it is landscape-only). The iPhone app has the same ten (WKWebView for the two Gizzi games), and so does the native Android app (a Compose canvas port of the iPhone engine; a locked-down WebView for the two Gizzi games, Settings \u2192 Advanced \u2192 Waiting games). When the bot that opened it finishes, the game pauses and says the reply is ready. Closing the window or switching games pauses a game; reopening picks up where you left it. Settings \u2192 Appearance \u2192 Background \u2192 Waiting games (on by default).",
       "touches": [
         "allternit-ai/src/components/waiting-games",
         "allternit-ai/src/components/threads/ThreadComposer.tsx",
@@ -3368,7 +3381,9 @@
         "allternit-ai/src/components/bots/stage/backdrop/StageBackdropPicker.tsx",
         "allternit-ai/public/_headers",
         "allternit-ai/fabric-session-pwa-functions/_site-headers.js",
-        "allternit/surfaces/allternit-mobile/ios/Features/WaitingGames"
+        "allternit/surfaces/allternit-mobile/ios/Features/WaitingGames",
+        "allternit/surfaces/allternit-mobile/android/feature/chat/src/main/java/com/allternit/feature/chat/games",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/Composer.kt"
       ],
       "decisions": [
         {
@@ -3920,7 +3935,7 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/worker-bots.mdx",
-        "allternit/surfaces/docs/guides/connect-vendor-from-chat.mdx",
+        "allternit/surfaces/docs/guides/connect-from-chat.mdx",
         "allternit/cmd/allternit-api/migrations/V282__bot_owns.sql"
       ],
       "decisions": [
@@ -4814,7 +4829,24 @@
         "allternit/cmd/gizzi-code/src/cli/commands/connect-flow.ts",
         "allternit/cmd/gizzi-code/src/cli/commands/connect-model.ts",
         "allternit/cmd/gizzi-code/src/cli/commands/connect-run.ts",
-        "allternit/cmd/allternit-cloud-api/src/routes/plan_threads.rs"
+        "allternit/cmd/allternit-cloud-api/src/routes/plan_threads.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/connections_catalog.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/connections_catalog_apps.json",
+        "allternit/services/open-connector/scripts/export-directory.ts",
+        "allternit-ai/src/components/connect-kit/ConnectionCard.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectionsBrowse.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectionsToolbar.tsx",
+        "allternit-ai/src/components/connect-kit/MoreConnections.tsx",
+        "allternit-ai/src/components/connect-kit/rowAction.ts",
+        "allternit-ai/src/components/connect-kit/view-state.ts",
+        "allternit-ai/src/lib/connections-catalog.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionCardView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsFilterPopover.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsMoreView.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/firstrun/ConnectionCards.kt",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/firstrun/ConnectionsMore.kt",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/firstrun/SettingsConnections.kt",
+        "allternit/surfaces/docs/cli/connect.mdx"
       ],
       "decisions": [
         {
@@ -4824,6 +4856,10 @@
         {
           "on": "2026-11-13",
           "note": "connect kit: hub A, setup A, fewest-step sign-ins; brain runner gated on vendors. Connections page = option A (Brains split into Works on any device, Needs your computer, Coming soon); day-one setup = Your AI, Your phone, Main bot, Connected, with no computer step; Add a computer is offered as Later, if you need it. Claude, Grok and Kimi plans on Allternit wait for vendor answers (plan Phase 0); Copilot waits for a GitHub App. Contract: CONTRACT-connections-2026-11.md. Kit routes never call require_compute."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Connections view redesign (Eoj approved): one toolbar with search and a filter menu (List, Grid, Deck; Status with counts), an amber dot in place of the needs banner, a More tile per group (6 shown at a time) and a browse page, backed by GET /api/v1/connections/catalog (11 key-provider brains plus a committed apps snapshot from services/open-connector/scripts/export-directory.ts). A connected catalog app moves into Apps. Same view on Desktop, web, phone, PWA, iOS, Android and gizzi connect more. Contract: CONTRACT-connections-2026-11.md section 11."
         },
         {
           "on": "2026-11-15",
@@ -5185,11 +5221,18 @@
       "label": "Allternit Sleep",
       "product": "product:memory-drive",
       "status": "building",
-      "description": "Memory consolidation that runs while you are away: naps on idle, a deeper cycle with REM-style hypothesis checks, reminders, and a question to you when two memories conflict. Backend, gizzi-code runtime and docs are built behind flags and not live. Desktop, ai.allternit.com, the PWA and iPhone get a memory settings switch (planned, plan steps 8.2 and 8.4); gizzi-code triggers, client, dispute note and reminders are on sibling PRs and join this entry after they merge.",
+      "description": "Memory consolidation that runs while you are away: naps on idle, a deeper cycle with REM-style hypothesis checks, reminders, stricter intake while Sleep is behind, and a question to you when two memories conflict. Backend, gizzi-code runtime and CLI, iPhone settings and docs merged 2026-11-20 (train 20261119-2008); every stage ships off. Desktop, ai.allternit.com, the phone layout and the PWA have the Sleep section in Memory settings and the chat conflict card (allternit-ai #1191, #1192, merged 2026-11-20).",
       "touches": [
         "allternit/cmd/allternit-api/src/sleep",
         "allternit/cmd/allternit-api/migrations/V291__sleep_core.sql",
         "allternit/cmd/gizzi-code/src/runtime/memory",
+        "allternit/cmd/gizzi-code/src/runtime/memory/sleep",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/services/memoryDrive/sleep.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/memory.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySleepView.swift",
+        "allternit-ai/src/views/settings/memory-sleep",
+        "allternit-ai/src/lib/agents/memory-sleep-client.ts",
+        "allternit-ai/src/lib/agents/memory-conflict-card.ts",
         "allternit/surfaces/docs/guides/sleep.mdx",
         "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
         "allternit/surfaces/docs/api/memory-sleep.mdx"
@@ -5198,11 +5241,18 @@
         {
           "on": "2026-11-19",
           "note": "Sleep is a feature of Memory Drive, not a new product. Everything ships off by default; the main switch alone turns no stage on."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Merged to main in train 20261119-2008 with every stage off. While sleep debt pauses fading, extraction skips new facts under debt_intake_min_attention (0.25); flagged facts always go in (Eoj decision 7)."
         }
       ],
       "evidence": [
         "allternit/cmd/allternit-api/src/sleep/mod.rs",
         "allternit/cmd/allternit-api/migrations/V291__sleep_core.sql",
+        "allternit/cmd/gizzi-code/src/runtime/memory/sleep/triggers.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/MemorySleepView.swift",
+        "allternit-ai/src/views/settings/memory-sleep/SleepSection.tsx",
         "allternit/surfaces/docs/guides/sleep.mdx",
         "allternit/surfaces/docs/architecture/context-memory/sleep.mdx",
         "allternit/surfaces/docs/api/memory-sleep.mdx"
@@ -5274,6 +5324,75 @@
       "evidence": [
         "allternit/surfaces/docs/guides/claude-organization.mdx",
         "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ]
+    },
+    {
+      "id": "feature:runtime-registry",
+      "label": "Runtime registry and runtimes API",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "One list of runtimes a bot can run on (runtimes[] in cli-catalog.json v3): adapter, which brains fit, access, status, system layer and look tokens. gizzi reads it directly (gizzi runtime catalog, bot create/edit --runtime/--brain, /runtime in the TUI); allternit-api and cloud-api serve it as GET /api/v1/runtimes for Desktop, web and the phone apps. The local CLI driver uses it for adapters and append-only system layers.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+        "allternit/cmd/gizzi-code/src/runtime/drivers",
+        "allternit/cmd/gizzi-code/src/cli/commands",
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/allternit-api/src/cli_*",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit/cmd/allternit-api/src/agent_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
+        "allternit/surfaces/docs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-20",
+          "note": "Harness & Bots 2.0: the registry is a top-level runtimes[] in cli-catalog.json (no second file). Runtime id = old native harness id. fits() accepts vendor, subs- and CLI provider ids; one rule for every client. Wire names stay (vendor, botBrain.mode/harness); new botBrain.runtime/access/autoSwitchedFrom are additive."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Gizzi: gizzi runtime catalog [--all] [--json], --runtime/--brain on bot create/edit (--model alias), /runtime picker in the TUI (Runtime then Brain, auto-switch note, Connected bots locked 'Run by <Vendor>')."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/runtime/catalog.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components/RuntimePicker.tsx",
+        "allternit/cmd/allternit-api/src/cli_catalog.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes.rs",
+        "allternit/surfaces/docs/api/runtimes.mdx"
+      ]
+    },
+    {
+      "id": "feature:runtime-views",
+      "label": "Runtime views",
+      "product": "product:digital-twin",
+      "status": "building",
+      "description": "Every runtime gets its own view of a bot's work: the View switch (Allternit / Runtime / Split, Split hidden below 900 px) draws the runtime's terminal or app look from the registry's data-only look tokens, or frames its live web app from the user's computer. The runtime/brain picker sits beside it. Same feature on Desktop, web, PWA, iOS, Android and Gizzi.",
+      "touches": [
+        "allternit/cmd/allternit-api/src/cli_*",
+        "allternit/cmd/allternit-api/src/runtime_live.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit-ai/src/components/bots",
+        "allternit-ai/src/lib/bots",
+        "allternit/surfaces/allternit-mobile/ios",
+        "allternit/surfaces/allternit-mobile/android",
+        "allternit/cmd/gizzi-code/src/cli/commands",
+        "allternit/surfaces/docs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-20",
+          "note": "Look config is data only (palette, glyphs, banner lines, step verbs, footer slots) so Swift and Kotlin draw it; agentView {view, look} is a separate config key so old clients saving botBrain don't wipe it. Phones show the look pack plus 'Open on your computer' for live web apps."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts",
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes.rs",
+        "allternit/cmd/allternit-api/src/bot_brain.rs",
+        "allternit/cmd/allternit-api/src/runtime_live.rs"
       ]
     }
   ],

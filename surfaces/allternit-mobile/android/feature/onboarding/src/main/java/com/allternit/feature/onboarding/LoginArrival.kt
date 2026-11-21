@@ -115,7 +115,7 @@ fun LoginArrival(paused: Boolean, modifier: Modifier = Modifier) {
                     modifier = Modifier.height(18.dp),
                 )
                 Image(
-                    painter = painterResource(R.drawable.gizzi_mascot),
+                    painter = painterResource(com.allternit.core.design.R.drawable.gizzi_mascot),
                     contentDescription = null,
                     modifier = Modifier.size(120.dp),
                 )

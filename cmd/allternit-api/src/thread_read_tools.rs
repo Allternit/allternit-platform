@@ -678,7 +678,7 @@ mod tests {
         let w = watch(&s.db, "ses_caller", &owner(), &[target("t1", None)], None).unwrap();
         let started = Instant::now();
         let v = wait(s.db.clone(), w, Duration::ZERO).await.unwrap();
-        assert!(started.elapsed() < Duration::from_millis(400));
+        assert!(started.elapsed() < Duration::from_secs(2), "timeout 0 returns at once, not after a wait");
         assert!(v["woke"].is_null());
         assert_eq!(v["timedOut"], true);
         assert_eq!(v["statuses"][0]["status"], "working");

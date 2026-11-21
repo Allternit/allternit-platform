@@ -392,6 +392,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // like an OAuth device authorization endpoint.
         .merge(routes::runtime_pairing::routes())
         .merge(routes::runtime_relay::routes())
+        // Runtime registry (static, public; same JSON allternit-api embeds).
+        .merge(routes::runtimes::routes())
         // Files drive: wake consent, wake settings, endpoints, token keys
         // (each handler resolves the user itself).
         .merge(routes::computer_files::routes())
@@ -668,6 +670,13 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // 503 mesh_not_configured when HEADSCALE_API_KEY is unset.
         .merge(routes::mesh::routes())
         .merge(routes::paired_computers::routes())
+        // Computers console list (signed in or device token, same caller rule).
+        .merge(routes::computers_console::routes())
+        // Computers console history: GET /api/v1/computers/:id/metrics (same caller rule).
+        .merge(routes::computer_metrics::routes())
+        // Computers console live host data, approvals and port forwards through
+        // the runtime relay; never wakes a computer (same caller rule).
+        .merge(routes::computers_host::routes())
         // Phone stream relay (Phones 2.0): the account's runtime upserts and
         // lists its registered phones with its device credential.
         .merge(routes::registered_phones::routes())

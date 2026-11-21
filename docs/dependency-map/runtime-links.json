@@ -747,6 +747,12 @@
       "kind": "external",
       "url": "https://auth.claude.com",
       "path": "https://auth.claude.com"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "label": "cli-catalog.json (runtime registry)",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json"
     }
   ],
   "edges": [
@@ -1098,7 +1104,7 @@
       "kind": "authenticated loopback HTTP; request-matched native bot replies",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/openmausbot/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1107,7 +1113,7 @@
       "kind": "authenticated loopback HTTP; request-matched native bot replies",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/codync/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1116,7 +1122,7 @@
       "kind": "authenticated loopback HTTP; request-matched native bot replies",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1125,7 +1131,7 @@
       "kind": "authenticated loopback HTTP; accepted message IDs matched to native conversation replies",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1135,7 +1141,7 @@
       "evidence": [
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
         "allternit/services/subscription-gateway/adapters/_shared/copilotkit-intelligence.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1145,7 +1151,7 @@
       "evidence": [
         "allternit/services/subscription-gateway/adapters/openbot-copilotkit/provider.ts",
         "allternit/services/subscription-gateway/adapters/_shared/copilotkit-intelligence.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1154,7 +1160,7 @@
       "kind": "launch-token exchange and signed-cookie loopback RPC; caller-matched completed turns",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1163,7 +1169,7 @@
       "kind": "access-key session exchange and authenticated loopback AG-UI SSE; own thread/run completion",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1173,7 +1179,7 @@
       "evidence": [
         "allternit/services/subscription-gateway/adapters/ag-ui/provider.ts",
         "allternit/services/subscription-gateway/adapters/_shared/ag-ui.ts",
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx"
       ]
     },
     {
@@ -1910,6 +1916,102 @@
       "evidence": [
         "allternit/surfaces/docs/operations/claude-linked-billing.mdx",
         "allternit/surfaces/docs/guides/claude-organization.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/providers",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "reads runtimes[] and tools[]: runtime registry, fits(), normalizer",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/subprocess.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/drivers",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "reads adapter kinds and runtimes[].systemLayer.via for local CLI sessions",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/drivers/local-cli-driver.ts",
+        "allternit/cmd/gizzi-code/src/runtime/drivers/cli-session-flags.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/cli_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "include_str! embed: GET /api/v1/runtimes (local gateway, adds installed with owner auth)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/cli_catalog.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/runtime_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "reads runtimes[].liveUi: POST/GET/DELETE /api/v1/runtimes/:id/live starts the runtime's own web app on 127.0.0.1 (owner auth)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/runtime_live.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "include_str! embed: public GET /api/v1/runtimes for web and phones",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/bot_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "botBrain normalizer derives runtime/mode/harness from the registry",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/bot_brain.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/agent_*",
+      "target": "allternit/cmd/allternit-api/src/bot_*",
+      "kind": "GET /agents/:id adds botKind; agent saves run the botBrain normalizer",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agent_routes.rs",
+        "allternit/cmd/allternit-api/src/bot_brain.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands",
+      "target": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "kind": "registers gizzi agents bot (create/edit --runtime/--brain)",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/runtime/catalog.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers",
+      "kind": "--runtime/--brain: fits(), auto-switch, normalizer",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "target": "allternit/cmd/allternit-api/src/agent_*",
+      "kind": "HTTP: GET /api/v1/agents/:id botKind for the Connected bot lock",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/allternit-api/src/agent_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/docs",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "documents the runtime registry, runtimes API and system layers",
+      "evidence": [
+        "allternit/surfaces/docs/cli/runtime.mdx",
+        "allternit/surfaces/docs/api/runtimes.mdx",
+        "allternit/surfaces/docs/concepts/system-layers.mdx"
       ]
     }
   ]

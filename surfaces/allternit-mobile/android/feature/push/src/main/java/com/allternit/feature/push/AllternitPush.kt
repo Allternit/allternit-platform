@@ -47,6 +47,8 @@ object AllternitPush {
     const val EXTRA_INBOX_ID = "com.allternit.push.inboxId"
     const val EXTRA_SESSION_ID = "com.allternit.push.sessionId"
     const val EXTRA_BOT_ID = "com.allternit.push.botId"
+    /** A `computer_alert` push: the console row id. */
+    const val EXTRA_COMPUTER_ID = "com.allternit.push.computerId"
 
     /** What this build does with a push (cloud `KNOWN_CAPABILITIES`): notification buttons. */
     val CAPABILITIES = listOf("actions")
@@ -156,11 +158,12 @@ object AllternitPush {
             data["inboxId"]?.let { putExtra(EXTRA_INBOX_ID, it) }
             (data["sessionId"] ?: data["threadSessionId"])?.let { putExtra(EXTRA_SESSION_ID, it) }
             data["botId"]?.let { putExtra(EXTRA_BOT_ID, it) }
+            data["computerId"]?.let { putExtra(EXTRA_COMPUTER_ID, it) }
         }
 
     /** The push a notification tap carried, once (the extras are removed). Null for any other intent. */
     fun readTap(intent: Intent): PushTap? {
-        val keys = listOf(EXTRA_URL, EXTRA_EVENT, EXTRA_INBOX_ID, EXTRA_SESSION_ID, EXTRA_BOT_ID)
+        val keys = listOf(EXTRA_URL, EXTRA_EVENT, EXTRA_INBOX_ID, EXTRA_SESSION_ID, EXTRA_BOT_ID, EXTRA_COMPUTER_ID)
         if (keys.none { intent.hasExtra(it) }) return null
         val tap = PushTap(
             url = intent.getStringExtra(EXTRA_URL),
@@ -168,6 +171,7 @@ object AllternitPush {
             inboxId = intent.getStringExtra(EXTRA_INBOX_ID)?.takeIf { it.isNotBlank() },
             sessionId = intent.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() },
             botId = intent.getStringExtra(EXTRA_BOT_ID)?.takeIf { it.isNotBlank() },
+            computerId = intent.getStringExtra(EXTRA_COMPUTER_ID)?.takeIf { it.isNotBlank() },
         )
         keys.forEach { intent.removeExtra(it) }
         return tap
@@ -193,7 +197,12 @@ data class PushTap(
     val inboxId: String?,
     val sessionId: String?,
     val botId: String?,
+    val computerId: String? = null,
 ) {
+    /** The computer a `computer_alert` points at: `computerId`, else the url `/computers/<id>` (iOS DeepLink.computerConsole). */
+    val computer: String?
+        get() = computerId ?: url?.let { Regex("""^/computers/([^/?#]+)""").find(it)?.groupValues?.get(1) }
+
     /** The inbox item: `inboxId`, else the `allternit_inbox` query of the url (`/?allternit_inbox=approval%3Aap1`). */
     val inboxItem: String?
         get() = inboxId ?: url?.let { runCatching { android.net.Uri.parse("https://app$it").getQueryParameter("allternit_inbox") }.getOrNull() }

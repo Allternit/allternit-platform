@@ -25,6 +25,8 @@ import cost from './commands/cost/index.js'
 import dash from './commands/dash/index.js'
 import dashboard from './commands/dashboard/index.js'
 import bots from './commands/bots/index.js'
+import autopilot from './commands/autopilot/index.js'
+import away from './commands/away/index.js'
 import customize from './commands/customize/index.js'
 import factory from './commands/factory/index.js'
 import board from './commands/board/index.js'
@@ -61,7 +63,7 @@ import status from './commands/status/index.js'
 import tasks from './commands/tasks/index.js'
 import goal from './commands/goal.js'
 import loops from './commands/loops.js'
-import { decisions, pr, projects, routines } from './commands/work/index.js'
+import { computers, decisions, pr, projects, routines } from './commands/work/index.js'
 import live from './commands/live/index.js'
 import find from './commands/find/index.js'
 import grep from './commands/grep/index.js'
@@ -212,6 +214,7 @@ import env from './commands/env/index.js'
 import exit from './commands/exit/index.js'
 import exportCommand from './commands/export/index.js'
 import model from './commands/model/index.js'
+import runtimeCommand from './commands/runtime/index.js'
 import tag from './commands/tag/index.js'
 import outputStyle from './commands/output-style/index.js'
 import remoteEnv from './commands/remote-env/index.js'
@@ -344,6 +347,8 @@ const COMMANDS = memoize((): Command[] => [
   dash,
   dashboard,
   bots,
+  autopilot,
+  away,
   customize,
   factory,
   board,
@@ -368,6 +373,7 @@ const COMMANDS = memoize((): Command[] => [
   loops,
   keybindings,
   routines,
+  computers,
   decisions,
   pr,
   projects,
@@ -381,6 +387,7 @@ const COMMANDS = memoize((): Command[] => [
   remember,
   mobile,
   model,
+  runtimeCommand,
   outputStyle,
   remoteEnv,
   plugin,

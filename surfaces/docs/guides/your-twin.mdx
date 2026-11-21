@@ -1,6 +1,6 @@
 ---
 title: Your twin
-description: "One voice and one shared memory for all your bots and their vendor bots: how they speak for you, what they may say, what they know, and where they learned it."
+description: "One voice and one shared memory for all your bots and their connected bots: how they speak for you, what they may say, what they know, and where they learned it."
 ---
 
 Your twin is the part of Allternit that stays the same across every bot you run. Instead of each bot knowing you a little differently, they share:
@@ -35,15 +35,15 @@ Each fact has a type (fact, preference, schedule rule, person, decision), an opt
 
 | Visibility | Who reads it |
 | --- | --- |
-| **All bots** | Every bot you run, and the vendor bots working for them. |
-| **One bot** | Only that bot. Vendor bots never see it. |
+| **All bots** | Every bot you run, and the connected bots working for them. |
+| **One bot** | Only that bot. Connected bots never see it. |
 | **Only me** | Nobody but you. It is never given to a bot. |
 
 Every fact shows **where it came from**: added by you, or learned by a bot, on which channel, when, and how sure the bot was.
 
 ### Suggestions from your bots
 
-When a vendor bot (or any client of your runtime) learns something in a conversation, it **suggests** it: vendor bots do it with the `twin_propose` tool. A suggestion is not used by any bot until you **Accept** it. You can **Edit** it first (saving an edit accepts it) or **Dismiss** it. Up to 50 suggestions can wait for review; after that bots must wait.
+When a connected bot (or any client of your runtime) learns something in a conversation, it **suggests** it: connected bots do it with the `twin_propose` tool. A suggestion is not used by any bot until you **Accept** it. You can **Edit** it first (saving an edit accepts it) or **Dismiss** it. Up to 50 suggestions can wait for review; after that bots must wait.
 
 ## Where the twin is used
 
@@ -65,6 +65,6 @@ Routes on the runtime (allternit-api), all signed in as the owner:
 | `PATCH /api/v1/twin/memory/:id` | Edit; also accepts a proposal. |
 | `POST /api/v1/twin/memory/:id/accept` | Accept as is. |
 | `DELETE /api/v1/twin/memory/:id` | Delete or dismiss. |
-| `GET /api/v1/twin/context[?botId=]` | Preview of what a bot (with `botId`) or a vendor bot (without) is told: `{ configured, context }`. |
+| `GET /api/v1/twin/context[?botId=]` | Preview of what a bot (with `botId`) or a connected bot (without) is told: `{ configured, context }`. |
 
-Vendor connector tools: `twin_context` (read only) returns `{ configured, context }` for the vendor audience: the voice plus **All bots** facts. `twin_propose` `{ content, kind?, subject?, visibility?: all|bot, confidence? }` suggests a fact; it is always a proposal, never `owner`-only, and a `bot` fact is limited to that vendor bot.
+Vendor connector tools: `twin_context` (read only) returns `{ configured, context }` for the vendor audience: the voice plus **All bots** facts. `twin_propose` `{ content, kind?, subject?, visibility?: all|bot, confidence? }` suggests a fact; it is always a proposal, never `owner`-only, and a `bot` fact is limited to that connected bot.

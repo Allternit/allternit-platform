@@ -7,6 +7,37 @@ description: "Settings → Connections: one page to connect your AI, your comput
 
 Connections is the same on Allternit Desktop, ai.allternit.com, the phone layout, the m.allternit.com app and the iPhone app (Settings › Connections, no new tab). In the terminal, `gizzi connect` lists the same rows with the same words. A few steps need Allternit Desktop, because they talk to a phone or a computer near you; those are marked below.
 
+## Find, filter and change the view
+
+The top of the page has one toolbar: a search button and a filter menu button (two sliders).
+
+- **Search** filters every row by name or what it is for. Clear it with the one clear button in the field.
+- **Filter menu** has three parts. **View** switches between **List**, **Grid** and **Deck**. **Status** shows **All**, **Connected**, **Needs you** and **Not connected**, each with a count. **Find more connections** opens the browse page.
+- **Amber dot.** The sliders button shows a small amber dot when something needs you. There is no separate "needs you" banner. Choose **Needs you** in the menu to see only those rows.
+- **Status chip.** A status you picked shows as a chip under the toolbar. Tap its **x** to clear it.
+
+The three views show the same rows. **List** is one row per line. **Grid** is two or more cards per line. **Deck** is a row of cards for each group that you swipe sideways. The view you pick is remembered on that device.
+
+### More
+
+Each group ends with a **More** tile when there are more connections to show than the group lists by default. **More** opens a panel in place, showing 6 at a time. The rest scroll inside the panel and load 24 at a time. The list comes from Allternit's live catalog, so it grows without an app update. In **Your AI**, **More** lists the other API-key providers (11 in all). In **Apps**, it lists the whole app directory, over a thousand apps. A **More** tile does not show when the catalog has nothing for that group or cannot be reached.
+
+**Find more connections** opens a browse page with a search field and a chip for each group, to look across all of them at once. On Desktop and the web it is a dialog; on a phone it is a full screen.
+
+An app that is not available on your account says **Runs on a computer.** Open it from Allternit Desktop, or use the fallback shown.
+
+When you connect an app from **More**, it leaves the catalog and moves into **Apps** as a connected row.
+
+### On each surface
+
+| Surface | What is different |
+| --- | --- |
+| Desktop and ai.allternit.com | The toolbar sits beside the page heading. **Find more connections** is a dialog. |
+| Phone layout and the m.allternit.com app | The toolbar is in the top bar, with a round back button. **More** and browse are full-screen sheets. |
+| iPhone app | Settings › Connections has the same toolbar in the top bar and no new tab. Deck snaps card by card. |
+| Android app | The same toolbar and the same three views as the iPhone app. The native app is not on Google Play yet; until it is, Android uses the m.allternit.com app. |
+| Gizzi Code | `gizzi connect --status connected` or `--status needs` filters the list, and `gizzi connect more` lists the catalog. See [Connect](/cli/connect#find-more-connections). |
+
 ## The four status words
 
 Every row shows one of four states. There are no others.
@@ -194,5 +225,6 @@ Two kinds of brains live elsewhere:
 - [Connected subscriptions](/guides/subscriptions)
 - [Lane status](/guides/lane-status)
 - [Meetings](/guides/meetings) (connect a calendar so Gizzi can join your calls)
+- [Connect (terminal)](/cli/connect)
 - [Connections API](/api/connections) (for developers)
 - [Add a connection to the registry](/build-on-allternit/add-a-connection) (for developers)

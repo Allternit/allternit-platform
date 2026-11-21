@@ -220,3 +220,6 @@ heartbeatOrphans, heartbeatOrphan-<id>, codeUsageTab-Overview, codeUsageTab-Mode
 
 ## Visual parity 1
 composerToolsTab, composerDeck, deckPluginsMore, deckPluginsManage, deckPlugin<name>, deckModeOff, codeComposer, codeModelChip, codeAttach, codeVoice, codeEnvironment, codeFolder, codeOpenTerminal, codeGreeting, codeShowUsage, codeHomeNoComputer
+
+## Claude organization + Connected apps (Android)
+connected-apps-page, connected-apps-empty, connected-app-<id>, connected-app-sheet, connected-app-cap, connected-app-cap-down, connected-app-cap-up, connected-app-save, connected-app-revoke, connected-app-revoke-confirm, privacyConnectedApps, claude-org-link, claude-org-relink, claude-org-unlink, claude-org-unlink-confirm, error-use-credits, error-link-again, error-manage-claude-org, error-linked-platforms

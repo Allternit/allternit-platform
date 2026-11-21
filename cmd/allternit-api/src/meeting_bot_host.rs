@@ -345,7 +345,7 @@ fn remove_profile(dir: Option<&Path>) {
 
 /// Signal the runner's whole process group (Chrome included). `force` =
 /// SIGKILL. Windows: `taskkill /T /F` on the tree.
-fn kill_group(pid: u32, force: bool) {
+pub(crate) fn kill_group(pid: u32, force: bool) {
     #[cfg(unix)]
     // SAFETY: killpg only sends a signal; the group was created for this child.
     unsafe {
@@ -369,7 +369,7 @@ fn exit_code_of(status: std::process::ExitStatus) -> i32 {
     status.code().unwrap_or(-1)
 }
 
-fn own_group(cmd: &mut tokio::process::Command) {
+pub(crate) fn own_group(cmd: &mut tokio::process::Command) {
     #[cfg(unix)]
     cmd.process_group(0);
     #[cfg(target_os = "linux")]

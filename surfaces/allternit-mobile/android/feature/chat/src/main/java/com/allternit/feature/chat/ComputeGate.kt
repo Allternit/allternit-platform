@@ -248,7 +248,7 @@ internal fun ConnectComputerSheet(backend: ChatBackend, onDismiss: () -> Unit, o
             val context = LocalContext.current
             CapsuleButton("Get Allternit Desktop", icon = DesignR.drawable.ph_arrow_square_out) { openUrl(context, DOWNLOAD_URL) }
             Text("From a terminal", color = c.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Text("ao fabric pair", color = c.textPrimary, fontSize = 14.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(c.fillNeutral).padding(10.dp))
+            Text("gizzi pair", color = c.textPrimary, fontSize = 14.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(c.fillNeutral).padding(10.dp))
             Spacer(Modifier.height(24.dp))
         }
     }

@@ -7111,6 +7111,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "host-probe"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs 5.0.1",
+ "regex",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "thiserror 1.0.69",
+ "uuid",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "hostname"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

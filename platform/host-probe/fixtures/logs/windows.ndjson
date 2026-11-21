@@ -1,0 +1,3 @@
+{"ts":"2026-11-20T12:00:00.1234567Z","level":2,"message":"Service crashed"}
+{"ts":"2026-11-20T12:00:01.0000000Z","level":4,"message":"Service started"}
+{"ts":"2026-11-20T12:00:02.0000000Z","level":3,"message":"Slow start"}

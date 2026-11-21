@@ -13,6 +13,12 @@ import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { AppRoutingError, suggestAppTask } from "@/runtime/bots/app-bot-routing"
 
+/** Light shape check: five whitespace-separated fields of cron characters. */
+export function isCronShape(cron: string): boolean {
+  const fields = cron.trim().split(/\s+/)
+  return fields.length === 5 && fields.every((f) => /^[0-9*/,\-?LW#A-Za-z]+$/.test(f))
+}
+
 const DESCRIPTION = `Suggest a task to your user and wait for their go-ahead.
 
 Use it when you notice work worth doing that your user didn't ask for (a
@@ -24,6 +30,9 @@ yourself before they answer.
 - title: a short name for the task (under 80 characters).
 - objective: what you would do and what they get, in one or two sentences.
 - why: optional, the reason you're suggesting it now.
+- schedule: optional, for work that should repeat. {cron, tz}: a five-field
+  cron expression (for example "0 9 * * 1" for Mondays at 9) and an IANA time
+  zone (for example "America/Chicago"). Your user still has to say go ahead.
 
 You can have a few suggestions waiting at once; suggesting the same title
 again returns the open one.`
@@ -34,10 +43,17 @@ export const SuggestTaskTool = Tool.define("suggest_task", {
     title: z.string().describe("Short name for the task"),
     objective: z.string().describe("What you would do and what the user gets"),
     why: z.string().optional().describe("Why you're suggesting it now"),
+    schedule: z
+      .object({
+        cron: z.string().refine(isCronShape, "cron must have five fields, like 0 9 * * 1"),
+        tz: z.string().min(1).describe("IANA time zone, like America/Chicago"),
+      })
+      .optional()
+      .describe("Repeat this task on a schedule once approved"),
   }),
   async execute(params, ctx) {
     try {
-      const r = await suggestAppTask(ctx.sessionID, { title: params.title, objective: params.objective, why: params.why })
+      const r = await suggestAppTask(ctx.sessionID, { title: params.title, objective: params.objective, why: params.why, schedule: params.schedule })
       return {
         title: `Suggested: ${params.title}`,
         output: r.existing

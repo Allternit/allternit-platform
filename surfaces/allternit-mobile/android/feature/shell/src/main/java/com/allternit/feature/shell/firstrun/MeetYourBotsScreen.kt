@@ -168,6 +168,12 @@ internal class MeetYourBotsModel(context: Context, private val scope: CoroutineS
 
     fun back() { if (stepIndex > 0 && step != Step.Done) stepIndex -= 1 }
 
+    /** Applies the Main step's choice on its own (the Office's "Pick your main bot", [MainBotPickerSheet]); returns its id. */
+    suspend fun applyMainChoice(): String {
+        val choice = (mainChoice as? MeetMainChoice.Look)?.copy(name = lookName.trim()) ?: mainChoice
+        return MeetMainBot.applyChoice(choice, catalog, models, primaryName.trim().ifEmpty { null }, roster)
+    }
+
     val shownTemplates get() = catalog.templates.filter { category == "all" || it.category == category }
 
     fun toggle(id: String) {
@@ -595,7 +601,7 @@ private fun TemplateCard(t: MeetBotTemplate, on: Boolean, have: Boolean = false,
 }
 
 @Composable
-private fun MainStep(model: MeetYourBotsModel) {
+internal fun MainStep(model: MeetYourBotsModel) {
     val c = setupColors
     var discOpen by remember { mutableStateOf(false) }
     var leadSheet by remember { mutableStateOf<String?>(null) }
@@ -641,7 +647,7 @@ private fun MainStep(model: MeetYourBotsModel) {
     Spacer(Modifier.height(12.dp))
     MonoLabel("Bring your own")
     PickGrid {
-        Pick("Vendor bot", false, { leadSheet = "vendor" }) { ActionTile("⇄") }
+        Pick("Connected bot", false, { leadSheet = "vendor" }) { ActionTile("⇄") }
         Pick("New bot", false, { leadSheet = "new" }) { ActionTile("+") }
         Pick("Import", false, { leadSheet = "import" }) { ActionTile("↓") }
     }

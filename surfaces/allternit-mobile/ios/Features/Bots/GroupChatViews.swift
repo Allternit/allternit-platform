@@ -801,7 +801,7 @@ enum GroupVendorLabels {
 }
 
 /// Add bots to a room (web useVendorPhoneThreads addToGroup): any bot not
-/// in it yet, vendor bots included; a vendor bot joins as `source: "vendor"`
+/// in it yet, Connected bots included; a Connected bot joins as `source: "vendor"`
 /// and answers through its own connection. Rooms hold up to 6 members.
 struct AddGroupMembersSheet: View {
     let group: BotGroupChat

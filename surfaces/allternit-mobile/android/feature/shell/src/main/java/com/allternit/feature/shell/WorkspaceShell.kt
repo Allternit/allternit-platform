@@ -63,6 +63,7 @@ import com.allternit.feature.shell.backdrop.BackdropScope
 import com.allternit.feature.shell.backdrop.BackdropSurface
 import com.allternit.feature.shell.backdrop.StageBackdrop
 import com.allternit.feature.shell.backdrop.StageBackdropStore
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 internal enum class DrawerValue { Closed, Open }
@@ -102,6 +103,10 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     androidx.compose.runtime.LaunchedEffect(Unit) { com.allternit.feature.chat.ChatHooks.onNotificationsGranted = { com.allternit.feature.push.AllternitPush.registerIfAuthorized(context) } }
 
     var mode by remember { mutableStateOf(launch.mode ?: ShellModePrefs.load(context)) }
+    // The home composer's voice button opens a new chat that starts voice mode once.
+    var voiceOnOpen by remember { mutableStateOf(false) }
+    /** A Settings page to open on top of the root ("subscriptions" = Connections); cleared when Settings closes. */
+    var settingsStart by remember { mutableStateOf<String?>(null) }
     // A first-run checklist fix opens Settings once the workspace is up (iOS DeepLinkRouter);
     // a debug `open-tab` extra opens a section (iOS AppModeStore `-open-tab`).
     var page by remember {
@@ -115,6 +120,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             },
         )
     }
+    LaunchedEffect(page) { if (page != ShellPage.Settings) settingsStart = null }
     val store = remember {
         ShellSessionsStore().also { it.seenPrefs = context.getSharedPreferences("allternit_shell", android.content.Context.MODE_PRIVATE) }
     }
@@ -238,6 +244,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             botsLaunch = com.allternit.feature.bots.BotsLaunch(openBotId = bot, openSessionId = launch.sessionId)
             page = ShellPage.Home
         } else if (launch.tab != null && launch.tab != "settings") {
+            if (launch.computerId != null) com.allternit.feature.computer.AciNav.openComputer(launch.computerId)
             launchSection(launch.tab)?.let { page = ShellPage.Section(it) }
         }
     }
@@ -309,6 +316,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         backend = chatBackend,
         menuButton = shellMenuButton,
         openSignIn = { page = ShellPage.Settings },
+        restorePoints = { done -> com.allternit.feature.settings.CloudBackupsPage(done) },
     )
     val projectsNav = remember {
         ProjectsNav(
@@ -349,6 +357,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             onDeleted = { page = ShellPage.Home },
             onOpenSection = { row -> page = ShellPage.Section(row) },
             onOpenSettings = { page = ShellPage.Settings },
+            onOpenConnections = { settingsStart = "subscriptions"; page = ShellPage.Settings },
         )
     }
 
@@ -375,6 +384,12 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 pickerRequest = spec.pickerRequest,
                 placeholderOverride = spec.placeholder,
                 deck = ComposerDeck.None,
+                onVoiceMode = spec.onVoiceMode,
+                // iOS bot composers pass playGamesAnytime: true.
+                playGamesAnytime = true,
+                agentChips = spec.agent?.let { agent ->
+                    @Composable { BotAgentChips(models, agent, onOpenConnections = { page = ShellPage.Section(RailRow("models", "Models", DesignR.drawable.ph_brain)) }) }
+                },
             )
         },
         currentModel = { models.selectedId to models.selected?.let { models.level(it) } },
@@ -385,6 +400,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         openProjectInLibrary = { id -> page = ShellPage.Project(id) },
         openInbox = { inboxOpen = true },
         officeFloor = com.allternit.feature.office.OfficeFeature.floor,
+        mainBotPicker = { onDismiss, onDone -> com.allternit.feature.shell.firstrun.MainBotPickerSheet(onDismiss, onDone) },
     )
 
     /** iOS newOptions: press and hold the New pill. */
@@ -494,14 +510,29 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 chat.startNewSession()
                                 chat.send(draft.toChatRequest())
                                 page = ShellPage.Chat(session = null, draft = draft)
+                                if (mode == ShellMode.Code) {
+                                    // iOS sessionChanged: the launch deck's permission mode and Worktree pick go onto the new thread.
+                                    scope.launch {
+                                        val id = androidx.compose.runtime.snapshotFlow { chat.currentSessionId }.first { it != null } ?: return@launch
+                                        com.allternit.feature.code.CodeDeckPrefs.applyToNewSession(context, id)
+                                    }
+                                }
                             },
                             onNew = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
+                            // The microphone permission was asked on the home composer; the chat starts voice mode.
+                            onVoiceMode = {
+                                chat.startNewSession()
+                                voiceOnOpen = true
+                                page = ShellPage.Chat(session = null, draft = ComposerDraft())
+                            },
                             codeHome = if (mode == ShellMode.Code) ({
                                 com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it })
                             }) else null,
                             onCodeSessions = if (mode == ShellMode.Code) ({ codeRoute = com.allternit.feature.code.CodeRoute.Overview }) else null,
                             codeActions = if (mode == ShellMode.Code) CodeComposerActions(
+                                host = codeHost,
+                                onUsage = { codeRoute = com.allternit.feature.code.CodeRoute.Usage },
                                 onTerminal = { codeRoute = com.allternit.feature.code.CodeRoute.Terminal },
                                 onFiles = { codeRoute = com.allternit.feature.code.CodeRoute.Files },
                                 onComputer = { codeRoute = com.allternit.feature.code.CodeRoute.Computer },
@@ -529,6 +560,10 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             onDeleted = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
                             onOpenSettings = { page = ShellPage.Settings },
+                            onOpenConnections = { settingsStart = "subscriptions"; page = ShellPage.Settings },
+                            startVoice = voiceOnOpen,
+                            onVoiceStarted = { voiceOnOpen = false },
+                            playGamesAnytime = mode == ShellMode.Code,
                             onOpenArtifact = { a ->
                                 page = ShellPage.Artifact(com.allternit.feature.artifacts.ArtifactRecordInput(a.id, a.kind, a.title, a.url, a.content), back = current)
                             },
@@ -684,6 +719,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 backend = chatBackend,
                                 versionName = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty() },
                                 onClose = { page = ShellPage.Home },
+                                startPage = settingsStart,
                                 connections = { onBack ->
                                     com.allternit.feature.shell.firstrun.ConnectionsSettingsScreen(
                                         onBack = onBack,
@@ -858,6 +894,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 onDismiss = { cliPickerSurface = null },
             )
         }
+        // The waiting games window, over every mode (iOS WorkspaceShell .overlay { WaitingGamesLayer() }).
+        // Bot Race lanes are the first four bots.
+        com.allternit.feature.chat.games.WaitingGamesLayer(racers = {
+            botsStore.bots.map { com.allternit.feature.chat.games.WaitingGameRacer(it.displayName, it.accentHex) }
+        })
     }
     }
 }
@@ -885,6 +926,8 @@ internal data class ShellLaunch(
     val openMain: Boolean = false,
     /** With [botId]: the exact thread a push named (iOS PushNotificationManager.handleTap → bot thread). */
     val sessionId: String? = null,
+    /** A computer_alert push or `allternit://computers/<id>`: open that computer's console detail (iOS DeepLink.computerConsole). */
+    val computerId: String? = null,
 )
 
 /** iOS ModeBarItem raw values and the web rail ids → the drawer row they open. */
@@ -899,6 +942,7 @@ private fun launchSection(tab: String): RailRow? {
         ?: when (id) {
             "models" -> RailRow("models", "Models", DesignR.drawable.ph_cpu)
             "connectors" -> RailRow("connectors", "Apps & Extensions", DesignR.drawable.ph_plugs_connected)
+            "computers" -> RailRow("computers", "Computers", DesignR.drawable.ph_desktop)
             else -> null
         }
 }

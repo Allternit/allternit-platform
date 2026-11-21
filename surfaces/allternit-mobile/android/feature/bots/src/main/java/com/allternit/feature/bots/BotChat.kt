@@ -1,5 +1,13 @@
 package com.allternit.feature.bots
 
+import androidx.compose.runtime.collectAsState
+import com.allternit.feature.bots.runtimes.AgentLayersModel
+import com.allternit.feature.bots.runtimes.BUILT_IN_ALLTERNIT
+import com.allternit.feature.bots.runtimes.RuntimeLookView
+import com.allternit.feature.bots.runtimes.RuntimeRegistry
+import com.allternit.feature.bots.runtimes.ViewSegmented
+import com.allternit.feature.bots.runtimes.lookItems
+import com.allternit.feature.bots.runtimes.rememberBotAgentState
 import com.allternit.core.design.AllternitSerif
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -72,6 +80,11 @@ import com.allternit.feature.chat.ChatScreen
 import com.allternit.feature.chat.ChatSendRequest
 import com.allternit.feature.chat.ChatViewModel
 import com.allternit.feature.chat.SessionContext
+import com.allternit.feature.chat.voice.VoiceBarSlot
+import com.allternit.feature.chat.voice.VoiceBot
+import com.allternit.feature.chat.voice.VoiceFullSlot
+import com.allternit.feature.chat.voice.VoiceHost
+import com.allternit.feature.chat.voice.VoiceHostWiring
 import kotlinx.coroutines.launch
 import com.allternit.core.design.R as DesignR
 
@@ -125,6 +138,12 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
     var editingId by remember { mutableStateOf<String?>(null) }
     var pickerRequest by remember { mutableStateOf(0) }
     val isMainChat = explicitSessionId == null
+    // Runtime · Brain · Bot (Harness & Bots 2.0): the composer chips and the View switch share this.
+    val agent = rememberBotAgentState(bot) { id -> nav.open(BotRoute.Chat(id, null)) }
+    val registry by RuntimeRegistry.state.collectAsState()
+    val agentRuntime = remember(agent.config, registry) {
+        AgentLayersModel(agent.botBrain, agent.agentView, registry.runtimes.ifEmpty { listOf(BUILT_IN_ALLTERNIT) }, emptyList(), emptyList(), bot.id, bot.displayName, agent.connected, agent.vendor)
+    }
 
     suspend fun resolve() {
         resolveError = null
@@ -182,6 +201,20 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
         }
     }
 
+    // Voice mode with this bot (iOS ChatView in the bot's environment: the composer's voice button calls
+    // voiceHost.start(..., bot: chatBot, presentation: .bar)). Voice turns go through this thread's ChatViewModel, the
+    // same send the composer makes, so the spoken conversation lands in the bot's thread; the "Voice chat ended" card
+    // is filed there too. The stage shows the bot's face in its own live mode look, in its colour.
+    val voiceContext = LocalContext.current
+    val voiceHost = remember(vm) { VoiceHost(voiceContext) }
+    VoiceHostWiring(voiceHost, vm)
+    val voiceBot = remember(bot) {
+        VoiceBot(bot.id, bot.displayName, bot.accentHex, bot.kokoroVoiceId) { sizeDp -> BotAvatar(bot, sizeDp.dp, live = sizeDp >= 48f) }
+    }
+    val endVoice: (Int) -> Unit = { seconds -> vm.appendVoiceSummary(seconds) }
+    // Leaving the thread ends the call, as iOS does when the bot's ChatView goes away (the mic is the engine's).
+    LaunchedEffect(deck) { if (deck != DeckTab.Thread) voiceHost.end() }
+
     val deckRow: @Composable () -> Unit = {
         val waiting = store.waitingCount(bot.id)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -191,12 +224,18 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
             DeckButton("Bot", deck == DeckTab.Bot, "botDeckBot") { deck = DeckTab.Bot }
         }
     }
-    val composer: @Composable (onSend: (ChatSendRequest) -> Unit) -> Unit = { send ->
+    // [voice]: the thread's composer, with the voice bar over it and the voice button on.
+    val composer: @Composable (voice: Boolean, onSend: (ChatSendRequest) -> Unit) -> Unit = { voice, send ->
         Column {
+            if (voice) VoiceBarSlot(voiceHost, onEnd = endVoice, bot = voiceBot)
             deckRow()
             host.composer(BotComposerSpec(
                 placeholder = placeholder, isStreaming = vm.isStreaming && deck == DeckTab.Thread, sendDisabled = vm.isCreatingSession,
-                prefill = prefill, onPrefillConsumed = { prefill = null }, onSend = send, onStop = vm::stopStreaming, pickerRequest = pickerRequest,
+                prefill = prefill, onPrefillConsumed = { prefill = null }, onSend = send, onStop = vm::stopStreaming, pickerRequest = pickerRequest, agent = agent,
+                onVoiceMode = if (voice) ({
+                    val (model, effort) = host.currentModel()
+                    voiceHost.start(vm, model, effort, bot = voiceBot)
+                }) else null,
             ))
         }
     }
@@ -223,11 +262,24 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                 Spacer(Modifier.weight(1f))
                 LibraryIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Thread options", "botThreadMenu", enabled = !acting) { menuOpen = true }
             }
+            // View: Allternit / Runtime (plan D9; Split is desktop-only). Shown for a runtime with a look of its own.
+            val lookRuntime = agentRuntime.runtime?.takeIf { it.tokens(agentRuntime.look) != null }
+            if (deck == DeckTab.Thread && lookRuntime != null) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp).testTag("botViewRow"), verticalAlignment = Alignment.CenterVertically) {
+                    Text(lookRuntime.name, color = c.textSecondary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    ViewSegmented(agent.view, runtimeLabel = if (agent.connected) "${bot.displayName} view" else "Runtime view") { v -> agent.apply(agentRuntime.pickView(v)) }
+                }
+            }
+            agent.error?.let { ErrorLine(it) }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (deck) {
                     DeckTab.Thread -> {
                         val sid = sessionId
                         when {
+                            sid != null && lookRuntime != null && agent.view == "runtime" -> RuntimeLookView(
+                                runtime = lookRuntime, look = agentRuntime.look, items = lookItems(vm.messages), isStreaming = vm.isStreaming,
+                                onSend = { text -> vm.send(ChatSendRequest(text)) }, onStop = vm::stopStreaming, botName = bot.displayName,
+                            )
                             sid != null -> Column(Modifier.fillMaxSize()) {
                                 if (onStage) BotChatStage(
                                     bot, live.first.takeIf { live.third }, working = live.third && !live.second,
@@ -242,7 +294,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                                     editing = editingId != null, onCancelEdit = { editingId = null; prefill = "" },
                                     greeting = { BotGreeting(bot) { prefill = it } },
                                     composer = {
-                                        composer { req ->
+                                        composer(true) { req ->
                                             val e = editingId
                                             if (e != null) { editingId = null; vm.resendEdited(e, req) } else vm.send(req)
                                         }
@@ -262,11 +314,11 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                     }
                     DeckTab.Threads -> Column(Modifier.fillMaxSize()) {
                         BotThreadsOverview(store, bot.id, modifier = Modifier.weight(1f)) { open(it) }
-                        composer { startThread(it.text) }
+                        composer(false) { startThread(it.text) }
                     }
                     DeckTab.Tasks -> Column(Modifier.fillMaxSize()) {
                         Box(Modifier.weight(1f)) { BotThreadTasks(store, bot, sessionId) { open(it) } }
-                        composer { req -> deck = DeckTab.Thread; vm.send(req) }
+                        composer(false) { req -> deck = DeckTab.Thread; vm.send(req) }
                     }
                     DeckTab.Bot -> Column(Modifier.fillMaxSize()) {
                         Box(Modifier.weight(1f)) { BotPageView(bot, store, nav, onOpenThreads = { deck = DeckTab.Threads }, onOpenTasks = { deck = DeckTab.Tasks }, backend = host.backend) }
@@ -275,6 +327,8 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                 }
             }
         }
+        // Full-screen voice mode on the bot stage (iOS fullScreenCover), over the whole bot chat.
+        VoiceFullSlot(voiceHost, onEnd = endVoice, bot = voiceBot)
     }
 
     if (menuOpen) LibrarySheet(title = bot.displayName, testTag = "botThreadMenuSheet", onDismiss = { menuOpen = false }, trailing = LibrarySheetAction("Done", bold = true) { menuOpen = false }) {
@@ -298,7 +352,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
         }
         Gap(12.dp)
     }
-    if (editOpen) EditBotSheet(bot.id, onDismiss = { editOpen = false }) { editOpen = false; scope.launch { store.refreshAll() } }
+    if (editOpen) EditBotSheet(bot.id, onDismiss = { editOpen = false }, backend = host.backend) { editOpen = false; scope.launch { store.refreshAll() } }
     if (deleteOpen) ConfirmSheet(
         title = "Delete ${bot.displayName}?", message = "Its chats, routines and files go with it. This can't be undone.",
         action = "Delete bot", testTag = "botDeleteConfirm", onDismiss = { deleteOpen = false },
@@ -325,7 +379,7 @@ private fun DeckButton(label: String, on: Boolean, testTag: String, meta: String
     val c = AllternitTheme.colors
     val view = LocalView.current
     Row(
-        Modifier.height(32.dp).clip(CircleShape).background(if (on) c.textPrimary else c.fillNeutral.copy(alpha = 0.7f)).testTag(testTag)
+        Modifier.height(32.dp).clip(CircleShape).background(if (on) c.textPrimary else c.fillNeutral.copy(alpha = c.fillNeutral.alpha * 0.7f)).testTag(testTag)
             .clickable(role = Role.Tab) { Haptics.perform(view, Haptics.Kind.Tap); onClick() }.padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {

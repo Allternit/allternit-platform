@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import com.allternit.feature.artifacts.ArtifactOfficeHooks
 import com.allternit.feature.artifacts.V2ArtifactScreen
 import com.allternit.feature.bots.BotModeStore
+import com.allternit.feature.bots.BotsOfficeKit
 import com.allternit.feature.chat.ChatBackend
 
 /** The entry points :feature:shell wires: the artifact hooks (Sign PDF, sectioned documents, the library's Allternit Office) and the bots floor. */
@@ -24,6 +25,6 @@ object OfficeFeature {
     }
 
     /** `BotsHost.officeFloor`: Bots options, Office. */
-    val floor: @Composable (store: BotModeStore, backend: ChatBackend, openBot: (String) -> Unit, onBack: () -> Unit) -> Unit =
-        { store, backend, openBot, _ -> OfficeFloorScreen(store, backend, openBot) }
+    val floor: @Composable (store: BotModeStore, backend: ChatBackend, openBot: (String) -> Unit, onBack: () -> Unit, kit: BotsOfficeKit) -> Unit =
+        { store, backend, openBot, _, kit -> OfficeFloorScreen(store, backend, openBot, kit = kit) }
 }

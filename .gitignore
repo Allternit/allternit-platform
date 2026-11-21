@@ -167,3 +167,6 @@ surfaces/allternit-desktop/resources/lume/
 # SourceKit-LSP build server config (machine-specific absolute paths; run `xcode-build-server config` locally)
 buildServer.json
 .sourcekit-lsp/
+
+# host-probe test fixtures are real files, not logs
+!platform/host-probe/fixtures/**/*.jsonl

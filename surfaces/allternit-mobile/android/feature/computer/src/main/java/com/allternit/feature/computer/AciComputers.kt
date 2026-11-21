@@ -78,6 +78,9 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
     var openComputer by remember { mutableStateOf<ComputerRecord?>(null) }
     var detail by remember { mutableStateOf<AciDevice?>(null) }
     var refreshing by remember { mutableStateOf(false) }
+    // Account flag `computers_console` (iOS AccountFlagsClient): off = today's screen, unchanged.
+    var consoleOn by remember { mutableStateOf(false) }
+    LaunchedEffect(host.signedIn) { consoleOn = host.signedIn && AciApi.consoleFlag() }
     val workflowRuntime = devices?.firstOrNull { it.isOnline } ?: devices?.firstOrNull()
 
     suspend fun openDesktop(device: AciDevice) {
@@ -98,6 +101,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
             AciViewHeader("Computers")
             AciWideButton(DesignR.drawable.ph_plus, "Add a computer", "aciAddComputer") { pairOpen = true }
             AciWideButton(DesignR.drawable.ph_desktop, "View a computer's screen", "aciViewScreen") { pickerOpen = true }
+            if (consoleOn) AciConsoleSection(host.restorePoints)
             when {
                 devices == null -> Text("Loading computers…", color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp))
@@ -162,7 +166,7 @@ private fun AciPairComputerSheet(onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.bgPanel, shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)) {
         Column(Modifier.verticalScroll(rememberScrollState()).testTag("aciPairSheet"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Box {
-                AciPromoHero(height = 176.dp, topRadius = 0.dp)
+                AciPromoHero(AciHero.Pair, height = 176.dp, imageHeight = 92.dp, topRadius = 0.dp)
                 Box(Modifier.padding(16.dp).size(44.dp).clip(CircleShape).background(c.bgPrimary).clickable(onClickLabel = "Close pairing instructions") { onDismiss() },
                     contentAlignment = Alignment.Center) { Icon(painterResource(DesignR.drawable.ph_x), null, tint = c.textSecondary, modifier = Modifier.size(18.dp)) }
             }
@@ -172,7 +176,7 @@ private fun AciPairComputerSheet(onDismiss: () -> Unit) {
                 Step(1, buildAnnotatedString { append("Install Allternit Desktop on the computer.") })
                 Step(2, buildAnnotatedString {
                     append("Open it and sign in with the same account you use on this phone. Or open a terminal on the computer and run ")
-                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp)) { append("ao fabric pair") }
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp)) { append("gizzi pair") }
                     append(".")
                 })
                 Step(3, buildAnnotatedString { append("Return to Computers on your phone. Tap your computer to open its live desktop.") })

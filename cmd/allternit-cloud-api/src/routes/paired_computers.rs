@@ -64,7 +64,7 @@ pub const PEER_SCOPE: &str = "factory:peer";
 /// the mesh by `allternit computers serve` beside VNC.
 pub const PEER_PORT: u16 = 3019;
 
-fn sha256_hex(value: &str) -> String {
+pub(crate) fn sha256_hex(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
@@ -128,7 +128,7 @@ pub(crate) async fn signed_in_caller(state: &ApiState, headers: &HeaderMap) -> R
 
 /// Whether `caller` may use a computer owned by `owner` under `org`: the
 /// owner, or a member of the computer's organization.
-fn may_use(caller: &Caller, owner: &str, org: Option<&str>) -> bool {
+pub(crate) fn may_use(caller: &Caller, owner: &str, org: Option<&str>) -> bool {
     caller.user_id == owner || (org.is_some() && caller.organization_id.as_deref() == org)
 }
 
@@ -299,6 +299,10 @@ struct ReportBody {
     vnc_ready: bool,
     #[serde(default)]
     name: Option<String>,
+    /// Optional `HostSnapshot` (computers console D4). Old computers send
+    /// none; a bad one is skipped and never fails the report.
+    #[serde(rename = "hostSample", default)]
+    host_sample: Option<serde_json::Value>,
 }
 
 async fn report(
@@ -328,6 +332,16 @@ async fn report(
     .await?;
     if updated.rows_affected() == 0 {
         return Err(ApiError::Unauthorized("unknown computer or wrong secret".into()));
+    }
+    if let Some(sample) = body.host_sample.as_ref().filter(|v| !v.is_null()) {
+        crate::routes::computer_metrics::store_sample(
+            &state.db,
+            crate::routes::computer_metrics::KIND_PAIRED,
+            &id,
+            sample,
+            Utc::now(),
+        )
+        .await;
     }
     Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }

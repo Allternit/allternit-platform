@@ -258,6 +258,11 @@ pub(crate) struct SocketTicket {
     /// The capability the ticketed path requires; the socket pump routes the
     /// tunnel to a connection granting it (multi-connection mode).
     pub(crate) required_capability: String,
+    /// A raw TCP stream ticket (`POST /api/v1/computers/:id/forward`): the
+    /// socket pump carries bytes only (binary frames both ways, no
+    /// `allternit_socket_ready` text frame) and holds the client's first bytes
+    /// until the node answers `socket_ready`.
+    pub(crate) raw_stream: bool,
     expires_at: Instant,
 }
 
@@ -762,8 +767,23 @@ pub(crate) async fn issue_socket_ticket(
         services_touch_runtime(&state.db, runtime_id).await;
     }
 
+    let ticket = store_socket_ticket(runtime_id, path, required, false).await;
+    Ok(serde_json::json!({
+        "ticket": ticket,
+        "expiresInSeconds": SOCKET_TICKET_TTL.as_secs(),
+    }))
+}
+
+/// How long a minted socket ticket can be redeemed.
+pub(crate) const SOCKET_TICKET_TTL: Duration = Duration::from_secs(30);
+/// How long a raw stream waits for the node's `socket_ready`.
+const RAW_STREAM_READY_TIMEOUT: Duration = Duration::from_secs(15);
+/// Most client bytes a raw stream holds before the node is ready.
+const RAW_STREAM_MAX_QUEUED_BYTES: usize = 1024 * 1024;
+
+async fn store_socket_ticket(runtime_id: &str, path: String, required: String, raw_stream: bool) -> String {
     let ticket = Uuid::new_v4().to_string();
-    let expires_at = Instant::now() + Duration::from_secs(30);
+    let expires_at = Instant::now() + SOCKET_TICKET_TTL;
     let mut tickets = socket_tickets().lock().await;
     tickets.retain(|_, value| value.expires_at > Instant::now());
     tickets.insert(
@@ -772,13 +792,51 @@ pub(crate) async fn issue_socket_ticket(
             runtime_id: runtime_id.to_string(),
             path,
             required_capability: required,
+            raw_stream,
             expires_at,
         },
     );
-    Ok(serde_json::json!({
-        "ticket": ticket,
-        "expiresInSeconds": 30,
-    }))
+    ticket
+}
+
+/// Mint a raw TCP stream ticket for `path` on a runtime owned by `owner_id`
+/// (Computers console port forward). Never wakes: `Ok(None)` when the runtime
+/// holds no relay connection that may serve the path. The caller has already
+/// authorized the acting user (who may be an organization member).
+pub(crate) async fn issue_stream_ticket(
+    db: &sqlx::PgPool,
+    owner_id: &str,
+    runtime_id: &str,
+    path: String,
+) -> Result<Option<String>, ApiError> {
+    crate::routes::account_compute::require_compute(db, owner_id).await?;
+    let capabilities = runtime_capabilities(db, runtime_id, owner_id).await?;
+    if !capabilities.iter().any(|capability| capability == "runtime:connect") {
+        return Err(ApiError::Forbidden(
+            "Runtime is not allowed to accept relayed sockets".to_string(),
+        ));
+    }
+    let validation = RelayRequest {
+        method: "GET".to_string(),
+        path: path.clone(),
+        headers: HashMap::new(),
+        body: String::new(),
+        body_encoding: "utf8".to_string(),
+    };
+    validate_proxy_request(&validation)?;
+    let required = required_capability(&validation.path, "GET").to_string();
+    if !capabilities.iter().any(|capability| capability == &required) {
+        return Err(ApiError::Forbidden(format!(
+            "Runtime pairing does not grant {required}"
+        )));
+    }
+    if connect_without_wake(runtime_id, &required, &validation.path, Duration::ZERO)
+        .await
+        .is_none()
+    {
+        return Ok(None);
+    }
+    Ok(Some(store_socket_ticket(runtime_id, path, required, true).await))
 }
 
 /// Consume a socket ticket, discarding expired ones. Returns `None` for
@@ -821,6 +879,7 @@ pub(crate) async fn upgrade_with_socket_ticket(
             ticket.runtime_id,
             ticket.path,
             ticket.required_capability,
+            ticket.raw_stream,
             relay_socket_id,
             quota_service,
             db,
@@ -864,6 +923,23 @@ pub(crate) async fn answer_test_request(
         }
         let _ = waiter.chunks.send(Ok(decode_relay_body(body, "utf8")));
     }
+}
+
+/// Test seam for a streamed relay response: send the head of one relayed
+/// request and hand back the body channel, so a test can push chunks one by
+/// one (SSE) and check each reaches the client before the stream ends.
+/// Dropping the sender ends the body, as `response_end` does.
+#[cfg(test)]
+pub(crate) async fn start_test_stream(
+    connection: &Arc<RuntimeConnection>,
+    request_id: &str,
+    status: u16,
+    headers: HashMap<String, String>,
+) -> Option<mpsc::UnboundedSender<Result<Bytes, Infallible>>> {
+    let mut waiter = connection.pending.lock().await.remove(request_id)?;
+    let head = waiter.head.take()?;
+    let _ = head.send(RelayHead { status, headers });
+    Some(waiter.chunks)
 }
 
 /// Like [`register_test_connection`] but with an explicit client identity and
@@ -963,11 +1039,38 @@ fn runtime_frame_to_browser_message(frame: &RuntimeSocketFrame) -> Message {
     }
 }
 
+/// Raw stream mode: every client payload (text or binary) is bytes for the
+/// TCP stream, sent base64-encoded.
+pub(crate) fn raw_frame_to_cloud(socket_id: &str, message: &Message) -> Option<CloudMessage> {
+    let bytes: &[u8] = match message {
+        Message::Text(body) => body.as_bytes(),
+        Message::Binary(body) => body.as_slice(),
+        _ => return None,
+    };
+    Some(CloudMessage::SocketData {
+        socket_id: socket_id.to_string(),
+        body: STANDARD.encode(bytes),
+        body_encoding: "base64".to_string(),
+    })
+}
+
+/// Raw stream mode: node bytes go out as binary frames; the ready handshake
+/// is never shown to the client (it would corrupt the TCP stream).
+pub(crate) fn raw_runtime_frame_to_client(frame: &RuntimeSocketFrame) -> Option<Message> {
+    match frame {
+        RuntimeSocketFrame::Ready => None,
+        RuntimeSocketFrame::Data(body, _) => Some(Message::Binary(body.to_vec())),
+        RuntimeSocketFrame::Close(..) => Some(Message::Close(None)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn browser_socket(
     socket: WebSocket,
     runtime_id: String,
     path: String,
     required_capability: String,
+    raw_stream: bool,
     relay_socket_id: String,
     quota_service: crate::services::SharedQuotaService,
     db: sqlx::PgPool,
@@ -1009,9 +1112,18 @@ async fn browser_socket(
     }
 
     let mut egress_bytes: i64 = 0;
+    // Raw streams hold the client's bytes until the node's TCP dial is ready.
+    let mut ready = !raw_stream;
+    let mut queued: Vec<CloudMessage> = Vec::new();
+    let mut queued_bytes: usize = 0;
+    let ready_deadline = tokio::time::Instant::now() + RAW_STREAM_READY_TIMEOUT;
     let (mut sink, mut stream) = socket.split();
     loop {
         tokio::select! {
+            _ = tokio::time::sleep_until(ready_deadline), if !ready => {
+                let _ = sink.send(Message::Close(None)).await;
+                break;
+            }
             browser = stream.next() => {
                 match browser {
                     Some(Ok(message)) => match message {
@@ -1020,8 +1132,26 @@ async fn browser_socket(
                                 let _ = crate::services::touch_runtime_activity(&db, &runtime_id).await;
                                 last_activity_write = Instant::now();
                             }
-                            if let Some(outbound) = browser_frame_to_cloud(&socket_id, &message) {
-                                let _ = connection.sender.send(outbound);
+                            let outbound = if raw_stream {
+                                raw_frame_to_cloud(&socket_id, &message)
+                            } else {
+                                browser_frame_to_cloud(&socket_id, &message)
+                            };
+                            if let Some(outbound) = outbound {
+                                if ready {
+                                    let _ = connection.sender.send(outbound);
+                                } else {
+                                    queued_bytes += match &message {
+                                        Message::Text(body) => body.len(),
+                                        Message::Binary(body) => body.len(),
+                                        _ => 0,
+                                    };
+                                    if queued_bytes > RAW_STREAM_MAX_QUEUED_BYTES {
+                                        let _ = sink.send(Message::Close(None)).await;
+                                        break;
+                                    }
+                                    queued.push(outbound);
+                                }
                             }
                         }
                         Message::Ping(body) => {
@@ -1046,6 +1176,21 @@ async fn browser_socket(
                     egress_bytes += body.len() as i64;
                 }
                 let is_close = matches!(frame, RuntimeSocketFrame::Close(..));
+                if raw_stream {
+                    if matches!(frame, RuntimeSocketFrame::Ready) {
+                        ready = true;
+                        for outbound in queued.drain(..) {
+                            let _ = connection.sender.send(outbound);
+                        }
+                        queued_bytes = 0;
+                        continue;
+                    }
+                    let Some(message) = raw_runtime_frame_to_client(&frame) else { continue };
+                    if sink.send(message).await.is_err() || is_close {
+                        break;
+                    }
+                    continue;
+                }
                 if sink.send(runtime_frame_to_browser_message(&frame)).await.is_err() || is_close {
                     break;
                 }
@@ -1429,6 +1574,65 @@ pub(crate) async fn relay_request_to_runtime_with(
             ).into_response());
         }
     };
+    dispatch_relay(connection, runtime_id, request, extra_allowed, trusted).await
+}
+
+/// Outcome of [`relay_request_no_wake`].
+pub(crate) enum NoWakeRelay {
+    /// The runtime answered (any status); the body streams through.
+    Response(Response),
+    /// No live relay connection may serve the request. Nothing was woken.
+    Offline,
+}
+
+/// Relay one allow-listed request to a runtime owned by `owner_id`, signed
+/// for the runtime's `relay_auth`, only when the runtime already holds a live
+/// relay connection. Never wakes a computer and never resets its idle clock
+/// (Computers console D3: reading a computer must not keep it awake). The
+/// caller has already authorized the acting user, who may be an organization
+/// member rather than the owner. The response streams through unbuffered
+/// (SSE included), exactly like [`relay_request_to_runtime`].
+pub(crate) async fn relay_request_no_wake(
+    db: &sqlx::PgPool,
+    owner_id: &str,
+    runtime_id: &str,
+    request: RelayRequest,
+    mut trusted: HashMap<String, String>,
+) -> Result<NoWakeRelay, ApiError> {
+    crate::routes::account_compute::require_compute(db, owner_id).await?;
+    let capabilities = runtime_capabilities(db, runtime_id, owner_id).await?;
+    if !capabilities.iter().any(|capability| capability == "runtime:connect") {
+        return Err(ApiError::Forbidden(
+            "Runtime is not allowed to accept relayed requests".to_string(),
+        ));
+    }
+    validate_proxy_request(&request)?;
+    let required = required_capability(&request.path, &request.method);
+    if !capabilities.iter().any(|capability| capability == required) {
+        return Err(ApiError::Forbidden(format!(
+            "Runtime pairing does not grant {required}"
+        )));
+    }
+    let Some(connection) = connect_without_wake(runtime_id, required, &request.path, Duration::ZERO).await else {
+        return Ok(NoWakeRelay::Offline);
+    };
+    let body = decode_relay_body(&request.body, &request.body_encoding);
+    trusted.extend(
+        runtime_signature_headers(db, owner_id, runtime_id, &request.method, &request.path, &body).await?,
+    );
+    dispatch_relay(connection, runtime_id, request, &[], trusted)
+        .await
+        .map(NoWakeRelay::Response)
+}
+
+/// Send one request on a live relay connection and stream the answer back.
+async fn dispatch_relay(
+    connection: Arc<RuntimeConnection>,
+    runtime_id: &str,
+    request: RelayRequest,
+    extra_allowed: &[&str],
+    trusted: HashMap<String, String>,
+) -> Result<Response, ApiError> {
     let request_id = Uuid::new_v4().to_string();
     // The path without its query (queries can carry tokens), for the timeout log.
     let logged_path = request.path.split('?').next().unwrap_or_default().to_string();

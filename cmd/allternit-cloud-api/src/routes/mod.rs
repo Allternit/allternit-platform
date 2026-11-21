@@ -8,6 +8,7 @@ pub mod artifacts_comments;
 pub mod artifacts_suggestions;
 pub mod artifacts_v2;
 pub mod gateway_catalog;
+pub mod runtimes;
 // Freeweights entitlement claim (signed plan/perks for freeweights.allternit.com).
 pub mod freeweights;
 pub mod approvals;
@@ -113,6 +114,9 @@ pub mod mail_triage;
 pub mod notifications;
 pub mod channel_onboarding;
 pub mod paired_computers;
+pub mod computers_console;
+pub mod computer_metrics;
+pub mod computers_host;
 pub mod phone_live;
 pub mod registered_phones;
 pub mod app_phones;

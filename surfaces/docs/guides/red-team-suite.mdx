@@ -16,7 +16,7 @@ The corpus has 42 cases, six for each way outside text reaches a bot:
 | PDF text | Instructions hidden in a document the bot summarizes |
 | Repo file | A README with instructions in it |
 | Peer-bot message | Another bot asking for private notes |
-| Vendor MCP `ask_bot` | A vendor bot's request |
+| Vendor MCP `ask_bot` | A connected bot's request |
 | A2A | A message from an outside agent |
 
 Each case records the channel, who sent it, the text, and the send a fully obeying model would make. For every case the runner labels the input the way the product does, then checks two things:
@@ -28,7 +28,7 @@ The corpus lives in `cmd/allternit-api/tests/fixtures/redteam/` and runs with `c
 
 ## Golden replay
 
-`tests/fixtures/golden/grok-allternit-2026-10.jsonl` is a redacted hand-off between a vendor bot (Grok) and an Allternit bot. It contains no personal data. The test replays it through the hop recorder and the thread timeline, and checks:
+`tests/fixtures/golden/grok-allternit-2026-10.jsonl` is a redacted hand-off between a connected bot (Grok) and an Allternit bot. It contains no personal data. The test replays it through the hop recorder and the thread timeline, and checks:
 
 - one trace id for the whole hand-off
 - every receipt reaches `answered`

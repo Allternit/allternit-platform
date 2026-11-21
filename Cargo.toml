@@ -58,6 +58,7 @@ members = [
     "platform/types/allternit-files-core",
     "platform/files/allternit-files-engine",
     "platform/files/allternit-files-mount",
+    "platform/host-probe",
     "domains/governance/evidence-management/receipts-schema",
     "services/local-engine",
     "services/model-source",
@@ -253,6 +254,7 @@ marketplace = { path = "platform/rust-sdk/adapters/rust/marketplace" }
 a2ui-types = { path = "platform/types/a2ui-types" }
 allternit-files-core = { path = "platform/types/allternit-files-core" }
 allternit-files-engine = { path = "platform/files/allternit-files-engine" }
+host-probe = { path = "platform/host-probe" }
 
 
 allternit-tools-gateway = { path = "services/gateway/routing" }

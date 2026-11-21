@@ -232,7 +232,7 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
                             }
                         }
                         item(key = "g-${group.key}") {
-                            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral.copy(alpha = 0.5f))) {
+                            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.fillNeutral.copy(alpha = c.fillNeutral.alpha * 0.5f))) {
                                 group.rows.forEachIndexed { i, m ->
                                     ModelRow(m, models) { creditsRequest = it }
                                     if (i < group.rows.lastIndex) Box(Modifier.fillMaxWidth().padding(start = 44.dp).height(1.dp).background(c.borderSubtle))
@@ -391,7 +391,7 @@ private fun CurrentModel(m: PickerModel, models: ModelStore) {
             .fillMaxWidth()
             .padding(top = 10.dp, bottom = 6.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(c.fillNeutral.copy(alpha = 0.5f))
+            .background(c.fillNeutral.copy(alpha = c.fillNeutral.alpha * 0.5f))
             .border(1.dp, c.borderSubtle, RoundedCornerShape(18.dp))
             .padding(12.dp)
             .testTag("modelPickerCurrent"),
@@ -421,4 +421,27 @@ private fun CurrentModel(m: PickerModel, models: ModelStore) {
             ThinkingSlider(thinking = thinking, value = models.level(m) ?: thinking.default) { models.chooseEffort(it) }
         }
     }
+}
+
+/**
+ * Composer chips in a bot chat (Harness & Bots 2.0, mockup a2; web ComposerAgentChips, iOS
+ * ModelPickerSheet chips): runtime, brain and bot where the model chip sits, opening the same
+ * choices as the bot form's layered picker. Brains come from this picker's catalog (the computer's
+ * models, else Allternit Cloud, plus this phone's), default model first so an automatic switch
+ * lands on the runtime CLI's default. OpenRouter is how Cloud routes, never a pick.
+ */
+@Composable
+internal fun BotAgentChips(models: ModelStore, agent: com.allternit.feature.bots.runtimes.BotAgentState, onOpenConnections: () -> Unit) {
+    LaunchedEffect(Unit) { models.load() }
+    val brains = rankOrdered(models.chatModels.filter { !it.hidden && !it.provider.startsWith("openrouter") })
+        .sortedBy { if (it.isDefault) 0 else 1 }
+        .map { m ->
+            val parts = m.id.split("/", limit = 2)
+            val model = if (m.provider == "ondevice" || parts.size < 2) m.id else parts[1]
+            com.allternit.feature.bots.runtimes.BrainOption(m.provider, model, m.name.ifEmpty { model })
+        }
+        .distinctBy { it.key }
+    com.allternit.feature.bots.runtimes.AgentChipsRow(
+        agent = agent, brains = brains, brainsLoading = models.isLoading && models.chatModels.isEmpty(), onOpenConnections = onOpenConnections,
+    )
 }
