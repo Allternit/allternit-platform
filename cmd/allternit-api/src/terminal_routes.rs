@@ -34,6 +34,7 @@ use axum::{
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,6 +43,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use crate::terminal_list::{validate_env, TerminalRecord, TerminalRecords};
 use crate::AppState;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,6 +146,9 @@ pub struct TerminalSessionStore {
     socket: Arc<Mutex<Option<PathBuf>>>,
     /// The `allternit-factory` binary (`None`: resolved by [`factory_bin`]).
     bin: Option<PathBuf>,
+    /// What this API created (title, command, cwd, time), which the engine's
+    /// terminal info lacks. Read by `GET /list`.
+    pub(crate) records: TerminalRecords,
 }
 
 impl Default for TerminalSessionStore {
@@ -160,6 +165,7 @@ impl TerminalSessionStore {
         Self {
             socket: Arc::new(Mutex::new(preset)),
             bin: None,
+            records: Default::default(),
         }
     }
 
@@ -168,6 +174,7 @@ impl TerminalSessionStore {
         Self {
             socket: Arc::new(Mutex::new(Some(path))),
             bin: Some(bin),
+            records: Default::default(),
         }
     }
 
@@ -318,6 +325,17 @@ pub struct CreateTerminalRequest {
     pub cols: u16,
     #[serde(default = "default_rows")]
     pub rows: u16,
+    /// Run this program instead of the shell (with `args`).
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Added to the terminal's environment, over `TERM`/`COLORTERM`.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// The terminal's name in `GET /list` and the agent wall.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -360,7 +378,7 @@ fn err_response(status: StatusCode, message: String) -> (StatusCode, Json<Termin
     )
 }
 
-fn pane_err(err: PaneError) -> (StatusCode, Json<TerminalMessageResponse>) {
+pub(crate) fn pane_err(err: PaneError) -> (StatusCode, Json<TerminalMessageResponse>) {
     let status = err.status();
     err_response(status, err.message())
 }
@@ -412,6 +430,7 @@ where
 {
     Router::new()
         .route("/create", post(create_terminal))
+        .route("/list", get(crate::terminal_list::list_terminals))
         .route("/:session_id/input", post(terminal_input))
         .route("/:session_id/close", post(terminal_close))
         .route("/:session_id/resize", post(terminal_resize))
@@ -422,31 +441,65 @@ async fn create_terminal(
     State(store): State<TerminalSessionStore>,
     Json(request): Json<CreateTerminalRequest>,
 ) -> impl IntoResponse {
+    if let Err(message) = validate_env(&request.env) {
+        return err_response(StatusCode::BAD_REQUEST, message);
+    }
     let session_id = Uuid::new_v4().to_string();
     let cwd = request.cwd.clone().or_else(|| {
         std::env::current_dir()
             .ok()
             .map(|p| p.to_string_lossy().into_owned())
     });
+    let argv = match request.command.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        Some(program) => std::iter::once(program.to_string())
+            .chain(request.args.iter().cloned())
+            .collect(),
+        None => shell_command(&request.shell),
+    };
+    let title = request
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string);
+    // Browser shells need a real terminal type whatever the engine inherited
+    // (an engine started from a service can have TERM=dumb); the caller's env
+    // goes over it.
+    let mut env: HashMap<String, String> = HashMap::from([
+        ("TERM".to_string(), "xterm-256color".to_string()),
+        ("COLORTERM".to_string(), "truecolor".to_string()),
+    ]);
+    env.extend(request.env.clone());
     let created = store
         .request(
             "factory.terminal.create",
             json!({
                 "terminal_id": session_id,
+                "label": title,
                 "cwd": cwd,
                 "cols": request.cols,
                 "rows": request.rows,
-                "command": shell_command(&request.shell),
-                // Browser shells need a real terminal type whatever the
-                // engine inherited (an engine started from a service can
-                // have TERM=dumb).
-                "env": { "TERM": "xterm-256color", "COLORTERM": "truecolor" },
+                "command": argv,
+                "env": env,
             }),
         )
         .await;
     if let Err(err) = created {
         return pane_err(err);
     }
+    store
+        .records
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(
+            session_id.clone(),
+            TerminalRecord {
+                title,
+                command: argv,
+                cwd,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            },
+        );
     debug!(%session_id, "Terminal session created (factory pane)");
     ok("Terminal session created", Some(json!({ "session_id": session_id })))
 }
@@ -919,5 +972,26 @@ mod tests {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["success"], false);
         assert!(body["message"].as_str().unwrap().contains("pane engine"), "{body}");
+    }
+}
+
+#[cfg(test)]
+mod list_route_tests {
+    use super::*;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    /// `GET /list` is its own route, not a session id: with the engine down it
+    /// reaches the engine call (503 JSON) instead of falling through to a 404.
+    #[tokio::test]
+    async fn terminal_list_route() {
+        let dir = std::env::temp_dir().join(format!("terminal-list-route-{}", Uuid::new_v4()));
+        let store = TerminalSessionStore::with_socket(dir.join("absent.sock"), dir.join("no-allternit-factory"));
+        let app: Router = routes().with_state(store);
+        let resp = app
+            .oneshot(Request::get("/list?preview=16").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }
