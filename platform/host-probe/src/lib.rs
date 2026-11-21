@@ -8,12 +8,18 @@
 //! `os.kernel`, `os.hostname`, `disk[].fs`, `primaryDisk`) are additive and
 //! optional, so existing TypeScript readers ignore them safely.
 //!
-//! Everything here is read-only and needs no root. Platform code sits behind
+//! The one write path is [`actions`] (`POST /v1/host/actions`): a fixed
+//! action list, an approval id per action, and a change record written to
+//! the runtime home before anything runs ([`changes`]).
+//!
+//! Everything else here is read-only and needs no root. Platform code sits behind
 //! `cfg(target_os = ...)`; a host this crate does not know returns
 //! [`ProbeError::Unsupported`] instead of panicking.
 
 use serde::{Deserialize, Serialize};
 
+pub mod actions;
+pub mod changes;
 pub mod cmd;
 pub mod logs;
 pub mod mask;
@@ -23,6 +29,11 @@ pub mod services;
 pub mod snapshot;
 pub mod updates;
 
+pub use actions::{
+    clean_items, run_action, ActionEngine, ActionError, ActionRequest, ActionResult, ActionType, ApprovalVerifier,
+    CleanItem, Executor, Snippet, SystemExecutor, UndoAction, WellFormedApproval,
+};
+pub use changes::{ChangeRecord, ChangeStatus, ChangeStore};
 pub use cmd::SourceStatus;
 pub use logs::{
     stream as stream_logs, tail as tail_logs, tail_with as tail_logs_with, LogError, LogLevel, LogLine, LogOptions,
