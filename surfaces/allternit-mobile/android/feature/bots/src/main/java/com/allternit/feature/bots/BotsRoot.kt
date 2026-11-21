@@ -454,6 +454,8 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
     var busy by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf<String?>(null) }
     var newBotOpen by remember { mutableStateOf(false) }
+    // Harness & Bots 2.0: the empty state opens the form on the Runtime · Brain · Bot picker.
+    var newBotPicker by remember { mutableStateOf(false) }
     var templatesOpen by remember { mutableStateOf(false) }
     var toPickerOpen by remember { mutableStateOf(false) }
     var templateError by remember { mutableStateOf<String?>(null) }
@@ -561,7 +563,20 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
                 // iOS AccountBotsStrip: the hub error or the no-bots prompt.
                 when {
                     store.agentsError != null && bots.isEmpty() -> ErrorLine(store.agentsError ?: "")
-                    bots.isEmpty() && !store.agentsLoading -> Text("No bots yet. Tap New bot to make your first one.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp))
+                    bots.isEmpty() && !store.agentsLoading -> Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("No bots yet.", color = c.textSecondary, fontSize = 13.sp)
+                        val view = androidx.compose.ui.platform.LocalView.current
+                        Row(
+                            Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(24.dp)).background(c.fillNeutral)
+                                .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                                    com.allternit.core.design.Haptics.perform(view, com.allternit.core.design.Haptics.Kind.Tap)
+                                    newBotPicker = true
+                                    newBotOpen = true
+                                }
+                                .testTag("botsEmptyPickHow").padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) { Text("Pick how your bot works", color = c.textPrimary, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) }
+                    }
                 }
             }
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -628,8 +643,9 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
         store = store,
         host = host,
         onBrowseTemplates = { newBotOpen = false; templatesOpen = true },
-        onDismiss = { newBotOpen = false },
-        onCreated = { ids -> newBotOpen = false; scope.launch { store.refreshAll(); ids.firstOrNull()?.let { nav.open(BotRoute.Chat(it, null)) } } },
+        onDismiss = { newBotOpen = false; newBotPicker = false },
+        openPicker = newBotPicker,
+        onCreated = { ids -> newBotOpen = false; newBotPicker = false; scope.launch { store.refreshAll(); ids.firstOrNull()?.let { nav.open(BotRoute.Chat(it, null)) } } },
     )
     if (templatesOpen) AgentTemplateSheet(onDismiss = { templatesOpen = false }) { t ->
         templatesOpen = false

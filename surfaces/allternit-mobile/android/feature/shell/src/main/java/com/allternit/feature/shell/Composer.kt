@@ -459,7 +459,11 @@ internal fun Composer(
                     Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp).rotate(plusTurn))
                 }
                 Spacer(Modifier.weight(1f))
-                if (agentChips != null) agentChips() else ModelChip(models = models, open = pickerOpen) { pickerOpen = true }
+                // Harness & Bots 2.0: every chat shows Runtime + Brain; bot chats keep Runtime + Brain + Bot.
+                if (agentChips != null) agentChips() else {
+                    PlainChatRuntimeChip(models)
+                    ModelChip(models = models, open = pickerOpen) { pickerOpen = true }
+                }
                 // Play (the waiting games) sits beside Stop; it stays composed so it can tell an open game the reply is ready.
                 com.allternit.feature.chat.games.WaitingGamesPlayButton(busy = isStreaming, anytime = playGamesAnytime, hidden = hasDraft)
                 if (isStreaming) {

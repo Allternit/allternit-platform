@@ -161,6 +161,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
             ShellMode.Aci -> "browser"
             else -> "chat"
         },
+        // Harness & Bots 2.0: a chat started on another runtime carries it on the session create.
+        botBrain = if (mode == ShellMode.Aci) null else com.allternit.feature.bots.runtimes.ChatRuntime.sessionBotBrain(),
     )
 
     fun openSession(session: AgentSession?) {
@@ -362,6 +364,10 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     }
 
     remember { com.allternit.feature.office.OfficeFeature.install() }
+    // Harness & Bots 2.0: the plain chat's Runtime chip and Connections > Runtimes start chats here.
+    com.allternit.feature.bots.runtimes.ChatRuntime.onStart = { _ -> openSession(null) }
+    com.allternit.feature.bots.runtimes.ChatRuntime.onPair = { page = ShellPage.Section(RailRow("computers", "Computers", DesignR.drawable.ph_desktop)) }
+    com.allternit.feature.bots.runtimes.ChatRuntime.check = { r -> runtimeCheck(chatBackend, r) }
     com.allternit.feature.office.OfficeFeature.selectedModel = { models.selectedId to models.selected?.let { models.level(it) } }
     com.allternit.feature.office.OfficeFeature.openChat = { id -> openSessionId(id) }
     val botsHost = com.allternit.feature.bots.BotsHost(
@@ -725,6 +731,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                         onBack = onBack,
                                         openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
                                         openAndroidScreen = { page = ShellPage.Section(RailRow("android-screen", "Android phone", DesignR.drawable.ph_cpu)) },
+                                        botsHost = botsHost,
+                                        onBotCreated = { id -> openBotChat(id) },
                                     )
                                 },
                                 openPhoneControl = { page = ShellPage.Section(RailRow("phone-control", "Phone control", DesignR.drawable.ph_cpu)) },
@@ -968,4 +976,25 @@ private fun BotBackdrop(botId: String, colorHex: String?) {
     val backdrops = remember(context) { StageBackdropStore.get(context) }
     val variant = backdrops.variantFor(BackdropSurface.Bot, BackdropScope.bot(botId))
     if (variant != "plain") StageBackdrop(variant = variant, modifier = Modifier.fillMaxSize(), colors = listOf(colorHex))
+}
+
+/**
+ * Can [r] run a chat now (Harness & Bots 2.0)? A computer must answer (the chat relay), and its
+ * `native-sessions/harnesses` row for the runtime's CLI must be present.
+ */
+private suspend fun runtimeCheck(backend: com.allternit.feature.chat.ChatBackend, r: com.allternit.feature.bots.runtimes.RuntimeEntry): com.allternit.feature.bots.runtimes.RuntimeCheck {
+    when (val pick = backend.relay.resolve()) {
+        is com.allternit.feature.chat.RelayPick.Computer -> Unit
+        com.allternit.feature.chat.RelayPick.NoComputer -> return com.allternit.feature.bots.runtimes.RuntimeCheck.NoComputer
+        com.allternit.feature.chat.RelayPick.Unreachable -> return com.allternit.feature.bots.runtimes.RuntimeCheck.Unreachable
+        is com.allternit.feature.chat.RelayPick.Failed ->
+            return if (pick.gate) com.allternit.feature.bots.runtimes.RuntimeCheck.NoComputer else com.allternit.feature.bots.runtimes.RuntimeCheck.Failed(pick.message)
+    }
+    val ids = (setOfNotNull(r.legacyHarness, r.tool, r.tool?.removeSuffix("-cli"), r.id) + r.aliases + r.toolAliases).map { it.lowercase() }.toSet()
+    return when (val h = NativeSessionsClient.harnesses()) {
+        is com.allternit.core.api.ApiResult.Ok ->
+            if (h.value.any { it.present && it.id.lowercase() in ids }) com.allternit.feature.bots.runtimes.RuntimeCheck.Ready
+            else com.allternit.feature.bots.runtimes.RuntimeCheck.NotInstalled("your computer")
+        else -> com.allternit.feature.bots.runtimes.RuntimeCheck.Failed(NativeSessionsClient.friendly(h))
+    }
 }

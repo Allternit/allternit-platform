@@ -95,7 +95,15 @@ private enum class ConnStatus(val label: String) { All("All"), Connected("Connec
  * It reuses [ConnectionsStore], [ConnectionRow] and [ConnectSheetHost] from first-run setup, never a second connect screen.
  */
 @Composable
-internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () -> Unit, openAndroidScreen: () -> Unit) {
+internal fun ConnectionsSettingsScreen(
+    onBack: () -> Unit,
+    openPhoneControl: () -> Unit,
+    openAndroidScreen: () -> Unit,
+    /** Harness & Bots 2.0: the bots host for "New bot on <Runtime>" (brains, connections). */
+    botsHost: com.allternit.feature.bots.BotsHost? = null,
+    /** Opens a bot made from a runtime's detail page. */
+    onBotCreated: (String) -> Unit = {},
+) {
     val c = setupColors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -107,6 +115,7 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
     var searchOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var browse by remember { mutableStateOf(false) }
+    var runtimeOpen by remember { mutableStateOf<com.allternit.feature.bots.runtimes.RuntimeEntry?>(null) }
     var status by remember { mutableStateOf(ConnStatus.All) }
     var confirmUnlink by remember { mutableStateOf(false) }
     val uri = LocalUriHandler.current
@@ -345,7 +354,13 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
                     MoreSection(group, title, store, layout, connector, onFallback = ::fallback, onBrowse = { browse = true })
                 }
             }
+            // Harness & Bots 2.0: how a chat or bot works, in the same List · Grid · Deck (status filters are about connections).
+            if (status == ConnStatus.All) com.allternit.feature.bots.runtimes.RuntimesSection(layout, query) { runtimeOpen = it }
         }
+    }
+    runtimeOpen?.let { r ->
+        androidx.activity.compose.BackHandler { runtimeOpen = null }
+        com.allternit.feature.bots.runtimes.RuntimeDetailScreen(r, botsHost, onBack = { runtimeOpen = null }, onBotCreated = { id -> runtimeOpen = null; onBotCreated(id) })
     }
     if (browse) ConnectionsBrowseScreen(store, connector, onFallback = ::fallback, onBack = { browse = false })
     }
