@@ -670,6 +670,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::paired_computers::routes())
         // Computers console list (signed in or device token, same caller rule).
         .merge(routes::computers_console::routes())
+        // Computers console history: GET /api/v1/computers/:id/metrics (same caller rule).
+        .merge(routes::computer_metrics::routes())
         // Phone stream relay (Phones 2.0): the account's runtime upserts and
         // lists its registered phones with its device credential.
         .merge(routes::registered_phones::routes())

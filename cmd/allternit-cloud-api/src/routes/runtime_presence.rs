@@ -3,7 +3,9 @@
 //! * `POST /api/v1/runtime-presence/heartbeat`: runtime → cloud every 60 s,
 //!   relay-signed exactly like `/api/v1/runtime/events`
 //!   ([`super::runtime_events::authenticate_runtime`]). Body
-//!   `{"runtimeId", "nextDue": [{"routineId","title","at"}]}` (≤ 50 entries).
+//!   `{"runtimeId", "nextDue": [{"routineId","title","at"}]}` (≤ 50 entries),
+//!   plus an optional `hostSample` (computers console D4, see
+//!   [`super::computer_metrics`]).
 //! * `GET /api/v1/runtime-presence`: signed-in owner →
 //!   `[{runtimeId, name, online, lastSeen, wakeable, nextDue}]`.
 //! * The sweeper ([`sweep`], once a minute) raises `attention.opened` through
@@ -88,6 +90,8 @@ async fn heartbeat(State(state): State<Arc<ApiState>>, headers: HeaderMap, body:
         // Files drive storage discovery (SPEC section 15): best effort, and
         // a heartbeat is never activity.
         super::computer_files::store_storage_report(&state.db, &_user, &runtime_id, &parsed).await;
+        // Computers console history (D4): the optional `hostSample`, best effort.
+        super::computer_metrics::store_from_heartbeat(&state.db, super::computer_metrics::KIND_DEVICE, &runtime_id, &parsed, Utc::now()).await;
         take_finished_failovers(&state.db, &runtime_id).await
     }
     .await;

@@ -19,8 +19,11 @@
 //!
 //! The route only reads the database and the relay hub's in-memory presence.
 //! It never calls a provider and never wakes an asleep computer. `lastSample`
-//! and `servicesCount` are left out until the heartbeat sample (step 2.2) and
-//! host data exist; `lastBackupAt` until Orgo daily backups (step 2.6).
+//! is the newest raw heartbeat sample of the machine (routes::computer_metrics,
+//! kept 48 hours): of the cloud computer's runtime device or self-paired row,
+//! of the paired row or its linked runtime device, or of the runtime device.
+//! `servicesCount` is left out until host data exists; `lastBackupAt` until
+//! Orgo daily backups (step 2.6).
 
 use axum::{
     extract::State,
@@ -70,7 +73,7 @@ pub struct ConsoleComputer {
     pub address: Option<String>,
     pub reach: &'static str,
     pub status: String,
-    /// `HostSnapshot`; filled from heartbeat samples in step 2.2.
+    /// `HostSnapshot`: the newest heartbeat sample, when one is kept.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_sample: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -88,6 +91,11 @@ pub struct CloudRow {
     pub tailnet_ip: Option<String>,
     pub location: Option<String>,
     pub host_region: Option<String>,
+    /// Newest raw sample (`HostSnapshot`) and when it was stored.
+    #[sqlx(default)]
+    pub last_sample: Option<serde_json::Value>,
+    #[sqlx(default)]
+    pub last_sample_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -100,6 +108,10 @@ pub struct PairedRow {
     pub runtime_device_id: Option<String>,
     /// Paired by someone else in the caller's organization.
     pub shared: bool,
+    #[sqlx(default)]
+    pub last_sample: Option<serde_json::Value>,
+    #[sqlx(default)]
+    pub last_sample_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -112,16 +124,28 @@ pub struct DeviceRow {
     pub tailnet_ip: Option<String>,
     pub status: Option<String>,
     pub last_seen_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub last_sample: Option<serde_json::Value>,
+    #[sqlx(default)]
+    pub last_sample_at: Option<DateTime<Utc>>,
 }
 
 async fn list_console(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
     let caller = signed_in_caller(&state, &headers).await?;
     let cloud: Vec<CloudRow> = sqlx::query_as(
         "SELECT pi.id, pi.status, pi.device_id, d.name AS device_name, d.tailnet_ip,
-                pi.location, h.region AS host_region
+                pi.location, h.region AS host_region, ls.snapshot AS last_sample, ls.ts AS last_sample_at
          FROM provisioned_instances pi
          LEFT JOIN provisioned_hosts h ON h.id = pi.host_id
          LEFT JOIN runtime_devices d ON d.id = pi.device_id
+         LEFT JOIN LATERAL (
+             SELECT s.snapshot, s.ts FROM computer_metric_samples s
+             WHERE s.resolution_secs = 60 AND s.snapshot IS NOT NULL
+               AND ((s.computer_kind = 'device' AND s.computer_id = pi.device_id)
+                 OR (s.computer_kind = 'paired' AND s.computer_id IN
+                       (SELECT spc.id FROM paired_computers spc WHERE spc.provisioned_instance_id = pi.id)))
+             ORDER BY s.ts DESC LIMIT 1
+         ) ls ON true
          WHERE pi.user_id = $1 AND pi.status <> 'deleted'
          ORDER BY pi.created_at",
     )
@@ -129,19 +153,33 @@ async fn list_console(State(state): State<Arc<ApiState>>, headers: HeaderMap) ->
     .fetch_all(&state.db)
     .await?;
     let paired: Vec<PairedRow> = sqlx::query_as(
-        "SELECT id, name, os, mesh_ip, last_seen_at, runtime_device_id, user_id <> $1 AS shared
-         FROM paired_computers
-         WHERE (user_id = $1 OR (organization_id IS NOT NULL AND organization_id = $2))
-           AND provisioned_instance_id IS NULL
-         ORDER BY created_at",
+        "SELECT pc.id, pc.name, pc.os, pc.mesh_ip, pc.last_seen_at, pc.runtime_device_id, pc.user_id <> $1 AS shared,
+                ls.snapshot AS last_sample, ls.ts AS last_sample_at
+         FROM paired_computers pc
+         LEFT JOIN LATERAL (
+             SELECT s.snapshot, s.ts FROM computer_metric_samples s
+             WHERE s.computer_kind = 'paired' AND s.computer_id = pc.id
+               AND s.resolution_secs = 60 AND s.snapshot IS NOT NULL
+             ORDER BY s.ts DESC LIMIT 1
+         ) ls ON true
+         WHERE (pc.user_id = $1 OR (pc.organization_id IS NOT NULL AND pc.organization_id = $2))
+           AND pc.provisioned_instance_id IS NULL
+         ORDER BY pc.created_at",
     )
     .bind(&caller.user_id)
     .bind(&caller.organization_id)
     .fetch_all(&state.db)
     .await?;
     let devices: Vec<DeviceRow> = sqlx::query_as(
-        "SELECT d.id, d.name, d.runtime_type, d.hostname, d.platform, d.tailnet_ip, d.status, d.last_seen_at
+        "SELECT d.id, d.name, d.runtime_type, d.hostname, d.platform, d.tailnet_ip, d.status, d.last_seen_at,
+                ls.snapshot AS last_sample, ls.ts AS last_sample_at
          FROM runtime_devices d
+         LEFT JOIN LATERAL (
+             SELECT s.snapshot, s.ts FROM computer_metric_samples s
+             WHERE s.computer_kind = 'device' AND s.computer_id = d.id
+               AND s.resolution_secs = 60 AND s.snapshot IS NOT NULL
+             ORDER BY s.ts DESC LIMIT 1
+         ) ls ON true
          WHERE d.user_id = $1 AND d.revoked_at IS NULL
            AND d.runtime_type IN ('desktop', 'vps', 'ao')
            AND NOT EXISTS (SELECT 1 FROM provisioned_instances pi WHERE pi.device_id = d.id)
@@ -216,7 +254,7 @@ fn cloud_computer(c: CloudRow, connected: &HashSet<String>) -> ConsoleComputer {
         reach: if address.is_some() { "mesh" } else { "relay" },
         address,
         status: cloud_status(&c.status, online).to_string(),
-        last_sample: None,
+        last_sample: c.last_sample,
         services_count: None,
         last_backup_at: None,
     }
@@ -260,6 +298,10 @@ fn paired_computer(
         .clone()
         .filter(|ip| is_mesh_ip(ip))
         .or_else(|| device.and_then(|d| d.tailnet_ip.clone()).filter(|ip| is_mesh_ip(ip)));
+    let last_sample = newest(
+        (pc.last_sample.clone(), pc.last_sample_at),
+        device.map(|d| (d.last_sample.clone(), d.last_sample_at)).unwrap_or_default(),
+    );
     let group = if is_desktop {
         GROUP_DESK
     } else if pc.shared {
@@ -280,9 +322,19 @@ fn paired_computer(
         reach: if address.is_some() { "mesh" } else { "relay" },
         address,
         status: (if online { "online" } else { "offline" }).to_string(),
-        last_sample: None,
+        last_sample,
         services_count: None,
         last_backup_at: None,
+    }
+}
+
+type Sample = (Option<serde_json::Value>, Option<DateTime<Utc>>);
+
+/// The newer of two `(sample, stored at)` pairs; a missing one loses.
+fn newest(a: Sample, b: Sample) -> Option<serde_json::Value> {
+    match (a, b) {
+        ((Some(x), ta), (Some(y), tb)) => Some(if tb > ta { y } else { x }),
+        ((x, _), (y, _)) => x.or(y),
     }
 }
 
@@ -309,7 +361,7 @@ fn device_computer(d: &DeviceRow, connected: &HashSet<String>, now: DateTime<Utc
         reach: if address.is_some() { "mesh" } else { "relay" },
         address,
         status: (if device_online(d, connected, now) { "online" } else { "offline" }).to_string(),
-        last_sample: None,
+        last_sample: d.last_sample.clone(),
         services_count: None,
         last_backup_at: None,
     }
