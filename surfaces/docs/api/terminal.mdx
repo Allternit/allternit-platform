@@ -91,6 +91,7 @@ Returns every terminal on the pane engine, including terminals that were not cre
   "terminals": [
     {
       "session_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "pane_id": "w4:p2",
       "title": "probe",
       "cwd": "/Users/dev/project",
       "command": ["bash", "-lc", "echo hi; sleep 60"],
@@ -104,6 +105,7 @@ Returns every terminal on the pane engine, including terminals that were not cre
 }
 ```
 
+- `pane_id` is the pane engine's id for the terminal's pane (the id the Factory agent wall shows). Use it to match an agent-wall pane to its terminal. It is `null` when the engine reports none.
 - `title` is the `title` given at create, else the terminal's own title (set by the program running in it), else the last folder of `cwd`, else `Terminal`.
 - `cwd` is the live working directory from the terminal's pane, else the one it was created with.
 - `command` and `created_at` are known only for terminals created through this API since it started; for others `command` is `[]` and `created_at` is `null`.
