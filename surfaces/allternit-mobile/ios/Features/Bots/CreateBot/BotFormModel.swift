@@ -237,7 +237,7 @@ final class BotFormModel: ObservableObject {
         let avatar = MeetAgentsAPI.object(config["avatar"]) ?? MeetAgentsAPI.object(row.at("avatar"))
         let vendorId = profile["vendorPackId"]?.jString
         look.configure(avatar: avatar.map(JSONValue.object), accent: accent, displayName: displayName, vendorId: vendorId)
-        connectedVendor = BotBrainPickerSheet.connectedVendor(config)
+        connectedVendor = BotBrainPickerSheet.connectedVendor(config, botKind: row.at("botKind")?.jString)
         storedBrain = config["botBrain"]?.jObject ?? [:]
         var brain = storedBrain
         if brain["modelRef"] == nil, let m = row.at("model")?.jString, let p = row.at("provider")?.jString, !m.isEmpty, !p.isEmpty {

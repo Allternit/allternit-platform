@@ -1,7 +1,7 @@
 import SwiftUI
 
 // -----------------------------------------------------------------------------
-// Connect a vendor bot (ChatGPT, Claude, Gemini, Grok Bot, Muse, …) with the
+// Connect a Connected bot (ChatGPT, Claude, Gemini, Grok Bot, Muse, …) with the
 // web's one-step connect (allternit-ai src/components/gateway/QuickConnect.tsx
 // `useOneStepConnect`): each press is one `POST gateway/connect`. Website
 // products open their sign-in window on the person's computer (the gateway's
@@ -66,7 +66,7 @@ final class OneStepConnect: ObservableObject {
 struct VendorConnectView: View {
     /// Offer "Make it my main bot" on the connected bot (Meet your bots → who leads).
     var offerMain = false
-    /// A vendor bot was connected; `mainBotId` is set when it was made the main bot.
+    /// A Connected bot was added; `mainBotId` is set when it was made the main bot.
     var onConnected: ((_ firstBotId: String?, _ mainBotId: String?) -> Void)? = nil
 
     @ObservedObject private var auth = AuthManager.shared
@@ -79,7 +79,7 @@ struct VendorConnectView: View {
         List {
             if !auth.isSignedIn {
                 FriendlyStateView(style: .empty, icon: "person.crop.circle", title: "Sign in to connect a bot",
-                                  message: "Vendor bots connect to your Allternit account.",
+                                  message: "Connected bots connect to your Allternit account.",
                                   actionTitle: "Sign in", action: { auth.isPresentingAuth = true })
                     .listRowBackground(Color.clear)
             } else if unsupported {
@@ -88,7 +88,7 @@ struct VendorConnectView: View {
                     .listRowBackground(Color.clear)
             } else if let loadError {
                 FriendlyStateView(style: .offline, icon: "desktopcomputer.trianglebadge.exclamationmark", title: "Couldn’t reach your computer",
-                                  message: "Vendor bots connect through it. \(loadError)", actionTitle: "Retry", action: { Task { await load() } })
+                                  message: "Connected bots connect through it. \(loadError)", actionTitle: "Retry", action: { Task { await load() } })
                     .listRowBackground(Color.clear)
             } else if let products {
                 Section {
@@ -119,7 +119,7 @@ struct VendorConnectView: View {
                 }
             }
         }
-        .navigationTitle("Connect a vendor bot")
+        .navigationTitle("Add a Connected bot")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
         .task { if products == nil { await load() } }

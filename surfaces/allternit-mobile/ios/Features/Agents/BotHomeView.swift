@@ -843,7 +843,7 @@ struct BotHomeView: View {
 
     /// "Codex · GPT-5", or "Run by <Vendor>" for a Connected bot.
     private var brainSummary: String {
-        if let vendor = BotBrainPickerSheet.connectedVendor(agent.config) { return "Run by \(vendor)" }
+        if let vendor = BotBrainPickerSheet.connectedVendor(agent) { return "Run by \(vendor)" }
         let brain = RuntimeRegistry.resolveRuntime(agent.config?["botBrain"]?.jObject ?? [:], in: runtimeRegistry.runtimes)
         let runtimeId = brain["runtime"]?.jString ?? "allternit"
         let runtimeName = runtimeId == "custom" ? "Custom harness" : (runtimeRegistry.runtime(runtimeId)?.name ?? runtimeId)

@@ -30,12 +30,16 @@ struct BotBrainPickerSheet: View {
         case form(BotFormModel)
     }
 
-    private enum Layer: String, CaseIterable, Identifiable {
+    /// One layer of the picker; the composer chips open the sheet on one.
+    enum Layer: String, CaseIterable, Identifiable {
         case runtime = "Runtime", brain = "Brain", bot = "Bot"
         var id: String { rawValue }
     }
 
     @State private var target: Target
+    /// In a bot chat (composer chips) the Bot layer opens the other bot's
+    /// chat instead of moving the picker to it.
+    private var onPickBot: (@MainActor (AgentRecord) -> Void)? = nil
     @StateObject private var registry = RuntimeRegistryStore.shared
     @StateObject private var modelStore = ModelStore.shared
     @StateObject private var hubStore = AgentHubStore.shared
@@ -57,9 +61,12 @@ struct BotBrainPickerSheet: View {
     @State private var saveError: String?
     @State private var dirty = false
 
-    /// Bot Home: picks save to the bot.
-    init(agent: AgentRecord) {
+    /// Bot Home: picks save to the bot. The composer chips pass the layer
+    /// that was tapped, so its choices are open.
+    init(agent: AgentRecord, open layer: Layer = .runtime, onPickBot: (@MainActor (AgentRecord) -> Void)? = nil) {
+        self.onPickBot = onPickBot
         _target = State(initialValue: .agent(agent))
+        _openLayer = State(initialValue: layer)
         let start = Self.startState(agent)
         _brain = State(initialValue: start.brain)
         _view = State(initialValue: start.view)
@@ -115,7 +122,7 @@ struct BotBrainPickerSheet: View {
 
     private var connectedVendor: String? {
         switch target {
-        case .agent(let a): return Self.connectedVendor(a.config)
+        case .agent(let a): return Self.connectedVendor(a)
         case .form(let f): return f.connectedVendor
         }
     }
@@ -532,7 +539,7 @@ struct BotBrainPickerSheet: View {
         } else {
             let currentId: String? = { if case .agent(let a) = target { return a.id } else { return nil } }()
             choices(bots.map { a in
-                let vendor = Self.connectedVendor(a.config)
+                let vendor = Self.connectedVendor(a)
                 return Choice(id: a.id, name: a.botDisplayName,
                               detail: vendor.map { "Run by \($0)" } ?? (a.botProfile?.tagline.flatMap { $0.isEmpty ? nil : $0 } ?? a.description ?? "Allternit bot"),
                               mark: .bot(a), badges: [Badge(text: vendor == nil ? "Allternit" : "Connected", tone: .plain)],
@@ -586,6 +593,11 @@ struct BotBrainPickerSheet: View {
     private func switchBot(_ a: AgentRecord) {
         if case .agent(let current) = target, current.id == a.id { return }
         Haptics.selection()
+        if let onPickBot {
+            dismiss()
+            onPickBot(a)
+            return
+        }
         let start = Self.startState(a)
         target = .agent(a)
         brain = start.brain
@@ -821,11 +833,21 @@ struct BotBrainPickerSheet: View {
     // MARK: Helpers
 
     /// A Connected bot (plan D4: a vendor binding exists): its vendor's name.
-    static func connectedVendor(_ config: [String: JSONValue]?) -> String? {
-        guard let profile = config?["botProfile"]?.jObject,
-              let pack = profile["vendorPackId"]?.jString, !pack.isEmpty else { return nil }
-        if let name = profile["vendorName"]?.jString, !name.isEmpty { return name }
+    /// The server's `botKind` (platform #2776) decides when present; older
+    /// servers leave it out and `config.botProfile.vendorPackId` decides.
+    static func connectedVendor(_ config: [String: JSONValue]?, botKind: String? = nil) -> String? {
+        if botKind == "allternit" { return nil }
+        let profile = config?["botProfile"]?.jObject
+        let pack = profile?["vendorPackId"]?.jString ?? ""
+        if botKind != "connected" && pack.isEmpty { return nil }
+        if let name = profile?["vendorName"]?.jString, !name.isEmpty { return name }
+        guard !pack.isEmpty else { return "its vendor" }
         let first = pack.split(separator: "-").first.map(String.init) ?? pack
         return first.prefix(1).uppercased() + first.dropFirst()
+    }
+
+    /// `connectedVendor` for a bot record.
+    static func connectedVendor(_ agent: AgentRecord) -> String? {
+        connectedVendor(agent.config, botKind: agent.botKind)
     }
 }

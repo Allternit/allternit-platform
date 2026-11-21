@@ -106,7 +106,7 @@ private struct BotFormSheet: View {
                     vendorOpen = false
                     AgentHubStore.shared.fetchAgentsIfNeeded(force: true)
                     let ids = firstBotId.map { [$0] } ?? []
-                    onCreated?(BotSetupOutcome(botIds: ids, mainBotId: mainBotId, summary: "Vendor bot connected"))
+                    onCreated?(BotSetupOutcome(botIds: ids, mainBotId: mainBotId, summary: "Connected bot added"))
                     dismiss()
                 }
                 .navigationTitle("Bring a vendor’s bot")

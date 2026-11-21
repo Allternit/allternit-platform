@@ -81,7 +81,8 @@ struct ConnectionWire: Decodable, Equatable, Sendable {
         if let text = try? c.decodeIfPresent(String.self, forKey: .terms) {
             terms = text
         } else {
-            terms = (try? c.decodeIfPresent(TermsObject.self, forKey: .terms))??.status
+            // `try?` flattens (Swift 5+), so this is one optional: `??.` would not compile.
+            terms = ((try? c.decodeIfPresent(TermsObject.self, forKey: .terms)) ?? nil)?.status
         }
         saved = try? c.decodeIfPresent(String.self, forKey: .saved)
         models = ((try? c.decodeIfPresent([String].self, forKey: .models)) ?? nil) ?? []
