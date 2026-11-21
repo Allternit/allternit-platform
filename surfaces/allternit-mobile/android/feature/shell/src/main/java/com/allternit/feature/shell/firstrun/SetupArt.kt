@@ -61,7 +61,7 @@ import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.ThinkingOrb
 import com.allternit.core.design.ThinkingOrbSize
 import com.allternit.core.design.ThinkingOrbState
-import com.allternit.feature.onboarding.R
+import com.allternit.core.design.R
 import kotlin.math.max
 import kotlin.math.min
 

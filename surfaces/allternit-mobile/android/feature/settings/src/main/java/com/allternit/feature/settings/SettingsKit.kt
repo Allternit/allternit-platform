@@ -242,7 +242,7 @@ internal fun SRow(
         }
         if (value != null) Text(value, color = c.textSecondary, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 4.dp))
         if (trailing != null) trailing()
-        else if (chevron && onClick != null) Icon(painterResource(DesignR.drawable.ph_arrow_right), contentDescription = null, tint = c.textTertiary, modifier = Modifier.size(16.dp))
+        else if (chevron && onClick != null) Icon(painterResource(DesignR.drawable.ph_caret_right), contentDescription = null, tint = c.textTertiary, modifier = Modifier.size(14.dp))
     }
 }
 
