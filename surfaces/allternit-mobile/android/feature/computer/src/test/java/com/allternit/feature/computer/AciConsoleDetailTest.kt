@@ -37,3 +37,52 @@ class AciConsoleDetailTest {
         assertNull(HostSnapshot.parse(Json.parseToJsonElement("""{"cpu":{"percent":40}}""")))
     }
 }
+
+class AciConsoleManageTest {
+    private fun obj(s: String) = kotlinx.serialization.json.Json.parseToJsonElement(s) as kotlinx.serialization.json.JsonObject
+    private val now = java.time.Instant.parse("2026-11-20T12:00:00Z")
+
+    @Test fun freshBackupIsNewestUnder24Hours() {
+        val old = CloudBackup("a", "2026-11-18T12:00:00Z", null)
+        val fresh = CloudBackup("b", "2026-11-20T01:00:00Z", 10.0)
+        val fresher = CloudBackup("c", "2026-11-20T09:00:00Z", null)
+        assertEquals("c", consoleFreshBackup(listOf(old, fresh, fresher), now)?.id)
+        assertNull(consoleFreshBackup(listOf(old), now))
+        assertNull(consoleFreshBackup(emptyList(), now))
+    }
+
+    @Test fun keyValidationRefusesPrivateKeysAndNeedsPublicPrefix() {
+        assertEquals(true, consoleKeyValid("Mac", "ssh-ed25519 AAAA"))
+        assertEquals(true, consoleKeyValid("Mac", "sk-ssh-ed25519@openssh.com AAAA"))
+        assertEquals(false, consoleKeyValid("", "ssh-ed25519 AAAA"))
+        assertEquals(false, consoleKeyValid("Mac", "-----BEGIN OPENSSH PRIVATE KEY-----"))
+        assertEquals(false, consoleKeyValid("Mac", "hello"))
+    }
+
+    @Test fun findingNeedsTitleAndReadsSuggestedAction() {
+        val f = HostFinding.parse(obj("""{"id":"1","severity":"warning","title":"Disk 91% full","detail":"d","suggestedAction":{"type":"clean_apt_cache","target":"/var/cache/apt","label":"Clear package cache"}}"""))
+        assertEquals("clean_apt_cache /var/cache/apt", f?.suggestedAction?.commandLine)
+        assertNull(HostFinding.parse(obj("""{"detail":"x"}""")))
+    }
+
+    @Test fun actionResultNeedsChangeIdAndMayCarryUndo() {
+        val r = HostActionResult.parse(obj("""{"changeId":"chg_1","undo":{"type":"restore","target":"chg_1"}}"""))
+        assertEquals("chg_1", r?.changeId)
+        assertEquals("restore chg_1", r?.undo?.commandLine)
+        assertNull(HostActionResult.parse(obj("""{"note":"x"}""")))
+    }
+
+    @Test fun agentKeysHaveNoRemoveAndRowsAcceptBareArrayOrEnvelope() {
+        assertEquals(true, SshKey.parse(obj("""{"id":"k","label":"agent","kind":"agent"}"""))?.isAgent)
+        val env = kotlinx.serialization.json.Json.parseToJsonElement("""{"keys":[{"id":"k","label":"a"}]}""")
+        val bare = kotlinx.serialization.json.Json.parseToJsonElement("""[{"id":"k","label":"a"}]""")
+        assertEquals(1, env.rows("keys").size)
+        assertEquals(1, bare.rows("keys").size)
+    }
+
+    @Test fun locationKeyMatchesCodeOrName() {
+        assertEquals("chi", consoleLocationKey("Chicago"))
+        assertEquals("lon", consoleLocationKey("lon"))
+        assertNull(consoleLocationKey("mars"))
+    }
+}
