@@ -15,6 +15,8 @@
 //!   token (relay-signed like `runtime_events`) and starts a 60 s push of the
 //!   public projection only: id, name, role, color, avatar sheet, status,
 //!   updated time. The cloud drops anything else at write time too.
+//! - `GET|PUT /floor/autopilot`, `GET /floor/digest`, `POST /floor/seen`: see
+//!   `floor_autopilot` (merged into this router).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,6 +52,7 @@ pub fn floor_router() -> Router<Arc<AppState>> {
         .route("/floor/state", get(state_route))
         .route("/floor/events", get(events_route))
         .route("/floor/share", get(share_get).put(share_put))
+        .merge(crate::floor_autopilot::floor_autopilot_router())
 }
 
 fn err(status: StatusCode, code: &str) -> Response {
@@ -66,15 +69,15 @@ fn kind_of(event_type: &str) -> Option<&'static str> {
     }
 }
 
-fn ms_of(rfc: &str) -> Option<i64> {
+pub(crate) fn ms_of(rfc: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(rfc).ok().map(|d| d.timestamp_millis())
 }
 
-fn preview(payload: &Value) -> Option<String> {
+pub(crate) fn preview(payload: &Value) -> Option<String> {
     payload["statusLine"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.chars().take(TEXT_MAX).collect())
 }
 
-fn second_floor(ms: i64) -> String {
+pub(crate) fn second_floor(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default().format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
@@ -144,7 +147,7 @@ pub struct Pod {
     pub bot_ids: Vec<String>,
 }
 
-fn clip(s: &str, max: usize) -> String {
+pub(crate) fn clip(s: &str, max: usize) -> String {
     s.trim().chars().take(max).collect()
 }
 

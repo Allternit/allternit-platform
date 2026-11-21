@@ -62,3 +62,88 @@ Query: `since` and `until` (ms), `limit` (default 500, at most 2000). Returns `{
 | `handoff` | A bot-to-bot hop | `toBotId`, and `label` (60 characters at most) |
 
 `label` is the title of the thread that received the hop. Hops that link no thread have no `label`.
+
+## GET /floor/autopilot
+
+Returns the Autopilot switch and its rules. With no saved settings, Autopilot is off and there are no rules.
+
+```json
+{
+  "enabled": true,
+  "mainBotId": "bot_main",
+  "rules": [
+    { "id": "r1", "scope": { "type": "all" }, "need": "question", "level": "draft" },
+    {
+      "id": "r2",
+      "scope": { "type": "bot", "id": "bot_a" },
+      "need": "permission",
+      "level": "limits",
+      "limits": { "maxPerDay": 5, "allowedActions": ["read_file"] },
+      "note": "Files only"
+    }
+  ],
+  "updatedAt": 1790000000000
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `enabled` | The switch. When it is off, every need waits for you. |
+| `mainBotId` | The bot that answers for you. `null` means the floor's main bot (see `mainBotId` in `/floor/state`). |
+| `rules[].scope` | `all`, or `bot` or `pod` with the bot or pod `id`. |
+| `rules[].need` | `suggestion`, `permission` or `question`. |
+| `rules[].level` | `draft` (Draft only), `ask` (Ask first), `tell` (Send and tell me) or `limits` (Act within limits). |
+| `rules[].limits` | `maxPerDay` and `allowedActions`. Sent only when the rule has a cap or actions. |
+| `updatedAt` | When the settings were last saved (ms), or `null`. |
+
+The levels have the same names and meanings as in the autonomy guide. This route stores the settings only. Outbound messages keep their own send policy under `/autonomy/policies`.
+
+## PUT /floor/autopilot
+
+Send the same shape as the GET answer (`updatedAt` is ignored). The rule set you send replaces the saved one in a single transaction, and the answer is the saved settings.
+
+- A rule without an `id` gets one.
+- A rule without a `level` gets `draft` for questions and `ask` for everything else.
+- A question rule at `limits` with no `maxPerDay` gets a cap of 20 a day.
+- `mainBotId`, when set, must be one of your active bots.
+
+The request is refused with `400` and `{ "error": "<code>", "rule": <index> }` when one of the cases below applies. `rule` is the index of the rule at fault, when there is one.
+
+| Code | Cause |
+| --- | --- |
+| `too_many_rules` | More than 50 rules. |
+| `bad_scope`, `bad_need`, `bad_level` | A value outside the lists above. |
+| `scope_id_required` | A `bot` or `pod` scope with no `id`. |
+| `duplicate_rule_id`, `duplicate_rule` | Two rules with one id, or two rules for the same scope and need. |
+| `max_per_day_out_of_range` | `maxPerDay` below 1 or above 200. |
+| `too_many_actions`, `bad_action` | More than 20 allowed actions, or one that is empty or longer than 40 characters. |
+| `note_too_long` | A note longer than 200 characters. |
+| `unknown_main_bot` | `mainBotId` is not one of your active bots. |
+
+## GET /floor/digest
+
+Query: `since`, as RFC 3339 or epoch ms. Without it, the window starts at your last-seen time (see `POST /floor/seen`), or 24 hours ago if you have none. The window never reaches back more than 30 days.
+
+```json
+{
+  "since": 1790000000000,
+  "until": 1790003600000,
+  "answered": [{ "botId": "bot_a", "threadId": "th_2", "text": "Chose the morning flight", "at": 1790001000000, "ruleId": "r1" }],
+  "waiting": [{ "botId": "bot_a", "threadId": "th_3", "text": "Pick a venue", "at": 1789990000000 }],
+  "finished": [{ "botId": "bot_a", "threadId": "th_1", "text": "Sent the Q4 report", "at": 1790002000000 }],
+  "suggestions": [{ "botId": "bot_main", "threadId": "th_4", "text": "Clean up the inbox", "at": 1789980000000 }]
+}
+```
+
+| List | What it holds |
+| --- | --- |
+| `answered` | Needs your main bot answered on autopilot inside the window. Each item adds the `ruleId` that allowed it. |
+| `finished` | Threads that finished inside the window, one item per thread. |
+| `waiting` | Threads waiting on you now, whatever the window. |
+| `suggestions` | Proposed threads waiting for a go-ahead now, whatever the window. |
+
+Each list holds at most 20 items, newest first. Incognito threads are left out. Apps show the digest when you were away for 30 minutes or more and at least one list has an item.
+
+## POST /floor/seen
+
+Stores now as your last-seen time and returns `{ "previous": 1790000000000, "now": 1790003600000 }` (ms). `previous` is `null` the first time. The time is kept on the server, so a digest you read on one device does not show again on another.
