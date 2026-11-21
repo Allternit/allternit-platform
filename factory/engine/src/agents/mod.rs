@@ -4,6 +4,7 @@
 //! path through it, `registry` the one reconciled session registry, and
 //! `view` the merged agent view (registry + live panes + peers).
 
+pub mod adopt;
 pub mod backend;
 pub mod delivery;
 pub mod http;
@@ -11,9 +12,11 @@ pub mod live_delivery;
 pub mod live_receipts;
 pub mod mailbox_drain;
 pub mod execenv;
+pub mod harness_table;
 pub mod home_migrate;
 pub mod live_sessions;
 pub mod peer;
+pub mod proc_scan;
 pub mod registry;
 pub mod snapshot;
 pub mod spawn;

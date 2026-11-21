@@ -7,6 +7,12 @@
 //! `~/.allternit/live-sessions/hooks.json`. Status: Claude's own `status` wins, then
 //! the pane's `agent_status`, then hooks.
 //!
+//! Holders: the process table (read-only, [`super::proc_scan`]) adds the other harnesses'
+//! processes (codex, kimi, grok, agy, gizzi, opencode, qwen), each mapped to its session id by
+//! [`super::harness_table`]. Entries are grouped by `(harness, session id)`, so one session lists
+//! every live pid holding it, the app each runs under, and whether it can move into Allternit
+//! (`movable`). Nothing here signals or writes to another process.
+//!
 //! Portions adapted from Reason Network (reason-machines/reason-network), Apache-2.0. Copyright 2026 Reason Machines, Inc.
 
 use std::collections::{BTreeSet, HashMap};
@@ -63,6 +69,48 @@ pub struct LiveSession {
     /// `push | turn | pull` (C1).
     pub tier: String,
     pub unread: u32,
+    /// Every live process holding this session id (one writer per session id: two holders
+    /// means it is open in two places). Empty for a pane with no agent process found.
+    #[serde(default)]
+    pub holders: Vec<Holder>,
+    /// The flags the external holder was started with that a Move or Copy keeps
+    /// (`--dangerously-skip-permissions`, `--model x`), in order.
+    #[serde(default)]
+    pub carried_flags: Vec<String>,
+    /// The harness can fork this session into a new one (Copy).
+    #[serde(default)]
+    pub can_copy: bool,
+    /// Whether it can move into Allternit: `now` (one external holder, idle, resumable),
+    /// `busy` (mid-turn), `open_elsewhere` (more than one live holder), `no_resume` (the
+    /// harness cannot resume by id, or no id was found), `here` (already in an Allternit pane).
+    #[serde(default)]
+    pub movable: String,
+    /// A holder runs outside Allternit (Terminal, iTerm2, Ghostty, other).
+    #[serde(default)]
+    pub external: bool,
+    /// The Move job for this session (`POST /api/v1/live-sessions/adopt`), kept 10 min after it ends.
+    /// Filled in by allternit-api, which runs the jobs ([`super::adopt::annotate`]).
+    #[serde(rename = "move", default, skip_serializing_if = "Option::is_none")]
+    pub move_job: Option<super::adopt::MoveJob>,
+}
+
+/// One live process holding a session.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Holder {
+    pub pid: u32,
+    /// `Terminal | iTerm2 | Allternit | Ghostty | other`, from the process's parent chain.
+    pub app: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tty: Option<String>,
+    /// The OS start time of the process (`ps -o lstart`; Claude Code's `procStart`), or RFC 3339
+    /// when only a start timestamp is known. A pid whose start time changed is a different process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
 }
 
 /// How WP11 (delivery) and WP13/14 look sessions up.
@@ -400,6 +448,7 @@ fn base_name(cwd: &str) -> String {
 }
 
 /// One session found by a source, before panes and addresses are applied.
+#[derive(Default)]
 struct Found {
     harness: String,
     id: String,
@@ -409,17 +458,228 @@ struct Found {
     since: String,
     socket: bool,
     hook: Option<HookInfo>,
+    /// The live processes holding it.
+    procs: Vec<Proc>,
+}
+
+/// A live process holding a session, with what the listing needs about it.
+#[derive(Clone, Default)]
+struct Proc {
+    holder: Holder,
+    argv: Vec<String>,
+    /// Runs under an Allternit pane (`Some(true)`), under something else (`Some(false)`),
+    /// or not known (no process table).
+    pane_held: Option<bool>,
+}
+
+/// A process that writes to its session store this recently is mid-turn.
+const STORE_BUSY_SECS: u64 = 30;
+
+/// `ps -o lstart` (`Sat Nov 21 03:55:44 2026`, local time) → RFC 3339.
+fn lstart_rfc3339(s: &str) -> Option<String> {
+    let t = chrono::NaiveDateTime::parse_from_str(s, "%a %b %d %H:%M:%S %Y").ok()?;
+    chrono::Local.from_local_datetime(&t).single().map(|d| d.with_timezone(&Utc).to_rfc3339())
+}
+
+fn proc_of(pid: u32, started: Option<String>, argv: Option<Vec<String>>, table: &HashMap<u32, &super::proc_scan::ProcRow>) -> Proc {
+    let row = table.get(&pid);
+    let app = super::proc_scan::app_for(pid, table);
+    Proc {
+        holder: Holder {
+            pid,
+            app: app.unwrap_or("other").to_string(),
+            tty: row.and_then(|r| r.tty.clone()),
+            started_at: started.or_else(|| row.map(|r| r.started.clone())),
+            ..Default::default()
+        },
+        argv: argv.or_else(|| super::proc_scan::argv(pid)).unwrap_or_default(),
+        pane_held: app.map(|a| a == "Allternit"),
+    }
+}
+
+/// One entry per `(harness, session id)`: two processes on one id become one session with two
+/// holders. The representative is the pane-held entry if any, else the newest. Entries with no
+/// id (a process whose session could not be found) are never merged.
+fn group(found: Vec<Found>) -> Vec<Found> {
+    let mut groups: Vec<Vec<Found>> = Vec::new();
+    let mut at: HashMap<(String, String), usize> = HashMap::new();
+    for f in found {
+        if f.id.is_empty() {
+            groups.push(vec![f]);
+            continue;
+        }
+        match at.get(&(f.harness.clone(), f.id.clone())) {
+            Some(&i) => groups[i].push(f),
+            None => {
+                at.insert((f.harness.clone(), f.id.clone()), groups.len());
+                groups.push(vec![f]);
+            }
+        }
+    }
+    groups
+        .into_iter()
+        .filter_map(|mut g| {
+            if g.len() == 1 {
+                return g.pop();
+            }
+            let rep = g.iter().position(|f| f.procs.iter().any(|p| p.pane_held == Some(true))).unwrap_or_else(|| {
+                g.iter().enumerate().max_by(|a, b| a.1.since.cmp(&b.1.since)).map_or(0, |(i, _)| i)
+            });
+            let mut rep = g.swap_remove(rep);
+            for f in g {
+                for p in f.procs {
+                    if !rep.procs.iter().any(|q| q.holder.pid == p.holder.pid) {
+                        rep.procs.push(p);
+                    }
+                }
+                if f.own_status.as_deref().and_then(norm_status) == Some("busy") {
+                    rep.own_status = Some("busy".into());
+                }
+                rep.pid = rep.pid.or(f.pid);
+                rep.hook = rep.hook.take().or(f.hook);
+                if rep.cwd.is_empty() {
+                    rep.cwd = f.cwd;
+                }
+            }
+            Some(rep)
+        })
+        .collect()
+}
+
+/// What a listing says about moving a session (the new `LiveSession` fields).
+#[derive(Debug, PartialEq)]
+struct Moves {
+    holders: Vec<Holder>,
+    carried_flags: Vec<String>,
+    can_copy: bool,
+    movable: &'static str,
+    external: bool,
+}
+
+/// `pane_id`: the Allternit pane this session was matched to. `unknown_holder`: a live process of
+/// this harness outside Allternit has no known session id, so it may hold this one.
+fn moves(f: &Found, pane_id: Option<&str>, status: &str, unknown_holder: bool) -> Moves {
+    let holders: Vec<Holder> = f
+        .procs
+        .iter()
+        .map(|p| {
+            let mut h = p.holder.clone();
+            if p.pane_held == Some(true) {
+                h.pane_id = pane_id.map(str::to_string);
+            }
+            h
+        })
+        .collect();
+    let external: Vec<&Proc> = f.procs.iter().filter(|p| p.holder.app != "Allternit").collect();
+    let rep = external.iter().find(|p| Some(p.holder.pid) == f.pid).or_else(|| external.first());
+    let carried_flags = rep.map(|p| super::harness_table::carried_flags(&f.harness, &p.argv)).unwrap_or_default();
+    let movable = if holders.len() > 1 {
+        "open_elsewhere"
+    } else if holders.len() == 1 && holders[0].app == "Allternit" {
+        "here"
+    } else if holders.is_empty() && pane_id.is_some() {
+        "here"
+    } else if holders.is_empty() && unknown_holder {
+        "open_elsewhere"
+    } else if super::harness_table::move_argv(&f.harness, &f.id, &[]).is_none() {
+        "no_resume"
+    } else if status == "busy" {
+        "busy"
+    } else {
+        "now"
+    };
+    Moves {
+        can_copy: super::harness_table::copy_argv(&f.harness, &f.id, &[]).is_some(),
+        external: !external.is_empty(),
+        holders,
+        carried_flags,
+        movable,
+    }
+}
+
+/// Harness processes outside Claude Code's pid registry (codex, kimi, grok, agy, gizzi,
+/// opencode, qwen), each mapped to its session id where one can be found. `known` pids are
+/// skipped. Returns the sessions and the harnesses with an external process whose session id
+/// was not found.
+fn scan_processes(
+    rows: &[super::proc_scan::ProcRow],
+    table: &HashMap<u32, &super::proc_scan::ProcRow>,
+    known: &BTreeSet<u32>,
+    panes: &[super::backend::LivePane],
+    hooks: &[HookInfo],
+) -> (Vec<Found>, BTreeSet<String>) {
+    use super::harness_table as ht;
+    let now = Utc::now();
+    let mut out = Vec::new();
+    let mut unresolved = BTreeSet::new();
+    for row in rows.iter().filter(|r| r.tty.is_some() && !known.contains(&r.pid)) {
+        let name = row.comm.rsplit('/').next().unwrap_or(&row.comm);
+        let candidate = ht::HARNESSES.iter().any(|h| h.id != "claude" && h.procs.contains(&name)) || ht::INTERPRETERS.contains(&name);
+        if !candidate {
+            continue;
+        }
+        let raw = super::proc_scan::argv(row.pid).unwrap_or_default();
+        let Some((h, argv)) = ht::harness_for_process(&row.comm, &raw) else { continue };
+        // Claude Code comes from its pid registry; daemons and one-shot subcommands are not sessions.
+        if h.id == "claude" || !ht::is_interactive(h, &argv) {
+            continue;
+        }
+        let cwd = super::proc_scan::cwd(row.pid).unwrap_or_default();
+        let p = proc_of(row.pid, None, Some(argv.clone()), table);
+        let pane_held = p.pane_held == Some(true);
+        let since = lstart_rfc3339(&row.started).unwrap_or_else(|| now.to_rfc3339());
+        match ht::resolve_session(h.id, row.pid, &cwd, &argv) {
+            Some(r) => {
+                let recent = r.last_write.and_then(|t| t.elapsed().ok()).is_some_and(|d| d.as_secs() <= STORE_BUSY_SECS);
+                out.push(Found {
+                    harness: h.id.into(),
+                    hook: hooks.iter().find(|x| x.session == r.id).cloned(),
+                    id: r.id,
+                    pid: Some(row.pid),
+                    cwd,
+                    own_status: recent.then(|| "busy".to_string()),
+                    since,
+                    socket: false,
+                    procs: vec![p],
+                });
+            }
+            None => {
+                // A pane-held process with no session id is already listed through its pane.
+                if pane_held && panes.iter().any(|pn| !cwd.is_empty() && pn.cwd.as_deref() == Some(cwd.as_str())) {
+                    continue;
+                }
+                if !pane_held {
+                    unresolved.insert(h.id.to_string());
+                }
+                out.push(Found { harness: h.id.into(), pid: Some(row.pid), cwd, since, procs: vec![p], ..Default::default() });
+            }
+        }
+    }
+    (out, unresolved)
 }
 
 /// Every live session on this computer. `person` is the address prefix (the Clerk username);
 /// `panes` are the Factory panes (pass `None` to ask the installed pane engine).
 pub fn discover(person: &str, panes: Option<Vec<super::backend::LivePane>>) -> Vec<LiveSession> {
-    let share_paths = matches!(std::env::var("ALLTERNIT_SHARE_PATHS").as_deref(), Ok("1" | "true"));
+    discover_with(person, panes, false)
+}
+
+/// [`discover`] with each session's full working folder whatever `ALLTERNIT_SHARE_PATHS` says.
+/// For this computer's own use only (adopt starts the moved session in that folder); never upload it.
+pub fn discover_full_paths(person: &str, panes: Option<Vec<super::backend::LivePane>>) -> Vec<LiveSession> {
+    discover_with(person, panes, true)
+}
+
+fn discover_with(person: &str, panes: Option<Vec<super::backend::LivePane>>, full_paths: bool) -> Vec<LiveSession> {
+    let share_paths = full_paths || matches!(std::env::var("ALLTERNIT_SHARE_PATHS").as_deref(), Ok("1" | "true"));
     let (machine_id, machine_name) = machine();
     let panes = panes.unwrap_or_else(|| super::backend::backend().and_then(|b| b.list()).unwrap_or_default());
     let hooks = read_hooks();
     let now = Utc::now();
     let mut found: Vec<Found> = Vec::new();
+    // The process table (read-only), for holders: which app each process runs under, its tty and start time.
+    let rows = super::proc_scan::snapshot();
+    let table = super::proc_scan::by_pid(&rows);
 
     // Claude Code: one file per running process.
     if let Ok(dir) = std::fs::read_dir(claude_dir().join("sessions")) {
@@ -431,6 +691,8 @@ pub fn discover(person: &str, panes: Option<Vec<super::backend::LivePane>>) -> V
             if !pid_alive(pid) {
                 continue;
             }
+            // `procStart` is the OS start time of the pid; a later recheck compares it before acting on the pid.
+            let started = v["procStart"].as_str().filter(|s| !s.is_empty()).map(str::to_string).or_else(|| v["startedAt"].as_i64().map(rfc3339_ms));
             found.push(Found {
                 harness: "claude".into(),
                 id: id.to_string(),
@@ -440,6 +702,7 @@ pub fn discover(person: &str, panes: Option<Vec<super::backend::LivePane>>) -> V
                 since: rfc3339_ms(v["startedAt"].as_i64().unwrap_or_else(|| now.timestamp_millis())),
                 socket: v["messagingSocketPath"].as_str().is_some_and(|s| !s.is_empty()),
                 hook: hooks.iter().find(|h| h.session == id).cloned(),
+                procs: vec![proc_of(pid, started, None, &table)],
             });
         }
     }
@@ -448,15 +711,17 @@ pub fn discover(person: &str, panes: Option<Vec<super::backend::LivePane>>) -> V
     for (id, (_, at)) in codex_index() {
         let Some(at) = at.filter(|t| (now - *t).num_seconds() <= CODEX_LIVE_SECS) else { continue };
         let hook = hooks.iter().find(|h| h.session == id).cloned();
+        let pid = hook.as_ref().and_then(|h| h.pid);
         found.push(Found {
             harness: "codex".into(),
-            pid: hook.as_ref().and_then(|h| h.pid),
+            pid,
             cwd: hook.as_ref().and_then(|h| h.cwd.clone()).unwrap_or_default(),
             id,
             own_status: None,
             since: at.to_rfc3339(),
             socket: false,
             hook,
+            procs: pid.filter(|p| pid_alive(*p)).map(|p| proc_of(p, None, None, &table)).into_iter().collect(),
         });
     }
 
@@ -475,13 +740,26 @@ pub fn discover(person: &str, panes: Option<Vec<super::backend::LivePane>>) -> V
             since: h.last_hook.map(|t| t.to_rfc3339()).unwrap_or_default(),
             socket: false,
             hook: Some(h.clone()),
+            procs: h.pid.map(|p| proc_of(p, None, None, &table)).into_iter().collect(),
         });
     }
+
+    // Other harnesses' processes (codex, kimi, grok, agy, gizzi, opencode, qwen), from the process table.
+    let known: BTreeSet<u32> = found.iter().flat_map(|f| f.procs.iter().map(|p| p.holder.pid)).collect();
+    let (scanned, unresolved) = scan_processes(&rows, &table, &known, &panes, &hooks);
+    found.extend(scanned);
+    // One entry per session id, every live pid a holder (decision 11: one writer per session id).
+    let found = group(found);
 
     let mut used: BTreeSet<String> = BTreeSet::new();
     let mut out: Vec<LiveSession> = Vec::new();
     for f in found {
-        let pane = panes.iter().find(|p| !used.contains(&p.pane_id) && !f.cwd.is_empty() && p.cwd.as_deref() == Some(f.cwd.as_str()));
+        // A session held only by processes outside Allternit never claims a pane in the same folder.
+        let may_claim_pane = f.procs.is_empty() || f.procs.iter().any(|p| p.pane_held != Some(false));
+        let pane = panes
+            .iter()
+            .filter(|_| may_claim_pane)
+            .find(|p| !used.contains(&p.pane_id) && !f.cwd.is_empty() && p.cwd.as_deref() == Some(f.cwd.as_str()));
         if let Some(p) = pane {
             used.insert(p.pane_id.clone());
         }
@@ -500,7 +778,13 @@ pub fn discover(person: &str, panes: Option<Vec<super::backend::LivePane>>) -> V
             "pull"
         };
         let (repo, branch) = git_info(&f.cwd);
+        let m = moves(&f, pane.map(|p| p.pane_id.as_str()), status, unresolved.contains(&f.harness));
         out.push(LiveSession {
+            holders: m.holders,
+            carried_flags: m.carried_flags,
+            can_copy: m.can_copy,
+            movable: m.movable.into(),
+            external: m.external,
             name: format!("{}-{}", base_name(&f.cwd), f.harness),
             doing: doing(&f.harness, &f.id, f.hook.as_ref().and_then(|h| h.transcript.as_deref())),
             harness: f.harness,
@@ -533,6 +817,8 @@ pub fn discover(person: &str, panes: Option<Vec<super::backend::LivePane>>) -> V
             status: p.agent_status.as_deref().and_then(norm_status).unwrap_or("idle").into(),
             since: now.to_rfc3339(),
             tier: "push".into(),
+            // Already inside Allternit; the pane label is not a resumable session id.
+            movable: "here".into(),
             ..Default::default()
         });
     }
@@ -630,6 +916,74 @@ mod tests {
         assert!(mine.iter().any(|s| s.address == "eoj/app-gizzi" && s.status == "busy" && s.tier == "push"));
         assert!(mine.iter().any(|s| s.address == "eoj/app-gizzi-2" && s.status == "idle"));
         assert_eq!(repo_slug("git@github.com:Allternit/allternit-platform.git").as_deref(), Some("Allternit/allternit-platform"));
+    }
+
+    fn held(harness: &str, id: &str, pid: u32, app: &str, since: &str, argv: &[&str]) -> Found {
+        Found {
+            harness: harness.into(),
+            id: id.into(),
+            pid: Some(pid),
+            cwd: "/repo".into(),
+            since: since.into(),
+            procs: vec![Proc {
+                holder: Holder { pid, app: app.into(), started_at: Some("Sat Nov 21 03:55:44 2026".into()), ..Default::default() },
+                argv: argv.iter().map(|s| s.to_string()).collect(),
+                pane_held: Some(app == "Allternit"),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn live_sessions_holders_two_pids_on_one_session_are_one_entry_open_elsewhere() {
+        let list = group(vec![
+            held("claude", "s1", 101, "Terminal", "2026-11-21T03:00:00+00:00", &["claude", "--dangerously-skip-permissions"]),
+            held("claude", "other", 150, "Terminal", "2026-11-21T03:30:00+00:00", &["claude"]),
+            held("claude", "s1", 202, "iTerm2", "2026-11-21T04:00:00+00:00", &["claude", "--resume", "s1", "--model", "opus"]),
+        ]);
+        assert_eq!(list.len(), 2);
+        let s1 = list.iter().find(|f| f.id == "s1").unwrap();
+        // The newest entry represents the session; both pids are holders.
+        assert_eq!(s1.pid, Some(202));
+        assert_eq!(s1.procs.iter().map(|p| p.holder.pid).collect::<Vec<_>>(), vec![202, 101]);
+        let m = moves(s1, None, "idle", false);
+        assert_eq!(m.movable, "open_elsewhere");
+        assert_eq!(m.holders.len(), 2);
+        assert!(m.external && m.can_copy);
+        assert_eq!(m.carried_flags, vec!["--model", "opus"]);
+    }
+
+    #[test]
+    fn live_sessions_holders_movable_per_case() {
+        let idle = held("claude", "s1", 101, "Terminal", "", &["claude", "--dangerously-skip-permissions"]);
+        let m = moves(&idle, None, "idle", false);
+        assert_eq!((m.movable, m.external, m.carried_flags.clone()), ("now", true, vec!["--dangerously-skip-permissions".to_string()]));
+        assert_eq!(moves(&idle, None, "busy", false).movable, "busy");
+        // Only inside an Allternit pane: already here; its pane id goes on the holder.
+        let pane = held("claude", "s2", 300, "Allternit", "", &["claude"]);
+        let m = moves(&pane, Some("w1:p2"), "idle", false);
+        assert_eq!((m.movable, m.external), ("here", false));
+        assert_eq!(m.holders[0].pane_id.as_deref(), Some("w1:p2"));
+        assert!(m.carried_flags.is_empty());
+        // A pane holder plus a Terminal holder (the 11-20 12:03 incident): refused, and the pane entry represents it.
+        let both = group(vec![held("claude", "s3", 400, "Terminal", "2026-11-21T09:00:00+00:00", &["claude"]), held("claude", "s3", 401, "Allternit", "2026-11-21T01:00:00+00:00", &["claude"])]);
+        assert_eq!(both.len(), 1);
+        assert_eq!(both[0].pid, Some(401));
+        assert_eq!(moves(&both[0], None, "idle", false).movable, "open_elsewhere");
+        // qwen resumes by the id in its argv (`--resume`); with no id found it cannot.
+        assert_eq!(moves(&held("qwen", "q1", 500, "Terminal", "", &["qwen"]), None, "idle", false).movable, "now");
+        assert_eq!(moves(&held("qwen", "", 501, "Terminal", "", &["qwen"]), None, "idle", false).movable, "no_resume");
+        let unknown = held("codex", "", 600, "Ghostty", "", &["codex"]);
+        let m = moves(&unknown, None, "idle", false);
+        assert_eq!((m.movable, m.can_copy), ("no_resume", false));
+        // Two processes with no id are never merged into one.
+        assert_eq!(group(vec![unknown, held("codex", "", 601, "Terminal", "", &["codex"])]).len(), 2);
+        // A live codex thread with no process found while an unidentified codex process runs: it may hold it.
+        let orphan = Found { harness: "codex".into(), id: "u1".into(), ..Default::default() };
+        assert_eq!(moves(&orphan, None, "idle", true).movable, "open_elsewhere");
+        assert_eq!(moves(&orphan, None, "idle", false).movable, "now");
+        assert!(lstart_rfc3339("Sun Nov 1 03:55:44 2026").is_some());
+        assert!(lstart_rfc3339("not a date").is_none());
     }
 }
 

@@ -34,6 +34,7 @@ use axum::{
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,6 +43,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use crate::terminal_list::{validate_env, TerminalRecord, TerminalRecords};
 use crate::AppState;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,6 +146,9 @@ pub struct TerminalSessionStore {
     socket: Arc<Mutex<Option<PathBuf>>>,
     /// The `allternit-factory` binary (`None`: resolved by [`factory_bin`]).
     bin: Option<PathBuf>,
+    /// What this API created (title, command, cwd, time), which the engine's
+    /// terminal info lacks. Read by `GET /list`.
+    pub(crate) records: TerminalRecords,
 }
 
 impl Default for TerminalSessionStore {
@@ -160,6 +165,7 @@ impl TerminalSessionStore {
         Self {
             socket: Arc::new(Mutex::new(preset)),
             bin: None,
+            records: Default::default(),
         }
     }
 
@@ -168,6 +174,7 @@ impl TerminalSessionStore {
         Self {
             socket: Arc::new(Mutex::new(Some(path))),
             bin: Some(bin),
+            records: Default::default(),
         }
     }
 
@@ -318,6 +325,17 @@ pub struct CreateTerminalRequest {
     pub cols: u16,
     #[serde(default = "default_rows")]
     pub rows: u16,
+    /// Run this program instead of the shell (with `args`).
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Added to the terminal's environment, over `TERM`/`COLORTERM`.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// The terminal's name in `GET /list` and the agent wall.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -360,7 +378,7 @@ fn err_response(status: StatusCode, message: String) -> (StatusCode, Json<Termin
     )
 }
 
-fn pane_err(err: PaneError) -> (StatusCode, Json<TerminalMessageResponse>) {
+pub(crate) fn pane_err(err: PaneError) -> (StatusCode, Json<TerminalMessageResponse>) {
     let status = err.status();
     err_response(status, err.message())
 }
@@ -412,6 +430,7 @@ where
 {
     Router::new()
         .route("/create", post(create_terminal))
+        .route("/list", get(crate::terminal_list::list_terminals))
         .route("/:session_id/input", post(terminal_input))
         .route("/:session_id/close", post(terminal_close))
         .route("/:session_id/resize", post(terminal_resize))
@@ -422,33 +441,115 @@ async fn create_terminal(
     State(store): State<TerminalSessionStore>,
     Json(request): Json<CreateTerminalRequest>,
 ) -> impl IntoResponse {
+    match create_with(&store, request, None).await {
+        Ok(session_id) => {
+            debug!(%session_id, "Terminal session created (factory pane)");
+            ok("Terminal session created", Some(json!({ "session_id": session_id })))
+        }
+        Err(err) => err,
+    }
+}
+
+/// Create a terminal (what `POST /create` does) and return its id. `shown`: the command
+/// `GET /list` reports when the launched argv wraps it (adopt runs the agent through the
+/// user's login shell).
+pub(crate) async fn create_with(
+    store: &TerminalSessionStore,
+    request: CreateTerminalRequest,
+    shown: Option<Vec<String>>,
+) -> Result<String, (StatusCode, Json<TerminalMessageResponse>)> {
+    if let Err(message) = validate_env(&request.env) {
+        return Err(err_response(StatusCode::BAD_REQUEST, message));
+    }
     let session_id = Uuid::new_v4().to_string();
     let cwd = request.cwd.clone().or_else(|| {
         std::env::current_dir()
             .ok()
             .map(|p| p.to_string_lossy().into_owned())
     });
-    let created = store
+    let program = request
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
+    let custom_command = program.is_some();
+    let argv: Vec<String> = match program {
+        Some(program) => std::iter::once(program.to_string())
+            .chain(request.args.iter().cloned())
+            .collect(),
+        None => shell_command(&request.shell),
+    };
+    let title = request
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string);
+    // Browser shells need a real terminal type whatever the engine inherited
+    // (an engine started from a service can have TERM=dumb); the caller's env
+    // goes over it.
+    let mut env: HashMap<String, String> = HashMap::from([
+        ("TERM".to_string(), "xterm-256color".to_string()),
+        ("COLORTERM".to_string(), "truecolor".to_string()),
+    ]);
+    env.extend(request.env.clone());
+    store
         .request(
             "factory.terminal.create",
             json!({
                 "terminal_id": session_id,
+                "label": title,
                 "cwd": cwd,
                 "cols": request.cols,
                 "rows": request.rows,
-                "command": shell_command(&request.shell),
-                // Browser shells need a real terminal type whatever the
-                // engine inherited (an engine started from a service can
-                // have TERM=dumb).
-                "env": { "TERM": "xterm-256color", "COLORTERM": "truecolor" },
+                "command": argv,
+                "env": env,
             }),
         )
-        .await;
-    if let Err(err) = created {
-        return pane_err(err);
+        .await
+        .map_err(pane_err)?;
+    store
+        .records
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(
+            session_id.clone(),
+            TerminalRecord {
+                title,
+                command: shown.unwrap_or(argv),
+                cwd,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                custom_command,
+            },
+        );
+    Ok(session_id)
+}
+
+/// The user's login shell, for running an agent command with the PATH their own
+/// terminal has (`$SHELL`, else zsh).
+pub(crate) fn login_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|p| p.starts_with('/') && std::path::Path::new(p).exists())
+        .unwrap_or_else(|| "/bin/zsh".to_string())
+}
+
+/// A create request that runs `argv` in `cwd` through the user's login shell
+/// (`$SHELL -lc 'exec "$0" "$@"' argv…`: no quoting, the agent replaces the
+/// shell, so the terminal's pid is the agent's).
+pub(crate) fn agent_request(argv: &[String], cwd: &str, title: &str, cols: u16, rows: u16) -> CreateTerminalRequest {
+    let mut args = vec!["-lc".to_string(), r#"exec "$0" "$@""#.to_string()];
+    args.extend(argv.iter().cloned());
+    CreateTerminalRequest {
+        shell: String::new(),
+        cwd: Some(cwd.to_string()),
+        cols,
+        rows,
+        command: Some(login_shell()),
+        args,
+        env: HashMap::new(),
+        title: Some(title.to_string()),
     }
-    debug!(%session_id, "Terminal session created (factory pane)");
-    ok("Terminal session created", Some(json!({ "session_id": session_id })))
 }
 
 async fn terminal_input(
@@ -504,11 +605,78 @@ async fn terminal_resize(
     }
 }
 
+/// `POST /:id/close` body (optional; old clients send none).
+#[derive(Debug, Default, Deserialize)]
+pub struct TerminalCloseRequest {
+    /// Ask the terminal's program to quit (SIGTERM, up to 10 s) before the
+    /// pane closes. Only for a terminal created with a `command`; a shell
+    /// closes as before. Never SIGKILL.
+    #[serde(default)]
+    pub graceful: bool,
+}
+
+const GRACEFUL_WAIT: Duration = Duration::from_secs(10);
+
+/// The engine's view of a terminal: `(running, pid)`.
+async fn terminal_proc(store: &TerminalSessionStore, session_id: &str) -> Option<(bool, Option<u32>)> {
+    let got = store
+        .request("factory.terminal.get", json!({ "terminal_id": session_id }))
+        .await
+        .ok()?;
+    let t = &got["terminal"];
+    Some((
+        t["running"].as_bool().unwrap_or(false),
+        t["pid"].as_u64().and_then(|p| u32::try_from(p).ok()),
+    ))
+}
+
+/// SIGTERM the program of a terminal this API started with a `command`, and
+/// wait up to 10 s for the engine to report it exited. The pid is the
+/// engine's own child, read again right before the signal.
+async fn stop_program(store: &TerminalSessionStore, session_id: &str) {
+    let custom = store
+        .records
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(session_id)
+        .is_some_and(|r| r.custom_command);
+    if !custom {
+        return;
+    }
+    let Some((true, Some(pid))) = terminal_proc(store, session_id).await else { return };
+    #[cfg(unix)]
+    {
+        // SAFETY: plain SIGTERM to the terminal's own running program.
+        let r = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        if r != 0 {
+            return;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        return;
+    }
+    let deadline = tokio::time::Instant::now() + GRACEFUL_WAIT;
+    while tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        match terminal_proc(store, session_id).await {
+            Some((true, Some(p))) if p == pid => continue,
+            _ => return,
+        }
+    }
+    warn!(%session_id, pid, "terminal program did not exit within 10 s of SIGTERM; closing the pane");
+}
+
 async fn terminal_close(
     State(store): State<TerminalSessionStore>,
     Path(session_id): Path<String>,
+    body: Option<Json<TerminalCloseRequest>>,
 ) -> impl IntoResponse {
     if valid_session_id(&session_id) {
+        if body.is_some_and(|Json(b)| b.graceful) {
+            stop_program(&store, &session_id).await;
+        }
         match store
             .request("factory.terminal.close", json!({ "terminal_id": session_id }))
             .await
@@ -919,5 +1087,26 @@ mod tests {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["success"], false);
         assert!(body["message"].as_str().unwrap().contains("pane engine"), "{body}");
+    }
+}
+
+#[cfg(test)]
+mod list_route_tests {
+    use super::*;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    /// `GET /list` is its own route, not a session id: with the engine down it
+    /// reaches the engine call (503 JSON) instead of falling through to a 404.
+    #[tokio::test]
+    async fn terminal_list_route() {
+        let dir = std::env::temp_dir().join(format!("terminal-list-route-{}", Uuid::new_v4()));
+        let store = TerminalSessionStore::with_socket(dir.join("absent.sock"), dir.join("no-allternit-factory"));
+        let app: Router = routes().with_state(store);
+        let resp = app
+            .oneshot(Request::get("/list?preview=16").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }
