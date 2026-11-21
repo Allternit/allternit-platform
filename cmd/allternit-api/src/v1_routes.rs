@@ -2005,11 +2005,16 @@ async fn agent_chat_bridge(
     } else {
         Some(format!("{}/{}", agent.provider, agent.model))
     };
+    // A plain chat on a runtime: its stored brain (or the runtime CLI's
+    // default) before the agent/default fallbacks.
+    let runtime_label = crate::agent_session_routes::plain_runtime_turn_model(&state.db, &chat_id, None, None)
+        .map(|(p, m)| format!("{p}/{m}"));
     let Some(raw_model) = body_json
         .get("runtimeModelId")
         .or_else(|| body_json.get("modelId"))
         .and_then(|v| v.as_str())
         .filter(|v| !v.trim().is_empty())
+        .or(runtime_label.as_deref())
         .or(agent_model_label.as_deref())
         .or(default_label.as_deref())
         // Frontend model ids use the `provider::model` convention; the runtime
@@ -2030,6 +2035,24 @@ async fn agent_chat_bridge(
     let model_id = match crate::cli_catalog::find(&provider_id) {
         Some(tool) => tool.current_model_id(&model_id).to_string(),
         None => model_id,
+    };
+    // A plain chat created on a runtime (`metadata.botBrain` / `runtime`,
+    // Harness & Bots 2.0) runs every turn on that runtime's CLI. A model the
+    // client sent is kept when that CLI runs it; with none sent, the session's
+    // stored brain wins over the agent/default fallback above.
+    let client_sent_model = body_json
+        .get("runtimeModelId")
+        .or_else(|| body_json.get("modelId"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.trim().is_empty());
+    let (provider_id, model_id) = match crate::agent_session_routes::plain_runtime_turn_model(
+        &state.db,
+        &chat_id,
+        client_sent_model.then_some(provider_id.as_str()),
+        client_sent_model.then_some(model_id.as_str()),
+    ) {
+        Some(pair) => pair,
+        None => (provider_id, model_id),
     };
 
     let gizzi = gizzi_base();
