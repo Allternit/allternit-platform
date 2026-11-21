@@ -1479,9 +1479,11 @@ mod tests {
         assert!(rule.contains(&format!("{LINUX_HELPER} clean apt-cache")));
         assert!(rule.contains(&format!("{LINUX_HELPER} service stop *")));
         assert!(!rule.contains("docker-prune"), "only admin clean-up items");
+        // Comment lines may tell the user how to uninstall; only rule lines grant anything.
+        let granted: String = rule.lines().filter(|l| !l.trim_start().starts_with('#')).collect::<Vec<_>>().join("\n");
         assert!(
-            !rule.contains(&format!("{LINUX_HELPER} install"))
-                && !rule.contains(&format!("{LINUX_HELPER} uninstall")),
+            !granted.contains(&format!("{LINUX_HELPER} install"))
+                && !granted.contains(&format!("{LINUX_HELPER} uninstall")),
             "setup itself is never passwordless"
         );
         assert!(!rule.contains("ALL=(ALL)") && !rule.contains("NOPASSWD: ALL\n"));
