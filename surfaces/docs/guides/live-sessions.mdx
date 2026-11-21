@@ -1,9 +1,9 @@
 ---
 title: "Live agent sessions"
-description: "See every Claude Code, Codex and Factory pane session running on your computer, what each is doing, and how a message can reach it."
+description: "See every Claude Code, Codex, Kimi, Grok, Antigravity, Gizzi, OpenCode, Qwen and Factory pane session running on your computer, what each is doing, which apps hold it, and whether it can move into Allternit."
 ---
 
-A live session is an agent running in a terminal on your computer: Claude Code, Codex, Gemini, Cursor, Copilot, OpenCode, Pi, or a Factory pane. Allternit lists them with a one-line status that costs no tokens, so you can tell what each one is working on without opening it.
+A live session is an agent running in a terminal on your computer: Claude Code, Codex, Kimi, Grok, Antigravity (`agy`), Gizzi, OpenCode, Qwen, Gemini, Cursor, Copilot, Pi, or a Factory pane. Allternit lists them with a one-line status that costs no tokens, so you can tell what each one is working on without opening it.
 
 ## List your sessions
 
@@ -11,10 +11,12 @@ A live session is an agent running in a terminal on your computer: Claude Code, 
 gizzi agents sessions
 ```
 
-Each row shows the address, `busy` or `idle`, the delivery tier, the repo and branch, and what the session is doing. Add `--json` for the full record.
+Each row shows the address, `busy` or `idle`, the delivery tier, whether it can move into Allternit (`movable`), how many live processes hold it, the repo and branch, and what the session is doing. Add `--json` for the full record.
 
 ```
-eoj/allternit-claude   busy    push  Allternit/allternit-platform@main  · Auth refresh rework · Running tests
+eoj/allternit-claude   busy    push  busy           1 holder  Allternit/allternit-platform@main  · Auth refresh rework · Running tests
+eoj/joe-claude         idle    pull  now            1 holder  joe
+eoj/web-codex          idle    push  open_elsewhere 2 holders Allternit/allternit-ai@main
 ```
 
 If nothing is running, the command says so. It never invents a session.
@@ -29,6 +31,30 @@ If nothing is running, the command says so. It never invents a session.
 | `tier` | How a message reaches it: `push` (into the running turn), `turn` (at its next hook) or `pull` (when it checks its inbox). |
 | `repo`, `branch` | Read from git in the session's folder. |
 | `cwd` | The folder name only. |
+| `holders` | Every live process holding this session id: `pid`, `app` (`Terminal`, `iTerm2`, `Allternit`, `Ghostty` or `other`, read from the process's parent chain; a Factory pane is `Allternit`), and when known `paneId`, `tty` and `startedAt` (the OS start time of the process). Two holders means the session is open in two places. |
+| `movable` | Whether it can move into Allternit: `now` (one holder outside Allternit, idle, and the harness can resume it by id), `busy` (mid-turn: wait for it), `open_elsewhere` (more than one live holder, so it is refused: only one process may write to a session), `no_resume` (the harness cannot resume by id, or no session id was found; it can still open a new session here), `here` (already in an Allternit pane). |
+| `carriedFlags` | The flags the outside holder was started with that a move keeps, such as `--dangerously-skip-permissions` or `--model opus`. Resume, continue, session, fork and one-shot print flags, ids and prompt text are left out. Never sent to the cloud. |
+| `canCopy` | The harness can fork this session into a new one. |
+| `external` | A holder runs outside Allternit. |
+
+## Holders and moving a session
+
+One session id should have one writer. Allternit groups every live process by harness and session id, so a session opened in Terminal and again in a pane shows once, with two holders, as `open_elsewhere`.
+
+How each harness's processes map to a session id, cheapest reliable source first (the id on its command line always wins):
+
+| Harness | Process | Session id from | Move command | Copy command |
+|---|---|---|---|---|
+| Claude Code | `claude` | `~/.claude/sessions/<pid>.json` | `claude --resume <id>` | `+ --fork-session` |
+| Codex | `codex` | the rollout file it holds open, else the newest rollout for its folder (`~/.codex/sessions`) | `codex resume <id>` | `codex fork <id>` |
+| Kimi | `kimi-code` | `~/.kimi-code/locks/sessions/<id>.lock` (holds the pid) | `kimi --session <id>` | `kimi fork <id>` |
+| Grok | `grok` | `~/.grok/active_sessions.json`, else the newest in `~/.grok/sessions/<folder>` | `grok --resume <id>` | `+ --fork-session` |
+| Antigravity | `agy` | the `presence/<id>.lock` it holds open | `agy --conversation <id>` | none |
+| Gizzi | `gizzi-code` | the transcript it holds open, else the newest in `~/.gizzi/projects/<folder>` | `gizzi --session <id>` | `+ --fork` |
+| OpenCode | `opencode` | the newest session for its folder in `opencode.db` | `opencode --session <id>` | `+ --fork` |
+| Qwen | `qwen` | none | none (`no_resume`) | none |
+
+Carried flags go right after the command name. The table lives in one place, `factory/engine/src/agents/harness_table.rs`; clients read only `movable`, `carriedFlags` and `canCopy`. Listing sessions never signals, writes to or types into a process: it reads the process table (`ps`), each process's argv and folder, and for Codex, Gizzi and Antigravity the files it holds open (`lsof`), each with a short timeout.
 
 ## How `doing` is worked out
 
@@ -50,6 +76,7 @@ Only the folder name leaves your computer, not the full path. To share full path
 
 ## For developers
 
-- Engine: `GET /api/factory/sessions` returns the array of sessions. allternit-api serves the same list at `GET /api/v1/live-sessions` behind your sign-in. If the Factory engine is not running it answers `502` with a `transport` error.
-- Heartbeat: the 60-second runtime presence heartbeat carries `sessions` (up to 100), so the cloud can show your sessions to your team.
+- Engine: `GET /api/factory/sessions` returns the array of sessions. allternit-api serves the same list at `GET /api/v1/live-sessions` behind your sign-in. If the Factory engine is not running, allternit-api runs the same discovery itself (session files and the process table), so every session and its holders still show; only pane-only entries (a pane with no agent process found) need the engine. It answers `502` with a `transport` error only if that fails too.
+- The new fields (`holders`, `carriedFlags`, `canCopy`, `movable`, `external`) are additive. An older runtime leaves them out; treat a missing `movable` as "this runtime cannot move sessions" and hide the move controls.
+- Heartbeat: the 60-second runtime presence heartbeat carries `sessions` (up to 100), so the cloud can show your sessions to your team. `carriedFlags` is removed first.
 - Hooks: sessions that only report through Gizzi hooks are read from `~/.allternit/live-sessions/hooks.json` and listed while their last hook is under 10 minutes old.

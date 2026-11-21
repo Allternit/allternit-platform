@@ -363,7 +363,22 @@ pub fn sessions_cmd(ctx: &Ctx) -> u8 {
             (Some(r), None) => r.clone(),
             _ => s.cwd.clone(),
         };
-        println!("{:<28} {:<7} {:<5} {}{}", s.address, s.status, s.tier, place, s.doing.as_deref().map(|d| format!("  · {d}")).unwrap_or_default());
+        // `movable` (now, busy, open_elsewhere, no_resume, here) and how many live processes hold the session.
+        let holders = match s.holders.len() {
+            1 => "1 holder".to_string(),
+            n => format!("{n} holders"),
+        };
+        let movable = if s.movable.is_empty() { "-" } else { s.movable.as_str() };
+        println!(
+            "{:<28} {:<7} {:<5} {:<14} {:<9} {}{}",
+            s.address,
+            s.status,
+            s.tier,
+            movable,
+            holders,
+            place,
+            s.doing.as_deref().map(|d| format!("  · {d}")).unwrap_or_default()
+        );
     }
     0
 }
