@@ -11,6 +11,32 @@ The frame sends `allternit:workspace:ready` to its parent. The host sends `{ typ
 
 The renewal accepts roster messages only inside an embed, from `window.parent`, at an allowed Allternit, local-development or desktop origin. Sibling windows cannot replace the roster. The accepted parent origin becomes the destination for actions; opaque desktop origins require `*` after parent validation. The initial ready message contains no account data.
 
+## Frame contract v2
+
+The Workspace frame (`?embed=workspace`) sends `allternit:workspace:ready` with `v: 2` and `caps: ["pods", "bubbles", "beams", "anchors", "focus", "needs"]`. A ready message with no `v` comes from a v1 frame. The contract is additive: a host turns on each feature only when its cap is listed, and a v2 frame still accepts a v1 roster.
+
+**Roster fields.** `allternit:workspace` adds:
+
+- `v: 2`.
+- `pods[]` (12 at most): `id`, `name` (40 characters at most), `color` (`#rrggbb`) and `kind` (`project`, `team` or `chief`). Each bot adds `pod`.
+- Per bot `needs`: `kind` (`approval`, `question` or `suggestion`) and `count`. The frame draws a badge.
+- `bubbles[]` (8 at most): `id`, `botId`, `kind` (`result` or `done`), `text` (120 characters at most) and `at`.
+- A handoff `label` (60 characters at most).
+
+**Focus.** `allternit:workspace:focus` carries `botId`, `podId` or `null`, and an `inset` of `top`, `right`, `bottom` and `left`. The camera frames the target inside the area the host panel does not cover.
+
+**Anchors.** `allternit:workspace:anchors` carries `v: 2` and `items[]` of `botId`, `x`, `y`, `w`, `h` and `visible`, in frame CSS pixels. The frame sends it only for bots with needs and the selected bot, on change, at most 10 times a second. A desktop host can place its own card over the bot. Phone and native hosts do not use anchors.
+
+**Pod action.** `allternit:workspace:action` adds `pod` with `podId`, sent when a pod is chosen. `answer`, `open`, `select` and `hire` are unchanged.
+
+**Caps gating.** A host that sees no `pods` cap keeps the v1 roster. A host that sees no `anchors` cap does not wait for rectangles. Version skew is expected, because the frame deploys on its own and apps ship by release.
+
+**The frame never approves.** The frame sends no approve or deny. Approvals stay in the host app, which uses its existing approval routes. Origin checks and text cleaning are unchanged.
+
+**The Workspace's own scene.** The Workspace and public floors load a separate scene with its own chunk. They do not mount the campus, so the 3D Workspace starts without loading any district. The full facility keeps the campus.
+
+The routes that supply pods, needs and events are in the [Floor API](/api/floor).
+
 ## Actions and state
 
 `{ type: "allternit:workspace:action", action: "answer" | "open", botId }` returns to the parent only after a valid roster is received, for a bot still on that roster. Both actions open host UI. The frame never approves a permission request. Live handoffs require existing endpoints and are deduplicated while in flight.
