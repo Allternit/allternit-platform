@@ -2548,7 +2548,7 @@
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs/guides/local-vendor-bots.mdx",
+        "allternit/surfaces/docs/guides/local-connected-bots.mdx",
         "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
         "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
@@ -3935,7 +3935,7 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/worker-bots.mdx",
-        "allternit/surfaces/docs/guides/connect-vendor-from-chat.mdx",
+        "allternit/surfaces/docs/guides/connect-from-chat.mdx",
         "allternit/cmd/allternit-api/migrations/V282__bot_owns.sql"
       ],
       "decisions": [
