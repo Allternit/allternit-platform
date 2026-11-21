@@ -271,6 +271,11 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
                 }
             }
             agent.error?.let { ErrorLine(it) }
+            agent.banner?.let { b ->
+                // Chip-save answers (not-installed warning, 422 refusal) fade out on their own after a while.
+                LaunchedEffect(b.id) { kotlinx.coroutines.delay(8_000); if (agent.banner?.id == b.id) agent.banner = null }
+                ChipSaveBanner(b.message, warn = b.warn) { agent.banner = null }
+            }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (deck) {
                     DeckTab.Thread -> {
@@ -592,5 +597,24 @@ private fun Chip(title: String, onRemove: () -> Unit) {
     Row(Modifier.clip(CircleShape).background(c.fillNeutral).padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, color = c.textPrimary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
         LibraryIconButton(com.allternit.core.design.R.drawable.ph_x, "Remove $title", iconSize = 12, onClick = onRemove)
+    }
+}
+
+/** Chip-save banner in the bot chat, drawn like feature:chat TransientBanner (iOS TransientErrorBanner). */
+@Composable
+private fun ChipSaveBanner(message: String, warn: Boolean, onDismiss: () -> Unit) {
+    val c = AllternitTheme.colors
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral)
+            .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp).testTag("botChipSaveBanner"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            painterResource(com.allternit.core.design.R.drawable.ph_warning), contentDescription = null,
+            tint = if (warn) AllternitStatic.StatusWarning else AllternitStatic.StatusError, modifier = Modifier.size(14.dp),
+        )
+        Text(message, color = c.textPrimary, fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        LibraryIconButton(com.allternit.core.design.R.drawable.ph_x, "Dismiss", iconSize = 12, onClick = onDismiss)
     }
 }

@@ -56,11 +56,16 @@ import com.allternit.core.design.R as DesignR
  * saves the whole config back (`PATCH agents/:id`, every other key kept); a brain pick also sets the
  * agent's top-level model/provider like BotBrainPickerSheet. A failed save puts the old config back.
  */
+/** One chip-save banner; [id] makes a repeat of the same text show again. */
+data class ChipBanner(val message: String, val warn: Boolean, val id: Long = System.nanoTime())
+
 class BotAgentState internal constructor(val bot: BotRecord, private val scope: CoroutineScope, val onOpenBot: (String) -> Unit) {
     var config by mutableStateOf(bot.config)
         private set
     var note by mutableStateOf<String?>(null)
     var error by mutableStateOf<String?>(null)
+    /** A save answer for the bot chat banner: the not-installed warning or a 422 refusal. */
+    var banner by mutableStateOf<ChipBanner?>(null)
     var vendor by mutableStateOf(bot.vendorName())
         private set
     var connected by mutableStateOf(bot.isConnected)
@@ -85,6 +90,7 @@ class BotAgentState internal constructor(val bot: BotRecord, private val scope: 
         config = mergedConfig(old, change)
         note = change.note
         error = null
+        banner = null
         val ref = change.botBrain["modelRef"] as? JsonObject
         val body = buildJsonObject {
             put("config", config)
@@ -92,9 +98,13 @@ class BotAgentState internal constructor(val bot: BotRecord, private val scope: 
         }
         scope.launch {
             when (val r = BotsApi.updateAgentSaved(bot.id, body)) {
-                // A runtime-not-installed warning keeps the save and is shown with the switch note.
-                is BotsResult.Ok -> r.value.takeIf { it.isNotEmpty() }?.let { w -> note = (listOfNotNull(note) + w).joinToString(" ") }
-                is BotsResult.Failed -> { config = old; note = null; error = if (r.isRuntimeRefusal) r.message else "Couldn't save the change. ${r.message}" }
+                // A runtime-not-installed warning keeps the save; the bot chat shows it as a banner.
+                is BotsResult.Ok -> r.value.takeIf { it.isNotEmpty() }?.let { w -> banner = ChipBanner(w.joinToString(" "), warn = true) }
+                is BotsResult.Failed -> {
+                    config = old; note = null
+                    // A runtime-rule refusal (422) is the server's own sentence, shown the same way.
+                    if (r.isRuntimeRefusal) banner = ChipBanner(r.message, warn = false) else error = "Couldn't save the change. ${r.message}"
+                }
             }
         }
     }
