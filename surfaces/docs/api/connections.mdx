@@ -1,6 +1,6 @@
 ---
 title: Connections API
-description: "GET /api/v1/connections on cloud-api and on a computer's runtime, the connect, submit, login and remove actions, the login object, the plan runner rows, the disclosure_required step, plan model chat and its refusals, reason codes, and the older endpoints behind Settings → Connections."
+description: "GET /api/v1/connections on cloud-api and on a computer's runtime, the GET /api/v1/connections/catalog \"More\" list, the connect, submit, login and remove actions, the login object, the plan runner rows, the disclosure_required step, plan model chat and its refusals, reason codes, and the older endpoints behind Settings → Connections."
 ---
 
 Settings → Connections ([user guide](/guides/connections)) is built from one list of rows. Two servers answer it, and the app merges the answers. This page is the contract (version 1). To add a row, see [Add a connection](/build-on-allternit/add-a-connection). Older endpoints that still back parts of the page are in [Older endpoints and Desktop bridge](#older-endpoints-and-desktop-bridge).
@@ -83,6 +83,68 @@ Coding tools and the local brain are `available: false` on cloud-api when no com
 | `chatgpt` | Codex signed in on this computer. `found` is the plan when known. |
 | `local` | Ollama or the local brain |
 | Voice and inference keys saved on the computer | Keys stored on this computer |
+
+
+## GET /api/v1/connections/catalog
+
+The "More" list in Settings → Connections: brains and apps you can add beyond the rows the page always shows. Served by **cloud-api** only, so it answers with no computer. Session auth only, as for `GET /api/v1/connections`: a platform API key gets `403`, no session gets `401`. The web app sends `X-Allternit-Route: cloud`.
+
+Query parameters (all optional):
+
+| Parameter | Meaning |
+|---|---|
+| `group` | One of `brains`, `computers`, `phones`, `tools`, `voice`, `apps`, `channels`. Omitted: every group, in that order. Anything else is `400`. |
+| `q` | Search text. Trimmed, lowercased and cut to 64 characters. Matches rank: name starts with `q`, then name contains `q`, then category or blurb contains `q`. Ties sort by name. |
+| `limit` | Entries per page. Default `24`, clamped to `0`–`60`. `limit=0` returns only `total` and `counts`, with `entries: []`. |
+| `cursor` | The `next_cursor` of the previous page. Treat it as opaque. |
+
+```json
+{
+  "version": 1,
+  "group": "apps",
+  "q": "air",
+  "total": 37,
+  "next_cursor": "24",
+  "counts": { "brains": 0, "computers": 0, "phones": 0, "tools": 0, "voice": 0, "apps": 37, "channels": 0 },
+  "entries": [{
+    "id": "airtable",
+    "group": "apps",
+    "name": "Airtable",
+    "blurb": "Project management",
+    "category": "Project management",
+    "ways": ["oauth"],
+    "runs_on": "computer",
+    "connector_id": "airtable",
+    "key_page": null,
+    "logo": null,
+    "available": false,
+    "unavailable_reason": "Runs on a computer.",
+    "fallbacks": ["this-mac"]
+  }]
+}
+```
+
+- `group` is `null` when the request had none; `q` is `null` when it was empty.
+- `total` counts the entries that match `q` and `group`. `counts` gives every group's total after `q`, ignoring `group`, so one `limit=0` call tells a client which groups have a More tile.
+- `next_cursor` is `null` on the last page (and always with `limit=0`).
+- A page is sent with `Cache-Control: private, max-age=300`.
+
+**Sources (v1):**
+
+- **brains:** one entry per cloud key row (`openai-key`, `anthropic-key`, `google-key`, `xai-key`, `together-key`, `fireworks-key`, `deepinfra-key`, `groq-key`, `deepseek-key`, `kimi-key`, `openrouter-key`). Name "`Vendor` key", blurb "Your own API key", `ways: ["paste"]`, `runs_on: "server"`, `key_page` set, always `available`. Connect opens the key sheet and submits to `POST /api/v1/connections/{id}/submit`.
+- **apps:** the connector snapshot committed in cloud-api (`cmd/allternit-cloud-api/src/services/connections_catalog_apps.json`, made by `services/open-connector/scripts/export-directory.ts`). `connector_id` equals `id`. Apps signed in with a key or custom credential have `ways: ["paste"]`; every other app (OAuth, Composio, no sign-in) has `ways: ["oauth"]`. An empty blurb is the category. Apps run on a computer: while the account has a computer online they are `available: true`; otherwise `available: false`, `unavailable_reason: "Runs on a computer."`, `fallbacks: ["this-mac"]`. Connect goes to `/api/v1/connectors/{connector_id}/connect` on the gateway.
+- **computers, phones, tools, voice, channels:** empty. Every id in those groups is already a row on the page.
+
+The catalog never lists an id the page already shows as a row (Gmail, Google Drive, Slack, GitHub, Notion, Telegram, WhatsApp, Discord, the coding tools and so on), and `catalog` is a reserved connection id. Clients also hide entries whose first way they can't run and entries already on the page. An entry connected from More is promoted into its group's main list as a normal row. If the call fails, clients hide the More tiles.
+
+Errors:
+
+| Status | Body | When |
+|---|---|---|
+| `400` | `{"error": "unknown_group"}` | `group` is not one of the seven groups |
+| `400` | `{"error": "bad_cursor"}` | `cursor` is not a value this endpoint gave out |
+| `401` | | No session |
+| `403` | | A platform API key or another API token |
 
 ## Actions
 

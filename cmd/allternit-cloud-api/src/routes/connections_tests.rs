@@ -44,6 +44,57 @@ async fn needs_a_session_and_refuses_api_tokens() {
     assert_eq!(status, StatusCode::FORBIDDEN, "API tokens never reach the rows");
 }
 
+/// `GET /catalog` (contract 11): session only, matched before `:id`, its
+/// 400s, and the private 5-minute cache on a page. `group=brains` and
+/// `limit=0` never read the database. Ranking and paging are unit-tested in
+/// services::connections_catalog.
+#[tokio::test]
+async fn catalog_needs_a_session_refuses_api_tokens_and_caches() {
+    let _guard = DEV_TOKEN_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+    let router = routes().with_state(state);
+    let (status, _) = send(&router, "GET", "/api/v1/connections/catalog", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    std::env::set_var(ALLOW_DEV_TOKEN_ENV, "true");
+    let (status, _) =
+        send(&router, "GET", "/api/v1/connections/catalog", Some(("authorization", "Bearer dev-api-token")), None).await;
+    std::env::remove_var(ALLOW_DEV_TOKEN_ENV);
+    assert_eq!(status, StatusCode::FORBIDDEN, "API tokens never reach the catalog");
+
+    let session = Some(("x-test-session-user", "user_catalog"));
+    let req = Request::builder()
+        .uri("/api/v1/connections/catalog?group=brains&limit=60")
+        .header("x-test-session-user", "user_catalog")
+        .body(Body::empty())
+        .unwrap();
+    let response = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get(header::CACHE_CONTROL).unwrap(), "private, max-age=300");
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!((body["version"].as_u64(), body["group"].as_str()), (Some(1), Some("brains")));
+    let entries = body["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), crate::services::connections_catalog::brain_key_count());
+    assert!(entries.iter().all(|e| e["group"] == "brains" && e["ways"] == serde_json::json!(["paste"])));
+    assert_eq!(body["next_cursor"], Value::Null);
+
+    let (status, body) = send(&router, "GET", "/api/v1/connections/catalog?limit=0", session, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["entries"], serde_json::json!([]));
+    assert!(body["counts"]["apps"].as_u64().unwrap() > 1_000, "{}", body["counts"]);
+    for base in ["gmail", "drive", "slack", "github", "notion"] {
+        let (_, found) = send(&router, "GET", &format!("/api/v1/connections/catalog?group=apps&q={base}&limit=60"), session, None).await;
+        if let Some(entries) = found["entries"].as_array() {
+            assert!(entries.iter().all(|e| e["id"] != base), "{base} is a base row");
+        }
+    }
+
+    let (status, body) = send(&router, "GET", "/api/v1/connections/catalog?group=gadgets", session, None).await;
+    assert_eq!((status, body), (StatusCode::BAD_REQUEST, serde_json::json!({ "error": "unknown_group" })));
+    let (status, body) = send(&router, "GET", "/api/v1/connections/catalog?cursor=abc", session, None).await;
+    assert_eq!((status, body), (StatusCode::BAD_REQUEST, serde_json::json!({ "error": "bad_cursor" })));
+}
+
 /// Accepts keys that start with `good`, rejects the rest.
 struct PrefixValidator;
 
