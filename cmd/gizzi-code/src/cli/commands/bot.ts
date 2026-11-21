@@ -35,9 +35,11 @@ import {
 } from "@/runtime/bots/bot-store"
 import { platformRequest } from "@/runtime/bots/platform-api"
 import {
+  allowed,
   fits,
   getRuntime,
   listRuntimes,
+  planRefusal,
   resolveRuntime,
   type AccessKind,
   type BotBrainLike,
@@ -133,16 +135,19 @@ export function runtimeOrThrow(id: string): RuntimeEntry {
 }
 
 /**
- * Whether a brain with this provider id fits the runtime. Besides the
- * registry rule (`fits`), a CLI's own provider id (claude-cli/…, codex-cli/…)
- * fits the runtime built on that CLI.
+ * Whether a brain with this provider id may run on the runtime: the
+ * registry's `allowed` (it fits, and a plan brain only where the runtime's
+ * `plans` list that provider; a runtime's own CLI sign-in always passes).
+ * Kept as a name for callers; the rule lives in runtime-registry.ts.
  */
-/** Kept as a name for callers; the rule lives in the registry's `fits`. */
 export function brainFits(r: RuntimeEntry, provider: string): boolean {
-  return fits(r, provider)
+  return allowed(r, provider)
 }
 
-/** The first brain that fits a vendor-locked runtime: its CLI's default model. */
+/**
+ * The first brain that fits (and is allowed on) a runtime with a CLI: its
+ * CLI's default model, which is the runtime's own sign-in.
+ */
 export function firstFittingBrain(r: RuntimeEntry): string | undefined {
   const tool = r.tool ? CLI_CATALOG.find((t) => t.id === r.tool) : undefined
   const model = tool?.models?.find((m) => m.default) ?? tool?.models?.[0]
@@ -208,7 +213,7 @@ export function applyRuntimeBrain(input: {
   let brain: string | undefined = brainArg !== undefined ? brainArg || undefined : (currentModel ?? undefined)
   let autoSwitchedFrom: string | undefined
   let note: string | undefined
-  if (brain && !brainFits(runtime, brainProvider(brain))) {
+  if (brain && !fits(runtime, brainProvider(brain))) {
     const fallback = firstFittingBrain(runtime)
     const only = runtime.brains === "any" ? "" : runtime.brains.map(providerName).join(" or ")
     if (!fallback) {
@@ -219,6 +224,19 @@ export function applyRuntimeBrain(input: {
     autoSwitchedFrom = brain
     brain = fallback
     note = `${runtime.name} runs ${only} models only, so the brain changed to ${fallback}.`
+  } else if (brain && !brainFits(runtime, brainProvider(brain))) {
+    // It fits, but it is a plan login this runtime may not use (contract:
+    // plan_not_allowed_on_runtime). A brain picked now is refused; a brain
+    // carried over from before switches to the runtime's own CLI model, or is
+    // cleared when the runtime has no CLI of its own.
+    const refusal = planRefusal(runtime, brainProvider(brain)) ?? `${runtime.name} can't use this brain.`
+    if (brainArg) throw new BotStoreError(refusal)
+    const fallback = firstFittingBrain(runtime)
+    autoSwitchedFrom = brain
+    brain = fallback
+    note = fallback
+      ? `${refusal} The brain changed to ${fallback}.`
+      : `${refusal} The brain was cleared; pick one with --brain <provider>/<model>.`
   }
 
   const sameRuntime = prev?.runtime === runtime.id

@@ -988,6 +988,19 @@ async fn create_agent(
     if let Err(err) = validate_agent_against_checklist(&body) {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))).into_response();
     }
+    // Runtime + brain rules, only when the request names a runtime itself.
+    if let Err(rejection) = crate::bot_brain::validate_explicit_runtime(
+        body.config.as_ref(),
+        Some(body.model.as_str()),
+        crate::cli_catalog::runtime_registry(),
+    ) {
+        return (StatusCode::UNPROCESSABLE_ENTITY, Json(rejection.body())).into_response();
+    }
+    let install_warnings = crate::bot_brain::install_warnings(
+        body.config.as_ref(),
+        crate::cli_catalog::runtime_registry(),
+        crate::bot_brain::tool_installed,
+    );
 
     let requested_id: Option<String> = body
         .id
@@ -1198,6 +1211,9 @@ async fn create_agent(
             if let Some(token) = principal_token {
                 // Fabric-transport bearer token — surfaced exactly once.
                 resp["principal_token"] = json!(token);
+            }
+            if !install_warnings.is_empty() {
+                resp["warnings"] = json!(install_warnings);
             }
             (StatusCode::CREATED, Json(resp)).into_response()
         }
@@ -2434,6 +2450,55 @@ fn apply_agent_update(
 }
 
 /// Field-level validation shared by PUT and PATCH.
+/// Runtime + brain rules for PUT/PATCH: only when the request names a runtime
+/// itself AND its runtime or brain differs from the stored record, so an
+/// existing bot that keeps both is never rejected
+/// (`bot_brain::validate_bot_brain_change`).
+async fn check_bot_brain_change(
+    state: &AppState,
+    id: &str,
+    user_id: &str,
+    body: &UpdateAgentBody,
+) -> Result<(), axum::response::Response> {
+    let names_runtime = body
+        .config
+        .as_ref()
+        .and_then(|c| c.get("botBrain"))
+        .and_then(|b| b.get("runtime"))
+        .and_then(|r| r.as_str())
+        .is_some_and(|r| !r.is_empty());
+    if !names_runtime {
+        return Ok(());
+    }
+    let db = state.db.clone();
+    let (id, user_id) = (id.to_string(), user_id.to_string());
+    let stored: Option<(Option<serde_json::Value>, Option<String>)> = tokio::task::spawn_blocking(move || {
+        let conn = db.connect().ok()?;
+        conn.query_row(
+            "SELECT config, model FROM agents WHERE id = ?1 AND user_id = ?2",
+            params![id, user_id],
+            |row| {
+                let raw: Option<String> = row.get(0)?;
+                let model: Option<String> = row.get(1)?;
+                Ok((raw.and_then(|s| serde_json::from_str(&s).ok()), model))
+            },
+        )
+        .ok()
+    })
+    .await
+    .ok()
+    .flatten();
+    let (stored_config, stored_model) = stored.unwrap_or((None, None));
+    crate::bot_brain::validate_bot_brain_change(
+        body.config.as_ref(),
+        body.model.as_deref(),
+        stored_config.as_ref(),
+        stored_model.as_deref(),
+        crate::cli_catalog::runtime_registry(),
+    )
+    .map_err(|rejection| (StatusCode::UNPROCESSABLE_ENTITY, Json(rejection.body())).into_response())
+}
+
 fn validate_agent_update_body(body: &UpdateAgentBody) -> Result<(), axum::response::Response> {
     if let Some(ref name) = body.name {
         if name.trim().len() < 3 {
@@ -2481,6 +2546,14 @@ async fn update_agent(
     if let Err(response) = validate_agent_update_body(&body) {
         return response;
     }
+    if let Err(response) = check_bot_brain_change(&state, &id, &user.user_id, &body).await {
+        return response;
+    }
+    let install_warnings = crate::bot_brain::install_warnings(
+        body.config.as_ref(),
+        crate::cli_catalog::runtime_registry(),
+        crate::bot_brain::tool_installed,
+    );
 
     let db = state.db.clone();
     let user_id = user.user_id;
@@ -2510,7 +2583,11 @@ async fn update_agent(
                 json!({"agent_id": webhook_agent_id, "name": webhook_name}),
             )
             .await;
-            Json(json!({"success": true})).into_response()
+            let mut resp = json!({"success": true});
+            if !install_warnings.is_empty() {
+                resp["warnings"] = json!(install_warnings);
+            }
+            Json(resp).into_response()
         }
         Ok(Err(e)) => {
             warn!("DB error updating agent: {}", e);
@@ -2546,6 +2623,14 @@ async fn patch_agent(
     if let Err(response) = validate_agent_update_body(&body) {
         return response;
     }
+    if let Err(response) = check_bot_brain_change(&state, &id, &user.user_id, &body).await {
+        return response;
+    }
+    let install_warnings = crate::bot_brain::install_warnings(
+        body.config.as_ref(),
+        crate::cli_catalog::runtime_registry(),
+        crate::bot_brain::tool_installed,
+    );
 
     let db = state.db.clone();
     let user_id = user.user_id;
@@ -2577,7 +2662,11 @@ async fn patch_agent(
                 json!({"agent_id": webhook_agent_id, "name": agent.name}),
             )
             .await;
-            Json(json!({"agent": agent})).into_response()
+            let mut resp = json!({"agent": agent});
+            if !install_warnings.is_empty() {
+                resp["warnings"] = json!(install_warnings);
+            }
+            Json(resp).into_response()
         }
         Ok(Err(rusqlite::Error::QueryReturnedNoRows)) => {
             (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response()
