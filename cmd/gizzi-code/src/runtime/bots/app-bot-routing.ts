@@ -158,7 +158,7 @@ export interface AppSuggestResult {
 /** Suggest a task to the user; it waits in status `proposed` until they say go ahead. */
 export async function suggestAppTask(
   sessionID: string,
-  input: { title: string; objective: string; why?: string },
+  input: { title: string; objective: string; why?: string; schedule?: { cron: string; tz: string } },
 ): Promise<AppSuggestResult> {
   return post<AppSuggestResult>("/bot-routing/suggest", { sessionId: sessionID, ...input }, 15_000)
 }
