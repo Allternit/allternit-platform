@@ -107,7 +107,8 @@ internal fun PhoneHeader(
     ) {
         Box(Modifier.width(side), contentAlignment = Alignment.CenterStart) { leading() }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (titleContent != null) Box(Modifier.semantics { heading(); contentDescription = title }) { titleContent() } else Text(
+            // A blank title draws nothing (iOS PhoneHeader `if let title, !title.isEmpty`).
+            if (titleContent != null) Box(Modifier.semantics { heading(); contentDescription = title }) { titleContent() } else if (title.isNotBlank()) Text(
                 text = title,
                 color = c.textPrimary,
                 fontSize = 16.sp,
@@ -173,7 +174,8 @@ internal fun ShellHome(
     var phoneArmed by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         PhoneHeader(
-            title = if (mode == ShellMode.Home) "Allternit" else mode.label,
+            // Home has no header title (Eoj 2026-11-20): the A:// mark on the page is the brand.
+            title = if (mode == ShellMode.Home) "" else mode.label,
             wideSides = mode == ShellMode.Home,
             leading = menuButton,
             trailing = {

@@ -89,7 +89,7 @@ internal fun ChatPage(
         )
     }
 
-    val title = store.sessions.firstOrNull { it.id == chat.currentSessionId }?.title ?: "Allternit"
+    val title = store.sessions.firstOrNull { it.id == chat.currentSessionId }?.title.orEmpty()
     // Wave H2: voice mode (iOS ChatView voiceHost): full screen or the bar over the composer.
     val voiceContext = androidx.compose.ui.platform.LocalContext.current
     val voiceHost = remember(chat) { com.allternit.feature.chat.voice.VoiceHost(voiceContext) }
@@ -174,6 +174,6 @@ internal fun ChatPage(
     }
     }
     if (shareOpen) {
-        ThreadShareSheet(backend = backend, sessionId = chat.currentSessionId, title = title, messages = chat.messages, onDismiss = { shareOpen = false })
+        ThreadShareSheet(backend = backend, sessionId = chat.currentSessionId, title = title.ifEmpty { "Allternit" }, messages = chat.messages, onDismiss = { shareOpen = false })
     }
 }

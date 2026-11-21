@@ -10,6 +10,7 @@ import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -79,8 +80,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -506,11 +509,15 @@ internal fun Composer(
             }
         }
 
-        if (deck != ComposerDeck.None) {
-            ToolsTab(folded = deckFolded) { setDeckFolded(!deckFolded) }
+        // iOS ComposerView: the tab shows only while the band is folded. An open band joins the
+        // card directly (no tab between them); a swipe down on the card folds it.
+        // It leaves at once (no fade) so the opening band is joined to the card from the first frame.
+        AnimatedVisibility(visible = deck != ComposerDeck.None && !deckOpen, enter = fadeIn(), exit = ExitTransition.None) {
+            ToolsTab { setDeckFolded(false) }
         }
         AnimatedVisibility(visible = deckOpen, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             DeckBand(
+                onHide = { setDeckFolded(true) },
                 compact = deck == ComposerDeck.Compact,
                 onMention = { tag -> if (!text.contains(tag)) text = tag + text },
                 onAt = { text += if (text.isEmpty() || text.endsWith(" ")) "@" else " @" },
@@ -713,6 +720,8 @@ private val DeckPluginExtensions = listOf("Allternit for Word", "Allternit for E
  */
 @Composable
 private fun DeckBand(
+    /** With no tab while open, TalkBack folds the band from here (iOS accessibilityAction "Hide tools"). */
+    onHide: () -> Unit,
     compact: Boolean,
     armed: DeckMode?,
     onPickMode: (DeckMode?) -> Unit,
@@ -737,6 +746,7 @@ private fun DeckBand(
             .horizontalScroll(rememberScrollState())
             .heightIn(min = if (compact) 48.dp else 60.dp)
             .padding(start = if (compact) 12.dp else 16.dp, end = if (compact) 12.dp else 16.dp, top = if (compact) 20.dp else 22.dp, bottom = if (compact) 6.dp else 8.dp)
+            .semantics { customActions = listOf(CustomAccessibilityAction("Hide tools") { onHide(); true }) }
             .testTag("composerDeck"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -814,9 +824,13 @@ private fun Modifier.drawBehindOutline(color: Color): Modifier = this.then(
     },
 )
 
-/** The grey "tools" pull tab under the card's bottom-left edge (iOS ComposerToolsTab): the only deck toggle. */
+/**
+ * The grey "tools" pull tab under the card's bottom-left edge (iOS ComposerToolsTab): flat top
+ * joined to the card, rounded bottom corners. It shows only while the deck is folded and unfolds
+ * it; the open band has no tab (swipe down on the card folds it).
+ */
 @Composable
-private fun ToolsTab(folded: Boolean, onClick: () -> Unit) {
+private fun ToolsTab(onClick: () -> Unit) {
     val c = AllternitTheme.colors
     Row(
         modifier = Modifier
@@ -825,15 +839,15 @@ private fun ToolsTab(folded: Boolean, onClick: () -> Unit) {
             .clip(RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp))
             .background(c.fillNeutral)
             .testTag("composerToolsTab")
-            .clickable(role = Role.Button, onClickLabel = if (folded) "Show tools" else "Hide tools", onClick = onClick)
-            .semantics { contentDescription = if (folded) "Show tools" else "Hide tools" }
+            .clickable(role = Role.Button, onClickLabel = "Show tools", onClick = onClick)
+            .semantics { contentDescription = "Show tools" }
             .heightIn(min = 24.dp)
             .widthIn(min = 44.dp)
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
     ) {
-        Icon(painterResource(if (folded) DesignR.drawable.ph_caret_down else DesignR.drawable.ph_caret_up), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(9.dp))
+        Icon(painterResource(DesignR.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(9.dp))
         Text("tools", color = c.textSecondary.copy(alpha = 0.8f), fontSize = 10.sp)
     }
 }
