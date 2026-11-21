@@ -1,13 +1,13 @@
 ---
-title: 'Vendor packs'
-description: 'How a vendor appears inside Allternit: an open MCP App, design tokens, or a look pack'
+title: 'Bot packs'
+description: 'How a connected bot looks inside Allternit: an open MCP App, design tokens, or a look pack. Formerly called vendor packs.'
 ---
 
 <Warning>
-**Preview.** Vendor packs are implemented as a schema, a registry, and a renderer. The registry is in memory and is filled at startup. You link a bot to a pack in the bot's **Look** setting (Edit bot), and bot chat then shows the vendor header. The bot's `vendorPackId` is saved with the rest of its profile. There is no submission path for vendor packs yet. Treat this page as a description of the format, which may change.
+**Preview.** Bot packs are implemented as a schema, a registry, and a renderer. The registry is in memory and is filled at startup. You link a bot to a pack in the bot's **Look** setting (Edit bot), and bot chat then shows the vendor header. The bot's `vendorPackId` is saved with the rest of its profile. There is no submission path for bot packs yet. Treat this page as a description of the format, which may change.
 </Warning>
 
-A vendor pack is a small `vendor-pack.json` file that says how one vendor looks inside Allternit. It has three tiers. The tier is a property of the file, so a pack can move up a tier by editing its JSON.
+A bot pack is a small `vendor-pack.json` file that says how one vendor's [connected bots](/guides/connected-bots) look inside Allternit. This page used to be called Vendor packs. The file name, `vendorPackId` and the code paths keep the `vendor` name. It has three tiers. The tier is a property of the file, so a pack can move up a tier by editing its JSON.
 
 | Tier | Name | What you supply | What Allternit does |
 |------|------|-----------------|---------------------|
@@ -136,7 +136,7 @@ Use real, contrasting colors. Allternit does not adjust a pack for accessibility
 ## Not yet available
 
 - Persisting packs on the server. The registry is in memory.
-- A submission or review flow for vendor packs.
+- A submission or review flow for bot packs.
 - Look-profile fields beyond those listed above, such as approval-card and computer-view styling.
 
 ## Built-in thread looks

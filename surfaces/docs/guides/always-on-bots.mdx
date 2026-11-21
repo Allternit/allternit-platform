@@ -20,7 +20,7 @@ When your computer is asleep or offline, texts and channel messages for the bot 
 
 ## Fallback brain: a vendor session needs a check
 
-A vendor bot (Claude, ChatGPT, Gemini, and others) never switches brains on its own. If its session isn't ready, the bot stops and tells you to sign in again.
+A connected bot (Claude, ChatGPT, Gemini, and others) never switches brains on its own. If its session isn't ready, the bot stops and tells you to sign in again.
 
 If you would rather it keep answering, enter a **fallback brain** as `provider/model`, for example `anthropic/claude-sonnet-5-5`. Then, when the vendor session is not ready, is blocked, or needs you to sign in:
 
@@ -33,7 +33,7 @@ The fallback brain uses your own provider usage, which is billed to you like any
 ## Limits
 
 - Always on moves messages, not a half-finished turn: a turn already running on your computer when it goes offline is not resumed elsewhere.
-- Spoken (voice call) turns on a vendor bot do not use the fallback yet; they stop and tell you.
+- Spoken (voice call) turns on a connected bot do not use the fallback yet; they stop and tell you.
 - Fallback applies to the first message that finds the session not ready. The vendor session still needs your attention under Settings → Connections.
 
 ## For developers

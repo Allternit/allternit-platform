@@ -245,7 +245,7 @@ With a Platform API project key (`Authorization: Bearer alt_live_…`, scopes `p
 
 ## MCP Events (mcp.allternit.com)
 
-The public edge at `https://mcp.allternit.com/mcp` (agents server, scope `agents:read`) and `https://mcp.allternit.com/mcp/bots/<bot id>` (vendor bot connector, scope `bots:act`) supports the MCP Events extension with webhook delivery. Both advertise it in `server/discover` (and in a legacy `initialize` answer):
+The public edge at `https://mcp.allternit.com/mcp` (agents server, scope `agents:read`) and `https://mcp.allternit.com/mcp/bots/<bot id>` (connected bot connector, scope `bots:act`) supports the MCP Events extension with webhook delivery. Both advertise it in `server/discover` (and in a legacy `initialize` answer):
 
 ```json
 "capabilities": { "tools": { "listChanged": false }, "events": { "listChanged": false } }
@@ -263,7 +263,7 @@ The edge answers these itself; your computer doesn't need to be awake. Subscript
 |------|------|------|
 | `-32602` | InvalidParams | Bad arguments, a non-https or private callback URL, or a `whsec_` secret outside 24–64 bytes. |
 | `-32011` | NotFound | The event isn't offered by this server (`data.kind: "event"`). |
-| `-32012` | Forbidden | A vendor bot connector asked for another bot's events. |
+| `-32012` | Forbidden | A connected bot connector asked for another bot's events. |
 | `-32013` | ResourceExhausted | 50 live subscriptions per app and server (`data.limit: "subscriptions"`). |
 | `-32014` | Unsupported | A delivery mode other than `webhook`. |
 | `-32015` | CallbackEndpointError | Your callback didn't pass verification; `data.reason` is `connection_refused`, `timeout`, `tls_error`, `http_4xx`, `http_5xx` or `challenge_failed`. |

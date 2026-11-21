@@ -94,7 +94,7 @@ The payload is the [Web Push](/api/web-push#what-gets-pushed) JSON with `type: "
 | `agent.message.sent` | the bot's name, the session title, or Your agent | the message preview (cut at 200 characters), or `Sent you a message. Open it to read it.` | `agent-msg-<thread or session>` |
 | `call.ended` | `Missed call from <from>` or Call ended | follow-up hint, or `<bot> finished a call with <from> (2 min).` | `call-<id>` |
 | `inbox.item.created` | the item title | its summary | `inbox-<id>` |
-| `vendor.ticket.created` | `New ticket for <bot>` | A vendor bot has work waiting. | `ticket-<id>` |
+| `vendor.ticket.created` | `New ticket for <bot>` | A connected bot has work waiting. | `ticket-<id>` |
 | `subscription.login_needed` | `Sign in to <Provider> again` | `Your <Provider> subscription (<label>) signed out. …` | `login-<loginId>` |
 | `subscription.signed_in` | `<Provider> is signed in again` | `… is working again.` | `login-<loginId>` (replaces the above) |
 | `attention.opened` | Something needs fixing | the item's summary, for example `Morning briefing failed: the bot is signed out.` | `attention-<attentionId>` (a re-notify replaces the earlier one) |

@@ -1,6 +1,6 @@
 ---
 title: The Needs you inbox
-description: "One list of everything across your bots, channels and vendor bots that is waiting on you, with Send, Approve, Reply and Call back right in the list."
+description: "One list of everything across your bots, channels and connected bots that is waiting on you, with Send, Approve, Reply and Call back right in the list."
 ---
 
 Your bots work on their own until something needs a person. The **Needs you** inbox collects all of those moments in one place, for every bot you own, so you don't have to open each bot's phone to find them.
@@ -11,13 +11,13 @@ Your bots work on their own until something needs a person. The **Needs you** in
 |---|---|---|
 | **Email** | A bot wrote an email that waits for your OK before it is sent. | **Send** (or **Don't send**) |
 | **Held message** | A bot wants to post in a channel (Slack, Telegram, …) and your settings ask you first. | **Send** (or **Deny**) |
-| **Approval** | A tool or a vendor bot is asking permission to do something. | **Approve** (or **Deny**) |
+| **Approval** | A tool or a connected bot is asking permission to do something. | **Approve** (or **Deny**) |
 | **Waiting** | A bot's task is waiting on you, or ready for your review. | **Open** / **Review** |
 | **Suggested** | A bot suggests a task you didn't ask for, with its reason. Nothing runs until you answer. See [tasks your bot suggests](/guides/bot-threads#tasks-your-bot-suggests). | **Go ahead** (or **Not now**) |
 | **Missed call** | Someone called a bot's number and nobody picked up, or left a voicemail. | **Call back** |
 | **Unanswered** | A person messaged a bot and nobody has answered for 30 minutes. | **Reply** |
 | **Not delivered** | A message from a bot failed to send, or may not have gone through. | **Open** |
-| **Vendor result** | A vendor bot finished, failed or ran out of time on a ticket you directed. | **Review** |
+| **Vendor result** | A connected bot finished, failed or ran out of time on a ticket you directed. | **Review** |
 | **Needs fixing** | A routine failed or was missed, a routine has no bot, or a run's result could not be saved. A red "urgent" tag means it paused itself or was flagged critical. A "Why" line says where the input came from when that matters. | **Retry** (runs the routine now) or **Open** |
 | **Tool changed** | A tool on a connected MCP server is new, or its description, schema or annotations changed since you approved it. The row names the tool and shows one line of what changed (old and new description, up to 200 characters each). The tool stays out of your bots' tool lists until you approve it. | **Approve tool** |
 | **Draft** | A bot wrote a message but kept it as a draft, because its [autonomy level](/guides/bot-autonomy) on that channel is *Draft only*. | **Review** |

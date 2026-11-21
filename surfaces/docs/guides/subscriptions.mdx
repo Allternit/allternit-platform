@@ -87,7 +87,7 @@ otherwise the picker contains default chat only. Copilot page chat support still
 needs human validation. Hermes profiles and Grok's Bot picker use their existing
 list readers.
 
-Choosing an entry does not create or modify a vendor bot or grant extra quota.
+Choosing an entry does not create or modify a connected bot or grant extra quota.
 Send the first turn yourself, and check that the vendor opened the intended bot
 before relying on its knowledge or instructions. Complete sign-in, verification
 checks, questions and approvals yourself.
@@ -142,7 +142,7 @@ Settings → Connections › Coding tools sets up CLI brains (Claude Code, Codex
    - **OpenCode:** a normal vendor like the others. Sign-in runs `opencode auth login`, which signs OpenCode in to the model providers you pick.
 3. When it says **Connected**, the tool is available as a brain in the model picker.
 
-A bot can also bring up this setup in chat: see [Connect a vendor from chat](/guides/connect-vendor-from-chat).
+A bot can also bring up this setup in chat: see [Connect a vendor from chat](/guides/connect-from-chat).
 
 If OpenAI rejects a Codex code, turn on "device code authorization for Codex" in ChatGPT Settings → Security, then try again. One-click install isn't available on Windows yet; install the tool yourself there, then sign in.
 
