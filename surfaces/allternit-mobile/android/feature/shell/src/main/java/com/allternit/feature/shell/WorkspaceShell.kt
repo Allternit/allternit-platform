@@ -102,6 +102,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     androidx.compose.runtime.LaunchedEffect(Unit) { com.allternit.feature.chat.ChatHooks.onNotificationsGranted = { com.allternit.feature.push.AllternitPush.registerIfAuthorized(context) } }
 
     var mode by remember { mutableStateOf(launch.mode ?: ShellModePrefs.load(context)) }
+    // The home composer's voice button opens a new chat that starts voice mode once.
+    var voiceOnOpen by remember { mutableStateOf(false) }
     // A first-run checklist fix opens Settings once the workspace is up (iOS DeepLinkRouter);
     // a debug `open-tab` extra opens a section (iOS AppModeStore `-open-tab`).
     var page by remember {
@@ -497,6 +499,12 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             },
                             onNew = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
+                            // The microphone permission was asked on the home composer; the chat starts voice mode.
+                            onVoiceMode = {
+                                chat.startNewSession()
+                                voiceOnOpen = true
+                                page = ShellPage.Chat(session = null, draft = ComposerDraft())
+                            },
                             codeHome = if (mode == ShellMode.Code) ({
                                 com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it })
                             }) else null,
@@ -529,6 +537,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             onDeleted = { page = ShellPage.Home },
                             onOpenSection = { row -> page = ShellPage.Section(row) },
                             onOpenSettings = { page = ShellPage.Settings },
+                            startVoice = voiceOnOpen,
+                            onVoiceStarted = { voiceOnOpen = false },
                             onOpenArtifact = { a ->
                                 page = ShellPage.Artifact(com.allternit.feature.artifacts.ArtifactRecordInput(a.id, a.kind, a.title, a.url, a.content), back = current)
                             },

@@ -108,12 +108,11 @@ object DeviceVoice {
     val linked: Boolean by lazy { runCatching { System.loadLibrary("sherpa-onnx-jni") }.isSuccess }
 
     /**
-     * Kokoro replies on sherpa-onnx phonemise through espeak-ng (GPL-3.0-or-later). Allternit keeps GPL code out of its
-     * closed apps: Desktop runs Kokoro in the separate GPL program allternit-tts, and iOS runs Kokoro on MLX + Misaki
-     * instead (project.yml). Off until Eoj decides how Android ships it; until then replies use the system voice,
-     * as on iOS 17. Listening (Silero + Moonshine) has no GPL part and is on.
+     * Kokoro replies on sherpa-onnx phonemise through espeak-ng (GPL-3.0-or-later). Desktop runs Kokoro in the separate
+     * GPL program allternit-tts and iOS runs it on MLX + Misaki; on Android Eoj chose (2026-11-20) to ship it in the app,
+     * with the espeak-ng notice shown under Settings › Voice › Reply voice. Listening (Silero + Moonshine) has no GPL part.
      */
-    const val KOKORO_ALLOWED = false
+    const val KOKORO_ALLOWED = true
 
     /** iOS ListeningPreference: "automatic" = the phone's on-device recognizer when it has one; "allternit" = Moonshine. */
     fun listener(context: Context, dictation: Dictation): VoiceListener {

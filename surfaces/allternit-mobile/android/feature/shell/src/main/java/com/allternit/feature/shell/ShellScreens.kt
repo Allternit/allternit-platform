@@ -169,6 +169,8 @@ internal fun ShellHome(
     onCodeSessions: (() -> Unit)? = null,
     /** Code mode's composer deck row (iOS CodeDeckRow): terminal, files, computer. */
     codeActions: CodeComposerActions? = null,
+    /** The home composer's voice button (iOS ComposerView onVoiceMode on the home chat): a new chat in voice mode. */
+    onVoiceMode: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var phoneArmed by remember { mutableStateOf(false) }
@@ -216,6 +218,7 @@ internal fun ShellHome(
                 onClearPhone = { phoneArmed = false },
                 onSend = onNewChat,
                 onOpenSection = onOpenSection,
+                onVoiceMode = if (mode == ShellMode.Home) onVoiceMode else null,
             )
         } else {
             Spacer(Modifier.navigationBarsPadding())
