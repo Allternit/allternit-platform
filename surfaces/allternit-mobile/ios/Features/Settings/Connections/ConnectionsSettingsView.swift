@@ -89,7 +89,7 @@ struct ConnectionsSettingsView: View {
             if isSearching || !query.isEmpty {
                 ProjectsSearchField(query: $query, placeholder: "Search connections")
             }
-            page
+            pageContent
         }
         .background(Color("BgPrimary").ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
@@ -145,7 +145,7 @@ struct ConnectionsSettingsView: View {
         .padding(.vertical, 4)
     }
 
-    private var page: some View {
+    private var pageContent: some View {
         PhoneSettingsPage(title: "Connections") {
             SettingsDescription(text: "Everything Allternit uses, in one place. Each one connects the same way and shows the same status.")
             if let loadError = store.loadError {

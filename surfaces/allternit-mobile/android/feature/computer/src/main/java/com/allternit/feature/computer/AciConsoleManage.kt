@@ -541,6 +541,7 @@ internal fun FixSheet(computer: ConsoleComputer, finding: HostFinding, onDone: (
                     is ConsoleWrite.NeedsElevation -> FixPhase.NeedsElevation
                     else -> FixPhase.Failed(consoleFailureText(r))
                 }
+            }
         }
     }
 
