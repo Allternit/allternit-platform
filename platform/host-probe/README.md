@@ -213,6 +213,41 @@ feeds the Activity tab. `ApprovalVerifier` lets the mounting runtime add a
 signature check; the default accepts any well-formed id. Tests use a fake
 `Executor`; no real command runs in tests.
 
+## Findings (`findings` module)
+
+`GET /v1/host/findings` → `{ findings: HostFinding[], sources? }`, where a
+finding is `{ id, severity: info|warning|critical, category, title, detail,
+suggestedAction?: { type, target } }` (console-types.ts `HostFinding`). The
+id is stable across reads, so a client can track one problem. A
+`suggestedAction` is a fixed-list action: the client asks the cloud for an
+approval id and sends it to `POST /v1/host/actions` like any other action.
+
+```rust
+let report = host_probe::findings_report_with(&snapshot)?; // blocking: spawn_blocking
+```
+
+| Rule | Id | Severity | Suggested action |
+|---|---|---|---|
+| Disk nearly full | `disk-full:<mount>` | ≥ 90 % used warning, ≥ 95 % critical | `space.clean` with the `clean_items()` id that frees the most on that disk; the detail lists every item with its estimated size |
+| Other clean-up on a full disk | `space-clean:<item id>` | info | `space.clean <item id>` |
+| Failed service | `service-failed:<unit>` | warning | `service.restart <unit>` |
+| Security updates waiting | `security-updates` | warning, critical when one names a CVE | `updates.install` with the one id (package or KB), or `all-security`; the detail lists the ids |
+| TCP port on `0.0.0.0` / `::` held by a program off the allow-list | `port-exposed:tcp:<port>` | warning | `port.free <port>` only when a known service holds it |
+
+- Clean-up sizes are read-only estimates, measured only when a disk is at
+  90 % or more: `.deb` files in `/var/cache/apt/archives`, `.rpm` files in
+  `/var/cache/dnf`, journal files older than 7 days in `/var/log/journal`,
+  `docker system df` reclaimable, `brew cleanup --dry-run`. Items under 50 MB
+  are not suggested. An item is tied to the disk its folder is on (Docker and
+  Homebrew without a known folder go to the system disk).
+- The port allow-list covers ssh, tailscaled, the Allternit runtime and the
+  usual OS services (Linux network daemons, macOS mDNSResponder / rapportd /
+  ControlCenter, Windows System / svchost / lsass). UDP and mesh-address
+  listeners are left out. A listener whose program cannot be seen (another
+  user's, no root) is only accepted on port 22.
+- `sources` says which inputs (services, ports, updates) could be read; a
+  missing input means fewer findings, never a made-up one.
+
 ## Admin access (one-time setup, contract D5)
 
 The probe never runs as root. Actions that need root (systemd services,
