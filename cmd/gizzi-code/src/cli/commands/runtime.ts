@@ -3,6 +3,7 @@ import { runtimeListCommand } from './runtime/list';
 import { runtimeRegisterCommand } from './runtime/register';
 import { runtimeStatusCommand } from './runtime/status';
 import { runtimeDaemonCommand } from './runtime/daemon';
+import { runtimeCatalogCommand } from './runtime/catalog';
 import { selfHostedRegister, selfHostedStatus } from './runtime/selfhost';
 import { createProfileStore } from '../../runtime/selfhost/profiles';
 
@@ -81,16 +82,34 @@ export const RuntimeLocalCommands: CommandModule[] = [
 ];
 
 /**
+ * `gizzi runtime catalog`: the runtime registry (Harness & Bots 2.0, D7).
+ * Only on top-level `gizzi runtime`; `runtimes` above is the local daemon
+ * registry, a different list.
+ */
+export const RuntimeCatalogCommand: CommandModule = {
+  command: 'catalog',
+  describe: 'List every runtime a bot can run on (Allternit, Claude Code, Codex, ...), grouped by category',
+  builder: (y) =>
+    y
+      .option('all', { type: 'boolean', default: false, describe: 'include the runtimes under "More"' })
+      .option('json', { type: 'boolean', default: false, describe: 'print every registry entry as JSON, with an installed field' }),
+  handler: async (argv) => {
+    await runtimeCatalogCommand({ all: argv.all === true, json: argv.json === true });
+  },
+};
+
+/**
  * Top-level `gizzi runtime`: the same commands as `gizzi agents harness`
- * (runtimes, register, status, daemon). The self-hosted Agents Server docs use
+ * (runtimes, register, status, daemon), plus `catalog`. The self-hosted Agents Server docs use
  * `gizzi runtime register --self-hosted` and `gizzi runtime status`.
  */
 export const RuntimeCommand: CommandModule = {
   command: 'runtime',
   describe: "Gizzi's runtime registry and self-hosted Agents Server profiles (register --self-hosted, status)",
   builder: (y) => {
+    y.command(RuntimeCatalogCommand);
     for (const sub of RuntimeLocalCommands) y.command(sub);
-    return y.demandCommand(1, 'Pick a subcommand: runtimes, register, status or daemon');
+    return y.demandCommand(1, 'Pick a subcommand: catalog, runtimes, register, status or daemon');
   },
   handler: () => {},
 };

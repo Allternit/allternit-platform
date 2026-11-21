@@ -37,7 +37,8 @@ export function platformBotFields(bot: Bot, soul: string | null) {
     trust_tier: "standard",
     is_bot: true,
     bot_profile: { displayName, tagline: bot.description.trim() || undefined },
-    config: { localBot: bot.name },
+    // Left out when unset, so bots without a runtime keep their sync hash.
+    config: bot.botBrain ? { localBot: bot.name, botBrain: bot.botBrain } : { localBot: bot.name },
   }
 }
 

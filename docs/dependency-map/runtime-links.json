@@ -747,6 +747,12 @@
       "kind": "external",
       "url": "https://auth.claude.com",
       "path": "https://auth.claude.com"
+    },
+    {
+      "id": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "label": "cli-catalog.json (runtime registry)",
+      "kind": "module",
+      "path": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json"
     }
   ],
   "edges": [
@@ -1910,6 +1916,94 @@
       "evidence": [
         "allternit/surfaces/docs/operations/claude-linked-billing.mdx",
         "allternit/surfaces/docs/guides/claude-organization.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/providers",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "reads runtimes[] and tools[]: runtime registry, fits(), normalizer",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/subprocess.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/drivers",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "reads adapter kinds and runtimes[].systemLayer.via for local CLI sessions",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/drivers/local-cli-driver.ts",
+        "allternit/cmd/gizzi-code/src/runtime/drivers/cli-session-flags.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/cli_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "include_str! embed: GET /api/v1/runtimes (local gateway, adds installed with owner auth)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/cli_catalog.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api/src/routes/runtimes_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "include_str! embed: public GET /api/v1/runtimes for web and phones",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/runtimes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/bot_*",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "botBrain normalizer derives runtime/mode/harness from the registry",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/bot_brain.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/agent_*",
+      "target": "allternit/cmd/allternit-api/src/bot_*",
+      "kind": "GET /agents/:id adds botKind; agent saves run the botBrain normalizer",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agent_routes.rs",
+        "allternit/cmd/allternit-api/src/bot_brain.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands",
+      "target": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "kind": "registers gizzi agents bot (create/edit --runtime/--brain)",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/gizzi-code/src/cli/commands/runtime/catalog.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers",
+      "kind": "--runtime/--brain: fits(), auto-switch, normalizer",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/runtime-registry.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+      "target": "allternit/cmd/allternit-api/src/agent_*",
+      "kind": "HTTP: GET /api/v1/agents/:id botKind for the Connected bot lock",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/cli/commands/bot.ts",
+        "allternit/cmd/allternit-api/src/agent_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/docs",
+      "target": "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+      "kind": "documents the runtime registry, runtimes API and system layers",
+      "evidence": [
+        "allternit/surfaces/docs/cli/runtime.mdx",
+        "allternit/surfaces/docs/api/runtimes.mdx",
+        "allternit/surfaces/docs/concepts/system-layers.mdx"
       ]
     }
   ]

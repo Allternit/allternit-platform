@@ -34,11 +34,12 @@ describe("answer shapes reach every brain", () => {
       { role: "user", content: "compare A and B" },
     ])
     expect(system).toContain(SHAPES)
-    // Claude Code: appended (or, on a bot turn, the whole) system prompt.
+    // Claude Code: appended to its own system prompt, bot turns included.
     const claude = claudeSessionFlags({ systemPrompt: system })
     expect(claude[claude.indexOf("--append-system-prompt") + 1]).toContain(SHAPES)
     const claudeBot = claudeSessionFlags({ systemPrompt: system, bot: {} as any })
-    expect(claudeBot[claudeBot.indexOf("--system-prompt") + 1]).toContain(SHAPES)
+    expect(claudeBot[claudeBot.indexOf("--append-system-prompt") + 1]).toContain(SHAPES)
+    expect(claudeBot).not.toContain("--system-prompt")
     // Codex: developer instructions, with or without gizzi's session tools.
     expect(codexDeveloperInstructions(system, undefined)).toContain(SHAPES)
     expect(codexDeveloperInstructions(system, { name: "gizzi", url: "http://x", headers: {} } as any)).toContain(SHAPES)

@@ -102,10 +102,22 @@ function byHarness(harness: string): RuntimeEntry | undefined {
 }
 
 /** Brain fits runtime when brains is "any" or the brain's provider is listed. */
+/**
+ * Does a brain's provider fit this runtime? `providerId` may be a vendor id
+ * (`anthropic`), a subscription id (`subs-anthropic`) or a CLI provider id
+ * (`claude-cli`): a runtime always runs its own CLI's models. Every client
+ * (gizzi, web, iOS, Android) uses this one rule.
+ */
 export function fits(runtime: RuntimeEntry | string, providerId: string): boolean {
   const r = typeof runtime === "string" ? getRuntime(runtime) : runtime
   if (!r) return false
-  return r.brains === "any" || r.brains.includes(providerId)
+  if (r.brains === "any") return true
+  const p = providerId.replace(/^subs-/, "")
+  if (r.brains.includes(p)) return true
+  if (!r.tool) return false
+  if (p === r.tool || p === r.id || (r.aliases ?? []).includes(p)) return true
+  const tool = (catalog as { tools?: { id: string; aliases?: string[] }[] }).tools?.find((t) => t.id === r.tool)
+  return (tool?.aliases ?? []).includes(p)
 }
 
 /**

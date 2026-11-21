@@ -17,9 +17,9 @@
  * - Skills: no personal skills (~/.claude/skills, ~/.agents/skills,
  *   ~/.openclaw/skills, project .claude/skills).
  * - Claude CLI brain: settings isolation (`--setting-sources ""`,
- *   `--disable-slash-commands`, `--strict-mcp-config`), the persona as the
- *   system prompt, and the bot's tool allowlist / approval gates instead of
- *   `bypassPermissions`.
+ *   `--disable-slash-commands`, `--strict-mcp-config`), the persona appended
+ *   to Claude Code's own system prompt (`--append-system-prompt`), and the
+ *   bot's tool allowlist / approval gates instead of `bypassPermissions`.
  *
  * This module is dependency-light on purpose (zod only) so the policy can be
  * unit tested without the runtime.
