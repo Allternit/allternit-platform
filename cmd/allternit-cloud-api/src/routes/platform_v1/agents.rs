@@ -16,9 +16,12 @@
 //! Harness & Bots 2.0 (contract "Backend gaps 1-3"): beside `model` (the
 //! brain) an agent carries `runtime` (a registry id, `GET /api/v1/runtimes`;
 //! `allternit` when absent or on an old row), `access` (`plan` | `key` |
-//! `local` | `credits`) and `agent_view` (`{view, look}`). The runtime rules
-//! (`runtime_unknown`, `brain_not_fit`, `plan_not_allowed_on_runtime`, 422)
-//! run only when the request sets `runtime`, so old-shape saves never fail.
+//! `local` | `credits`) and `agent_view` (`{view, look}`). Platform agents run
+//! only on Allternit's hosted runtime, so an explicit `runtime` other than
+//! `allternit` is `422 runtime_not_available` (an unknown one
+//! `runtime_unknown`), and `allternit` then gets the shared brain rules
+//! (`brain_not_fit`, `plan_not_allowed_on_runtime`). The checks run only when
+//! the request sets `runtime`, so old-shape saves never fail.
 
 use axum::{
     extract::{Path, State},
@@ -354,13 +357,14 @@ fn rule_error(err: runtime_rules::RuleError, param: &str) -> PlatformError {
     PlatformError::unprocessable(err.code(), err.message()).with_param(param)
 }
 
-/// The runtime a request set explicitly, checked against the brain it will
-/// run (`model`, as sent or as stored): the canonical id, or a 422. Runs
-/// before the model's own format check so a plan brain on the wrong runtime
-/// gets the runtime's answer.
+/// The runtime a request set explicitly: only `allternit` (id or alias) runs a
+/// Platform agent today (`runtime_not_available` otherwise, never stored and
+/// ignored), then checked against the brain it will run (`model`, as sent or
+/// as stored). The canonical id, or a 422. Runs before the model's own format
+/// check so a runtime answer comes first.
 pub fn validate_runtime(runtime: &str, model: &str) -> Result<String, PlatformError> {
     let registry = runtime_rules::registry();
-    let id = registry.normalize_runtime(Some(runtime)).map_err(|e| rule_error(e, "runtime"))?;
+    let id = registry.platform_runtime(runtime).map_err(|e| rule_error(e, "runtime"))?;
     registry.check(&id, runtime_rules::provider_of(model)).map_err(|e| rule_error(e, "model"))?;
     Ok(id)
 }

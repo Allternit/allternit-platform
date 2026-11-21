@@ -108,9 +108,10 @@ export type Agent = {
 };
 
 /**
- * The runtime that runs the agent: an id or alias from `GET /api/v1/runtimes`, stored as its id. Absent: `allternit`.
- * Setting it checks the brain (`model`) against the runtime; a broken rule is `422` `runtime_unknown`,
- * `brain_not_fit` or `plan_not_allowed_on_runtime`. Saves without it are never refused for it.
+ * The runtime that runs the agent. Platform agents run on Allternit's hosted runtime, so the only value is
+ * `allternit` (the default; an alias is stored as `allternit`). Any other runtime from `GET /api/v1/runtimes`
+ * runs only on a computer: `422 runtime_not_available` (create the agent in the Allternit app instead); an
+ * unknown id is `422 runtime_unknown`. Saves without it are never refused for it.
  */
 export type AgentRuntime = string;
 

@@ -210,7 +210,8 @@ async fn agents_crud_defaults_and_rules() {
 }
 
 /// Harness & Bots 2.0, backend gap 1: `runtime`, `access`, `agent_view` beside
-/// `model`, with the shared runtime rules only when `runtime` is sent.
+/// `model`. Platform agents run only on the `allternit` runtime; the checks
+/// run only when `runtime` is sent.
 #[tokio::test]
 async fn agents_carry_runtime_access_and_view() {
     let c = ctx().await;
@@ -235,14 +236,19 @@ async fn agents_carry_runtime_access_and_view() {
     let (s, u) = call(&c.app, "PATCH", &format!("/v1/agents/{id}"), &key, Some(json!({ "model": "openai/gpt-5" }))).await;
     assert_eq!((s, u["runtime"].as_str()), (StatusCode::OK, Some("antigravity")), "{u}");
 
-    // The three rule errors, 422 with the contract's messages.
+    // Platform agents run only on Allternit's hosted runtime: any other runtime
+    // (id or alias) is refused, never stored and ignored; an unknown one is runtime_unknown.
     for (body, code, message) in [
         (json!({ "runtime": "nope" }), "runtime_unknown", "No runtime called nope."),
-        (json!({ "runtime": "claude", "model": "openai/gpt-5" }), "brain_not_fit", "Claude Code runs Anthropic models only."),
         (
             json!({ "runtime": "hermes", "model": "subs-claude/claude-sonnet-5-5" }),
-            "plan_not_allowed_on_runtime",
-            "Claude's plan can't be used inside Hermes. Use an API key, or pick Claude Code.",
+            "runtime_not_available",
+            "Platform agents run on Allternit's hosted runtime. Hermes runs only on a computer: create the agent in the Allternit app instead.",
+        ),
+        (
+            json!({ "runtime": "claude-cli", "model": "anthropic/claude-sonnet-5-5" }),
+            "runtime_not_available",
+            "Platform agents run on Allternit's hosted runtime. Claude Code runs only on a computer: create the agent in the Allternit app instead.",
         ),
     ] {
         let mut create = body.clone();
@@ -250,22 +256,20 @@ async fn agents_carry_runtime_access_and_view() {
         create["name"] = json!("Desk");
         let (s, e) = call(&c.app, "POST", "/v1/agents", &key, Some(create)).await;
         assert_eq!((s, e["error"]["code"].as_str(), e["error"]["message"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some(code), Some(message)), "{body}");
+        assert_eq!((e["error"]["type"].as_str(), e["error"]["param"].as_str()), (Some("invalid_request_error"), Some("runtime")), "{body}");
         let (s, e) = call(&c.app, "PATCH", &format!("/v1/agents/{id}"), &key, Some(body.clone())).await;
         assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some(code)), "PATCH {body}");
     }
-    // An explicit runtime is checked against the stored model when none is sent.
-    let (s, e) = call(&c.app, "PATCH", &format!("/v1/agents/{id}"), &key, Some(json!({ "runtime": "claude" }))).await;
-    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::UNPROCESSABLE_ENTITY, Some("brain_not_fit")));
 
-    // A fitting runtime with access and a view: saved and read back (agentView is accepted too).
+    // `allternit` with access and a view: saved and read back (agentView is accepted too).
     let (s, h) = call(&c.app, "POST", "/v1/agents", &key, Some(json!({
-        "account_id": acct, "name": "Hermes desk", "runtime": "Hermes", "model": "anthropic/claude-sonnet-5-5",
+        "account_id": acct, "name": "Second desk", "runtime": "Allternit", "model": "anthropic/claude-sonnet-5-5",
         "access": "key", "agentView": { "view": "split", "look": "terminal" },
     }))).await;
     assert_eq!(s, StatusCode::CREATED, "{h}");
     let hid = h["id"].as_str().unwrap().to_string();
     let (_, got) = call(&c.app, "GET", &format!("/v1/agents/{hid}"), &key, None).await;
-    assert_eq!((got["runtime"].as_str(), got["access"].as_str(), got["model"].as_str()), (Some("hermes"), Some("key"), Some("anthropic/claude-sonnet-5-5")));
+    assert_eq!((got["runtime"].as_str(), got["access"].as_str(), got["model"].as_str()), (Some("allternit"), Some("key"), Some("anthropic/claude-sonnet-5-5")));
     assert_eq!(got["agent_view"], json!({ "view": "split", "look": "terminal" }));
 
     for (body, code) in [
@@ -276,7 +280,7 @@ async fn agents_carry_runtime_access_and_view() {
         let (s, e) = call(&c.app, "PATCH", &format!("/v1/agents/{hid}"), &key, Some(body.clone())).await;
         assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::BAD_REQUEST, Some(code)), "{body}");
     }
-    let (s, u) = call(&c.app, "PATCH", &format!("/v1/agents/{hid}"), &key, Some(json!({ "access": null, "runtime": "allternit" }))).await;
+    let (s, u) = call(&c.app, "PATCH", &format!("/v1/agents/{hid}"), &key, Some(json!({ "access": null, "runtime": "allternit", "model": "openai/gpt-5" }))).await;
     assert_eq!(s, StatusCode::OK, "{u}");
     assert_eq!((u["runtime"].as_str(), u["access"].is_null(), u["agent_view"]["view"].as_str()), (Some("allternit"), true, Some("split")));
 }

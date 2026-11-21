@@ -116,6 +116,9 @@ pub(crate) mod rules {
         RuntimeUnknown { runtime: String },
         BrainNotFit { runtime: String, vendor: String },
         PlanNotAllowed { plan: String, runtime: String, own: String },
+        /// Platform agents (`/v1/agents`) run only on Allternit's hosted
+        /// runtime; any other runtime runs only on a computer.
+        RuntimeNotAvailable { runtime: String },
     }
 
     impl RuleError {
@@ -124,6 +127,7 @@ pub(crate) mod rules {
                 RuleError::RuntimeUnknown { .. } => "runtime_unknown",
                 RuleError::BrainNotFit { .. } => "brain_not_fit",
                 RuleError::PlanNotAllowed { .. } => "plan_not_allowed_on_runtime",
+                RuleError::RuntimeNotAvailable { .. } => "runtime_not_available",
             }
         }
 
@@ -133,6 +137,9 @@ pub(crate) mod rules {
                 RuleError::BrainNotFit { runtime, vendor } => format!("{runtime} runs {vendor} models only."),
                 RuleError::PlanNotAllowed { plan, runtime, own } => format!(
                     "{plan}'s plan can't be used inside {runtime}. Use an API key, or pick {own}."
+                ),
+                RuleError::RuntimeNotAvailable { runtime } => format!(
+                    "Platform agents run on Allternit's hosted runtime. {runtime} runs only on a computer: create the agent in the Allternit app instead."
                 ),
             }
         }
@@ -240,6 +247,21 @@ pub(crate) mod rules {
         }
     }
 
+    impl Registry<'_> {
+        /// The runtime of a Platform agent (`/v1/agents`): those run only on
+        /// Allternit's hosted runtime, so a known runtime other than
+        /// `allternit` (id or alias) is `runtime_not_available` instead of
+        /// being stored and silently ignored. Unknown ids stay
+        /// `runtime_unknown`. Returns the canonical id (`allternit`).
+        pub(crate) fn platform_runtime(&self, raw: &str) -> Result<String, RuleError> {
+            let id = self.normalize_runtime(Some(raw))?;
+            if id == RUNTIME_ALLTERNIT {
+                return Ok(id);
+            }
+            Err(RuleError::RuntimeNotAvailable { runtime: self.name(&id) })
+        }
+    }
+
     /// The registry embedded in this build.
     pub(crate) fn registry() -> Registry<'static> {
         Registry::new(super::catalog())
@@ -322,6 +344,23 @@ pub(crate) mod rules {
             assert_eq!(err.code(), "brain_not_fit");
             let err = reg.check("kimi", "subs-chatgpt").unwrap_err();
             assert_eq!(err.message(), "ChatGPT's plan can't be used inside Kimi Code. Use an API key, or pick Codex.");
+        }
+
+        #[test]
+        fn runtime_rules_platform_agents_only_run_on_allternit() {
+            let reg = registry();
+            assert_eq!(reg.platform_runtime("allternit").unwrap(), "allternit");
+            assert_eq!(reg.platform_runtime(" Allternit ").unwrap(), "allternit");
+            for other in ["hermes", "claude", "claude-cli", "agy"] {
+                let err = reg.platform_runtime(other).unwrap_err();
+                assert_eq!(err.code(), "runtime_not_available", "{other}");
+            }
+            assert_eq!(
+                reg.platform_runtime("hermes").unwrap_err().message(),
+                "Platform agents run on Allternit's hosted runtime. Hermes runs only on a computer: create the agent in the Allternit app instead."
+            );
+            assert_eq!(reg.platform_runtime("agy").unwrap_err().message().split(". ").nth(1), Some("Antigravity runs only on a computer: create the agent in the Allternit app instead."));
+            assert_eq!(reg.platform_runtime("nope").unwrap_err().code(), "runtime_unknown");
         }
 
         #[test]
