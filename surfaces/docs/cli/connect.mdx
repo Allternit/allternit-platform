@@ -11,7 +11,26 @@ gizzi connect claude                  # connect one row
 gizzi connect status claude           # one row's state
 gizzi connect disconnect claude       # remove it (same as --disconnect)
 gizzi connect --json                  # the rows as JSON
+gizzi connect --status needs          # only rows that need you (or: connected)
+gizzi connect more                    # more connections from the live catalog
 ```
+
+## Find more connections
+
+`gizzi connect more` lists the live catalog, the same list as **More** in Settings → Connections. It needs you signed in to Allternit.
+
+```bash
+gizzi connect more                    # every group
+gizzi connect more apps               # one group (brains, apps, and so on)
+gizzi connect more apps --search air  # narrow by name
+gizzi connect more apps --json        # the server's response as JSON
+```
+
+Each line is the name, what it is for, and its state. An app that needs a computer says **Runs on a computer.** When the list is cut short, the last line says "Showing N of TOTAL". Add `--search` to narrow it. An unknown group prints the server's message.
+
+`gizzi connect --status connected` or `--status needs` limits the normal list to rows in that state.
+
+`gizzi connect <id>` also accepts an id from the catalog. A `<provider>-key` id runs the key flow. An app says **Runs on a computer.** and points you to Settings → Connections in Allternit.
 
 ## Your plan with no computer
 

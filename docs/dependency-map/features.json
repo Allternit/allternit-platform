@@ -4816,7 +4816,24 @@
         "allternit/cmd/gizzi-code/src/cli/commands/connect-flow.ts",
         "allternit/cmd/gizzi-code/src/cli/commands/connect-model.ts",
         "allternit/cmd/gizzi-code/src/cli/commands/connect-run.ts",
-        "allternit/cmd/allternit-cloud-api/src/routes/plan_threads.rs"
+        "allternit/cmd/allternit-cloud-api/src/routes/plan_threads.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/connections_catalog.rs",
+        "allternit/cmd/allternit-cloud-api/src/services/connections_catalog_apps.json",
+        "allternit/services/open-connector/scripts/export-directory.ts",
+        "allternit-ai/src/components/connect-kit/ConnectionCard.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectionsBrowse.tsx",
+        "allternit-ai/src/components/connect-kit/ConnectionsToolbar.tsx",
+        "allternit-ai/src/components/connect-kit/MoreConnections.tsx",
+        "allternit-ai/src/components/connect-kit/rowAction.ts",
+        "allternit-ai/src/components/connect-kit/view-state.ts",
+        "allternit-ai/src/lib/connections-catalog.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionCardView.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsFilterPopover.swift",
+        "allternit/surfaces/allternit-mobile/ios/Features/Settings/Connections/ConnectionsMoreView.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/firstrun/ConnectionCards.kt",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/firstrun/ConnectionsMore.kt",
+        "allternit/surfaces/allternit-mobile/android/feature/shell/src/main/java/com/allternit/feature/shell/firstrun/SettingsConnections.kt",
+        "allternit/surfaces/docs/cli/connect.mdx"
       ],
       "decisions": [
         {
@@ -4826,6 +4843,10 @@
         {
           "on": "2026-11-13",
           "note": "connect kit: hub A, setup A, fewest-step sign-ins; brain runner gated on vendors. Connections page = option A (Brains split into Works on any device, Needs your computer, Coming soon); day-one setup = Your AI, Your phone, Main bot, Connected, with no computer step; Add a computer is offered as Later, if you need it. Claude, Grok and Kimi plans on Allternit wait for vendor answers (plan Phase 0); Copilot waits for a GitHub App. Contract: CONTRACT-connections-2026-11.md. Kit routes never call require_compute."
+        },
+        {
+          "on": "2026-11-20",
+          "note": "Connections view redesign (Eoj approved): one toolbar with search and a filter menu (List, Grid, Deck; Status with counts), an amber dot in place of the needs banner, a More tile per group (6 shown at a time) and a browse page, backed by GET /api/v1/connections/catalog (11 key-provider brains plus a committed apps snapshot from services/open-connector/scripts/export-directory.ts). A connected catalog app moves into Apps. Same view on Desktop, web, phone, PWA, iOS, Android and gizzi connect more. Contract: CONTRACT-connections-2026-11.md section 11."
         },
         {
           "on": "2026-11-15",

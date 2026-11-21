@@ -58,3 +58,15 @@ Use plain words and the four status words only. Say what the row needs from a pe
 - Smoke-boot allternit-api after a runtime route change. `design_connector_routes.rs` already matches a `/connections` path.
 - For a runner row, check `connect` with and without `accept_disclosure`, a device token and a missing `X-Allternit-Turn` header (both `plan_person_only`), and that disconnect deletes the sign-in.
 - Run `python3 surfaces/docs/scripts/check_links.py` and update the [Connections](/guides/connections) guide if the new row changes what a person sees.
+
+## Regenerating the apps snapshot
+
+The apps in **More** come from a committed snapshot of the connector directory, `cmd/allternit-cloud-api/src/services/connections_catalog_apps.json`. Regenerate it when the directory changes:
+
+```bash
+cd services/open-connector
+node scripts/export-directory.ts           # rewrites the snapshot
+node scripts/export-directory.ts --check   # exits non-zero when the snapshot is stale
+```
+
+Commit the new snapshot with the change. The snapshot lives in `src/` because `scripts/deploy-cloud-api.sh` syncs only `src`, `tests` and `migrations`. The route that serves it is `GET /api/v1/connections/catalog` (see [Connections API](/api/connections)); `catalog` is a reserved connection id.
