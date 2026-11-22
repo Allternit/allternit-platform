@@ -1612,6 +1612,7 @@ dependencies = [
 name = "allternit-node-daemon"
 version = "0.1.0"
 dependencies = [
+ "allternit-terminal-service",
  "anyhow",
  "chrono",
  "clap",

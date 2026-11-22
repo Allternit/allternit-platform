@@ -3,6 +3,7 @@
 //! sockets and PTYs.
 
 pub mod config;
+pub mod engine;
 pub mod handlers;
 pub mod identity;
 pub mod launch;

@@ -2013,6 +2013,24 @@
         "allternit/surfaces/docs/api/runtimes.mdx",
         "allternit/surfaces/docs/concepts/system-layers.mdx"
       ]
+    },
+    {
+      "source": "allternit/cmd/allternit-cloud-api",
+      "target": "allternit/cmd/allternit-node",
+      "kind": "runtime relay WebSocket (request/response_start/response_chunk/response_end envelopes): every /terminal/* and /api/v1/node/* request for a runtime whose connection is allternit-node; terminal streams are SSE chunks ending after the exit event",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/runtime_relay.rs",
+        "allternit/cmd/allternit-node/src/relay.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-node",
+      "target": "allternit/factory/pane",
+      "kind": "Unix socket (pane engine, factory.terminal.* and pane.get/read through allternit-terminal-service): /terminal/* served from the engine when it answers (never started by the node, probed again every 30 s while missing), else in-process portable-pty terminals; /terminal/list says which with engine pane|missing",
+      "evidence": [
+        "allternit/cmd/allternit-node/src/engine.rs",
+        "allternit/cmd/allternit-node/src/handlers.rs"
+      ]
     }
   ]
 }

@@ -23,7 +23,10 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# Fallback terminals when no pane engine is reachable (see src/engine.rs).
 portable-pty = "0.8"
+# The terminal API over the Factory pane engine (shared with allternit-api).
+allternit-terminal-service = { workspace = true }
 clap = { version = "4.4", features = ["derive"] }
 
 [dev-dependencies]

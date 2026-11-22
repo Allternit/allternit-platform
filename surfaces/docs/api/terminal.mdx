@@ -210,6 +210,21 @@ data: {"type":"exit","exit_code":0}
 
 `exit_code` is `null` when the pane engine couldn't read it.
 
+## Cloud computers
+
+On a cloud computer (or a Mac running `allternit-node` with Desktop quit), the same routes reach the computer's `allternit-node` daemon through the runtime relay. It serves them in one of two ways:
+
+- **Pane engine** (the computer's `allternit-factory pane server` answers): the same service and JSON as on Desktop. Terminals survive an `allternit-node` restart, `/terminal/list` returns titles, `preview` rows and `pane_id`, create takes `command`/`args`/`env`/`title`, and `close` takes `{"graceful": true}`.
+- **Fallback** (no pane engine on the image, for example Orgo, headless or older images): the node runs the terminals itself. Create takes the same body, and `/terminal/list` returns them with `pane_id: null` and no `preview`. These terminals end when `allternit-node` restarts, and a graceful close is a plain close.
+
+`/terminal/list` on a cloud computer also returns a top-level `engine` field that says which one is serving:
+
+```json
+{ "terminals": [], "engine": "missing" }
+```
+
+`engine` is `"pane"` or `"missing"`. The node never starts the pane engine. While none has answered, it checks again at most every 30 seconds. See `cmd/allternit-node/README.md` for the socket paths it checks.
+
 ## Error codes
 
 | Status | Code | Description |
