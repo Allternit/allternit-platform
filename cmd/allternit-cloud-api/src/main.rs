@@ -317,6 +317,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     allternit_cloud_api::routes::runtime_presence::start_presence_sweeper(state.clone());
     // Computers console history: roll raw samples older than 48 h into 5 minute rows, keep 30 days.
     allternit_cloud_api::routes::computer_metrics::start_metrics_sweeper(state.clone());
+    allternit_cloud_api::routes::computer_alerts::start_alert_evaluator(state.clone());
     // Computers console: take expired agent SSH keys off cloud computers every 5 minutes.
     services::start_ssh_key_sweeper(state.provisioning_service.clone());
     // Discord shared app gateway (a no-op until the ALLTERNIT_DISCORD_* env is set).

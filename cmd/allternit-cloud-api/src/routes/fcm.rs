@@ -196,6 +196,17 @@ pub fn message(msg: &PushMessage, token: &str) -> Value {
             data.insert(key.into(), json!(value));
         }
     }
+    // Computer alerts (computers console step 2.8): the app reads `computerId`, `rule` and `value` as strings.
+    if msg.kind == "computer_alert" {
+        for key in ["computerId", "rule"] {
+            if let Some(value) = d.get(key).and_then(Value::as_str).filter(|v| !v.is_empty()) {
+                data.insert(key.into(), json!(value));
+            }
+        }
+        if let Some(value) = d.get("value").and_then(Value::as_f64) {
+            data.insert("value".into(), json!(value.round().to_string()));
+        }
+    }
     if let Some(private) = d.get("private").and_then(Value::as_bool) {
         data.insert("private".into(), json!(private.to_string()));
     }

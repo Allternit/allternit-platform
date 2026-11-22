@@ -172,7 +172,10 @@ pub const ERASE: &[(&str, &str)] = &[
     ("cloud_phones", USER),
     ("computer_pairing_codes", USER),
     ("paired_computers", USER),
-    // Computers console alert rules (migration 154): the owner's own settings.
+    // Alert incidents (migration 157) go before the rules they point at, then
+    // the Activity events, then the owner's rules (migration 154).
+    ("computer_alert_state", "rule_id IN (SELECT id FROM computer_alert_rules WHERE user_id = $1)"),
+    ("computer_alert_events", USER),
     ("computer_alert_rules", USER),
     // Computers console SSH public keys (migration 156): the owner's own keys.
     ("computer_ssh_keys", USER),
