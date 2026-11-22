@@ -44,6 +44,17 @@ When you run a coding agent in the terminal (Claude Code, Codex, Kimi, Antigravi
   - The keys under the terminal still type into the agent. On Android the composer takes the place of the **Type a command** line while the agent runs.
 - **ai.allternit.com phone layout and m.allternit.com:** the agent's box stays visible and you type in the terminal. Its questions show as buttons above the keys, with **Stop** while it works.
 
+**Android app: terminals and sessions on your computer.** Open the Code threads screen (the checklist in the header, or **All threads** in Code tools). When your computer's runtime supports it, two sections sit above the threads:
+
+- **Terminals:** every Allternit terminal on the computer, with its folder, the agent's state (**Working**, **Needs you**, **Idle**, or **Running** / **Exited** for a plain shell) and its last two lines. Tap one to open that exact terminal. Closing its tab later keeps it running on your computer.
+- **On your computer:** Claude Code and other CLI sessions running outside Allternit (Terminal, iTerm2, Ghostty), with the app and pid. **Keeps:** lists the flags the session was started with.
+  - **Move here** always asks first. The sheet shows the command, the flags it keeps, and which app and pid it stops. The old Terminal window stays open and shows the exit. While the agent works, the button is **Move when idle**.
+  - While a move runs, the row shows **Waiting for it to go idle…** (with **Cancel**), then **Stopping…** and **Starting…**. When it is done, the terminal opens. If it fails, the row says why. When the new terminal didn't start, it shows the command with a **Copy** button.
+  - **Open a copy** and **New session here** open their terminal at once.
+  - A session open in two places can't be moved. The row names every holder.
+
+The sections are hidden when you are signed out, when nothing is running, and on a runtime without these routes. The app asks for updates only while the screen is open and the app is in front.
+
 If Code doesn't recognise the screen, or you quit the agent, the full terminal comes back.
 
 ## For developers
@@ -52,6 +63,8 @@ If Code doesn't recognise the screen, or you quit the agent, the full terminal c
 - Session row: `CodeSessionHeader` with `usePhoneSurface()` drops the Gizzi Code lockup and the Cloud badge and shows one folder · branch chip.
 - Prompt: `ChatComposer` puts `bottomDockContent` in the control row (`composer-terminal-dock`) when it is the Code terminal prompt on the phone surface.
 - Swipe rows: `.phone-swipe-row` and `.phone-swipe-row__underlay` in `phone.css` hold the action under the row (`useSwipeActions`' CSS contract).
-- Terminal shell: see [Terminal API](/api/terminal#create-terminal).
-- Coding agents: the screen parser is `src/lib/terminal/agent-frame.ts` (allternit-ai). The iPhone app runs a line-for-line port (`ios/Features/Code/AgentFrame.swift`), and the composer is `AgentComposerBar` (`PhoneCodeTerminal.swift`). The Android app runs a Kotlin port (`android/feature/code/.../AgentFrame.kt`); the composer is `AgentComposer` and the crop is `AgentFrameReader` (`CodeTerminal.kt`). All three are tested against the same captured screens (`surfaces/allternit-mobile/agent-frame-fixtures`, copied from the ai repo, which holds the source of truth): `./gradlew :feature:code:testDebugUnitTest --tests '*AgentFrameTest*'` on Android.
+- Coding agents on Android: a Kotlin port of the parser (`android/feature/code/.../AgentFrame.kt`); the composer is `AgentComposer` and the crop is `AgentFrameReader` (`CodeTerminal.kt`). It is tested against the same captured screens: `./gradlew :feature:code:testDebugUnitTest --tests '*AgentFrameTest*'`.
 - Android shell tiles use the terminal service (`/terminal/create`, `/terminal/:id/input`, `/terminal/:id/resize`, `/terminal/:id/close`, the SSE stream `/terminal/:id/stream`), like iOS and the web. Tile ids are kept for the app process, so a rotation re-attaches the same shells (the stream replays the scrollback); a terminal the computer no longer has shows "This terminal closed on your computer" and a **New terminal** button. The Computers console terminal still uses gizzi-code's `/v1/pty`.
+- Move a session (Android app): `CodeApi.listTerminals`, `liveSessions`, `adopt` and `adoptJob` (`CodeData.kt`) call `GET /terminal/list?preview=12`, `GET /api/v1/live-sessions`, `POST /api/v1/live-sessions/adopt` and `GET /api/v1/live-sessions/adopt/:jobId` over the relay. A 404 with no error code hides the feature. The rules (actions, error sentences, command quoting, preview crop, poll backoff) and `TerminalSessionsStore` are in `OnYourComputer.kt`, a port of the iOS `OnYourComputer.swift`; `CodeStore` owns the store, so a Move is followed after the screen closes. The rows and the confirm sheet are in `OnYourComputerViews.kt`. `CodeTerminalStore.open(terminalId, name)` opens a listed terminal by its id, and closing that tile only detaches. Tests: `--tests '*OnYourComputerTest*'`. See also [Live sessions](/guides/live-sessions).
+- Terminal shell: see [Terminal API](/api/terminal#create-terminal).
+- Coding agents: the screen parser is `src/lib/terminal/agent-frame.ts` (allternit-ai). The iPhone app runs a line-for-line port (`ios/Features/Code/AgentFrame.swift`), and the composer is `AgentComposerBar` (`PhoneCodeTerminal.swift`). Both are tested against the same captured screens (`surfaces/allternit-mobile/agent-frame-fixtures`, copied from the ai repo, which holds the source of truth).

@@ -425,7 +425,11 @@ class PaneMirror(private val backend: ChatBackend, private val scope: CoroutineS
  * no longer has is treated as gone (the tile offers a new terminal), never an error.
  */
 internal object CodeTerminalTiles {
-    class Saved(val name: String, var terminalId: String?) {
+    /**
+     * [owned]: the phone started this shell, so closing its tile ends it. A terminal opened from the sessions
+     * view (one the computer already had, or a moved session) is not: closing the tile only stops showing it.
+     */
+    class Saved(val name: String, var terminalId: String?, val owned: Boolean = true) {
         /** The session showing it now; a new store's session takes over its stream. */
         var attached: TerminalSession? = null
     }
@@ -455,10 +459,34 @@ class CodeTerminalStore(private val backend: ChatBackend) {
 
     fun startIfNeeded() {
         if (started) return
+        restoreSaved()
+        if (tiles.isEmpty()) addTile()
+    }
+
+    /** Re-attaches this process's remembered tiles (an activity restart) without starting a new shell. */
+    private fun restoreSaved() {
         started = true
-        if (CodeTerminalTiles.saved.isEmpty()) { addTile(); return }
         for (saved in CodeTerminalTiles.saved.toList()) tiles.add(Tile(saved.name, session(saved).also { it.start() }, saved))
         selected = selected.coerceIn(0, maxOf(0, tiles.lastIndex))
+    }
+
+    /**
+     * Shows the computer's terminal [terminalId] (a preview tap in the sessions view, a finished Move, Open a
+     * copy, New session here): selects the tile already attached to it, else attaches a new tile by id, so
+     * its scrollback replays. False when every tile is taken.
+     */
+    fun open(terminalId: String, name: String): Boolean {
+        if (!started) restoreSaved()
+        val index = tiles.indexOfFirst { it.session.terminalId == terminalId }
+        if (index >= 0) { selected = index; return true }
+        if (tiles.size >= MAX_TILES) return false
+        val saved = CodeTerminalTiles.Saved(name.ifBlank { "Terminal ${CodeTerminalTiles.next++}" }, terminalId, owned = false)
+        CodeTerminalTiles.saved.add(saved)
+        val s = session(saved)
+        tiles.add(Tile(saved.name, s, saved))
+        selected = tiles.lastIndex
+        s.start()
+        return true
     }
 
     private fun session(saved: CodeTerminalTiles.Saved): TerminalSession {
@@ -479,7 +507,7 @@ class CodeTerminalStore(private val backend: ChatBackend) {
 
     fun closeTile(index: Int) {
         val t = tiles.getOrNull(index) ?: return
-        t.session.close()
+        if (t.saved.owned) t.session.close() else t.session.detach()
         tiles.removeAt(index)
         CodeTerminalTiles.saved.remove(t.saved)
         t.saved.attached = null
@@ -563,6 +591,8 @@ private sealed interface TermTarget {
 fun TerminalScreen(store: CodeTerminalStore, backend: ChatBackend, onBack: () -> Unit, onOpenPorts: (ptyId: String) -> Unit, onConnect: () -> Unit) {
     var target by remember { mutableStateOf<TermTarget>(TermTarget.Shell(store.selected)) }
     LaunchedEffect(Unit) { store.startIfNeeded() }
+    // A terminal opened from the sessions view (a preview, a finished Move) selects its tile: show it.
+    LaunchedEffect(store.selected) { target = TermTarget.Shell(store.selected) }
     LaunchedEffect(Unit) {
         while (true) {
             store.refreshBots()
@@ -587,7 +617,9 @@ fun TerminalScreen(store: CodeTerminalStore, backend: ChatBackend, onBack: () ->
                 StripButton(DesignR.drawable.ph_plus, "New shell", "codeTerminalNew") { store.addTile(); target = TermTarget.Shell(store.tiles.lastIndex) }
             }
             (target as? TermTarget.Shell)?.let { t ->
-                StripButton(DesignR.drawable.ph_x, "Close shell", "codeTerminalClose") {
+                // A terminal the computer already had keeps running there; only its tab closes.
+                val owned = store.tiles.getOrNull(t.index)?.saved?.owned != false
+                StripButton(DesignR.drawable.ph_x, if (owned) "Close shell" else "Close tab", "codeTerminalClose") {
                     store.closeTile(t.index)
                     target = TermTarget.Shell(store.selected)
                 }
