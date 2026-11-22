@@ -31,6 +31,44 @@ On a phone, the count button in the header does the same: in the terminal it ope
 
 On a phone, the terminal is always one shell at a time with a strip of tabs. See [Code on a phone](/code/on-a-phone#terminal).
 
+## Coding agents in the terminal
+
+When a coding agent runs in a Code terminal, Allternit hides the agent's own input box and its composer drives the agent instead. This covers Claude Code, Codex, Kimi, Antigravity (`agy`), opencode and Gizzi. Grok and Qwen show the full screen. See [which tools work how](#harness-support).
+
+- **The composer reads "Message <agent>…"** (for example "Message Claude Code…"). What you send is typed into the agent and submitted.
+- **A chip on the composer's top edge** shows the agent and its state: **Idle**, **Working** or **Needs you**. While it works, **Stop** (Esc) interrupts the turn.
+- **Permission and choice prompts become buttons.** **Yes**, **No** or the numbered options replace the agent's dialog, and a click presses that key (or moves the selection) in the agent.
+- **A mode button** in the bottom bar shows the agent's own mode (such as **Bypass permissions** or **Plan mode**). A click cycles it, the same as Shift+Tab in the agent.
+- **Slash and @ menus still open**, just above the composer, because what you type is mirrored into the agent as you type.
+- **A screen Allternit does not recognise shows the full terminal**, including the agent's own box. Nothing is hidden when Allternit cannot tell where the input box is.
+- **`exit` brings the full shell back.** When the agent quits, the composer returns to the normal terminal prompt.
+
+On a phone, the same state shows as question buttons and **Stop** above the keys strip. See [Code on a phone](/code/on-a-phone#terminal).
+
+### Tabs, the Terminals menu and live cards
+
+- **Tabs (Desktop).** Each terminal is a tab. **New** opens another terminal and **Close** ends one. A tab takes the agent's name once it runs, for example "Claude Code".
+- **The Terminals menu** (the switcher at the top right in Terminal mode) lists **Your shell**, your Terminal bots and every terminal, each with its title, folder and status (**Working**, **Needs you** or **Idle**), such as `claude · allternit-platform · Working`. A row opens that exact terminal, with its history. The menu is fully opaque.
+- **Live cards.** In the Code overview, every terminal, plain shells included, is a live card in **List**, **Grid** or **Deck**: its title, folder, the agent and its state, and the last lines of the screen above the agent's input box. A runtime that cannot list terminals still shows "Terminal session". The cards update only while the overview is open.
+- **On this Mac.** The menu, the overview and the phone sessions sheet also list every agent session running outside Allternit (Terminal, iTerm2, Ghostty), with **Move here**, **Open a copy** and **New session here**. See [Move a session into Allternit](/guides/live-sessions#move-a-session-into-allternit).
+
+### Harness support
+
+<a id="harness-support"></a>
+
+| Tool | Composer in the terminal | Move (resume command) | Open a copy | New session here |
+| --- | --- | --- | --- | --- |
+| Claude Code (`claude`) | Yes | `claude --resume <id>` | `+ --fork-session` | Yes |
+| Codex (`codex`) | Yes | `codex resume <id>` | `codex fork <id>` | Yes |
+| Kimi (`kimi`) | Yes | `kimi --session <id>` | `kimi fork <id>` | Yes |
+| Grok (`grok`) | No, full screen | `grok --resume <id>` | `+ --fork-session` | Yes |
+| Antigravity (`agy`) | Yes | `agy --conversation <id>` | Not available | Yes |
+| Gizzi (`gizzi`) | Yes | `gizzi --session <id>` | `+ --fork` | Yes |
+| opencode (`opencode`) | Yes | `opencode --session <id>` | `+ --fork` | Yes |
+| Qwen (`qwen`) | No, full screen | `qwen --resume <id>` | `+ --fork-session` | Yes |
+
+Move and Open a copy keep the flags the old process was started with (such as `--dangerously-skip-permissions`). A Qwen started without a session id on its command line, or any session whose id was not found, cannot move or copy; **New session here** still works. Details: [Live agent sessions](/guides/live-sessions#holders-and-moving-a-session).
+
 ## Prompt
 
 In Code, the prompt is one input line in a dashed frame across the whole width of the Code view. On the line: **+** (attach), `❯`, the text you type, voice and run. On the frame's top edge, the prompt cache's state (**cache warm**, **cache expiring** or **cache cold**) is at the left, and the model with its status dot is at the right. The cache state shows only when the provider reports it. As you type more, the line grows upward (up to about ten lines). Press **Enter** to run, **Shift+Enter** for a new line.
@@ -68,3 +106,5 @@ Code mode can show the same moving background as bot chats. Each workspace can h
 - Mounts: `src/views/code/CodeCanvas.tsx` (launchpad and conversation). Both drop their padding while `terminalCanvasOpen` is true; the docked `CodeSessionPanel` stays available.
 - iPhone app: `surfaces/allternit-mobile/ios/Features/Code/CodeComposer.swift` (`CodePromptEdge`, `CodeContextBar`, `CodeRunUsage`). Usage comes from the chat stream's finish frame, so the app shows it only for runs in the open session, not for threads loaded from history. The preference is `allternit-code-composer-context-bar`.
 - Prompt: `src/views/chat/ChatComposer.tsx`, `codeTerminal` branch. `composer-terminal-line` stacks `composer-terminal-edge` (the frame's top edge, drawn in segments so a background shows through: `composer-terminal-cache`, then `model-picker-trigger`), `composer-terminal-input` (attach, text, voice, run), `composer-compact-controls` (the status row) and `composer-terminal-usage`. The last run's numbers come from the newest `metadata.telemetry` in the session (`src/views/code/code-composer-status.tsx`), and the position preference is `useCodeComposerPrefs` (`allternit-code-composer-v1`). `ComposerContextBar` in `src/components/usage/ContextUsage.tsx` replaces `ComposerUsageMeter` when it is **Above**, and both take `panelFooter` for `ContextBarPlacement`. `bottomDockContent` fills its left side (`CodeBottomStatusBar` with `CodeWorkspaceBar` as `leading`), and `bottomDockTrailing` its right end (`CodeTerminalButton`). The textarea auto-grows from 24 to 200 px.
+- Agent composer: `src/lib/terminal/agent-frame.ts` reads the visible rows of the terminal and returns an `AgentFrame` (`agent`, `hideFrom`, `status`, `dialog`, `mode`) or `null` for an unrecognised screen; `agentNameFrom` names the agent from the screen or terminal title. `src/views/code/agent-composer.tsx` draws the status chip, Stop, the dialog buttons and the mode button, and the composer placeholder. The Swift and Kotlin ports (`Features/Code/AgentFrame.swift`, `feature/code/.../AgentFrame.kt`) are checked against the shared fixture corpus in `surfaces/allternit-mobile/agent-frame-fixtures/`; the TypeScript fixtures are `src/lib/terminal/__fixtures__/agent-frame/`.
+- Terminals menu, cards and On this Mac: `src/views/code/terminal-sessions.store.ts` (`useTerminalSessions`, `useTerminalSessionsPolling`, `selectAgentFor`, `selectExternalSessions`), `src/lib/agents/live-sessions-api.ts` (`listLiveSessions`, `adopt`, `getAdoptJob`), `src/components/session-overview/TerminalPreview.tsx` and `src/views/code/OnThisComputerRows.tsx`. Terminals are paired with Terminal bot panes by `pane_id` on `/terminal/list`.
