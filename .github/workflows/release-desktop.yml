@@ -352,6 +352,22 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-files-mount
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-files-mount
 
+      - name: Build host helper (Computers console elevation)
+        # allternit-host-helper: the one root helper the Computers console setup
+        # sheet installs after an OS admin prompt. host_probe::elevation::
+        # bundled_helper() finds it next to allternit-api (Resources/bin).
+        # Universal lipo; electron-builder signs it with the rest of Resources/bin.
+        run: |
+          cargo build --release -p host-probe --bin allternit-host-helper --target x86_64-apple-darwin
+          cargo build --release -p host-probe --bin allternit-host-helper --target aarch64-apple-darwin
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          lipo -create \
+            target/x86_64-apple-darwin/release/allternit-host-helper \
+            target/aarch64-apple-darwin/release/allternit-host-helper \
+            -output surfaces/allternit-desktop/resources/bin/allternit-host-helper
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-host-helper
+          lipo -info surfaces/allternit-desktop/resources/bin/allternit-host-helper
+
       - name: Record Rust binaries for reuse
         if: steps.prebuilt.outputs.hit != 'true'
         shell: bash
@@ -654,6 +670,17 @@ jobs:
           mkdir -p surfaces/allternit-desktop/resources/bin
           cp target/x86_64-pc-windows-msvc/release/allternit-api.exe \
              surfaces/allternit-desktop/resources/bin/allternit-api.exe
+
+      - name: Build host helper (Computers console elevation)
+        # allternit-host-helper.exe sits next to allternit-api.exe (resources\bin):
+        # host_probe::elevation::bundled_helper() looks for it there. The setup
+        # sheet copies it to %ProgramFiles%\Allternit\HostHelper after a UAC prompt.
+        shell: bash
+        run: |
+          cargo build --release -p host-probe --bin allternit-host-helper --target x86_64-pc-windows-msvc
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          cp target/x86_64-pc-windows-msvc/release/allternit-host-helper.exe \
+             surfaces/allternit-desktop/resources/bin/allternit-host-helper.exe
 
       - name: Setup Go
         # Needed to build the mesh-node sidecar from source (the vendor tree
@@ -1027,6 +1054,15 @@ jobs:
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-voice-service surfaces/allternit-desktop/resources/bin/allternit-tts
           # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
           bash scripts/check-voice-no-gpl.sh surfaces/allternit-desktop/resources/bin/allternit-voice-service
+
+      - name: Build host helper (Linux, Computers console elevation)
+        # allternit-host-helper: root helper behind `sudo -n` (sudoers drop-in),
+        # installed by the setup sheet after one admin prompt. Lands in
+        # resources/bin next to allternit-api, where bundled_helper() looks.
+        run: |
+          scripts/build-linux-sidecars.sh --arch ${{ matrix.arch }} surfaces/allternit-desktop/resources/bin host-helper
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-host-helper
+          ls -lh surfaces/allternit-desktop/resources/bin/allternit-host-helper
 
       - name: Build Files drive mount helper (Linux)
         # allternit-files-mount: the Linux FUSE mount (gizzi files mount, via

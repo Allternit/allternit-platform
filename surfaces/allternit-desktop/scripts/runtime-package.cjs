@@ -58,6 +58,9 @@ const BINARIES = [
   `allternit-api${EXE}`,
   `gizzi-code${EXE}`,
   `allternit-factory${EXE}`,
+  // The Computers console elevation helper: host_probe::elevation::bundled_helper()
+  // looks for it next to allternit-api, so it must land in the same bin/.
+  `allternit-host-helper${EXE}`,
   ...(TARGET_OS === 'win32' ? [] : ['allternit-files-mount']),
 ];
 

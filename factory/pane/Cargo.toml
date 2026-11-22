@@ -73,6 +73,8 @@ tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 ed25519-dalek = { workspace = true }
 rand = "0.8"
 futures-util = "0.3"
+# Computers console: the shared /v1/host/* routes (same router allternit-api mounts) served on the shim.
+host-probe = { workspace = true, features = ["http"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 # P5 visibility panel (src/ao/peers/*, src/ao/visibility/*) and P6a Bus mailbox

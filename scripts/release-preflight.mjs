@@ -323,6 +323,9 @@ function checkPackagingDryRun(jobs) {
   // engine runs every terminal (allternit-api /terminal, gizzi /pty) over a
   // Unix socket, or a named pipe on Windows. It replaced allternit-mux.
   bins.push({ name: 'allternit-factory', optional: false, flag: null });
+  // Computers console elevation helper: host_probe::elevation::bundled_helper()
+  // looks for it next to allternit-api, on every OS (staged by prepare-host-helper.cjs).
+  bins.push({ name: 'allternit-host-helper', optional: false, flag: null });
   bins.push({ name: 'lume', optional: false, flag: null, darwinOnly: true });
   // Phone Link's Apple ID signer (cmd/allternit-sideload, staged by
   // prepare-sideload.cjs). ADVISORY ONLY for now: iPhone setup also needs the
