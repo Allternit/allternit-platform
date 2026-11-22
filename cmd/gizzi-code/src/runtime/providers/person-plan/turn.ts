@@ -67,8 +67,8 @@ async function* chatgptTurn(input: TurnInput): AsyncGenerator<TurnEvent> {
     return
   }
   if (!res.ok || !res.body) {
-    const err = readErrorBody(await res.text().catch(() => ""))
-    yield { type: "error", code: err.code, message: chatgptErrorText(err.code, res.status, err.message) }
+    const err = readErrorBody(await res.text().catch(() => ""), res.headers)
+    yield { type: "error", code: err.code, message: chatgptErrorText(err.code, res.status, err.message), ...(err.resetAt ? { resetAt: err.resetAt } : {}) }
     return
   }
   yield* parseResponsesStream(res.body)

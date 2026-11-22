@@ -208,6 +208,12 @@ export namespace ProviderError {
       code: credits?.code ?? described.code,
     }
     if (originalName) metadata.originalName = originalName
+    // A person-plan failure (PersonPlanError) keeps the provider's own code and
+    // reset time so the chat stream's error frame can carry them.
+    const planCode = (input.error as { providerCode?: unknown } | undefined)?.providerCode
+    const planReset = (input.error as { resetAt?: unknown } | undefined)?.resetAt
+    if (typeof planCode === "string" && planCode && !credits) metadata.code = planCode
+    if (typeof planReset === "string" && planReset) metadata.resetAt = planReset
 
     return {
       type: "api_error",
