@@ -223,8 +223,16 @@ struct ConnectionsSettingsView: View {
     }
 
     @ViewBuilder
+    /// The ChatGPT subscription and Codex CLI sit in one card at the top of Brains
+    /// (List layout, when both rows are listed). Codex then leaves Coding tools.
+    private var groupsAccountPair: Bool {
+        layout == .list && AccountPair.pairsUp(visible.map(\.id))
+    }
+
     private func groupSection(_ group: ConnGroup) -> some View {
-        let rows = visible.filter { $0.group == group }
+        let rows = visible.filter { $0.group == group && !(groupsAccountPair && group == .tools && $0.id == AccountPair.codexId) }
+        let pairEntries = (group == .brains && groupsAccountPair)
+            ? [AccountPair.chatgptId, AccountPair.codexId].compactMap { id in visible.first { $0.id == id } } : []
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
@@ -254,9 +262,12 @@ struct ConnectionsSettingsView: View {
                     case .list:
                     PhoneSettingsCard {
                         if group == .brains {
-                            let sections = brainSections(rows)
+                            if !pairEntries.isEmpty {
+                                AccountPairCard { rowList(pairEntries, accountMarks: true) }
+                            }
+                            let sections = brainSections(rows.filter { e in !pairEntries.contains { $0.id == e.id } })
                             ForEach(Array(sections.enumerated()), id: \.element.0) { si, section in
-                                if si > 0 { PhoneCardDivider() }
+                                if si > 0 || !pairEntries.isEmpty { PhoneCardDivider() }
                                 Text(section.0.uppercased())
                                     .font(.system(size: 11, weight: .semibold))
                                     .tracking(0.6)
@@ -346,10 +357,15 @@ struct ConnectionsSettingsView: View {
     }
 
     @ViewBuilder
-    private func rowList(_ rows: [ConnEntry]) -> some View {
+    private func rowList(_ rows: [ConnEntry], accountMarks: Bool = false) -> some View {
         ForEach(Array(rows.enumerated()), id: \.element.id) { i, e in
             if i > 0 { PhoneCardDivider() }
-            ConnectionRowView(entry: e, store: store, opensPage: ConnRoute.opensPage(e, store: store) && store.isAvailable(e.id)) { action in
+            ConnectionRowView(
+                entry: e, store: store,
+                opensPage: ConnRoute.opensPage(e, store: store) && store.isAvailable(e.id),
+                accountExtras: AccountPair.extras(id: e.id, row: store.row(e.id), paired: accountMarks),
+                accountMark: accountMarks
+            ) { action in
                 act(e, action)
             }
         }

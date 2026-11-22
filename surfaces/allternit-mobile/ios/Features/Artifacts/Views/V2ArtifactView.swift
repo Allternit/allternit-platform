@@ -53,6 +53,8 @@ struct V2ArtifactView: View {
     @State private var showingEditor = false
     @State private var needsSignIn = false
     @State private var isExporting = false
+    /// Real bytes while a file is fetched to save (design pick: downloads B).
+    @State private var savingProgress: ByteProgress?
     @State private var sharedFile: SharedArtifactFile?
     @State private var showingPDFTemplate = false
     @State private var showingComments = false
@@ -135,7 +137,7 @@ struct V2ArtifactView: View {
             }
             .overlay(alignment: .bottom) {
                 if isExporting {
-                    ArtifactExportProgressPill(label: "Preparing file…")
+                    ArtifactExportProgressPill(label: savingProgress.map { ByteProgressText.status(verb: "Saving", $0) } ?? "Preparing file…")
                         .padding(.bottom, 24)
                 }
             }
@@ -463,15 +465,15 @@ struct V2ArtifactView: View {
             CodeBodyView(code: body)
         case "image":
             if case .string("video")? = a.version.meta?["media"], let url = ArtifactBodyDecoder.firstURI(body) {
-                ArtifactVideoView(urlString: url, fit: fit)
+                ArtifactVideoView(urlString: url, fit: fit, poster: ByteLoading.poster(meta: a.version.meta))
             } else if let url = ArtifactBodyDecoder.firstURI(body) {
-                ArtifactImageView(urlString: url, fit: fit)
+                ArtifactImageView(urlString: url, fit: fit, poster: ByteLoading.poster(meta: a.version.meta))
             } else {
                 unreadable("image")
             }
         case "video":
             if let url = ArtifactBodyDecoder.videoURL(body: body, meta: a.version.meta) {
-                ArtifactVideoView(urlString: url, fit: fit)
+                ArtifactVideoView(urlString: url, fit: fit, poster: ByteLoading.poster(meta: a.version.meta))
             } else {
                 // An unrendered video project: the web's viewer previews it.
                 ArtifactLiveWebView(artifact: a)
@@ -545,7 +547,8 @@ struct V2ArtifactView: View {
     private func shareFile(_ a: ArtifactV2) async {
         guard let source = shareSource(a) else { return }
         isExporting = true
-        defer { isExporting = false }
+        savingProgress = nil
+        defer { isExporting = false; savingProgress = nil }
         do {
             let data: Data
             let ext: String
@@ -555,7 +558,7 @@ struct V2ArtifactView: View {
                 data = pdf
                 ext = "pdf"
             case .media(let url, let isVideo):
-                data = try await ArtifactMediaLoader.data(for: url)
+                data = try await ArtifactMediaLoader.data(for: url) { p in Task { @MainActor in savingProgress = p } }
                 ext = isVideo ? Self.videoExtension(url) : Self.imageExtension(data)
             }
             let base = a.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -758,16 +761,24 @@ enum ArtifactMediaLoader {
         return URL(string: path, relativeTo: base)?.absoluteURL
     }
 
-    static func data(for urlString: String) async throws -> Data {
+    /// The bytes behind `urlString`. With `onProgress`, a download reports real
+    /// bytes as they arrive (design pick: downloads, option B); a `data:` URL
+    /// is already here and reports once, complete. Reports are throttled to
+    /// about 8 a second, and the last one always goes through.
+    static func data(for urlString: String, onProgress: (@Sendable (ByteProgress) -> Void)? = nil) async throws -> Data {
         if urlString.hasPrefix("data:") {
             guard let comma = urlString.firstIndex(of: ",") else { throw ArtifactContentError.badURL }
             let meta = urlString[..<comma]
             let payload = String(urlString[urlString.index(after: comma)...])
+            let data: Data
             if meta.contains(";base64") {
-                guard let data = Data(base64Encoded: payload, options: .ignoreUnknownCharacters) else { throw ArtifactContentError.badURL }
-                return data
+                guard let decoded = Data(base64Encoded: payload, options: .ignoreUnknownCharacters) else { throw ArtifactContentError.badURL }
+                data = decoded
+            } else {
+                data = Data((payload.removingPercentEncoding ?? payload).utf8)
             }
-            return Data((payload.removingPercentEncoding ?? payload).utf8)
+            onProgress?(ByteProgress(bytes: Int64(data.count), totalBytes: Int64(data.count)))
+            return data
         }
         var request: URLRequest
         if urlString.hasPrefix("/") {
@@ -782,6 +793,10 @@ enum ArtifactMediaLoader {
             }
             request = URLRequest(url: url)
         }
+        if let onProgress {
+            let throttle = ProgressThrottle(onProgress)
+            return try await ByteDownloader(request: request, onProgress: { throttle.send($0) }).run()
+        }
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw APIError.httpError(statusCode: http.statusCode, message: nil)
@@ -793,8 +808,10 @@ enum ArtifactMediaLoader {
 private struct ArtifactImageView: View {
     let urlString: String
     var fit: ArtifactFit = .fit
+    var poster: String? = nil
     @State private var image: UIImage?
     @State private var failed = false
+    @State private var progress: ByteProgress?
 
     var body: some View {
         Group {
@@ -820,12 +837,12 @@ private struct ArtifactImageView: View {
             } else if failed {
                 FriendlyStateView(style: .error, icon: "photo", title: "Couldn't load the image", message: "Check your connection and try again.")
             } else {
-                ProgressView()
+                ByteLoadingView(posterURL: poster, progress: progress, verb: "Loading")
             }
         }
         .task {
             do {
-                let data = try await ArtifactMediaLoader.data(for: urlString)
+                let data = try await ArtifactMediaLoader.data(for: urlString) { p in Task { @MainActor in progress = p } }
                 if let decoded = UIImage(data: data) { image = decoded } else { failed = true }
             } catch {
                 failed = true
@@ -837,8 +854,10 @@ private struct ArtifactImageView: View {
 private struct ArtifactVideoView: View {
     let urlString: String
     var fit: ArtifactFit = .fit
+    var poster: String? = nil
     @State private var player: AVPlayer?
     @State private var failed = false
+    @State private var progress: ByteProgress?
 
     var body: some View {
         Group {
@@ -847,7 +866,7 @@ private struct ArtifactVideoView: View {
             } else if failed {
                 FriendlyStateView(style: .error, icon: "video", title: "Couldn't load the video", message: "Check your connection and try again.")
             } else {
-                ProgressView("Loading video…")
+                ByteLoadingView(posterURL: poster, progress: progress, verb: "Loading")
             }
         }
         .task {
@@ -858,7 +877,7 @@ private struct ArtifactVideoView: View {
                 return
             }
             do {
-                let data = try await ArtifactMediaLoader.data(for: urlString)
+                let data = try await ArtifactMediaLoader.data(for: urlString) { p in Task { @MainActor in progress = p } }
                 let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
                 try data.write(to: file, options: .atomic)
                 player = AVPlayer(url: file)
