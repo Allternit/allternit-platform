@@ -23,6 +23,20 @@
 //!   409 `no_recent_backup` (no Orgo daily backup in the last 48 h; nothing
 //!   was deleted); 503 `region_unavailable` `{ location }`.
 //!
+//! - `GET /api/v1/computers/:id/backups` → `{ backups: [{ id, createdAt,
+//!   sizeBytes?, kind }], canRestore }` (step 2.6): the finished Orgo daily
+//!   backups, newest first; `canRestore` is Orgo's "can be restored now"
+//!   (null when it does not say). Read only, never wakes the computer. 503
+//!   `backup_check_failed` when Orgo's answer can't be read.
+//! - `POST /api/v1/computers/:id/backups/restore` `{ backupId, confirm: true }`
+//!   → 202 `{ instance, backupId }`: an in-place restore (same computer,
+//!   same id), which erases what changed since that backup. 400
+//!   `confirm_required` / `backup_id_required`; 404 `backup_not_found`; 409
+//!   `restore_unavailable` / `busy`; 501 `not_supported` while
+//!   `ALLTERNIT_ORGO_BACKUP_RESTORE` is off (the default).
+//!
+//! Every error body carries a plain `message`.
+//!
 //! The location and template on create are fields of
 //! `POST /api/v1/provisioned-instances` (`routes/provisioned_instances.rs`).
 
@@ -45,6 +59,8 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/computers/:id/restart", post(restart))
         .route("/api/v1/computers/:id/move", post(move_computer))
         .route("/api/v1/computers/:id/rebuild", post(rebuild))
+        .route("/api/v1/computers/:id/backups", get(list_backups))
+        .route("/api/v1/computers/:id/backups/restore", post(restore_backup))
 }
 
 /// The JSON response for a cloud action error.
@@ -175,6 +191,84 @@ async fn rebuild(
             Ok(instance) => (
                 StatusCode::ACCEPTED,
                 Json(serde_json::json!({ "instance": instance })),
+            )
+                .into_response(),
+            Err(error) => action_error_response(&error),
+        },
+    )
+}
+
+async fn list_backups(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    Ok(
+        match state.provisioning_service.cloud_backups(&id, &user.id).await {
+            Ok(list) => Json(serde_json::json!({
+                "backups": list.backups,
+                "canRestore": list.can_restore,
+            }))
+            .into_response(),
+            Err(error) => action_error_response(&error),
+        },
+    )
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreBackupRequest {
+    #[serde(default)]
+    backup_id: Option<String>,
+    #[serde(default)]
+    confirm: bool,
+}
+
+async fn restore_backup(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Option<Json<RestoreBackupRequest>>,
+) -> Result<Response, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    if let Err(error) = state
+        .provisioning_service
+        .console_cloud_row(&id, &user.id)
+        .await
+    {
+        return Ok(action_error_response(&error));
+    }
+    let request = body.map(|Json(request)| request).unwrap_or_default();
+    let Some(backup_id) = request.backup_id.filter(|b| !b.trim().is_empty()) else {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "backup_id_required",
+                "message": "Pick a backup to restore.",
+            })),
+        )
+            .into_response());
+    };
+    if !request.confirm {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "confirm_required",
+                "message": "Restoring puts this computer back to that backup and erases what changed since. Send {\"confirm\": true}.",
+            })),
+        )
+            .into_response());
+    }
+    Ok(
+        match state
+            .provisioning_service
+            .restore_cloud_backup(&id, &user.id, &backup_id)
+            .await
+        {
+            Ok(instance) => (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({ "instance": instance, "backupId": backup_id })),
             )
                 .into_response(),
             Err(error) => action_error_response(&error),
