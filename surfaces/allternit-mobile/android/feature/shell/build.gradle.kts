@@ -72,4 +72,5 @@ dependencies {
     implementation(project(":core:data"))
     // setContent { } for MainActivity.
     implementation(libs.activity.compose)
+    testImplementation(libs.junit)
 }

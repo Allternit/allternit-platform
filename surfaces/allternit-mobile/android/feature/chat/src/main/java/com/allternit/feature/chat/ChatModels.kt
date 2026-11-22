@@ -104,7 +104,7 @@ data class QuestionItem(val header: String?, val question: String, val options: 
  * The inline error card's data (iOS ChatError, ChatErrorCardView): built from a finish frame
  * with status "error", a stream error, or a transport failure.
  */
-data class ChatError(val name: String?, val message: String?, val raw: String) {
+data class ChatError(val name: String?, val message: String?, val raw: String, val typed: ChatErrorInfo? = null) {
     val isModelError: Boolean get() = name == NO_BRAIN || name == "ProviderModelNotFoundError"
 
     /**

@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -151,7 +153,36 @@ fun ChatScreen(
             onConnect = callbacks.onConnectConnector,
             onShareLink = if (hasSession) callbacks.onShareLink else null,
             onOpenArtifact = callbacks.onOpenArtifact,
+            onOpenConnections = callbacks.onOpenConnections,
         )
+    }
+
+    // Chat wait, design pick B (iOS AnswerRoom): the sent message anchors at the top of the view and the answer grows
+    // into the room kept below it; status stays in the running strip above the composer.
+    var anchorId by remember { mutableStateOf<String?>(null) }
+    var wasStreaming by remember { mutableStateOf(viewModel.isStreaming) }
+    LaunchedEffect(viewModel.isStreaming) {
+        AnswerRoom.anchorId(wasStreaming, viewModel.isStreaming, viewModel.messages)?.let { anchorId = it }
+        if (!viewModel.isStreaming) anchorId = null
+        wasStreaming = viewModel.isStreaming
+    }
+    val anchorIndex = anchorId?.let { id -> messages.indexOfFirst { it.id == id } } ?: -1
+    LaunchedEffect(anchorId) {
+        if (anchorIndex >= 0) list.scrollToItem(anchorIndex)
+    }
+    val spacingPx = with(androidx.compose.ui.platform.LocalDensity.current) { 20.dp.toPx() }
+    val roomPx by remember(anchorIndex) {
+        derivedStateOf {
+            if (anchorIndex < 0) 0f else {
+                val info = list.layoutInfo
+                val turn = info.visibleItemsInfo.filter { it.index >= anchorIndex && it.key != ANSWER_ROOM_KEY }
+                val reachesEnd = turn.lastOrNull()?.index == viewModel.messages.lastIndex
+                if (!reachesEnd) 0f else AnswerRoom.room(
+                    viewport = (info.viewportEndOffset - info.viewportStartOffset).toFloat(),
+                    turnHeight = turn.sumOf { it.size }.toFloat(), topGap = 0f, rowSpacing = spacingPx,
+                )
+            }
+        }
     }
 
     LaunchedEffect(viewModel.needsBrainPick) {
@@ -172,7 +203,8 @@ fun ChatScreen(
     }
     LaunchedEffect(messages.size, last?.content?.length, last?.toolCalls?.size, viewModel.computeGate) {
         val count = list.layoutInfo.totalItemsCount
-        if (count > 0) {
+        // An anchored turn that is still running must not drag the view to the bottom (jump button instead).
+        if (count > 0 && AnswerRoom.followsBottom(anchorIndex >= 0, viewModel.isStreaming)) {
             if (viewModel.isStreaming) {
                 list.scrollToItem(count - 1)
                 list.scrollBy(100_000f)
@@ -225,6 +257,9 @@ fun ChatScreen(
                             actions = actions,
                         )
                         }
+                    }
+                    if (anchorIndex >= 0) {
+                        item(key = ANSWER_ROOM_KEY) { Spacer(Modifier.height(with(androidx.compose.ui.platform.LocalDensity.current) { roomPx.toDp() })) }
                     }
                     if (gate != null) {
                         item(key = "computeGate") {
@@ -281,6 +316,10 @@ fun ChatScreen(
                 ) { Icon(painterResource(DesignR.drawable.ph_x), null, tint = c.textSecondary, modifier = Modifier.size(12.dp)) }
             }
         }
+        // Running generations: one chip each; tap opens the full view, press and hold peeks.
+        RunningStrip()
         composer()
     }
 }
+
+private const val ANSWER_ROOM_KEY = "answerRoom"

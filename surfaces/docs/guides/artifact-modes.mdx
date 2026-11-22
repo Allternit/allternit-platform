@@ -51,6 +51,16 @@ On phones (ai.allternit.com and the m.allternit.com app), Docs, Sheets, Slides a
 
 Bot threads do not offer these three editor-pane modes. Use the workspace artifact session for the editable Office flow. A bot can still produce file deliverables through tools available to its thread; that is a different path from editing an open pane.
 
+## While a picture or clip is made
+
+In the Android app the frame opens on the Allternit block pulse and then follows the real work: a picture's preview sharpens in the same box, and a video shows its latest frame, "Frame N of M", a progress bar and the Render, Encode, Save steps. The newest reply shows the full frame; older replies keep a compact card. Press and hold a card, or the chip in the strip above the composer while something is running, to peek at the full frame; let go and it closes. Tap to open it in a bottom sheet. With the system animation scale at zero the pulse draws one still frame and the preview does not blur in.
+
+When you send a message that starts a picture or clip, your message is held at the top of the chat and the answer grows below it, so nothing jumps while it is made. The status stays in the strip above the composer, not as a chat bubble.
+
+If it fails, the card says why in the server's words. A usage limit shows when it resets, in your time ("resets at 3:40 PM", or "Tue 3:40 PM" on another day). A sign-in error offers **Connect ChatGPT** (or **Open Connections**), a usage limit offers **Pick another model**, and anything else offers **Try again**. A failed turn shows one error card, never two. Older servers that send a plain error sentence keep the plain card.
+
+A stored picture you open from a chat shows its preview sharpening as the file arrives, with the real bytes, percent and time left ("Loading 41% · 3.0 of 7.4 MB · ETA 3 s"), or "— ETA" when the server gave no size. **Save or share file** in the export sheet shows the same line while the file is fetched. Stored clips still load inside the viewer without a progress line on Android.
+
 ## Inspect and continue
 
 Keep the conversation for instructions and steering, and the artifact pane for the resulting work. Open a supported output to preview or edit it, check the contents, and ask for a specific revision. Available export formats depend on the artifact kind and the tool that created it.

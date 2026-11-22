@@ -457,6 +457,11 @@ class ChatViewModel(
                 it.copy(toolStatus = ToolStatus(event.toolName, event.toolName, ToolState.Running, System.currentTimeMillis()))
                     .upsertToolCall(ToolCallRecord(event.toolCallId, event.toolName, ToolState.Running, startedAt = System.currentTimeMillis()))
             }
+            is ChatStreamEvent.ToolProgress -> {
+                // A running tool's live report: the call stays running and keeps the newest metadata.
+                update(id) { it.upsertToolCall(ToolCallRecord(event.toolCallId, event.toolName, ToolState.Running, metadata = event.metadata, startedAt = System.currentTimeMillis())) }
+                syncProgress(id)
+            }
             is ChatStreamEvent.ToolResult -> update(id) { m ->
                 val f = event.frame
                 val call = ToolCallRecord(
@@ -473,7 +478,7 @@ class ChatViewModel(
                 )
                 val status = m.toolStatus?.let { s -> s.copy(state = ToolState.Done, elapsedMs = s.startedAt?.let { System.currentTimeMillis() - it }) }
                 m.upsertToolCall(call).copy(toolStatus = status)
-            }
+            }.also { syncProgress(id) }
             is ChatStreamEvent.ToolError -> update(id) { m ->
                 val name = event.toolName ?: m.toolStatus?.toolName ?: "Tool"
                 val status = m.toolStatus?.let { s ->
@@ -481,7 +486,7 @@ class ChatViewModel(
                 }
                 m.upsertToolCall(ToolCallRecord(event.toolCallId, name, ToolState.Failed, error = event.error, finishedAt = System.currentTimeMillis()))
                     .copy(toolStatus = status)
-            }
+            }.also { syncProgress(id) }
             is ChatStreamEvent.Artifact -> update(id) {
                 it.copy(artifacts = it.artifacts + ArtifactRecord(event.artifactId, event.kind, event.title, event.url, event.content))
             }
@@ -489,13 +494,17 @@ class ChatViewModel(
                 if (event.status != "error") return false
                 flushPending()
                 val raw = event.error ?: "The generation failed."
-                update(id) { it.copy(error = ChatError(event.errorName, event.errorMessage, raw)) }
+                // A typed error frame already drew its card: one error per turn, never two.
+                update(id) { if (it.error?.typed != null) it else it.copy(error = ChatError(event.errorName, event.errorMessage, raw)) }
                 return true
             }
             is ChatStreamEvent.StreamError -> {
                 flushPending()
                 val name = if (event.message == ChatError.NO_BRAIN_MESSAGE) ChatError.NO_BRAIN else null
-                update(id) { it.copy(error = ChatError(name, event.message, event.message)) }
+                val typed = if (event.code != null || event.resetAtMs != null) {
+                    ChatErrorInfo.make(event.message, event.code, resetAtMs = event.resetAtMs)
+                } else null
+                update(id) { it.copy(error = ChatError(name, event.message, event.message, typed)) }
                 return true
             }
             is ChatStreamEvent.Question -> {
@@ -713,6 +722,8 @@ class ChatViewModel(
 
     private fun finishStreaming(id: String) {
         flushPending()
+        // The turn is over: no call of it is running any more, so its progress leaves the store.
+        messages.firstOrNull { it.id == id }?.let { GenerationProgressStore.shared.sync(it.toolCalls, replyIsLive = false) }
         val started = requestStartedAt
         val first = firstDeltaAt
         if (started != null && first != null) {
@@ -739,6 +750,12 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    /** Keeps the shared progress store in step with one reply's tool calls. */
+    private fun syncProgress(id: String) {
+        val m = messages.firstOrNull { it.id == id } ?: return
+        GenerationProgressStore.shared.sync(m.toolCalls, replyIsLive = m.isStreaming)
     }
 
     private fun isPristine(id: String): Boolean {
