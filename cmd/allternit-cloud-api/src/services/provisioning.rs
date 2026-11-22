@@ -74,6 +74,9 @@ mod free;
 mod orgo;
 #[path = "provisioning_credit.rs"]
 mod credit;
+#[path = "provision_ssh_keys.rs"]
+mod ssh_keys;
+pub use ssh_keys::{start_ssh_key_sweeper, SshKeyInput};
 #[path = "provisioning_plan_hours.rs"]
 mod plan_hours;
 pub use plan_hours::{
@@ -491,6 +494,13 @@ pub enum CloudActionError {
     BackupNotFound,
     /// The provider says this computer cannot be restored right now.
     RestoreUnavailable,
+    /// An SSH key the add route refuses before anything is written
+    /// (`private_key`, `invalid_public_key`, `too_many_keys`, `invalid_expiry`, ...).
+    SshKeyRefused { code: &'static str, message: String },
+    /// The same key (fingerprint) is already on this computer.
+    SshKeyExists,
+    /// No key with that id on this computer.
+    SshKeyNotFound,
     Api(ApiError),
 }
 
@@ -587,6 +597,21 @@ impl CloudActionError {
                     "message": "This computer can't be restored right now. Try again in a few minutes. Nothing was changed.",
                 }),
             ),
+            Self::SshKeyRefused { code, message } => (400, json!({ "error": code, "message": message })),
+            Self::SshKeyExists => (
+                409,
+                json!({
+                    "error": "key_exists",
+                    "message": "That key is already on this computer. Nothing was changed.",
+                }),
+            ),
+            Self::SshKeyNotFound => (
+                404,
+                json!({
+                    "error": "key_not_found",
+                    "message": "That key is no longer on this computer.",
+                }),
+            ),
             Self::Api(error) => match error {
                 ApiError::NotFound(_) => Self::NotACloudComputer.parts(),
                 other => {
@@ -609,6 +634,16 @@ impl From<ApiError> for CloudActionError {
     fn from(error: ApiError) -> Self {
         Self::Api(error)
     }
+}
+
+/// Where to reach a computer's SSH server (Orgo's Direct SSH). The port is
+/// never 22: port 22 on the host is Orgo's server, not the computer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SshEndpoint {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub command: String,
 }
 
 /// Backend seam the scheduling/lifecycle logic programs against. Tests
@@ -688,6 +723,20 @@ pub trait ProvisionBackend: Send + Sync + std::fmt::Debug {
     /// (same computer, same id). Never a restore as a new computer.
     async fn restore_backup(&self, _name: &str, _backup_id: &str) -> Result<(), ProvisionError> {
         Err(unsupported("backup restores"))
+    }
+    /// Replace the computer's SSH public keys with `keys` (one OpenSSH line
+    /// each) and turn SSH on (Orgo `POST /computers/{id}/ssh`). Returns true
+    /// when the provider needs one restart before the keys work.
+    async fn set_ssh_keys(&self, _name: &str, _keys: &[String]) -> Result<bool, ProvisionError> {
+        Err(unsupported("SSH keys"))
+    }
+    /// Turn SSH off and remove every key (Orgo `DELETE /computers/{id}/ssh`).
+    async fn disable_ssh(&self, _name: &str) -> Result<(), ProvisionError> {
+        Err(unsupported("SSH keys"))
+    }
+    /// Where to connect (Orgo `GET /computers/{id}/ssh`); `Ok(None)` while SSH is off.
+    async fn ssh_endpoint(&self, _name: &str) -> Result<Option<SshEndpoint>, ProvisionError> {
+        Err(unsupported("SSH keys"))
     }
 
     // -- Customer restore points and downloadable copies -------------------
@@ -5257,6 +5306,7 @@ pub(crate) mod pg_tests {
     const MIGRATION_066: &str = include_str!("../../migrations_pg/066_paired_computer_orgs.sql");
     const MIGRATION_081: &str = include_str!("../../migrations_pg/081_paired_cloud_computers.sql");
     const MIGRATION_CREDIT: &str = include_str!("../../migrations_pg/132_credit_computers.sql");
+    const MIGRATION_SSH_KEYS: &str = include_str!("../../migrations_pg/156_computer_ssh_keys.sql");
     const MIGRATION_PLAN_HOURS: &str = include_str!("../../migrations_pg/134_plan_computer_hours.sql");
 
     async fn test_pool() -> PgPool {
@@ -7182,6 +7232,117 @@ pub(crate) mod pg_tests {
         .unwrap();
         assert_eq!(device, None, "the new computer pairs again");
         assert_eq!(live, 1, "still one computer");
+    }
+
+    #[tokio::test]
+    async fn ssh_keys_go_to_orgo_as_one_set_and_only_public_keys_are_stored() {
+        const LAPTOP: &str =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl eoj@laptop";
+        const AGENT: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f";
+        let pool = migrated_pool().await;
+        let schema: String = sqlx::query_scalar("SELECT current_schema()").fetch_one(&pool).await.unwrap();
+        apply_migration_sql(&pool, &schema, MIGRATION_SSH_KEYS).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_SSH_KEYS).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, seen, _) = orgo::tests::console_orgo(false).await;
+        let service = console_service(&pool, orgo);
+        let view = service
+            .create_placed("user_1", Some("sub_1"), &CloudPlacement { location: Some("nyc".to_string()), ..Default::default() })
+            .await
+            .unwrap();
+        let id = view.id.clone();
+        for _ in 0..200 {
+            if seen().iter().any(|(_, _, _, body)| {
+                body["command"].as_str().is_some_and(|c| c.contains("allternit-orgo-ensure"))
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        set_status(&pool, &id, "running").await;
+        let input = |key: &str, label: &str, agent: Option<i64>| SshKeyInput {
+            label: Some(label.to_string()),
+            public_key: Some(key.to_string()),
+            kind: agent.map(|_| "agent".to_string()),
+            expires_in_minutes: agent,
+        };
+        let key_sets = || -> Vec<serde_json::Value> {
+            seen()
+                .into_iter()
+                .filter(|(m, p, _, _)| m == "POST" && p.ends_with("/ssh"))
+                .map(|(_, _, _, body)| body["public_key"].clone())
+                .collect()
+        };
+        let stored = || async {
+            sqlx::query_scalar::<_, String>("SELECT public_key FROM computer_ssh_keys ORDER BY created_at")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+
+        // Paired/desktop ids and other users' computers: 404 not_a_cloud_computer.
+        for (computer, user) in [("pc_box", "user_1"), (id.as_str(), "user_2")] {
+            for error in [
+                service.ssh_keys(computer, user).await.unwrap_err(),
+                service.add_ssh_key(computer, user, input(LAPTOP, "Laptop", None)).await.unwrap_err(),
+                service.remove_ssh_key(computer, user, "sshk_x").await.unwrap_err(),
+            ] {
+                assert_eq!(error.parts().0, 404);
+                assert_eq!(error.parts().1["error"], "not_a_cloud_computer");
+            }
+        }
+
+        // A private key is refused before anything is sent or stored.
+        let private = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----";
+        let refused = service.add_ssh_key(&id, "user_1", input(private, "Oops", None)).await.unwrap_err();
+        assert_eq!(refused.parts().0, 400);
+        assert_eq!(refused.parts().1["error"], "private_key");
+        assert!(refused.parts().1["message"].as_str().unwrap().contains("public key"));
+        assert!(key_sets().is_empty());
+        assert!(stored().await.is_empty());
+
+        // A person's key, then an agent key: Orgo gets the whole set each time.
+        let (laptop, restart) = service.add_ssh_key(&id, "user_1", input(LAPTOP, "Laptop", None)).await.unwrap();
+        assert!(!restart);
+        assert_eq!((laptop.kind.as_str(), laptop.label.as_str(), laptop.expires_at.as_deref()), ("computer", "Laptop", None));
+        assert_eq!(laptop.fingerprint, "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU");
+        let again = service.add_ssh_key(&id, "user_1", input(LAPTOP, "Twice", None)).await.unwrap_err();
+        assert_eq!(again.parts().1["error"], "key_exists");
+        let (agent, _) = service.add_ssh_key(&id, "user_1", input(AGENT, "Deploy bot", Some(30))).await.unwrap();
+        assert_eq!(agent.kind, "agent");
+        assert!(agent.expires_at.is_some());
+        assert_eq!(key_sets(), vec![serde_json::json!(LAPTOP), serde_json::json!(format!("{LAPTOP}\n{AGENT}"))]);
+        let too_long = service.add_ssh_key(&id, "user_1", input(AGENT, "x", Some(2 * 24 * 60))).await.unwrap_err();
+        assert_eq!(too_long.parts().1["error"], "invalid_expiry");
+
+        // The list has both keys (no key material) and where to connect.
+        let list = service.ssh_keys(&id, "user_1").await.unwrap();
+        assert_eq!(list.keys.iter().map(|k| k.id.clone()).collect::<Vec<_>>(), vec![laptop.id.clone(), agent.id.clone()]);
+        let connect = list.connect.unwrap();
+        assert_eq!((connect.host.as_str(), connect.port, connect.user.as_str()), ("203.0.113.7", 40022, "root"));
+
+        // Removing a key sends the set without it.
+        service.remove_ssh_key(&id, "user_1", &laptop.id).await.unwrap();
+        assert_eq!(key_sets().last().unwrap(), &serde_json::json!(AGENT));
+        assert_eq!(stored().await, vec![AGENT.to_string()]);
+        let missing = service.remove_ssh_key(&id, "user_1", &laptop.id).await.unwrap_err();
+        assert_eq!(missing.parts().1["error"], "key_not_found");
+
+        // An expired agent key: the sweep turns SSH off (it was the last key), then forgets it.
+        sqlx::query("UPDATE computer_ssh_keys SET expires_at = NOW() - INTERVAL '1 minute'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        service.sweep_expired_ssh_keys(Utc::now()).await;
+        assert!(seen().iter().any(|(m, p, _, _)| m == "DELETE" && p.ends_with("/ssh")));
+        assert!(stored().await.is_empty());
+
+        // Mid-change computers refuse; nothing is sent.
+        set_status(&pool, &id, "provisioning").await;
+        let sent = key_sets().len();
+        let busy = service.add_ssh_key(&id, "user_1", input(LAPTOP, "Laptop", None)).await.unwrap_err();
+        assert_eq!(busy.parts().1["error"], "busy");
+        assert_eq!(key_sets().len(), sent);
     }
 
     #[tokio::test]

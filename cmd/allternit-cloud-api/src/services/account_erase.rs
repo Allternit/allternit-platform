@@ -174,6 +174,8 @@ pub const ERASE: &[(&str, &str)] = &[
     ("paired_computers", USER),
     // Computers console alert rules (migration 154): the owner's own settings.
     ("computer_alert_rules", USER),
+    // Computers console SSH public keys (migration 156): the owner's own keys.
+    ("computer_ssh_keys", USER),
     ("code_environments", USER),
     ("gizzi_instances", USER),
     ("byo_bootstrap_tokens", USER),
