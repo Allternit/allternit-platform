@@ -94,7 +94,7 @@ data class ChatErrorInfo(
         private fun signedOutReason(text: String, chatgpt: Boolean, lane: Lane): String {
             if (text.isNotEmpty() && !text.contains("gizzi connect", ignoreCase = true)) return text
             if (!chatgpt) return "Sign in again to keep going."
-            return if (lane == Lane.Chat) "Sign in to ChatGPT on this phone to keep going." else "Sign in to ChatGPT on this phone to make pictures with it."
+            return if (lane == Lane.Chat) "ChatGPT is not signed in on your account. Tap Connect to sign it in and keep going." else "ChatGPT is not signed in on your account. Tap Connect to sign it in and make pictures with it."
         }
 
         /** "3:40 PM" today, "Tue 3:40 PM" on another day; null when unknown or past. */
