@@ -57,7 +57,35 @@ When the answer links to something in one of your apps, such as a Slack message,
 
 ## When the agent makes an image or a video
 
-While the agent is making an image or a video, the chat shows a frame the same shape as the picture you asked for. If you asked for a size, the frame matches it. If you didn't, it's square for an image and 16:9 for a video. Small squares pulse out from the middle of the frame. The foot of the frame says **Generating image** or **Rendering video**, with a timer showing how long it has been working. Under the frame you can see what the agent is doing right now.
+While the agent is making an image or a video, the chat shows a frame the same shape as the picture you asked for. If you asked for a size, the frame matches it. If you didn't, it's square for an image and 16:9 for a video. The frame opens on the Allternit block pulse (small squares that rise out of the middle) and then follows the real work:
+
+- **A picture:** when the picture maker sends a preview, it appears in the same frame and sharpens as the picture is drawn. The foot says what is happening now ("Drawing", then "Saving") with how long it has been working.
+- **A video:** the frame shows the latest frame drawn, **Frame N of M**, a progress bar and three steps, **Render**, **Encode** and **Save**. The video steps only appear once real frames arrive. Until then you see the pulse, never a made-up percentage.
+
+The newest reply shows the full frame. An older reply keeps a smaller card; a video keeps its last four thumbnails there. Your message stays in view while the answer grows below it, so the chat does not jump. Nothing about the wait is added to the chat as a bubble.
+
+### Peek and the running strip
+
+While anything is being made, a **strip above the message box** shows one small chip for each picture or video that is running in that chat. The strip is hidden when nothing is running.
+
+- **Desktop and the web:** hover a chip, or an older card, for about 0.2 seconds, or move to it with the keyboard, to peek at the full frame. Click the chip to scroll to the card and highlight it. If the card is scrolled out of the thread, click opens the full frame in a dialog.
+- **Phone layout and the m.allternit.com app:** press and hold a chip for about 0.35 seconds to peek, and let go to close it. Tap it to open the full frame in a bottom sheet.
+
+### Downloads
+
+Opening a stored clip, and **Download**, show real progress from the file's real bytes. The poster sharpens as the file arrives, with a line such as **Loading 41% · 3.0 of 7.4 MB · ETA 3 s**. When the server did not say how big the file is, the line reads **Loading · 3.0 MB · — ETA** and the bar does not fill. **Download** shows **Saving 41%** over the foot of the card. A stored picture opens as a plain image and shows no byte line.
+
+### When it fails
+
+The card says why, in the server's own words, and offers the way out:
+
+| Reason | What the card shows | Button |
+| --- | --- | --- |
+| A usage limit | "ChatGPT usage limit, resets at 3:40 PM" (or "Tue 3:40 PM" on another day), in your time. When the provider sent no reset time, the card says so and shows none. | **Pick another model** |
+| Not signed in | "ChatGPT is not signed in" | **Connect ChatGPT** (other sign-ins: **Open Connections**) |
+| Anything else | The server's reason | **Try again** |
+
+A failed turn shows one error, never two, and the spinner stops when the turn ends or you press stop. See [Connections](/guides/connections#the-chatgpt-account-on-desktop-and-the-web) for the ChatGPT rows.
 
 When the image or video is ready, it appears in the chat itself and comes into focus. It no longer shows as a file row. Under it are three buttons:
 
@@ -67,7 +95,7 @@ When the image or video is ready, it appears in the chat itself and comes into f
 
 You can also click an image to open it. A video plays in place with its own controls. The chat's **Artifacts** pane lists every generated picture in a gallery; see [The chat's Artifacts pane](/guides/artifacts#the-chats-artifacts-pane).
 
-If your device is set to reduce motion, the frame shows still squares and the image appears without the fade.
+If your device is set to reduce motion, the pulse is one still frame, previews and downloads step instead of blurring in, and the image appears without the fade.
 
 Images and videos the agent draws from code are made on the device that shows the chat: Allternit Desktop, ai.allternit.com, the m.allternit.com app or the iPhone app. Keep the chat open until the render finishes. On the iPhone app, the phone encodes the video itself (H.264 with AAC sound) and saves it to your computer's media storage.
 

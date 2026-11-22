@@ -213,6 +213,17 @@ The Coding tools group is only for CLI brains: Claude Code, Codex, Grok and the 
 - **Add a coding tool** at the bottom shows every other tool Allternit supports: Gemini CLI, GitHub Copilot CLI, Aider, Amp, Goose, Crush, Cline, Kilo Code, Factory Droid, Augment Auggie, OpenHands, Continue and more. **Install** runs a pinned installer, then the same sign-in.
 - **Add your own** registers a CLI that isn't listed. Give its command and how it takes a prompt (for example `-p {prompt}`), and optionally a model flag, a sign-in check and an install command. It then installs, signs in and works as a brain like the others, and you can remove it any time. Custom tools are only available on your own computer, not on a shared hosted runtime.
 
+### The ChatGPT account on Desktop and the web
+
+In Settings → Connections, ChatGPT shows as two rows under one heading, **ChatGPT account · two separate connections**, at the top of Brains:
+
+| Row | Badge | What it powers | Sign-in |
+| --- | --- | --- | --- |
+| **ChatGPT subscription** | Device sign-in | Chat models and pictures. Shows "Signed in on this computer" and how many models it lists, when the server says. | **Connect** starts the device sign-in. |
+| **Codex CLI** | Own sign-in | Coding runs. | **Set up** installs and signs in the Codex tool. |
+
+They can use the same ChatGPT account, but each one signs in and reports on its own, so signing out of one does not sign out the other. When only one of the two is listed it shows alone with its badge and its **Powers** line. If a ChatGPT picture or chat fails because the sign-in is missing, the error's button is **Connect ChatGPT**, which opens this row. See [When it fails](/guides/agent-steps#when-it-fails).
+
 Two kinds of brains live elsewhere:
 
 - **Local models** on your own computer are under **Settings → Models**.

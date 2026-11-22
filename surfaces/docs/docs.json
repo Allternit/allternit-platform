@@ -819,6 +819,7 @@
                   "api/data-retention",
                   "api/embeddings",
                   "api/images",
+                  "api/generation-progress",
                   "api/realtime-audio",
                   "api/cache",
                   "api/context-caches",
