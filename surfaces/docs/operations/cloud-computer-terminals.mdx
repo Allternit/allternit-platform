@@ -1,0 +1,51 @@
+---
+title: "Cloud computer terminals (operations)"
+description: "How every cloud computer image gets the Factory pane engine and allternit-node: one install script, one user, one socket path, and the image check that proves it"
+---
+
+A cloud computer's terminals run on the [Factory pane engine](/cli/allternit-mux) (`allternit-factory pane server`). The `allternit-node` daemon serves them over the relay (`/terminal/*`), so they keep working when the Allternit app on the computer is busy or restarting. It uses the engine when one answers, and falls back to its own PTYs when none does.
+
+## Which images get it
+
+One script, `cmd/allternit-computer-cloud/guest/install-pane-engine.sh`, sets up the engine and the node on every image. It runs inside the guest as root, and running it again changes nothing.
+
+| Image | How it runs the script | Where the binaries come from |
+|---|---|---|
+| `allternit-desktop` (Incus base: bot desktops, and the base of the next two) | `build-image.sh`, `--init systemd` | `FACTORY_BIN` and `NODE_BIN`, built by the "Build Allternit Desktop Image" workflow (`desktop-image.yml`). Without them the script builds both from `FACTORY_SRC_DIR` |
+| `allternit-cloud-computer` | Inherited from `allternit-desktop` | The base image |
+| `allternit-computer-headless` | `build-headless-computer-image.sh` runs it again, `--init systemd` | The base image, or optional `FACTORY_BIN` / `NODE_BIN` |
+| Orgo computers | `orgo/setup.sh`, `--init supervisord` (Orgo has no systemd). cloud-api writes the script next to `setup.sh` as `/opt/allternit-orgo/install-pane-engine.sh` | The signed runtime feed (`ALLTERNIT_ORGO_RUNTIME_FEED`, `bin/allternit-factory` and `bin/allternit-node`, every hash checked). The Linux `.deb` has no `allternit-factory`. Today's runtime feed doesn't carry `allternit-node`, so Orgo computers get the engine and no node: the app's allternit-api serves their terminals from the engine. This step is best effort, so a feed without these binaries never fails first boot |
+
+`cloud-init.yaml` writes the same units inline. Keep it in step with the script.
+
+Existing computers keep what they have until they're rebuilt from a new image. Until then the node, where there is one, falls back to its PTYs.
+
+## User, socket and start
+
+- **Both run as root, with `HOME=/root`.** The Allternit app runs as root on every cloud image and writes the pairing identity the node adopts to `/root/.config/allternit/runtime-identity.json`. The engine makes its socket owner-only (0600), so the node has to be the engine's user to connect.
+- **The socket is `/root/.config/ao/sessions/ao/herdr.sock`.** That is the engine's default for root and the Factory session `ao`, and it's also where the app's own allternit-api looks. Both services get `ALLTERNIT_FACTORY_PANE_SOCKET` set to that path, so the node is handed the socket instead of probing for it. The engine still binds where it always has.
+- **The node starts once the computer is paired.** Before pairing, the identity file doesn't exist and the node would exit at once. Under systemd, `allternit-node.path` starts `allternit-node.service` when the file appears. Under supervisord, `/usr/local/sbin/allternit-node-run` waits for the file. A bot desktop that never pairs never runs the node.
+
+| Unit (systemd) | Runs | Key settings |
+|---|---|---|
+| `allternit-factory-pane.service` | `/opt/allternit-factory/allternit-factory pane server` | `User=root`, `HOME=/root`, `HERDR_SESSION=ao`, `ALLTERNIT_FACTORY_PANE_SOCKET` |
+| `allternit-node.service` | `/opt/allternit-node/allternit-node run` | `User=root`, `HOME=/root`, `ALLTERNIT_RUNTIME_IDENTITY_PATH`, `ALLTERNIT_FACTORY_PANE_SOCKET`. Restarts always, and only runs when the binary and the identity exist |
+| `allternit-node.path` | Starts `allternit-node.service` | `PathExists=/root/.config/allternit/runtime-identity.json` |
+
+On Orgo, the same two programs are in `/etc/allternit/orgo/allternit-engine.conf` (`allternit-factory-pane`, `allternit-node`), with logs in `/var/log/allternit-orgo/`. `allternit-orgo-ensure` copies that file into the image's supervisord `conf.d` next to the app's program.
+
+## The image check
+
+`bash cmd/allternit-computer-cloud/guest/validate-image.sh <image>` launches a throw-away container from a locally built image. Never point it at the fleet. On top of its other checks, it now proves:
+
+1. `/opt/allternit-node/allternit-node` exists, and `allternit-node.service` and `allternit-node.path` are enabled.
+2. `allternit-factory-pane.service` is active.
+3. Both units carry the same `ALLTERNIT_FACTORY_PANE_SOCKET` and run as the same user.
+4. `allternit-factory pane tty ensure`, run with the engine unit's own environment, reports exactly that socket.
+5. The socket file is owned by the node's user.
+6. The node's user, given only that path, can list terminals on it (`allternit-factory pane tty list`, a real `factory.terminal.list` call).
+7. `allternit-node.path` is active, waiting for pairing.
+
+## Desktop bundle
+
+The "Release Allternit Desktop" workflow (`release-desktop.yml`) builds `allternit-node` for macOS. It is a universal binary, like `allternit-factory`, and ships at `Contents/Resources/bin/allternit-node` next to it. `sudo …/allternit-node install` then keeps a Mac reachable with the app quit. The Linux bundle doesn't carry it: it has no `allternit-factory` either, and cloud images get both from the image workflow. The Windows bundle doesn't carry it, because the daemon has no Windows service yet.

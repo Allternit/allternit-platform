@@ -1,8 +1,9 @@
 #!/bin/bash
 # Validate a freshly built Allternit desktop image by launching a test
-# container and checking that key services and binaries are present, and that
-# the Allternit Driver answers hello/read_ui through the guest-agent forwarder
-# (phase D1b). Do NOT run this against the production fleet; it launches a
+# container and checking that key services and binaries are present, that the
+# Factory pane engine answers on the socket allternit-node is given (and that
+# the node's user can reach it), and that the Allternit Driver answers
+# hello/read_ui through the guest-agent forwarder (phase D1b). Do NOT run this against the production fleet; it launches a
 # local throw-away container from a locally built image.
 
 set -euo pipefail
@@ -28,6 +29,7 @@ done
 
 echo "[validate-image] checking binaries"
 incus exec "${TEST_CONTAINER}" -- test -x /opt/allternit-factory/allternit-factory
+incus exec "${TEST_CONTAINER}" -- test -x /opt/allternit-node/allternit-node
 incus exec "${TEST_CONTAINER}" -- test -x /opt/allternit-desktop/run.sh
 incus exec "${TEST_CONTAINER}" -- test -x /usr/local/bin/allternit-driver-rpc
 incus exec "${TEST_CONTAINER}" -- test -f /opt/allternit-driver/allternit_driver/__main__.py
@@ -42,6 +44,8 @@ incus exec "${TEST_CONTAINER}" -- which python3
 echo "[validate-image] checking services"
 incus exec "${TEST_CONTAINER}" -- systemctl is-enabled allternit-desktop.service
 incus exec "${TEST_CONTAINER}" -- systemctl is-enabled allternit-factory-pane.service
+incus exec "${TEST_CONTAINER}" -- systemctl is-enabled allternit-node.service
+incus exec "${TEST_CONTAINER}" -- systemctl is-enabled allternit-node.path
 incus exec "${TEST_CONTAINER}" -- systemctl is-enabled allternit-driver.service
 # The driver must actually be running (it starts at boot; the desktop session
 # may still be coming up, so give it a moment).
@@ -58,6 +62,52 @@ if [ -z "${driver_up}" ]; then
     echo "ERROR: allternit-driver.service is not active" >&2
     exit 1
 fi
+
+echo "[validate-image] checking the pane engine and allternit-node's socket"
+# install-pane-engine.sh: the engine and the node run as the same user, and
+# the node's ALLTERNIT_FACTORY_PANE_SOCKET is where the engine really listens.
+# The node itself waits for pairing (allternit-node.path), so it is not
+# started here; this proves what it will connect to.
+incus exec "${TEST_CONTAINER}" -- bash -c '
+    set -euo pipefail
+    fail() { echo "ERROR: $*" >&2; journalctl -u allternit-factory-pane --no-pager -n 30 >&2 || true; exit 1; }
+    up=""
+    for _ in $(seq 1 30); do
+        systemctl is-active --quiet allternit-factory-pane.service && { up=1; break; }
+        sleep 2
+    done
+    [ -n "${up}" ] || fail "allternit-factory-pane.service is not active"
+
+    env_of() { systemctl show -p Environment --value "$1" | tr " " "\n" | sed -n "s/^$2=//p" | tr -d "\""; }
+    user_of() { u="$(systemctl show -p User --value "$1")"; echo "${u:-root}"; }
+    node_socket="$(env_of allternit-node.service ALLTERNIT_FACTORY_PANE_SOCKET)"
+    pane_socket_env="$(env_of allternit-factory-pane.service ALLTERNIT_FACTORY_PANE_SOCKET)"
+    node_user="$(user_of allternit-node.service)"
+    pane_user="$(user_of allternit-factory-pane.service)"
+    [ -n "${node_socket}" ] || fail "allternit-node.service has no ALLTERNIT_FACTORY_PANE_SOCKET"
+    [ "${node_socket}" = "${pane_socket_env}" ] || fail "socket env differs: node ${node_socket}, engine ${pane_socket_env}"
+    [ "${node_user}" = "${pane_user}" ] || fail "allternit-node runs as ${node_user}, the engine as ${pane_user}"
+    pane_home="$(env_of allternit-factory-pane.service HOME)"
+    pane_session="$(env_of allternit-factory-pane.service HERDR_SESSION)"
+
+    # The engine answers: `pane tty ensure` with the engine unit'"'"'s own env
+    # reports the socket it serves (it is already running, so this starts nothing).
+    ensure_out="$(runuser -u "${pane_user}" -- env HOME="${pane_home}" HERDR_SESSION="${pane_session}" \
+        /opt/allternit-factory/allternit-factory pane tty ensure)" || fail "allternit-factory pane tty ensure failed"
+    engine_socket="$(printf "%s" "${ensure_out}" | python3 -c "import json,sys; print(json.load(sys.stdin)[\"socket\"])")"
+    [ "${engine_socket}" = "${node_socket}" ] || fail "the engine serves ${engine_socket}, allternit-node is given ${node_socket}"
+    [ -S "${node_socket}" ] || fail "${node_socket} is not a socket"
+    owner="$(stat -c %U "${node_socket}")"
+    [ "${owner}" = "${node_user}" ] || fail "${node_socket} belongs to ${owner} (mode $(stat -c %a "${node_socket}")); allternit-node runs as ${node_user}"
+
+    # The node'"'"'s user reaches it with only the env the node gets: a real
+    # factory.terminal.list call on that socket.
+    runuser -u "${node_user}" -- env HOME="$(env_of allternit-node.service HOME)" HERDR_SOCKET_PATH="${node_socket}" \
+        /opt/allternit-factory/allternit-factory pane tty list >/dev/null \
+        || fail "${node_user} cannot list terminals on ${node_socket}"
+    systemctl is-active --quiet allternit-node.path || fail "allternit-node.path is not waiting for pairing"
+    echo "[validate-image] pane engine ok: ${engine_socket} (user ${node_user})"
+'
 
 echo "[validate-image] checking the driver's capability report"
 # hello through the same forwarder path allternit-api uses.

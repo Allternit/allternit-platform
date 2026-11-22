@@ -200,8 +200,8 @@ jobs:
         # prost-build (allternit-agent-system-rails) shells out to protoc.
         run: brew install protobuf
 
-      # Reuse last build's allternit-api and allternit-factory when no Rust input changed
-      # (.github/scripts/prebuilt-rust-bin.mjs); a hit skips the cargo builds.
+      # Reuse last build's allternit-api, allternit-factory and allternit-node when no
+      # Rust input changed (.github/scripts/prebuilt-rust-bin.mjs); a hit skips the cargo builds.
       - name: Restore prebuilt Rust binaries
         uses: actions/cache/restore@v4
         with:
@@ -212,7 +212,7 @@ jobs:
       - name: Reuse prebuilt Rust binaries if unchanged
         id: prebuilt
         shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory
+        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory --bin target/x86_64-apple-darwin/release/allternit-node --bin target/aarch64-apple-darwin/release/allternit-node
 
       - name: Build allternit-api (x86_64)
         if: steps.prebuilt.outputs.hit != 'true'
@@ -337,6 +337,27 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-factory
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-factory
 
+      - name: Build allternit-node daemon
+        # The always-on node.core daemon (crate allternit-node-daemon,
+        # cmd/allternit-node): ships beside allternit-factory so
+        # `sudo allternit-node install` keeps this Mac reachable with the app
+        # quit, and serves its terminals from that pane engine. Universal lipo,
+        # like the factory. macOS only: the Linux bundle has no allternit-factory
+        # (cloud images install both from desktop-image.yml), and the daemon has
+        # no Windows service.
+        run: |
+          if [ "${{ steps.prebuilt.outputs.hit }}" != true ]; then
+            cargo build --release -p allternit-node-daemon --target x86_64-apple-darwin
+            cargo build --release -p allternit-node-daemon --target aarch64-apple-darwin
+          fi
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          lipo -create \
+            target/x86_64-apple-darwin/release/allternit-node \
+            target/aarch64-apple-darwin/release/allternit-node \
+            -output surfaces/allternit-desktop/resources/bin/allternit-node
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-node
+          lipo -info surfaces/allternit-desktop/resources/bin/allternit-node
+
       - name: Build Files drive mount helper
         # allternit-files-mount: gizzi files mount (WebDAV on macOS) and Files
         # uploads over 4 MiB. gizzi finds it next to itself in resources/bin;
@@ -355,7 +376,7 @@ jobs:
       - name: Record Rust binaries for reuse
         if: steps.prebuilt.outputs.hit != 'true'
         shell: bash
-        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory
+        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory --bin target/x86_64-apple-darwin/release/allternit-node --bin target/aarch64-apple-darwin/release/allternit-node
 
       - name: Save prebuilt Rust binaries
         if: steps.prebuilt.outputs.hit != 'true'
