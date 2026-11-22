@@ -3,7 +3,7 @@
 //!
 //! The pane engine is the source of truth for which terminals exist
 //! (`factory.terminal.list`). Its terminal info has no title, cwd, command or
-//! creation time, so allternit-api keeps a small in-memory record of what it
+//! creation time, so the service keeps a small in-memory record of what it
 //! was asked to create ([`TerminalRecords`]) and reads the live title and cwd
 //! from the terminal's pane (`pane.get`) and the screen from `pane.read`.
 //! Terminals that were not created through this API still appear, with what
@@ -12,20 +12,15 @@
 //! A failure on one terminal's pane calls drops only that terminal's extra
 //! fields; only a failure to list the terminals at all fails the request.
 
-use axum::{
-    extract::{Query, State},
-    response::{IntoResponse, Response},
-    Json,
-};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::terminal_routes::{pane_err, TerminalSessionStore};
+use crate::{Reply, TerminalService};
 
-/// What allternit-api itself knows about a terminal it created.
+/// What the service itself knows about a terminal it created.
 #[derive(Debug, Clone)]
 pub(crate) struct TerminalRecord {
     pub title: Option<String>,
@@ -44,14 +39,15 @@ const MAX_PREVIEW_ROWS: u32 = 40;
 /// Per-terminal budget for the pane calls (`pane.get` + `pane.read`).
 const PANE_CALL_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// `GET /list` query: `?preview=N` adds the last N visible rows (1–40).
 #[derive(Debug, Deserialize)]
-pub(crate) struct ListQuery {
+pub struct ListQuery {
     #[serde(default)]
     pub preview: Option<u32>,
 }
 
 /// Env keys the engine can pass to a child: non-empty, no `=` and no NUL.
-pub(crate) fn validate_env(env: &HashMap<String, String>) -> Result<(), String> {
+pub fn validate_env(env: &HashMap<String, String>) -> Result<(), String> {
     for key in env.keys() {
         if key.is_empty() || key.contains('=') || key.contains('\0') {
             return Err(format!(
@@ -65,7 +61,7 @@ pub(crate) fn validate_env(env: &HashMap<String, String>) -> Result<(), String> 
 /// A title the user set, else the terminal's own title, else the cwd's last
 /// folder, else "Terminal". The engine's default workspace label
 /// (`term-<id>`) is not a title.
-pub(crate) fn resolve_title(
+pub fn resolve_title(
     created: Option<&str>,
     pane_title: Option<&str>,
     cwd: Option<&str>,
@@ -88,7 +84,7 @@ pub(crate) fn resolve_title(
 }
 
 /// The last `n` rows of a screen dump.
-pub(crate) fn last_rows(text: &str, n: usize) -> Vec<String> {
+pub fn last_rows(text: &str, n: usize) -> Vec<String> {
     let rows: Vec<&str> = text.split_terminator('\n').collect();
     let start = rows.len().saturating_sub(n);
     rows[start..]
@@ -105,7 +101,7 @@ struct PaneFacts {
 }
 
 async fn pane_facts(
-    store: &TerminalSessionStore,
+    store: &TerminalService,
     pane_id: &str,
     preview: Option<usize>,
 ) -> PaneFacts {
@@ -145,65 +141,66 @@ async fn pane_facts(
     }
 }
 
-pub(crate) async fn list_terminals(
-    State(store): State<TerminalSessionStore>,
-    Query(query): Query<ListQuery>,
-) -> Response {
-    let listed = match store.request("factory.terminal.list", json!({})).await {
-        Ok(v) => v,
-        Err(err) => return pane_err(err).into_response(),
-    };
-    let engine: Vec<Value> = listed["terminals"].as_array().cloned().unwrap_or_default();
-    let preview = query.preview.map(|n| n.clamp(1, MAX_PREVIEW_ROWS) as usize);
+impl TerminalService {
+    /// `GET /list?preview=N`: `{"terminals": [...]}`, or the error reply when
+    /// the engine can't list them.
+    pub async fn list(&self, preview: Option<u32>) -> Result<Value, Reply> {
+        let store = self;
+        let listed = store
+            .request("factory.terminal.list", json!({}))
+            .await
+            .map_err(Reply::from)?;
+        let engine: Vec<Value> = listed["terminals"].as_array().cloned().unwrap_or_default();
+        let preview = preview.map(|n| n.clamp(1, MAX_PREVIEW_ROWS) as usize);
 
-    // Forget records of terminals the engine no longer has.
-    let live: HashSet<&str> = engine
-        .iter()
-        .filter_map(|t| t["terminal_id"].as_str())
-        .collect();
-    let records: HashMap<String, TerminalRecord> = {
-        let mut map = store.records.lock().unwrap_or_else(|p| p.into_inner());
-        map.retain(|id, _| live.contains(id.as_str()));
-        map.clone()
-    };
+        // Forget records of terminals the engine no longer has.
+        let live: HashSet<&str> = engine
+            .iter()
+            .filter_map(|t| t["terminal_id"].as_str())
+            .collect();
+        let records: HashMap<String, TerminalRecord> = {
+            let mut map = store.records.lock().unwrap_or_else(|p| p.into_inner());
+            map.retain(|id, _| live.contains(id.as_str()));
+            map.clone()
+        };
 
-    let entries = engine.iter().map(|info| {
-        let store = &store;
-        let records = &records;
-        async move {
-            let id = info["terminal_id"].as_str().unwrap_or_default().to_string();
-            let record = records.get(&id);
-            let facts = match info["pane_id"].as_str() {
-                Some(pane_id) => Some(pane_facts(store, pane_id, preview).await),
-                None => None,
-            };
-            let cwd = facts
-                .as_ref()
-                .and_then(|f| f.cwd.clone())
-                .or_else(|| record.and_then(|r| r.cwd.clone()));
-            let title = resolve_title(
-                record.and_then(|r| r.title.as_deref()),
-                facts.as_ref().and_then(|f| f.title.as_deref()),
-                cwd.as_deref(),
-            );
-            let mut entry = json!({
-                "session_id": id,
-                "title": title,
-                "cwd": cwd,
-                "command": record.map(|r| r.command.clone()).unwrap_or_default(),
-                "running": info["running"].as_bool().unwrap_or(false),
-                "exit_code": info["exit_code"],
-                "pid": info["pid"],
-                "created_at": record.map(|r| r.created_at.clone()),
-            });
-            if let Some(rows) = facts.and_then(|f| f.preview) {
-                entry["preview"] = json!(rows);
+        let entries = engine.iter().map(|info| {
+            let records = &records;
+            async move {
+                let id = info["terminal_id"].as_str().unwrap_or_default().to_string();
+                let record = records.get(&id);
+                let facts = match info["pane_id"].as_str() {
+                    Some(pane_id) => Some(pane_facts(store, pane_id, preview).await),
+                    None => None,
+                };
+                let cwd = facts
+                    .as_ref()
+                    .and_then(|f| f.cwd.clone())
+                    .or_else(|| record.and_then(|r| r.cwd.clone()));
+                let title = resolve_title(
+                    record.and_then(|r| r.title.as_deref()),
+                    facts.as_ref().and_then(|f| f.title.as_deref()),
+                    cwd.as_deref(),
+                );
+                let mut entry = json!({
+                    "session_id": id,
+                    "title": title,
+                    "cwd": cwd,
+                    "command": record.map(|r| r.command.clone()).unwrap_or_default(),
+                    "running": info["running"].as_bool().unwrap_or(false),
+                    "exit_code": info["exit_code"],
+                    "pid": info["pid"],
+                    "created_at": record.map(|r| r.created_at.clone()),
+                });
+                if let Some(rows) = facts.and_then(|f| f.preview) {
+                    entry["preview"] = json!(rows);
+                }
+                entry
             }
-            entry
-        }
-    });
-    let terminals = futures::future::join_all(entries).await;
-    Json(json!({ "terminals": terminals })).into_response()
+        });
+        let terminals = futures::future::join_all(entries).await;
+        Ok(json!({ "terminals": terminals }))
+    }
 }
 
 #[cfg(test)]

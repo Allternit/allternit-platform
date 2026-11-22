@@ -63,6 +63,8 @@ cipher = "0.4"
 
 # Internal crates - the Factory engine & Cowork
 allternit-factory-engine = { path = "../../factory/engine" }
+# The terminal API over the pane engine (shared with allternit-node).
+allternit-terminal-service = { workspace = true }
 allternit-cowork-runtime = { path = "../../infrastructure/executor/cowork/cowork/allternit-cowork-runtime" }
 allternit-cowork-scheduler = { path = "../../infrastructure/executor/cowork/cowork/allternit-cowork-scheduler" }
 allternit-gc-agents = { workspace = true }
