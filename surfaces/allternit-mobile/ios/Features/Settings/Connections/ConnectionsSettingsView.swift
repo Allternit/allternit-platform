@@ -318,7 +318,7 @@ struct ConnectionsSettingsView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(alignment: .top, spacing: 12) {
                             ForEach(cards) { e in
-                                ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e)) { act(e, $0) }
+                                ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e), accountExtras: cardExtras(e)) { act(e, $0) }
                                     .containerRelativeFrame(.horizontal) { w, _ in w * 0.78 }
                             }
                             if let more, showsMore(more) {
@@ -332,7 +332,7 @@ struct ConnectionsSettingsView: View {
                 } else {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 12, alignment: .top), GridItem(.flexible(), spacing: 12, alignment: .top)], alignment: .center, spacing: 12) {
                         ForEach(cards) { e in
-                            ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e)) { act(e, $0) }
+                            ConnectionCardView(entry: e, store: store, opensPage: isOpensPage(e), accountExtras: cardExtras(e)) { act(e, $0) }
                         }
                         if let more, showsMore(more) { moreTile(more, card: true) }
                     }
@@ -342,6 +342,12 @@ struct ConnectionsSettingsView: View {
                 PhoneSettingsCard { rowList(wide) }
             }
         }
+    }
+
+    /// Grid and Deck keep both ChatGPT rows as separate cards (Codex stays in Coding tools) but give them the
+    /// List rows' titles, badges and Powers line. `paired` adds the "signing out of one" line when both show.
+    private func cardExtras(_ e: ConnEntry) -> AccountPair.Extras? {
+        AccountPair.extras(id: e.id, row: store.row(e.id), paired: AccountPair.pairsUp(visible.map(\.id)))
     }
 
     /// The More tile shows only while the list is unfiltered and the server
