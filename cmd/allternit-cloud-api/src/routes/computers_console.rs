@@ -13,9 +13,13 @@
 //! - `desktop`: the caller's Allternit Desktop runtimes (`runtime_type`
 //!   `desktop`).
 //!
-//! A `paired_computers` row and the runtime device of the same machine are
-//! one row (pairing doc D7): linked by `paired_computers.runtime_device_id`
-//! (migration 153), or, until that is filled in, by the same owner and name.
+//! One row per machine (step 2.10, surfaces/docs/dev/computer-pairing.mdx):
+//! the paired rows and runtime devices of one computer (Desktop, `gizzi
+//! pair`, `ao fabric pair`, `allternit computer pair`) are grouped by machine
+//! key when the list is read (`build_console`), and the other ids of the
+//! machine are sent as `aliases`. Nothing is merged in the database.
+//! A name the owner gave the machine (`computer_machine_names`, migration
+//! 159) replaces the reported one.
 //!
 //! The route only reads the database and the relay hub's in-memory presence.
 //! It never calls a provider and never wakes an asleep computer. `lastSample`
@@ -88,6 +92,22 @@ pub struct ConsoleComputer {
     pub services_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_backup_at: Option<DateTime<Utc>>,
+    /// Every other id of the same machine (step 2.10): its other runtime
+    /// devices and paired rows, a cloud computer's runtime device. Always
+    /// sent. Any console route given one of these answers for this row.
+    pub aliases: Vec<String>,
+    /// The code-paired row of the machine (`paired_computers.id`), for the
+    /// screen-share and Factory peer routes. Left out when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paired_id: Option<String>,
+    /// `mid:<machine id>`, the hostname key, `cloud:<id>`, `paired:<id>`
+    /// (shared) or `id:<id>`: what names and unpair are keyed by.
+    #[serde(skip)]
+    pub machine_key: String,
+    #[serde(skip)]
+    pub member_devices: Vec<String>,
+    #[serde(skip)]
+    pub member_paired: Vec<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -120,6 +140,13 @@ pub struct PairedRow {
     pub last_sample: Option<serde_json::Value>,
     #[sqlx(default)]
     pub last_sample_at: Option<DateTime<Utc>>,
+    /// What the machine sent at redeem time (migration 159), NULL before.
+    #[sqlx(default)]
+    pub machine_id: Option<String>,
+    #[sqlx(default)]
+    pub hostname: Option<String>,
+    #[sqlx(default)]
+    pub platform: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -136,6 +163,9 @@ pub struct DeviceRow {
     pub last_sample: Option<serde_json::Value>,
     #[sqlx(default)]
     pub last_sample_at: Option<DateTime<Utc>>,
+    /// ~/.allternit/machine-id as sent at pairing (migration 119).
+    #[sqlx(default)]
+    pub machine_id: Option<String>,
 }
 
 async fn list_console(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
@@ -170,7 +200,7 @@ pub async fn load_console(db: &sqlx::PgPool, user_id: &str, organization_id: Opt
     .await?;
     let paired: Vec<PairedRow> = sqlx::query_as(
         "SELECT pc.id, pc.name, pc.os, pc.mesh_ip, pc.last_seen_at, pc.runtime_device_id, pc.user_id <> $1 AS shared,
-                ls.snapshot AS last_sample, ls.ts AS last_sample_at
+                pc.machine_id, pc.hostname, pc.platform, ls.snapshot AS last_sample, ls.ts AS last_sample_at
          FROM paired_computers pc
          LEFT JOIN LATERAL (
              SELECT s.snapshot, s.ts FROM computer_metric_samples s
@@ -188,7 +218,7 @@ pub async fn load_console(db: &sqlx::PgPool, user_id: &str, organization_id: Opt
     .await?;
     let devices: Vec<DeviceRow> = sqlx::query_as(
         "SELECT d.id, d.name, d.runtime_type, d.hostname, d.platform, d.tailnet_ip, d.status, d.last_seen_at,
-                ls.snapshot AS last_sample, ls.ts AS last_sample_at
+                d.machine_id, ls.snapshot AS last_sample, ls.ts AS last_sample_at
          FROM runtime_devices d
          LEFT JOIN LATERAL (
              SELECT s.snapshot, s.ts FROM computer_metric_samples s
@@ -204,12 +234,86 @@ pub async fn load_console(db: &sqlx::PgPool, user_id: &str, organization_id: Opt
     .bind(user_id)
     .fetch_all(db)
     .await?;
+    let names: Vec<(String, String)> =
+        sqlx::query_as("SELECT machine_key, name FROM computer_machine_names WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_all(db)
+            .await?;
     let connected = crate::routes::runtime_relay::connected_runtime_ids().await;
-    Ok(build_console(cloud, paired, devices, &connected, Utc::now()))
+    let mut rows = build_console(cloud, paired, devices, &connected, Utc::now());
+    apply_names(&mut rows, &names);
+    Ok(rows)
 }
 
-/// Join the three sources into console rows: cloud first, then desks, then
-/// servers, each in creation order.
+/// The owner's own names for machines (migration 159), by machine key.
+/// Shared rows keep the name their owner gave them.
+pub fn apply_names(rows: &mut [ConsoleComputer], names: &[(String, String)]) {
+    for row in rows.iter_mut().filter(|r| r.group != GROUP_SHARED) {
+        if let Some((_, name)) = names.iter().find(|(key, _)| *key == row.machine_key) {
+            row.name = name.clone();
+        }
+    }
+}
+
+/// Hostnames too common to say, without a machine id, that two runtimes are
+/// one machine (default VPS and image names). Rows on them group only by
+/// machine id or a stored link.
+const GENERIC_HOSTNAMES: &[&str] = &[
+    "localhost", "ubuntu", "debian", "raspberrypi", "vps", "server", "linux", "fedora", "centos", "computer",
+    "host", "box", "node", "machine", "default",
+];
+
+/// `mid:<machine id>` (step 2.10): the id in ~/.allternit/machine-id that
+/// Desktop, `gizzi pair`, `ao fabric pair` and `allternit computer pair` send.
+pub fn machine_id_key(machine_id: Option<&str>) -> Option<String> {
+    machine_id.map(str::trim).filter(|m| !m.is_empty()).map(|m| format!("mid:{m}"))
+}
+
+/// The hostname key the active-machine cap uses for rows without a machine
+/// id (`quota_service::machine_key`: lower case, `.local` dropped, then
+/// `|platform`), or None for no hostname or a generic one.
+pub fn host_key(hostname: Option<&str>, platform: Option<&str>) -> Option<String> {
+    let key = crate::services::quota_service::machine_key(hostname, platform)?;
+    let host = key.split('|').next().unwrap_or_default();
+    (!GENERIC_HOSTNAMES.contains(&host)).then_some(key)
+}
+
+/// One machine: the paired rows and runtime devices that are the same
+/// computer (indexes into the inputs of `build_console`).
+#[derive(Default)]
+struct Machine {
+    paired: Vec<usize>,
+    devices: Vec<usize>,
+    mid: Option<String>,
+    hosts: Vec<String>,
+}
+
+impl Machine {
+    fn add_host(&mut self, host: Option<String>) {
+        if let Some(h) = host {
+            if !self.hosts.contains(&h) {
+                self.hosts.push(h);
+            }
+        }
+    }
+}
+
+/// Join the three sources into console rows, one row per machine (step
+/// 2.10): cloud first, then desks, then servers, each in creation order.
+///
+/// Grouping, in this order:
+/// 1. runtime devices with the same machine id are one machine;
+/// 2. a device without one joins the first machine on the same (non-generic)
+///    hostname + platform, else machines without ids group by that key;
+/// 3. a paired row (own rows only) joins the machine of its stored
+///    `runtime_device_id`, else the one with its machine id, else its
+///    hostname key, else (link not stored yet) the first machine with a
+///    device of the same name and no paired row. A shared row is always its
+///    own machine.
+///
+/// The row id is the paired row's id when the machine has one (as before
+/// 2.10), else its oldest device's id. Every other member id is in
+/// `aliases`, and every console route resolves any of them to this row.
 pub fn build_console(
     cloud: Vec<CloudRow>,
     paired: Vec<PairedRow>,
@@ -218,38 +322,98 @@ pub fn build_console(
     now: DateTime<Utc>,
 ) -> Vec<ConsoleComputer> {
     let mut rows: Vec<ConsoleComputer> = cloud.into_iter().map(|c| cloud_computer(c, connected)).collect();
-    let mut linked: HashSet<String> = HashSet::new();
+    let mut machines: Vec<Machine> = Vec::new();
+    let mut of_device: Vec<usize> = vec![usize::MAX; devices.len()];
+
+    for (i, d) in devices.iter().enumerate() {
+        let Some(mid) = machine_id_key(d.machine_id.as_deref()) else { continue };
+        let m = match machines.iter().position(|m| m.mid.as_deref() == Some(mid.as_str())) {
+            Some(m) => m,
+            None => {
+                machines.push(Machine { mid: Some(mid), ..Default::default() });
+                machines.len() - 1
+            }
+        };
+        machines[m].devices.push(i);
+        machines[m].add_host(host_key(d.hostname.as_deref(), d.platform.as_deref()));
+        of_device[i] = m;
+    }
+    for (i, d) in devices.iter().enumerate() {
+        if of_device[i] != usize::MAX {
+            continue;
+        }
+        let host = host_key(d.hostname.as_deref(), d.platform.as_deref());
+        let m = match host.as_ref().and_then(|h| machines.iter().position(|m| m.hosts.contains(h))) {
+            Some(m) => m,
+            None => {
+                machines.push(Machine::default());
+                machines.len() - 1
+            }
+        };
+        machines[m].devices.push(i);
+        machines[m].add_host(host);
+        of_device[i] = m;
+    }
+    for (i, pc) in paired.iter().enumerate() {
+        let mid = machine_id_key(pc.machine_id.as_deref());
+        let host = host_key(pc.hostname.as_deref(), pc.platform.as_deref());
+        let found = if pc.shared {
+            None
+        } else {
+            pc.runtime_device_id
+                .as_ref()
+                .and_then(|id| devices.iter().position(|d| &d.id == id))
+                .map(|d| of_device[d])
+                .or_else(|| mid.as_ref().and_then(|k| machines.iter().position(|m| m.mid.as_ref() == Some(k))))
+                .or_else(|| host.as_ref().and_then(|h| machines.iter().position(|m| m.hosts.contains(h))))
+                .or_else(|| {
+                    devices
+                        .iter()
+                        .enumerate()
+                        .find(|(d, dev)| {
+                            machines[of_device[*d]].paired.is_empty()
+                                && dev.name.as_deref().is_some_and(|n| n.trim().eq_ignore_ascii_case(pc.name.trim()))
+                        })
+                        .map(|(d, _)| of_device[d])
+                })
+        };
+        let m = match found {
+            Some(m) => m,
+            None => {
+                let mut fresh = Machine::default();
+                if !pc.shared {
+                    fresh.mid = mid;
+                    fresh.add_host(host);
+                }
+                machines.push(fresh);
+                machines.len() - 1
+            }
+        };
+        machines[m].paired.push(i);
+    }
+
+    // Machines with a paired row first, in paired order, then the others in
+    // device order (the order before 2.10).
+    let mut order: Vec<usize> = (0..machines.len()).collect();
+    order.sort_by_key(|&m| {
+        let mm = &machines[m];
+        match mm.paired.first() {
+            Some(p) => (0, *p),
+            None => (1, mm.devices.first().copied().unwrap_or(usize::MAX)),
+        }
+    });
     let mut desk = Vec::new();
     let mut servers = Vec::new();
-    for pc in paired {
-        let device = linked_device(&pc, &devices, &linked);
-        if let Some(d) = device {
-            linked.insert(d.id.clone());
-        }
-        let row = paired_computer(pc, device, connected, now);
-        if row.kind == "desktop" { desk.push(row) } else { servers.push(row) }
-    }
-    for d in devices.iter().filter(|d| !linked.contains(&d.id)) {
-        let row = device_computer(d, connected, now);
+    for m in order {
+        let pcs: Vec<&PairedRow> = machines[m].paired.iter().map(|&i| &paired[i]).collect();
+        let devs: Vec<&DeviceRow> = machines[m].devices.iter().map(|&i| &devices[i]).collect();
+        let key = machines[m].mid.clone().or_else(|| machines[m].hosts.first().cloned());
+        let row = machine_computer(&pcs, &devs, key, connected, now);
         if row.kind == "desktop" { desk.push(row) } else { servers.push(row) }
     }
     rows.extend(desk);
     rows.extend(servers);
     rows
-}
-
-/// The runtime device of the same machine: the stored link, else (own rows
-/// only, link not stored yet) the first unlinked device with the same name.
-fn linked_device<'a>(pc: &PairedRow, devices: &'a [DeviceRow], taken: &HashSet<String>) -> Option<&'a DeviceRow> {
-    if let Some(id) = &pc.runtime_device_id {
-        return devices.iter().find(|d| &d.id == id);
-    }
-    if pc.shared {
-        return None;
-    }
-    devices.iter().find(|d| {
-        !taken.contains(&d.id) && d.name.as_deref().is_some_and(|n| n.trim().eq_ignore_ascii_case(pc.name.trim()))
-    })
 }
 
 fn cloud_computer(c: CloudRow, connected: &HashSet<String>) -> ConsoleComputer {
@@ -258,6 +422,11 @@ fn cloud_computer(c: CloudRow, connected: &HashSet<String>) -> ConsoleComputer {
     let address = c.tailnet_ip.filter(|ip| is_mesh_ip(ip));
     ConsoleComputer {
         name: c.device_name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Cloud computer".to_string()),
+        machine_key: format!("cloud:{}", c.id),
+        aliases: c.device_id.iter().cloned().collect(),
+        member_devices: c.device_id.iter().cloned().collect(),
+        member_paired: Vec::new(),
+        paired_id: None,
         id: c.id,
         kind: "cloud",
         group: GROUP_CLOUD.to_string(),
@@ -300,40 +469,83 @@ fn device_online(d: &DeviceRow, connected: &HashSet<String>, now: DateTime<Utc>)
     connected.contains(&d.id) || (d.status.as_deref() == Some("online") && recent(d.last_seen_at, now))
 }
 
-fn paired_computer(
-    pc: PairedRow,
-    device: Option<&DeviceRow>,
+/// The device the relay should use for a machine: one holding a relay
+/// first, then a Desktop (it serves host data), then one that reported
+/// lately; ties go to the oldest.
+fn preferred_device<'a>(devs: &[&'a DeviceRow], connected: &HashSet<String>, now: DateTime<Utc>) -> Option<&'a DeviceRow> {
+    let score = |d: &DeviceRow| {
+        (connected.contains(&d.id) as u8) * 4
+            + ((d.runtime_type.as_deref() == Some("desktop")) as u8) * 2
+            + (device_online(d, connected, now) as u8)
+    };
+    let mut best: Option<&'a DeviceRow> = None;
+    for d in devs {
+        if best.map_or(true, |b| score(d) > score(b)) {
+            best = Some(d);
+        }
+    }
+    best
+}
+
+/// One console row for one machine: its paired rows (code pairing) and its
+/// runtime devices (Desktop, `gizzi pair`, `ao fabric pair`).
+fn machine_computer(
+    pcs: &[&PairedRow],
+    devs: &[&DeviceRow],
+    key: Option<String>,
     connected: &HashSet<String>,
     now: DateTime<Utc>,
 ) -> ConsoleComputer {
-    let online = recent(pc.last_seen_at, now) || device.is_some_and(|d| device_online(d, connected, now));
-    let is_desktop = device.is_some_and(|d| d.runtime_type.as_deref() == Some("desktop"));
-    let os_source = pc.os.clone().or_else(|| device.and_then(|d| d.platform.clone()));
+    let pc = pcs.first().copied();
+    let device = preferred_device(devs, connected, now);
+    let shared = pc.is_some_and(|p| p.shared);
+    let online = pcs.iter().any(|p| recent(p.last_seen_at, now)) || devs.iter().any(|d| device_online(d, connected, now));
+    let is_desktop = devs.iter().any(|d| d.runtime_type.as_deref() == Some("desktop"));
+    let os_source = pcs
+        .iter()
+        .find_map(|p| p.os.clone())
+        .or_else(|| device.and_then(|d| d.platform.clone()))
+        .or_else(|| devs.iter().find_map(|d| d.platform.clone()));
     let (os, os_family) = os_label(os_source.as_deref());
-    let address = pc
-        .mesh_ip
-        .clone()
-        .filter(|ip| is_mesh_ip(ip))
-        .or_else(|| device.and_then(|d| d.tailnet_ip.clone()).filter(|ip| is_mesh_ip(ip)));
-    let last_sample = newest(
-        (pc.last_sample.clone(), pc.last_sample_at),
-        device.map(|d| (d.last_sample.clone(), d.last_sample_at)).unwrap_or_default(),
-    );
+    let address = pcs
+        .iter()
+        .filter_map(|p| p.mesh_ip.clone())
+        .chain(device.and_then(|d| d.tailnet_ip.clone()))
+        .chain(devs.iter().filter_map(|d| d.tailnet_ip.clone()))
+        .find(|ip| is_mesh_ip(ip));
+    let last_sample = pcs
+        .iter()
+        .map(|p| (p.last_sample.clone(), p.last_sample_at))
+        .chain(devs.iter().map(|d| (d.last_sample.clone(), d.last_sample_at)))
+        .fold((None, None), |acc: Sample, s: Sample| {
+            let newer = s.0.is_some() && (acc.0.is_none() || s.1 > acc.1);
+            if newer { s } else { acc }
+        })
+        .0;
     let group = if is_desktop {
         GROUP_DESK
-    } else if pc.shared {
+    } else if shared {
         GROUP_SHARED
     } else {
         GROUP_SERVERS
     };
     // A shared row's linked device is not in the caller's own device list,
     // but its stored link still names the runtime.
-    let runtime_id = device.map(|d| d.id.clone()).or_else(|| pc.runtime_device_id.clone());
+    let runtime_id = device.map(|d| d.id.clone()).or_else(|| pc.and_then(|p| p.runtime_device_id.clone()));
+    let id = pc.map(|p| p.id.clone()).or_else(|| devs.first().map(|d| d.id.clone())).unwrap_or_default();
+    let name = pc
+        .map(|p| p.name.clone())
+        .or_else(|| devs.iter().find_map(|d| d.name.clone().or_else(|| d.hostname.clone()).filter(|n| !n.trim().is_empty())))
+        .unwrap_or_else(|| (if is_desktop { "Desktop" } else { "Computer" }).to_string());
+    let member_paired: Vec<String> = pcs.iter().map(|p| p.id.clone()).collect();
+    let member_devices: Vec<String> = devs.iter().map(|d| d.id.clone()).collect();
+    let aliases: Vec<String> =
+        member_paired.iter().chain(member_devices.iter()).filter(|a| **a != id).cloned().collect();
+    let machine_key = if shared { format!("paired:{id}") } else { key.unwrap_or_else(|| format!("id:{id}")) };
     ConsoleComputer {
-        id: pc.id,
         kind: if is_desktop { "desktop" } else { "paired" },
         group: group.to_string(),
-        name: pc.name,
+        name,
         provider: (if is_desktop { "Allternit Desktop" } else { "Paired" }).to_string(),
         provider_logo: None,
         region: None,
@@ -346,47 +558,27 @@ fn paired_computer(
         last_sample,
         services_count: None,
         last_backup_at: None,
+        paired_id: pc.map(|p| p.id.clone()),
+        aliases,
+        machine_key,
+        member_devices,
+        member_paired,
+        id,
     }
 }
 
 type Sample = (Option<serde_json::Value>, Option<DateTime<Utc>>);
 
-/// The newer of two `(sample, stored at)` pairs; a missing one loses.
-fn newest(a: Sample, b: Sample) -> Option<serde_json::Value> {
-    match (a, b) {
-        ((Some(x), ta), (Some(y), tb)) => Some(if tb > ta { y } else { x }),
-        ((x, _), (y, _)) => x.or(y),
-    }
-}
-
-fn device_computer(d: &DeviceRow, connected: &HashSet<String>, now: DateTime<Utc>) -> ConsoleComputer {
-    let is_desktop = d.runtime_type.as_deref() == Some("desktop");
-    let (os, os_family) = os_label(d.platform.as_deref());
-    let address = d.tailnet_ip.clone().filter(|ip| is_mesh_ip(ip));
-    let name = d
-        .name
-        .clone()
-        .or_else(|| d.hostname.clone())
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| (if is_desktop { "Desktop" } else { "Computer" }).to_string());
-    ConsoleComputer {
-        id: d.id.clone(),
-        kind: if is_desktop { "desktop" } else { "paired" },
-        group: (if is_desktop { GROUP_DESK } else { GROUP_SERVERS }).to_string(),
-        name,
-        provider: (if is_desktop { "Allternit Desktop" } else { "Paired" }).to_string(),
-        provider_logo: None,
-        region: None,
-        os,
-        os_family,
-        reach: if address.is_some() { "mesh" } else { "relay" },
-        address,
-        status: (if device_online(d, connected, now) { "online" } else { "offline" }).to_string(),
-        runtime_id: Some(d.id.clone()),
-        last_sample: d.last_sample.clone(),
-        services_count: None,
-        last_backup_at: None,
-    }
+/// The console row `id` names for this caller: by row id or by any alias
+/// (step 2.10). Console routes use it so an old id still reaches the machine.
+pub async fn find_machine(
+    db: &sqlx::PgPool,
+    user_id: &str,
+    organization_id: Option<&str>,
+    id: &str,
+) -> Result<Option<ConsoleComputer>, sqlx::Error> {
+    let rows = load_console(db, user_id, organization_id).await?;
+    Ok(rows.into_iter().find(|r| r.id == id || r.aliases.iter().any(|a| a == id)))
 }
 
 /// Display name and family for a free-form OS string (`paired_computers.os`,

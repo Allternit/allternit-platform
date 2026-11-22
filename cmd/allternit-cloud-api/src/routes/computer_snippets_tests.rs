@@ -97,6 +97,7 @@ async fn setup() -> Arc<ApiState> {
         include_str!("../../migrations_pg/153_computers_console.sql"),
         include_str!("../../migrations_pg/154_computer_metrics.sql"),
         include_str!("../../migrations_pg/158_computer_snippets.sql"),
+        include_str!("../../migrations_pg/159_computer_machine_identity.sql"),
     ] {
         let sql = sql.replace("public.", "");
         sqlx::raw_sql(&sql)

@@ -147,6 +147,7 @@ async fn schema(state: &Arc<ApiState>) {
     for sql in [
         include_str!("../../migrations_pg/153_computers_console.sql"),
         include_str!("../../migrations_pg/154_computer_metrics.sql"),
+        include_str!("../../migrations_pg/159_computer_machine_identity.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration");
     }
@@ -243,6 +244,18 @@ async fn ids_resolve_across_the_three_kinds_with_their_access_rules() {
     assert_eq!((team.runtime_id.as_deref(), team.owner_id.as_str()), (Some("rt_team"), "teammate"));
     let desk = resolve_target(db, &me, "rt_desk").await.unwrap().unwrap();
     assert_eq!((desk.kind, desk.runtime_id.as_deref()), (TargetKind::Device, Some("rt_desk")));
+    // Step 2.10: an ao node on the same Mac (same ~/.allternit/machine-id) is
+    // an alias: its id reaches the machine's Desktop runtime and both sample sources.
+    device(db, "rt_ao", DEV_USER, "studio", "ao").await;
+    sqlx::raw_sql("UPDATE runtime_devices SET machine_id = 'Zk3m9QpL2vX8aB4cD6eF7gH1', status = 'offline' WHERE id IN ('rt_desk', 'rt_ao')")
+        .execute(db)
+        .await
+        .unwrap();
+    let alias = resolve_target(db, &me, "rt_ao").await.unwrap().unwrap();
+    assert_eq!(alias.runtime_id.as_deref(), Some("rt_desk"), "the Desktop serves host data");
+    let mut members = alias.sources.devices.clone();
+    members.sort_unstable();
+    assert_eq!(members, vec!["rt_ao".to_string(), "rt_desk".to_string()]);
     // A cloud computer's runtime is reached through the cloud id only.
     assert_eq!(resolve_target(db, &me, "rt_cloud").await.unwrap(), None);
     for (caller, id) in [(&me, "pi_other"), (&me, "pi_dead"), (&me, "rt_other"), (&me, "pc_cloud"), (&stranger, "pc_team"), (&stranger, "pi_1"), (&stranger, "rt_desk")] {
