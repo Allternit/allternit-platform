@@ -1594,6 +1594,7 @@ private struct ACIConsoleBackupsTab: View {
     @State private var busy = false
     @State private var message: String? = nil
     @State private var showPoints = false
+    @State private var canRestore = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1615,7 +1616,7 @@ private struct ACIConsoleBackupsTab: View {
                             titleVisibility: .visible, presenting: confirming) { backup in
             Button("Restore \(consoleWhen(backup.createdAt))", role: .destructive) { Task { await restore(backup) } }
             Button("Cancel", role: .cancel) {}
-        } message: { _ in Text("The computer goes back to this point and restarts. Changes made after it are lost.") }
+        } message: { _ in Text("The computer goes back to this point and restarts. Everything changed since that backup is erased and can't be brought back.") }
     }
 
     @ViewBuilder private var cloudBody: some View {
@@ -1629,6 +1630,7 @@ private struct ACIConsoleBackupsTab: View {
                 VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
             case .ready(let list):
                 if list.isEmpty { consoleNote("No backups yet. The first one is made within a day.") }
+                if !list.isEmpty && !canRestore { consoleNote("Restoring from a backup isn't available for this computer right now.") }
                 ForEach(list) { b in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -1637,14 +1639,25 @@ private struct ACIConsoleBackupsTab: View {
                                 .font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
                         }
                         Spacer()
-                        ACIPillButton(title: "Restore", accessibilityLabel: "Restore backup from \(consoleWhen(b.createdAt))") { confirming = b }
-                            .disabled(busy)
+                        if canRestore {
+                            ACIPillButton(title: "Restore", accessibilityLabel: "Restore backup from \(consoleWhen(b.createdAt))") { confirming = b }
+                                .disabled(busy)
+                        }
                     }
                 }
             }
             consoleStatusLine(message)
         }
-        .task(id: attempt) { state = .loading; state = await .run { try await ACIComputersClient.shared.cloudBackups(id: computer.id) } }
+        .task(id: attempt) {
+            state = .loading
+            var allowed = true
+            state = await .run {
+                let list = try await ACIComputersClient.shared.cloudBackupList(id: computer.id)
+                allowed = list.canRestore
+                return list.backups
+            }
+            canRestore = allowed
+        }
         consoleCard {
             Text("Restore points and copies").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
             Text("Your existing restore points and \"Download a copy\" stay here.")

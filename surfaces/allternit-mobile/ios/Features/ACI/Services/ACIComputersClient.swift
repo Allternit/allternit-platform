@@ -414,14 +414,21 @@ final class ACIComputersClient: Sendable {
         let id: String
         let createdAt: String
         let sizeBytes: Double?
+        let kind: String?         // optional; absent on older servers
+    }
+
+    /// The backups list plus whether the server allows restoring (`canRestore`; absent means yes).
+    struct CloudBackupList: Sendable {
+        let backups: [CloudBackup]
+        let canRestore: Bool
     }
 
     private struct FindingsEnvelope: Decodable { let findings: [ACILossy<HostFinding>]? }
     private struct KeysEnvelope: Decodable { let keys: [ACILossy<SSHKey>]? }
-    private struct BackupsEnvelope: Decodable { let backups: [ACILossy<CloudBackup>]? }
+    private struct BackupsEnvelope: Decodable { let backups: [ACILossy<CloudBackup>]?; let canRestore: Bool? }
     private struct ApprovalEnvelope: Decodable { let approvalId: String?; let approval_id: String? }
 
-    private func jsonBody(_ dict: [String: String]) -> Data? { try? JSONSerialization.data(withJSONObject: dict) }
+    private func jsonBody(_ dict: [String: Any]) -> Data? { try? JSONSerialization.data(withJSONObject: dict) }
 
     func hostFindings(id: String) async throws -> [HostFinding] {
         let env = try? JSONDecoder().decode(FindingsEnvelope.self, from: try await cloud(hostPath(id, "host/findings")))
@@ -483,14 +490,22 @@ final class ACIComputersClient: Sendable {
 
     /// Orgo daily backups (cloud computers only).
     func cloudBackups(id: String) async throws -> [CloudBackup] {
-        let data = try await cloud(hostPath(id, "backups"))
-        let decoder = JSONDecoder()
-        if let rows = try? decoder.decode([ACILossy<CloudBackup>].self, from: data) { return rows.compactMap(\.value) }
-        return ((try? decoder.decode(BackupsEnvelope.self, from: data))?.backups ?? []).compactMap(\.value)
+        try await cloudBackupList(id: id).backups
     }
 
+    func cloudBackupList(id: String) async throws -> CloudBackupList {
+        let data = try await cloud(hostPath(id, "backups"))
+        let decoder = JSONDecoder()
+        if let rows = try? decoder.decode([ACILossy<CloudBackup>].self, from: data) {
+            return CloudBackupList(backups: rows.compactMap(\.value), canRestore: true)
+        }
+        let env = try? decoder.decode(BackupsEnvelope.self, from: data)
+        return CloudBackupList(backups: (env?.backups ?? []).compactMap(\.value), canRestore: env?.canRestore ?? true)
+    }
+
+    /// Restore is in place: changes since the backup are erased, so the server needs `confirm: true`.
     func restoreCloudBackup(id: String, backupId: String) async throws {
-        _ = try await cloud(hostPath(id, "backups/restore"), method: "POST", body: jsonBody(["backupId": backupId]))
+        _ = try await cloud(hostPath(id, "backups/restore"), method: "POST", body: jsonBody(["backupId": backupId, "confirm": true]))
     }
 
     /// Cloud settings: restart, move (`location` = nyc | chi | lon | syd), rebuild.
@@ -549,7 +564,10 @@ final class ACIComputersClient: Sendable {
                 || path.contains("/ssh-keys") || path.hasSuffix("/backups") || path.hasSuffix("/backups/restore")
                 || path.hasSuffix("/approvals") || path.hasSuffix("/restart") || path.hasSuffix("/move")
                 || path.hasSuffix("/rebuild") || path.contains("/computers/paired/") || path.hasSuffix("/computers/snippets")
-            if [404, 405, 501].contains(http.statusCode), consolePath {
+            // Restore answers with its own plain `message` (501 while the server gate is off,
+            // 404 backup_not_found, 409 restore_unavailable / busy): show it, never "not available".
+            let isRestore = path.hasSuffix("/backups/restore")
+            if [404, 405, 501].contains(http.statusCode), consolePath, !isRestore {
                 throw Failure.notAvailable
             }
             if http.statusCode == 409, consolePath {

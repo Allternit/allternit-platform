@@ -332,6 +332,9 @@ object AciApi {
             status in 200..299 -> ConsoleWrite.Ok(json)
             status == 403 && error == "needs_elevation" -> ConsoleWrite.NeedsElevation((json as? JsonObject).str("message").orEmpty())
             status == 409 && (error == null || error == "asleep") -> ConsoleWrite.Asleep
+            // Restore answers with its own plain message (501 while the server gate is off, 404 backup_not_found): show it.
+            (status == 404 || status == 501) && request.url.encodedPath.endsWith("/backups/restore") && !(json as? JsonObject).str("message").isNullOrBlank() ->
+                ConsoleWrite.Failed((json as JsonObject).str("message").orEmpty())
             status == 404 || status == 405 || status == 501 -> ConsoleWrite.Unavailable
             status == 401 -> ConsoleWrite.Failed("Sign in to Allternit to do this. Nothing was changed.")
             else -> ConsoleWrite.Failed(ApiCall.httpError(status, body).message?.takeIf { it.isNotBlank() } ?: "That didn't work. Nothing was changed.")

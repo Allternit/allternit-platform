@@ -72,6 +72,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 
 /** One write's outcome (iOS ACIComputersClient.Failure). Asleep and Unavailable never retry or wake. */
@@ -127,13 +128,13 @@ internal data class SshKey(val id: String, val label: String, val fingerprint: S
     }
 }
 
-internal data class CloudBackup(val id: String, val createdAt: String, val sizeBytes: Double?) {
+internal data class CloudBackup(val id: String, val createdAt: String, val sizeBytes: Double?, val kind: String? = null) {
     val instant: Instant? get() = runCatching { Instant.parse(createdAt) }.getOrNull()
 
     companion object {
         fun parse(o: JsonObject): CloudBackup? {
             val size = (o["sizeBytes"] as? JsonPrimitive)?.doubleOrNull
-            return CloudBackup(o.str("id") ?: return null, o.str("createdAt") ?: return null, size)
+            return CloudBackup(o.str("id") ?: return null, o.str("createdAt") ?: return null, size, o.str("kind"))
         }
     }
 }
@@ -194,6 +195,20 @@ internal suspend fun <T> readRows(id: String, tail: String, key: String, parse: 
     }
 
 internal suspend fun consoleBackups(id: String) = readRows(id, "backups", "backups", CloudBackup::parse)
+
+/** The backups list plus the server's `canRestore` (absent, or a bare array, means yes). */
+internal data class BackupList(val backups: List<CloudBackup>, val canRestore: Boolean)
+
+internal suspend fun consoleBackupList(id: String): HostRead<BackupList> =
+    when (val r = AciApi.consoleRead(id, "backups")) {
+        is HostRead.Ok -> {
+            val can = ((r.value as? JsonObject)?.get("canRestore") as? JsonPrimitive)?.booleanOrNull ?: true
+            HostRead.Ok(BackupList(r.value.rows("backups").mapNotNull(CloudBackup::parse), can))
+        }
+        is HostRead.Asleep -> r
+        HostRead.Unavailable -> HostRead.Unavailable
+        is HostRead.Failed -> r
+    }
 
 /**
  * The canonical two-step (LANES-BRIEF "APPROVAL FLOW"): 1) POST approvals {type,target} gives an approvalId bound to
@@ -418,7 +433,7 @@ private fun AddKeySheet(computer: ConsoleComputer, onDone: () -> Unit, onAdded: 
 @Composable
 internal fun BackupsTab(computer: ConsoleComputer, restorePoints: (@Composable (onDone: () -> Unit) -> Unit)?) {
     val scope = rememberCoroutineScope()
-    val backups = rememberHostLoad(computer.id) { if (computer.kind == "cloud") consoleBackups(computer.id) else HostRead.Ok(emptyList()) }
+    val backups = rememberHostLoad(computer.id) { if (computer.kind == "cloud") consoleBackupList(computer.id) else HostRead.Ok(BackupList(emptyList(), true)) }
     var confirming by remember { mutableStateOf<CloudBackup?>(null) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -427,15 +442,17 @@ internal fun BackupsTab(computer: ConsoleComputer, restorePoints: (@Composable (
         CCard {
             CTitle("Daily backups")
             HostNotReady(backups, "Backups aren't available for this computer yet.", "Asleep, not woken. Backups show when it is awake.")
-            (backups.state as? HostRead.Ok)?.value?.let { list ->
+            (backups.state as? HostRead.Ok)?.value?.let { loaded ->
+                val list = loaded.backups
                 if (list.isEmpty()) CNote("No backups yet. The first one is made within a day.")
+                else if (!loaded.canRestore) CNote("Restoring from a backup isn't available for this computer right now.")
                 list.forEach { b ->
                     Row(Modifier.fillMaxWidth().testTag("aciConsoleBackup"), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             CText(consoleWhen(b.createdAt), true, 14, AllternitTheme.colors.textPrimary)
                             CText(listOfNotNull(consoleAgo(b.createdAt), b.sizeBytes?.let { consoleBytes(it) }).joinToString(" · "), false, 12)
                         }
-                        Box(Modifier.alpha(if (busy) 0.45f else 1f)) {
+                        if (loaded.canRestore) Box(Modifier.alpha(if (busy) 0.45f else 1f)) {
                             AciPillButton("Restore", "aciConsoleRestore", label = "Restore backup from ${consoleWhen(b.createdAt)}") { if (!busy) confirming = b }
                         }
                     }
@@ -465,13 +482,13 @@ internal fun BackupsTab(computer: ConsoleComputer, restorePoints: (@Composable (
         AlertDialog(
             onDismissRequest = { confirming = null },
             title = { Text("Restore this backup?") },
-            text = { Text("The computer goes back to this point and restarts. Changes made after it are lost.") },
+            text = { Text("The computer goes back to this point and restarts. Everything changed since that backup is erased and can't be brought back.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirming = null
                     scope.launch {
                         busy = true
-                        val r = AciApi.consoleWrite("POST", computer.id, "backups/restore", buildBody("backupId" to b.id))
+                        val r = AciApi.consoleWrite("POST", computer.id, "backups/restore", JsonObject(mapOf("backupId" to JsonPrimitive(b.id), "confirm" to JsonPrimitive(true))))
                         busy = false
                         message = if (r is ConsoleWrite.Ok) "Restoring from ${consoleWhen(b.createdAt)}. The computer restarts." else consoleFailureText(r)
                     }
