@@ -561,6 +561,32 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         return false
     }
 
+    /// Tells the agent how far a pane_render request has got (stage, frame N of
+    /// M, a small preview): platform #2802, `POST /pane-render/:id/progress`.
+    /// Fire-and-forget by design: a failure never fails the render. False once
+    /// neither route knows the request (it ended or timed out), so the caller
+    /// stops reporting; true when it was taken or the network failed (try the next one).
+    func postPaneRenderProgress(requestId: String, detail: GenerationProgressDetail) async -> Bool {
+        guard let resolved = await InstanceConnection.resolve(),
+              let body = try? JSONEncoder().encode(detail) else { return true }
+        let paths = ["api/v1/pane-render/\(requestId)/progress", "v1/pane-render/\(requestId)/progress"]
+        for path in resolved.isRelay ? paths : paths.reversed() {
+            var request = URLRequest(url: resolved.baseURL.appendingPathComponent(path))
+            request.httpMethod = "POST"
+            request.timeoutInterval = 8
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let token = try? await AuthManager.shared.getToken(), !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            request.httpBody = body
+            guard let (_, response) = try? await InstanceConnection.data(for: request),
+                  let http = response as? HTTPURLResponse else { return true }
+            if (200...299).contains(http.statusCode) { return true }
+            if http.statusCode != 404 { return true }
+        }
+        return false
+    }
+
     /// Answers a capture_screen_context request with the app's view, on the
     /// computer that asked; same two routes as `replyPaneArtifact`. False when
     /// neither knows the request (it timed out, or another app answered first).
