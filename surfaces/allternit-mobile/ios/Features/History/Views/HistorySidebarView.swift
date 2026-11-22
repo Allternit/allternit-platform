@@ -122,6 +122,11 @@ struct HistorySidebarView: View {
         // panel (rounded trailing corners) edge to edge behind it.
         .sheet(isPresented: $isSettingsPresented) {
             SettingsView()
+                // Passed in, not inherited: Sign in closes this sheet and opens the
+                // root sign-in sheet in the same tick, and SettingsView redraws
+                // once more after its presenter's environment is gone (crash 11-22).
+                .environmentObject(authManager)
+                .environmentObject(modeStore)
         }
         .sheet(isPresented: $isQuickTaskPresented) {
             QuickTaskSheet()
