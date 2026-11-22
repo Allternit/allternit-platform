@@ -298,6 +298,8 @@ struct ChatContentView: View {
     @State private var isCodePlusSheetPresented = false
     @State private var activeArtifact: ArtifactRecord? = nil
     @State private var isModelPickerPresented = false
+    /// The ChatGPT sign-in a signed-out error card opens.
+    @State private var connectSheet: ConnSheet? = nil
     @Environment(\.scenePhase) private var scenePhase
 
     /// The mode + agent state the NEXT session create should be stamped
@@ -654,6 +656,14 @@ struct ChatContentView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
+            // Pictures and clips being made: one chip each, tap for the full
+            // view, press and hold to peek (the strip draws nothing when idle).
+            RunningGenerationsStrip()
+                // A signed-out error card's "Connect ChatGPT" opens the sign-in here.
+                .sheet(item: $connectSheet) { sheet in
+                    ConnectSheetView(sheet: sheet, store: ConnectionsStore.shared)
+                }
+
             if isTerminal {
                 codeComposer(terminal: true)
             } else if isCodeThread {
@@ -806,7 +816,7 @@ struct ChatContentView: View {
 
     /// The credits button shows only when a Cloud model is listed.
     private var errorActionKinds: Set<ChatErrorAction.Kind> {
-        var kinds: Set<ChatErrorAction.Kind> = [.manageClaudeOrg, .linkAgain]
+        var kinds: Set<ChatErrorAction.Kind> = [.manageClaudeOrg, .linkAgain, .connectChatGPT, .openConnections]
         if modelStore.creditsFallbackModelId != nil { kinds.insert(.useCredits) }
         return kinds
     }
@@ -830,9 +840,12 @@ struct ChatContentView: View {
                     if let cloudId = modelStore.creditsFallbackModelId {
                         viewModel.resendOnCloudModel(failedMessageId, cloudModelId: cloudId)
                     }
-                case .manageClaudeOrg, .linkAgain:
+                case .manageClaudeOrg, .linkAgain, .openConnections:
                     // Settings › Connections holds the Claude organization row.
                     DeepLinkRouter.shared.enqueue(.settings("subscriptions"))
+                case .connectChatGPT:
+                    // The same device sign-in Settings › Connections opens.
+                    connectSheet = .chatgptDevice
                 }
             },
             isLastAssistant: message.id == viewModel.lastAssistantMessageId,

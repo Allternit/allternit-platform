@@ -108,3 +108,32 @@ struct PaneRenderResult: Codable, Sendable {
         PaneRenderResult(ok: false, error: message)
     }
 }
+
+/// Reports a pane_render request's progress to the agent about once a second
+/// (a new stage always goes at once), with a small preview. Fire-and-forget:
+/// a failure or an unknown request never fails the render; after the agent
+/// stops waiting (404) it stops reporting.
+@MainActor
+final class PaneRenderProgressReporter {
+    private let requestId: String
+    private let client: AgentChatClient
+    private var throttle = GenerationProgressThrottle()
+    private var ended = false
+
+    init(requestId: String, client: AgentChatClient) {
+        self.requestId = requestId
+        self.client = client
+    }
+
+    /// `make` runs only when the throttle lets this report through, so the
+    /// thumbnail is not drawn for reports that are dropped.
+    func report(stage: GenerationStage, _ make: () -> GenerationProgressDetail) {
+        guard !ended, throttle.shouldSend(stage: stage, now: ProcessInfo.processInfo.systemUptime) else { return }
+        let detail = make()
+        Task { [client, requestId, weak self] in
+            if await client.postPaneRenderProgress(requestId: requestId, detail: detail) == false {
+                self?.ended = true
+            }
+        }
+    }
+}
