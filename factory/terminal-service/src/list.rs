@@ -184,6 +184,7 @@ impl TerminalService {
                 );
                 let mut entry = json!({
                     "session_id": id,
+                    "pane_id": info["pane_id"],
                     "title": title,
                     "cwd": cwd,
                     "command": record.map(|r| r.command.clone()).unwrap_or_default(),
