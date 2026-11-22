@@ -118,6 +118,7 @@ pub mod computers_console;
 pub mod computer_alerts;
 pub mod computer_metrics;
 pub mod computers_host;
+pub mod computer_snippets;
 pub mod computers_cloud;
 pub mod phone_live;
 pub mod registered_phones;

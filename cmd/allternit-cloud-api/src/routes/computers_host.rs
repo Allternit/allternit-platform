@@ -411,7 +411,7 @@ pub fn check_action(action: &str, target: &str) -> Result<(), ApiError> {
 }
 
 /// The runtime's relay key (`credential_hash`).
-async fn relay_key(db: &PgPool, runtime_id: &str) -> Result<String, ApiError> {
+pub(crate) async fn relay_key(db: &PgPool, runtime_id: &str) -> Result<String, ApiError> {
     let key: Option<Option<String>> =
         sqlx::query_scalar("SELECT credential_hash FROM runtime_devices WHERE id = $1 AND revoked_at IS NULL")
             .bind(runtime_id)

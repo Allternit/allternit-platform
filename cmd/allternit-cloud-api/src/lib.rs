@@ -679,6 +679,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Computers console live host data, approvals and port forwards through
         // the runtime relay; never wakes a computer (same caller rule).
         .merge(routes::computers_host::routes())
+        // Computers console snippets: CRUD + run on many computers, approval required (step 2.9).
+        .merge(routes::computer_snippets::routes())
         .merge(routes::computers_cloud::routes())
         // Phone stream relay (Phones 2.0): the account's runtime upserts and
         // lists its registered phones with its device credential.
