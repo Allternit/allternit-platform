@@ -1272,36 +1272,83 @@ impl ProvisionBackend for OrgoBackend {
         if !is_success(status) {
             return Err(orgo_error(status, &json));
         }
-        Ok(newest_backup_at(&json))
+        parse_orgo_backups(&json)
+            .map(|list| list.newest_finished_at())
+            .map_err(|message| ProvisionError::Api { status: 502, message })
     }
 }
 
-/// The newest backup time in an Orgo backups answer (`{backups:[...]}` or a
-/// bare array). Orgo's docs do not spell out the item shape, so the usual
-/// time keys are read; an unfinished or failed backup does not count, and
-/// an answer with no readable time reads as "no backup" (fail closed).
-fn newest_backup_at(json: &serde_json::Value) -> Option<DateTime<Utc>> {
-    let items = json
-        .get("backups")
-        .or_else(|| json.get("data"))
-        .unwrap_or(json)
-        .as_array()?;
-    items
+/// Backup statuses that mean "finished and restorable". A backup with no
+/// status counts as finished (Orgo lists finished daily backups); any other
+/// status, known-bad or unknown, does not, so an unfamiliar state can never
+/// let a rebuild erase the disk.
+const ORGO_BACKUP_DONE: [&str; 9] =
+    ["completed", "complete", "ready", "available", "succeeded", "success", "done", "finished", "ok"];
+
+/// Read an Orgo `GET /computers/{id}/backups` answer.
+///
+/// Orgo's docs say only that it "lists the computer's daily backups and
+/// whether it can be restored now"; the item shape is not published and no
+/// real answer has been read yet (step 2.6, 2026-11-22: there was no live
+/// Orgo computer to ask). So the list is read from `backups`, `data` or
+/// `items` (or a bare array), each item needs an id and an RFC 3339 or unix
+/// time, and the answer fails closed: a missing list, or a non-empty list
+/// with no item we can read, is an error (never "no backups"), so the
+/// rebuild check says "couldn't check" instead of guessing.
+pub(crate) fn parse_orgo_backups(json: &serde_json::Value) -> Result<CloudBackupList, String> {
+    let items = if let Some(array) = json.as_array() {
+        array
+    } else {
+        ["backups", "data", "items"]
+            .iter()
+            .find_map(|key| json.get(*key).and_then(|value| value.as_array()))
+            .ok_or_else(|| "orgo backups answer has no backup list".to_string())?
+    };
+    let mut backups: Vec<CloudBackup> = items.iter().filter_map(orgo_backup).collect();
+    if backups.is_empty() && !items.is_empty() {
+        return Err(format!("orgo backups answer: none of {} items could be read", items.len()));
+    }
+    backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    let can_restore = ["can_restore", "canRestore", "restorable", "can_restore_now"]
         .iter()
-        .filter(|item| {
-            !matches!(
-                string_field(item, &["status", "state"])
-                    .map(|status| status.to_ascii_lowercase())
-                    .as_deref(),
-                Some("failed" | "error" | "pending" | "creating" | "in_progress" | "running")
-            )
-        })
-        .filter_map(|item| {
-            string_field(item, &["created_at", "createdAt", "completed_at", "completedAt", "timestamp", "date"])
-        })
-        .filter_map(|text| DateTime::parse_from_rfc3339(&text).ok())
-        .map(|at| at.with_timezone(&Utc))
-        .max()
+        .find_map(|key| json.get(*key).and_then(|value| value.as_bool()));
+    Ok(CloudBackupList { backups, can_restore })
+}
+
+fn orgo_backup(item: &serde_json::Value) -> Option<CloudBackup> {
+    if !item.is_object() {
+        return None;
+    }
+    let id = string_field(item, &["id", "backup_id", "backupId", "snapshot_id"])?;
+    let created_at = ["created_at", "createdAt", "completed_at", "completedAt", "taken_at", "timestamp", "date"]
+        .iter()
+        .find_map(|key| item.get(*key).and_then(backup_time))?;
+    let finished = match string_field(item, &["status", "state"]) {
+        None => true,
+        Some(status) => ORGO_BACKUP_DONE.contains(&status.to_ascii_lowercase().as_str()),
+    };
+    let size_bytes = ["size_bytes", "sizeBytes", "bytes"]
+        .iter()
+        .find_map(|key| item.get(*key).and_then(|value| value.as_u64()));
+    let kind = string_field(item, &["kind", "type"])
+        .map(|kind| kind.to_ascii_lowercase())
+        .unwrap_or_else(|| "daily".to_string());
+    Some(CloudBackup { id, created_at, size_bytes, kind, finished })
+}
+
+/// An RFC 3339 string, or unix seconds (milliseconds above 10^11).
+fn backup_time(value: &serde_json::Value) -> Option<DateTime<Utc>> {
+    match value {
+        serde_json::Value::String(text) => DateTime::parse_from_rfc3339(text)
+            .ok()
+            .map(|at| at.with_timezone(&Utc)),
+        serde_json::Value::Number(number) => {
+            let raw = number.as_i64()?;
+            let seconds = if raw > 100_000_000_000 { raw / 1000 } else { raw };
+            DateTime::<Utc>::from_timestamp(seconds, 0)
+        }
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2585,21 +2632,36 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_newest_finished_backup_counts() {
-        let json = serde_json::json!({ "backups": [
-            { "id": "b1", "created_at": "2026-11-19T03:00:00Z", "status": "completed" },
+    fn backups_read_finished_items_newest_first_and_fail_closed_on_unknown_shapes() {
+        let json = serde_json::json!({ "can_restore": true, "backups": [
+            { "id": "b1", "created_at": "2026-11-19T03:00:00Z", "status": "completed", "size_bytes": 2048 },
             { "id": "b2", "created_at": "2026-11-20T03:00:00Z" },
             { "id": "b3", "created_at": "2026-11-21T03:00:00Z", "status": "failed" },
-            { "id": "b4", "status": "completed" }
+            { "id": "b4", "created_at": "2026-11-21T04:00:00Z", "status": "something_new" },
+            { "id": "b5", "status": "completed" }
         ]});
+        let list = parse_orgo_backups(&json).unwrap();
+        assert_eq!(list.can_restore, Some(true));
         assert_eq!(
-            newest_backup_at(&json).unwrap().to_rfc3339(),
-            "2026-11-20T03:00:00+00:00"
+            list.finished().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+            ["b2", "b1"],
+            "failed, unknown-status and timeless items are left out"
         );
-        let bare = serde_json::json!([{ "createdAt": "2026-11-18T01:00:00Z" }]);
-        assert!(newest_backup_at(&bare).is_some());
-        assert_eq!(newest_backup_at(&serde_json::json!({ "backups": [] })), None);
-        assert_eq!(newest_backup_at(&serde_json::json!({ "error": "x" })), None);
+        assert_eq!(list.newest_finished_at().unwrap().to_rfc3339(), "2026-11-20T03:00:00+00:00");
+        assert_eq!(
+            serde_json::to_value(list.finished().last().unwrap()).unwrap(),
+            serde_json::json!({ "id": "b1", "createdAt": "2026-11-19T03:00:00Z", "sizeBytes": 2048, "kind": "daily" })
+        );
+
+        // A bare array and unix seconds read too.
+        let bare = parse_orgo_backups(&serde_json::json!([{ "backup_id": 7, "createdAt": 1_763_694_000 }])).unwrap();
+        assert_eq!(bare.backups[0].id, "7");
+        assert!(bare.newest_finished_at().is_some());
+        // An empty list is "no backups"; no list, or items we can't read, is an error.
+        assert_eq!(parse_orgo_backups(&serde_json::json!({ "backups": [] })).unwrap().newest_finished_at(), None);
+        assert!(parse_orgo_backups(&serde_json::json!({ "error": "x" })).is_err());
+        assert!(parse_orgo_backups(&serde_json::json!({ "backups": null })).is_err());
+        assert!(parse_orgo_backups(&serde_json::json!({ "backups": [{ "when": "today" }] })).is_err());
     }
 
     #[test]

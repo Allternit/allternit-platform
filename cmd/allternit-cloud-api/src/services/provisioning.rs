@@ -697,6 +697,49 @@ pub struct InstanceSnapshot {
     pub created_at: String,
 }
 
+/// One provider daily backup (Orgo `GET /computers/{id}/backups`), as the
+/// console shows it: `{ id, createdAt, sizeBytes?, kind }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudBackup {
+    pub id: String,
+    #[serde(serialize_with = "serialize_rfc3339")]
+    pub created_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    /// `daily` unless the provider names another kind.
+    pub kind: String,
+    /// False while the backup is still being made, after it failed, or when
+    /// its status is one we do not know. Unfinished backups are never shown,
+    /// restored from, or counted by the rebuild check.
+    #[serde(skip)]
+    pub finished: bool,
+}
+
+fn serialize_rfc3339<S: serde::Serializer>(at: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+}
+
+/// A provider's backup list: the backups, newest first, and whether the
+/// provider says the computer can be restored now (`None` = not said).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CloudBackupList {
+    pub backups: Vec<CloudBackup>,
+    pub can_restore: Option<bool>,
+}
+
+impl CloudBackupList {
+    /// Finished backups only, newest first.
+    pub fn finished(&self) -> impl Iterator<Item = &CloudBackup> {
+        self.backups.iter().filter(|backup| backup.finished)
+    }
+
+    /// When the newest finished backup was taken.
+    pub fn newest_finished_at(&self) -> Option<DateTime<Utc>> {
+        self.finished().map(|backup| backup.created_at).max()
+    }
+}
+
 /// Progress of a downloadable copy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackupState {
@@ -7038,6 +7081,17 @@ pub(crate) mod pg_tests {
         set_backups(serde_json::Value::Null);
         let none = service.rebuild_cloud(&id, "user_1").await.unwrap_err();
         assert_eq!(none.parts().1["error"], "no_recent_backup");
+        assert!(!seen().iter().any(|(m, _, _, _)| m == "DELETE"));
+        // An answer we can't read is "couldn't check" (503), not "no backup",
+        // and a recent backup in an unknown state does not count.
+        set_backups(serde_json::json!({ "snapshots": [{ "when": "today" }] }));
+        let unreadable = service.rebuild_cloud(&id, "user_1").await.unwrap_err();
+        assert_eq!(unreadable.parts().0, 503);
+        assert_eq!(unreadable.parts().1["error"], "backup_check_failed");
+        let recent_pending = (Utc::now() - Duration::hours(1)).to_rfc3339();
+        set_backups(serde_json::json!({ "backups": [{ "id": "b9", "created_at": recent_pending, "status": "uploading" }] }));
+        let pending = service.rebuild_cloud(&id, "user_1").await.unwrap_err();
+        assert_eq!(pending.parts().1["error"], "no_recent_backup");
         assert!(!seen().iter().any(|(m, _, _, _)| m == "DELETE"));
 
         // A backup from 2 hours ago: delete + create in the same city, same row id.
