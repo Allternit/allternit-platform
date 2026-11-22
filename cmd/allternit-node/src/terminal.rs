@@ -1,7 +1,11 @@
 //! PTY-backed terminal sessions served in-process over the relay — the same
 //! HTTP contract as `allternit-api/src/terminal_routes.rs`
-//! (create/input/close/resize/stream) so fabric terminal sessions work with
-//! the desktop app fully quit.
+//! (create/list/input/close/resize/stream) so fabric terminal sessions work
+//! with the desktop app fully quit.
+//!
+//! This is the fallback: when a Factory pane engine answers on this computer
+//! (see `engine.rs`), terminals live in the engine instead and survive a node
+//! restart. These PTYs die with the node.
 //!
 //! portable-pty is synchronous; the open and the output reader run on
 //! blocking threads, and output is fanned out to stream subscribers over a
@@ -28,6 +32,56 @@ struct TerminalSession {
     child: Arc<Mutex<Box<dyn Child + Send + Send>>>,
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     created: Instant,
+    /// For `GET /terminal/list`.
+    title: Option<String>,
+    cwd: Option<String>,
+    command: Vec<String>,
+    /// RFC 3339, UTC.
+    created_at: String,
+}
+
+/// What to run in a new PTY.
+#[derive(Debug, Clone, Default)]
+pub struct PtySpec {
+    /// Program and arguments (`[shell]` for a plain shell). Must not be empty.
+    pub argv: Vec<String>,
+    pub cwd: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+    /// Added over `TERM`/`COLORTERM`.
+    pub env: HashMap<String, String>,
+    /// The name `GET /terminal/list` shows.
+    pub title: Option<String>,
+}
+
+/// One PTY session as `GET /terminal/list` reports it.
+#[derive(Debug, Clone)]
+pub struct PtyListing {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub cwd: Option<String>,
+    pub command: Vec<String>,
+    pub running: bool,
+    pub exit_code: Option<u32>,
+    pub pid: Option<u32>,
+    pub created_at: String,
+}
+
+/// A `GET /terminal/list` item for a PTY session: the same fields as an
+/// engine terminal (allternit-terminal-service's list), with `pane_id: null`
+/// and no `preview` (a PTY has no pane to read a screen from).
+pub fn list_entry(pty: &PtyListing) -> serde_json::Value {
+    serde_json::json!({
+        "session_id": pty.session_id,
+        "pane_id": null,
+        "title": allternit_terminal_service::resolve_title(pty.title.as_deref(), None, pty.cwd.as_deref()),
+        "cwd": pty.cwd,
+        "command": pty.command,
+        "running": pty.running,
+        "exit_code": pty.exit_code,
+        "pid": pty.pid,
+        "created_at": pty.created_at,
+    })
 }
 
 #[derive(Default)]
@@ -52,6 +106,7 @@ impl TerminalStore {
         Self::default()
     }
 
+    /// A plain shell.
     pub fn create(
         &self,
         shell: &str,
@@ -59,16 +114,31 @@ impl TerminalStore {
         cols: u16,
         rows: u16,
     ) -> anyhow::Result<CreatedSession> {
+        self.create_with(PtySpec {
+            argv: vec![shell.to_string()],
+            cwd: cwd.map(str::to_string),
+            cols,
+            rows,
+            ..PtySpec::default()
+        })
+    }
+
+    /// A shell or a program with arguments, env and a title.
+    pub fn create_with(&self, spec: PtySpec) -> anyhow::Result<CreatedSession> {
+        let Some((program, args)) = spec.argv.split_first() else {
+            anyhow::bail!("no program to run");
+        };
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
-                rows,
-                cols,
+                rows: spec.rows,
+                cols: spec.cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
             .context("open pty")?;
-        let mut command = portable_pty::CommandBuilder::new(shell);
+        let mut command = portable_pty::CommandBuilder::new(program);
+        command.args(args);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         // A coding agent's session markers, inherited when the node was started
@@ -90,13 +160,17 @@ impl TerminalStore {
         ] {
             command.env_remove(key);
         }
-        if let Some(cwd) = cwd {
+        // The caller's env goes over TERM/COLORTERM (same as the pane engine path).
+        for (key, value) in &spec.env {
+            command.env(key, value);
+        }
+        if let Some(cwd) = spec.cwd.as_deref() {
             command.cwd(cwd);
         }
         let child = pair
             .slave
             .spawn_command(command)
-            .context("spawn shell in pty")?;
+            .context("spawn program in pty")?;
         drop(pair.slave);
 
         let writer = pair
@@ -117,6 +191,19 @@ impl TerminalStore {
             child: Arc::new(Mutex::new(child)),
             master: Arc::new(Mutex::new(pair.master)),
             created: Instant::now(),
+            title: spec
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(str::to_string),
+            cwd: spec.cwd.clone().or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().into_owned())
+            }),
+            command: spec.argv.clone(),
+            created_at: chrono::Utc::now().to_rfc3339(),
         });
         let session_id = uuid::Uuid::new_v4().to_string();
         self.sessions
@@ -154,6 +241,42 @@ impl TerminalStore {
 
     fn get(&self, session_id: &str) -> Option<Arc<TerminalSession>> {
         self.sessions.lock().unwrap().get(session_id).cloned()
+    }
+
+    /// True when this store holds the session (running or exited, not closed).
+    pub fn contains(&self, session_id: &str) -> bool {
+        self.sessions.lock().unwrap().contains_key(session_id)
+    }
+
+    /// Every held session, oldest first, for `GET /terminal/list`.
+    pub fn list(&self) -> Vec<PtyListing> {
+        let mut sessions: Vec<(String, Arc<TerminalSession>)> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(id, session)| (id.clone(), session.clone()))
+            .collect();
+        sessions.sort_by_key(|(_, session)| session.created);
+        sessions
+            .into_iter()
+            .map(|(session_id, session)| {
+                let (status, pid) = {
+                    let mut child = session.child.lock().unwrap();
+                    (child.try_wait().ok().flatten(), child.process_id())
+                };
+                PtyListing {
+                    session_id,
+                    title: session.title.clone(),
+                    cwd: session.cwd.clone(),
+                    command: session.command.clone(),
+                    running: status.is_none(),
+                    exit_code: status.map(|s| s.exit_code()),
+                    pid,
+                    created_at: session.created_at.clone(),
+                }
+            })
+            .collect()
     }
 
     pub fn input(&self, session_id: &str, content: &str) -> anyhow::Result<()> {

@@ -279,6 +279,7 @@
         "allternit/cmd/allternit-factory",
         "allternit/factory/engine",
         "allternit/factory/pane",
+        "allternit/factory/terminal-service",
         "allternit/cmd/gizzi-code/src/cli/factory",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/factory",
         "allternit/cmd/allternit-api/src/factory_*",
