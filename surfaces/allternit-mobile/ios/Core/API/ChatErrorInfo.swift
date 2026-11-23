@@ -64,7 +64,10 @@ struct ChatErrorInfo: Equatable, Sendable {
             return info
         }
         if signedOutCodes.contains(lowered ?? "") || status == 401 || matches(signedOutText, text) {
-            return base(.signedOut, signedOutReason(text, chatgpt: chatgpt, lane: lane), .connect)
+            var info = base(.signedOut, signedOutReason(text, chatgpt: chatgpt, lane: lane), .connect)
+            // Browser sign-in is separate from OAuth Connections.
+            if lane == .picture && chatgpt { info.action = nil }
+            return info
         }
         if networkCodes.contains(lowered ?? "") || matches(networkText, text) {
             let bare = text.range(of: #"^(?:failed to fetch|fetch failed|load failed)$"#, options: [.regularExpression, .caseInsensitive]) != nil
@@ -77,7 +80,7 @@ struct ChatErrorInfo: Equatable, Sendable {
     private static func signedOutReason(_ text: String, chatgpt: Bool, lane: Lane) -> String {
         if !text.isEmpty, text.range(of: "gizzi connect", options: .caseInsensitive) == nil { return text }
         if !chatgpt { return "Sign in again to keep going." }
-        return lane == .chat ? "Sign in to ChatGPT on this phone to keep going." : "Sign in to ChatGPT on this phone to make pictures with it."
+        return lane == .chat ? "Sign in to ChatGPT on this phone to keep going." : "Sign in to ChatGPT in this device’s ACI image browser, then confirm a new image request. OAuth chat sign-in does not sign in that browser."
     }
 
     /// "3:40 PM" today, "Tue 3:40 PM" on another day; nil when unknown or past.

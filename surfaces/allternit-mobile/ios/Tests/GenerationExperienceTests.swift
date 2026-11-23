@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import Allternit
 
 /// The tricky logic behind the generation experience: which typed error a
@@ -25,6 +26,9 @@ final class GenerationExperienceTests: XCTestCase {
     func testSignedOutReasonNeverShowsTheCLICommand() {
         let info = ChatErrorInfo.make(message: "Run gizzi connect chatgpt", code: "signed_out")
         XCTAssertEqual(info.kind, .signedOut)
+        let picture = ChatErrorInfo.make(message: "Run gizzi connect chatgpt", code: "signed_out", lane: .picture)
+        XCTAssertNil(picture.actionLabel)
+        XCTAssertTrue(picture.isChatGPT)
         XCTAssertFalse(info.reason.localizedCaseInsensitiveContains("gizzi"))
         XCTAssertEqual(info.actionLabel, "Connect ChatGPT")
     }
@@ -118,5 +122,143 @@ final class GenerationExperienceTests: XCTestCase {
         let peak = BlockPulseMath.tile(since: BlockPulseMath.rise * BlockPulseMath.tileSeconds, distance: 0, spread: 0.001)
         XCTAssertEqual(peak?.alpha ?? 0, 1, accuracy: 0.0001)
         XCTAssertEqual(peak?.scale ?? 0, 1, accuracy: 0.0001)
+    }
+}
+
+/// Regression coverage for browser requests (empty code must not become executable HTML),
+/// crash/replay submission fencing, foreground origin markers, and image byte validation.
+final class ACIBrowserImageContractTests: XCTestCase {
+    private func payload(_ changes: [String: Any] = [:]) throws -> String {
+        var object: [String: Any] = ["id": "job-1", "sessionID": "chat-1", "toolCall": ["messageID": "message-1", "callID": "tool-1"],
+            "kind": "browser-image", "engine": "chatgpt-aci", "prompt": "Draw a blue bird",
+            "format": "html", "code": "", "width": 1024, "height": 1024, "timeoutMs": 600000, "time": Date().timeIntervalSince1970 * 1000]
+        object.merge(changes) { _, new in new }
+        return String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)!
+    }
+
+    func testBrowserRequestKeepsIdentityAndNeverFallsThroughToCode() throws {
+        let request = try XCTUnwrap(PaneRenderRequest(payload: payload()))
+        XCTAssertEqual(request.kind, .browserImage)
+        XCTAssertEqual(request.engine, "chatgpt-aci")
+        XCTAssertEqual(request.prompt, "Draw a blue bird")
+        XCTAssertEqual(request.toolCall, "tool-1")
+        XCTAssertEqual(request.toolMessageId, "message-1")
+        XCTAssertEqual(request.sessionId, "chat-1")
+        XCTAssertEqual(request.code, "")
+        for changes: [String: Any] in [["kind": "unknown"], ["engine": "api-key"], ["prompt": " "],
+            ["prompt": String(repeating: "a", count: 16001)], ["code": "alert(1)"],
+            ["format": "canvas"], ["timeoutMs": 600001], ["width": 1e100]] {
+            XCTAssertNil(PaneRenderRequest(payload: try payload(changes)))
+        }
+    }
+
+    func testBrowserRequestRequiresNumericFreshTimeAndBoundedTimeout() throws {
+        let now = Date().timeIntervalSince1970 * 1000
+        for changes: [String: Any] in [
+            ["time": NSNull()], ["time": "now"], ["time": true],
+            ["time": now - 600_001], ["time": now + 31_000],
+            ["timeoutMs": NSNull()], ["timeoutMs": false], ["timeoutMs": 0],
+            ["timeoutMs": -1], ["timeoutMs": 600_001], ["timeoutMs": "600000"]
+        ] {
+            XCTAssertNil(PaneRenderRequest(payload: try payload(changes)))
+        }
+        XCTAssertNotNil(PaneRenderRequest(payload: try payload(["time": now - 1000])))
+        XCTAssertNotNil(PaneRenderRequest(payload: try payload(["time": now + 29_000])))
+    }
+
+    func testDurableFenceRejectsReplayAndIdentityMutation() throws {
+        let suite = "aci-image-test-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let request = try XCTUnwrap(PaneRenderRequest(payload: payload()))
+        XCTAssertTrue(ACIBrowserImageLedger(defaults: defaults).reserve(request))
+        // A newly created ledger represents a process restart, not just an in-memory Set.
+        XCTAssertFalse(ACIBrowserImageLedger(defaults: defaults).reserve(request))
+        let changed = try XCTUnwrap(PaneRenderRequest(payload: payload(["sessionID": "another-chat", "prompt": "Changed"])))
+        XCTAssertFalse(ACIBrowserImageLedger(defaults: defaults).reserve(changed))
+    }
+
+    func testOnlyExplicitForegroundSendGetsPersonMarker() {
+        XCTAssertEqual(AgentChatClient.personTurn(personInitiated: true, isForeground: true), "person")
+        XCTAssertNil(AgentChatClient.personTurn(personInitiated: false, isForeground: true))
+        XCTAssertNil(AgentChatClient.personTurn(personInitiated: true, isForeground: false))
+        XCTAssertNil(AgentChatClient.personTurn(personInitiated: false, isForeground: false))
+    }
+
+    @MainActor func testDownloadedImageReturnsActualDimensionsAndPNG() throws {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let png = try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 23, height: 17), format: format)
+            .image { ctx in UIColor.blue.setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 23, height: 17)) }.pngData())
+        let result = try ACIBrowserImageJob.normalize(png, mime: "image/png")
+        XCTAssertTrue(result.ok)
+        XCTAssertEqual(result.width, 23)
+        XCTAssertEqual(result.height, 17)
+        XCTAssertTrue(try XCTUnwrap(result.image).hasPrefix("data:image/png;base64,"))
+        XCTAssertThrowsError(try ACIBrowserImageJob.normalize(png, mime: "text/html"))
+        XCTAssertThrowsError(try ACIBrowserImageJob.normalize(Data("broken".utf8), mime: "image/png"))
+        XCTAssertThrowsError(try ACIBrowserImageJob.normalize(Data(repeating: 0, count: 20 * 1024 * 1024 + 1), mime: "image/png"))
+        let tooWide = try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 4097, height: 1), format: format).image { _ in }.pngData())
+        XCTAssertThrowsError(try ACIBrowserImageJob.normalize(tooWide, mime: "image/png"))
+    }
+}
+
+final class ACILocalImageHistoryTests: XCTestCase {
+    @MainActor func testOfflineResultSurvivesRestartInItsOriginalChat() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ACILocalImageStore(directory: directory, owner: "person-a")
+        let original = try store.createChat(history: [MessageRecord(id: "prior", role: "user", content: "Earlier chat")])
+        let other = try store.createChat(history: [])
+        try store.begin(sessionId: original, id: "local-request", messageId: "assistant-image", prompt: "A blue bird")
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let png = try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 23, height: 17), format: format).image { _ in }.pngData())
+        let result = try ACIBrowserImageJob.normalize(png, mime: "image/png")
+        try store.finish(sessionId: original, id: "local-request", owner: "person-a", result: result)
+        let reopened = ACILocalImageStore(directory: directory, owner: "person-a")
+        XCTAssertEqual(reopened.messages(sessionId: original).map(\.id), ["prior", "local-request-user", "assistant-image"])
+        XCTAssertTrue(reopened.messages(sessionId: other).isEmpty)
+        let entry = try XCTUnwrap(reopened.entry(messageId: "assistant-image"))
+        XCTAssertEqual(entry.prompt, "A blue bird")
+        let tool = try XCTUnwrap(reopened.messages(sessionId: original).last?.toolCalls.first)
+        XCTAssertEqual(tool.input["kind"], "image")
+        XCTAssertEqual(tool.input["engine"], "chatgpt-aci")
+        let file = try XCTUnwrap(reopened.file(entry))
+        XCTAssertEqual(file.pathExtension, "png")
+        XCTAssertEqual(UIImage(contentsOfFile: file.path)?.size, CGSize(width: 23, height: 17))
+        XCTAssertEqual(Set(reopened.sessions().map(\.id)), Set([original, other]))
+        let otherAccount = ACILocalImageStore(directory: directory, owner: "person-b")
+        XCTAssertTrue(otherAccount.messages(sessionId: original).isEmpty)
+        XCTAssertThrowsError(try otherAccount.finish(sessionId: original, id: "local-request", owner: "person-a", result: result))
+    }
+
+    @MainActor func testRestartDoesNotResumeOrResendPendingTurn() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ACILocalImageStore(directory: directory, owner: "a")
+        let id = try store.createChat(history: [])
+        try store.begin(sessionId: id, id: "pending", messageId: "assistant", prompt: "Draw a bird")
+        let reopened = ACILocalImageStore(directory: directory, owner: "a")
+        let messages = reopened.messages(sessionId: id)
+        XCTAssertFalse(try XCTUnwrap(messages.last).isStreaming)
+        XCTAssertEqual(messages.last?.toolCalls.first?.state, .failed)
+        XCTAssertTrue(messages.last?.toolCalls.first?.error?.contains("will not be sent again") == true)
+    }
+
+    @MainActor func testFinalPngLimitIsIndependentOfSourceLimit() throws {
+        let side = 1700
+        var bytes = Data(count: side * side * 4)
+        var seed: UInt32 = 12345
+        bytes.withUnsafeMutableBytes { buffer in
+            let values = buffer.bindMemory(to: UInt8.self)
+            for index in values.indices { seed = seed &* 1664525 &+ 1013904223; values[index] = UInt8(truncatingIfNeeded: seed >> 24) }
+        }
+        let provider = try XCTUnwrap(CGDataProvider(data: bytes as CFData))
+        let cg = try XCTUnwrap(CGImage(width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+        let png = try XCTUnwrap(UIImage(cgImage: cg).pngData())
+        XCTAssertGreaterThan(png.count, ACIBrowserImageJob.pngLimit)
+        XCTAssertLessThan(png.count, ACIBrowserImageJob.sourceLimit)
+        XCTAssertThrowsError(try ACIBrowserImageJob.normalize(png, mime: "image/png"))
     }
 }

@@ -1,10 +1,9 @@
 import z from "zod/v4"
+import { isPersonTurn } from "@/runtime/providers/person-plan/rules"
 import { LabelField } from "@/runtime/primitives/gap-types"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PaneRender } from "@/runtime/integrations/pane-render"
 import DESCRIPTION from "@/runtime/tools/builtins/media-generate.txt"
-import { availableProviders, fabricCapabilities } from "@/runtime/providers/fabric/tasks"
-import { attachmentsFor, describeOutcome, providerName, runSubscriptionTask } from "@/runtime/tools/builtins/subscription"
 
 interface Meta {
   ok: boolean
@@ -16,8 +15,43 @@ interface Meta {
   width?: number
   height?: number
   video?: PaneRender.Video
+  code?: string
+  poster?: string
 }
 const meta = (m: Meta): Meta => m
+
+/**
+ * Turn progress reports into tool metadata updates: at most about one a second,
+ * except that a change of stage always goes through at once (the card must not
+ * show "drawing" after the render moved on). Reports in between are dropped;
+ * the next one carries the newer numbers.
+ */
+export function progressForwarder(
+  emit: (detail: PaneRender.ProgressDetail) => void,
+  options: { intervalMs?: number; now?: () => number } = {},
+) {
+  const intervalMs = options.intervalMs ?? 1000
+  const now = options.now ?? Date.now
+  let lastAt = -Infinity
+  let lastStage: PaneRender.ProgressStage | undefined
+  return (detail: PaneRender.ProgressDetail) => {
+    const t = now()
+    if (detail.stage === lastStage && t - lastAt < intervalMs) return
+    lastAt = t
+    lastStage = detail.stage
+    emit(detail)
+  }
+}
+
+/** The live metadata a running generation reports: `progress` is the current label, `progress_detail` the full report. */
+function reportProgress(ctx: Tool.Context, title: string, extra: Record<string, unknown> = {}) {
+  return progressForwarder((detail) =>
+    ctx.metadata({
+      title: `${title} — ${detail.label}`,
+      metadata: { ...extra, progress: detail.label, progress_detail: detail },
+    }),
+  )
+}
 
 const MAX_CODE = 400_000
 const MIN_SIDE = 64
@@ -60,6 +94,12 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
   const motionBlur = Math.min(8, Math.max(1, Math.round(params.motionBlur ?? 4)))
   const frames = Math.round(duration * fps)
 
+  let poster: string | undefined
+  const forward = reportProgress(ctx, `Video: ${title}`, { lane: "native" })
+  const onProgress = (detail: PaneRender.ProgressDetail) => {
+    if (detail.preview) poster = detail.preview
+    forward(detail)
+  }
   const result = await PaneRender.request(
     {
       sessionID: ctx.sessionID,
@@ -75,7 +115,7 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
       title,
       toolCall: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
     },
-    { abort: ctx.abort, timeoutMs: videoTimeoutMs(frames, motionBlur) },
+    { abort: ctx.abort, timeoutMs: videoTimeoutMs(frames, motionBlur), onProgress },
   )
 
   if (!result.ok || !result.video) {
@@ -89,56 +129,77 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
   return {
     title: `Video: ${title}`,
     output: `Rendered "${title}" (${width}×${height}, ${duration}s at ${fps}fps${sound}). Video: ${result.video.url}. It's in the session's Outputs. The contact sheet (six stills across the video, timestamped) is attached: check motion, framing and text against the request, and if anything is off, call again with the same title and fixed code.`,
-    metadata: meta({ ok: true, lane: "native", format: "canvas", width, height, video: result.video }),
+    metadata: meta({ ok: true, lane: "native", format: "canvas", width, height, video: result.video, ...(poster && poster.length <= 400_000 ? { poster } : {}) }),
     ...(result.image
       ? { attachments: [{ type: "file" as const, mime: "image/png", url: result.image, filename: `${title} contact sheet.png` }] }
       : {}),
   }
 }
 
-/**
- * Subscription lane: `image.generate` on one of the user's connected
- * subscriptions, run on their Sessions computer. The user confirms each
- * image (D16); the image comes back checksum-verified.
- */
-async function subscriptionImage(prompt: string, title: string, provider: string | undefined, ctx: Tool.Context) {
-  const live = availableProviders(await fabricCapabilities(), "image.generate")
-  const chosen = provider ?? live[0]
-  if (!chosen || !live.includes(chosen)) {
-    return {
-      title: "Image: subscription lane not available",
-      output: chosen && live.length
-        ? `${providerName(chosen)} cannot make images right now. Available: ${live.map(providerName).join(", ")}. Nothing was sent.`
-        : "No connected subscription can make images right now (none set up, or the Sessions computer is not reachable). Nothing was sent. Offer the native lane or ask the user how to proceed.",
-      metadata: meta({ ok: false, lane: "subscription" }),
+/** Validate the normalized PNG before attaching untrusted browser output to a chat. */
+export function browserImageResult(result: PaneRender.Result): { image: string; width: number; height: number } | undefined {
+  if (!result.ok || !result.image?.startsWith("data:image/png;base64,")) return
+  const encoded = result.image.slice("data:image/png;base64,".length)
+  // A bounded PNG keeps the reply under the API's 16 MiB JSON body limit.
+  if (!encoded || encoded.length > 11_184_812 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return
+  const bytes = Buffer.from(encoded, "base64")
+  if (bytes.length > 8 * 1024 * 1024 || bytes.length < 33 || bytes.toString("base64") !== encoded) return
+  if (!bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) || bytes.toString("ascii", 12, 16) !== "IHDR") return
+  if (bytes.readUInt32BE(8) !== 13) return
+  let offset = 8
+  let hasData = false
+  let ended = false
+  while (offset + 12 <= bytes.length) {
+    const size = bytes.readUInt32BE(offset)
+    if (size > bytes.length - offset - 12) return
+    const type = bytes.toString("ascii", offset + 4, offset + 8)
+    if (type === "IDAT" && size > 0) hasData = true
+    offset += size + 12
+    if (type === "IEND") {
+      if (size !== 0 || offset !== bytes.length) return
+      ended = true
+      break
     }
   }
-  const result = await runSubscriptionTask(ctx, {
-    capability: "image.generate",
-    provider: chosen,
-    prompt,
-    title,
-    summary: `Make an image with your ${providerName(chosen)} subscription: "${title}"`,
-  })
-  const images = result.files.filter((f) => f.mime.startsWith("image/"))
-  const outcome = describeOutcome({ ...result, files: images }, chosen, "image")
-  const ok = outcome.ok && images.length > 0
-  const note = result.task.result?.text?.trim()
-  return {
-    title: `Image: ${title}${ok ? "" : " — not finished"}`,
-    output: ok
-      ? `${providerName(chosen)} made "${title}". It's in the session's Outputs. The image is attached: check it against the request.${note ? `\n\n${note}` : ""}`
-      : outcome.ok
-        ? `${providerName(chosen)} finished but returned no image.`
-        : outcome.text,
-    metadata: meta({
-      ok,
-      lane: "subscription",
-      provider: chosen,
-      taskID: result.task.task_id,
-      artifacts: images.map((f) => ({ id: f.artifactID, mime: f.mime, sha256: f.sha256 })),
+  if (!hasData || !ended) return
+  const width = bytes.readUInt32BE(16)
+  const height = bytes.readUInt32BE(20)
+  if (!width || !height || width > 4096 || height > 4096 || width * height > 16_000_000) return
+  if ((result.width !== undefined && result.width !== width) || (result.height !== undefined && result.height !== height)) return
+  return { image: result.image, width, height }
+}
+
+async function aciImage(prompt: string, title: string, provider: string | undefined, ctx: Tool.Context) {
+  const latestUser = [...ctx.messages].reverse().find((m) => m.info.role === "user")?.info
+  if (!latestUser || latestUser.role !== "user" || latestUser.bot || !isPersonTurn(latestUser.metadata)) {
+    return { title: `Image: ${title} — needs your request`, output: "Local ACI images only run from a message you send yourself in chat. Nothing was sent.", metadata: meta({ ok: false, lane: "aci", code: "person_required" }) }
+  }
+  if ((provider && provider !== "chatgpt") || !prompt.trim() || prompt.length > 16_000) {
+    return { title: `Image: ${title} — request unavailable`, output: "Local ACI images need provider chatgpt and a prompt of 1–16000 characters. Nothing was sent.", metadata: meta({ ok: false, lane: "aci", code: "invalid_request" }) }
+  }
+  // The app presents the exact prompt before a provider send. A replayed
+  // sync request never grants that confirmation by itself.
+  const result = await PaneRender.request({
+    sessionID: ctx.sessionID, kind: "browser-image", engine: "chatgpt-aci", prompt,
+    format: "html", code: "", width: 1024, height: 1024, title,
+    toolCall: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
+  }, {
+    abort: ctx.abort, timeoutMs: 600_000,
+    onProgress: (detail) => ctx.metadata({
+      title: `Image: ${title} — ${detail.label}`,
+      metadata: { lane: "aci", provider: "chatgpt", progress: detail.label, progress_detail: detail },
     }),
-    attachments: attachmentsFor(images, title),
+  })
+  const image = browserImageResult(result)
+  if (!image) return {
+    title: `Image: ${title} — not finished`,
+    output: result.ok ? "The ACI browser returned an invalid or oversized image. No image was attached." : (result.error || "The local ACI browser did not return an image."),
+    metadata: meta({ ok: false, lane: "aci", provider: "chatgpt", code: result.code ?? (result.ok ? "invalid_image" : "unavailable") }),
+  }
+  return {
+    title: `Image: ${title}`, output: `Made "${title}" in this device's ACI browser. The image is attached and available in Outputs.`,
+    metadata: meta({ ok: true, lane: "aci", provider: "chatgpt", width: image.width, height: image.height }),
+    attachments: [{ type: "file" as const, mime: "image/png", url: image.image, filename: `${title}.png` }],
   }
 }
 
@@ -150,13 +211,13 @@ export const MediaGenerateTool = Tool.define("media_generate", {
     prompt: z.string().describe("What the user asked for, in their words"),
     title: z.string().optional().describe("Short name for the output; reuse it to replace a previous version"),
     lane: z
-      .enum(["native", "cloud", "subscription", "own_key"])
+      .enum(["native", "aci", "cloud", "subscription", "own_key"])
       .optional()
-      .describe("How to make it; native = you write it as code; subscription = a connected subscription makes the image (the user confirms each one)"),
+      .describe("How to make it; aci = ChatGPT image in this device’s ACI browser after prompt confirmation; native = code rendering. subscription is a legacy alias of aci, never a remote route."),
     provider: z
       .string()
       .optional()
-      .describe("Subscription lane: which subscription (chatgpt, claude, kimi); default the first that can"),
+      .describe("ACI image provider: chatgpt. No automatic provider or device fallback."),
     format: PaneRender.Format.optional().describe("Native lane: svg, html or canvas (video: canvas)"),
     code: z
       .string()
@@ -175,9 +236,10 @@ export const MediaGenerateTool = Tool.define("media_generate", {
   async execute(params, ctx) {
     const noun = params.kind === "video" ? "Video" : "Image"
     const title = (params.title ?? params.prompt).trim().slice(0, 80) || noun
-    const lane = params.lane ?? (params.code ? "native" : undefined)
-    if (lane === "subscription" && params.kind === "image") {
-      return subscriptionImage(params.prompt, title, params.provider, ctx)
+    const lane = params.lane ?? (params.code ? "native" : params.kind === "image" ? "aci" : undefined)
+    if ((lane === "aci" || lane === "subscription") && params.kind === "image") {
+      // The old name remains accepted but never routes back to Sessions.
+      return aciImage(params.prompt, title, params.provider, ctx)
     }
     if (lane !== "native") {
       return {
@@ -217,7 +279,7 @@ export const MediaGenerateTool = Tool.define("media_generate", {
         title,
         toolCall: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
       },
-      { abort: ctx.abort },
+      { abort: ctx.abort, onProgress: reportProgress(ctx, `Image: ${title}`, { lane: "native" }) },
     )
 
     if (!result.ok || !result.image) {

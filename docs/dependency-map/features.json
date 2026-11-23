@@ -5394,6 +5394,35 @@
         "allternit/cmd/allternit-api/src/bot_brain.rs",
         "allternit/cmd/allternit-api/src/runtime_live.rs"
       ]
+    },
+    {
+      "id": "feature:aci-local-images",
+      "label": "Device-local ACI ChatGPT image generation",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A person confirms an image request in chat; the same device runs its ACI ChatGPT browser and returns genuine progress and bounded image bytes to the originating turn and Outputs. No Sessions or remote-computer execution.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/media-generate.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/pane-render",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit/surfaces/allternit-mobile/ios/Features/ACI",
+        "allternit/surfaces/allternit-mobile/ios/Features/Media",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat",
+        "allternit/surfaces/allternit-mobile/android/feature/chat",
+        "allternit/surfaces/allternit-mobile/android/feature/shell",
+        "allternit/surfaces/allternit-desktop",
+        "allternit-ai/src/lib/agents/pane-render-bridge.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-23",
+          "note": "Eoj: build local ACI execution on Desktop and each phone using the approved generation UI. OAuth chat and browser image readiness remain distinct. Native phone browser compatibility and lifecycle require real-device validation before release."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/dev/aci-image-jobs.mdx",
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/media-generate.ts"
+      ]
     }
   ],
   "journeys": [

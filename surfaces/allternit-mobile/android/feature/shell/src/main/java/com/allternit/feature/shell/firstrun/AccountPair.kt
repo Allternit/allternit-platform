@@ -31,7 +31,7 @@ import com.allternit.core.design.R as DesignR
 
 /**
  * The ChatGPT account shown as two separate connections (contract section 9.9, D5; design pick: Connections,
- * option B grouped). "ChatGPT subscription" is the device sign-in (chat models and pictures); "Codex CLI" is its
+ * option B grouped). "ChatGPT subscription" is the device sign-in (chat models); "Codex CLI" is its
  * own sign-in (coding runs). They can use the same ChatGPT account, but each one signs in and reports on its own.
  * Mirrors iOS `AccountPair` and the web `accountPair.tsx`.
  */
@@ -64,7 +64,7 @@ internal object AccountPair {
     fun extras(id: String, row: ConnectionWire, paired: Boolean): Extras? = when (id) {
         CHATGPT_ID -> Extras(
             title = "ChatGPT subscription", badge = "Device sign-in",
-            powers = "Powers: chat models and pictures.",
+            powers = "Powers: chat models.",
             connectLabel = "Connect", disconnectLabel = "Disconnect",
             statusOn = "Signed in", statusOff = "Not signed in",
             modelCount = row.modelCount.takeIf { it > 0 },

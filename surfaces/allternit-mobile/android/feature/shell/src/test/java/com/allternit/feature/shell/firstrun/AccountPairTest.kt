@@ -18,7 +18,7 @@ class AccountPairTest {
         val e = AccountPair.extras("chatgpt", ConnectionWire("chatgpt", ConnState.On, modelCount = 3), paired = true)!!
         assertEquals("ChatGPT subscription", e.title)
         assertEquals("Device sign-in", e.badge)
-        assertTrue(e.powers.startsWith("Powers: chat models and pictures"))
+        assertTrue(e.powers.startsWith("Powers: chat models"))
         assertEquals("Signed in · 3 models", AccountPair.statusLine(e, ConnState.On, "x"))
         assertEquals("Not signed in", AccountPair.statusLine(e, ConnState.Off, "x"))
     }

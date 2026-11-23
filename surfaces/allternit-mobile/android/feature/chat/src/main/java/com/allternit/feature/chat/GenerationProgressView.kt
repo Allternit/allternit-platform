@@ -455,10 +455,11 @@ internal fun MediaGenerateCard(
         call.state == ToolState.Failed -> {
             val lane = GenerationProgressDetail.lane(call, null)
             GenerationFailure(
-                info = ChatErrorInfo.make(call.error, lane = if (lane == GenerationLane.Motion) ChatErrorInfo.Lane.Motion else ChatErrorInfo.Lane.Picture),
+                info = ChatErrorInfo.make(call.error, lane = if (lane == GenerationLane.Motion) ChatErrorInfo.Lane.Motion else ChatErrorInfo.Lane.Picture).let { if (call.browserImageResult != null) it.copy(action = null) else it },
                 lane = lane, aspect = GenerationProgressDetail.aspect(call), onChooseModel = onChooseModel, onConnect = onConnect, onRetry = onRetry,
             )
         }
+        call.state == ToolState.Done -> BrowserImageResult(call)
         else -> Unit
     }
 }

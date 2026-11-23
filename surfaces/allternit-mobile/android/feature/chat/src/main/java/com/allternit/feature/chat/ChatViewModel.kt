@@ -112,7 +112,154 @@ class ChatViewModel(
     val lastUserMessageId: String? get() = messages.lastOrNull { it.role == "user" }?.id
 
     fun dispose() {
+        browserImages?.request?.call?.let { GenerationProgressStore.shared.clear(it) }
+        browserImages?.dispose()
+        localImages?.deactivate()
+        browserImages = null
         scope.cancel()
+    }
+
+    internal var browserImages by mutableStateOf<BrowserImageJob?>(null)
+        private set
+    internal var imageChatVisible by mutableStateOf(false)
+    val hasBrowserImageJob: Boolean get() = browserImages?.request != null
+    private var imagePoll: Job? = null
+    private var imagePersonTurn = false
+    private val imageTurns = mutableMapOf<String, String>()
+
+    /** The shell owns this object. Leaving the browser or chat does not dispose the job. */
+    fun attachBrowserImages(context: android.content.Context, accountId: String) {
+        if (browserImages != null) return
+        localImages = LocalImageStore(context, accountId)
+        refreshLocalImages()
+        val owner = BrowserImageJob(context, accountId)
+        browserImages = owner
+        imagePoll = scope.launch {
+            while (isActive) {
+                val sid = currentSessionId
+                if (imageChatVisible && owner.foreground && imagePersonTurn && sid != null && !sid.startsWith("android-local-") && owner.request == null) {
+                    val response = backend.imageSync("GET")
+                    if (response is ApiResult.Ok) {
+                        val json = org.json.JSONTokener(response.value.toString()).nextValue()
+                        val rows = when (json) {
+                            is org.json.JSONArray -> json
+                            is org.json.JSONObject -> json.optJSONArray("requests") ?: json.optJSONArray("pending")
+                            else -> null
+                        }
+                        if (rows != null) for (i in 0 until rows.length()) {
+                            val request = BrowserImageJob.Request.parse(rows.optJSONObject(i) ?: continue, sid) ?: continue
+                            if (offerBrowserImage(request, messages.lastOrNull { m -> m.toolCalls.any { it.id == request.call } }?.id ?: continue)) break
+                        }
+                    }
+                }
+                delay(1500)
+            }
+        }
+    }
+
+    private fun sendBrowserImage(input: ChatSendRequest) {
+        val owner = browserImages ?: run { transientError = "Open this chat on the phone to make an image."; return }
+        if (isStreaming || isCreatingSession || owner.request != null) return
+        if (!input.personTurn) return
+        if (input.text.isBlank() || input.text.length > 16000) { transientError = "Enter an image prompt of 1–16000 characters."; return }
+        if (input.attachments.isNotEmpty()) { transientError = "This browser image action supports a text prompt. Remove attachments first."; draftToRestore = input.text; return }
+        isCreatingSession = true
+        scope.launch {
+            try {
+                val sid = currentSessionId ?: ("android-local-" + UUID.randomUUID()).also { currentSessionId = it }
+                if (!imageChatVisible) { draftToRestore = input.text; return@launch }
+                val id = "android-image-" + UUID.randomUUID().toString()
+                val r = BrowserImageJob.Request(id, sid, id, input.text, System.currentTimeMillis() + 600000, false)
+                offerBrowserImage(r, null)
+            } catch (e: Exception) {
+                transientError = e.message ?: "Could not start the image request."
+                draftToRestore = input.text
+            } finally { isCreatingSession = false }
+        }
+    }
+
+    private var localImages: LocalImageStore? = null
+    internal var savedImageTurns by mutableStateOf<List<org.json.JSONObject>>(emptyList())
+        private set
+    private val claimedImages = mutableMapOf<String, String>()
+    private var claimingImage = false
+    private fun refreshLocalImages() { savedImageTurns = localImages?.entries().orEmpty().map { org.json.JSONObject(it.toString()) } }
+
+    private fun offerBrowserImage(r: BrowserImageJob.Request, originalMessage: String?): Boolean {
+        val owner = browserImages ?: return false
+        if (r.remote && r.id !in claimedImages) {
+            if (claimingImage) return false
+            claimingImage = true
+            scope.launch {
+                try {
+                    val executor = UUID.randomUUID().toString()
+                    val claim = backend.imageSync("POST", r.id, "claim", org.json.JSONObject().put("executorId", executor).toString())
+                    if (claim is ApiResult.Ok) {
+                        claimedImages[r.id] = executor
+                        offerBrowserImage(r, originalMessage)
+                    }
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { transientError = "Could not claim this image request. It has not been sent to ChatGPT." }
+                finally { claimingImage = false }
+            }
+            return true
+        }
+        if (localImages?.entries()?.any { it.optString("id") == r.id && it.has("result") } == true) return false
+        val messageId = originalMessage ?: UUID.randomUUID().toString()
+        imageTurns[r.id] = messageId
+        // A relayed turn is stored before offer, including replay/decline errors.
+        if (r.remote) try { localImages!!.begin(r, messageId, null, messages) } catch (e: Exception) {
+            scope.launch { backend.imageSync("POST", r.id, "reply", BrowserImageJob.error("storage", "Could not save the original turn on this phone.").put("executorId", claimedImages[r.id]).toString()) }
+            transientError = "Could not save the image turn on this phone."; return false
+        }
+        return owner.offer(r, onProgress = { detail ->
+            val metadata = com.allternit.core.api.ApiJson.default.parseToJsonElement(org.json.JSONObject().put("progress_detail", detail).toString()) as JsonObject
+            GenerationProgressDetail.read(metadata)?.let { GenerationProgressStore.shared.set(r.call, it) }
+            if (currentSessionId == r.session) update(messageId) { it.upsertToolCall(ToolCallRecord(r.call, "media_generate", ToolState.Running, metadata = metadata,
+                input = buildJsonObject { put("kind", "image"); put("prompt", r.prompt) })).copy(isStreaming = true) }
+            if (r.remote) scope.launch {
+                val response = backend.imageSync("POST", r.id, "progress", org.json.JSONObject(detail.toString()).put("executorId", claimedImages.getValue(r.id)).toString())
+                if (response is ApiResult.HttpError && response.status in listOf(404, 409) && owner.request?.id == r.id) owner.cancel()
+            }
+        }, onComplete = { result ->
+            GenerationProgressStore.shared.clear(r.call)
+            // Persist against the captured original native ID, even when another chat is displayed.
+            val hasTurn = localImages?.entries()?.any { it.optString("id") == r.id } == true
+            val saved = try { if (hasTurn) localImages!!.complete(r.id, result) else result } catch (e: Exception) {
+                transientError = "Could not save the image locally. Free storage and keep this chat open."
+                BrowserImageJob.error("storage", "Could not save the image locally.")
+            }
+            refreshLocalImages()
+            if (currentSessionId == r.session) {
+                val row = savedImageTurns.firstOrNull { it.optString("id") == r.id }
+                val finalMessage = row?.let { localImages!!.message(it) }
+                if (finalMessage != null) update(messageId) { old -> old.copy(toolCalls = old.toolCalls.filterNot { it.id == r.call } + finalMessage.toolCalls, isStreaming = false) }
+                else update(messageId) { it.upsertToolCall(ToolCallRecord(r.call, "media_generate", ToolState.Failed, output = saved.toString(), error = saved.optString("error"))) }
+            }
+            if (r.remote) scope.launch {
+                val reply = backend.imageSync("POST", r.id, "reply", org.json.JSONObject(result.toString()).put("executorId", claimedImages.getValue(r.id)).toString())
+                if (reply !is ApiResult.Ok) transientError = "The image is saved on this phone. Its runtime reply could not sync."
+            }
+            if (r.remote) onSessionsChanged()
+        })
+    }
+
+    internal fun confirmBrowserImage() {
+        val owner = browserImages ?: return
+        val r = owner.request ?: return
+        if (!imageChatVisible || currentSessionId != r.session || owner.confirmed) return
+        if (!r.remote) {
+            val user = MessageRecord(UUID.randomUUID().toString(), "user", r.prompt)
+            val assistant = MessageRecord(imageTurns.getValue(r.id), "assistant", "", isStreaming = true, toolCalls = listOf(ToolCallRecord(r.call, "media_generate", ToolState.Running,
+                input = buildJsonObject { put("kind", "image"); put("prompt", r.prompt) })))
+            try { localImages!!.begin(r, assistant.id, user.id, messages) } catch (e: Exception) {
+                transientError = "Could not save this image turn. Free storage before trying again."; return
+            }
+            messages = messages + user + assistant
+            refreshLocalImages()
+        }
+        imagePersonTurn = true
+        owner.confirm()
     }
 
     // MARK: Sessions
@@ -124,7 +271,8 @@ class ChatViewModel(
     var systemPromptFor: ((sessionId: String) -> String?)? = null
 
     fun startNewSession() {
-        stopStreaming()
+        imagePersonTurn = false
+        stopStreamingInternal(cancelImage = false)
         transientError = null
         computeGate = null
         messages = emptyList()
@@ -136,7 +284,8 @@ class ChatViewModel(
     /** Opens a history chat: `GET agent-sessions/:id/messages`, then its branches. */
     fun loadSession(sessionId: String) {
         if (sessionId == currentSessionId && (messages.isNotEmpty() || isStreaming)) return
-        stopStreaming()
+        imagePersonTurn = false
+        stopStreamingInternal(cancelImage = false)
         transientError = null
         computeGate = null
         currentSessionId = sessionId
@@ -144,13 +293,16 @@ class ChatViewModel(
         branches = emptyList()
         editedVersions = emptyMap()
         isLoadingHistory = true
+        val local = localImages?.messages(sessionId, browserImages?.request?.call).orEmpty()
+        messages = local
+        if (sessionId.startsWith("android-local-")) { isLoadingHistory = false; return }
         scope.launch {
             val r = backend.listMessages(sessionId)
             if (currentSessionId != sessionId) return@launch
             isLoadingHistory = false
             when (r) {
                 is ApiResult.Ok -> {
-                    messages = r.value.map(MessageRecord::fromWire)
+                    messages = localImages?.merge(sessionId, r.value.map(MessageRecord::fromWire), browserImages?.request?.call) ?: r.value.map(MessageRecord::fromWire)
                     loadBranches()
                     refreshPermissions()
                 }
@@ -166,6 +318,9 @@ class ChatViewModel(
     /** `DELETE agent-sessions/:id`, then a fresh chat (the ⋯ menu's Delete chat). */
     fun deleteCurrentSession(onDone: () -> Unit) {
         val id = currentSessionId ?: return
+        if (browserImages?.request?.session == id) browserImages?.cancel()
+        localImages?.delete(id); refreshLocalImages()
+        if (id.startsWith("android-local-")) { startNewSession(); onSessionsChanged(); onDone(); return }
         scope.launch {
             when (val r = backend.deleteSession(id)) {
                 is ApiResult.Ok -> {
@@ -182,8 +337,10 @@ class ChatViewModel(
 
     /** The composer's send (iOS sendMessage): optimistic user bubble, then [startStream]. */
     fun send(request: ChatSendRequest) {
+        if (request.browserImage) { sendBrowserImage(request); return }
         val trimmed = request.text.trim()
-        if (trimmed.isEmpty() || isStreaming || isCreatingSession) return
+        if (trimmed.isEmpty() || isStreaming || isCreatingSession || browserImages?.request != null) return
+        imagePersonTurn = request.personTurn
         val userId = UUID.randomUUID().toString()
         messages = messages + MessageRecord(id = userId, role = "user", content = trimmed, attachmentNames = request.attachments.map { it.name })
         startStream(
@@ -196,6 +353,7 @@ class ChatViewModel(
             userMessageId = userId,
             agentModeId = request.agentModeId,
             systemPrompt = request.systemPrompt,
+            personTurn = request.personTurn,
         )
     }
 
@@ -209,7 +367,13 @@ class ChatViewModel(
 
     /** Action-bar Retry on the last good reply (iOS regenerateLastResponse). */
     fun regenerate(runtimeModelId: String?, effort: String?) {
-        if (isStreaming || isCreatingSession) return
+        if (isStreaming || isCreatingSession || hasBrowserImageJob) return
+        val browserCall = messages.lastOrNull { it.role == "assistant" }?.toolCalls?.lastOrNull { it.browserImageResult != null }
+        if (browserCall != null) {
+            draftToRestore = browserCall.input?.str("prompt")
+            transientError = "Use Image mode to confirm a new request. Check ChatGPT first if the earlier request was interrupted."
+            return
+        }
         val index = messages.indexOfLast { it.role == "assistant" }
         if (index < 0) return
         val lastUserText = messages.subList(0, index).lastOrNull { it.role == "user" }?.content
@@ -302,6 +466,7 @@ class ChatViewModel(
         userMessageId: String?,
         agentModeId: String?,
         systemPrompt: String? = null,
+        personTurn: Boolean = false,
     ) {
         transientError = null
         draftToRestore = null
@@ -339,6 +504,9 @@ class ChatViewModel(
                     finishStreaming(assistantId)
                     return@launch
                 }
+                if (currentSessionId?.startsWith("android-local-") == true) {
+                    throw SendException("This chat contains images saved on this phone. Choose Image for another picture, or start a new chat for a computer-backed model.")
+                }
                 // Find the computer before creating the session, so a no-computer send leaves
                 // no empty chat behind.
                 val runtimeId = when (val pick = backend.relay.resolve()) {
@@ -371,7 +539,7 @@ class ChatViewModel(
                         answerCards = "widgets",
                     ),
                 )
-                failed = runStream(runtimeId, body, assistantId)
+                failed = runStream(runtimeId, body, assistantId, personTurn)
                 finishStreaming(assistantId)
             } catch (e: CancellationException) {
                 isCreatingSession = false
@@ -412,12 +580,12 @@ class ChatViewModel(
      * up to 120 s, iOS RuntimeRelayClient.wakeTimeout) as long as nothing has arrived yet.
      * Returns true when the reply failed (error frame / finish "error").
      */
-    private suspend fun runStream(runtimeId: String, body: AgentChatRequest, assistantId: String): Boolean {
+    private suspend fun runStream(runtimeId: String, body: AgentChatRequest, assistantId: String, personTurn: Boolean): Boolean {
         val deadline = System.currentTimeMillis() + 120_000
         while (true) {
             var failedFrame = false
             var transport: ChatStreamEvent.Failed? = null
-            backend.streamTurn(runtimeId, body).collect { event ->
+            backend.streamTurn(runtimeId, body, personTurn && browserImages?.foreground == true).collect { event ->
                 if (event is ChatStreamEvent.Failed) transport = event else if (apply(event, assistantId)) failedFrame = true
             }
             val t = transport ?: run {
@@ -528,7 +696,10 @@ class ChatViewModel(
         )
     }
 
-    fun stopStreaming() {
+    fun stopStreaming() = stopStreamingInternal(cancelImage = true)
+
+    private fun stopStreamingInternal(cancelImage: Boolean) {
+        if (cancelImage) browserImages?.cancel()
         val sessionId = currentSessionId
         val wasStreaming = isStreaming
         streamJob?.cancel()

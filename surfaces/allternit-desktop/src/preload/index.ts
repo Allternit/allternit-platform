@@ -1379,6 +1379,17 @@ const allternitDesktopAPI = {
   motion: motionAPI,
   miniApps: miniAppsAPI,
   hermesRouting: hermesRoutingAPI,
+  aciImage: {
+    read: (id: string) => ipcRenderer.invoke('aci-image:read', id),
+    show: () => ipcRenderer.invoke('aci-image:show'),
+    run: (request: { requestId: string; sessionId: string; prompt: string; timeoutMs?: number }) => ipcRenderer.invoke('aci-image:run', request),
+    cancel: (requestId: string) => ipcRenderer.invoke('aci-image:cancel', requestId),
+    onProgress: (callback: (progress: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);
+      ipcRenderer.on('aci-image:progress', listener);
+      return () => ipcRenderer.removeListener('aci-image:progress', listener);
+    },
+  },
   browserCapture: browserCaptureAPI,
   teach: teachAPI,
   artifactPreview: artifactPreviewAPI,

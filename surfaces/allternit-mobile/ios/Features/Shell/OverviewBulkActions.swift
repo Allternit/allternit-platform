@@ -13,6 +13,11 @@ extension ShellSessionsStore {
     /// Put an archived session back in the open list: `metadata.archived` off and
     /// `active: true` (Code's archive is `active: false`, so this undoes both).
     func unarchive(id: String) async throws {
+        if ACILocalImageStore.isLocal(id) {
+            try ACILocalImageStore.shared.archive(id, archived: false)
+            restore(sessions.filter { $0.id != id } + ACILocalImageStore.shared.sessions().filter { $0.id == id })
+            return
+        }
         struct Body: Encodable {
             struct Metadata: Encodable { let archived: Bool }
             let active: Bool
@@ -28,6 +33,12 @@ extension ShellSessionsStore {
     /// Delete for good, as the drawer's swipe-delete does. Optimistic; the list
     /// comes back if the write fails. Plan chats (pth_…) live in the plan store.
     func delete(id: String) async throws {
+        if ACILocalImageStore.isLocal(id) {
+            try ACILocalImageStore.shared.delete(id)
+            _ = remove(id: id)
+            RailPinsStore.shared.remove(id: id)
+            return
+        }
         let before = remove(id: id)
         RailPinsStore.shared.remove(id: id)
         do {

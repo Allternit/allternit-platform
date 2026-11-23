@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.padding
 /** A composer send → the chat's send request (iOS ChatView onSend: model, effort, files, tools). */
 internal fun ComposerDraft.toChatRequest(): ChatSendRequest = ChatSendRequest(
     text = text,
+    browserImage = agentModeId == "image",
+    personTurn = true,
     attachments = attachments.map { ChatAttachmentInput(it.name, it.uri, it.kind, it.bytes, it.mediaType) },
     runtimeModelId = modelId,
     effort = effort,
@@ -118,6 +120,7 @@ internal fun ChatPage(
             wideSides = true,
             leading = menuButton,
             trailing = {
+                com.allternit.feature.chat.BrowserImageLibrary(chat)
                 Box {
                     PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
@@ -167,7 +170,7 @@ internal fun ChatPage(
                     onOpenSection = onOpenSection,
                     isStreaming = chat.isStreaming,
                     deck = ComposerDeck.Compact,
-                    sendDisabled = chat.isCreatingSession,
+                    sendDisabled = chat.isCreatingSession || chat.hasBrowserImageJob,
                     onStop = chat::stopStreaming,
                     prefill = prefill,
                     onPrefillConsumed = { prefill = null },

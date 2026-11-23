@@ -72,4 +72,44 @@ describe("PaneRender", () => {
       },
     })
   })
+
+  test("browser jobs require the same executor claim for progress and final result", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({ directory: tmp.path, fn: async () => {
+      const abort = new AbortController()
+      const pending = PaneRender.request({ sessionID: "ses_test", kind: "browser-image", engine: "chatgpt-aci", prompt: "A blue mug", format: "canvas", code: "never execute this", width: 1024, height: 1024, title: "Mug" }, { abort: abort.signal, timeoutMs: 900_000 })
+      try {
+        const [request] = await PaneRender.list()
+        expect(request.timeoutMs).toBe(600_000)
+        expect(request).toMatchObject({ format: "html", code: "" })
+        expect(await PaneRender.reply({ requestID: request.id, result: { ok: true } })).toBe(false)
+        const owner = "11111111-1111-4111-8111-111111111111"
+        const other = "22222222-2222-4222-8222-222222222222"
+        expect(await PaneRender.claim({ requestID: request.id, executorID: owner })).toBe(true)
+        expect(await PaneRender.claim({ requestID: request.id, executorID: owner })).toBe(true)
+        expect(await PaneRender.claim({ requestID: request.id, executorID: other })).toBe(false)
+        const detail = { lane: "picture" as const, stage: "drawing" as const, label: "Drawing" }
+        expect(await PaneRender.progress({ requestID: request.id, detail, executorID: other })).toBe(false)
+        expect(await PaneRender.progress({ requestID: request.id, detail: { ...detail, preview: "https://chatgpt.com/private-image" }, executorID: owner })).toBe(false)
+        expect(await PaneRender.progress({ requestID: request.id, detail, executorID: owner })).toBe(true)
+        expect(await PaneRender.reply({ requestID: request.id, executorID: other, result: { ok: false } })).toBe(false)
+        expect(await PaneRender.reply({ requestID: request.id, executorID: owner, result: { ok: false, code: "signed_out", error: "Sign in within this device's ACI browser." } })).toBe(true)
+        expect(await pending).toMatchObject({ ok: false, code: "signed_out" })
+        expect(await PaneRender.list()).toHaveLength(0)
+      } finally {
+        abort.abort()
+        await pending
+      }
+    } })
+  })
+
+  test("incomplete browser-image requests never enter the pending list", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({ directory: tmp.path, fn: async () => {
+      const result = await PaneRender.request({ sessionID: "ses_test", kind: "browser-image", format: "html", code: "", width: 1024, height: 1024, title: "Mug" })
+      expect(result).toMatchObject({ ok: false, code: "invalid_request" })
+      expect(await PaneRender.list()).toHaveLength(0)
+    } })
+  })
+
 })

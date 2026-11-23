@@ -15,7 +15,7 @@ final class AccountPairAnswerRoomTests: XCTestCase {
         let extras = try XCTUnwrap(AccountPair.extras(id: "chatgpt", row: row, paired: true))
         XCTAssertEqual(extras.title, "ChatGPT subscription")
         XCTAssertEqual(extras.badge, "Device sign-in")
-        XCTAssertTrue(extras.powers.hasPrefix("Powers: chat models and pictures"))
+        XCTAssertTrue(extras.powers.hasPrefix("Powers: chat models"))
         XCTAssertEqual(AccountPair.statusLine(extras, state: .on, fallback: "x"), "Signed in on this iPhone · 3 models")
         XCTAssertEqual(AccountPair.statusLine(extras, state: .off, fallback: "x"), "Not signed in on this iPhone")
     }

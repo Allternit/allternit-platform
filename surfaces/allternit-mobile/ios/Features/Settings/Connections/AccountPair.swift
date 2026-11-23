@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The ChatGPT account shown as two separate connections (contract §9.9, D5;
 /// design pick: Connections, option B grouped). "ChatGPT subscription" is the
-/// device sign-in (chat models and pictures); "Codex CLI" is its own sign-in
+/// device sign-in (chat models); "Codex CLI" is its own sign-in
 /// (coding runs). They can use the same ChatGPT account, but each one signs in
 /// and reports on its own. Mirrors allternit-ai `accountPair.tsx`.
 enum AccountPair {
@@ -37,7 +37,7 @@ enum AccountPair {
             return Extras(
                 title: "ChatGPT subscription",
                 badge: "Device sign-in",
-                powers: "Powers: chat models and pictures. Signed in once on this iPhone.",
+                powers: "Powers: chat models. Signed in once on this iPhone.",
                 statusOn: "Signed in on this iPhone",
                 statusOff: "Not signed in on this iPhone",
                 modelCount: count > 0 ? count : nil

@@ -82,6 +82,7 @@ data class ChatErrorInfo(
             }
             if ((lowered != null && lowered in signedOutCodes) || status == 401 || signedOutText.containsMatchIn(text)) {
                 return base(Kind.SignedOut, signedOutReason(text, chatgpt, lane), Action.Connect)
+                    .let { if (lane == Lane.Picture && chatgpt) it.copy(action = null) else it }
             }
             if ((lowered != null && lowered in networkCodes) || networkText.containsMatchIn(text)) {
                 val reason = if (text.isEmpty() || bareNetwork.matches(text)) "Couldn't reach Allternit. Check your connection and try again." else text
@@ -94,7 +95,7 @@ data class ChatErrorInfo(
         private fun signedOutReason(text: String, chatgpt: Boolean, lane: Lane): String {
             if (text.isNotEmpty() && !text.contains("gizzi connect", ignoreCase = true)) return text
             if (!chatgpt) return "Sign in again to keep going."
-            return if (lane == Lane.Chat) "ChatGPT is not signed in on your account. Tap Connect to sign it in and keep going." else "ChatGPT is not signed in on your account. Tap Connect to sign it in and make pictures with it."
+            return if (lane == Lane.Chat) "ChatGPT is not signed in on your account. Tap Connect to sign it in and keep going." else "Sign in to ChatGPT in this device’s ACI image browser, then confirm a new image request. OAuth chat sign-in does not sign in that browser."
         }
 
         /** "3:40 PM" today, "Tue 3:40 PM" on another day; null when unknown or past. */

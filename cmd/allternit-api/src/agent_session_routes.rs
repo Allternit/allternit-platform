@@ -218,7 +218,10 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         // session's artifact pane, edited through its editor's tools).
         .route("/pane-artifact/:id/reply", post(reply_pane_artifact))
         // The app's rendered image for a media_generate (native lane) call.
-        .route("/pane-render/:id/reply", post(reply_pane_render))
+        .route("/pane-render", get(list_pane_renders))
+        .route("/pane-render/:id/progress", post(progress_pane_render))
+        .route("/pane-render/:id/claim", post(claim_pane_render))
+        .route("/pane-render/:id/reply", post(reply_pane_render).layer(axum::extract::DefaultBodyLimit::max(PANE_REPLY_BODY_LIMIT)))
         // The app's capture for a capture_screen_context call (its front
         // window or its own view). Secrets are redacted and the text marked
         // untrusted here, before the runtime (and the model) sees it.
@@ -1573,6 +1576,9 @@ async fn send_message(
     // A bot's session: the turn runs as the bot (see `bot_turn_marker`).
     if let Some(bot) = session_bot_marker(&state.db, &session_id) {
         payload["bot"] = bot;
+        if let Some(metadata) = payload.get_mut("metadata").and_then(serde_json::Value::as_object_mut) {
+            metadata.remove("turn");
+        }
     }
 
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
@@ -1748,6 +1754,40 @@ async fn reply_pane_artifact(
 ) -> impl IntoResponse {
     let client = gizzi_client(&headers);
     let path = format!("/v1/pane-artifact/{}/reply", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn list_pane_renders(headers: HeaderMap) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, "/v1/pane-render", None).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn claim_pane_render(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/pane-render/{}/claim", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn progress_pane_render(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/pane-render/{}/progress", urlencoding::encode(&request_id));
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
         Ok(value) => Json(value).into_response(),
         Err(response) => response,
@@ -1950,6 +1990,11 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     }
     if let Some(zone) = body.metadata.as_ref().and_then(crate::v1_routes::turn_time_zone) {
         payload["metadata"]["time_zone"] = json!(zone);
+    }
+    // Foreground composer sends can invoke a person-confirmed local image
+    // job regardless of their chat model. Persist-only notes grant nothing.
+    if body.no_reply != Some(true) && body.metadata.as_ref().and_then(|m| m.get("turn")).and_then(|v| v.as_str()) == Some("person") {
+        payload["metadata"]["turn"] = json!("person");
     }
     payload
 }
@@ -2673,6 +2718,9 @@ async fn transform_bus_event(
         "pane_render.requested" => Some(json!({
             "type": "pane_render_requested",
             "request_id": props.get("id"),
+            "engine": props.get("engine"),
+            "prompt": props.get("prompt"),
+            "toolCall": props.get("toolCall"),
             "session_id": props.get("sessionID"),
             "kind": props.get("kind"),
             "format": props.get("format"),
@@ -3328,6 +3376,22 @@ mod send_message_payload_tests {
             "metadata": { "time_zone": "Mars/Olympus" }
         })));
         assert!(payload.get("metadata").is_none());
+    }
+
+    #[test]
+    fn local_image_person_marker_is_not_granted_by_persist_only_notes() {
+        let request = send_message_payload(&body(serde_json::json!({
+            "text": "Make a blue mug image", "metadata": { "turn": "person" }
+        })));
+        assert_eq!(request["metadata"]["turn"], "person");
+        let note = send_message_payload(&body(serde_json::json!({
+            "text": "Saved image", "noReply": true, "metadata": { "turn": "person" }
+        })));
+        assert!(note.pointer("/metadata/turn").is_none());
+        let invalid = send_message_payload(&body(serde_json::json!({
+            "text": "Make an image", "metadata": { "turn": true }
+        })));
+        assert!(invalid.pointer("/metadata/turn").is_none());
     }
 
     #[test]

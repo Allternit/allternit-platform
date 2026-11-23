@@ -282,7 +282,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         /// `screen_context: "available"` says this app can answer capture_screen_context
         /// with its own view (ScreenContextResponder); sent only while the app is in front.
         /// Optional fields are omitted when nil.
-        struct Metadata: Encodable { let tools: ToolOptions?; let form_factor: String?; let time_zone: String?; let screen_context: String?; let answer_cards: String? }
+        struct Metadata: Encodable { let tools: ToolOptions?; let form_factor: String?; let time_zone: String?; let screen_context: String?; let answer_cards: String?; let turn: String? }
         let chatId: String
         let message: String
         let agentId: String?
@@ -338,7 +338,12 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
     /// never reached the phone.
     ///
     /// Throws `AgentChatClientError.noReachableNode` when no computer resolves.
-    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil, clientLocation: ClientLocation? = nil) -> AsyncThrowingStream<AgentChatEvent, Error> {
+    /// Only the foreground composer opts in. Helpers, replay and retry default to no marker.
+    nonisolated static func personTurn(personInitiated: Bool, isForeground: Bool) -> String? {
+        personInitiated && isForeground ? "person" : nil
+    }
+
+    func sendMessageStream(sessionId: String, text: String, agentId: String? = nil, systemPrompt: String? = nil, runtimeModelId: String? = nil, effort: String? = nil, attachments: [AttachmentRef]? = nil, tools: ToolOptions? = nil, workdir: String? = nil, clientLocation: ClientLocation? = nil, personInitiated: Bool = false) -> AsyncThrowingStream<AgentChatEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -368,7 +373,7 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                         effort: effort,
                         fast: UserDefaults.standard.bool(forKey: "allternit-model-fast") ? true : nil,
                         attachments: attachments,
-                        metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, screen_context: screenContext, answer_cards: "widgets"),
+                        metadata: AgentChatRequest.Metadata(tools: tools, form_factor: formFactor, time_zone: TimeZone.current.identifier, screen_context: screenContext, answer_cards: "widgets", turn: Self.personTurn(personInitiated: personInitiated, isForeground: screenContext != nil)),
                         workdir: workdir,
                         client_location: clientLocation
                     ))
@@ -561,14 +566,52 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
         return false
     }
 
+    /// Reconcile pending browser jobs after a sync reconnect. Listing never authorizes a send.
+    func pendingPaneRenders() async throws -> [PaneRenderRequest] {
+        let data = try await browserPaneRequest(path: "", method: "GET", body: nil)
+        guard let list = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw APIError.invalidResponse }
+        return list.compactMap { object in
+            guard let data = try? JSONSerialization.data(withJSONObject: object), let json = String(data: data, encoding: .utf8) else { return nil }
+            return PaneRenderRequest(payload: json)
+        }
+    }
+
+    /// Claim only after native prompt confirmation. Progress and reply carry the same executor id.
+    func claimBrowserImage(requestId: String, executorId: String) async throws {
+        let data = try JSONSerialization.data(withJSONObject: ["executorId": executorId])
+        let escaped = requestId.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? requestId
+        _ = try await browserPaneRequest(path: "/" + escaped + "/claim", method: "POST", body: data)
+    }
+
+    private func browserPaneRequest(path: String, method: String, body: Data?) async throws -> Data {
+        guard let resolved = await InstanceConnection.resolve() else { throw AgentChatClientError.noReachableNode }
+        let paths = ["api/v1/pane-render", "v1/pane-render"]
+        for prefix in resolved.isRelay ? paths : paths.reversed() {
+            var request = URLRequest(url: resolved.baseURL.appendingPathComponent(prefix + path))
+            request.httpMethod = method
+            request.httpBody = body
+            request.timeoutInterval = 10
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let token = try await AuthManager.shared.getToken(), !token.isEmpty { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+            let (data, response) = try await InstanceConnection.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            if (200...299).contains(http.statusCode) { return data }
+            if http.statusCode != 404 { throw APIError.httpError(statusCode: http.statusCode, message: "Image job unavailable or claimed by another device.") }
+        }
+        throw APIError.httpError(statusCode: 404, message: "Image job is no longer pending.")
+    }
+
     /// Tells the agent how far a pane_render request has got (stage, frame N of
     /// M, a small preview): platform #2802, `POST /pane-render/:id/progress`.
     /// Fire-and-forget by design: a failure never fails the render. False once
     /// neither route knows the request (it ended or timed out), so the caller
     /// stops reporting; true when it was taken or the network failed (try the next one).
-    func postPaneRenderProgress(requestId: String, detail: GenerationProgressDetail) async -> Bool {
+    func postPaneRenderProgress(requestId: String, detail: GenerationProgressDetail, executorId: String? = nil) async -> Bool {
         guard let resolved = await InstanceConnection.resolve(),
-              let body = try? JSONEncoder().encode(detail) else { return true }
+              let encoded = try? JSONEncoder().encode(detail),
+              var object = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any] else { return true }
+        if let executorId { object["executorId"] = executorId }
+        guard let body = try? JSONSerialization.data(withJSONObject: object) else { return true }
         let paths = ["api/v1/pane-render/\(requestId)/progress", "v1/pane-render/\(requestId)/progress"]
         for path in resolved.isRelay ? paths : paths.reversed() {
             var request = URLRequest(url: resolved.baseURL.appendingPathComponent(path))

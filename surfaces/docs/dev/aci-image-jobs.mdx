@@ -1,0 +1,51 @@
+---
+title: Device-local ACI image jobs
+description: Same-device browser generation, progress and chat image return
+---
+
+<Note>This implementation is in development. Safari and Codex probes do not establish support in native ACI webviews.</Note>
+
+## Surface Matrix
+
+| Surface | Status |
+|---|---|
+| Desktop | BUILD: local ACI browser executor and native result import |
+| Web and phone layout | BUILD: explicit unavailable result when cross-origin browser control is unavailable |
+| PWA | BUILD: same capability gate; no remote fallback |
+| iOS | BUILD: local retained ACI webview, image download and chat result |
+| Android | BUILD: local retained ACI webview, image download and chat result |
+| Gizzi / CLI | BUILD: request and progress contract; no Sessions routing |
+| Backend | BUILD: existing pane-render authenticated relay, sync only |
+| Docs | BUILD: this contract and user guide |
+| Platform console | N/A: no workspace image generation UI |
+
+## Request contract
+
+Extend the existing `pane_render.requested` request with `kind: "browser-image"`, `engine: "chatgpt-aci"`, and `prompt: string` (1–16000 characters). Keep existing `id`, `sessionID`, `toolCall`, `time`, `timeoutMs`, `title`, `width`, `height`; use `format: "html"`, `code: ""` only for wire compatibility. These fields are not executable content for browser-image. Unknown kinds must never fall through to native code rendering. Timeout: 10 minutes maximum. Request IDs bind retries to the same job. A browser-image job may only run on a device that is displaying its originating chat, after a person confirms the exact prompt. It never uses a Sessions machine or another device. ACI web sign-in is distinct from ChatGPT OAuth chat authorization.
+
+## Execution and return
+
+Use the same-device ACI browser and its private website session. Fixed provider operations only: open ChatGPT; detect sign-in/verification; locate composer; submit exactly once; identify current-turn output; obtain the finished image bytes. Do not inject OAuth tokens or import Safari cookies. Stop on a provider challenge and show Needs you; never bypass it. Keep the browser alive when returning to chat, but do not authorize arbitrary background web.* calls. Sign-out and account switches cancel jobs and tear down retained browser state.
+
+Report through the existing pane-render progress route using `{lane:"picture",stage,label,preview?,fraction?,bytes?,total_bytes?}`. No invented progress. A preview must be a bounded local thumbnail, never a provider-private URL. Opening state is BlockPulse. Real preview replaces it. Saving/downloading uses actual byte counts. `tool_progress` delivers the same metadata to the approved full/history/peek/running-strip views.
+
+Return the existing pane-render result `{ok:true,image:"data:image/png;base64,...",width,height}` or `{ok:false,error,code?}`. Normalize decoded images to PNG on the device. Validate MIME, decoded image and dimensions, with a 20 MiB source limit and an 8 MiB normalized PNG limit (to fit the 16 MiB JSON relay), maximum 4096 pixels per side and 16 million pixels total. Native download must use the browser's own authenticated context; no screenshot substituted for final bytes. Attach the final image to the original tool turn and Outputs through the existing media_generate result handling. Results must not take their chat IDs from page scripts.
+
+## Lifecycle and recovery
+
+A local job owns the browser, not the visible browser view. Explicit Stop cancels. Switching back to chat only hides it. While the OS suspends the phone, report paused/reconnecting rather than promising continued execution. Persist request/conversation identity before submission and never auto-resubmit an ambiguous job after restart. Web/PWA without a same-device capable browser integration return `unsupported`; never route to another computer silently. CLI without a local app executor returns an actionable unavailable error.
+
+
+## Claim before execution
+
+After the person confirms, claim the pending browser-image request with `POST /pane-render/:id/claim {executorId}` through the authenticated local API. `executorId` is a client-generated random UUID (16–128 alphanumeric, hyphen or underscore characters), retained with this job. Repeating the same claim is idempotent; another executor receives 409. Include that exact `executorId` in every progress and reply JSON body for a browser-image job. The runtime refuses unclaimed or mismatched browser-image progress/results. Ordinary native renders retain their existing wire shape. Claim does not authorize sending by itself: local confirmation is still required. Do not generate another executor ID to bypass a conflicting claim.
+
+## Local history and files
+
+Explicit image actions save their original user turn, assistant image turn, stable chat identity and bounded PNG on the device. iOS uses account-scoped Application Support files and history. Android uses account-scoped files and an atomic index. Desktop writes an account-scoped PNG and origin manifest before returning success, and the chat store retains local image turns across server transcript reloads. Desktop file reads accept an opaque artifact UUID through trusted IPC; they never accept filesystem paths. Android local-file rendering checks the active account directory. A failed optional server operation cannot be the only copy of the image. These files are local; they are not automatically shared to another device.
+
+The explicit Desktop and iOS image paths integrate with their existing local person-plan chat histories. Android's new local image conversation can create, reopen and export images without a runtime. Its existing text-model transport is unchanged; never send an `android-local-` ID to a computer session endpoint. Local image outputs remain available even when the runtime chat cannot load.
+
+## Verification boundary
+
+Source syntax and documentation checks do not establish ChatGPT WebView support. The release train must compile each native target and run the focused contract/ownership/history tests. A real signed-in image run on each supported device must verify prompt confirmation, image mode, current-turn correlation, byte download, original-chat output, Stop, navigation, suspension, account change and replay after interruption. Report unsupported authentication or changed provider markup explicitly. The successful standalone Codex and Safari probes are separate evidence.

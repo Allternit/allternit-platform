@@ -387,6 +387,9 @@ export const AgentCompatRoutes = () =>
             return {
               type: "pane_render_requested",
               request_id: props.id ?? null,
+              engine: props.engine ?? null,
+              prompt: props.prompt ?? null,
+              toolCall: props.toolCall ?? null,
               session_id: props.sessionID ?? null,
               kind: props.kind ?? null,
               format: props.format ?? null,

@@ -118,6 +118,10 @@ fun ChatScreen(
             if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) feedFocus.clearFocus()
         }
     }
+    androidx.compose.runtime.DisposableEffect(viewModel) {
+        viewModel.imageChatVisible = true
+        onDispose { viewModel.imageChatVisible = false }
+    }
     val messages = viewModel.messages
 
     val hasSession = viewModel.currentSessionId != null
@@ -318,6 +322,7 @@ fun ChatScreen(
         }
         // Running generations: one chip each; tap opens the full view, press and hold peeks.
         RunningStrip()
+        BrowserImageControls(viewModel)
         composer()
     }
 }
