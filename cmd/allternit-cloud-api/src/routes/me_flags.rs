@@ -46,7 +46,17 @@ use crate::{
 };
 
 /// Flags a caller may read or write. Anything else in a PUT body is a 400.
-pub(crate) const ALLOWED_FLAGS: &[&str] = &["botsIntroSeenAt"];
+pub(crate) const ALLOWED_FLAGS: &[&str] = &[
+    "botsIntroSeenAt",
+    "introHomeSeenAt",
+    "introCodeSeenAt",
+    "introAciSeenAt",
+    "introProjectsSeenAt",
+    "introArtifactsSeenAt",
+    "introAutomationSeenAt",
+    "introCustomizeSeenAt",
+    "introFreeweightsSeenAt",
+];
 
 /// Longest accepted value (an ISO time with millis and offset is ~29).
 const MAX_FLAG_VALUE_LEN: usize = 40;
@@ -156,7 +166,8 @@ pub(crate) fn feature_on(all: Option<&str>, allowlist: Option<&str>, user_id: &s
 }
 
 /// Check a PUT body: a non-empty object of allowlisted keys, each an
-/// RFC 3339 time string of at most [`MAX_FLAG_VALUE_LEN`] chars.
+/// RFC 3339 time string of at most [`MAX_FLAG_VALUE_LEN`] chars, or JSON
+/// `null` to clear the key (Clerk's metadata merge deletes a key set to null).
 pub(crate) fn validate_updates(body: &Value) -> Result<Map<String, Value>, ApiError> {
     let Some(object) = body.as_object() else {
         return Err(ApiError::BadRequest("Body must be a JSON object of flags".to_string()));
@@ -169,8 +180,12 @@ pub(crate) fn validate_updates(body: &Value) -> Result<Map<String, Value>, ApiEr
         if !ALLOWED_FLAGS.contains(&key.as_str()) {
             return Err(ApiError::BadRequest(format!("Unknown flag '{key}'")));
         }
+        if value.is_null() {
+            updates.insert(key.clone(), Value::Null);
+            continue;
+        }
         let Some(text) = value.as_str() else {
-            return Err(ApiError::BadRequest(format!("Flag '{key}' must be an ISO-8601 time string")));
+            return Err(ApiError::BadRequest(format!("Flag '{key}' must be an ISO-8601 time string or null")));
         };
         if text.len() > MAX_FLAG_VALUE_LEN || chrono::DateTime::parse_from_rfc3339(text).is_err() {
             return Err(ApiError::BadRequest(format!("Flag '{key}' must be an ISO-8601 time string")));
@@ -363,13 +378,38 @@ mod tests {
     }
 
     #[test]
+    fn intro_keys_are_allowed_and_null_clears() {
+        assert_eq!(ALLOWED_FLAGS.len(), 9);
+        for key in [
+            "introHomeSeenAt", "introCodeSeenAt", "introAciSeenAt", "introProjectsSeenAt",
+            "introArtifactsSeenAt", "introAutomationSeenAt", "introCustomizeSeenAt", "introFreeweightsSeenAt",
+        ] {
+            let ok = validate_updates(&json!({ key: "2026-11-23T12:00:00Z" })).unwrap();
+            assert_eq!(ok.get(key).unwrap(), "2026-11-23T12:00:00Z");
+            let cleared = validate_updates(&json!({ key: null })).unwrap();
+            assert_eq!(cleared.get(key).unwrap(), &Value::Null, "{key} null clears");
+            assert_eq!(merge_body(cleared), json!({ "unsafe_metadata": { key: null } }));
+        }
+        let bots = validate_updates(&json!({ "botsIntroSeenAt": null })).unwrap();
+        assert_eq!(bots.get("botsIntroSeenAt").unwrap(), &Value::Null);
+        assert!(matches!(
+            validate_updates(&json!({ "introUnknownSeenAt": null })),
+            Err(ApiError::BadRequest(_))
+        ));
+        let user = json!({ "unsafe_metadata": { "introHomeSeenAt": "2026-11-23T12:00:00Z" } });
+        let flags = flags_response(&user);
+        assert_eq!(flags["flags"].as_object().unwrap().len(), 9);
+        assert_eq!(flags["flags"]["introHomeSeenAt"], "2026-11-23T12:00:00Z");
+        assert_eq!(flags["flags"]["introCodeSeenAt"], Value::Null);
+    }
+
+    #[test]
     fn values_must_be_short_rfc3339_times() {
         for good in ["2026-10-20T12:00:00Z", "2026-10-20T12:00:00.123+02:00"] {
             assert!(validate_updates(&json!({ "botsIntroSeenAt": good })).is_ok(), "{good}");
         }
         let too_long = format!("2026-10-20T12:00:00.{}Z", "1".repeat(30));
         for bad in [
-            json!(null),
             json!(true),
             json!(1_760_000_000),
             json!(""),
@@ -391,16 +431,16 @@ mod tests {
             "unsafe_metadata": { "botsIntroSeenAt": "2026-10-20T12:00:00Z", "other": "x" },
             "private_metadata": { "secret": "no" }
         });
-        assert_eq!(
-            flags_response(&user),
-            json!({ "flags": { "botsIntroSeenAt": "2026-10-20T12:00:00Z" } })
-        );
+        let flags = flags_response(&user);
+        assert_eq!(flags["flags"]["botsIntroSeenAt"], "2026-10-20T12:00:00Z");
+        assert!(flags["flags"].get("other").is_none());
+        assert!(flags["flags"].get("secret").is_none());
         for user in [
             json!({ "id": "user_1" }),
             json!({ "unsafe_metadata": {} }),
             json!({ "unsafe_metadata": { "botsIntroSeenAt": 5 } }),
         ] {
-            assert_eq!(flags_response(&user), json!({ "flags": { "botsIntroSeenAt": null } }));
+            assert_eq!(flags_response(&user)["flags"]["botsIntroSeenAt"], Value::Null);
         }
     }
 
@@ -442,11 +482,11 @@ mod tests {
         let cfg = config(&base);
 
         let read = read_flags_with(&cfg, "user_1").await.unwrap();
-        assert_eq!(read, json!({ "flags": { "botsIntroSeenAt": null } }));
+        assert_eq!(read["flags"]["botsIntroSeenAt"], Value::Null);
 
         let updates = validate_updates(&json!({ "botsIntroSeenAt": "2026-10-20T12:00:00Z" })).unwrap();
         let written = write_flags_with(&cfg, "user_1", updates).await.unwrap();
-        assert_eq!(written, json!({ "flags": { "botsIntroSeenAt": "2026-10-20T12:00:00Z" } }));
+        assert_eq!(written["flags"]["botsIntroSeenAt"], "2026-10-20T12:00:00Z");
 
         let read = read_flags_with(&cfg, "user_1").await.unwrap();
         assert_eq!(read, written);
