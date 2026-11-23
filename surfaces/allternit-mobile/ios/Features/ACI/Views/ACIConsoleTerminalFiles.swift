@@ -113,6 +113,8 @@ struct ACIConsoleTerminalTab: View {
 /// clean-ups. The Files drive has no Trash yet, so there is no Trash view.
 struct ACIConsoleFilesTab: View {
     let computer: ACIComputersClient.ConsoleComputer
+    /// Switches the detail to its Settings tab (from a 403 `whole_disk_off`).
+    var openSettings: (() -> Void)? = nil
     @ObservedObject private var drive = FilesDrive.shared
     @State private var view: Mode = .browse
 
@@ -131,7 +133,9 @@ struct ACIConsoleFilesTab: View {
             switch view {
             case .browse:
                 if drive.hasFiles(computer.id) {
-                    ACIConsoleFilesPanes(computerId: computer.id, name: computer.name)
+                    ACIConsoleFilesPanes(computerId: computer.id, name: computer.name,
+                                         diskRoots: computer.wholeDiskState.showsRootsSwitcher ? computer.wholeDiskState.roots : [],
+                                         openSettings: openSettings)
                 } else {
                     ScrollView {
                         consoleNote("The Files drive isn't on for \(computer.name) yet. Turn it on in Settings, Files, and this computer's folders show here.")
@@ -148,12 +152,16 @@ struct ACIConsoleFilesTab: View {
 private struct ACIConsoleFilesPanes: View {
     let computerId: String
     let name: String
+    let diskRoots: [ACIComputersClient.WholeDiskRoot]
+    let openSettings: (() -> Void)?
     @StateObject private var model: FilesComputerModel
     @Environment(\.horizontalSizeClass) private var sizeClass
 
-    init(computerId: String, name: String) {
+    init(computerId: String, name: String, diskRoots: [ACIComputersClient.WholeDiskRoot], openSettings: (() -> Void)?) {
         self.computerId = computerId
         self.name = name
+        self.diskRoots = diskRoots
+        self.openSettings = openSettings
         _model = StateObject(wrappedValue: FilesComputerModel(computerId: computerId, name: name))
     }
 
@@ -168,7 +176,12 @@ private struct ACIConsoleFilesPanes: View {
                 }
             }
         }
-        .task { await model.load() }
+        .task {
+            model.diskRoots = diskRoots
+            model.openSettings = openSettings
+            await model.load()
+        }
+        .onChange(of: diskRoots) { _, new in model.diskRoots = new }
     }
 
     private var pane: some View {

@@ -22,6 +22,9 @@ final class ACIComputersClient: Sendable {
         case asleep(ConsoleSnapshot?)
         /// 403 `needs_elevation` from `POST host/actions`: the one-time admin helper is not set up on that computer.
         case needsElevation(String)
+        /// 403 `whole_disk_off` from a Files route: the path is outside the Files drive and whole-disk
+        /// browsing is off. Carries the server's plain message.
+        case wholeDiskOff(String)
 
         var errorDescription: String? {
             switch self {
@@ -34,6 +37,7 @@ final class ACIComputersClient: Sendable {
             case .notAvailable: return "Not available on your account yet."
             case .asleep: return "Asleep, not woken."
             case .needsElevation: return "This change needs the one-time admin helper on that computer."
+            case .wholeDiskOff(let message): return message
             }
         }
     }
@@ -211,6 +215,11 @@ final class ACIComputersClient: Sendable {
         let lastSample: ConsoleSnapshot?
         let servicesCount: Int?
         let lastBackupAt: String?
+        /// Whole-disk Files (platform #2829). Missing from an older server = unavailable.
+        var wholeDisk: WholeDisk? = nil
+
+        /// Always a full value, so callers never branch on a missing field.
+        var wholeDiskState: WholeDisk { wholeDisk ?? WholeDisk(enabled: false, available: false, reason: nil, roots: []) }
 
         var isOnline: Bool { !["offline", "asleep", "stopped"].contains(status.lowercased()) }
         var isAsleep: Bool { status.lowercased() == "asleep" }
@@ -226,6 +235,63 @@ final class ACIComputersClient: Sendable {
             }
             return out
         }
+    }
+
+    /// One whole-disk root: `/` on Linux and macOS, one entry per drive letter on Windows.
+    struct WholeDiskRoot: Decodable, Sendable, Equatable, Identifiable {
+        let id: String
+        let path: String
+        let label: String
+    }
+
+    /// `wholeDisk` on a console row and in the PATCH answer. Lenient: a missing or odd field never drops the row.
+    struct WholeDisk: Decodable, Sendable, Equatable {
+        let enabled: Bool
+        let available: Bool
+        let reason: String?
+        let roots: [WholeDiskRoot]
+
+        init(enabled: Bool, available: Bool, reason: String?, roots: [WholeDiskRoot]) {
+            self.enabled = enabled; self.available = available; self.reason = reason; self.roots = roots
+        }
+
+        enum CodingKeys: String, CodingKey { case enabled, available, reason, roots }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? false
+            available = (try? c.decode(Bool.self, forKey: .available)) ?? false
+            reason = try? c.decode(String.self, forKey: .reason)
+            roots = ((try? c.decode([ACILossy<WholeDiskRoot>].self, forKey: .roots)) ?? []).compactMap(\.value)
+        }
+
+        /// The roots switcher shows only while the setting is on and the server sent roots.
+        var showsRootsSwitcher: Bool { enabled && !roots.isEmpty }
+
+        /// Plain words for `reason`, shown as text when the switch is not available.
+        var reasonCopy: String {
+            switch reason {
+            case "not_owner": return "Only the owner of this computer can turn this on."
+            case "not_a_server": return "Allternit Desktop already reaches its own files, so this doesn’t apply."
+            case "no_runtime": return "Pair this computer first, then you can turn this on."
+            default: return "Not available on this computer."
+            }
+        }
+    }
+
+    static let wholeDiskWarning = "Anyone using this computer from Allternit can open, change or delete any file on it, not only the Files drive."
+
+    private struct WholeDiskAnswer: Decodable { let wholeDisk: WholeDisk? }
+
+    /// PATCH /api/v1/computers/:id/file-roots. Turning on sends `confirm: true`; the caller held to confirm first.
+    /// Owner only; 403/409 carry a plain `message` the user sees as is.
+    func setWholeDisk(id: String, on: Bool) async throws -> WholeDisk {
+        let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let payload: [String: Any] = on ? ["wholeDisk": true, "confirm": true] : ["wholeDisk": false]
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let data = try await cloud("api/v1/computers/\(enc)/file-roots", method: "PATCH", body: body)
+        let answer = try? JSONDecoder().decode(WholeDiskAnswer.self, from: data)
+        return answer?.wholeDisk ?? WholeDisk(enabled: on, available: true, reason: nil, roots: [])
     }
 
     private struct ConsoleEnvelope: Decodable {
@@ -547,7 +613,7 @@ final class ACIComputersClient: Sendable {
     /// Non-2xx → the server's `detail` / `message` / `error`, else a plain
     /// sentence (never a raw status code): a 502/503/504 with no body is the
     /// computer or relay not answering.
-    private static func check(_ response: URLResponse, data: Data) throws {
+    static func check(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { throw Failure.server("Couldn't load this. Try again.") }
         guard (200...299).contains(http.statusCode) else {
             let path = http.url?.path ?? ""
@@ -555,6 +621,9 @@ final class ACIComputersClient: Sendable {
                 || path.contains("/ssh-keys") || path.hasSuffix("/backups") || path.hasSuffix("/backups/restore")
                 || path.hasSuffix("/approvals") || path.hasSuffix("/restart") || path.hasSuffix("/move")
                 || path.hasSuffix("/rebuild") || path.contains("/computers/paired/") || path.hasSuffix("/computers/snippets")
+            if http.statusCode == 404, path.hasSuffix("/file-roots") {
+                throw Failure.server("This computer isn't on your account any more.")
+            }
             if [404, 405, 501].contains(http.statusCode), consolePath {
                 throw Failure.notAvailable
             }
@@ -566,8 +635,11 @@ final class ACIComputersClient: Sendable {
             }
             if http.statusCode == 403 {
                 struct Elevation: Decodable { let error: String?; let message: String? }
-                if let e = try? JSONDecoder().decode(Elevation.self, from: data), e.error == "needs_elevation" {
-                    throw Failure.needsElevation(e.message ?? "")
+                if let e = try? JSONDecoder().decode(Elevation.self, from: data) {
+                    if e.error == "needs_elevation" { throw Failure.needsElevation(e.message ?? "") }
+                    if e.error == "whole_disk_off" {
+                        throw Failure.wholeDiskOff(e.message ?? "Turn on whole-disk browsing for this computer in its Settings first.")
+                    }
                 }
             }
             struct Body: Decodable { let detail: String?; let message: String?; let error: String? }
