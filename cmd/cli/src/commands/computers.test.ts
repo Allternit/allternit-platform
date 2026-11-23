@@ -4,7 +4,7 @@ import { Command } from 'commander';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createComputersCommand, ptyWsUrl } from './computers.js';
+import { createComputersCommand, ptyWsUrl, unpairMessage } from './computers.js';
 import { normalizeApiAlias } from '../argv.js';
 
 function buildProgram(commands: Command[]): Command {
@@ -445,4 +445,38 @@ test('computers ssh mints a pty ws-token then opens the pty socket', async (t) =
     FakeWebSocket.instances[0]?.url,
     'wss://api.example/ws/computers/c-1/pty?token=tok-1',
   );
+});
+
+test('computers unpair posts confirm:true to /unpair and refuses without --yes', async () => {
+  const seen = await withMockedFetch(
+    () => jsonOk({ ok: true }),
+    async () => {
+      await buildProgram([createComputersCommand()]).parseAsync([
+        'node', 'allternit', 'computers', 'unpair', 'alias-1', '--yes',
+      ]);
+    },
+  );
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.method, 'POST');
+  assert.equal(seen[0]?.url, 'https://api.example/api/v1/computers/alias-1/unpair');
+  assert.deepEqual(await seen[0]?.json(), { confirm: true });
+
+  const none = await withMockedFetch(
+    () => jsonOk({}),
+    async () => {
+      await buildProgram([createComputersCommand()]).parseAsync([
+        'node', 'allternit', 'computers', 'unpair', 'alias-1',
+      ]);
+    },
+  );
+  assert.equal(none.length, 0);
+  process.exitCode = 0;
+});
+
+test('unpairMessage maps each server code to a plain sentence', () => {
+  assert.match(unpairMessage('confirm_required'), /Confirm/);
+  assert.match(unpairMessage('not_owner'), /Only the person/);
+  assert.match(unpairMessage('cloud_computer'), /cloud computer/);
+  assert.match(unpairMessage('404 Not Found'), /already gone/);
+  assert.equal(unpairMessage('weird'), 'weird');
 });

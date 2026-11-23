@@ -770,7 +770,7 @@ private fun PairedSettings(
         CTitle("Remove")
         CText("Unpair to take it off your account and away from every agent. The computer itself keeps running at ${computer.provider}.")
         AciHoldButton("Hold to unpair", "aciConsoleHoldUnpair", danger = true, enabled = !busy) {
-            perform("Unpaired.", { AciApi.consolePairedWrite("DELETE", computer.id, null) }) { onChanged(); onGone() }
+            perform("Unpaired.", { AciApi.consoleUnpair(computer.id) }) { onChanged(); onGone() }
         }
     }
 }

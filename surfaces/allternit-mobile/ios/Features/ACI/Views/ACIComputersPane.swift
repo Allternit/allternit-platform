@@ -1993,7 +1993,7 @@ private struct ACIConsoleSettingsTab: View {
                 .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
             ACIHoldButton(title: "Hold to unpair", danger: true, disabled: busy) {
                 Task {
-                    await perform("Unpaired.") { try await ACIComputersClient.shared.removePaired(id: computer.id) }
+                    await perform("Unpaired.") { try await ACIComputersClient.shared.unpair(id: computer.id) }
                     if !isError { dismiss() }
                 }
             }

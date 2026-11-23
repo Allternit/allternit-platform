@@ -17,6 +17,18 @@ class AciConsoleTerminalFilesTest {
         assertEquals("c3", ConsoleComputer.parse(obj("""{"id":"c3","name":"X","status":"online","runtimeId":""}"""))!!.relayId)
     }
 
+    @Test fun aliasesAndPairedIdDecodeAndMatch() {
+        val row = ConsoleComputer.parse(obj("""{"id":"p1","name":"Mac","status":"online","aliases":["p1","d7"],"pairedId":"p1"}"""))!!
+        assertEquals(listOf("p1", "d7"), row.aliases)
+        assertEquals("p1", row.pairedId)
+        assertEquals(true, row.matches("d7"))
+        assertEquals(false, row.matches("zz"))
+        val old = ConsoleComputer.parse(obj("""{"id":"c2","name":"Desk","status":"online"}"""))!!
+        assertEquals(emptyList<String>(), old.aliases)
+        assertNull(old.pairedId)
+        assertEquals(true, old.matches("c2"))
+    }
+
     @Test fun snippetsAcceptWrappedOrBareShape() {
         val wrapped = Json.parseToJsonElement("""{"snippets":[{"id":"s1","name":"Disk","command":"df -h","description":"Space"},{"id":"bad"}]}""")
         assertEquals(listOf("s1"), wrapped.rows("snippets").mapNotNull(ConsoleSnippet::parse).map { it.id })
