@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { BlockTitle } from '../../components/BlockTitle';
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pane } from '../../components/design-system/Pane'
 import { Box, Text, useInput } from '../../ink'
@@ -52,7 +53,9 @@ export function WorkPane<T>({
   onKey,
   onClose,
   notice,
+  blockTitle,
 }: {
+  blockTitle?: boolean
   title: string
   subtitle?: string
   items: T[] | undefined
@@ -79,7 +82,7 @@ export function WorkPane<T>({
   return (
     <Pane>
       <Box>
-        <Text bold>{title}</Text>
+        {blockTitle ? <BlockTitle title={title.toUpperCase()} /> : <Text bold>{title}</Text>}
         {subtitle ? <Text dimColor> · {subtitle}</Text> : null}
       </Box>
       {error ? <Text color="warning">{error}</Text> : null}
