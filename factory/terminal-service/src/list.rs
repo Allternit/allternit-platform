@@ -66,7 +66,9 @@ pub fn resolve_title(
     pane_title: Option<&str>,
     cwd: Option<&str>,
 ) -> String {
-    let clean = |s: Option<&str>| s.map(str::trim).filter(|s| !s.is_empty());
+    fn clean(s: Option<&str>) -> Option<&str> {
+        s.map(str::trim).filter(|s| !s.is_empty())
+    }
     if let Some(t) = clean(created) {
         return t.to_string();
     }
