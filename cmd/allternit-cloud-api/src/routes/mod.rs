@@ -120,6 +120,7 @@ pub mod computer_metrics;
 pub mod computers_host;
 pub mod computer_snippets;
 pub mod computer_machines;
+pub mod computer_file_roots;
 pub mod computers_cloud;
 pub mod phone_live;
 pub mod registered_phones;

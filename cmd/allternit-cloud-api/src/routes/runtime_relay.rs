@@ -1419,7 +1419,19 @@ async fn proxy_to_runtime(
     let user_id = crate::auth::resolve_user_scoped(&state.db, &headers, "compute")
         .await?
         .id;
-    relay_request_to_runtime(
+    // Whole-disk file roots (step 2.11): only this owner proxy tells the
+    // runtime the setting is on. Guest and server-side relays never do, and
+    // the header allow-list drops any copy a client sends.
+    let mut trusted = HashMap::new();
+    if crate::routes::computer_file_roots::is_file_route(&request.path)
+        && crate::routes::computer_file_roots::whole_disk_on(&state.db, &user_id, &runtime_id).await
+    {
+        trusted.insert(
+            crate::routes::computer_file_roots::WHOLE_DISK_HEADER.to_string(),
+            "on".to_string(),
+        );
+    }
+    relay_request_to_runtime_with(
         &state.db,
         &state.contabo_runtime_service,
         &state.quota_service,
@@ -1433,6 +1445,8 @@ async fn proxy_to_runtime(
             body: request.body,
             body_encoding: request.body_encoding,
         },
+        &[],
+        trusted,
     )
     .await
 }
@@ -1515,6 +1529,30 @@ pub(crate) async fn relay_request_to_runtime_with(
         return Err(ApiError::Forbidden(format!(
             "Runtime pairing does not grant {required_capability}"
         )));
+    }
+    // Whole-disk file roots (step 2.11): a file route naming a path outside
+    // the Files drive needs the owner's per-computer setting, for every
+    // caller of the relay (fail closed: 403 whole_disk_off).
+    if crate::routes::computer_file_roots::is_file_route(&request.path) {
+        // Only small control bodies are read for paths; file content and
+        // chunks (up to 5 MiB) are never decoded here.
+        let body = if request.body.len() <= 96 * 1024 {
+            decode_relay_body(&request.body, &request.body_encoding)
+        } else {
+            Bytes::new()
+        };
+        if let Some(refused) = crate::routes::computer_file_roots::refuse_outside_drive(
+            db,
+            user_id,
+            runtime_id,
+            &request.method,
+            &request.path,
+            &body,
+        )
+        .await
+        {
+            return Ok(refused);
+        }
     }
     // Files drive (SPEC section 9): /api/v1/files/v2/* never wakes a computer
     // and never touches its idle timer. Only POST /computer-files/:id/

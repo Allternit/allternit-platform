@@ -100,6 +100,10 @@ pub struct ConsoleComputer {
     /// screen-share and Factory peer routes. Left out when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paired_id: Option<String>,
+    /// Whole-disk file roots (step 2.11, `computer_file_roots`): filled by
+    /// `load_console`, left out only by the pure `build_console`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub whole_disk: Option<crate::routes::computer_file_roots::WholeDisk>,
     /// `mid:<machine id>`, the hostname key, `cloud:<id>`, `paired:<id>`
     /// (shared) or `id:<id>`: what names and unpair are keyed by.
     #[serde(skip)]
@@ -242,6 +246,7 @@ pub async fn load_console(db: &sqlx::PgPool, user_id: &str, organization_id: Opt
     let connected = crate::routes::runtime_relay::connected_runtime_ids().await;
     let mut rows = build_console(cloud, paired, devices, &connected, Utc::now());
     apply_names(&mut rows, &names);
+    crate::routes::computer_file_roots::apply_whole_disk(db, user_id, &mut rows).await;
     Ok(rows)
 }
 
@@ -427,6 +432,7 @@ fn cloud_computer(c: CloudRow, connected: &HashSet<String>) -> ConsoleComputer {
         member_devices: c.device_id.iter().cloned().collect(),
         member_paired: Vec::new(),
         paired_id: None,
+        whole_disk: None,
         id: c.id,
         kind: "cloud",
         group: GROUP_CLOUD.to_string(),
@@ -559,6 +565,7 @@ fn machine_computer(
         services_count: None,
         last_backup_at: None,
         paired_id: pc.map(|p| p.id.clone()),
+        whole_disk: None,
         aliases,
         machine_key,
         member_devices,

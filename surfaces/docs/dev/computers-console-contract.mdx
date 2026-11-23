@@ -119,6 +119,7 @@ Response: `{ "computers": [ConsoleComputer, ...] }`. Web, CLI and iOS accept thi
 | `status` | One of the values below |
 | `lastSample` | Newest `HostSnapshot`, or null |
 | `servicesCount`, `lastBackup` | Summary fields |
+| `wholeDisk` | `{ enabled, available, reason?, roots }` (step 2.11). See [Whole-disk files](#whole-disk-files). |
 
 Status values:
 
@@ -220,6 +221,8 @@ Errors:
 | `PATCH /api/v1/computers/paired/:id` | `{ name }` (1 to 80 characters) returns `{ id, name }`. Renames the whole machine on every surface: `:id` is any console row id or alias, and cloud rows work too. Owner only. 400 `invalid_name`, 403 `not_owner` (shared with you), 404 `not_found` | built (step 2.10) |
 | `POST /api/v1/computers/:id/unpair` | `{ confirm: true }` returns `{ removed: true, id, revokedDevices, removedPaired }`. Removes every alias of the machine at once: revokes each runtime device (Desktop, `gizzi pair`, `ao fabric pair`), deletes its code-paired rows and its name. `:id` is any row id or alias. Owner only. 400 `confirm_required`, 403 `not_owner`, 404 `not_found`, 409 `cloud_computer` (delete a cloud computer from Settings instead). Clients use this for Remove in the console | built (step 2.10) |
 | `DELETE /api/v1/computers/paired/:id` | Removes only that code-paired row (screen sharing). Kept as is for old clients; the machine's runtimes stay paired | exists |
+| `GET /api/v1/computers/:id/file-roots` | `{ id, wholeDisk }` (same object as the console row). Never contacts the computer | built (step 2.11) |
+| `PATCH /api/v1/computers/:id/file-roots` | `{ wholeDisk: true, confirm: true }` or `{ wholeDisk: false }` returns `{ id, wholeDisk }`. Owner only. 400 `invalid_body` / `confirm_required`, 403 `not_owner` (shared with you), 404 `not_found`, 409 `not_a_server` (a Desktop row) / `no_runtime` (no runtime paired yet). Writes `audit_log` `computer.whole_disk.on` or `.off` | built (step 2.11) |
 
 Snippet runs reuse the approval mint above, one approval per computer (type `snippet.run`, target = the snippet id). The command travels inside the approved action: the cloud sends `POST /v1/host/actions` with `{ type, target, approval_id, snippet: { id, name, script, elevated, timeoutSec } }`, the node never fetches it and saves nothing, and `snippet.id` must equal `target`. Without `snippet` the node still reads `<store>/snippets/<id>.json`. The approval binds the snippet id; the cloud is the authority on the text.
 
@@ -299,6 +302,29 @@ Each computer has its own list of public keys in `computer_ssh_keys` (migration 
 - Public URLs are out of scope.
 - Resize, grow, clone and region prices are read from one real request before the UI ships (Eoj gate G3).
 
+## Whole-disk files
+
+Step 2.11. A per-computer setting, **off by default**. Off, the console Files tab shows only the Files drive folder (`~/Allternit` and the other Files drive roots), as before. On, the owner can browse the whole disk of a server they own: a paired machine or an Allternit Cloud computer. Shared rows and Desktop rows never get it (Desktop already reaches its own files locally).
+
+`wholeDisk` on a console row and on `GET|PATCH /api/v1/computers/:id/file-roots`:
+
+| Field | Meaning |
+|---|---|
+| `enabled` | On for the runtime the relay calls (`runtimeId`) |
+| `available` | The row can have it at all |
+| `reason` | When not available: `not_owner`, `not_a_server` or `no_runtime` |
+| `roots` | `[{ id, path, label }]`, only while enabled. `/` (id `disk:/`) on Linux and macOS; on Windows one entry per drive letter in `lastSample.disk[].mount` (`C:\`, id `disk:C:`), else `C:\` |
+
+The setting is stored per machine (migration 160, `computer_whole_disk`, keyed by the 2.10 machine key) together with the machine's runtime ids at the moment it was turned on. A runtime paired later, or a re-pair, starts **off** until the owner turns it on again.
+
+**Enforcement, fail closed.** Every relayed request to a file route (`/api/v1/files/*`, `/api/v1/files/v2/*`, `/api/v1/computers/:id/files/*`) that names a path outside the Files drive is refused with **403 `{ error: "whole_disk_off", message }`** unless the setting is on for that runtime. "Outside" means: an absolute path that is not under a user folder (`/home/<u>`, `/Users/<u>`, `/root`, `/var/home/<u>`, `X:\Users\<u>`), `~other`, a UNC path, any `..` step, or a v2 `POST /roots` body with `kind: "disk"`. Paths are read from the query (`path`, `paths`, `local_path`, `src`, `dest`, `from`, `to`, `source`, `destination`, `dir`, `directory`, `target`) and from small JSON bodies (64 KiB at most; file content is never read). A missing table or a database error counts as off.
+
+The owner's browser proxy (`POST /api/v1/runtime-devices/:id/proxy`) also sends the trusted header **`x-allternit-whole-disk: on`** on file routes while the setting is on. No client can send it (the relay header allow-list drops it), and guest (`files-gateway`) and server-side relays never send it. Nothing in this step wakes a computer: the routes read only the database.
+
+**What the runtime must do (lane A follow-up).** Today `files_scope` keeps every relayed caller inside the home folder, so turning the setting on changes nothing on the computer yet. The runtime must: accept a `kind: "disk"` root (and paths outside home) from a relayed caller only when `x-allternit-whole-disk: on` is present, keep the secrets deny-list and the `O_NOFOLLOW` checks for those paths, hide disk roots from `GET /roots` and answer `whole_disk_off` (403) for them when the header is absent, never share a disk root or hand it to an agent, and keep its change records for writes there.
+
+**What clients must do.** iOS, Android, web (+ phone layout and PWA) and the CLI show a roots switcher in the Files tab only when `wholeDisk.enabled` is true (the Files drive stays the first entry). Settings shows a switch only when `wholeDisk.available` is true; turning it on is a hold-to-confirm sheet that says plainly the agent and you can open, change and delete any file on the computer, then sends `confirm: true`. Show `message` on 403 `whole_disk_off` with a link to that switch.
+
 ## Migrations
 
 | Number | Content |
@@ -310,5 +336,6 @@ Each computer has its own list of public keys in `computer_ssh_keys` (migration 
 | 157 | `computer_alert_state`, `computer_alert_events`, `computer_alert_rules.duration_minutes` (step 2.8) |
 | 158 | `computer_snippets`, `computer_snippet_runs` (step 2.9) |
 | 159 | `paired_computers.machine_id`, `hostname`, `platform`; `computer_machine_names` (step 2.10). No back-fill: rows are grouped when the list is read |
+| 160 | `computer_whole_disk` (step 2.11): the whole-disk setting per machine, off when no row. Account erase deletes it |
 
 Take the next free number above origin/main and open PRs when the files are written. Production applies migrations through the cloud-api deploy, not sqlx (see the cloud-api deploy notes).
