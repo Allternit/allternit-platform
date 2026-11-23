@@ -1431,24 +1431,44 @@ async fn proxy_to_runtime(
             "on".to_string(),
         );
     }
-    relay_request_to_runtime_with(
-        &state.db,
-        &state.contabo_runtime_service,
-        &state.quota_service,
-        &state.provisioning_service,
-        &user_id,
-        &runtime_id,
-        RelayRequest {
-            method: request.method,
-            path: request.path,
-            headers: request.headers,
-            body: request.body,
-            body_encoding: request.body_encoding,
-        },
-        &[],
-        trusted,
-    )
-    .await
+    let relay = RelayRequest {
+        method: request.method,
+        path: request.path,
+        headers: request.headers,
+        body: request.body,
+        body_encoding: request.body_encoding,
+    };
+    // The runtime grants whole-disk paths only to a request carrying the
+    // cloud relay signature (step 2.11b, files_scope::whole_disk_gate), so a
+    // request with the header must go out signed. Fails closed: a runtime
+    // with no relay key gets an error, never an unsigned grant.
+    if trusted.is_empty() {
+        relay_request_to_runtime_with(
+            &state.db,
+            &state.contabo_runtime_service,
+            &state.quota_service,
+            &state.provisioning_service,
+            &user_id,
+            &runtime_id,
+            relay,
+            &[],
+            trusted,
+        )
+        .await
+    } else {
+        relay_signed_request_to_runtime_with(
+            &state.db,
+            &state.contabo_runtime_service,
+            &state.quota_service,
+            &state.provisioning_service,
+            &user_id,
+            &runtime_id,
+            relay,
+            &[],
+            trusted,
+        )
+        .await
+    }
 }
 
 /// A single request to relay to a runtime over its outbound WebSocket.
