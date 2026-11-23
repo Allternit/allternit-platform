@@ -174,7 +174,7 @@ export function unpairMessage(raw: string): string {
   if (text.includes('confirm_required')) return 'Confirm to remove this computer. Nothing was changed.';
   if (text.includes('not_owner')) return 'Only the person who paired this computer can remove it.';
   if (text.includes('cloud_computer')) return "This is an Allternit cloud computer. It can't be unpaired; delete it with `allternit computers delete <id>` instead.";
-  if (text.startsWith('404') || text.includes('not_found') || text.includes('not found')) return 'This computer is already gone. Run `allternit computers list`.';
+  if (text.startsWith('404') || text.includes('not_found') || text.includes('not found')) return 'Couldn\'t find this computer or its unpair route. Run `allternit computers list` and try again.';
   return raw;
 }
 

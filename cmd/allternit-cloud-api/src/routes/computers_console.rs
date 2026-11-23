@@ -298,18 +298,26 @@ impl Machine {
     }
 }
 
+/// Weak identity evidence must name exactly one machine. Picking the first
+/// match could revoke an unrelated computer when the owner unpairs a row.
+fn unique_machine(mut matches: impl Iterator<Item = usize>) -> Option<usize> {
+    let first = matches.next()?;
+    matches.next().is_none().then_some(first)
+}
+
 /// Join the three sources into console rows, one row per machine (step
 /// 2.10): cloud first, then desks, then servers, each in creation order.
 ///
 /// Grouping, in this order:
 /// 1. runtime devices with the same machine id are one machine;
-/// 2. a device without one joins the first machine on the same (non-generic)
-///    hostname + platform, else machines without ids group by that key;
-/// 3. a paired row (own rows only) joins the machine of its stored
-///    `runtime_device_id`, else the one with its machine id, else its
-///    hostname key, else (link not stored yet) the first machine with a
-///    device of the same name and no paired row. A shared row is always its
-///    own machine.
+/// 2. a device without one joins the unique machine on the same
+///    non-generic hostname + platform, else stays separate;
+/// 3. a paired row (own rows only) joins by machine id, else a compatible
+///    stored `runtime_device_id`, else its hostname key, else (link not
+///    stored yet) the unique compatible machine with a
+///    device of the same name and no paired row. Fallbacks must be unique
+///    and never override a conflicting machine id. A shared row is always
+///    its own machine.
 ///
 /// The row id is the paired row's id when the machine has one (as before
 /// 2.10), else its oldest device's id. Every other member id is in
@@ -343,7 +351,7 @@ pub fn build_console(
             continue;
         }
         let host = host_key(d.hostname.as_deref(), d.platform.as_deref());
-        let m = match host.as_ref().and_then(|h| machines.iter().position(|m| m.hosts.contains(h))) {
+        let m = match host.as_ref().and_then(|h| unique_machine(machines.iter().enumerate().filter(|(_, m)| m.hosts.contains(h)).map(|(i, _)| i))) {
             Some(m) => m,
             None => {
                 machines.push(Machine::default());
@@ -360,21 +368,32 @@ pub fn build_console(
         let found = if pc.shared {
             None
         } else {
-            pc.runtime_device_id
-                .as_ref()
-                .and_then(|id| devices.iter().position(|d| &d.id == id))
-                .map(|d| of_device[d])
-                .or_else(|| mid.as_ref().and_then(|k| machines.iter().position(|m| m.mid.as_ref() == Some(k))))
-                .or_else(|| host.as_ref().and_then(|h| machines.iter().position(|m| m.hosts.contains(h))))
+            // A saved link, hostname or name cannot contradict an explicit
+            // machine id. In particular, a stale link must not bridge IDs.
+            let compatible = |m: &Machine| mid.is_none() || m.mid.is_none() || m.mid == mid;
+            mid.as_ref()
+                .and_then(|k| machines.iter().position(|m| m.mid.as_ref() == Some(k)))
                 .or_else(|| {
-                    devices
-                        .iter()
-                        .enumerate()
-                        .find(|(d, dev)| {
-                            machines[of_device[*d]].paired.is_empty()
-                                && dev.name.as_deref().is_some_and(|n| n.trim().eq_ignore_ascii_case(pc.name.trim()))
+                    pc.runtime_device_id
+                        .as_ref()
+                        .and_then(|id| devices.iter().position(|d| &d.id == id))
+                        .map(|d| of_device[d])
+                        .filter(|&m| compatible(&machines[m]))
+                })
+                .or_else(|| host.as_ref().and_then(|h| {
+                    unique_machine(machines.iter().enumerate()
+                        .filter(|(_, m)| compatible(m) && m.hosts.contains(h))
+                        .map(|(i, _)| i))
+                }))
+                .or_else(|| {
+                    unique_machine(machines.iter().enumerate()
+                        .filter(|(_, m)| {
+                            compatible(m) && m.paired.is_empty() && !pc.name.trim().is_empty()
+                                && !GENERIC_HOSTNAMES.contains(&pc.name.trim().to_lowercase().as_str())
+                                && m.devices.iter().any(|&d| devices[d].name.as_deref()
+                                    .is_some_and(|n| n.trim().eq_ignore_ascii_case(pc.name.trim())))
                         })
-                        .map(|(d, _)| of_device[d])
+                        .map(|(i, _)| i))
                 })
         };
         let m = match found {
@@ -382,14 +401,28 @@ pub fn build_console(
             None => {
                 let mut fresh = Machine::default();
                 if !pc.shared {
-                    fresh.mid = mid;
-                    fresh.add_host(host);
+                    fresh.mid = mid.clone();
+                    fresh.add_host(host.clone());
                 }
                 machines.push(fresh);
                 machines.len() - 1
             }
         };
+        if !pc.shared {
+            // Retain the stronger identity when a new client joins an old
+            // runtime, so a later pairing cannot attach a different ID.
+            if machines[m].mid.is_none() {
+                machines[m].mid = mid;
+            }
+            machines[m].add_host(host);
+        }
         machines[m].paired.push(i);
+    }
+
+    // Identity passes visit modern devices before legacy ones. Restore
+    // creation order before choosing the stable row id and breaking ties.
+    for machine in &mut machines {
+        machine.devices.sort_unstable();
     }
 
     // Machines with a paired row first, in paired order, then the others in
@@ -531,7 +564,12 @@ fn machine_computer(
     };
     // A shared row's linked device is not in the caller's own device list,
     // but its stored link still names the runtime.
-    let runtime_id = device.map(|d| d.id.clone()).or_else(|| pc.and_then(|p| p.runtime_device_id.clone()));
+    let runtime_id = device.map(|d| d.id.clone()).or_else(|| {
+        // Own devices absent from this group are revoked, unavailable or
+        // have a conflicting machine id. Only shared rows need the stored
+        // link because their owner's runtime is outside our device list.
+        if shared { pc.and_then(|p| p.runtime_device_id.clone()) } else { None }
+    });
     let id = pc.map(|p| p.id.clone()).or_else(|| devs.first().map(|d| d.id.clone())).unwrap_or_default();
     let name = pc
         .map(|p| p.name.clone())

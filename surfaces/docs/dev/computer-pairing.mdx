@@ -66,9 +66,9 @@ Optional, after `online`: `screen_share_off` to `screen_share_on` (mesh IP assig
 Every pairing path sends the same key, and the console groups by it when it reads the list. It is the key the active-machine cap already counts machines by (`services::quota_service::machine_key_for`), so one Mac is one machine for billing and for Computers.
 
 1. **`mid:<machine id>`**: the random id in `~/.allternit/machine-id`, made once by whichever client runs first. Desktop (`auth-manager.ts` `machineId()`), `gizzi pair` (`pairing.ts` `machineId()`), `ao fabric pair` (`factory/pane/src/ao/fabric/cloud.rs` `shared_machine_id()`) and `allternit computer pair` (`computer-pair.ts` `machineId()`) all read and write that file.
-2. **Hostname key** for clients too old to send a machine id: lower-case hostname without `.local`, then `|platform`. A row without a machine id joins the first machine on the same hostname key. Generic hostnames (`localhost`, `ubuntu`, `debian`, `vps` and similar) never join by hostname, so two default VPS images stay two rows. Two rows with different machine ids never join, whatever their hostnames.
+2. **Hostname key** for clients too old to send a machine id: lower-case hostname without `.local`, then `|platform`. A row without a machine id joins by hostname only when that key names exactly one machine. Generic hostnames (`localhost`, `ubuntu`, `debian`, `vps` and similar) never join by hostname, so two default VPS images stay two rows. Two rows with different machine ids never join, whatever their hostnames, display names or stored runtime links. A code-paired row that supplies a machine id promotes a matched legacy machine to that id, so later pairings cannot replace it.
 3. **Stored link**: `paired_computers.runtime_device_id`, written at redeem time when the machine id names a live runtime device.
-4. **Same owner and name**, for code-paired rows from before 2.10 that have neither.
+4. **Same owner and name**, for code-paired rows from before 2.10 that have neither. The name must be nonempty, nongeneric and match exactly one compatible machine. An ambiguous match stays separate.
 
 Shared rows (paired by someone else in your organization) never join your machines.
 
@@ -83,7 +83,7 @@ Why this key: it already exists on every runtime device (migration 119), Desktop
 | `runtimeId` | The device holding a relay, else the Desktop (it serves host data), else one that reported lately |
 | `pairedId` | The `paired_computers.id`, for screen sharing and Factory peer tickets |
 
-Every console route resolves a row id or an alias to the same machine (`computers_host::resolve_target`), so a client that saved an old id keeps working. Nothing is merged or copied in the database: dropping migration 159's columns and table is a full undo.
+Every console route resolves a row id or an alias to the same machine (`computers_host::resolve_target`), so a client that saved an old id keeps working. Nothing is merged or copied in the database. Migration 159 is additive. Keep its columns and table when rolling code back.
 
 ### Rename and unpair
 
@@ -104,7 +104,7 @@ Account erase covers `computer_machine_names`.
 
 `POST /api/v1/computers/pairing-codes` now answers `command: "gizzi pair"` (the visible command), `installCommand`, and `codeCommand` (`allternit computer pair <code>`, the optional screen-share step). The ao and `allternit` CLIs print `gizzi pair` as the pairing command for your own computers.
 
-### Draft SQL for migration 153 (applied as 153_computers_console.sql)
+### Existing links (migration 153_computers_console.sql)
 
 ```sql
 ALTER TABLE public.paired_computers
@@ -117,7 +117,7 @@ ALTER TABLE public.provisioned_instances
   ADD COLUMN IF NOT EXISTS template TEXT NULL;
 ```
 
-The table name for cloud instances must be confirmed against `migrations_pg` before the real file is written. Never drop a column in the same train that stops using it.
+Migration 153 uses `provisioned_instances` for cloud computers. Migration 159 adds the machine identity columns and names table. Never drop a column in the same train that stops using it.
 
 ## Related
 

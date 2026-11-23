@@ -477,6 +477,6 @@ test('unpairMessage maps each server code to a plain sentence', () => {
   assert.match(unpairMessage('confirm_required'), /Confirm/);
   assert.match(unpairMessage('not_owner'), /Only the person/);
   assert.match(unpairMessage('cloud_computer'), /cloud computer/);
-  assert.match(unpairMessage('404 Not Found'), /already gone/);
+  assert.match(unpairMessage('404 Not Found'), /unpair route/);
   assert.equal(unpairMessage('weird'), 'weird');
 });

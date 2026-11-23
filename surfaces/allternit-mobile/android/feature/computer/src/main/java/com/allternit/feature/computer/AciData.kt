@@ -337,7 +337,8 @@ object AciApi {
             status == 401 -> ConsoleWrite.Failed("Sign in to Allternit to do this. Nothing was changed.")
             status == 400 || error == "confirm_required" -> ConsoleWrite.Failed("Confirm to remove this computer. Nothing was changed.")
             status == 403 || error == "not_owner" -> ConsoleWrite.Failed("Only the person who paired this computer can remove it.")
-            status == 404 -> ConsoleWrite.Failed("This computer is already gone. Pull to refresh.")
+            status == 404 && error in listOf("not_found", "computer_not_found") -> ConsoleWrite.Failed("This computer is already gone. Pull to refresh.")
+            status in listOf(404, 405, 501) -> ConsoleWrite.Failed("Removing this computer isn't available on this server yet. Nothing was changed.")
             status == 409 || error == "cloud_computer" -> ConsoleWrite.Failed("This is an Allternit cloud computer. It can't be unpaired. Remove it from your cloud settings.")
             else -> ConsoleWrite.Failed("Couldn't remove this computer. Nothing was changed.")
         }

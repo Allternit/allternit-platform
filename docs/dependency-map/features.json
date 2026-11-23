@@ -5394,6 +5394,32 @@
         "allternit/cmd/allternit-api/src/bot_brain.rs",
         "allternit/cmd/allternit-api/src/runtime_live.rs"
       ]
+    },
+    {
+      "id": "feature:computers-console",
+      "label": "Computers console and unified machine pairing",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "One row per owned machine across Desktop, Gizzi, Factory and code pairing, with alias-aware selection, machine rename and confirmed machine unpair. Conflicting machine IDs and ambiguous legacy names stay separate. Prepared in platform PRs #2825/#2828 and ai #1233; not live.",
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/computers_console.rs",
+        "allternit/surfaces/docs/dev/computer-pairing.mdx"
+      ],
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/computers_console.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/computer_machines.rs",
+        "allternit/cmd/cli/src/commands/computers.ts",
+        "allternit/surfaces/allternit-mobile/ios/Features/ACI/Services/ACIComputersClient.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/computer/src/main/java/com/allternit/feature/computer/AciData.kt",
+        "allternit-ai/src/components/computers",
+        "allternit/surfaces/docs/dev/computer-pairing.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-23",
+          "note": "Pairing review: explicit machine IDs override weak identity evidence; ambiguous or generic legacy names do not merge; unavailable unpair routes do not imply a successful removal. Builds and surface verification remain with the train."
+        }
+      ]
     }
   ],
   "journeys": [

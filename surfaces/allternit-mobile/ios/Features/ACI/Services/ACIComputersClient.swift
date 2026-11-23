@@ -548,11 +548,7 @@ final class ACIComputersClient: Sendable {
     func unpair(id: String) async throws {
         let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         let body = try? JSONSerialization.data(withJSONObject: ["confirm": true])
-        do {
-            _ = try await cloud("api/v1/computers/\(enc)/unpair", method: "POST", body: body)
-        } catch Failure.server(let code) {
-            throw Failure.server(Self.unpairMessage(code))
-        }
+        _ = try await cloud("api/v1/computers/\(enc)/unpair", method: "POST", body: body)
     }
 
     /// Plain sentence for each unpair error code (400 confirm_required, 403 not_owner,
@@ -607,6 +603,16 @@ final class ACIComputersClient: Sendable {
         guard let http = response as? HTTPURLResponse else { throw Failure.server("Couldn't load this. Try again.") }
         guard (200...299).contains(http.statusCode) else {
             let path = http.url?.path ?? ""
+            if path.hasSuffix("/unpair") {
+                struct UnpairError: Decodable { let error: String?; let message: String? }
+                let body = try? JSONDecoder().decode(UnpairError.self, from: data)
+                if let code = body?.error,
+                   ["confirm_required", "not_owner", "cloud_computer", "not_found", "computer_not_found"].contains(code) {
+                    throw Failure.server(unpairMessage(code))
+                }
+                if [404, 405, 501].contains(http.statusCode) { throw Failure.notAvailable }
+                if let message = body?.message, !message.isEmpty { throw Failure.server(message) }
+            }
             let consolePath = path.hasSuffix("computers/console") || path.contains("/host/") || path.hasSuffix("/metrics")
                 || path.contains("/ssh-keys") || path.hasSuffix("/backups") || path.hasSuffix("/backups/restore")
                 || path.hasSuffix("/approvals") || path.hasSuffix("/restart") || path.hasSuffix("/move")

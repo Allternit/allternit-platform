@@ -144,6 +144,20 @@ Clipboard and file transfer require this user's active control lease on this dev
 
 File uploads use 1 MB chunks so they fit through the phone runtime relay. The runtime checks ownership and active control on every chunk and isolates partial uploads by user, computer, and upload ID. Up to four partial uploads are retained in memory; entries older than ten minutes are pruned on the next upload. No destination file is written until all bytes arrive in order.
 
+## Pair one computer once
+
+<Note>
+The unified Computers console is behind the `computers_console` flag. This change is prepared for the build train and is not live yet.
+</Note>
+
+Run `gizzi pair` on the computer you want to add. If Gizzi Code is not installed, follow [Installation](/cli/installation) first. Desktop sign-in and the older pairing commands on the same machine appear in one row. Screen sharing remains an optional setup step.
+
+The console keeps distinct machine IDs separate even when computers have the same name. Old clients without an ID join by hostname only when the match is unambiguous. Existing saved computer IDs continue to open the machine through its aliases.
+
+Rename applies to the machine. **Hold to unpair** signs out every runtime grouped with it and removes its screen-sharing pairing. Only the owner can do this. A cloud computer uses Delete in Settings instead. If the server does not support machine unpair yet, the app shows that the action is unavailable and leaves the computer paired.
+
+The development CLI also accepts `allternit computers unpair <id> --yes`. The confirmation flag is required. See [Pairing contract](/dev/computer-pairing) for the API and identity rules.
+
 ## Online, asleep or offline
 
 Settings → Computers shows each paired computer as **Online**, **Asleep** or **Offline**, when it was last seen, and the next routine it is due to run. The same list appears in Settings on the phone layout and the installed phone app.
