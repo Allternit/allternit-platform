@@ -302,3 +302,15 @@ Each computer gets its own key. Agents get short-lived keys. The probe writes a 
 | 155 | SSH keys, snippets |
 
 Take the next free number above origin/main and open PRs when the files are written. Production applies migrations through the cloud-api deploy, not sqlx (see the cloud-api deploy notes).
+
+## Whole-disk files: runtime side
+
+Step 2.11b, the runtime half of [Whole-disk files](#whole-disk-files) (cloud side: step 2.11). Where this differs from the cloud section's "What the runtime must do", this section is what the runtime does.
+
+**The grant.** `allternit-api` grants whole-disk access to one request only when all of these hold: it carries `x-allternit-whole-disk: on`, it is relayed (`x-allternit-relayed`), and its cloud relay signature (`x-allternit-runtime-sig`, `-ts`, `x-allternit-owner`, the scheme in `relay_auth`) is valid for this runtime and its paired owner. The middleware `files_scope::whole_disk_gate` checks this on `/api/v1/files/*` and `/api/v1/files/v2/*`. A local caller, an unsigned request, a wrong owner or a body over 8 MiB gets no extra access; the request goes on with the old scope. **The cloud must therefore sign the owner proxy request whenever it adds the header** (`relay_signed_request_to_runtime_with`, not the unsigned variant), or the runtime grants nothing.
+
+**With the grant** (`Caller::WholeDisk`): the home folder and every path outside it, for list, read, raw, exists, mkdir, write and delete. Still refused (`403 path_not_allowed`, reason `protected`): the home secrets deny-list at any depth (`/root/.ssh`, `/home/other/.aws`), its `file_patterns` (`*.pem`, `.env`, `id_rsa*` …), the runtime identity folder `.config/allternit`, the Allternit data folders, and the system stores `/etc/{shadow,gshadow,sudoers,sudoers.d,ssh,master.passwd,allternit}`, `/var/lib/allternit`, `/var/db/{dslocal,sudo}`, `C:\Windows\System32\config`. `..` is refused, symlinks are resolved before the check, and files open with `O_NOFOLLOW` and are checked again on the open file. The disk root itself (`/`, `C:\`) can't be written or deleted (`disk_root_itself`).
+
+**Without the grant**, a relayed path outside home answers `403 { error: "whole_disk_off", message }`, the cloud's body word for word.
+
+**Files drive v2.** The whole disk (`disk:/`, `C:\`) is browsed through the path routes above, not as a drive root: the drive indexes every root it adds. `POST /roots` with `kind: "disk"` (or a folder outside home) adds a **disk root**: one folder outside home that holds neither the home folder nor a system secret store, so `/`, a drive, `/home`, `/Users` and `/etc` are refused (`scope_violation`). It needs the grant (`whole_disk_off` otherwise; a local caller gets the old scope refusal). A disk root is always `shareable: false` and `agent_process: false`, and `PATCH` can't turn either on from any device. Without the grant it is left out of `GET /roots`, and every route on it answers `whole_disk_off`. Guests never reach it, and it is left out of the sleep snapshot. Writes in a disk root keep the drive's versions and trash, as in any root; the legacy path routes keep no change records, as before.

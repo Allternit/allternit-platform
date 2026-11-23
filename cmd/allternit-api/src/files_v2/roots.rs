@@ -144,15 +144,36 @@ pub fn refresh_providers(inner: &Inner) -> Result<(), Fail> {
 /// `POST /roots` (section 12): check the path like the legacy routes, add the
 /// folder as a `user_added` root. Over the relay it starts unshared and with
 /// agents off.
-pub fn add_user_root(inner: &Inner, req: &Req, name: &str, local_path: &str, mut pol: RootPolicy) -> Result<RootRecord, Fail> {
+///
+/// Whole-disk files (step 2.11): `disk` is the body's `kind: "disk"`. A disk
+/// root (that, or any folder outside home) needs a relayed caller with the
+/// signed grant; without it the answer is `403 whole_disk_off` (relayed) or
+/// the old scope refusal (local). A disk root is never shareable and never
+/// open to agents, whoever adds it.
+pub fn add_user_root(inner: &Inner, req: &Req, name: &str, local_path: &str, mut pol: RootPolicy, disk: bool) -> Result<RootRecord, Fail> {
+    use crate::files_scope::Caller;
+    if disk && req.relayed && !req.whole_disk {
+        return Err(ApiError::whole_disk_off().into());
+    }
+    let caller = match (req.relayed, req.whole_disk) {
+        (true, true) => Caller::WholeDisk,
+        (true, false) => Caller::Remote,
+        _ => Caller::Local,
+    };
     let path = inner
         .scope
-        .authorize_root(local_path, &[inner.cfg.data_dir.clone()])
-        .map_err(|d| ApiError::new(ErrorCode::ScopeViolation, d.message()))?;
+        .authorize_root(local_path, &[inner.cfg.data_dir.clone()], caller)
+        .map_err(|d| match d.0 {
+            "whole_disk_off" => ApiError::whole_disk_off(),
+            _ => ApiError::new(ErrorCode::ScopeViolation, d.message()),
+        })?;
+    if disk && !inner.scope.is_disk_path(&path) {
+        return Err(ApiError::invalid("A disk root must be a folder outside the home folder. Add folders in home as usual.").into());
+    }
     if !path.is_dir() {
         return Err(ApiError::new(ErrorCode::NotFound, "That folder doesn't exist on this computer.").into());
     }
-    if req.relayed {
+    if req.relayed || inner.scope.is_disk_path(&path) {
         pol.shareable = false;
         pol.agent_process = false;
     }
@@ -165,8 +186,14 @@ pub fn add_user_root(inner: &Inner, req: &Req, name: &str, local_path: &str, mut
 
 /// `PATCH /roots/:id`. Fails closed on changes that would widen access from
 /// another device, or unprotect Memory Drive.
-pub fn check_policy_change(root: &RootRecord, req: &Req, new: &RootPolicy) -> Result<(), ApiError> {
+///
+/// A disk root (`disk`, step 2.11) can never be made shareable or open to
+/// agents, from any device.
+pub fn check_policy_change(root: &RootRecord, req: &Req, new: &RootPolicy, disk: bool) -> Result<(), ApiError> {
     let old = &root.policy;
+    if disk && (new.shareable || new.agent_process) {
+        return Err(ApiError::forbidden("A folder outside the home folder can't be shared or given to agents."));
+    }
     if root.kind == RootKind::MemoryDrive && !new.protected {
         return Err(ApiError::forbidden("Memory Drive is always protected."));
     }
