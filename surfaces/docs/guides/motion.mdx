@@ -80,6 +80,16 @@ progress bar shows the render, and you can cancel it.
 
 The video has no sound. The picture matches the preview frame for frame.
 
+### What the export shows
+
+The export uses the same progress card as a video made in chat (see [When the agent makes an image or a video](/guides/agent-steps#when-the-agent-makes-an-image-or-a-video)).
+On Desktop and in the browser it opens on the Allternit block pulse, then shows
+**Frame N of M** with the latest frame and the **Render**, **Encode** and **Save**
+steps. A cloud export goes **Waiting**, **Rendering** and **Downloading**; it
+shows no frame pictures, because the frames are drawn on the server. If the
+export fails, the card gives the real reason and **Try again**. With reduced
+motion on, the pulse is a still frame.
+
 ### Export MP4 (cloud)
 
 Press **Export MP4 (cloud)** under the player, or **Download → MP4 video
@@ -145,7 +155,8 @@ This is about the phone layout, not motion artifacts.
 ## For developers
 
 See [Motion body format](/api/artifacts-motion) for the JSON schema and the
-renderer.
+renderer, and [Generation progress and errors](/api/generation-progress) for
+the progress report an app sends while it renders.
 
 ## Related
 

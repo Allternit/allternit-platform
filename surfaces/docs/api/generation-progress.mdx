@@ -1,0 +1,106 @@
+---
+title: Generation progress and errors
+description: The progress report for a picture or video being made, the pane-render progress route, the tool_progress chat frame and the typed error frame.
+---
+
+When the agent makes a picture or a video, three things let a client show real progress and real errors. This page is for developers building a client or an app that renders for the agent. For what people see, read [When the agent makes an image or a video](/guides/agent-steps#when-the-agent-makes-an-image-or-a-video).
+
+Not covered here: the gateway [Images API](/api/images), which is a separate contract.
+
+## The `progress_detail` shape
+
+While `media_generate` runs, its tool metadata carries two fields: `progress`, a short label that is always the current one, and `progress_detail`, an object. A field that is unknown is absent, never zero or a guess.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `lane` | `picture` or `motion` | Which kind of work this is. Required. |
+| `stage` | `queued`, `drawing`, `rendering`, `encoding`, `saving` or `downloading` | The current step. Required. |
+| `label` | string, up to 200 characters | What is happening in plain words, such as "Drawing frame 12 of 180". Required. |
+| `frame` | integer, 0 or more | Motion: the frame being drawn, counting from 1. |
+| `frames` | integer, 1 or more | Motion: the total number of frames. |
+| `fraction` | number, 0 to 1 | How far through the current stage. |
+| `preview` | string | A thumbnail, 320 px on the long side or smaller: an `http(s)` URL, a `data:image/` URL or an API path. Up to 400,000 characters. |
+| `bytes` | integer | Downloading: bytes received so far. |
+| `total_bytes` | integer | Downloading: bytes in all. Absent when the size is unknown. |
+| `eta_s` | number | Downloading: seconds left. Absent until there is enough data to estimate. |
+
+```json
+{
+  "lane": "motion",
+  "stage": "rendering",
+  "label": "Drawing frame 12 of 180",
+  "frame": 12,
+  "frames": 180,
+  "fraction": 0.07,
+  "preview": "data:image/jpeg;base64,/9j/4AAQ..."
+}
+```
+
+When the call finishes, the final metadata may carry `poster`, the last preview, so a client can show a still while the file loads.
+
+## Reporting progress from an app: `POST /pane-render/:requestID/progress`
+
+An app that renders a picture or video for the agent (the Allternit apps do this on the phone and in the browser) reports how far it has got to the Gizzi runtime. The body is a `progress_detail` object.
+
+```http
+POST /pane-render/{requestID}/progress
+Content-Type: application/json
+
+{ "lane": "picture", "stage": "drawing", "label": "Drawing", "preview": "data:image/jpeg;base64,..." }
+```
+
+| Status | Meaning |
+| --- | --- |
+| `200` with `true` | The report was accepted and published as the `pane_render.progress` event. |
+| `404` with `{ "error": "Unknown request" }` | No render request with that id is waiting (it finished, timed out or was cancelled). Stop reporting. |
+| `400` | The body is not a valid `progress_detail`. |
+
+Send a report about once a second and whenever the stage changes. The runtime passes the newest report on to the chat, at most once a second, except that a stage change always goes through.
+
+## The `tool_progress` chat frame
+
+A client reading the chat stream gets running progress as its own frame. allternit-api sends it while a tool call is running, once for each distinct `progress_detail`, and never after the call settles:
+
+```json
+{
+  "type": "tool_progress",
+  "messageId": "msg_...",
+  "toolCallId": "call_...",
+  "toolName": "media_generate",
+  "metadata": { "progress": "Drawing frame 12 of 180", "progress_detail": { "lane": "motion", "stage": "rendering", "label": "Drawing frame 12 of 180", "frame": 12, "frames": 180 } }
+}
+```
+
+Merge `metadata` into the running tool part of `toolCallId`. Today only `media_generate` sends it. A client that does not know the frame type ignores it, and a server older than this feature never sends it. See [Response parts](/guides/response-parts).
+
+## The `error` frame: `code` and `reset_at`
+
+A failed turn ends the stream with an error frame. Two optional fields let a client say why and offer a way out:
+
+```json
+{ "type": "error", "error": "ChatGPT usage limit reached.", "code": "subscription_sharing_usage_limit_exceeded", "reset_at": "2026-11-21T15:40:00.000Z" }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `error` | The server's reason in plain words. Show it as it is. |
+| `code` | The provider's machine code, when there is one. |
+| `reset_at` | When a usage limit lifts, as an ISO 8601 time. Absent when the provider did not send one. Show it in the person's time zone; do not guess a time. |
+
+Codes the apps recognise:
+
+| Kind | Codes | Way out |
+| --- | --- | --- |
+| Usage limit | `usage_limit_reached`, `usage_limit_exceeded`, `usage_limit`, `plan_rate`, `vendor_limited`, or any code starting `subscription_sharing` that names a usage limit; also HTTP 429 | Pick another model |
+| Not signed in | `signed_out`, `login_expired`, `not_signed_in`, `signed_out_allternit`, `subscription_sharing_invalid_user`, `chatpass_v2_scope_not_authorized`, `chatpass_v2_invalid_authorization_context`; also HTTP 401 | Connect |
+| No connection | `network`, `stream_ended` | Try again |
+
+Any other error keeps the server's words and offers Try again. A non-200 chat reply carries the same reason in its JSON body, so read the body rather than the HTTP status text. A server older than this feature sends the `error` text only, with no `code` or `reset_at`.
+
+The Gizzi terminal prints the reset time as "Resets at ..." after the reason.
+
+## Related
+
+- [Response parts](/guides/response-parts)
+- [Motion body format](/api/artifacts-motion)
+- [Connections API](/api/connections)
