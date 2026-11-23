@@ -16,22 +16,6 @@ import com.allternit.core.design.R as DesignR
  *
  * A0 inventory (Android, base PR #2793)
  *
- *  Pieces the lane touches later (A2-A3), not in A1:
- *   - Drawer mode icon:   ModeFan.kt `ModeDialButton` (:1058, test id "modeDial"), used by ShellDrawer.kt `DrawerHeader`
- *                         (:187/:196, param `onModeDial`), wired in WorkspaceShell.kt :839 `onModeDial = { hold.openFan() }`.
- *   - ☰ hold:             ModeFan.kt `MenuHold`/`MenuHoldMachine`/`reduceMenuHold` (:110-:300), `MenuHoldState` (:357),
- *                         `PhoneMenuButton` (:606), `MenuOverlayHost` (:715); WorkspaceShell.kt :133 (`MenuHoldState()`),
- *                         :311, :500, :547, :854.
- *   - Header New:         ChatPage.kt :138 `PhoneIconButton(ph_note_pencil, "New chat", testTag "chatNewChat")` (remove in A3).
- *                         SessionOverview.kt `OverviewFloatingBar` New is a list-screen New and stays.
- *   - Freeweights screen: feature/models ModelsScreens.kt `ModelsRoot` (:103): Catalog segment = Freeweights browse
- *                         (FreeweightsApi, freeweights.allternit.com); opened from the shell as rail id "models"
- *                         (WorkspaceShell.kt :652). There is no separate "model lab" screen.
- *   - Reduced motion:     ModeFan.kt `rememberReducedMotion()` is private; [rememberHubReducedMotion] below is the same read.
- *   - Haptics:            core/design MotionHaptics.kt has only Haptics.Kind { Tap, Success, Warning }. The hub needs
- *                         medium / selection / light, so [HubHaptic] uses the same view constants ModeFan.kt already uses
- *                         (VIRTUAL_KEY, LONG_PRESS, CLOCK_TICK) until MotionHaptics grows those kinds.
- *
  *  Contract section -> existing Android screen it opens ("none" = hidden on Android, no new screen)
  *
  *  | Mode  | Section id     | Opens on Android                                                          |
@@ -137,7 +121,7 @@ internal object ModeHubSpec {
     // Timings (CONTRACT.md "Timings and motion").
     const val HOLD_MILLIS = 450L
     const val PRESS_SCALE = 0.94f
-    const val OPEN_ITEMS = 3 // phone: a card previews 1 item, the open section lists up to 3 rows here (mock phone n = 3), then More
+    const val OPEN_ITEMS = 4 // Frozen contract: up to four rows, then More.
     const val ROW_HEIGHT_DP = 42
     const val CARD_WIDTH_DP = 128
     const val CARD_HEIGHT_DP = 66

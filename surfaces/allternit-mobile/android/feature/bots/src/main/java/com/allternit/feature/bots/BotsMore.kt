@@ -536,6 +536,7 @@ internal fun BotProjectPage(project: BotProjectSummary, host: BotsHost, store: B
         }
         sendError?.let { ErrorLine(it) }
         host.composer(BotComposerSpec(
+            sessionOpen = true, onNewThread = { nav.reset() },
             placeholder = "Tell the coordinator what you need…", sendDisabled = sending, prefill = prefill, onPrefillConsumed = { prefill = null },
             onSend = { req ->
                 val text = req.text.trim()

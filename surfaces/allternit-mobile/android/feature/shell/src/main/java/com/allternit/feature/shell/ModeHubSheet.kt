@@ -13,6 +13,9 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -50,7 +53,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -136,7 +139,7 @@ private fun HubPanel(
     var sectionId by remember { mutableStateOf(ModeHubSpec.sections(currentMode).first().id) }
     val sections = ModeHubSpec.sections(browse)
     val section = sections.firstOrNull { it.id == sectionId } ?: sections.first()
-    val items = remember(browse, section.id) { itemsFor(browse, section) }
+    val items = itemsFor(browse, section)
     val shape = RoundedCornerShape(26.dp)
 
     Column(
@@ -146,6 +149,8 @@ private fun HubPanel(
             .fillMaxWidth()
             .shadow(18.dp, shape, ambientColor = Color.Black.copy(alpha = 0.16f), spotColor = Color.Black.copy(alpha = 0.16f))
             .clip(shape)
+            .pointerInput(Unit) { detectTapGestures(onTap = {}) }
+            .semantics { paneTitle = "Shelves" }
             .background(c.bgPrimary.copy(alpha = 0.96f))
             .border(BorderStroke(1.dp, c.borderSubtle), shape)
             .padding(8.dp)
@@ -176,7 +181,7 @@ private fun HubPanel(
         Column(Modifier.fillMaxWidth().height((ModeHubSpec.OPEN_ITEMS * ModeHubSpec.ROW_HEIGHT_DP).dp)) {
             if (items.isEmpty()) {
                 Box(Modifier.fillMaxWidth().height(ModeHubSpec.ROW_HEIGHT_DP.dp).padding(horizontal = 9.dp), contentAlignment = Alignment.CenterStart) {
-                    Text("Nothing here yet", color = c.textTertiary, fontSize = 12.5.sp)
+                    Text(if (section.id in setOf("recents", "sessions", "main-bot", "bots", "groups", "bot-projects")) "Nothing here yet" else section.more, color = c.textTertiary, fontSize = 12.5.sp)
                 }
             } else {
                 items.take(ModeHubSpec.OPEN_ITEMS).forEach { item ->

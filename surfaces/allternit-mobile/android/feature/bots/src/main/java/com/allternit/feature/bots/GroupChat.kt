@@ -776,6 +776,7 @@ internal fun GroupRoomScreen(groupId: String, host: BotsHost, store: BotModeStor
                 GroupLog(room, store, speaking, runError, docked, Modifier.weight(1f))
                 host.composer(
                     BotComposerSpec(
+                        sessionOpen = true, onNewThread = { nav.reset() },
                         placeholder = "Message #${room.name} · @ a bot to start a thread",
                         isStreaming = running,
                         onSend = { req -> send(req.text) },

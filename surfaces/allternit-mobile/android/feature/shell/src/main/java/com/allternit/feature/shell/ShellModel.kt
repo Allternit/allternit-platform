@@ -26,7 +26,7 @@ import java.time.OffsetDateTime
 
 /**
  * The four phone modes (iOS `ShellMode`, Core/AppMode.swift). [raw] is the wire/test id:
- * `modeFanCard<raw>` and the persisted value. Cowork is not a mode (a composer toggle in Home).
+ * the persisted mode value. Cowork is not a mode (a composer toggle in Home).
  */
 internal enum class ShellMode(val raw: String, val label: String, @DrawableRes val icon: Int, val accent: Color) {
     Home("home", "Home", com.allternit.core.design.R.drawable.ph_house, ModeAccents.Chat.accent),
@@ -67,7 +67,7 @@ internal enum class ShellMode(val raw: String, val label: String, @DrawableRes v
         }
 
     companion object {
-        /** MenuHold.fanModes order: Home · Bots · Code · ACI. */
+        /** Home · Bots · Code · ACI order. */
         val fan: List<ShellMode> = entries
 
         fun fromRaw(raw: String?): ShellMode = entries.firstOrNull { it.raw == raw } ?: Home

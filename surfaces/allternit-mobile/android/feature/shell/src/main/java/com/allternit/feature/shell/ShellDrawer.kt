@@ -192,8 +192,8 @@ private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, botsWaiting: I
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // D4: tap closes the drawer, then the mode fan opens out of ☰ (iOS ModeDialButton).
-        ModeDialButton(mode = mode, botsWaiting = botsWaiting, onOpenFan = onModeDial)
+        // The mode icon opens Shelves after closing the drawer.
+        ModeDialButton(mode = mode, botsWaiting = botsWaiting, onOpenHub = onModeDial)
         // ShellWordmark: the pixel mark; suffixed marks run smaller to fit beside the buttons.
         Box(
             modifier = Modifier.padding(start = 6.dp).weight(1f).heightIn(min = 44.dp).testTag("shellWordmark${mode.raw}"),

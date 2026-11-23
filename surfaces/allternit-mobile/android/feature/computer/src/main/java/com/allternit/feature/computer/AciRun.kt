@@ -224,7 +224,7 @@ class AciRunModel(private val goal: String, private val client: AciAgentClient) 
  * the screenshot with the action highlight and scanlines, the trace log, and Approve / Deny / Stop.
  */
 @Composable
-internal fun AciAgentRunView(goal: String, client: AciAgentClient, onExit: () -> Unit) {
+internal fun AciAgentRunView(goal: String, client: AciAgentClient, onExit: () -> Unit, controls: @Composable () -> Unit = {}) {
     val c = AllternitTheme.colors
     val model = remember(goal) { AciRunModel(goal, client) }
     DisposableEffect(model) {
@@ -348,6 +348,7 @@ internal fun AciAgentRunView(goal: String, client: AciAgentClient, onExit: () ->
                 Text(line.text, color = if (line.kind != null) actionColor(line.kind) else c.textSecondary, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
             }
         }
+        controls()
         Row(Modifier.fillMaxWidth().background(c.bgSecondary).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (model.requiresApproval) {
@@ -379,7 +380,7 @@ private fun OutlineButton(title: String, color: Color, tag: String, onClick: () 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-internal fun AciWebBrowser(initialUrl: String, onExit: () -> Unit, onStartAgentRun: (String) -> Unit) {
+internal fun AciWebBrowser(initialUrl: String, onExit: () -> Unit, onStartAgentRun: (String) -> Unit, controls: @Composable () -> Unit = {}) {
     val c = AllternitTheme.colors
     var urlText by remember { mutableStateOf(initialUrl) }
     var loading by remember { mutableStateOf(false) }
@@ -442,6 +443,7 @@ internal fun AciWebBrowser(initialUrl: String, onExit: () -> Unit, onStartAgentR
             onRelease = { it.destroy() },
             modifier = Modifier.weight(1f).fillMaxWidth(),
         )
+        controls()
         Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             NavArrow(DesignR.drawable.ph_caret_left, "Back", canBack, "aciBrowserBack") { web?.goBack() }
             Box(Modifier.width(44.dp).height(36.dp).clickable(enabled = canForward, onClickLabel = "Forward") { web?.goForward() }.testTag("aciBrowserForward"), contentAlignment = Alignment.Center) {

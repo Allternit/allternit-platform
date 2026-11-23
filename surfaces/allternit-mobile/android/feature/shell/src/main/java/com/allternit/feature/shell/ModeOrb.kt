@@ -4,6 +4,12 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,6 +32,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,7 +51,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -64,24 +72,32 @@ internal fun Modifier.holdOrTap(
     val hold = rememberUpdatedState(onHold)
     val tap = rememberUpdatedState(onTap)
     val pressed = rememberUpdatedState(onPressedChange)
-    pointerInput(Unit) {
+    onKeyEvent {
+        when {
+            it.type == KeyEventType.KeyUp && (it.key == Key.Enter || it.key == Key.Spacebar || it.key == Key.DirectionCenter) -> { tap.value(); true }
+            it.type == KeyEventType.KeyUp && it.key == Key.Menu -> { hold.value(); true }
+            else -> false
+        }
+    }.focusable().pointerInput(Unit) {
         awaitEachGesture {
             awaitFirstDown()
             pressed.value(true)
-            var cancelled = false
-            val up = withTimeoutOrNull(ModeHubSpec.HOLD_MILLIS) {
-                waitForUpOrCancellation().also { if (it == null) cancelled = true }
-            }
-            if (up == null && !cancelled) {
-                // The timeout hit with the finger still down: the hold completes.
-                HubHaptic.Medium.play(view)
-                pressed.value(false)
-                hold.value()
-                waitForUpOrCancellation()
-            } else {
-                pressed.value(false)
-                if (up != null) tap.value()
-            }
+            try {
+                var cancelled = false
+                val up = withTimeoutOrNull(ModeHubSpec.HOLD_MILLIS) {
+                    waitForUpOrCancellation().also { if (it == null) cancelled = true }
+                }
+                if (up == null && !cancelled) {
+                    // The timeout hit with the finger still down: the hold completes.
+                    HubHaptic.Medium.play(view)
+                    pressed.value(false)
+                    hold.value()
+                    waitForUpOrCancellation()
+                } else {
+                    pressed.value(false)
+                    if (up != null) tap.value()
+                }
+            } finally { pressed.value(false) }
         }
     }
 }
@@ -126,7 +142,7 @@ internal fun ModeOrb(
         if (!expanded) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(44.dp)
                     .then(glass)
                     .testTag("modeOrb")
                     .holdOrTap(
@@ -149,24 +165,27 @@ internal fun ModeOrb(
                 ModeDialBadge(botsWaiting, Modifier.align(Alignment.TopEnd).padding(end = 0.dp))
             }
         } else {
-            Row(
-                modifier = Modifier
-                    .then(glass)
-                    .padding(4.dp)
-                    .testTag("modeOrbPill"),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp),
-            ) {
-                ModeHubSpec.modes.forEach { m ->
-                    PillMode(
-                        mode = m,
-                        current = m == mode,
-                        reduced = reduced,
-                        badge = if (m == ShellMode.Bots) botsWaiting else 0,
-                        onPressedChange = { pressed = it },
-                        onHold = onOpenHub,
-                        onTap = { HubHaptic.Light.play(view); onPick(m) },
-                    )
+            Box(Modifier.size(44.dp))
+            Popup(alignment = Alignment.TopStart, onDismissRequest = { onExpandedChange(false) }, properties = PopupProperties(focusable = true)) {
+                Row(
+                    modifier = Modifier
+                        .then(glass)
+                        .padding(4.dp)
+                        .testTag("modeOrbPill"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp),
+                ) {
+                    ModeHubSpec.modes.forEach { m ->
+                        PillMode(
+                            mode = m,
+                            current = m == mode,
+                            reduced = reduced,
+                            badge = if (m == ShellMode.Bots) botsWaiting else 0,
+                            onPressedChange = { pressed = it },
+                            onHold = onOpenHub,
+                            onTap = { HubHaptic.Light.play(view); onPick(m) },
+                        )
+                    }
                 }
             }
         }
@@ -191,7 +210,7 @@ private fun PillMode(
     )
     Box(
         modifier = Modifier
-            .height(30.dp)
+            .height(44.dp)
             .defaultMinSize(minWidth = 44.dp)
             .clip(CircleShape)
             .background(lens)

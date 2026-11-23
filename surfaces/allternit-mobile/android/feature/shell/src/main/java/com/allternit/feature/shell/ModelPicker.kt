@@ -431,11 +431,11 @@ private fun CurrentModel(m: PickerModel, models: ModelStore) {
  * lands on the runtime CLI's default. OpenRouter is how Cloud routes, never a pick.
  */
 @Composable
-internal fun BotAgentChips(models: ModelStore, agent: com.allternit.feature.bots.runtimes.BotAgentState, onOpenConnections: () -> Unit) {
+internal fun BotAgentChips(models: ModelStore, agent: com.allternit.feature.bots.runtimes.BotAgentState, onOpenConnections: () -> Unit, iconOnly: Boolean = false) {
     LaunchedEffect(Unit) { models.load() }
     val brains = brainOptions(models).map { it.first }
     com.allternit.feature.bots.runtimes.AgentChipsRow(
-        agent = agent, brains = brains, brainsLoading = models.isLoading && models.chatModels.isEmpty(), onOpenConnections = onOpenConnections,
+        agent = agent, brains = brains, iconOnly = iconOnly, brainsLoading = models.isLoading && models.chatModels.isEmpty(), onOpenConnections = onOpenConnections,
     )
 }
 
@@ -458,11 +458,11 @@ internal fun brainOptions(models: ModelStore): List<Pair<com.allternit.feature.b
  * An automatic brain change (the runtime can't run the current brain) selects that model here.
  */
 @Composable
-internal fun PlainChatRuntimeChip(models: ModelStore) {
+internal fun PlainChatRuntimeChip(models: ModelStore, iconOnly: Boolean = false) {
     val options = brainOptions(models)
     val current = options.firstOrNull { it.second == models.selectedId }?.first?.key
     com.allternit.feature.bots.runtimes.ChatRuntimeChip(
-        brains = options.map { it.first }, brainKey = current,
+        brains = options.map { it.first }, brainKey = current, iconOnly = iconOnly,
         onBrainSwitch = { b -> options.firstOrNull { it.first.key == b.key }?.let { models.select(it.second) } },
     )
 }

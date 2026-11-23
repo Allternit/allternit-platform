@@ -90,6 +90,8 @@ data class BotComposerSpec(
     val onVoiceMode: (() -> Unit)? = null,
     /** A bot chat's Runtime · Brain · Bot state: the composer shows the three agent chips in place of the model chip. */
     val agent: com.allternit.feature.bots.runtimes.BotAgentState? = null,
+    val sessionOpen: Boolean = false,
+    val onNewThread: (() -> Unit)? = null,
 )
 
 /**
@@ -204,6 +206,7 @@ class BotsOfficeKit internal constructor(private val host: BotsHost, private val
                     greeting = {},
                     composer = {
                         host.composer(BotComposerSpec(
+                            sessionOpen = true, onNewThread = { nav.open(BotRoute.Chat(bot.id, null, newThread = true)) },
                             placeholder = "Message ${bot.displayName}…", isStreaming = vm.isStreaming, sendDisabled = vm.isCreatingSession,
                             prefill = prefill, onPrefillConsumed = { prefill = null }, pickerRequest = pickerRequest, onStop = vm::stopStreaming,
                             onSend = { req -> val e = editingId; if (e != null) { editingId = null; vm.resendEdited(e, req) } else vm.send(req) },
@@ -229,7 +232,7 @@ class BotsOfficeKit internal constructor(private val host: BotsHost, private val
 
 /** Every screen Bots mode can push (iOS BotRoute, cut to the wave E screens). */
 sealed interface BotRoute {
-    data class Chat(val botId: String, val sessionId: String?) : BotRoute
+    data class Chat(val botId: String, val sessionId: String?, val newThread: Boolean = false) : BotRoute
     data class Page(val botId: String) : BotRoute
     data class Threads(val botId: String?) : BotRoute
     data class Project(val project: BotProjectSummary) : BotRoute
@@ -290,7 +293,7 @@ internal class BotPauseModel(private val backend: ChatBackend) {
 enum class RosterLayout(val raw: String, val label: String) { List("list", "List"), Grid("grid", "Grid"), Deck("deck", "Deck") }
 
 /** Where the shell asks Bots mode to go on open (iOS BotModeStore.pendingOpenBotId / pendingRoute). */
-class BotsLaunch(val openBotId: String? = null, val route: BotRoute? = null, val projectId: String? = null, val openMain: Boolean = false, val openSessionId: String? = null)
+class BotsLaunch(val openBotId: String? = null, val route: BotRoute? = null, val projectId: String? = null, val openMain: Boolean = false, val openSessionId: String? = null, val resetRoot: Boolean = false)
 
 /**
  * Bots mode root (iOS BotsModeRootView): header "Bots" with search and the options sheet, the
@@ -308,6 +311,7 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
     var threadsOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(launch) {
+        if (launch.resetRoot) nav.reset()
         launch.openBotId?.let { nav.reset(BotRoute.Chat(it, launch.openSessionId)) }
         launch.route?.let { nav.reset(it) }
         // allternit://call/main (iOS .callMain): the main bot's chat, or the bots list when there is none.
@@ -811,7 +815,7 @@ private fun BotRouteDestination(route: BotRoute, host: BotsHost, store: BotModeS
         }
     }
     when (route) {
-        is BotRoute.Chat -> withBot(route.botId) { BotChatSessionScreen(it, route.sessionId, host, store, nav) }
+        is BotRoute.Chat -> withBot(route.botId) { BotChatSessionScreen(it, route.sessionId, host, store, nav, newThread = route.newThread) }
         is BotRoute.Page -> withBot(route.botId) { b -> BotScreen(b.displayName, nav, testTag = "botPageScreen") { BotPageView(b, store, nav, backend = host.backend) } }
         is BotRoute.Threads -> BotScreen(route.botId?.let { store.bot(it)?.displayName } ?: "Threads", nav, testTag = "botThreadsScreen") {
             BotThreadsOverview(store, route.botId) { nav.openThread(it) }

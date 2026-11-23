@@ -41,8 +41,7 @@ internal fun ComposerDraft.toChatRequest(): ChatSendRequest = ChatSendRequest(
 )
 
 /**
- * The open chat (iOS ChatView): the header (☰ with the mode badge, the chat's name, ⋯ and New
- * chat), then [ChatScreen] with the shell's composer. Edit on the last user message loads its
+ * The open chat (iOS ChatView): the header (☰ with the mode badge, the chat's name and ⋯), then [ChatScreen] with the shell's composer. Edit on the last user message loads its
  * text into the composer and the next send replaces everything after it.
  */
 @Composable
@@ -135,7 +134,6 @@ internal fun ChatPage(
                         }
                     }
                 }
-                PhoneIconButton(com.allternit.core.design.R.drawable.ph_note_pencil, "New chat", testTag = "chatNewChat", onClick = onNewChat)
             },
         )
         ChatScreen(
@@ -176,6 +174,8 @@ internal fun ChatPage(
                         voiceHost.start(chat, models.selectedId, models.selected?.let { models.level(it) })
                     },
                     playGamesAnytime = playGamesAnytime,
+                    sessionOpen = true,
+                    onNewItem = onNewChat,
                 )
             },
             modifier = Modifier.weight(1f),

@@ -121,13 +121,13 @@ private enum class DeckTab { Thread, Threads, Tasks, Bot }
  * the bot page. A nil session opens the bot's main chat; a send docks the stage.
  */
 @Composable
-internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, host: BotsHost, store: BotModeStore, nav: BotNavigator) {
+internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, host: BotsHost, store: BotModeStore, nav: BotNavigator, newThread: Boolean = false) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     val vm = rememberBotChat(host, bot)
-    var sessionId by remember(bot.id, explicitSessionId) { mutableStateOf(explicitSessionId) }
+    var sessionId by remember(bot.id, explicitSessionId, newThread) { mutableStateOf(explicitSessionId) }
     var resolveError by remember { mutableStateOf<String?>(null) }
-    var deck by remember { mutableStateOf(DeckTab.Thread) }
+    var deck by remember(bot.id, explicitSessionId, newThread) { mutableStateOf(if (newThread) DeckTab.Threads else DeckTab.Thread) }
     var docked by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var editOpen by remember { mutableStateOf(false) }
@@ -153,7 +153,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
             is BotsResult.Failed -> resolveError = r.message
         }
     }
-    LaunchedEffect(bot.id, explicitSessionId) { resolve() }
+    LaunchedEffect(bot.id, explicitSessionId, newThread) { if (!newThread) resolve() }
     LaunchedEffect(sessionId) { sessionId?.let { vm.loadSession(it); docked = false } }
     LaunchedEffect(vm.isStreaming) { if (vm.isStreaming) docked = true }
     LaunchedEffect(vm.transientError) {
@@ -218,7 +218,7 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
     val deckRow: @Composable () -> Unit = {
         val waiting = store.waitingCount(bot.id)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            DeckButton(if (isMainChat) "Main chat" else thread?.displayTitle?.takeIf { it.isNotEmpty() } ?: "Thread", deck == DeckTab.Thread, "botDeckThread") { deck = DeckTab.Thread }
+            DeckButton(if (isMainChat) "Main chat" else thread?.displayTitle?.takeIf { it.isNotEmpty() } ?: "Thread", deck == DeckTab.Thread, "botDeckThread") { deck = DeckTab.Thread; if (sessionId == null) scope.launch { resolve() } }
             DeckButton("Threads", deck == DeckTab.Threads, "botDeckThreads", dot = waiting > 0) { deck = DeckTab.Threads }
             DeckButton("Tasks", deck == DeckTab.Tasks, "botDeckTasks", meta = thread?.progressLabel) { deck = DeckTab.Tasks }
             DeckButton("Bot", deck == DeckTab.Bot, "botDeckBot") { deck = DeckTab.Bot }
@@ -230,6 +230,8 @@ internal fun BotChatSessionScreen(bot: BotRecord, explicitSessionId: String?, ho
             if (voice) VoiceBarSlot(voiceHost, onEnd = endVoice, bot = voiceBot)
             deckRow()
             host.composer(BotComposerSpec(
+                sessionOpen = sessionId != null,
+                onNewThread = { prefill = ""; deck = DeckTab.Threads },
                 placeholder = placeholder, isStreaming = vm.isStreaming && deck == DeckTab.Thread, sendDisabled = vm.isCreatingSession,
                 prefill = prefill, onPrefillConsumed = { prefill = null }, onSend = send, onStop = vm::stopStreaming, pickerRequest = pickerRequest, agent = agent,
                 onVoiceMode = if (voice) ({
@@ -575,7 +577,7 @@ internal fun BotLiveStageScreen(bot: BotRecord, host: BotsHost, store: BotModeSt
                     viewModel = vm, backend = host.backend,
                     callbacks = botCallbacks(host, vm, onPickModel = {}, onEdit = {}),
                     editing = false, onCancelEdit = {}, greeting = {},
-                    composer = { host.composer(BotComposerSpec(placeholder = "Message ${bot.displayName}…", isStreaming = vm.isStreaming, onSend = vm::send, onStop = vm::stopStreaming)) },
+                    composer = { host.composer(BotComposerSpec(sessionOpen = true, onNewThread = { nav.open(BotRoute.Chat(bot.id, null, newThread = true)) }, placeholder = "Message ${bot.displayName}…", isStreaming = vm.isStreaming, onSend = vm::send, onStop = vm::stopStreaming)) },
                 )
                 resolveError != null -> FriendlyState(FriendlyStyle.Error, "Couldn't open the stage", resolveError ?: "", actionTitle = "Try again", onAction = { scope.launch { resolve() } }) {
                     Icon(painterResource(com.allternit.core.design.R.drawable.ph_chat_circle), null, tint = AllternitStatic.StatusError, modifier = Modifier.size(28.dp))
