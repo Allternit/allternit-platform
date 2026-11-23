@@ -1,6 +1,8 @@
 package com.allternit.core.design
 
+import android.os.Build
 import android.provider.Settings
+import android.view.WindowManager
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +35,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -41,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -113,6 +118,17 @@ fun IntroSheet(
         onDismissRequest = { /* Continue is the only way out, like the other surfaces */ },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, dismissOnBackPress = false),
     ) {
+        // Contract: scrim plus a 3 dp blur behind the sheet. Blur needs API 31 and a device that allows it;
+        // otherwise the plain scrim stays. Kept under reduced motion (the contract does not drop it).
+        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        val blurPx = with(LocalDensity.current) { 3.dp.roundToPx() }
+        DisposableEffect(window) {
+            if (window != null && Build.VERSION.SDK_INT >= 31 && window.windowManager.isCrossWindowBlurEnabled) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+                window.attributes = window.attributes.also { it.blurBehindRadius = blurPx }
+            }
+            onDispose { }
+        }
         Box(
             modifier
                 .fillMaxSize()
