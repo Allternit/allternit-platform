@@ -5394,6 +5394,37 @@
         "allternit/cmd/allternit-api/src/bot_brain.rs",
         "allternit/cmd/allternit-api/src/runtime_live.rs"
       ]
+    },
+    {
+      "id": "feature:polish-kit-intros",
+      "label": "Polish kit and first-visit intros (mobile refresh)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Block-type tab titles that dock letter by letter on scroll, plus a first-visit intro per tab and mode (Home, Bots, Code, ACI, Projects, Artifacts, Automation, Customize, Freeweights). One shared polish contract (src/design/polish: dock math, springs; src/components/polish and src/lib/intros arrive with the web lane, so they join touches once they exist), glass controls and intro sheets on web, iOS and Android; the half-block title in Gizzi Code; seen state in /me/flags intro*SeenAt keys (PUT null clears one).",
+      "touches": [
+        "allternit-ai/src/design",
+        "allternit-ai/src/components/brand",
+        "allternit/surfaces/allternit-mobile/ios/Core/DesignSystem",
+        "allternit/surfaces/allternit-mobile/ios/Features/Shared",
+        "allternit/surfaces/allternit-mobile/ios/Features/Shell/PixelWordmark.swift",
+        "allternit/surfaces/allternit-mobile/android/core/design",
+        "allternit/surfaces/allternit-mobile/scripts",
+        "allternit/cmd/allternit-cloud-api/src/routes/me_flags.rs",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
+        "allternit/surfaces/docs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-23",
+          "note": "2026-11-23 Eoj approved mobile refresh A/A2/B: block-type tab titles that dock letter by letter on scroll, first-visit intros per tab and mode"
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/me_flags.rs",
+        "allternit/surfaces/allternit-mobile/ios/Features/Shell/PixelWordmark.swift",
+        "allternit/surfaces/allternit-mobile/android/core/design/src/main/java/com/allternit/core/design/PixelWordmark.kt",
+        "allternit-ai/src/components/brand/block-type.ts"
+      ]
     }
   ],
   "journeys": [
