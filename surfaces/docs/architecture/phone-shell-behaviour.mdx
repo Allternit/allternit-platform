@@ -37,6 +37,12 @@ The node owns the signals, in `cmd/allternit-api/src/code_session_status.rs`. Th
 
 `src/shell/mode-hub/contract.ts` holds the sections for each mode, the timings (`HOLD_MS` 450, `HOVER_INTENT_MS` 120), the haptic map and the event names. `ModeHubHost` is mounted once in the phone shell and once in the desktop shell. After a pick it fires `allternit:mode-arrive` with `{ from, to }`. With reduced motion, states change at once. The old menu hold fan and Bots shelf (`menu-hold.ts`) are removed.
 
+## Titles, intros and arrivals
+
+The motion numbers (dock distance, springs, intro unlock, arrival timeline, drawer push) live in `src/design/polish/contract.ts` and `dock-math.ts`. Swift and Kotlin copy them. Arrivals and mode intros trigger on a change in the shell mode store, and also on `allternit:mode-arrive`, so pill taps, rail buttons and deep links count. With reduced motion, titles and arrivals fade. Haptics do nothing on Desktop and iOS Safari. For users, see [Phone titles, intros and arrivals](/guides/phone-titles-and-intros).
+
+First-visit intros store their seen state in the account flags `intro*SeenAt` (see [Account flags](/api/me#account-flags)). Each client keeps a local cache so an intro shows once even when offline.
+
 ## Calm errors
 
 `src/lib/errors/plain-error.ts` exports `plainErrorText(err, fallback)`, `stripStatusText`, `statusSentence` and `isComputeGateRefusal`. Use `plainErrorText` for any text shown to a person. A 409 `compute_required` or 428 on a read shows no error: the list shows its empty state and the chip shows. On an action the compute gate sheet opens as before. Chip state comes from `useComputerChip()` in `PhoneNoComputer.tsx`.
