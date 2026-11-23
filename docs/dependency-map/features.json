@@ -1,6 +1,38 @@
 {
   "features": [
     {
+      "id": "feature:guard-local-connector",
+      "label": "Guard local read-only connector",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "Private Guard catalog and saved evidence through a stdio MCP connector. Implementation source currently lives in the operator Brain workspace outside this repository. Runtime execution, remote transport and product-client availability are not shipped.",
+      "touches": [
+        "allternit/surfaces/docs",
+        "allternit/cmd/gizzi-code"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-09",
+          "note": "Document the local connector and explicit surface limitations. Stdio SDK checks do not certify Desktop, web or native app integration."
+        },
+        {
+          "on": "2026-11-09",
+          "note": "Standalone Guard workspace adds native case research, bookmarks, camera references and branded CLI. guard_workspace extends read-only MCP. Internal Brain source remains outside the platform map; vendor APIs and remote/native client transport remain unconnected."
+        },
+        {
+          "on": "2026-11-10",
+          "note": "Standalone Guard adds durable conversations, reviewed runs, typed profiles/reports, local T3MP3ST Admiral intake, persistent tool panes and a shared CLI/TUI. Installed gizzi guard forwarding is a reversible local bridge; source command registry is included for the next normal Gizzi build. guard_conversation extends read-only MCP. Hosted AI/PWA and native mobile remain N/A because Guard is loopback-only with no remote product connector."
+        },
+        {
+          "on": "2026-11-13",
+          "note": "Standalone Guard adds neutral main/split workspaces, shared List/Grid/Deck collections and interactive 3D hardware with a Guard software simulator. Case camera membership, on-demand availability and saved snapshots share HTTP/CLI/TUI; guard_cameras is read-only. OpenSky observations can overlay God’s Eye. Worldcam access, continuous AI monitoring/video recording and remote/native product transport remain unsupported."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/guard.mdx"
+      ]
+    },
+    {
       "id": "feature:chat",
       "label": "Chat with streamed replies (includes former Cowork)",
       "product": "product:ai-allternit",

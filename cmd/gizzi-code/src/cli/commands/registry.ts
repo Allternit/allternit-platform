@@ -1,3 +1,4 @@
+import { GuardCommand } from "@/cli/commands/guard"
 
 import { ExecCommand, RunCommand } from "@/cli/commands/run"
 import { GenerateCommand } from "@/cli/commands/generate"
@@ -77,6 +78,7 @@ export interface RegisteredCommand {
  * this module stays dependency-cycle-free.
  */
 export const COMMANDS: RegisteredCommand[] = [
+  GuardCommand,
   // The four Allternit Factory parts (SPEC §7). Gizzi's older agent-control
   // commands (agent, agent-hub, runtime, bot, thread, mail, ac, cron,
   // cowork, cowork-team) are folded in under these.
