@@ -318,6 +318,13 @@ object AciApi {
     internal suspend fun consoleWrite(method: String, id: String, tail: String, body: JsonObject?): ConsoleWrite =
         write(ApiCall.request(method, consoleUrl(id, tail, emptyMap()), writeBody(method, body)))
 
+    /**
+     * `PATCH api/v1/computers/:id/file-roots`: `{ wholeDisk: true, confirm: true }` to turn on (the caller held to confirm),
+     * `{ wholeDisk: false }` to turn off. Owner only; 403/409 come back as `Failed` with the server's plain message.
+     */
+    internal suspend fun consoleWholeDisk(id: String, on: Boolean): ConsoleWrite =
+        consoleWrite("PATCH", id, "file-roots", wholeDiskBody(on))
+
     /** `PATCH|DELETE api/v1/computers/paired/:id` (rename / unpair). */
     internal suspend fun consolePairedWrite(method: String, id: String, body: JsonObject?): ConsoleWrite =
         write(ApiCall.request(method, config.cloudBaseUrl.newBuilder().addPathSegments("api/v1/computers/paired").addPathSegment(id).build(), writeBody(method, body)))
@@ -505,4 +512,10 @@ class AciAgentClient(private val backend: ChatBackend) {
     suspend fun approve(runId: String, deny: Boolean) {
         backend.runtimeJson("POST", "/api/aci/approve/" + Uri.encode(runId) + if (deny) "?deny=true" else "", "{}")
     }
+}
+
+/** PATCH body for whole-disk Files: `{ wholeDisk: true, confirm: true }` to turn on, `{ wholeDisk: false }` to turn off (not `enabled`). */
+internal fun wholeDiskBody(on: Boolean): JsonObject = kotlinx.serialization.json.buildJsonObject {
+    put("wholeDisk", kotlinx.serialization.json.JsonPrimitive(on))
+    if (on) put("confirm", kotlinx.serialization.json.JsonPrimitive(true))
 }
