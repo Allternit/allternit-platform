@@ -104,3 +104,7 @@ The Gizzi terminal prints the reset time as "Resets at ..." after the reason.
 - [Response parts](/guides/response-parts)
 - [Motion body format](/api/artifacts-motion)
 - [Connections API](/api/connections)
+
+## Device-local browser images
+
+The `browser-image` request uses `engine: "chatgpt-aci"` and the exact prompt, with empty `code` and compatibility format `html`. A relayed request needs an executor claim before progress or result. Local person-plan image actions persist locally and do not require this relay. See [Device-local ACI image jobs](/dev/aci-image-jobs) for claim ownership, private previews, image bounds and same-device execution.

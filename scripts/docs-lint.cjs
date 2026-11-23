@@ -149,7 +149,7 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
     const line = lines[i];
     if (COMPETITOR_NAMES.test(line)) {
       // Generation setup and failure examples quote the actual supported provider labels.
-      if (['guides/artifact-modes.mdx', 'guides/agent-steps.mdx', 'guides/image-generation.mdx', 'dev/aci-image-jobs.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      if (['guides/artifact-modes.mdx', 'guides/agent-steps.mdx', 'guides/image-generation.mdx', 'dev/aci-image-jobs.mdx', 'api/generation-progress.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Allow the OpenAI migration guide to mention OpenAI in the title/body.
       if (mdxPath.endsWith('guides/openai-migration.mdx')) continue;
       // Native session pickup names the other CLIs; that page is the catalog.
