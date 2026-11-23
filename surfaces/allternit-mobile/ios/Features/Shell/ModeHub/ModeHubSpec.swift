@@ -35,16 +35,8 @@ import SwiftUI
 // BotRoute / ACITabView's own destination; if a host cannot route to one, it
 // falls back to the mode's root tab, never a new screen.
 //
-// Other I0 findings:
-// - Header New: ChatView.swift:61 (PhoneIconButton "New chat"); SessionOverviewView
-//   onNew (label at :68-70, wired at :162). Both are removed in I4.
-// - ModeDialView( ) is used by HistorySidebarView.swift:251 as ModeDialButton();
-//   MenuOverlayHost lives in ModeDialView.swift:237-257.
-// - MenuHoldController.shared: WorkspaceShell.swift:104,117; ModeDialView.swift
-//   :237,311,386,422; BotShelfView.swift:39; PhoneHeader.swift:175-226 (hold on the
-//   header menu button, switchDirectly, openShelf).
-// - BotShelfView( ) is created at ModeDialView.swift:257 only.
-// - Drawer mode icon: ModeDialButton in HistorySidebarView.swift:251.
+// The shell hosts Shelves. The drawer mode icon and composer orb open it.
+// Header New is removed; overview lists keep their bottom New action.
 
 // MARK: - Modes
 

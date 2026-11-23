@@ -56,7 +56,7 @@ struct PhoneHeader<Leading: View, Trailing: View>: View {
 }
 
 extension PhoneHeader where Leading == PhoneMenuButton {
-    /// The usual header: ☰ leads (tap opens the drawer, hold fans the modes out).
+    /// The usual header: ☰ leads (tap opens the drawer).
     init(
         title: String?,
         subtitle: String? = nil,
@@ -122,108 +122,31 @@ struct PhonePressStyle: ButtonStyle {
     }
 }
 
-/// The ☰ button (PhoneHeader MenuButton, contract C8). Tap opens the
-/// drawer. Hold 0.35 s fans the modes out of it (Home · Bots · Code · ACI);
-/// slide over the cards and let go on one to switch, or keep holding on Bots
-/// for the bots shelf. A short hold and release keeps the fan open for a tap.
-/// A hold does nothing while the drawer is open. The rules are
-/// `reduceMenuHold`; `MenuHoldController` runs them and `MenuOverlayHost`
-/// draws the fan at shell level. A small badge shows the current mode.
-///
-/// VoiceOver: activate opens the menu; one named action per mode
-/// ("Switch to Code", …) and "Open your bots".
+/// The hamburger has one action: open the drawer, by touch or keyboard.
 struct PhoneMenuButton: View {
     var round: Bool = false
-    /// Glyph colour where the header is not the usual ink (Code's terminal chrome).
     var tint: Color? = nil
     var glyphSize: CGFloat? = nil
     let onOpen: () -> Void
-
     @EnvironmentObject private var modeStore: AppModeStore
-    @Environment(\.menuHoldEnabled) private var holdEnabled
-    @State private var buttonFrame: CGRect = .zero
-    @State private var pressing = false
-    @GestureState private var fingerDown = false
 
     var body: some View {
-        let mode = modeStore.shellMode
-        let ink = tint ?? Color("TextPrimary")
-        Image(systemName: "line.3.horizontal")
-            .font(.system(size: glyphSize ?? (round ? 18 : 20), weight: .regular))
-            .foregroundColor(ink)
-            .frame(width: 44, height: 44)
-            .background(Circle().fill(round ? Color("FillNeutral") : Color.clear))
-            .overlay(alignment: .bottomTrailing) {
-                MenuModeBadge(mode: mode, fill: ink).offset(x: -4, y: -4)
-            }
-            .contentShape(Circle())
-            .background(
-                GeometryReader { proxy in
-                    Color.clear
-                        .onAppear { remember(proxy.frame(in: .global)) }
-                        .onChange(of: proxy.frame(in: .global)) { _, rect in remember(rect) }
+        Button(action: onOpen) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: glyphSize ?? (round ? 18 : 20), weight: .regular))
+                .foregroundColor(tint ?? Color("TextPrimary"))
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(round ? Color("FillNeutral") : Color.clear))
+                .overlay(alignment: .bottomTrailing) {
+                    MenuModeBadge(mode: modeStore.shellMode, fill: tint ?? Color("TextPrimary"))
+                        .offset(x: -4, y: -4)
                 }
-            )
-            .gesture(pressGesture)
-            .onChange(of: fingerDown) { _, down in
-                guard !down else { return }
-                // The system took the touch (no onEnded): treat it as a cancel.
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(60))
-                    if pressing {
-                        pressing = false
-                        if holdEnabled { MenuHoldController.shared.dispatch(.cancel) }
-                    }
-                }
-            }
-            .accessibilityElement()
-            .accessibilityLabel("Open menu")
-            .accessibilityValue("\(mode.label) mode")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { open() }
-            .accessibilityActions {
-                if holdEnabled {
-                    ForEach(MenuHold.fanModes, id: \.self) { option in
-                        Button("Switch to \(option.label)") { MenuHoldController.shared.switchDirectly(to: option) }
-                    }
-                    Button("Open your bots") { MenuHoldController.shared.dispatch(.openShelf) }
-                }
-            }
-            .accessibilityIdentifier("phoneMenuButton")
-    }
-
-    private var pressGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .global)
-            .updating($fingerDown) { _, down, _ in down = true }
-            .onChanged { gesture in
-                let hold = MenuHoldController.shared
-                if !pressing {
-                    pressing = true
-                    if holdEnabled { hold.press(anchor: buttonFrame, onOpen: onOpen) }
-                    return
-                }
-                if holdEnabled { hold.drag(location: gesture.location, translation: gesture.translation) }
-            }
-            .onEnded { gesture in
-                guard pressing else { return }
-                pressing = false
-                if holdEnabled {
-                    Haptics.prepare()
-                    MenuHoldController.shared.endPress()
-                } else if hypot(gesture.translation.width, gesture.translation.height) <= MenuHold.slop {
-                    open()
-                }
-            }
-    }
-
-    /// The shell plays the drawer's light haptic when it opens.
-    private func open() {
-        onOpen()
-    }
-
-    private func remember(_ rect: CGRect) {
-        buttonFrame = rect
-        if holdEnabled { MenuHoldController.shared.noteAnchor(rect) }
+                .contentShape(Circle())
+        }
+        .buttonStyle(PhonePressStyle())
+        .accessibilityLabel("Open menu")
+        .accessibilityValue("\(modeStore.shellMode.label) mode")
+        .accessibilityIdentifier("phoneMenuButton")
     }
 }
 
@@ -244,19 +167,6 @@ struct MenuModeBadge: View {
         .frame(width: 15, height: 15)
         .accessibilityHidden(true)
         .accessibilityIdentifier("phoneMenuModeBadge\(mode.rawValue)")
-    }
-}
-
-private struct MenuHoldEnabledKey: EnvironmentKey {
-    static let defaultValue = true
-}
-
-extension EnvironmentValues {
-    /// False where the shell's fan can't draw over the screen (a full-screen
-    /// cover such as the session overview): ☰ is then tap only.
-    var menuHoldEnabled: Bool {
-        get { self[MenuHoldEnabledKey.self] }
-        set { self[MenuHoldEnabledKey.self] = newValue }
     }
 }
 

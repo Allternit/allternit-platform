@@ -21,7 +21,7 @@ enum RecentsDateFilter: String, CaseIterable {
 
 /// The phone drawer (allternit-ai src/fabric-session/phone/PhoneDrawer.tsx):
 /// the active mode's rail, laid out like Claude iOS. Top line: the mode dial
-/// (tap closes the drawer and fans the modes out of ☰, D4),
+/// (tap opens Shelves),
 /// the mode's wordmark, Inbox and a round search button. Then the mode's rail
 /// rows (Projects, Artifacts, Automation Tasks, Customize, More), Teammates,
 /// Pinned, and Recents with See all + a filter — swipe a recent left to
@@ -247,8 +247,29 @@ struct HistorySidebarView: View {
     /// `phone-drawer-top-modes`: dial · wordmark · Inbox · search.
     private var header: some View {
         HStack(spacing: 8) {
-            // D4: tap closes the drawer, then the mode fan opens out of ☰.
-            ModeDialButton()
+            // Tap closes the drawer and opens the shell’s Shelves hub.
+            Button {
+                Haptics.medium()
+                NotificationCenter.default.post(name: ModeHubSpec.openModeHub, object: nil)
+            } label: {
+                Image(systemName: modeStore.shellMode.icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color("BgPrimary"))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Color("TextPrimary")))
+                    .frame(width: 44, height: 44)
+                    .overlay(alignment: .topTrailing) {
+                        if botStore.waitingCount > 0 {
+                            Text(botStore.waitingCount > 9 ? "9+" : "\(botStore.waitingCount)")
+                                .font(.system(size: 10, weight: .bold))
+                                .padding(4)
+                                .background(Color("FillNeutral"), in: Capsule())
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open Shelves, \(modeStore.shellMode.label) mode")
+            .accessibilityIdentifier("modeHubDrawerButton")
             ShellWordmark(mode: modeStore.shellMode)
                 .padding(.leading, 6)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)

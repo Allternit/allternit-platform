@@ -183,6 +183,10 @@ struct CodeModeView: View {
             applyDebugArgs()
             #endif
         }
+        .onReceive(NotificationCenter.default.publisher(for: .composerNewItem)) { _ in
+            guard modeStore.shellMode == .code else { return }
+            newThread()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .codePickView)) { note in
             if let kind = note.object as? CodeViewKind { selectView(kind) }
         }

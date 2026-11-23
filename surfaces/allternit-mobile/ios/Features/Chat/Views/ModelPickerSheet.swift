@@ -710,6 +710,7 @@ extension EnvironmentValues {
 /// chips for runtime and brain.
 struct ComposerAgentChips: View {
     let bot: AgentRecord
+    var iconOnly = false
 
     @ObservedObject private var registry = RuntimeRegistryStore.shared
     @ObservedObject private var modelStore = ModelStore.shared
@@ -743,8 +744,8 @@ struct ComposerAgentChips: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            row(namedRuntime: true, namedBrain: true, namedBot: true)
-            row(namedRuntime: false, namedBrain: true, namedBot: false)
+            row(namedRuntime: !iconOnly, namedBrain: !iconOnly, namedBot: !iconOnly)
+            row(namedRuntime: false, namedBrain: !iconOnly, namedBot: false)
             row(namedRuntime: false, namedBrain: false, namedBot: false)
         }
         .sheet(item: $openLayer) { layer in
@@ -806,7 +807,7 @@ struct ComposerAgentChips: View {
         } label: {
             HStack(spacing: 4) {
                 icon(layer)
-                if named || locked {
+                if named || (locked && !iconOnly) {
                     // Long names are cut by length: the row is measured at
                     // its ideal width (ViewThatFits), where truncation never runs.
                     Text(Self.short(label, layer == .brain ? 16 : 13))

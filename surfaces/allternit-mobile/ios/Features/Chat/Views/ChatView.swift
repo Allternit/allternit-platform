@@ -50,7 +50,7 @@ struct ChatView: View {
                 onMenu: { isSidebarOpen = true }
             ) {
                 HStack(spacing: 0) {
-                    // Share link moved into ⋯ so ⋯ fits beside New chat.
+                    // Share link moved into ⋯ (New is the New orb above the composer).
                     PhoneIconButton(systemName: "ellipsis", label: "Chat options") {
                         isChatMenuOpen = true
                     }
@@ -58,10 +58,6 @@ struct ChatView: View {
                         ChatMenuPopover(items: menuItems, onSelect: selectMenuItem, onClose: { isChatMenuOpen = false })
                             .presentationCompactAdaptation(.popover)
                     }
-                    PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
-                        startNewChat()
-                    }
-                    .accessibilityIdentifier("chatNewChat")
                 }
             }
             .zIndex(1)
@@ -73,6 +69,7 @@ struct ChatView: View {
                 chatMenuHoldsExtras: true,
                 onNewChat: startNewChat
             )
+
         }
         .background(Color("BgPrimary"))
         .sheet(isPresented: $isShareLinkPresented) {

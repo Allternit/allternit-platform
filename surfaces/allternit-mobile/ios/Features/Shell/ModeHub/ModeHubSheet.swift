@@ -13,7 +13,7 @@ struct ModeHubItem: Identifiable, Equatable {
 /// contract CONTRACT.md). Rises from the bottom edge. Top to bottom: path +
 /// More, up to 4 item rows (3 fit above the cards), the section cards (first
 /// tap selects, second tap opens), then the four modes at the bottom.
-/// Not mounted anywhere yet (steps I2-I4).
+/// Hosted once by MainWorkspaceView, above every mode.
 struct ModeHubSheet: View {
     @Binding var isPresented: Bool
     /// The app's current mode; the sheet starts here.
@@ -64,7 +64,10 @@ struct ModeHubSheet: View {
                 .onTapGesture { dismiss() }
                 .accessibilityHidden(true)
             sheet
-                .offset(y: appeared ? max(drag, 0) : 600)
+                // Absorb taps on blank sheet space; only the outer scrim dismisses.
+                .contentShape(Rectangle())
+                .onTapGesture { }
+                .offset(y: reduced ? 0 : (appeared ? max(drag, 0) : 600))
                 .gesture(
                     DragGesture()
                         .onChanged { drag = $0.translation.height }

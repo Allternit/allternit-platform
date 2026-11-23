@@ -38,7 +38,13 @@ struct ModeOrbView: View {
         .scaleEffect(pressing && !reduced ? ModeHubSpec.holdPressScale : 1)
         .animation(reduced ? nil : ModeHubSpec.pillSpring, value: open)
         .animation(reduced ? nil : ModeHubSpec.tickSpring, value: pressing)
-        .onDisappear { holdTask?.cancel(); collapseTask?.cancel() }
+        .onDisappear {
+            holdTask?.cancel()
+            holdTask = nil
+            collapseTask?.cancel()
+            pressing = false
+            held = false
+        }
         .accessibilityElement(children: .contain)
         .accessibilityAction(.escape) { collapse() }
     }
