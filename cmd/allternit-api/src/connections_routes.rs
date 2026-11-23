@@ -345,9 +345,19 @@ pub(crate) async fn connect_chatgpt_with(bin: &std::path::Path, accept: Option<&
         Some("needs") if first.get("reason_code").and_then(Value::as_str) == Some("disclosure_required") => {
             disclosure_required(first.get("disclosure").cloned().unwrap_or(Value::Null))
         }
-        Some("on") => Json(json!({ "state": "on" })).into_response(),
+        Some("on") => {
+            refresh_model_list_after_sign_in_change("signed in");
+            Json(json!({ "state": "on" })).into_response()
+        }
         _ => err(StatusCode::INTERNAL_SERVER_ERROR, "could_not_start", "Could not start. Try again"),
     }
+}
+
+/// After a ChatGPT device sign-in or sign-out finishes, gizzi re-reads its model list. Called once per
+/// transition. Gizzi reloads when idle, so a running chat is not stopped (cli_tools::reload_gizzi).
+fn refresh_model_list_after_sign_in_change(what: &'static str) {
+    tracing::info!(what, "chatgpt device sign-in changed; refreshing gizzi's model list");
+    tokio::spawn(crate::cli_tools::reload_gizzi());
 }
 
 fn find_row(id: &str) -> Option<&'static CliRow> {
@@ -385,17 +395,14 @@ fn row_json(
 // ─── Row building ─────────────────────────────────────────────────────────────
 
 async fn cli_row(r: &'static CliRow, src: String) -> Value {
-    // ChatGPT signed in on this computer (gizzi) wins; Codex answers otherwise.
+    // The `chatgpt` row is the ChatGPT device sign-in only (contract 9.9). Codex has its own `codex` row.
     if r.id == "chatgpt" {
         if let Some(bin) = crate::cloud_worker::gizzi_bin() {
             if let Some(status) = chatgpt_device_status(&bin).await {
-                let codex = codex_chatgpt_row(r, src.clone()).await;
-                if status.get("state").and_then(Value::as_str) != Some("off") || codex["state"] != "on" {
-                    return chatgpt_row_from_status(&status, &src);
-                }
-                return codex;
+                return chatgpt_row_from_status(&status, &src);
             }
         }
+        return row_json(r, "off", None, None, false, Some("Not available on this computer."), vec![], &src);
     }
     codex_chatgpt_row(r, src).await
 }
@@ -435,7 +442,7 @@ async fn codex_chatgpt_row(r: &'static CliRow, src: String) -> Value {
     if signed_in {
         let found = match (r.id, who) {
             (_, Some(w)) => w,
-            ("chatgpt", None) => "Signed in with Codex".to_string(),
+            ("codex", None) => "Signed in with Codex".to_string(),
             _ => "Signed in on this computer".to_string(),
         };
         return row_json(r, "on", Some(found), None, true, None, models, &src);
@@ -532,6 +539,7 @@ async fn connect(Path(id): Path<String>, headers: HeaderMap, body: Option<Json<C
             let accept = body.as_ref().and_then(|b| b.accept_disclosure.as_deref());
             return connect_chatgpt_with(&bin, accept).await;
         }
+        return err(StatusCode::CONFLICT, "could_not_start", "Not available on this computer.");
     }
     let (Some(r), true) = (find_row(&id), true) else {
         return err(StatusCode::NOT_FOUND, "unknown_connection", "Nothing here to connect.");
@@ -587,6 +595,8 @@ async fn submit(Path(id): Path<String>, headers: HeaderMap, Json(body): Json<Sub
                 return refused;
             }
         }
+        // The device sign-in finishes in the browser; there is no code to paste, and no Codex fallback.
+        return err(StatusCode::CONFLICT, "could_not_start", "Finish signing in in the browser window.");
     }
     let Some(r) = find_row(&id) else {
         return err(StatusCode::NOT_FOUND, "unknown_connection", "Nothing here to connect.");
@@ -622,13 +632,19 @@ async fn login_status(Path(id): Path<String>, headers: HeaderMap) -> Response {
                 // A device sign-in this server started, or one already done: gizzi answers.
                 if running || word == "done" {
                     if word != "pending" {
-                        CHATGPT_SIGN_IN.lock().await.take();
+                        // The poll that ends a sign-in this server started is the one transition: refresh once.
+                        let ended = CHATGPT_SIGN_IN.lock().await.take().is_some();
+                        if ended && word == "done" {
+                            refresh_model_list_after_sign_in_change("signed in");
+                        }
                     }
                     let row = (word == "done").then(|| chatgpt_row_from_status(&status, &source()));
                     return Json(json!({ "status": word, "row": row })).into_response();
                 }
             }
         }
+        // Not a Codex sign-in: this row never falls through to the `codex` row.
+        return Json(json!({ "status": "expired", "row": null })).into_response();
     }
     let Some(r) = find_row(&id) else {
         return err(StatusCode::NOT_FOUND, "unknown_connection", "Nothing here to connect.");
@@ -666,11 +682,16 @@ async fn disconnect(Path(id): Path<String>, headers: HeaderMap) -> Response {
             if on {
                 // Revokes at OpenAI, then deletes the tokens on this computer.
                 return match gizzi_json(&bin, &["connect", "disconnect", "chatgpt", "--json"], 45).await {
-                    Some(v) if v["state"] == "off" => StatusCode::NO_CONTENT.into_response(),
+                    Some(v) if v["state"] == "off" => {
+                        refresh_model_list_after_sign_in_change("signed out");
+                        StatusCode::NO_CONTENT.into_response()
+                    }
                     _ => err(StatusCode::BAD_GATEWAY, "could_not_sign_out", "Could not sign out. Try again"),
                 };
             }
         }
+        // Nothing signed in here; never sign Codex out from the ChatGPT row.
+        return StatusCode::NO_CONTENT.into_response();
     }
     let Some(r) = find_row(&id) else {
         return err(StatusCode::NOT_FOUND, "unknown_connection", "Nothing here to disconnect.");
@@ -783,6 +804,21 @@ mod tests {
             assert!(row["source"].as_str().unwrap().starts_with("runtime:"));
             assert!(["off", "connecting", "on", "needs"].contains(&row["state"].as_str().unwrap()));
         }
+    }
+
+    #[test]
+    fn chatgpt_row_ignores_codex() {
+        // The chatgpt row is built from the device sign-in status alone: off stays off, whatever Codex is doing.
+        let off = chatgpt_row_from_status(&json!({"state":"off","models":[]}), "runtime:r1");
+        assert_eq!(off["id"], "chatgpt");
+        assert_eq!(off["state"], "off");
+        assert_eq!(off["found"], Value::Null);
+        assert_eq!(off["models"].as_array().unwrap().len(), 0);
+        let on = chatgpt_row_from_status(&json!({"state":"on","found":"ChatGPT Plus","models":["chatgpt/gpt-6.1-sol"]}), "runtime:r1");
+        assert_eq!(on["state"], "on");
+        assert_eq!(on["models"][0], "chatgpt/gpt-6.1-sol");
+        // Codex keeps its own row.
+        assert!(CLI_ROWS.iter().any(|r| r.id == "codex" && r.tool == "codex-cli"));
     }
 
     #[test]
