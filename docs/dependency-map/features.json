@@ -5423,6 +5423,34 @@
         "allternit/surfaces/docs/dev/aci-image-jobs.mdx",
         "allternit/cmd/gizzi-code/src/runtime/tools/builtins/media-generate.ts"
       ]
+    },
+    {
+      "id": "feature:media-generation",
+      "label": "Picture and motion generation with live progress",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "media_generate renders pictures and motion from code, or requests ChatGPT images in the same device’s ACI browser. Live progress carries real stages, thumbnails and download bytes to chat and the Motion editor.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/gizzi-code/src/runtime/server",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit-ai/src/components/ai-elements",
+        "allternit-ai/src/lib/media"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-21",
+          "note": "Eoj approved the generation-experience plan (~/.claude/plans/generation-experience-2026-11-20.md): one progress contract (PaneRender.ProgressDetail, POST /pane-render/:id/progress, pane_render.progress event, forwarded by media_generate as metadata.progress_detail) that every surface mirrors."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/media-generate.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/pane-render/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes/pane-render.ts",
+        "allternit-ai/src/components/ai-elements/GeneratedMediaCard.tsx",
+        "allternit-ai/src/components/ai-elements/process/RenderingCard.tsx"
+      ]
     }
   ],
   "journeys": [
