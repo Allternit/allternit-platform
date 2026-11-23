@@ -394,6 +394,18 @@ export type MeshStatus = {
   proxies: Array<{ target: string; url: string }>;
 };
 
+// ─── Computer port forwarding (Computers console, forward-manager.ts) ────────
+const computerForwardAPI = {
+  open: (req: { computerId: string; remotePort: number; localPort?: number; label?: string }) => ipcRenderer.invoke('computer-forward:open', req),
+  close: (id: string): Promise<void> => ipcRenderer.invoke('computer-forward:close', id),
+  list: () => ipcRenderer.invoke('computer-forward:list'),
+  onEvent: (handler: (event: unknown) => void): (() => void) => {
+    const listener = (_e: unknown, event: unknown) => handler(event);
+    ipcRenderer.on('computer-forward:event', listener);
+    return () => ipcRenderer.removeListener('computer-forward:event', listener);
+  },
+};
+
 const meshAPI = {
   start: (): Promise<MeshStatus> => ipcRenderer.invoke('mesh:start'),
   stop: (): Promise<MeshStatus> => ipcRenderer.invoke('mesh:stop'),
@@ -1356,6 +1368,7 @@ const allternitDesktopAPI = {
   auth: authAPI,
   devicePairing: devicePairingAPI,
   mesh: meshAPI,
+  computerForward: computerForwardAPI,
   filesDrive: filesDriveAPI,
   shell: shellAPI,
   office: officeAPI,

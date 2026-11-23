@@ -210,6 +210,9 @@ Errors:
 
 `POST /api/v1/computers/:id/forward` with `{ remotePort }` returns `{ url, ticket, expiresInSeconds }` (30 seconds). Connect to `url?ticket=`. The ticket is single use. One WebSocket carries one raw TCP stream: binary frames both ways, no ready text frame. Mint one ticket per TCP connection. The node side is `/v1/host/forward?port=N` (1 to 65535): it dials `127.0.0.1:N`, replies `socket_ready` (or `socket_close` code 1011), then pumps bytes as base64 `socket_data`. The relay connection is the authentication and no approval is needed.
 
+
+**Desktop client (step 3.10).** Allternit Desktop main (`forward-manager.ts`) listens on `127.0.0.1:<local port>` and, for each TCP connection, mints a ticket, opens the WebSocket and pumps bytes. The local port is the one the person typed, taken exactly or reported busy; the default (same as the remote port) slides to the next free port. It asks the relay once when the tunnel opens, so asleep (409) and offline (503) are told before a local port is taken. A WebSocket closed with 1011 closes the tunnel with "service stopped". Tunnels close when Desktop quits. The renderer uses `window.allternit.computerForward` (`open`, `close`, `list`, `onEvent`) only; the web browser shows "Open in Desktop" and the phone layout a note.
+
 ## Further console routes
 
 | Route | Body and result | Status |

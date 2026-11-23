@@ -97,6 +97,7 @@ import { connectionSettingsTarget, isWorkspaceLoadFailure, OPEN_COMPUTERS_SETTIN
 // left Settings → Devices failing with "No handler registered".
 import './device-pairing-manager.js';
 import { meshManager } from './mesh-manager.js';
+import './forward-manager.js';
 import { filesDriveManager } from './files-drive-manager.js';
 import { startMeshBridgeServer } from './mesh-bridge-server.js';
 import { createStartupWindow } from './startup-window.js';
