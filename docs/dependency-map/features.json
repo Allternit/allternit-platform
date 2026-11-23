@@ -21,7 +21,14 @@
         "allternit-ai/src/lib/tasks",
         "allternit/cmd/allternit-api/src/cowork",
         "allternit/cmd/allternit-api/src/cowork_*",
-        "allternit/platform/packages/cowork-engine"
+        "allternit/platform/packages/cowork-engine",
+        "allternit-ai/src/shell/mode-hub",
+        "allternit-ai/src/shell/new-item.ts",
+        "allternit-ai/src/fabric-session/phone",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat",
+        "allternit/surfaces/allternit-mobile/ios/Features/Shell",
+        "allternit/surfaces/allternit-mobile/android/feature/shell",
+        "allternit/surfaces/docs/guides/chat-composer.mdx"
       ],
       "decisions": [
         {
@@ -59,6 +66,10 @@
         {
           "on": "2026-11-17",
           "note": "System prompts wave 3: the TUI prompt (cli/ui/ink-app/constants/prompts.ts) starts from the runtime base-code and safety text and keeps only TUI sections; built-in agent prompts (explore, plan, verification; runtime and TUI copies), the built-in catalog, both coordinator prompts, mission orchestrator and design critique prompts are rewritten as rules; the voice call persona is Gizzi (cloud-api voice_calls_cloud.rs) with a rewritten call summary prompt and coordinator worker prompts. Chat manuals load per turn (ai withInteractiveAnswers; gateway manual_for loads one template line). Guard: test/session/system-prompt-guard.test.ts. Docs: core/system-prompts.mdx."
+        },
+        {
+          "on": "2026-11-23",
+          "note": "Approved composer cleanup: remove Output; filled plus; keyboard-only focus; one-line rest with icon Runtime/Brain chips and labeled chips top right when open; Tools behind sliders. Shelves hub via mode orb replaces phone hamburger hold/fan. New orb above session composers, with Quick task; overview and drawer New remain. Native iOS and Android adapt the same contract. Implementation awaiting build train."
         }
       ],
       "evidence": [
