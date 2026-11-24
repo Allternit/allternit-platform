@@ -618,6 +618,7 @@
 		A776ECF1B96ACCFF43C98D93 /* ArtifactModeGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5DEE1077913C64B8B109927 /* ArtifactModeGallery.swift */; };
 		A7846C5ABD81DC26528ED1AF /* ChatGPTOAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 239FCBB65388CB8EC3F92C78 /* ChatGPTOAuth.swift */; };
 		A7CBE1CF548F349674847F10 /* SessionDiffClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66D32A152B8E7658FE8E4F00 /* SessionDiffClient.swift */; };
+		A7D5C1304D9D381A8FF675F1 /* ModeArrivalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31F59AFBAC6D9F4B90BDD926 /* ModeArrivalView.swift */; };
 		A8617FB11A410A8BA6511CA1 /* SessionOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D67DA49FC0BE293248CD0D62 /* SessionOverviewView.swift */; };
 		A88B703279AC0473D1ACA7E0 /* SecureEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEDA41D5C2B85B3C79DA95FD /* SecureEnvelope.swift */; };
 		A88BCC361550F9FBE57C85AE /* DecideIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 171BCC12EDA4F66CEB80E43C /* DecideIntents.swift */; };
@@ -1237,6 +1238,7 @@
 		302A6416DE266F5195F08582 /* NodesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodesStore.swift; sourceTree = "<group>"; };
 		31906E53E13F148C15E53F18 /* MeetYourBotsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetYourBotsView.swift; sourceTree = "<group>"; };
 		31B1C4FC19D94EEE7F561655 /* AllternitShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = AllternitShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		31F59AFBAC6D9F4B90BDD926 /* ModeArrivalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModeArrivalView.swift; sourceTree = "<group>"; };
 		31F8509A5A698D3AE1311CAC /* CodeSessionParsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeSessionParsing.swift; sourceTree = "<group>"; };
 		3205192CB5B62ACC0909EEA5 /* ActivityTokenClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityTokenClient.swift; sourceTree = "<group>"; };
 		324344A5DC94AD9D1F524C6F /* ConnectComputerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectComputerView.swift; sourceTree = "<group>"; };
@@ -2542,6 +2544,7 @@
 				34429F16AC2D1219E4E8CE9C /* BotsDrawerRail.swift */,
 				E44332C83123F7464F36D69E /* CustomizeViews.swift */,
 				66FD35F18B3062FF97F7BF10 /* InboxSheet.swift */,
+				31F59AFBAC6D9F4B90BDD926 /* ModeArrivalView.swift */,
 				AB5C3EAC8540F8EE15999F62 /* ModeIntros.swift */,
 				C7897BA4CEED5704C356EB36 /* NativeSessionPickerSheet.swift */,
 				746581C22A7F7F2E8019787C /* OverviewBulkActions.swift */,
@@ -4823,6 +4826,7 @@
 				1CA10FA52947ECFA94C78B73 /* MiniAppCatalogStore.swift in Sources */,
 				F5AE3243CDCD3417161D9BDF /* MiniAppRuntimeView.swift in Sources */,
 				554F846E9556C106AED8763C /* MiniAppsStoreView.swift in Sources */,
+				A7D5C1304D9D381A8FF675F1 /* ModeArrivalView.swift in Sources */,
 				01E9BC3F02522F5FC05CBEB2 /* ModeHubSheet.swift in Sources */,
 				CB1B6A64F746242B4BE11833 /* ModeHubSpec.swift in Sources */,
 				937A45ADCE190EA57C4BBA1C /* ModeIntros.swift in Sources */,
