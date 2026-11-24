@@ -39,11 +39,11 @@ enum ByteLoading {
     }
 }
 
-/// Download option B, "sharpens as it loads": the poster goes from blurred
-/// to sharp by the real fraction of bytes in; an unknown size holds the blur
-/// at 16 and shows a small spinner. The status line gives bytes, percent and
-/// ETA ("— ETA" when there is none). Reduce Motion: the blur steps with the
-/// bytes and nothing animates or spins.
+/// Download "dots resolve as it loads": the poster is halftone dots that get
+/// finer by the real fraction of bytes in (a band of dots until the poster
+/// arrives); an unknown size holds the coarse dots and shows a small spinner. The status line gives bytes, percent and
+/// ETA ("— ETA" when there is none). Reduce Motion: a fixed medium
+/// halftone, and nothing animates or spins.
 struct ByteLoadingView: View {
     var posterURL: String?
     var progress: ByteProgress?
@@ -53,17 +53,14 @@ struct ByteLoadingView: View {
     @State private var poster: UIImage?
 
     var body: some View {
-        let blur = ByteProgressText.blur(progress)
         let line = ByteProgressText.status(verb: verb, progress ?? ByteProgress(bytes: 0))
         ZStack(alignment: .bottom) {
             Color("FillNeutral")
             if let poster {
-                Image(uiImage: poster)
-                    .resizable()
-                    .scaledToFill()
-                    .blur(radius: blur)
-                    .clipped()
-                    .animation(reduceMotion ? nil : .linear(duration: 0.25), value: blur)
+                // Halftone poster, finer by the real byte fraction; unknown size holds coarse.
+                DotFieldView(mode: .halftone(poster, fraction: progress?.fraction))
+            } else {
+                DotFieldView(mode: .field(.band, amplitude: 0.45))
             }
             HStack(spacing: 8) {
                 if progress?.fraction == nil && !reduceMotion { ProgressView().controlSize(.mini) }
