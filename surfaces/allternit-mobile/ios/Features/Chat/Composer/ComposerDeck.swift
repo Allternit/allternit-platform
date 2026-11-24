@@ -80,10 +80,8 @@ struct ComposerDeckBand: View {
     /// True while one of the band's sheets is up, so the folded band does not
     /// close under it when the keyboard focus moves (contract C1).
     var onSheetActive: ((Bool) -> Void)? = nil
-    /// The card's radius (expanded) — the tray's bottom corners match it.
-    var cornerRadius: CGFloat = 22
-    /// How far the tray tucks under the card's bottom edge.
-    private let overlap: CGFloat = 18
+    /// The tray's own bottom corners (the deck's size before the tray).
+    private let radius: CGFloat = 16
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -117,21 +115,22 @@ struct ComposerDeckBand: View {
             }
             .padding(.horizontal, variant == .full ? 16 : 12)
         }
-        // Tucked under the card (the card keeps four round corners and sits
-        // above): top padding = overlap + 8 clears it.
-        .padding(.top, overlap + 8)
+        // Full width and tucked under the card past its round bottom
+        // corners, so the tray fills them and its side walls run on from the
+        // card's sides. Only the part below the card shows: 14 (12) above
+        // the row, 52 (40) tall at least, the deck's size before the tray.
+        .padding(.top, (variant == .full ? 14 : 12) + DeckTuck.underCard)
         .padding(.bottom, variant == .full ? 8 : 6)
-        .frame(minHeight: (variant == .full ? 52 : 40) + overlap)
+        .frame(minHeight: (variant == .full ? 52 : 40) + DeckTuck.underCard)
         .background(
-            UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius)
+            UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius)
                 .fill(Color("FillNeutral"))
         )
         .overlay(
-            DeckOutline(radius: cornerRadius)
+            DeckOutline(radius: radius)
                 .stroke(Color("BorderSubtle"), lineWidth: 1)
         )
-        .padding(.horizontal, 6)
-        .padding(.top, -overlap)
+        .padding(.top, -DeckTuck.underCard)
         .onChange(of: isManagePluginsPresented || isArtifactsPresented) { _, active in
             onSheetActive?(active)
         }
@@ -289,6 +288,15 @@ struct ComposerDeckBand: View {
         guard !inputText.contains(tag) else { return }
         inputText = tag + inputText
     }
+}
+
+/// How far the bottom tray runs in under the composer card. The card is
+/// open (continuous corners, radius 22) whenever the tray shows, and a
+/// continuous corner starts curving about 1.53 radii from the edge, so 34
+/// clears it: the tray's walls start behind the card's straight sides and
+/// meet them with no notch at the corners.
+enum DeckTuck {
+    static let underCard: CGFloat = 34
 }
 
 /// Sides and bottom of the deck tray — its top edge hides under the card.
