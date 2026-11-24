@@ -101,8 +101,8 @@ struct CustomizeSectionHero<Actions: View>: View {
             }
             .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
             .background(palette.bg)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(palette.border, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(palette.border, lineWidth: 1))
             .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: index)
             .task(id: items.count) {
                 guard items.count > 1, !reduceMotion else { return }

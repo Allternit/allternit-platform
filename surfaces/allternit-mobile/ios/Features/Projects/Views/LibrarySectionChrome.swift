@@ -113,6 +113,8 @@ struct LibraryFloatingBar<NewMenu: View>: View {
     let newLabel: String
     var wide: Wide = .search
     var newDisabled = false
+    /// Opt-in polish glass surface (Automation) instead of the elevated float surface.
+    var glass = false
     /// Plain New action; ignored when `newMenu` is non-empty.
     var onNew: (() -> Void)? = nil
     /// Menu items for New (the web's renderNew menus). Pass as `newMenu:`: a
@@ -134,7 +136,7 @@ struct LibraryFloatingBar<NewMenu: View>: View {
                         .font(.system(size: 19))
                         .foregroundColor(Color("TextPrimary"))
                         .frame(width: 46, height: 46)
-                        .modifier(FloatSurface(shape: Circle()))
+                        .modifier(FloatSurface(shape: Circle(), glass: glass))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(placeholder)
@@ -177,7 +179,7 @@ struct LibraryFloatingBar<NewMenu: View>: View {
         .padding(.trailing, 8)
         .frame(height: 46)
         .frame(maxWidth: .infinity)
-        .modifier(FloatSurface(shape: Capsule()))
+        .modifier(FloatSurface(shape: Capsule(), glass: glass))
     }
 
     @ViewBuilder
@@ -202,7 +204,7 @@ struct LibraryFloatingBar<NewMenu: View>: View {
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(Color("TextPrimary"))
                 .frame(width: 46, height: 46)
-                .modifier(FloatSurface(shape: Circle()))
+                .modifier(FloatSurface(shape: Circle(), glass: glass))
                 .opacity(newDisabled ? 0.6 : 1)
         } else {
             HStack(spacing: 8) {
@@ -215,7 +217,7 @@ struct LibraryFloatingBar<NewMenu: View>: View {
             .foregroundColor(Color("TextPrimary"))
             .padding(.horizontal, 18)
             .frame(height: 46)
-            .modifier(FloatSurface(shape: Capsule()))
+            .modifier(FloatSurface(shape: Capsule(), glass: glass))
             .opacity(newDisabled ? 0.6 : 1)
         }
     }
@@ -238,12 +240,13 @@ struct LibraryFloatingBar<NewMenu: View>: View {
 
 extension LibraryFloatingBar where NewMenu == EmptyView {
     init(query: Binding<String>, placeholder: String = "Search", newLabel: String, wide: Wide = .search,
-         newDisabled: Bool = false, onNew: @escaping () -> Void) {
+         newDisabled: Bool = false, glass: Bool = false, onNew: @escaping () -> Void) {
         self._query = query
         self.placeholder = placeholder
         self.newLabel = newLabel
         self.wide = wide
         self.newDisabled = newDisabled
+        self.glass = glass
         self.onNew = onNew
         self.newMenu = { EmptyView() }
     }

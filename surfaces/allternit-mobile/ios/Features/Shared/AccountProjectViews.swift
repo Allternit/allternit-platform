@@ -3,12 +3,56 @@ import SwiftUI
 /// One neutral line for a screen whose computer parts are empty because
 /// there is no computer: "<text> · Connect". Connect opens the connect kit
 /// (the same sheet as the composer's computer chip). Never red.
+///
+/// `.card` (opt-in): a white card with a small glass Connect button, for
+/// screens whose whole body is the no-computer state (Projects, Automation).
 struct NeedsComputerLine: View {
+    enum Style { case line, card }
+
     let text: String
+    var style: Style = .line
 
     @State private var isConnectPresented = false
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        Group {
+            switch style {
+            case .line: line
+            case .card: card
+            }
+        }
+        .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
+    }
+
+    private var card: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "desktopcomputer")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color("TextSecondary"))
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.system(size: 14))
+                .foregroundStyle(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            GlassPill(title: "Connect") { isConnectPresented = true }
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 10)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(scheme == .dark ? Color(white: 0.14) : Color.white)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(PolishTokens.glassBorder, lineWidth: 0.5)
+        )
+        .accessibilityElement(children: .contain)
+    }
+
+    private var line: some View {
         HStack(spacing: 6) {
             Image(systemName: "desktopcomputer")
                 .font(.system(size: 12, weight: .medium))
@@ -36,7 +80,6 @@ struct NeedsComputerLine: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
     }
 }
 
