@@ -931,7 +931,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
 
         // First-visit mode intros and the Bots arrivals (web W12/W13, iOS I12/I13).
         ModeIntroHost(mode, botsStore)
-        ModeArrivals(mode, onBotsHome = page == ShellPage.Home, openBotId = botsLaunch.openBotId, botsStore = botsStore)
+        ModeArrivals(mode, onBotsHome = page == ShellPage.Home, botsStore = botsStore)
 
         ModeHubSheet(
             visible = hubOpen,

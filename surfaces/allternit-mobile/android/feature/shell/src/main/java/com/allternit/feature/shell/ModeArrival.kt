@@ -32,6 +32,7 @@ import com.allternit.core.design.PolishGlass
 import com.allternit.core.design.PolishHaptic
 import com.allternit.core.design.rememberReducedMotion
 import com.allternit.feature.bots.BotAvatar
+import com.allternit.feature.bots.BotRosterPositions
 import com.allternit.feature.bots.BotModeStore
 import com.allternit.feature.bots.BotRecord
 import kotlinx.coroutines.delay
@@ -79,7 +80,9 @@ private class ArrivalState {
  * draws nothing. The overlay never takes touches and is hidden from accessibility.
  */
 @Composable
-internal fun ModeArrivals(mode: ShellMode, onBotsHome: Boolean, openBotId: String?, botsStore: BotModeStore) {
+internal fun ModeArrivals(mode: ShellMode, onBotsHome: Boolean, botsStore: BotModeStore) {
+    // Every way into a bot (a pick on the Bots home, a link, a shelf, a new bot) lands here once.
+    val openBotId = botsStore.focusedBotId
     val reduced = rememberReducedMotion()
     val view = LocalView.current
     val state = remember { ArrivalState() }
@@ -103,6 +106,9 @@ internal fun ModeArrivals(mode: ShellMode, onBotsHome: Boolean, openBotId: Strin
         }
         state.teamArmedAt = 0L
         if (reduced) return@LaunchedEffect
+        // Let the roster lay out, then land on its real faces. Not on screen: skip, never fake it.
+        delay(200)
+        if (team.none { BotRosterPositions.faces.containsKey(it.id) }) return@LaunchedEffect
         state.teamPlaying = true
         team.indices.forEach { i ->
             launch {
@@ -141,17 +147,17 @@ internal fun ModeArrivals(mode: ShellMode, onBotsHome: Boolean, openBotId: Strin
 @Composable
 private fun TeamArrivalLayer(team: List<BotRecord>) {
     BoxWithConstraints(Modifier.fillMaxSize().clearAndSetSemantics { }.testTag("teamArrival")) {
-        val size = 48.dp
-        val gap = 22.dp
-        val rowTop = 116.dp
-        val fromY = maxHeight - rowTop - 120.dp
         val fade = remember { Animatable(1f) }
         LaunchedEffect(Unit) {
             delay(ArrivalSpec.TEAM_RESET_MS - 250)
             fade.animateTo(0f, tween(250))
         }
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val fromCenter = with(density) { androidx.compose.ui.geometry.Offset(maxWidth.toPx() / 2f, maxHeight.toPx()) }
         Box(Modifier.fillMaxSize().graphicsLayer { alpha = fade.value }) {
             team.forEachIndexed { i, bot ->
+                // The face's real spot, read when this arrival starts; a bot that is off screen is not drawn.
+                val target = remember { BotRosterPositions.faces[bot.id] } ?: return@forEachIndexed
                 val color = botColor(bot, PolishGlass.Coral)
                 val wash = remember { Animatable(0f) }
                 val fly = remember { Animatable(0f) }
@@ -160,16 +166,23 @@ private fun TeamArrivalLayer(team: List<BotRecord>) {
                     launch { wash.animateTo(1f, tween(450)); wash.animateTo(0f, tween(650)) }
                     fly.animateTo(1f, spring(ArrivalSpec.TEAM_DAMPING, ArrivalSpec.TEAM_STIFFNESS))
                 }
-                val x = 20.dp + (size + gap) * i
-                val centerX = maxWidth / 2 - size / 2
+                val size = with(density) { target.width.toDp() }
                 Box(
-                    Modifier.offset(x - 40.dp, rowTop - 60.dp).size(size + 80.dp, 170.dp)
+                    Modifier
+                        .offset { androidx.compose.ui.unit.IntOffset((target.left - 40.dp.toPx()).toInt(), (target.top - 60.dp.toPx()).toInt()) }
+                        .size(size + 80.dp, 170.dp)
                         .graphicsLayer { alpha = wash.value }
                         .background(Brush.radialGradient(listOf(color.copy(alpha = 0.32f), Color.Transparent))),
                 )
                 Box(
                     Modifier
-                        .offset(centerX + (x - centerX) * fly.value, rowTop + fromY * (1f - fly.value))
+                        .offset {
+                            val t = fly.value
+                            androidx.compose.ui.unit.IntOffset(
+                                (fromCenter.x - target.width / 2f + (target.left - (fromCenter.x - target.width / 2f)) * t).toInt(),
+                                (fromCenter.y + (target.top - fromCenter.y) * t).toInt(),
+                            )
+                        }
                         .graphicsLayer {
                             val s = 0.3f + 0.7f * fly.value
                             scaleX = s; scaleY = s; alpha = fly.value.coerceIn(0f, 1f)

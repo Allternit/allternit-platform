@@ -223,3 +223,12 @@ composerToolsTab, composerDeck, deckPluginsMore, deckPluginsManage, deckPlugin<n
 
 ## Claude organization + Connected apps (Android)
 connected-apps-page, connected-apps-empty, connected-app-<id>, connected-app-sheet, connected-app-cap, connected-app-cap-down, connected-app-cap-up, connected-app-save, connected-app-revoke, connected-app-revoke-confirm, privacyConnectedApps, claude-org-link, claude-org-relink, claude-org-unlink, claude-org-unlink-confirm, error-use-credits, error-link-again, error-manage-claude-org, error-linked-platforms
+
+## Mode arrivals (Android, D10)
+
+Non-interactive overlays: they take no touches and are hidden from accessibility, so flows can only assert them for presence, never tap them.
+
+| ID | What |
+|---|---|
+| teamArrival | The team flying up into the Bots roster (1.1 s) |
+| botArrival | The wash and big avatar when a bot opens (2.3 s) |
