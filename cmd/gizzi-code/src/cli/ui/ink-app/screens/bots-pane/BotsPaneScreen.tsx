@@ -28,6 +28,7 @@ import { useRegisterOverlay } from '../../context/overlayContext'
 import { getBotRosterRows } from '@/runtime/bots/bot-roster.js'
 import { createBot, deleteBot, BotStoreError } from '@/runtime/bots/bot-store.js'
 import { BotsRowList } from './BotsRowList'
+import { BlockTitle } from '../../components/BlockTitle'
 import { handleBotsPaneKey } from './keys'
 import { openBotChat } from './open-bot-chat'
 import { useNotifications } from '../../../../../context/notifications'
@@ -205,6 +206,7 @@ export function BotsPaneScreen(): React.ReactNode {
 
   return (
     <Box flexDirection="column" width={columns} height={termRows} paddingX={1}>
+      <BlockTitle title="BOTS" />
       <Box flexDirection="row" justifyContent="space-between">
         <Text bold color="gizzi">
           Gizzi Code · Bots

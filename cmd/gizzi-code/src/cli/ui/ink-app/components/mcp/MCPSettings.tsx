@@ -11,6 +11,7 @@ import { MCPRemoteServerMenu } from './MCPRemoteServerMenu';
 import { MCPStdioServerMenu } from './MCPStdioServerMenu';
 import { MCPToolDetailView } from './MCPToolDetailView';
 import { MCPToolListView } from './MCPToolListView';
+import { BlockTitle } from '../BlockTitle';
 import type { AgentMcpServerInfo, MCPViewState, ServerInfo } from './types';
 type Props = {
   onComplete: (result?: string, options?: {
@@ -127,7 +128,7 @@ export function MCPSettings({
             agentServer
           });
 
-        const t11 = <MCPListPanel servers={servers} agentServers={agentMcpServers} onSelectServer={t9} onSelectAgentServer={t10} onComplete={onComplete} defaultTab={viewState.defaultTab} />;
+        const t11 = <><BlockTitle title="MCP" /><MCPListPanel servers={servers} agentServers={agentMcpServers} onSelectServer={t9} onSelectAgentServer={t10} onComplete={onComplete} defaultTab={viewState.defaultTab} /></>;
 
         return t11;
       }
