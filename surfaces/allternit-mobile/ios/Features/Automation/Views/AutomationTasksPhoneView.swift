@@ -194,40 +194,39 @@ struct AutomationTasksPhoneView: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
-            LibrarySectionHeader(title: "Automation Tasks", onMenu: { openLibraryDrawer($isSidebarOpen) }) {
-                Button { isFilterPresented = true } label: {
-                    PhoneFilterButtonLabel(active: filtersOn)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Filter and sort")
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if noComputer {
-                        NeedsComputerLine(text: "Automation tasks run on your computer")
-                            .padding(.bottom, 8)
-                    }
+        NavigationStack {
+            PolishedTabPage(
+                title: "Automation Tasks",
+                description: "Goals, routines and loops that run on your computer and report back.",
+                introKey: .automation,
+                hero: { AutomationIntroHero() }
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    if noComputer { AutomationNeedsComputerCard(text: "Automation tasks run on your computer") }
                     if let error { errorBanner(error) }
                     if let actionError = store.actionError { errorBanner(actionError) }
-                    typeAndViewBar.padding(.bottom, 12)
+                    typeAndViewBar
                     if !noComputer { keepAwakeBanner }
-                    mainContent.padding(.top, 20)
+                    SectionLabel("Your tasks")
+                    mainContent
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                // Clears the floating bar.
-                .padding(.bottom, 96)
             }
             .refreshable { await loadAll() }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    PhoneMenuButton(round: true, onOpen: { openLibraryDrawer($isSidebarOpen) })
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    GlassCircleButton(systemImage: filtersOn ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease",
+                                      label: "Filter and sort", size: 36) { isFilterPresented = true }
+                }
+            }
         }
-        .background(Color("BgPrimary").ignoresSafeArea())
         .overlay(alignment: .bottom) {
-            LibraryFloatingBar(
+            AutomationGlassBar(
                 query: $searchQuery,
                 placeholder: "Search automation tasks",
                 newLabel: "New task",
-                wide: .new,
                 newMenu: {
                     Button { newTask = NewTask(kind: activeKind ?? .routine) } label: { Label("Set up manually", systemImage: "plus") }
                     Button(action: startWithAssistant) { Label("Create with Assistant", systemImage: "cpu") }
@@ -277,9 +276,13 @@ struct AutomationTasksPhoneView: View {
     /// Desktop's tab strip and List / Graph / Calendar switch, on the screen
     /// rather than behind the filter button.
     private var typeAndViewBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             AutomationTypeTabs(selection: $activeTab)
-            AutomationViewToggle(selection: $routinesViewRaw)
+                .padding(.horizontal, -14)
+            SlidingSegmented(
+                items: RoutinesView.allCases.map { .init(id: $0.rawValue, title: $0.label) },
+                selection: $routinesViewRaw
+            )
         }
     }
 
@@ -508,37 +511,19 @@ struct AutomationTasksPhoneView: View {
             .font(.system(size: 13))
             .foregroundColor(Color("TextTertiary"))
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 80)
+            .padding(.vertical, 40)
         } else {
             emptyState(
                 title: searchQuery.isEmpty ? "No automation tasks yet" : "No tasks match your search",
                 message: searchQuery.isEmpty
-                    ? "Tap 'New task' to configure your first Goal, Routine, or Loop."
+                    ? "Tap New task to set up your first Goal, Routine or Loop."
                     : "Try another search or type."
             )
-            .padding(.vertical, 80)
         }
     }
 
     private func emptyState(title: String, message: String) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: "clock")
-                .font(.system(size: 48))
-                .foregroundColor(Color("TextTertiary"))
-                .opacity(0.25)
-                .padding(.bottom, 6)
-            Text(title)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundColor(Color("TextSecondary"))
-            Text(message)
-                .font(.system(size: 13))
-                .foregroundColor(Color("TextTertiary"))
-                .lineSpacing(5)
-                .frame(maxWidth: 280)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 24)
+        EmptyBox(icon: "clock", title: title, line: message)
     }
 
     // MARK: - Actions
@@ -1220,85 +1205,310 @@ private struct LoopRunHistorySection: View {
 
 // MARK: - Type tabs and view switch
 
-/// Arc Tabs with Desktop's labels and icons: a muted strip whose selected tab
-/// is a raised card. It scrolls sideways on a narrow screen.
+/// Filter pills with Desktop's labels and icons: the picked pill is an ink
+/// chip that slides to the new pick (FilterPills look, plus the type icon and
+/// the Agent Heartbeats filter). It scrolls sideways on a narrow screen.
 private struct AutomationTypeTabs: View {
     @Binding var selection: AutomationTasksPhoneView.TaskTab
+    @Namespace private var ns
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
+                HStack(spacing: 8) {
                     ForEach(AutomationTasksPhoneView.TaskTab.allCases, id: \.self) { tab in
                         let on = selection == tab
-                        Button { selection = tab } label: {
+                        Button {
+                            guard !on else { return }
+                            Haptics.selection()
+                            withAnimation(reduceMotion ? nil : PolishTokens.base) { selection = tab }
+                        } label: {
                             HStack(spacing: 6) {
-                                Image(systemName: tab.icon).font(.system(size: 13))
-                                Text(tab.label).font(.system(size: 13, weight: .medium)).fixedSize()
+                                Image(systemName: tab.icon).font(.system(size: 12, weight: .semibold))
+                                Text(tab.label).font(.system(size: 14, weight: .semibold)).fixedSize()
                             }
-                            .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
-                            .padding(.horizontal, 12)
-                            .frame(height: 36)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(on ? Color("BgPanel") : Color.clear)
-                                    .shadow(color: .black.opacity(on ? 0.1 : 0), radius: 1, y: 1)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .stroke(on ? Color("BorderSubtle") : Color.clear, lineWidth: 1)
-                            )
-                            .contentShape(Rectangle().inset(by: -4))
+                            .foregroundStyle(on ? Color("BgPrimary") : PolishTokens.ink)
+                            .padding(.horizontal, 14)
+                            .frame(height: 34)
+                            .background {
+                                if on {
+                                    Capsule().fill(PolishTokens.ink)
+                                        .matchedGeometryEffect(id: "automationFilterPick", in: ns)
+                                } else {
+                                    Capsule().fill(PolishTokens.neutralFill)
+                                }
+                            }
+                            .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
                         .id(tab)
-                        .accessibilityAddTraits(on ? .isSelected : [])
+                        .accessibilityLabel(tab.label)
+                        .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
                         .accessibilityIdentifier("automationTab\(tab.rawValue)")
                     }
                 }
-                .padding(4)
+                .padding(.horizontal, 14)
             }
             .onChange(of: selection) { _, tab in
                 withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(tab, anchor: .center) }
             }
         }
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Task type")
     }
 }
 
-/// `Toggle` in RoutinesSchedule.tsx: List, Graph, Calendar.
-private struct AutomationViewToggle: View {
-    @Binding var selection: String
+/// White card for the no-computer state: the line plus a glass Connect button
+/// that opens the connect kit (same sheet NeedsComputerLine opens). Never red.
+private struct AutomationNeedsComputerCard: View {
+    let text: String
+    @State private var isConnectPresented = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(AutomationTasksPhoneView.RoutinesView.allCases, id: \.self) { view in
-                let on = selection == view.rawValue
-                Button { selection = view.rawValue } label: {
-                    Text(view.label)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(on ? Color("TextPrimary") : Color("TextTertiary"))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(on ? Color("BgPanel") : Color.clear)
-                                .shadow(color: .black.opacity(on ? 0.06 : 0), radius: 2, y: 1)
-                        )
-                        .contentShape(Rectangle().inset(by: -10))
+        HStack(spacing: 10) {
+            Image(systemName: "desktopcomputer")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color("TextSecondary"))
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            GlassPill(title: "Connect") { isConnectPresented = true }
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(PolishTokens.glassBorder, lineWidth: 0.5))
+        .accessibilityElement(children: .contain)
+        .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
+    }
+}
+
+/// Floating bottom bar, glass: a round search button that opens a search pill,
+/// and a "New task" pill with the same menu as before (LibraryFloatingBar's
+/// `.new` behaviour with the polish glass surface).
+private struct AutomationGlassBar<NewMenu: View>: View {
+    @Binding var query: String
+    let placeholder: String
+    let newLabel: String
+    @ViewBuilder var newMenu: () -> NewMenu
+
+    @State private var open = false
+    @FocusState private var focused: Bool
+
+    private var searching: Bool { open || !query.isEmpty }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if searching {
+                searchPill
+            } else {
+                Button {
+                    Haptics.light()
+                    open = true
+                    focused = true
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(PolishTokens.ink)
+                        .frame(width: 46, height: 46)
+                        .polishGlass(cornerRadius: 23)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityAddTraits(on ? .isSelected : [])
+                .accessibilityLabel(placeholder)
+                Spacer(minLength: 0)
+            }
+            Menu { newMenu() } label: { newFace }
+                .accessibilityLabel(newLabel)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 14)
+    }
+
+    private var searchPill: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16))
+                .foregroundStyle(Color("TextSecondary"))
+            TextField(placeholder, text: $query)
+                .font(.system(size: 16))
+                .foregroundStyle(PolishTokens.ink)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .focused($focused)
+                .onChange(of: focused) { _, isFocused in
+                    if !isFocused && query.isEmpty { open = false }
+                }
+            Button {
+                query = ""
+                open = false
+                focused = false
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color("TextSecondary"))
+                    .frame(width: 28, height: 28)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Clear search")
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+        .frame(height: 46)
+        .frame(maxWidth: .infinity)
+        .polishGlass(cornerRadius: 23)
+    }
+
+    @ViewBuilder
+    private var newFace: some View {
+        if searching {
+            Image(systemName: "plus")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(PolishTokens.ink)
+                .frame(width: 46, height: 46)
+                .polishGlass(cornerRadius: 23)
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: "plus").font(.system(size: 17, weight: .semibold))
+                Text(newLabel).font(.system(size: 16, weight: .medium)).lineLimit(1)
+            }
+            .foregroundStyle(PolishTokens.ink)
+            .padding(.horizontal, 18)
+            .frame(height: 46)
+            .polishGlass(cornerRadius: 23)
+        }
+    }
+}
+
+// MARK: - Intro hero
+
+/// First-visit intro hero: the real task-row look. The filter pill moves
+/// All -> Goals -> Routines -> Loops, the rows filter with it, and the loop
+/// row turns to Passed. Reduce Motion shows the Loops state, still.
+private struct AutomationIntroHero: View {
+    private struct Row: Identifiable {
+        let id: String
+        let kind: String
+        let icon: String
+        let title: String
+        let note: String
+        var trailing: String?
+        var bar = false
+        var loop = false
+    }
+
+    private let order: [(key: String, label: String)] = [("all", "All"), ("goals", "Goals"), ("routines", "Routines"), ("loops", "Loops")]
+    private let rows: [Row] = [
+        Row(id: "r", kind: "routines", icon: "clock", title: "Morning inbox triage", note: "Routine · weekdays 9:00", trailing: "in 14h"),
+        Row(id: "g", kind: "goals", icon: "target", title: "Ship the FAQ", note: "Goal · 3 of 5 steps", bar: true),
+        Row(id: "l", kind: "loops", icon: "repeat", title: "Fix failing tests", note: "Loop · run 4 · until green", loop: true),
+    ]
+
+    @State private var index = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var ns
+
+    private var current: String { order[index].key }
+    private var visible: [Row] { rows.filter { current == "all" || $0.kind == current } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            BlockText("AUTOMATION TASKS", height: 7)
+                .padding(.bottom, 8)
+            HStack(spacing: 4) {
+                ForEach(order, id: \.key) { item in
+                    let on = item.key == current
+                    Text(item.label)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(on ? Color("BgPrimary") : PolishTokens.ink)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background {
+                            if on {
+                                Capsule().fill(PolishTokens.ink).matchedGeometryEffect(id: "heroPick", in: ns)
+                            } else {
+                                Capsule().fill(PolishTokens.neutralFill)
+                            }
+                        }
+                }
+            }
+            Text("Your tasks")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color("TextSecondary"))
+                .padding(.top, 9)
+                .padding(.bottom, 5)
+            VStack(spacing: 5) {
+                ForEach(visible) { row in
+                    heroRow(row)
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.95)))
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Preview: the task list filters as the pill moves, and a loop turns to Passed.")
+        .task {
+            if reduceMotion { index = order.count - 1; return }
+            let hold: [UInt64] = [1_500, 1_500, 1_500, 2_200]
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: hold[index] * 1_000_000)
+                if Task.isCancelled { return }
+                withAnimation(PolishTokens.base) { index = (index + 1) % order.count }
             }
         }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("FillNeutral")))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("View")
+    }
+
+    private func heroRow(_ row: Row) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: row.icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(PolishTokens.ink)
+                .frame(width: 22, height: 22)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(row.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(PolishTokens.ink)
+                Text(row.note).font(.system(size: 9.5)).foregroundStyle(Color("TextSecondary"))
+                if row.bar {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white)
+                            Capsule().fill(PolishTokens.ink).frame(width: geo.size.width * (index % 2 == 0 ? 0.4 : 0.6))
+                        }
+                    }
+                    .frame(height: 3)
+                    .padding(.top, 3)
+                    .padding(.trailing, 30)
+                }
+            }
+            Spacer(minLength: 0)
+            if let trailing = row.trailing {
+                Text(trailing).font(.system(size: 9.5)).foregroundStyle(Color("TextSecondary"))
+            }
+            if row.loop {
+                if current == "loops" {
+                    HStack(spacing: 3) {
+                        Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
+                        Text("Passed").font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .foregroundStyle(Color(hex: "#16A34A"))
+                    .transition(.scale.combined(with: .opacity))
+                } else {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 10)).foregroundStyle(Color("TextSecondary"))
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(PolishTokens.neutralFill))
     }
 }
 
