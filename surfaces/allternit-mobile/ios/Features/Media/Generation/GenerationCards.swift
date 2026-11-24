@@ -105,9 +105,39 @@ struct MediaGenerateCard: View {
     var onRetry: () -> Void = {}
 
     @ObservedObject private var store = GenerationProgressStore.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The preview the card last drew as halftone (picture lane). Non-nil means
+    /// a halftone preview was showing, so the finish crossfades instead of blooming.
+    @State private var halftoneShown: UIImage?
+    @State private var reveal: Reveal?
+
+    struct Reveal: Equatable {
+        let image: UIImage
+        let style: DotFieldView.RevealStyle
+        static func == (a: Reveal, b: Reveal) -> Bool { a.image === b.image && a.style == b.style }
+    }
 
     var body: some View {
+        content
+            .onChange(of: store.entry(call.id)?.detail.preview) { _, _ in noteHalftone() }
+            .onChange(of: call.state) { old, new in
+                if old == .running, new == .done { Task { await playReveal() } }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch call.state {
+        case .done where reveal != nil:
+            if let reveal {
+                Color("FillNeutral")
+                    .aspectRatio(Self.aspect(of: call) ?? 1, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .overlay { DotFieldView(mode: .reveal(reveal.image, reveal.style, duration: Self.revealSeconds)) }
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                    .accessibilityHidden(true)
+            }
         case .running where replyIsLive:
             let lane = Self.lane(of: call, reported: store.entry(call.id)?.detail)
             let card = GenerationProgressView(callId: call.id, lane: lane, mode: isNewestTurn ? .full : .history, aspect: Self.aspect(of: call))
@@ -124,6 +154,41 @@ struct MediaGenerateCard: View {
         default:
             EmptyView()
         }
+    }
+
+    static let revealSeconds = 0.8
+
+    /// Remember the preview while it is drawn as halftone (picture lane only).
+    private func noteHalftone() {
+        guard let detail = store.entry(call.id)?.detail, detail.lane == .picture, detail.hasPreview,
+              let source = detail.preview, let image = GenerationPreviewCache.image(source) else { return }
+        halftoneShown = image
+    }
+
+    /// The finished picture takes the card's place: dots bloom into it when no
+    /// preview was shown, a crossfade out of the halftone when one was. The real
+    /// picture is read from the call's result; the last preview stands in if it
+    /// cannot be. Reduce Motion: no reveal, the picture just appears.
+    private func playReveal() async {
+        guard !reduceMotion, Self.lane(of: call, reported: nil) == .picture else { return }
+        var final: UIImage?
+        if let url = Self.imageURL(in: call.output), let data = try? await ArtifactMediaLoader.data(for: url) { final = UIImage(data: data) }
+        let style: DotFieldView.RevealStyle = halftoneShown != nil ? .crossfade : .cells
+        guard let image = final ?? halftoneShown else { return }
+        reveal = Reveal(image: image, style: style)
+        try? await Task.sleep(nanoseconds: UInt64(Self.revealSeconds * 1_000_000_000))
+        reveal = nil
+        halftoneShown = nil
+    }
+
+    /// The first inline picture or https picture link in a tool result.
+    static func imageURL(in output: String?) -> String? {
+        guard let output else { return nil }
+        let pattern = #"(data:image/[a-zA-Z+.-]+;base64,[A-Za-z0-9+/=]+|https://[^\s"')\]]+\.(?:png|jpe?g|webp)(?:\?[^\s"')\]]*)?)"#
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
+              let r = Range(m.range, in: output) else { return nil }
+        return String(output[r])
     }
 
     /// The lane: what the app reported, else the call's own `kind`.

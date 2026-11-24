@@ -48,6 +48,8 @@ struct ByteLoadingView: View {
     var posterURL: String?
     var progress: ByteProgress?
     var verb = "Loading"
+    /// The finished picture, once it is in: the halftone crossfades into it (0.8 s).
+    var finished: UIImage?
 
     @ReducedMotion private var reduceMotion
     @State private var poster: UIImage?
@@ -56,12 +58,15 @@ struct ByteLoadingView: View {
         let line = ByteProgressText.status(verb: verb, progress ?? ByteProgress(bytes: 0))
         ZStack(alignment: .bottom) {
             Color("FillNeutral")
-            if let poster {
+            if let finished {
+                DotFieldView(mode: .reveal(finished, .crossfade, duration: 0.8))
+            } else if let poster {
                 // Halftone poster, finer by the real byte fraction; unknown size holds coarse.
                 DotFieldView(mode: .halftone(poster, fraction: progress?.fraction))
             } else {
                 DotFieldView(mode: .field(.band, amplitude: 0.45))
             }
+            if finished == nil {
             HStack(spacing: 8) {
                 if progress?.fraction == nil && !reduceMotion { ProgressView().controlSize(.mini) }
                 Text(line)
@@ -74,6 +79,7 @@ struct ByteLoadingView: View {
             .background(Capsule().fill(Color("BgPanel")))
             .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
             .padding(.bottom, 14)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .ignore)
