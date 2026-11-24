@@ -1,7 +1,19 @@
 package com.allternit.feature.settings
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.allternit.core.design.PolishHaptic
+import com.allternit.core.design.SectionLabel
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -227,6 +239,7 @@ fun SettingsRoot(host: SettingsHost) {
 @Composable
 private fun RootList(host: SettingsHost, push: (String) -> Unit) {
     val context = LocalContext.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     val openLink = rememberLinkOpener()
     var info by remember { mutableStateOf(false) }
@@ -254,21 +267,23 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
             }
         }
         for ((label, rows) in ROOT_GROUPS) {
-            SLabel(label)
+            RootLabel(label)
             SCard {
                 rows.forEachIndexed { index, row ->
                     if (index > 0) SDivider()
+                    Box(Modifier.pressScale98()) {
                     when (row) {
                         is RootRow.Page -> SRow(row.label ?: page(row.id).label, "settingsRow_${row.id}", icon = page(row.id).icon, onClick = { push(row.id) })
                         RootRow.Customize -> SRow("Customize", "settingsRow_customize", icon = DesignR.drawable.ph_sliders_horizontal, onClick = { push("customize") })
                         RootRow.OpenLinks -> SRow("Open links in", "settingsRow_openLinks", icon = DesignR.drawable.ph_arrow_square_out, value = if (inApp) "In app" else "Browser", onClick = { push("open-links") })
-                        RootRow.Haptics -> SToggleRow("Haptic feedback", "settingsRow_haptics", haptics, icon = DesignR.drawable.ph_dots_three_vertical, onChange = { haptics = it; SettingsPrefs.setHapticsOn(context, it) })
-                        RootRow.ReduceMotion -> SToggleRow("Reduce motion", "settingsRow_reduceMotion", reduceMotion, icon = DesignR.drawable.ph_arrows_down_up, onChange = { reduceMotion = it; SettingsPrefs.setReduceMotion(context, it) })
+                        RootRow.Haptics -> SToggleRow("Haptic feedback", "settingsRow_haptics", haptics, icon = DesignR.drawable.ph_dots_three_vertical, onChange = { haptics = it; SettingsPrefs.setHapticsOn(context, it); if (it) PolishHaptic.perform(view, PolishHaptic.Kind.Selection) })
+                        RootRow.ReduceMotion -> SToggleRow("Reduce motion", "settingsRow_reduceMotion", reduceMotion, icon = DesignR.drawable.ph_arrows_down_up, onChange = { reduceMotion = it; SettingsPrefs.setReduceMotion(context, it); if (haptics) PolishHaptic.perform(view, PolishHaptic.Kind.Selection) })
+                    }
                     }
                 }
             }
         }
-        SLabel("Appearance")
+        RootLabel("Appearance")
         SCard { AppearanceTiles() }
         SCard(Modifier.padding(top = 18.dp)) {
             val count = ADVANCED_SECTIONS.sumOf { advancedItems(it.first).size }
@@ -300,6 +315,29 @@ private fun RootList(host: SettingsHost, push: (String) -> Unit) {
             }
         }
     }
+}
+
+/** Root section heading: the shared SectionLabel, keeping the "<label> section" description the old SLabel had. */
+@Composable
+private fun RootLabel(text: String) {
+    SectionLabel(text, Modifier.fillMaxWidth().padding(horizontal = 6.dp).semantics { contentDescription = "$text section" })
+}
+
+/** Row press feedback (.98) without taking the tap from the row: watches the pointer on the initial pass only. */
+@Composable
+private fun Modifier.pressScale98(): Modifier {
+    var pressed by remember { mutableStateOf(false) }
+    val s by animateFloatAsState(if (pressed) 0.98f else 1f, label = "rowPress")
+    return this
+        .graphicsLayer { scaleX = s; scaleY = s }
+        .pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                pressed = true
+                waitForUpOrCancellation(PointerEventPass.Initial)
+                pressed = false
+            }
+        }
 }
 
 @Composable
