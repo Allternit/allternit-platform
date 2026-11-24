@@ -916,8 +916,13 @@ struct ACIConsoleSection: View {
 /// is retried; 404/501 shows "not available". Live logs run only while
 /// the Services log view is on screen and the app is in the foreground.
 struct ACIConsoleDetailView: View {
-    let computer: ACIComputersClient.ConsoleComputer
+    /// The row with any whole-disk change the Settings switch made, so Files updates at once.
+    @State private var computer: ACIComputersClient.ConsoleComputer
     @Environment(\.dismiss) private var dismiss
+
+    init(computer: ACIComputersClient.ConsoleComputer) {
+        _computer = State(initialValue: computer)
+    }
 
     private enum Section: String, CaseIterable, Identifiable {
         case overview = "Overview", services = "Services", usage = "Usage", ports = "Ports"
@@ -951,7 +956,7 @@ struct ACIConsoleDetailView: View {
                 if section == .terminal {
                     ACIConsoleTerminalTab(computer: computer)
                 } else if section == .files {
-                    ACIConsoleFilesTab(computer: computer)
+                    ACIConsoleFilesTab(computer: computer, openSettings: { section = .settings })
                 } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
@@ -964,7 +969,8 @@ struct ACIConsoleDetailView: View {
                         case .access: ACIConsoleAccessTab(computer: computer)
                         case .backups: ACIConsoleBackupsTab(computer: computer)
                         case .health: ACIConsoleHealthTab(computer: computer)
-                        case .settings: ACIConsoleSettingsTab(computer: computer)
+                        case .settings:
+                            ACIConsoleSettingsTab(computer: computer, onWholeDisk: { computer.wholeDisk = $0 })
                         }
                     }
                     .padding(16)
@@ -1343,48 +1349,6 @@ private struct ACIConsolePortsTab: View {
 }
 
 // MARK: - Console manage tabs: Access, Backups, Health, Settings
-
-/// Press and hold for one second to confirm (the iOS form of Arc HoldToConfirm).
-/// VoiceOver users get a plain activate action instead of the hold.
-private struct ACIHoldButton: View {
-    let title: String
-    var danger = false
-    var disabled = false
-    let action: () -> Void
-    @State private var progress: CGFloat = 0
-
-    var body: some View {
-        ZStack {
-            GeometryReader { geo in
-                Rectangle()
-                    .fill((danger ? Theme.statusError : Color("TextPrimary")).opacity(0.18))
-                    .frame(width: geo.size.width * progress)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Text(title)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(danger ? Theme.statusError : Color("TextPrimary"))
-        }
-        .frame(maxWidth: .infinity, minHeight: 48)
-        .background(Color("FillNeutral"))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
-        .opacity(disabled ? 0.45 : 1)
-        .allowsHitTesting(!disabled)
-        .onLongPressGesture(minimumDuration: 1.0, maximumDistance: 40, perform: {
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            action()
-        }, onPressingChanged: { pressing in
-            if pressing { withAnimation(.linear(duration: 1.0)) { progress = 1 } }
-            else { withAnimation(.easeOut(duration: 0.2)) { progress = 0 } }
-        })
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .accessibilityHint("Press and hold to confirm")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { if !disabled { action() } }
-    }
-}
 
 /// Plain sentence for a failed change. Never a status code.
 func consoleFailureText(_ error: Error) -> String {
@@ -1873,7 +1837,9 @@ struct ACIConsoleFixSheet: View {
 
 private struct ACIConsoleSettingsTab: View {
     let computer: ACIComputersClient.ConsoleComputer
+    var onWholeDisk: (ACIComputersClient.WholeDisk) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
+    @State private var askingWholeDisk = false
     @State private var message: String? = nil
     @State private var isError = false
     @State private var busy = false
@@ -1890,6 +1856,7 @@ private struct ACIConsoleSettingsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            wholeDiskCard
             switch computer.kind {
             case "cloud": cloudBody
             case "paired": pairedBody
@@ -1897,6 +1864,45 @@ private struct ACIConsoleSettingsTab: View {
                 consoleNote("This is the computer you are holding. Manage it from Allternit Desktop.")
             }
             consoleStatusLine(message, error: isError)
+        }
+    }
+
+    // MARK: whole disk
+
+    /// "Browse the whole disk": only when the row carries `wholeDisk` (an older server omits it). Off by default;
+    /// turning it on is a hold-to-confirm with the plain warning, turning it off needs no confirm.
+    @ViewBuilder private var wholeDiskCard: some View {
+        if let disk = computer.wholeDisk {
+            consoleCard {
+                Text("Browse the whole disk").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                if !disk.available {
+                    Text(disk.reasonCopy).font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                } else if disk.enabled {
+                    Text("On. Files can open any folder on this computer.").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                    ACIPillButton(title: "Turn off") { Task { await setWholeDisk(false) } }.disabled(busy)
+                } else if askingWholeDisk {
+                    Text(ACIComputersClient.wholeDiskWarning).font(.system(size: 13)).foregroundColor(Color("TextPrimary"))
+                    ACIHoldButton(title: "Hold to turn on", danger: true, disabled: busy) {
+                        Task { await setWholeDisk(true) }
+                    }
+                    ACIPillButton(title: "Cancel") { askingWholeDisk = false }
+                } else {
+                    Text("Off. Files shows only the Files drive.").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                    ACIPillButton(title: "Turn on") { askingWholeDisk = true }.disabled(busy)
+                }
+            }
+        }
+    }
+
+    private func setWholeDisk(_ on: Bool) async {
+        busy = true; defer { busy = false }
+        do {
+            let updated = try await ACIComputersClient.shared.setWholeDisk(id: computer.id, on: on)
+            onWholeDisk(updated)
+            askingWholeDisk = false
+            message = on ? "Whole disk is on." : "Whole disk is off."; isError = false
+        } catch {
+            message = consoleFailureText(error); isError = true
         }
     }
 

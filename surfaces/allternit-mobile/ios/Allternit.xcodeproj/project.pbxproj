@@ -102,6 +102,7 @@
 		16EA99E23FF18243D69A33C9 /* SSHConnectionsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46B0738673B7B6922FEFC50A /* SSHConnectionsStore.swift */; };
 		16FA39F7A6F891652E3E533E /* MeetYourBotsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31906E53E13F148C15E53F18 /* MeetYourBotsView.swift */; };
 		172004D5F72BC6AB34DD4EC0 /* FilesShareFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DED185DEB6F8D4E9AA9890F /* FilesShareFlow.swift */; };
+		176C7A09EBA19F29D89A74D0 /* ACIHoldButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4AFF10DF855CBDB7FBCF289 /* ACIHoldButton.swift */; };
 		17D87DFB3EEE39FC4C5A5EA4 /* CodeLanguage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B425580E480D60109FCC8F9 /* CodeLanguage.swift */; };
 		1834CC829C4E4DF29D135C87 /* AgentActivityDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEEC6838A5C637D76EED594C /* AgentActivityDetailView.swift */; };
 		1835BCF4D303C85249F87AAB /* CronJob.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC9B4BA16EDF46885053622B /* CronJob.swift */; };
@@ -754,6 +755,7 @@
 		C93A436608AE74D95C954409 /* RoutinesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB3BAD01993CC3ACFBFC483 /* RoutinesListView.swift */; };
 		C93CF8080B7650C0C1A3A1A7 /* FilesOnDeviceInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DDE4A61FA568C7A852B5D3E /* FilesOnDeviceInstaller.swift */; };
 		C99E48C1FA052191753E2355 /* PauseControlIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CC9F781B0ADDE0BB8143AD /* PauseControlIntent.swift */; };
+		C9C6A0BCDA1AF56B81E21E90 /* ConsoleWholeDiskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 859CBC11D91C0867FE68E290 /* ConsoleWholeDiskTests.swift */; };
 		C9C85C7C7A13935A112A3B90 /* AllternitWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 68B1051892B0960972533D49 /* AllternitWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CA57CFBBCA4A665E137B9B0F /* ConnectionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BACE2EC435EF4B71CCFABF6A /* ConnectionsSettingsView.swift */; };
 		CA6782D84EF8B462FA886E0F /* IntroSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77FC62D9F2F51F479E0AA71A /* IntroSheet.swift */; };
@@ -1539,6 +1541,7 @@
 		84B28CE671F7453200BD7F1D /* PhoneLiveClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLiveClient.swift; sourceTree = "<group>"; };
 		84FC33C4E8CA18AFE3DD8E0E /* CoworkSessionWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoworkSessionWorkspaceView.swift; sourceTree = "<group>"; };
 		856F61ACB40C279586500F11 /* PhoneIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneIntents.swift; sourceTree = "<group>"; };
+		859CBC11D91C0867FE68E290 /* ConsoleWholeDiskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleWholeDiskTests.swift; sourceTree = "<group>"; };
 		85F5DF368763C37AE6E8833E /* OnboardingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingStore.swift; sourceTree = "<group>"; };
 		861E4928AB3C96923A32C33C /* TeachClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeachClient.swift; sourceTree = "<group>"; };
 		865EBF07D9834DA313040A4D /* EndConversationRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndConversationRow.swift; sourceTree = "<group>"; };
@@ -1754,6 +1757,7 @@
 		C41FA19EB719D2B421490D26 /* ConnectWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectWizardView.swift; sourceTree = "<group>"; };
 		C426D6E835FD06E4486CFFA7 /* LocalVoiceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalVoiceEngine.swift; sourceTree = "<group>"; };
 		C481BFE9D2B27E30D347883F /* FileProviderUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FileProviderUI.framework; path = System/Library/Frameworks/FileProviderUI.framework; sourceTree = SDKROOT; };
+		C4AFF10DF855CBDB7FBCF289 /* ACIHoldButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ACIHoldButton.swift; sourceTree = "<group>"; };
 		C50BA8075C4FBCA27CA52761 /* McpDirectory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpDirectory.swift; sourceTree = "<group>"; };
 		C5222EE1EE170C34F038CA47 /* AppGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroup.swift; sourceTree = "<group>"; };
 		C5BB9F2E0048B9D1662BD674 /* SettingsPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPages.swift; sourceTree = "<group>"; };
@@ -2432,6 +2436,7 @@
 				2B32E0565DA7953C599388DC /* ACIComputersPane.swift */,
 				4776768AC72546905DC10A9B /* ACIConsoleTerminalFiles.swift */,
 				6CD577FADF6DABC75EFEE188 /* ACIExtensionsView.swift */,
+				C4AFF10DF855CBDB7FBCF289 /* ACIHoldButton.swift */,
 				D79BCB48BED6FF8FD50328A5 /* ACIMcpAppsView.swift */,
 				F63B7493C9D1FC2AB9560D6D /* ACINavStore.swift */,
 				10FBC416BB357D8C57841986 /* ACIPhoneChrome.swift */,
@@ -2860,6 +2865,7 @@
 				745B726A32A25866A67C8D4E /* ComputerChipTests.swift */,
 				49E2E61182EF774EBE2AAACA /* ConnectedAppsAndClaudeLinkTests.swift */,
 				03F7D2D2E6E654FB036596F2 /* ConnectionsMergeTests.swift */,
+				859CBC11D91C0867FE68E290 /* ConsoleWholeDiskTests.swift */,
 				BE44ED582CA4DA23E6DADFBB /* DecideDelegateIntentRulesTests.swift */,
 				6D1CF76A3B4AF38B5A019D23 /* DeepLinkTests.swift */,
 				DD7AEBB0FB7A8734D3B1DA5C /* EditHistoryTests.swift */,
@@ -4422,6 +4428,7 @@
 				A6597ED70130F9FBC2E15D84 /* ComputerChipTests.swift in Sources */,
 				91D24751C1B8DD85C6CD6D2B /* ConnectedAppsAndClaudeLinkTests.swift in Sources */,
 				E57F469D9F0EF53B3D433EE1 /* ConnectionsMergeTests.swift in Sources */,
+				C9C6A0BCDA1AF56B81E21E90 /* ConsoleWholeDiskTests.swift in Sources */,
 				5C2093288994F432DB8B4804 /* DecideDelegateIntentRulesTests.swift in Sources */,
 				7A8A041B3D2EB92063AC4836 /* DeepLinkTests.swift in Sources */,
 				4121CD4E66C00FEDC29BE409 /* EditHistoryTests.swift in Sources */,
@@ -4479,6 +4486,7 @@
 				0ABC103578A8870EAB8382E1 /* ACIConsoleTerminalFiles.swift in Sources */,
 				BD7F631405D1D2919CF47B8E /* ACIEvent.swift in Sources */,
 				8FC14EF1D85C458EC58EA0CE /* ACIExtensionsView.swift in Sources */,
+				176C7A09EBA19F29D89A74D0 /* ACIHoldButton.swift in Sources */,
 				AF8A87A3DFCA30D17D3A2793 /* ACIMcpAppsView.swift in Sources */,
 				BFF219CA3E0AB7C1E54CC77F /* ACINavStore.swift in Sources */,
 				24544D44D953A515CA693DF9 /* ACIPhoneChrome.swift in Sources */,

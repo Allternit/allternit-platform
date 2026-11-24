@@ -187,6 +187,8 @@ private enum class DetailTab(val title: String) { Overview("Overview"), Services
 internal fun AciConsoleDetail(computer: ConsoleComputer, restorePoints: (@Composable (onDone: () -> Unit) -> Unit)? = null, onChanged: () -> Unit = {}, onDone: () -> Unit) {
     val c = AllternitTheme.colors
     var tab by remember { mutableStateOf(DetailTab.Overview) }
+    // The row with any whole-disk change the Settings switch made, so Files updates at once.
+    var current by remember(computer) { mutableStateOf(computer) }
     ModalBottomSheet(onDismissRequest = onDone, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = c.bgPrimary) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.92f).testTag("aciConsoleDetail")) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -210,11 +212,11 @@ internal fun AciConsoleDetail(computer: ConsoleComputer, restorePoints: (@Compos
                     DetailTab.Usage -> UsageTab(computer)
                     DetailTab.Ports -> PortsTab(computer)
                     DetailTab.Terminal -> TerminalTab(computer)
-                    DetailTab.Files -> FilesTab(computer, onDone)
+                    DetailTab.Files -> FilesTab(current, onDone, onOpenSettings = { tab = DetailTab.Settings })
                     DetailTab.Access -> AccessTab(computer)
                     DetailTab.Backups -> BackupsTab(computer, restorePoints)
                     DetailTab.Health -> HealthTab(computer)
-                    DetailTab.Settings -> SettingsTab(computer, onChanged, onDone)
+                    DetailTab.Settings -> SettingsTab(current, onChanged, onDone, onWholeDisk = { current = current.copy(wholeDisk = it) })
                 }
             }
         }

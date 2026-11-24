@@ -178,6 +178,74 @@ export function unpairMessage(raw: string): string {
   return raw;
 }
 
+// ── Whole-disk Files (platform #2829, contract "Whole-disk files") ──────────
+
+type WholeDiskRoot = { id: string; path: string; label: string };
+type WholeDisk = { enabled?: boolean; available?: boolean; reason?: string; roots?: WholeDiskRoot[] };
+
+export const WHOLE_DISK_WARNING =
+  'Anyone using this computer from Allternit can open, change or delete any file on it, not only the Files drive.';
+
+const WHOLE_DISK_REASONS: Record<string, string> = {
+  not_owner: 'Only the owner of this computer can turn this on.',
+  not_a_server: 'Allternit Desktop already reaches its own files, so this does not apply.',
+  no_runtime: 'Pair this computer first, then you can turn this on.',
+};
+
+/// Plain sentence for a file-roots failure: the server's message when it has one, never a bare code.
+export function plainFileRootsError(message: string): string {
+  switch (message) {
+    case 'not_found': return 'This computer is not on your account.';
+    case 'not_owner': return WHOLE_DISK_REASONS.not_owner as string;
+    case 'not_a_server': return 'This is a Desktop computer. It already reaches its own files.';
+    case 'no_runtime': return WHOLE_DISK_REASONS.no_runtime as string;
+    case 'confirm_required': return 'Turning this on needs confirmation. Run again with --yes.';
+    case 'invalid_body': return 'The server did not accept that change.';
+    case 'whole_disk_off': return 'Whole-disk browsing is off for this computer. Turn it on with `allternit computers files-roots <id> --on --yes`.';
+    default: return message;
+  }
+}
+
+/// What the user reads: the state, then each root (or why it is not available).
+export function describeWholeDisk(w: WholeDisk | undefined): string {
+  if (!w) return 'Whole-disk browsing: not available (this server does not report it).';
+  if (!w.available) {
+    return `Whole-disk browsing: not available. ${WHOLE_DISK_REASONS[w.reason ?? ''] ?? 'Not available on this computer.'}`;
+  }
+  if (!w.enabled) return 'Whole-disk browsing: off. Files shows only the Files drive.';
+  const roots = w.roots ?? [];
+  return [
+    'Whole-disk browsing: on.',
+    'Roots: Files drive (first)' + (roots.length ? '' : ', no whole-disk roots reported'),
+    ...roots.map((r) => `  ${r.label}  ${r.path}`),
+  ].join('\n');
+}
+
+type FilesRootsOptions = { on?: boolean; off?: boolean; yes?: boolean };
+
+async function filesRootsAction(command: Command, id: string, options: FilesRootsOptions): Promise<void> {
+  try {
+    if (options.on && options.off) throw new Error('Pick one of --on or --off.');
+    if (options.on && !options.yes) {
+      throw new Error(`${WHOLE_DISK_WARNING} Nothing was changed. Run again with --yes to turn it on.`);
+    }
+    const path = `/api/v1/computers/${encodeURIComponent(id)}/file-roots`;
+    const api = client(command);
+    const body = options.on ? { wholeDisk: true, confirm: true } : options.off ? { wholeDisk: false } : undefined;
+    let answer: { id?: string; wholeDisk?: WholeDisk };
+    try {
+      answer = await api.request(body ? 'PATCH' : 'GET', path, body) as { id?: string; wholeDisk?: WholeDisk };
+    } catch (error) {
+      throw new Error(plainFileRootsError(error instanceof Error ? error.message : String(error)));
+    }
+    if (command.optsWithGlobals<GlobalOptions>().json) output(command, answer);
+    else process.stdout.write(`${describeWholeDisk(answer.wholeDisk)}\n`);
+  } catch (error) {
+    process.stderr.write(`allternit: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
+}
+
 export function createComputersCommand(): Command {
   const create = new Command('create')
     .description('Create a computer (cloud_desktop, local, or deferred kinds)')
@@ -477,6 +545,17 @@ function createScreenshotCommand(name: string, description: string): Command {
     .addCommand(resize)
     .addCommand(clone)
     .addCommand(sshCommand)
+    .addCommand(
+      new Command('files-roots')
+        .description('Show or change whole-disk Files for a paired or cloud computer (off by default)')
+        .argument('<id>', 'computer id')
+        .option('--on', 'turn whole-disk browsing on (needs --yes)')
+        .option('--off', 'turn whole-disk browsing off')
+        .option('--yes', 'confirm turning it on: anyone using the computer from Allternit can then open, change or delete any file on it')
+        .action(async function (this: Command, id: string, options: FilesRootsOptions) {
+          await filesRootsAction(this, id, options);
+        }),
+    )
     .addCommand(drive)
     .addCommand(createScreenshotCommand(
       'screenshot',

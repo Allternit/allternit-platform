@@ -50,7 +50,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
 /** One Files root (`GET /roots`), a folder item (`GET /roots/:id/list`) and an inbox task (`/inbox/tasks`). */
-internal data class FilesRoot(val id: String, val kind: String, val name: String, val rootItemId: String)
+internal data class FilesRoot(val id: String, val kind: String, val name: String, val rootItemId: String, val pathHint: String? = null)
 internal data class FilesItem(val id: String, val name: String, val isFolder: Boolean, val size: Long, val modifiedAt: String?, val canDelete: Boolean = true)
 internal data class FilesTask(val id: String, val name: String, val droppedBy: String, val createdAt: String?)
 internal data class FilesFreshness(val state: String, val snapshotAt: String?, val servedBy: String?) {
@@ -73,13 +73,41 @@ internal data class FilesFreshness(val state: String, val snapshotAt: String?, v
 internal class FilesApi(private val runtimeId: String) {
     sealed interface Out<out T> {
         data class Ok<T>(val value: T) : Out<T>
-        data class Failed(val message: String, val gate: Boolean = false) : Out<Nothing>
+        data class Failed(val message: String, val gate: Boolean = false, /** 403 `whole_disk_off`: the message is the server's. */ val wholeDiskOff: Boolean = false) : Out<Nothing>
     }
 
     private suspend fun run(method: String, path: String, body: String? = null): Out<JsonObject> = when (val r = AciRelay.call(runtimeId, method, "/api/v1/files/v2$path", body)) {
         is RuntimeCall.Ok -> Out.Ok(r.body.obj ?: JsonObject(emptyMap()))
         RuntimeCall.NoComputer -> Out.Failed("No computer is connected.", gate = true)
+        is RuntimeCall.Http -> wholeDiskOffFailure(r) ?: Out.Failed(r.failureText() ?: "Couldn’t load this. Try again.")
         else -> Out.Failed(r.failureText() ?: "Couldn’t load this. Try again.")
+    }
+
+    /** `POST /roots`: a whole-disk root (`/`, `C:\\`) is refused with `wholeDiskOff` unless the owner turned that on. */
+    suspend fun addRoot(name: String, path: String): Out<FilesRoot> {
+        val body = kotlinx.serialization.json.buildJsonObject {
+            put("name", kotlinx.serialization.json.JsonPrimitive(name))
+            put("local_path", kotlinx.serialization.json.JsonPrimitive(path))
+            put("policy", kotlinx.serialization.json.buildJsonObject {
+                put("read", kotlinx.serialization.json.JsonPrimitive(true)); put("write", kotlinx.serialization.json.JsonPrimitive(true))
+                put("shareable", kotlinx.serialization.json.JsonPrimitive(false)); put("agent_process", kotlinx.serialization.json.JsonPrimitive(false))
+                put("protected", kotlinx.serialization.json.JsonPrimitive(false)); put("offline", kotlinx.serialization.json.JsonPrimitive(false))
+                put("replica", kotlinx.serialization.json.JsonPrimitive(false))
+                put("versions", kotlinx.serialization.json.buildJsonObject {
+                    put("keep_count", kotlinx.serialization.json.JsonPrimitive(0)); put("keep_days", kotlinx.serialization.json.JsonPrimitive(0))
+                })
+                put("trash_days", kotlinx.serialization.json.JsonPrimitive(30))
+            })
+        }
+        return when (val r = run("POST", "/roots", body.toString())) {
+            is Out.Ok -> {
+                val o = r.value.child("root")
+                val id = o.str("id")
+                if (o == null || id == null) Out.Failed("Couldn’t open that folder. Try again.")
+                else Out.Ok(FilesRoot(id, o.str("kind").orEmpty(), o.str("name").orEmpty(), o.str("root_item_id").orEmpty(), o.str("path_hint")))
+            }
+            is Out.Failed -> r
+        }
     }
 
     private fun JsonObject.freshness(): FilesFreshness? = (this["freshness"] as? JsonObject)?.let {
@@ -88,7 +116,7 @@ internal class FilesApi(private val runtimeId: String) {
 
     suspend fun roots(): Out<Pair<List<FilesRoot>, FilesFreshness?>> = when (val r = run("GET", "/roots")) {
         is Out.Ok -> Out.Ok(r.value.list("roots").mapNotNull { o ->
-            FilesRoot(o.str("id") ?: return@mapNotNull null, o.str("kind").orEmpty(), o.str("name").orEmpty(), o.str("root_item_id").orEmpty())
+            FilesRoot(o.str("id") ?: return@mapNotNull null, o.str("kind").orEmpty(), o.str("name").orEmpty(), o.str("root_item_id").orEmpty(), o.str("path_hint"))
         }.sortedWith(compareBy({ rootOrder(it.kind) }, { it.name.lowercase() })) to r.value.freshness())
         is Out.Failed -> r
     }
@@ -133,6 +161,12 @@ internal class FilesApi(private val runtimeId: String) {
     }
 }
 
+/** 403 `whole_disk_off` from a file route: the server's own message, marked so Files can offer the Settings switch. */
+internal fun wholeDiskOffFailure(r: RuntimeCall.Http): FilesApi.Out.Failed? =
+    if (r.status == 403 && r.code == "whole_disk_off") FilesApi.Out.Failed(
+        r.message?.takeIf { it.isNotBlank() } ?: "Turn on whole-disk browsing for this computer in its Settings first.", wholeDiskOff = true,
+    ) else null
+
 private sealed interface FilesNav {
     data object Roots : FilesNav
     data class Folder(val root: FilesRoot, val parentId: String, val title: String) : FilesNav
@@ -145,7 +179,7 @@ private sealed interface FilesNav {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AciComputerFilesScreen(device: AciDevice, onClose: () -> Unit, embedded: Boolean = false) {
+internal fun AciComputerFilesScreen(device: AciDevice, onClose: () -> Unit, embedded: Boolean = false, diskRoots: List<WholeDiskRoot> = emptyList(), onOpenSettings: (() -> Unit)? = null) {
     val api = remember(device.id) { FilesApi(device.id) }
     val stack = remember { mutableStateListOf<FilesNav>(FilesNav.Roots) }
     var pending by remember { mutableStateOf<List<FilesTask>>(emptyList()) }
@@ -160,7 +194,7 @@ internal fun AciComputerFilesScreen(device: AciDevice, onClose: () -> Unit, embe
         if (wide) {
             Row(Modifier.fillMaxSize()) {
                 Box(Modifier.weight(0.38f).fillMaxHeight()) {
-                    AciFilesRoots(device, api, actions, pending.size, onBack = onClose,
+                    AciFilesRoots(device, api, actions, pending.size, diskRoots, onOpenSettings, onBack = onClose,
                         onRoot = { stack.clear(); stack += FilesNav.Roots; stack += FilesNav.Folder(it, it.rootItemId, it.name) },
                         onInbox = { stack.clear(); stack += FilesNav.Roots; stack += FilesNav.Inbox })
                 }
@@ -168,18 +202,18 @@ internal fun AciComputerFilesScreen(device: AciDevice, onClose: () -> Unit, embe
                 Box(Modifier.weight(0.62f).fillMaxHeight()) {
                     when (val top = stack.last()) {
                         FilesNav.Roots -> AciFullPage { AciStateCard("Pick a folder", "Choose a folder on the left to see what is in it.") }
-                        is FilesNav.Folder -> AciFilesFolder(api, actions, top, onBack = { stack.removeAt(stack.lastIndex) },
+                        is FilesNav.Folder -> AciFilesFolder(api, actions, top, onOpenSettings, onBack = { stack.removeAt(stack.lastIndex) },
                             onFolder = { stack += FilesNav.Folder(top.root, it.id, it.name) })
                         FilesNav.Inbox -> AciInboxRequests(api, onBack = { stack.removeAt(stack.lastIndex) }, onChanged = { pending = it })
                     }
                 }
             }
         } else when (val top = stack.last()) {
-            FilesNav.Roots -> AciFilesRoots(device, api, actions, pending.size,
+            FilesNav.Roots -> AciFilesRoots(device, api, actions, pending.size, diskRoots, onOpenSettings,
                 onBack = onClose,
                 onRoot = { stack += FilesNav.Folder(it, it.rootItemId, it.name) },
                 onInbox = { stack += FilesNav.Inbox })
-            is FilesNav.Folder -> AciFilesFolder(api, actions, top, onBack = { stack.removeAt(stack.lastIndex) },
+            is FilesNav.Folder -> AciFilesFolder(api, actions, top, onOpenSettings, onBack = { stack.removeAt(stack.lastIndex) },
                 onFolder = { stack += FilesNav.Folder(top.root, it.id, it.name) })
             FilesNav.Inbox -> AciInboxRequests(api, onBack = { stack.removeAt(stack.lastIndex) }, onChanged = { pending = it })
         }
@@ -189,13 +223,14 @@ internal fun AciComputerFilesScreen(device: AciDevice, onClose: () -> Unit, embe
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AciFilesRoots(device: AciDevice, api: FilesApi, actions: AciFileActions, pendingCount: Int, onBack: () -> Unit, onRoot: (FilesRoot) -> Unit, onInbox: () -> Unit) {
+private fun AciFilesRoots(device: AciDevice, api: FilesApi, actions: AciFileActions, pendingCount: Int, diskRoots: List<WholeDiskRoot>, onOpenSettings: (() -> Unit)?, onBack: () -> Unit, onRoot: (FilesRoot) -> Unit, onInbox: () -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var roots by remember { mutableStateOf<List<FilesRoot>?>(null) }
     var fresh by remember { mutableStateOf<FilesFreshness?>(null) }
     var error by remember { mutableStateOf<FilesApi.Out.Failed?>(null) }
     var refreshing by remember { mutableStateOf(false) }
+    var diskError by remember { mutableStateOf<FilesApi.Out.Failed?>(null) }
     suspend fun load() {
         when (val r = api.roots()) {
             is FilesApi.Out.Ok -> {
@@ -221,7 +256,27 @@ private fun AciFilesRoots(device: AciDevice, api: FilesApi, actions: AciFileActi
                         list.isEmpty() -> AciStateCard("No folders yet", "This computer hasn’t shared any folders with Files.")
                         else -> {
                             AciListRow("Inbox requests", "Files dropped in Inbox that wait for you", if (pendingCount > 0) "$pendingCount" else null, "filesInboxRequestsRow", onInbox)
-                            list.forEach { r -> AciListRow(r.name, r.kind.replaceFirstChar { it.uppercase() }, null, "filesRoot-${r.id}") { onRoot(r) } }
+                            list.filter { r -> diskRoots.none { it.path == r.pathHint } }.forEach { r -> AciListRow(r.name, r.kind.replaceFirstChar { it.uppercase() }, null, "filesRoot-${r.id}") { onRoot(r) } }
+                            if (diskRoots.isNotEmpty()) {
+                                // Whole-disk roots after the Files drive; only while the setting is on. A root is added on first use.
+                                Text("Whole disk", color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                                diskRoots.forEach { d ->
+                                    AciListRow(d.label, d.path, null, "filesDisk-${d.id}") {
+                                        scope.launch {
+                                            val existing = list.firstOrNull { it.pathHint == d.path }
+                                            if (existing != null) { diskError = null; onRoot(existing); return@launch }
+                                            when (val added = api.addRoot(d.label, d.path)) {
+                                                is FilesApi.Out.Ok -> { diskError = null; roots = list + added.value; onRoot(added.value) }
+                                                is FilesApi.Out.Failed -> diskError = added
+                                            }
+                                        }
+                                    }
+                                }
+                                diskError?.let { f ->
+                                    Text(f.message, color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp).testTag("aciFilesDiskError"))
+                                    if (f.wholeDiskOff && onOpenSettings != null) AciPillButton("Open Settings", "aciFilesOpenSettings") { onOpenSettings() }
+                                }
+                            }
                             // iOS FilesDrive.Launch.scan: a scan lands in Scans (or Inbox when there is no Scans root).
                             AciListRow("Scan a document", "Saved as a PDF in Scans", null, "filesScanRow") { actions.scan(null, null) }
                         }
@@ -234,17 +289,18 @@ private fun AciFilesRoots(device: AciDevice, api: FilesApi, actions: AciFileActi
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AciFilesFolder(api: FilesApi, actions: AciFileActions, nav: FilesNav.Folder, onBack: () -> Unit, onFolder: (FilesItem) -> Unit) {
+private fun AciFilesFolder(api: FilesApi, actions: AciFileActions, nav: FilesNav.Folder, onOpenSettings: (() -> Unit)?, onBack: () -> Unit, onFolder: (FilesItem) -> Unit) {
     val c = AllternitTheme.colors
     val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<FilesItem>?>(null) }
     var fresh by remember { mutableStateOf<FilesFreshness?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var diskOff by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     suspend fun load() {
         when (val r = api.list(nav.root.id, nav.parentId)) {
-            is FilesApi.Out.Ok -> { items = r.value.first; fresh = r.value.second; error = null; actions.asleep = r.value.second?.asleep == true }
-            is FilesApi.Out.Failed -> error = r.message
+            is FilesApi.Out.Ok -> { items = r.value.first; fresh = r.value.second; error = null; diskOff = false; actions.asleep = r.value.second?.asleep == true }
+            is FilesApi.Out.Failed -> { error = r.message; diskOff = r.wholeDiskOff }
         }
     }
     LaunchedEffect(nav.parentId, actions.revision) { load() }
@@ -263,7 +319,8 @@ private fun AciFilesFolder(api: FilesApi, actions: AciFileActions, nav: FilesNav
                     fresh?.takeIf { it.asleep }?.let { Text(it.line, color = c.textSecondary, fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp)) }
                     val list = items
                     when {
-                        error != null && list == null -> AciStateCard("Couldn’t open this folder", error.orEmpty(), "Retry", { scope.launch { load() } })
+                        error != null && list == null -> if (diskOff && onOpenSettings != null) AciStateCard("Couldn’t open this folder", error.orEmpty(), "Open Settings", { onOpenSettings() })
+                        else AciStateCard("Couldn’t open this folder", error.orEmpty(), "Retry", { scope.launch { load() } })
                         list == null -> AciStateCard("Loading…", "Reading this folder.")
                         list.isEmpty() -> AciStateCard("This folder is empty", "Tap + to add a file or a scan.")
                         else -> list.forEach { item ->

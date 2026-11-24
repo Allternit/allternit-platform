@@ -69,6 +69,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
+import com.allternit.feature.artifacts.child
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -654,7 +655,7 @@ internal fun consoleLocationKey(region: String?): String? {
 }
 
 @Composable
-internal fun SettingsTab(computer: ConsoleComputer, onChanged: () -> Unit, onGone: () -> Unit) {
+internal fun SettingsTab(computer: ConsoleComputer, onChanged: () -> Unit, onGone: () -> Unit, onWholeDisk: (WholeDisk) -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
     var isError by remember { mutableStateOf(false) }
@@ -672,12 +673,55 @@ internal fun SettingsTab(computer: ConsoleComputer, onChanged: () -> Unit, onGon
         }
     }
 
+    WholeDiskCard(computer, busy) { on ->
+        busy = true
+        scope.launch {
+            val r = AciApi.consoleWholeDisk(computer.id, on)
+            busy = false
+            isError = r !is ConsoleWrite.Ok
+            message = if (r is ConsoleWrite.Ok) { if (on) "Whole disk is on." else "Whole disk is off." } else consoleFailureText(r)
+            if (r is ConsoleWrite.Ok) onWholeDisk(wholeDiskAnswer(r.body, on))
+        }
+    }
     when (computer.kind) {
         "cloud" -> CloudSettings(computer, busy) { text, call -> perform(text, call) }
         "paired" -> PairedSettings(computer, busy, { text, call, after -> perform(text, call, after) }, onChanged, onGone)
         else -> CNote("This is the computer you are holding. Manage it from Allternit Desktop.")
     }
     StatusLine(message, isError)
+}
+
+/** The `wholeDisk` of the PATCH answer; when it is unreadable, the state that was asked for. */
+internal fun wholeDiskAnswer(body: JsonElement?, on: Boolean): WholeDisk =
+    WholeDisk.parse((body as? JsonObject).child("wholeDisk")) ?: WholeDisk(on, true, null, emptyList())
+
+/**
+ * "Browse the whole disk": shown only when the row carries `wholeDisk` (an older server omits it). Off by default.
+ * Turning on is a hold-to-confirm with the plain warning; turning off needs no confirm.
+ */
+@Composable
+private fun WholeDiskCard(computer: ConsoleComputer, busy: Boolean, set: (Boolean) -> Unit) {
+    val disk = computer.wholeDisk ?: return
+    var asking by remember { mutableStateOf(false) }
+    CCard {
+        CTitle("Browse the whole disk")
+        when {
+            !disk.available -> CText(disk.reasonCopy)
+            disk.enabled -> {
+                CText("On. Files can open any folder on this computer.")
+                AciPillButton("Turn off", "aciConsoleWholeDiskOff") { if (!busy) set(false) }
+            }
+            asking -> {
+                CText(WholeDisk.WARNING)
+                AciHoldButton("Hold to turn on", "aciConsoleWholeDiskHold", danger = true, enabled = !busy) { asking = false; set(true) }
+                AciPillButton("Cancel", "aciConsoleWholeDiskCancel") { asking = false }
+            }
+            else -> {
+                CText("Off. Files shows only the Files drive.")
+                AciPillButton("Turn on", "aciConsoleWholeDiskOn") { asking = true }
+            }
+        }
+    }
 }
 
 @Composable

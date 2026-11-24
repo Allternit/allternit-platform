@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.feature.artifacts.bool
 import com.allternit.feature.artifacts.child
 import com.allternit.feature.artifacts.list
 import com.allternit.feature.artifacts.num
@@ -73,6 +74,8 @@ internal data class ConsoleComputer(
     val aliases: List<String> = emptyList(),
     /** The paired-row id when this machine has one; paired-only actions use it. */
     val pairedId: String? = null,
+    /** Whole-disk Files (platform #2829). Null = an older server that omits it = unavailable. */
+    val wholeDisk: WholeDisk? = null,
 ) {
     /** True when [other] is this row's id or any alias (selection, deep links, push `computerId`). */
     fun matches(other: String): Boolean = id == other || other in aliases
@@ -104,7 +107,34 @@ internal data class ConsoleComputer(
             return ConsoleComputer(id, name, o.str("provider").orEmpty(), o.str("region"), o.str("os").orEmpty(), status, sample, o.num("servicesCount")?.toInt(), o.str("address"),
                 o.str("kind").orEmpty(), o.str("group").orEmpty(), o.str("lastBackupAt"), o.str("runtimeId"),
                 (o["aliases"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content }.orEmpty(),
-                o.str("pairedId")?.takeIf { it.isNotBlank() })
+                o.str("pairedId")?.takeIf { it.isNotBlank() }, WholeDisk.parse(o.child("wholeDisk")))
+        }
+    }
+}
+
+/** One whole-disk root: `/` on Linux and macOS, one entry per drive letter on Windows. */
+internal data class WholeDiskRoot(val id: String, val path: String, val label: String)
+
+/** `wholeDisk` on a console row and in the PATCH answer: `{ enabled, available, reason?, roots }`. */
+internal data class WholeDisk(val enabled: Boolean, val available: Boolean, val reason: String?, val roots: List<WholeDiskRoot>) {
+    /** The roots switcher shows only while the setting is on and the server sent roots. */
+    val showsRootsSwitcher: Boolean get() = enabled && roots.isNotEmpty()
+
+    /** Plain words for `reason`, shown as text when the switch is not available. */
+    val reasonCopy: String get() = when (reason) {
+        "not_owner" -> "Only the owner of this computer can turn this on."
+        "not_a_server" -> "Allternit Desktop already reaches its own files, so this doesn’t apply."
+        "no_runtime" -> "Pair this computer first, then you can turn this on."
+        else -> "Not available on this computer."
+    }
+
+    companion object {
+        const val WARNING = "Anyone using this computer from Allternit can open, change or delete any file on it, not only the Files drive."
+
+        /** Null when the field is missing (unavailable); odd fields never drop the row. */
+        fun parse(o: JsonObject?): WholeDisk? = o?.let {
+            WholeDisk(it.bool("enabled") == true, it.bool("available") == true, it.str("reason"),
+                it.list("roots").mapNotNull { r -> WholeDiskRoot(r.str("id") ?: return@mapNotNull null, r.str("path") ?: return@mapNotNull null, r.str("label") ?: r.str("path").orEmpty()) })
         }
     }
 }
