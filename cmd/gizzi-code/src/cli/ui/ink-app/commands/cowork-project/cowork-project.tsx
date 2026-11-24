@@ -1,6 +1,7 @@
 // @ts-nocheck
 import * as React from 'react'
 import { Box, Text, useInput } from '../../ink'
+import { BlockTitle } from '../../components/BlockTitle'
 import { Dialog } from '../../components/design-system/Dialog'
 import type { LocalJSXCommandCall } from '../../types/command'
 import { ALLTERNIT_GATEWAY_BASE } from '@/shared/constants/allternitGateway'
@@ -151,7 +152,7 @@ export function CoworkProjectCommandWrapper({
 
   if (loading) {
     return (
-      <Dialog title="Cowork Projects" onCancel={() => onDone()}>
+      <Dialog title={<BlockTitle title="PROJECTS" />} onCancel={() => onDone()}>
         <Text>Loading projects…</Text>
       </Dialog>
     )
@@ -159,7 +160,7 @@ export function CoworkProjectCommandWrapper({
 
   if (error && !selectedProjectId) {
     return (
-      <Dialog title="Cowork Projects" onCancel={() => onDone()}>
+      <Dialog title={<BlockTitle title="PROJECTS" />} onCancel={() => onDone()}>
         <Text color="red">Error: {error}</Text>
       </Dialog>
     )
@@ -233,7 +234,7 @@ export function CoworkProjectCommandWrapper({
   }
 
   return (
-    <Dialog title="Cowork Projects" onCancel={() => onDone()}>
+    <Dialog title={<BlockTitle title="PROJECTS" />} onCancel={() => onDone()}>
       <Box flexDirection="column">
         {projects.length === 0 ? (
           <Text dimColor>No Cowork projects found.</Text>

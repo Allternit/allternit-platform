@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { BlockTitle } from '../../components/BlockTitle'
 import * as path from 'node:path'
 import * as React from 'react'
 import {
@@ -158,8 +159,9 @@ export function ArtifactViewer({ onDone }: ArtifactViewerProps) {
   return (
     <Pane>
       <Box marginBottom={1} flexDirection="column">
-        <Text bold>
-          Artifacts ({entries.length}) — {displayRoot}/
+        <BlockTitle title="ARTIFACTS" />
+        <Text dimColor>
+          {entries.length} artifacts · {displayRoot}/
         </Text>
         <Text dimColor>updated {formatDate(entries[0]?.mtimeMs ?? 0)}</Text>
       </Box>
