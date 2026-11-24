@@ -43,6 +43,7 @@ import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.Haptics
+import com.allternit.core.design.ProvideDockScroll
 import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.core.design.R as DesignR
 
@@ -57,14 +58,19 @@ internal fun CodeScaffold(
     onBack: () -> Unit,
     backTag: String,
     trailing: @Composable () -> Unit = {},
+    /** The page scroll in dp (`rememberDockOffset(listState)`): the title docks into the bar. Null keeps the plain bar (T7/T8). */
+    dockScroll: (() -> Float)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = AllternitTheme.colors
     BackHandler(onBack = onBack)
-    Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding()) {
-        LibraryHeader(title = title, subtitle = subtitle, onBack = onBack, backTag = backTag, trailing = trailing)
-        content()
+    val body: @Composable () -> Unit = {
+        Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding()) {
+            LibraryHeader(title = title, subtitle = subtitle, onBack = onBack, backTag = backTag, trailing = trailing)
+            content()
+        }
     }
+    if (dockScroll != null) ProvideDockScroll(dockScroll, body) else body()
 }
 
 /** iOS "Connect a computer or Allternit Cloud" (no computer: 428 / compute_required), never a raw error. */

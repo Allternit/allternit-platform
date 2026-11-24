@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.rememberDockOffset
 import com.allternit.feature.artifacts.LibrarySheet
 import com.allternit.feature.artifacts.LibrarySheetAction
 import com.allternit.feature.artifacts.relativeTime
@@ -244,16 +245,9 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
     }
     val openTerminal: (String, String) -> Unit = { id, name -> store.openTerminal(id, name, onRoute) }
     val all = host.sessions()
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val shown = all.filter { (filter == null && it.status != CodeSessionStatus.Archived || it.status == filter) && it.title.contains(query, ignoreCase = true) }
-    // The computer sections sit with All (a status filter is about threads) and follow the search.
-    val terminals = if (filter != null) emptyList() else live.terminals.filter {
-        query.isEmpty() || TerminalPreview.title(it).contains(query, ignoreCase = true) || it.cwd.contains(query, ignoreCase = true)
-    }
-    val external = if (filter != null) emptyList() else live.rows.filter {
-        query.isEmpty() || OnYourComputer.displayName(it).contains(query, ignoreCase = true) || it.cwd.contains(query, ignoreCase = true)
-    }
-    val computerSections = terminals.isNotEmpty() || external.isNotEmpty()
-    CodeScaffold(title = "Code threads", subtitle = "${all.count { it.status != CodeSessionStatus.Archived }} threads", onBack = onBack, backTag = "codeOverviewBack") {
+    CodeScaffold(title = "Code threads", subtitle = "${all.count { it.status != CodeSessionStatus.Archived }} threads", onBack = onBack, backTag = "codeOverviewBack", dockScroll = rememberDockOffset(listState)) {
         Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(12.dp)) {
             if (query.isEmpty()) Text("Search threads", color = c.textTertiary, fontSize = 15.sp)
             BasicTextField(query, { query = it }, singleLine = true, textStyle = TextStyle(color = c.textPrimary, fontSize = 15.sp), cursorBrush = SolidColor(c.accentCode), modifier = Modifier.fillMaxWidth().testTag("codeOverviewSearch"))
@@ -272,29 +266,8 @@ internal fun CodeOverviewScreen(host: CodeHost, store: CodeStore, onRoute: (Code
                 "Start a thread from the composer and it appears here.",
             )
         } else {
-            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("codeOverviewList")) {
-                if (terminals.isNotEmpty()) {
-                    item(key = "terminals-label") { SectionLabel("Terminals") }
-                    // Android's threads screen is one list: the List layout's 2 preview rows.
-                    items(terminals, key = { "terminal-${it.sessionId}" }) { t ->
-                        TerminalPreviewRow(t, TerminalPreview.Layout.List) { openTerminal(t.sessionId, TerminalPreview.title(t)) }
-                    }
-                }
-                if (external.isNotEmpty()) {
-                    item(key = "computer-label") { SectionLabel("On your computer") }
-                    items(external, key = { "live-${it.sessionId}" }) { s -> OnYourComputerRow(s, live, openTerminal) }
-                }
-                if (computerSections) item(key = "threads-label") { SectionLabel("Threads") }
-                if (shown.isEmpty()) {
-                    item(key = "threads-empty") {
-                        Text(
-                            if (filter == null) "No threads yet. Start one from the composer." else "Nothing ${filter?.label?.lowercase()}",
-                            color = c.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("codeOverviewNoThreads"),
-                        )
-                    }
-                } else {
-                    items(shown, key = { it.id }) { s -> SessionRow(s, onMore = { acting = s }, onClick = { onOpen(s.id) }) }
-                }
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("codeOverviewList"), state = listState) {
+                items(shown, key = { it.id }) { s -> SessionRow(s, onMore = { acting = s }, onClick = { onOpen(s.id) }) }
             }
         }
     }
@@ -364,7 +337,8 @@ internal fun CodeComputerScreen(host: CodeHost, onBack: () -> Unit) {
         failed = list == null
         devices = list
     }
-    CodeScaffold(title = "Computer", subtitle = "Where Code runs your commands", onBack = onBack, backTag = "codeComputerBack") {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    CodeScaffold(title = "Computer", subtitle = "Where Code runs your commands", onBack = onBack, backTag = "codeComputerBack", dockScroll = rememberDockOffset(listState)) {
         val list = devices
         when {
             list == null && !failed -> Loading()
@@ -375,7 +349,7 @@ internal fun CodeComputerScreen(host: CodeHost, onBack: () -> Unit) {
                     CodePill("Open Apps & Extensions", testTag = "codeComputerConnect") { host.openConnections() }
                 }
             }
-            else -> LazyColumn(Modifier.fillMaxSize().testTag("codeComputerList")) {
+            else -> LazyColumn(Modifier.fillMaxSize().testTag("codeComputerList"), state = listState) {
                 item {
                     CodeRow(
                         title = "Automatic", detail = "Use whichever of your computers is online", testTag = "codeComputerAuto",
