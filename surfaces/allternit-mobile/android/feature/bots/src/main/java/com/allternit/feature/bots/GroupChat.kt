@@ -54,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -74,6 +75,10 @@ import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiJson
 import com.allternit.core.api.gen.AgentChatRequest
 import com.allternit.core.design.AllternitStatic
+import com.allternit.core.design.EmptyBox
+import com.allternit.core.design.GlassPill
+import com.allternit.core.design.ProvideDockScroll
+import com.allternit.core.design.SectionLabel
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyErrorMessage
 import com.allternit.core.design.Haptics
@@ -530,6 +535,30 @@ private fun SwipeDeleteRow(testTag: String, onDelete: () -> Unit, content: @Comp
     }
 }
 
+/**
+ * Press feedback that watches the pointer without consuming it, so the child's own click still
+ * fires: scales to [scale] while a finger is down, on a quick spring.
+ */
+@Composable
+internal fun Modifier.observedPressScale(scale: Float): Modifier {
+    var pressed by remember { mutableStateOf(false) }
+    val s by androidx.compose.animation.core.animateFloatAsState(
+        if (pressed) scale else 1f,
+        androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 600f),
+        label = "observedPress",
+    )
+    return this
+        .pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                    pressed = e.changes.any { it.pressed }
+                }
+            }
+        }
+        .graphicsLayer { scaleX = s; scaleY = s }
+}
+
 /** Group chats (iOS GroupsListView): the open rooms, search, New group chat, swipe to delete. */
 @Composable
 internal fun GroupsListScreen(store: BotModeStore, nav: BotNavigator) {
@@ -547,20 +576,26 @@ internal fun GroupsListScreen(store: BotModeStore, nav: BotNavigator) {
     }
     LaunchedEffect(Unit) { load() }
     val shown = query.trim().lowercase().let { q -> if (q.isEmpty()) store.groups else store.groups.filter { it.name.lowercase().contains(q) } }
+    val scroll = rememberScrollState()
+    ProvideDockScroll(scroll) {
     BotScreen("Group chats", nav, testTag = "groupsListScreen", trailing = {
-        Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), "New group chat", tint = c.textPrimary, modifier = Modifier.size(40.dp).clip(CircleShape).clickable { creating = true }.padding(10.dp).testTag("groupsNew"))
+        GlassPill(onClick = { creating = true }, modifier = Modifier.testTag("groupsNew"), height = 36.dp, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)) {
+            Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), "New group chat", tint = c.textPrimary, modifier = Modifier.size(18.dp))
+        }
     }) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+        Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(vertical = 8.dp)) {
             if (store.groups.isNotEmpty()) {
-                Text("${store.groups.size} OPEN", color = c.textTertiary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+                SectionLabel("${store.groups.size} OPEN", Modifier.padding(horizontal = 20.dp))
                 Box(Modifier.padding(horizontal = 16.dp)) { LibraryField("", query, "Search group chats", "groupsSearch") { query = it } }
                 Gap(8.dp)
             }
-            if (!ListState(loading && store.groups.isEmpty(), error, store.groups.isEmpty(), "Couldn't load group chats", "No group chats yet.") { scope.launch { load() } }) {
-                RowGroup {
+            if (store.groups.isEmpty() && !loading && error == null) {
+                EmptyBox("No group chats yet.", "Pick two or more bots and start a room.", Modifier.padding(horizontal = 16.dp).testTag("groupsEmptyNew"), onClick = { creating = true })
+            } else if (!ListState(loading && store.groups.isEmpty(), error, store.groups.isEmpty(), "Couldn't load group chats", "No group chats yet.") { scope.launch { load() } }) {
+                Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.bgPanel).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(20.dp))) {
                     shown.forEachIndexed { i, g ->
                         SwipeDeleteRow("groupRow${g.id}", onDelete = { confirmDelete = g }) {
-                            Row(Modifier.fillMaxWidth().clickable { nav.open(BotRoute.Group(g.id)) }.testTag("groupRow${g.id}").padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(Modifier.fillMaxWidth().observedPressScale(0.98f).clickable { nav.open(BotRoute.Group(g.id)) }.testTag("groupRow${g.id}").padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 GroupFaces(store, g.memberIds, 26.dp)
                                 Column(Modifier.weight(1f)) {
                                     Text("# ${g.name}", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -573,8 +608,8 @@ internal fun GroupsListScreen(store: BotModeStore, nav: BotNavigator) {
                     }
                 }
             }
-            if (store.groups.isEmpty() && !loading && error == null) Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { Pill("New group chat", "groupsEmptyNew", primary = true) { creating = true } }
         }
+    }
     }
     if (creating) NewGroupChatSheet(store, onDismiss = { creating = false }) { room -> creating = false; nav.open(BotRoute.Group(room.id)) }
     confirmDelete?.let { g ->

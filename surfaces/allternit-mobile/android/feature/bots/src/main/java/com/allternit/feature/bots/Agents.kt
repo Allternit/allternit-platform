@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.ProvideDockScroll
 import com.allternit.feature.artifacts.LibraryField
 import com.allternit.feature.artifacts.LibraryIconButton
 import com.allternit.feature.artifacts.LibrarySearchField
@@ -468,13 +469,15 @@ internal fun MarketplaceScreen(nav: BotNavigator) {
         loading = false
     }
     LaunchedEffect(query) { load() }
-    BotScreen("Discover agents | bots", nav, testTag = "marketplace") {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+    val scroll = rememberScrollState()
+    ProvideDockScroll(scroll) {
+    BotScreen("Marketplace", nav, testTag = "marketplace") {
+        Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(bottom = 24.dp)) {
             LibrarySearchField(query, "Search the marketplace", "marketplaceSearch", Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) { query = it }
             if (!ListState(loading, error, listings.isEmpty(), "Couldn't load agents", "No published agents or bots yet. Check back later or publish your own from the workspace.") { scope.launch { load() } }) {
                 listings.forEach { l ->
                     Column(
-                        Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.bgPanel).border(BorderStroke(1.dp, c.borderSubtle), RoundedCornerShape(14.dp))
+                        Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.fillNeutral)
                             .testTag("marketplaceListing${l.id}").clickable { nav.open(BotRoute.Listing(l.id)) }.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
@@ -489,6 +492,7 @@ internal fun MarketplaceScreen(nav: BotNavigator) {
                 }
             }
         }
+    }
     }
 }
 
@@ -514,15 +518,17 @@ internal fun MarketplaceListingScreen(id: String, store: BotModeStore, nav: BotN
             l.publisherName?.let { Text("By $it", color = c.textSecondary, fontSize = 13.sp) }
             Text(l.description, color = c.textPrimary, fontSize = 15.sp)
             if (installed != null) Text("✓ Installed", color = AllternitStatic.StatusSuccess, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            else Pill("Install", "marketplaceInstall", primary = true, busy = installing) {
-                installing = true
-                scope.launch {
-                    when (val r = BotsApi.install(id)) { is BotsResult.Ok -> { installed = r.value; store.refreshAgents() }; is BotsResult.Failed -> installError = r.message }
-                    installing = false
+            else Box(Modifier.observedPressScale(0.94f)) {
+                Pill("Install", "marketplaceInstall", primary = true, busy = installing) {
+                    installing = true
+                    scope.launch {
+                        when (val r = BotsApi.install(id)) { is BotsResult.Ok -> { installed = r.value; store.refreshAgents() }; is BotsResult.Failed -> installError = r.message }
+                        installing = false
+                    }
                 }
             }
             installError?.let { ErrorLine(it, Modifier.padding(0.dp)) }
-            Pill("Rate this agent", "marketplaceRate") { rateOpen = true }
+            Box(Modifier.observedPressScale(0.94f)) { Pill("Rate this agent", "marketplaceRate") { rateOpen = true } }
             Text("Reviews (${l.ratingCount})", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             reviews.forEach { (stars, text, who) ->
                 Column {
