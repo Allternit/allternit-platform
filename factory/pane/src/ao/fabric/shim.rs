@@ -986,6 +986,20 @@ async fn harness_session_events(AxumPath(id): AxumPath<String>) -> Response {
 // Server
 // ---------------------------------------------------------------------------
 
+/// One `HostApi` per process (one snapshot sampler, one findings cache). The
+/// credentials come from the ao identity file, read fresh per request because
+/// the relay rotates the token. Same routes and logic as allternit-api's
+/// `host_routes.rs`: the shared `host_probe::http` router.
+fn host_api() -> Arc<host_probe::http::HostApi> {
+    static API: std::sync::OnceLock<Arc<host_probe::http::HostApi>> = std::sync::OnceLock::new();
+    API.get_or_init(|| {
+        host_probe::http::HostApi::new(Arc::new(|| {
+            super::identity::NodeIdentity::load_readonly()?.host_credentials()
+        }))
+    })
+    .clone()
+}
+
 pub(crate) async fn serve(port: u16, state: Arc<ShimState>) -> Result<(), String> {
     let app = Router::new()
         .route("/health", get(health))
@@ -1028,6 +1042,8 @@ pub(crate) async fn serve(port: u16, state: Arc<ShimState>) -> Result<(), String
             "/v1/browser-skills/*rest",
             get(acu_browser_skills_get_rest).post(acu_browser_skills_post_rest),
         )
+        // Computers console: /v1/host/* (snapshot, findings, actions, forward ...).
+        .merge(host_probe::http::router(host_api()))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))

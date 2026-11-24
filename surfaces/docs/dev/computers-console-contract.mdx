@@ -24,7 +24,7 @@ Status: contract agreed 2026-11-20. Routes are being built in lanes and are not 
 
 ## Node routes (loopback `/v1/host/*`)
 
-Served by the shared `host_probe::http` router (feature `http`). **Shipped in allternit-api** (step 1.8); the ao shim mounts the same router in a follow-up. Read routes need no approval. The one write route is `POST /v1/host/actions`.
+Served by the shared `host_probe::http` router (feature `http`). **Shipped in allternit-api** (step 1.8) **and on the ao shim** (step 1.8b): the shim (`127.0.0.1:8014`, used by paired servers through `ao fabric` / `allternit-factory pane fabric`) merges the same router with the same logic. It takes its credentials from the ao identity file (`~/.allternit/factory/fabric/identity.json`): relay key = `sha256_hex(deviceToken)`, owner = the paired user id, runtime id = `runtimeId`. An unpaired or expired identity refuses every relayed call and every action, exactly as an unpaired allternit-api does. Read routes need no approval. The one write route is `POST /v1/host/actions`.
 
 | Route | Returns |
 |---|---|
@@ -269,6 +269,18 @@ The probe never runs as root and no password is stored. Changes that need elevat
 | macOS | A privileged launchd helper, installed once. |
 | Windows | An elevated service, installed once. |
 | Orgo cloud | Already root, no setup. |
+
+**Bundling (built in step 1.8b).** The helper binary is `allternit-host-helper` (built from `platform/host-probe/src/bin/`). The runtime looks for it next to its own executable (`elevation::bundled_helper()`), so it ships beside `allternit-api` on every OS, in the Desktop app and in every runtime update (`runtime-package.cjs` lists it with the other binaries):
+
+| OS | Staged at (app / runtime) |
+|---|---|
+| macOS | `Allternit.app/Contents/Resources/bin/allternit-host-helper` (universal, signed with the app) |
+| Windows | `resources\bin\allternit-host-helper.exe` |
+| Linux (AppImage, .deb, cloud computers) | `resources/bin/allternit-host-helper` (glibc floor build) |
+
+Until the helper sits there, `GET /v1/host/elevation/plan` and `POST /v1/host/elevation/setup` answer 503 `helper_missing`.
+
+**Port forward close code.** `GET /v1/host/forward` answers 502 when its TCP dial fails. Every relay client then sends `socket_close` with code 1011 (local failure): the Desktop relay client, the agent daemon and the ao relay. A local socket that ends without a close frame also sends 1011.
 
 ## SSH key model
 

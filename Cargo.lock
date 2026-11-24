@@ -1069,6 +1069,7 @@ dependencies = [
  "ctrlc",
  "ed25519-dalek 2.2.0",
  "futures-util",
+ "host-probe",
  "interprocess",
  "jsonc-parser",
  "libc",

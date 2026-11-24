@@ -1895,14 +1895,26 @@ export class DesktopAuthManager {
         body_encoding: isBinary ? 'base64' : 'utf8',
       }));
     });
+    let localFailed = false;
     local.on('close', (code: number, reason: Buffer) => {
       this.relayLocalSockets.delete(socketId);
       if (relay.readyState === WebSocket.OPEN) {
-        relay.send(JSON.stringify({ type: 'socket_close', socket_id: socketId, code, reason: reason.toString() }));
+        // A refused upgrade (the host forward answers 502 when its TCP dial
+        // fails) or a dropped socket closes locally as 1006, which must not go
+        // on the wire. Tell the cloud 1011 (local failure); 1005 means a clean
+        // close without a code.
+        const wireCode = localFailed || code === 1006 ? 1011 : code === 1005 ? 1000 : code;
+        relay.send(JSON.stringify({
+          type: 'socket_close',
+          socket_id: socketId,
+          code: wireCode,
+          reason: wireCode === 1011 && !reason.length ? 'Local runtime socket failed' : reason.toString(),
+        }));
       }
     });
     local.on('error', (error: Error) => {
       log.warn('[Auth] Local runtime socket error:', error.message);
+      localFailed = true;
       local.close(1011, 'Local runtime socket failed');
     });
   }
