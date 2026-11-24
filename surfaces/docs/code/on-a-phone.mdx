@@ -7,11 +7,11 @@ Code on a phone is the same Code as on Desktop, sized for one hand. It runs on y
 
 ## Header
 
-From left to right: **☰** (the menu) and up to three buttons. Before a session starts, the Code lockup on the page names it, so the header has no title. With the terminal open, the header reads **Terminal**.
+From left to right: **☰** (the menu, which only opens the drawer; the drawer's mode icon opens the Shelves hub, as does a hold on the mode orb above the composer) and up to three buttons. Before a session starts, the Code lockup on the page names it, so the header has no title. With the terminal open, the header reads **Terminal**.
 
 - **Panes** (in a session): the session's panes and actions, each opening full screen.
 - **Count**: how many code threads are open. Tap it for all of them as cards, with **New thread** at the bottom.
-- **Pencil** (before a session starts): a new thread. Inside a session, start one from the count button or the menu.
+- **New:** the header has no New button. New is the orb at the composer's top right (a new thread, plus Quick task when a session is open), and the drawer keeps its New menu. Inside a session you can also start a thread from the count button.
 - **Terminal** (`>_`): opens the terminal. **×** closes it.
 
 ## Session row
@@ -32,10 +32,59 @@ The terminal fills the screen in one dark surface. On the iPhone app, the comput
 
 The terminal starts your computer's usual shell. If a computer doesn't have zsh (most Linux cloud computers), it starts that computer's default shell (bash or sh) instead.
 
+## Coding agents in the terminal
+
+When you run a coding agent in the terminal (Claude Code, Codex, Kimi, Antigravity, opencode or Gizzi), Code reads the agent's screen and gives you buttons for it.
+
+- **iPhone and Android apps:** the agent's own input box is hidden, and a composer under the terminal drives the agent:
+  - **Message <agent>…** sends what you type to the agent as one prompt.
+  - The status line shows the agent's name and **Idle**, **Working** or **Needs you**. While it works, **Stop** sends Esc.
+  - The agent's mode (**Bypass**, **Plan**, **Accept edits**…) is on the right. Tap it to switch to the next mode (shift+tab).
+  - When the agent asks a question (a permission or a choice), each answer is a button. A button sends the answer's number, or the arrow keys and Enter.
+  - The keys under the terminal still type into the agent. On Android the composer takes the place of the **Type a command** line while the agent runs.
+- **ai.allternit.com phone layout and m.allternit.com:** the agent's box stays visible and you type in the terminal. Its questions show as buttons above the keys, with **Stop** while it works.
+
+**Android app: terminals and sessions on your computer.** Open the Code threads screen (the checklist in the header, or **All threads** in Code tools). When your computer's runtime supports it, two sections sit above the threads:
+
+- **Terminals:** every Allternit terminal on the computer, with its folder, the agent's state (**Working**, **Needs you**, **Idle**, or **Running** / **Exited** for a plain shell) and its last two lines. Tap one to open that exact terminal. Closing its tab later keeps it running on your computer.
+- **On your computer:** Claude Code and other CLI sessions running outside Allternit (Terminal, iTerm2, Ghostty), with the app and pid. **Keeps:** lists the flags the session was started with.
+  - **Move here** always asks first. The sheet shows the command, the flags it keeps, and which app and pid it stops. The old Terminal window stays open and shows the exit. While the agent works, the button is **Move when idle**.
+  - While a move runs, the row shows **Waiting for it to go idle…** (with **Cancel**), then **Stopping…** and **Starting…**. When it is done, the terminal opens. If it fails, the row says why. When the new terminal didn't start, it shows the command with a **Copy** button.
+  - **Open a copy** and **New session here** open their terminal at once.
+  - A session open in two places can't be moved. The row names every holder.
+
+The sections are hidden when you are signed out, when nothing is running, and on a runtime without these routes. The app asks for updates only while the screen is open and the app is in front.
+
+If Code doesn't recognise the screen, or you quit the agent, the full terminal comes back.
+
+## Move a session from your computer
+
+Open the Code sessions view (the count button, or **Code sessions** in the menu). Two sections sit under **Computers** when your computer's runtime supports them:
+
+- **Terminal sessions:** every Allternit terminal on the computer, with its folder, the agent's state (**Working**, **Needs you**, **Idle**, or **Running** / **Exited** for a plain shell) and its last lines. Tap one to open that exact terminal. Nothing new starts.
+- **On your computer** (or **On** and your computer's name): Claude Code and other CLI sessions running outside Allternit, in Terminal, iTerm2 or Ghostty. Each row shows the CLI, the session, its folder, the app and pid, and its status. **Keeps:** lists the flags the session was started with (for example `--model opus`). A moved or copied session starts with the same flags.
+
+What you can do with a session:
+
+- **Move here** stops the session on your computer and resumes it in an Allternit terminal. On a phone, Move always asks first. The sheet shows the command that will run, the flags it keeps, and which app and pid it stops. The old Terminal window stays open and shows the exit.
+- **Move when idle** shows instead while the agent is working. The move waits until the agent is idle. While it waits you can **Cancel**.
+- While a move runs, the row shows **Waiting for it to go idle…**, then **Stopping…** and **Starting…**. When it is done, the new terminal opens. If the move fails, the row says why in one sentence. When the new terminal didn't start, the row shows the command to run by hand, with a **Copy** button.
+- **Open a copy** opens a copy of the session in an Allternit terminal. The original keeps running on your computer. The button shows only when the CLI can open a copy.
+- **New session here** starts a fresh session of the same CLI in the same folder.
+
+A session that is open in two places can't be moved. The row names every holder, for example "Open in 2 places: Terminal (pid 4821), iTerm2 (pid 5110). Close one to move it." A CLI that can't reopen a session by id offers only **New session here**.
+
+The sections are hidden when you are signed out, when nothing is running, and on a computer whose runtime doesn't have these routes yet. The phone asks for updates only while the sessions view is open and the app is in front: terminals every 2 seconds and sessions every 5 seconds. After three failures in a row it waits 15 seconds between tries.
+
 ## For developers
 
 - Header: `src/fabric-session/phone/screens/LazyScreen.tsx` (the pencil hides while `usePhonePanes` has panes, so the header keeps three buttons).
 - Session row: `CodeSessionHeader` with `usePhoneSurface()` drops the Gizzi Code lockup and the Cloud badge and shows one folder · branch chip.
 - Prompt: `ChatComposer` puts `bottomDockContent` in the control row (`composer-terminal-dock`) when it is the Code terminal prompt on the phone surface.
 - Swipe rows: `.phone-swipe-row` and `.phone-swipe-row__underlay` in `phone.css` hold the action under the row (`useSwipeActions`' CSS contract).
+- Coding agents on Android: a Kotlin port of the parser (`android/feature/code/.../AgentFrame.kt`); the composer is `AgentComposer` and the crop is `AgentFrameReader` (`CodeTerminal.kt`). It is tested against the same captured screens: `./gradlew :feature:code:testDebugUnitTest --tests '*AgentFrameTest*'`.
+- Android shell tiles use the terminal service (`/terminal/create`, `/terminal/:id/input`, `/terminal/:id/resize`, `/terminal/:id/close`, the SSE stream `/terminal/:id/stream`), like iOS and the web. Tile ids are kept for the app process, so a rotation re-attaches the same shells (the stream replays the scrollback); a terminal the computer no longer has shows "This terminal closed on your computer" and a **New terminal** button. The Computers console terminal still uses gizzi-code's `/v1/pty`.
+- Move a session (Android app): `CodeApi.listTerminals`, `liveSessions`, `adopt` and `adoptJob` (`CodeData.kt`) call `GET /terminal/list?preview=12`, `GET /api/v1/live-sessions`, `POST /api/v1/live-sessions/adopt` and `GET /api/v1/live-sessions/adopt/:jobId` over the relay. A 404 with no error code hides the feature. The rules (actions, error sentences, command quoting, preview crop, poll backoff) and `TerminalSessionsStore` are in `OnYourComputer.kt`, a port of the iOS `OnYourComputer.swift`; `CodeStore` owns the store, so a Move is followed after the screen closes. The rows and the confirm sheet are in `OnYourComputerViews.kt`. `CodeTerminalStore.open(terminalId, name)` opens a listed terminal by its id, and closing that tile only detaches. Tests: `--tests '*OnYourComputerTest*'`. See also [Live sessions](/guides/live-sessions).
 - Terminal shell: see [Terminal API](/api/terminal#create-terminal).
+- Coding agents: the screen parser is `src/lib/terminal/agent-frame.ts` (allternit-ai). The iPhone app runs a line-for-line port (`ios/Features/Code/AgentFrame.swift`), and the composer is `AgentComposerBar` (`PhoneCodeTerminal.swift`). Both are tested against the same captured screens (`surfaces/allternit-mobile/agent-frame-fixtures`, copied from the ai repo, which holds the source of truth).
+- Move a session (iPhone app): `TerminalServiceClient.list(preview:)` and `LiveSessionsClient` (`ios/Core/API/TerminalServiceClient.swift`) call `GET /terminal/list?preview=12`, `GET /api/v1/live-sessions`, `POST /api/v1/live-sessions/adopt` and `GET /api/v1/live-sessions/adopt/:jobId`. A 404 hides the feature. The rules (actions, error sentences, command quoting, preview crop, poll backoff) are in `ios/Features/Code/OnYourComputer.swift`, a port of `src/views/code/on-this-computer.ts` and `src/components/session-overview/terminal-overview.ts`. The rows and the confirm sheet are in `OnYourComputerViews.swift`. `CodeTerminalStore.attach(sessionId:title:)` opens a listed terminal by its session id. See also [Live sessions](/guides/live-sessions).

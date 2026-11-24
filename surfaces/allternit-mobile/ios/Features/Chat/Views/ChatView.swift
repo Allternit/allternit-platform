@@ -50,7 +50,7 @@ struct ChatView: View {
                 onMenu: { isSidebarOpen = true }
             ) {
                 HStack(spacing: 0) {
-                    // Share link moved into ⋯ so ⋯ fits beside New chat.
+                    // Share link moved into ⋯ (New is the New orb above the composer).
                     PhoneIconButton(systemName: "ellipsis", label: "Chat options") {
                         isChatMenuOpen = true
                     }
@@ -58,10 +58,6 @@ struct ChatView: View {
                         ChatMenuPopover(items: menuItems, onSelect: selectMenuItem, onClose: { isChatMenuOpen = false })
                             .presentationCompactAdaptation(.popover)
                     }
-                    PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
-                        startNewChat()
-                    }
-                    .accessibilityIdentifier("chatNewChat")
                 }
             }
             .zIndex(1)
@@ -73,6 +69,7 @@ struct ChatView: View {
                 chatMenuHoldsExtras: true,
                 onNewChat: startNewChat
             )
+
         }
         .background(Color("BgPrimary"))
         .sheet(isPresented: $isShareLinkPresented) {
@@ -124,6 +121,10 @@ struct ChatView: View {
             // Drawer rows: this chat shows "Working" while it streams and is never unread.
             sessions.setActive(viewModel.currentSessionId, streaming: viewModel.isStreaming)
             guard !viewModel.isStreaming else { return }
+            if ACILocalImageStore.isLocal(viewModel.currentSessionId) {
+                sessions.loadLocalImages()
+                return
+            }
             if sessions.session(id: viewModel.currentSessionId) == nil || viewModel.currentSessionId != nil {
                 await sessions.load()
                 if let id = viewModel.currentSessionId { sessions.markSeen(id) }
@@ -241,6 +242,10 @@ struct ChatContentView: View {
     /// Scroll-to-bottom button: the transcript is more than one screen above its end.
     @State private var jumpFar = false
     @ReducedMotion private var reducedMotion
+    /// Chat wait B: the sent message held at the top while the answer grows (see `AnswerRoom`).
+    @State private var answerAnchorId: String?
+    @State private var answerTurnHeight: CGFloat = 0
+    @State private var answerViewport: CGFloat = 0
     /// Home: the web chat launch screen (greeting, composer with its full
     /// deck, the template gallery) and the compact deck in a session. Other
     /// hosts get the plain composer.
@@ -298,6 +303,8 @@ struct ChatContentView: View {
     @State private var isCodePlusSheetPresented = false
     @State private var activeArtifact: ArtifactRecord? = nil
     @State private var isModelPickerPresented = false
+    /// The ChatGPT sign-in a signed-out error card opens.
+    @State private var connectSheet: ConnSheet? = nil
     @Environment(\.scenePhase) private var scenePhase
 
     /// The mode + agent state the NEXT session create should be stamped
@@ -372,6 +379,8 @@ struct ChatContentView: View {
             }
         }
         .onDisappear {
+            viewModel.isChatVisible = false
+            viewModel.declineBrowserImage()
             // Leaving the thread ends the call (the engine owns the mic) — but
             // not when the full-screen cover is what covered this view.
             if voiceHost.presentation != .full { voiceHost.end() }
@@ -385,12 +394,24 @@ struct ChatContentView: View {
         // with its editor's requests, so it isn't started twice.
         .task(id: artifactStudio == nil ? (viewModel.currentSessionId ?? sessionId ?? "") : "") {
             guard artifactStudio == nil, !SampleWorkspace.isEnabled,
-                  let id = viewModel.currentSessionId ?? sessionId, !id.isEmpty else { return }
+                  let id = viewModel.currentSessionId ?? sessionId, !id.isEmpty, !ACILocalImageStore.isLocal(id) else { return }
             await viewModel.servePaneArtifactRequests(
                 sessionId: id,
                 run: nil,
                 onProblem: { viewModel.transientError = $0 }
             )
+        }
+        .alert("Send this image prompt to ChatGPT?", isPresented: Binding(
+            get: { viewModel.pendingBrowserImage != nil },
+            set: { _ in }
+        )) {
+            Button("Send exact prompt") { viewModel.confirmBrowserImage() }
+            Button("Cancel", role: .cancel) { viewModel.declineBrowserImage() }
+        } message: {
+            Text((viewModel.pendingBrowserImage?.prompt ?? "") + "\n\nUses ChatGPT in this phone's ACI browser. Website sign-in is separate from ChatGPT text-chat authorization.")
+        }
+        .sheet(isPresented: $viewModel.imageBrowserPresented) {
+            ACIWebBrowserView(initialURL: URL(string: "https://chatgpt.com/")!, onExit: { viewModel.imageBrowserPresented = false })
         }
         .sheet(isPresented: $isModelPickerPresented) {
             ModelPickerSheet(modelStore: modelStore)
@@ -401,7 +422,12 @@ struct ChatContentView: View {
             inputText = prompt
             DispatchQueue.main.async { OnboardingStore.shared.pendingPrompt = nil }
         }
+        .onReceive(ACILocalImageStore.shared.$threads) { _ in
+            // @Published emits before assignment; refresh on the next main-actor turn.
+            Task { @MainActor in viewModel.refreshLocalImageTurns() }
+        }
         .onAppear {
+            viewModel.isChatVisible = true
             viewModel.sessionContext = sessionContext
             if let sessionId = sessionId {
                 viewModel.loadSession(sessionId)
@@ -564,6 +590,16 @@ struct ChatContentView: View {
         }
     }
 
+    /// One thread row (terminal or chat).
+    @ViewBuilder
+    private func threadRow(_ message: MessageRecord, hostedRun: PhoneTaskCardModel?) -> some View {
+        if isTerminal {
+            terminalRow(message)
+        } else {
+            messageRow(message, hostedRun: hostedRun)
+        }
+    }
+
     private var sessionLayout: some View {
         VStack(spacing: 0) {
             // Transient load/send failure banner (dismissible).
@@ -590,11 +626,24 @@ struct ChatContentView: View {
                                     .padding(.top, 60)
                             }
                         } else {
-                            ForEach(viewModel.messages) { message in
-                                if isTerminal {
-                                    terminalRow(message)
-                                } else {
-                                    messageRow(message, hostedRun: runHosts[message.id])
+                            if !isTerminal, let parts = AnswerRoom.split(viewModel.messages, anchor: answerAnchorId) {
+                                ForEach(parts.head) { message in
+                                    threadRow(message, hostedRun: runHosts[message.id])
+                                }
+                                // The sent message and the answer under it: measured so the
+                                // room below shrinks by what the answer adds.
+                                VStack(spacing: AnswerRoom.rowSpacing) {
+                                    ForEach(parts.turn) { message in
+                                        threadRow(message, hostedRun: runHosts[message.id])
+                                    }
+                                }
+                                .background(GeometryReader { Color.clear.preference(key: AnswerRoomTurnHeightKey.self, value: $0.size.height) })
+                                Color.clear
+                                    .frame(height: AnswerRoom.room(viewport: answerViewport, turnHeight: answerTurnHeight))
+                                    .accessibilityHidden(true)
+                            } else {
+                                ForEach(viewModel.messages) { message in
+                                    threadRow(message, hostedRun: runHosts[message.id])
                                 }
                             }
                         }
@@ -613,6 +662,27 @@ struct ChatContentView: View {
                     .padding(.vertical, 16)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .background(GeometryReader { Color.clear.preference(key: AnswerRoomViewportKey.self, value: $0.size.height) })
+                .onPreferenceChange(AnswerRoomViewportKey.self) { answerViewport = $0 }
+                .onPreferenceChange(AnswerRoomTurnHeightKey.self) { answerTurnHeight = $0 }
+                .onChange(of: viewModel.isStreaming) { was, now in
+                    // A turn started: anchor the sent message at the top, one scroll.
+                    guard !isTerminal,
+                          let id = AnswerRoom.anchorId(wasStreaming: was, isStreaming: now, messages: viewModel.messages) else { return }
+                    answerAnchorId = id
+                    DispatchQueue.main.async {
+                        if reducedMotion {
+                            scrollProxy.scrollTo(id, anchor: .top)
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.35)) { scrollProxy.scrollTo(id, anchor: .top) }
+                        }
+                    }
+                }
+                .onChange(of: viewModel.currentSessionId) { _, _ in
+                    // Another chat: no anchor, no room.
+                    answerAnchorId = nil
+                    answerTurnHeight = 0
+                }
                 .modifier(JumpDistanceTracker(far: $jumpFar))
                 .overlay(alignment: .bottom) {
                     if showJumpButton {
@@ -626,6 +696,8 @@ struct ChatContentView: View {
                     // Fires on new messages AND on streamed content changes;
                     // the view model's ~50ms flush coalescing bounds the rate.
                     guard let lastId = viewModel.messages.last?.id else { return }
+                    // An anchored turn keeps the sent message at the top while it answers.
+                    guard AnswerRoom.followsBottom(anchored: answerAnchorId != nil, streaming: viewModel.isStreaming) else { return }
                     // Animated scroll lags behind rapid streaming deltas.
                     if viewModel.isStreaming {
                         scrollProxy.scrollTo(lastId, anchor: .bottom)
@@ -653,6 +725,22 @@ struct ChatContentView: View {
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+
+            // Pictures and clips being made: one chip each, tap for the full
+            // view, press and hold to peek (the strip draws nothing when idle).
+            if modelStore.selectedModelId?.hasPrefix("chatgpt/") == true || viewModel.pendingBrowserImage != nil {
+                Button("Create image in ChatGPT", systemImage: "photo") {
+                    viewModel.requestLocalBrowserImage(inputText)
+                }
+                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isStreaming)
+                .font(.footnote)
+            }
+            ACILocalImageOutputs(sessionId: viewModel.currentSessionId)
+            RunningGenerationsStrip()
+                // A signed-out error card's "Connect ChatGPT" opens the sign-in here.
+                .sheet(item: $connectSheet) { sheet in
+                    ConnectSheetView(sheet: sheet, store: ConnectionsStore.shared)
+                }
 
             if isTerminal {
                 codeComposer(terminal: true)
@@ -690,7 +778,7 @@ struct ChatContentView: View {
                 isRunning: viewModel.isStreaming,
                 onStop: { viewModel.stopStreaming() },
                 onSend: { text in
-                    viewModel.sendMessage(text, attachments: attachmentStore.attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
+                    viewModel.sendMessage(text, attachments: attachmentStore.attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend, personInitiated: true)
                     attachmentStore.clear()
                 },
                 onOpenTerminal: { terminal ? onLeaveTerminal?() : onEnterTerminal?() },
@@ -766,7 +854,7 @@ struct ChatContentView: View {
                     self.editingMessageId = nil
                     viewModel.resendEditedMessage(editingMessageId, newText: inputText, attachments: attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
                 } else {
-                    viewModel.sendMessage(inputText, attachments: attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
+                    viewModel.sendMessage(inputText, attachments: attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend, personInitiated: true)
                 }
                 inputText = ""
             },
@@ -806,7 +894,7 @@ struct ChatContentView: View {
 
     /// The credits button shows only when a Cloud model is listed.
     private var errorActionKinds: Set<ChatErrorAction.Kind> {
-        var kinds: Set<ChatErrorAction.Kind> = [.manageClaudeOrg, .linkAgain]
+        var kinds: Set<ChatErrorAction.Kind> = [.manageClaudeOrg, .linkAgain, .connectChatGPT, .openConnections]
         if modelStore.creditsFallbackModelId != nil { kinds.insert(.useCredits) }
         return kinds
     }
@@ -830,9 +918,12 @@ struct ChatContentView: View {
                     if let cloudId = modelStore.creditsFallbackModelId {
                         viewModel.resendOnCloudModel(failedMessageId, cloudModelId: cloudId)
                     }
-                case .manageClaudeOrg, .linkAgain:
+                case .manageClaudeOrg, .linkAgain, .openConnections:
                     // Settings › Connections holds the Claude organization row.
                     DeepLinkRouter.shared.enqueue(.settings("subscriptions"))
+                case .connectChatGPT:
+                    // The same device sign-in Settings › Connections opens.
+                    connectSheet = .chatgptDevice
                 }
             },
             isLastAssistant: message.id == viewModel.lastAssistantMessageId,
@@ -1010,8 +1101,8 @@ struct ChatLaunchGreeting: View {
             }
             .accessibilityHidden(true)
             Text(Self.sessionTitle())
-                .font(.system(size: 32, design: .serif))
-                .tracking(-0.64)
+                .font(.system(size: 33, design: .serif))
+                .tracking(-0.4)
                 .lineSpacing(2)
                 .foregroundColor(Color("TextPrimary"))
                 .multilineTextAlignment(.center)
@@ -1029,7 +1120,7 @@ struct ChatLaunchGreeting: View {
             if reduceMotion || !firstMount {
                 revealed = true
             } else {
-                withAnimation(.easeOut(duration: 0.6)) { revealed = true }
+                withAnimation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.5)) { revealed = true }
             }
         }
     }
@@ -1448,7 +1539,7 @@ private struct TerminalQuestionCards: View {
             QuestionCardView(request: request)
         }
         .task(id: "\(sessionId ?? "")|\(isLast)|\(message.isStreaming)") {
-            guard isLast, !message.isStreaming, let sessionId else { return }
+            guard isLast, !message.isStreaming, let sessionId, !ACILocalImageStore.isLocal(sessionId) else { return }
             await asks.refresh(sessionId: sessionId)
         }
     }

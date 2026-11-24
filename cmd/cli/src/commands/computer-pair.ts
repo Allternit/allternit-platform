@@ -13,7 +13,8 @@
  */
 import { Command } from 'commander';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { homedir, hostname, platform } from 'node:os';
@@ -196,7 +197,16 @@ async function pairAction(code: string, options: { name?: string; meshNode?: str
   const res = await fetch(`${cloudUrl()}/api/v1/computers/pair`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ code, name, os: platform() === 'darwin' ? 'macos' : platform() }),
+    // machineId/hostname/platform: the same machine key Desktop and `gizzi pair`
+    // send, so Computers shows this computer once (computers console step 2.10).
+    body: JSON.stringify({
+      code,
+      name,
+      os: platform() === 'darwin' ? 'macos' : platform(),
+      machineId: machineId(),
+      hostname: hostname(),
+      platform: `${process.platform}-${process.arch}`, // as Desktop sends it
+    }),
   });
   const body = await res.json().catch(() => ({})) as Record<string, string>;
   if (!res.ok) return fail(body.message ?? body.error ?? `pairing failed (${res.status})`);
@@ -223,6 +233,29 @@ async function pairAction(code: string, options: { name?: string; meshNode?: str
   for (const cmd of service.start) await runQuiet(cmd);
   process.stdout.write(`Installed ${service.path}. It keeps this computer on the mesh and starts at login.\n`);
   process.stdout.write('It shows up in Computers on your other devices within a minute.\n');
+  process.stdout.write('Tip: `gizzi pair` (npm install -g @allternit/gizzi-code) is the pairing command for your computers; it joins this same row.\n');
+}
+
+/**
+ * This machine's stable id: random, made once, kept in ~/.allternit/machine-id.
+ * Allternit Desktop, `gizzi pair` and `ao fabric pair` read and write the same
+ * file, so all of them report one machine. Undefined when it cannot be read or
+ * made; the cloud then matches by hostname + platform.
+ */
+export function machineId(file = path.join(homedir(), '.allternit', 'machine-id')): string | undefined {
+  const valid = (v: string) => /^[A-Za-z0-9_-]{16,64}$/.test(v);
+  try {
+    const existing = readFileSync(file, 'utf8').trim();
+    if (valid(existing)) return existing;
+  } catch {}
+  try {
+    const id = randomBytes(24).toString('base64url');
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, id + '\n', { mode: 0o600 });
+    return id;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

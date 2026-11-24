@@ -3,7 +3,9 @@
 //! 1. In the Computers list the user asks for a pairing code
 //!    (`POST /api/v1/computers/pairing-codes`, signed in). Codes are single
 //!    use, expire in 10 minutes, and are stored hashed.
-//! 2. On the machine, `allternit computer pair <code>` redeems it
+//! 2. On the machine, `allternit computer pair <code>` redeems it (the code
+//!    response's `command` is `gizzi pair`, the one visible pairing command
+//!    since step 2.10; the code itself is the screen-share step, `codeCommand`)
 //!    (`POST /api/v1/computers/pair`, the code is the credential). It gets a
 //!    mesh preauth key for the code's user (the same Headscale path as
 //!    `/api/v1/mesh/enroll`), the computer's id, and a secret for its reports.
@@ -53,7 +55,11 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/computers/pair", post(redeem_pairing_code))
         .route("/api/v1/computers/paired", get(list_paired))
         .route("/api/v1/computers/paired/self", post(pair_self))
-        .route("/api/v1/computers/paired/:id", delete(remove_paired))
+        // PATCH renames the whole machine (step 2.10, routes::computer_machines).
+        .route(
+            "/api/v1/computers/paired/:id",
+            delete(remove_paired).patch(crate::routes::computer_machines::rename),
+        )
         .route("/api/v1/computers/paired/:id/report", post(report))
         .route("/api/v1/computers/paired/:id/peer-ticket", post(peer_ticket))
 }
@@ -148,7 +154,12 @@ async fn create_pairing_code(State(state): State<Arc<ApiState>>, headers: Header
         Json(serde_json::json!({
             "code": code,
             "expiresAt": expires_at.to_rfc3339(),
-            "command": format!("allternit computer pair {code}"),
+            // The one visible pairing command (gate G1, step 2.10): `gizzi
+            // pair` makes the computer's console row by itself. The code is
+            // only for the optional screen-share step (`codeCommand`).
+            "command": "gizzi pair",
+            "installCommand": "npm install -g @allternit/gizzi-code",
+            "codeCommand": format!("allternit computer pair {code}"),
         })),
     )
         .into_response())
@@ -160,6 +171,20 @@ struct RedeemBody {
     name: String,
     #[serde(default)]
     os: Option<String>,
+    /// ~/.allternit/machine-id, hostname and `<os>-<arch>` (step 2.10): the
+    /// same machine key runtime pairing sends, so the console shows this
+    /// computer and its Desktop / `gizzi pair` runtime as one row. Old CLIs
+    /// send none.
+    #[serde(default, rename = "machineId")]
+    machine_id: Option<String>,
+    #[serde(default)]
+    hostname: Option<String>,
+    #[serde(default)]
+    platform: Option<String>,
+}
+
+fn short(raw: Option<String>, max: usize) -> Option<String> {
+    raw.map(|v| v.trim().chars().take(max).collect::<String>()).filter(|v| !v.is_empty())
 }
 
 async fn redeem_pairing_code(State(state): State<Arc<ApiState>>, Json(body): Json<RedeemBody>) -> Result<Response, ApiError> {
@@ -189,15 +214,40 @@ async fn redeem_pairing_code(State(state): State<Arc<ApiState>>, Json(body): Jso
     let os = body.os.map(|o| o.trim().chars().take(32).collect::<String>()).filter(|o| !o.is_empty());
     let id = format!("pc_{}", uuid::Uuid::new_v4().simple());
     let secret = hex::encode(rand::thread_rng().gen::<[u8; 32]>());
-    sqlx::query("INSERT INTO paired_computers (id, user_id, name, os, secret_hash, organization_id) VALUES ($1, $2, $3, $4, $5, $6)")
-        .bind(&id)
-        .bind(&user_id)
-        .bind(&name)
-        .bind(&os)
-        .bind(sha256_hex(&secret))
-        .bind(&organization_id)
-        .execute(&state.db)
-        .await?;
+    let machine_id = crate::routes::runtime_pairing::clean_machine_id(body.machine_id.as_deref());
+    // Link the runtime device of the same machine now (Desktop or `gizzi
+    // pair` already ran there); the console also groups by machine key.
+    let runtime_device_id: Option<String> = match machine_id.as_deref() {
+        Some(mid) => {
+            sqlx::query_scalar(
+                "SELECT id FROM runtime_devices
+                 WHERE user_id = $1 AND machine_id = $2 AND revoked_at IS NULL
+                   AND runtime_type IN ('desktop', 'vps', 'ao')
+                 ORDER BY (runtime_type = 'desktop') DESC, created_at DESC LIMIT 1",
+            )
+            .bind(&user_id)
+            .bind(mid)
+            .fetch_optional(&state.db)
+            .await?
+        }
+        None => None,
+    };
+    sqlx::query(
+        "INSERT INTO paired_computers (id, user_id, name, os, secret_hash, organization_id, machine_id, hostname, platform, runtime_device_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+    )
+    .bind(&id)
+    .bind(&user_id)
+    .bind(&name)
+    .bind(&os)
+    .bind(sha256_hex(&secret))
+    .bind(&organization_id)
+    .bind(&machine_id)
+    .bind(short(body.hostname, 255))
+    .bind(short(body.platform, 64))
+    .bind(&runtime_device_id)
+    .execute(&state.db)
+    .await?;
     Ok((
         StatusCode::CREATED,
         Json(serde_json::json!({

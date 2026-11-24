@@ -1,6 +1,52 @@
 package com.allternit.feature.settings
 
 import android.content.Context
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.sp
+import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.GlassPill
+import com.allternit.core.design.PolishGlass
+import com.allternit.core.design.PolishHaptic
+import com.allternit.core.design.R as DesignR
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -111,6 +157,84 @@ internal fun PublishPage(onBack: () -> Unit, onStart: () -> Unit, onPublished: (
         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SButton("Start publishing", "publish_start", onClick = onStart)
             SButton("Published artifacts", "publish_artifacts", onClick = onPublished)
+        }
+    }
+}
+
+/** A Customize card: the neutral fill at radius 20 (the polish pass; lists inside keep their rows). */
+@Composable
+internal fun CCard(modifier: Modifier = Modifier, radius: Dp = 20.dp, content: @Composable ColumnScope.() -> Unit) {
+    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(radius)).background(PolishGlass.track()), content = content)
+}
+
+/** Search on the neutral fill, no border. */
+@Composable
+internal fun CustomizeSearch(value: String, placeholder: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    val c = AllternitTheme.colors
+    Row(
+        modifier.height(40.dp).clip(RoundedCornerShape(14.dp)).background(PolishGlass.track()).padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(painterResource(DesignR.drawable.ph_magnifying_glass), contentDescription = null, tint = c.textTertiary, modifier = Modifier.size(16.dp))
+        Box(Modifier.weight(1f).padding(start = 7.dp), contentAlignment = Alignment.CenterStart) {
+            if (value.isEmpty()) Text(placeholder, color = c.textTertiary, fontSize = 13.sp, maxLines = 1)
+            BasicTextField(
+                value = value, onValueChange = onChange, singleLine = true,
+                textStyle = TextStyle(color = c.textPrimary, fontSize = 13.sp),
+                cursorBrush = SolidColor(c.textPrimary),
+                modifier = Modifier.fillMaxWidth().testTag("customize_search").semantics { contentDescription = placeholder },
+            )
+        }
+    }
+}
+
+/**
+ * Tabs with an underline that slides between them (its offset and width are animated), with a selection
+ * haptic on a pick. [onSelect] null makes the row a picture (the intro hero). [carets] marks tabs with a ⌄.
+ */
+@Composable
+internal fun SlidingTabRow(
+    labels: List<String>,
+    selected: Int,
+    onSelect: ((Int) -> Unit)?,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 13.5.sp,
+    gap: Dp = 18.dp,
+    carets: Set<Int> = emptySet(),
+) {
+    val c = AllternitTheme.colors
+    val view = LocalView.current
+    val density = LocalDensity.current
+    val frames = remember { mutableStateMapOf<Int, Pair<Float, Float>>() } // index -> x, width in px
+    val target = frames[selected]
+    val x by animateDpAsState(with(density) { (target?.first ?: 0f).toDp() }, spring(dampingRatio = 0.85f, stiffness = 420f), label = "tabX")
+    val w by animateDpAsState(with(density) { (target?.second ?: 0f).toDp() }, spring(dampingRatio = 0.85f, stiffness = 420f), label = "tabW")
+    Box(modifier.fillMaxWidth()) {
+        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(1.dp).background(c.borderSubtle))
+        Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+            labels.forEachIndexed { i, label ->
+                val picked = i == selected
+                val color by animateColorAsState(if (picked) c.textPrimary else c.textSecondary, spring(stiffness = 420f), label = "tabText")
+                Row(
+                    Modifier
+                        .onGloballyPositioned { frames[i] = it.positionInParent().x to it.size.width.toFloat() }
+                        .semantics { this.selected = picked }
+                        .then(
+                            if (onSelect != null) Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Tab) {
+                                if (!picked) { PolishHaptic.perform(view, PolishHaptic.Kind.Selection); onSelect(i) }
+                            } else Modifier,
+                        )
+                        .padding(bottom = 8.dp, top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(label, color = color, fontSize = fontSize, fontWeight = if (picked) FontWeight.SemiBold else FontWeight.Normal)
+                    if (i in carets) Icon(painterResource(DesignR.drawable.ph_caret_down), contentDescription = null, tint = color, modifier = Modifier.size(12.dp))
+                }
+            }
+        }
+        if (target != null) {
+            Box(Modifier.align(Alignment.BottomStart).offset(x = x).width(w).height(2.dp).clip(RoundedCornerShape(2.dp)).background(c.textPrimary))
         }
     }
 }

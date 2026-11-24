@@ -22,8 +22,19 @@
 //!   deny-list of secret stores (SSH and GPG keys, Keychains, cloud CLI
 //!   credentials, agent CLI auth files, the Allternit data folders).
 //!
-//! Both policies refuse anything outside the home folder, and both refuse a
-//! write or delete of the home folder itself. Names are compared in Unicode
+//! - **Whole disk** (step 2.11): a relayed caller whose request carries the
+//!   cloud's `x-allternit-whole-disk: on` AND a valid cloud relay signature
+//!   ([`whole_disk_gate`]). The owner turned whole-disk files on for this
+//!   computer: the home folder and every path outside it, minus the secrets
+//!   deny-list (applied to every suffix of the path, so `/root/.ssh` and
+//!   `/home/other/.aws` are refused), its file name patterns, the system
+//!   secret stores in [`SYSTEM_SECRETS`] and the Allternit data folders.
+//!   Without the grant a relayed path outside home answers `403
+//!   whole_disk_off`, the error the cloud uses.
+//!
+//! Local and remote policies refuse anything outside the home folder; every
+//! policy refuses a write or delete of the home folder (and the disk root)
+//! itself. Names are compared in Unicode
 //! NFC (APFS treats NFC and NFD spellings as one name). Reads and writes open
 //! the file with `O_NOFOLLOW` and then check where the open file really is
 //! (`F_GETPATH` on macOS, `/proc/self/fd` on Linux), so a path swapped for a
@@ -50,6 +61,86 @@ pub enum Caller {
     /// Another device: replayed by the cloud relay (`x-allternit-relayed`),
     /// forwarded by a proxy, or a non-loopback TCP peer.
     Remote,
+    /// A relayed owner request the cloud marked whole-disk and signed
+    /// ([`WholeDiskGrant`]). Only [`caller_with_grant`] returns it.
+    WholeDisk,
+}
+
+/// The trusted header the cloud's owner proxy adds while whole-disk files are
+/// on for this computer (cloud `computer_file_roots::WHOLE_DISK_HEADER`).
+pub const WHOLE_DISK_HEADER: &str = "x-allternit-whole-disk";
+/// The cloud's message for `whole_disk_off`, word for word.
+pub const WHOLE_DISK_OFF_MESSAGE: &str =
+    "This folder is outside the Files drive. Turn on whole-disk browsing for this computer in its Files settings first.";
+
+/// Request extension set by [`whole_disk_gate`] only after the cloud relay
+/// signature checked out. Clients can't set an extension.
+#[derive(Clone, Copy, Debug)]
+pub struct WholeDiskGrant;
+
+/// Largest body the gate buffers to check a signature. Bigger (or unsized)
+/// bodies pass through untouched and get no grant.
+const MAX_GRANT_BODY: u64 = 8 * 1024 * 1024;
+
+/// Middleware for the file routes: a request with `x-allternit-whole-disk: on`
+/// gets [`WholeDiskGrant`] only when it is relayed and its cloud relay
+/// signature (`relay_auth::verify_relay`, the 1.8 gate) is valid for this
+/// runtime. A local or unsigned caller sending the header gets nothing extra;
+/// the request goes on as before. The signature key is the
+/// `Arc<dyn RelaySecret>` extension when a layer set one (tests), else
+/// [`crate::relay_auth::process_secret`].
+pub async fn whole_disk_gate(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let wants = req
+        .headers()
+        .get(WHOLE_DISK_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("on"));
+    let relayed = req.headers().contains_key(crate::cowork_devices_routes::RELAYED_HEADER);
+    if !wants || !relayed {
+        return next.run(req).await;
+    }
+    // Only a body of known size, at most MAX_GRANT_BODY, is checked. A
+    // relayed replay always has one (the relay sends the whole body).
+    let sized = axum::body::HttpBody::size_hint(req.body()).upper().is_some_and(|n| n <= MAX_GRANT_BODY);
+    if !sized {
+        return next.run(req).await;
+    }
+    let (mut parts, body) = req.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, MAX_GRANT_BODY as usize).await else {
+        return (StatusCode::PAYLOAD_TOO_LARGE, Json(json!({"error": "body too large"}))).into_response();
+    };
+    let secret = parts
+        .extensions
+        .get::<Arc<dyn crate::relay_auth::RelaySecret>>()
+        .cloned()
+        .unwrap_or_else(crate::relay_auth::process_secret);
+    let path = parts
+        .extensions
+        .get::<axum::extract::OriginalUri>()
+        .map(|u| u.0.path().to_string())
+        .unwrap_or_else(|| parts.uri.path().to_string());
+    let signed = crate::relay_auth::verify_relay(
+        secret.as_ref(),
+        &parts.headers,
+        parts.method.as_str(),
+        &path,
+        &bytes,
+        crate::relay_auth::unix_now(),
+    )
+    .is_ok();
+    if signed {
+        parts.extensions.insert(WholeDiskGrant);
+    }
+    next.run(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes))).await
+}
+
+/// [`caller`], upgraded to [`Caller::WholeDisk`] for a remote request that
+/// [`whole_disk_gate`] granted.
+pub fn caller_with_grant(headers: &HeaderMap, peer: Option<SocketAddr>, granted: bool) -> Caller {
+    match caller(headers, peer) {
+        Caller::Remote if granted => Caller::WholeDisk,
+        other => other,
+    }
 }
 
 /// What the handler is about to do with the path.
@@ -82,6 +173,8 @@ impl Denied {
             "home_itself" => "The home folder itself can't be changed.",
             "unresolvable" => "That path points at something that doesn't exist.",
             "local_only" => "Only a process on this computer can record bot-written files.",
+            "whole_disk_off" => WHOLE_DISK_OFF_MESSAGE,
+            "disk_root_itself" => "The disk root itself can't be changed.",
             _ => "That path is not allowed.",
         }
     }
@@ -89,6 +182,10 @@ impl Denied {
 
 /// The `403` every file handler answers with for a refused path.
 pub fn denied_response(denied: Denied) -> Response {
+    if denied.0 == "whole_disk_off" {
+        // Same shape as the cloud's relay gate (`computer_file_roots::off_response`).
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "whole_disk_off", "message": WHOLE_DISK_OFF_MESSAGE}))).into_response();
+    }
     (
         StatusCode::FORBIDDEN,
         Json(json!({
@@ -344,7 +441,9 @@ impl FilesScope {
         if caller != Caller::Local {
             return Err(Denied("local_only"));
         }
-        let (canonical, rel) = self.check(raw, Access::Read)?;
+        let (canonical, rel) = self.check(raw, Access::Read, caller)?;
+        // Never a path outside home (the caller is local, so check refused it).
+        let rel = rel.ok_or(Denied("outside_home"))?;
         if rel.is_empty() {
             return Err(Denied("home_itself"));
         }
@@ -354,8 +453,10 @@ impl FilesScope {
 
     /// Turn a caller's path into the canonical path to operate on, or refuse it.
     pub fn authorize(&self, raw: &str, caller: Caller, access: Access) -> Result<PathBuf, Denied> {
-        let (canonical, rel) = self.check(raw, access)?;
+        let (canonical, rel) = self.check(raw, access, caller)?;
         if caller == Caller::Remote {
+            // check() refused every path outside home for a remote caller.
+            let rel = rel.ok_or(Denied("whole_disk_off"))?;
             if let Err(denied) = remote_allows(&rel, access) {
                 // A file an agent wrote here: readable, never writable.
                 if !(access == Access::Read && self.bot_writes.contains(&canonical)) {
@@ -366,9 +467,11 @@ impl FilesScope {
         Ok(canonical)
     }
 
-    /// Resolution plus the checks both callers share. Returns the canonical
-    /// path and its home-relative parts in NFC.
-    fn check(&self, raw: &str, access: Access) -> Result<(PathBuf, Vec<String>), Denied> {
+    /// Resolution plus the checks every caller shares. Returns the canonical
+    /// path and its home-relative parts in NFC; `None` for a path outside
+    /// home, which only [`Caller::WholeDisk`] gets (a remote caller gets
+    /// `whole_disk_off`, a local one `outside_home`).
+    fn check(&self, raw: &str, access: Access, caller: Caller) -> Result<(PathBuf, Option<Vec<String>>), Denied> {
         let home = self.home.as_deref().ok_or(Denied("no_home"))?;
         if raw.contains('\0') {
             return Err(Denied("invalid_path"));
@@ -376,23 +479,52 @@ impl FilesScope {
         let expanded = expand(raw, home);
         let lexical = normalize(&expanded)?;
         let canonical = resolve(&lexical, access != Access::Delete)?;
-        let rel = canonical.strip_prefix(home).map_err(|_| Denied("outside_home"))?;
+        if self.protected.iter().any(|p| starts_with_ci(&canonical, p)) {
+            return Err(Denied("protected"));
+        }
+        let Ok(rel) = canonical.strip_prefix(home) else {
+            return match caller {
+                Caller::WholeDisk => {
+                    let parts = disk_parts(&canonical);
+                    if parts.is_empty() && access != Access::Read {
+                        return Err(Denied("disk_root_itself"));
+                    }
+                    if disk_secret(&parts) {
+                        return Err(Denied("protected"));
+                    }
+                    Ok((canonical, None))
+                }
+                Caller::Remote => Err(Denied("whole_disk_off")),
+                Caller::Local => Err(Denied("outside_home")),
+            };
+        };
         let rel = nfc_parts(rel);
         if rel.is_empty() && access != Access::Read {
             return Err(Denied("home_itself"));
         }
-        if is_secret(&rel) || self.protected.iter().any(|p| starts_with_ci(&canonical, p)) {
+        if is_secret(&rel) || (caller == Caller::WholeDisk && whole_disk_secret(&rel)) {
             return Err(Denied("protected"));
         }
-        Ok((canonical, rel))
+        Ok((canonical, Some(rel)))
+    }
+
+    /// True when `path` (canonical) is outside the home folder: a whole-disk
+    /// path. Files drive roots there are disk roots (never shared, never
+    /// given to an agent, hidden without the grant).
+    pub fn is_disk_path(&self, path: &Path) -> bool {
+        match self.home.as_deref() {
+            Some(home) => !path.starts_with(home),
+            None => true,
+        }
     }
 
     /// `authorize` for `/files/list`. A remote caller may also list the home
     /// folder itself, but only one level deep (the web's `readDir('.')`
     /// probe); `listable` hides the secret entries in it.
     pub fn authorize_list(&self, raw: &str, caller: Caller, recursive: bool) -> Result<PathBuf, Denied> {
-        let (canonical, rel) = self.check(raw, Access::Read)?;
+        let (canonical, rel) = self.check(raw, Access::Read, caller)?;
         if caller == Caller::Remote {
+            let rel = rel.ok_or(Denied("whole_disk_off"))?;
             if rel.is_empty() {
                 if recursive {
                     return Err(Denied("outside_roots"));
@@ -410,14 +542,25 @@ impl FilesScope {
     /// everything under it, the folder may not be the home folder itself nor
     /// hold a secret store, a protected folder or one of `extra_protected`
     /// (the Files drive's own data folder).
-    pub fn authorize_root(&self, raw: &str, extra_protected: &[PathBuf]) -> Result<PathBuf, Denied> {
-        let (canonical, _rel) = self.check(raw, Access::Write)?;
+    ///
+    /// `caller` is [`Caller::Local`] for the legacy behaviour (home only).
+    /// [`Caller::WholeDisk`] also accepts a disk root: a folder outside home
+    /// that holds neither the home folder nor a system secret store, so `/`,
+    /// `C:\`, `/home`, `/Users` and `/etc` are refused (the drive indexes
+    /// every root it adds). [`Caller::Remote`] outside home: `whole_disk_off`.
+    pub fn authorize_root(&self, raw: &str, extra_protected: &[PathBuf], caller: Caller) -> Result<PathBuf, Denied> {
+        let (canonical, _rel) = self.check(raw, Access::Write, caller)?;
         let home = self.home.as_deref().ok_or(Denied("no_home"))?;
-        let holds_secret = home_secrets()
+        let parts = disk_parts(&canonical);
+        let holds_system_secret = SYSTEM_SECRETS
             .iter()
-            .map(|parts| parts.iter().fold(home.to_path_buf(), |p, c| p.join(c)))
-            .chain(std::iter::once(home.join(".allternit")))
-            .any(|secret| starts_with_ci(&secret, &canonical));
+            .any(|secret| parts.len() < secret.len() && parts.iter().zip(secret.iter()).all(|(a, b)| eq_ci(a, b)));
+        let holds_secret = holds_system_secret
+            || home_secrets()
+                .iter()
+                .map(|parts| parts.iter().fold(home.to_path_buf(), |p, c| p.join(c)))
+                .chain(std::iter::once(home.join(".allternit")))
+                .any(|secret| starts_with_ci(&secret, &canonical));
         let extra: Vec<PathBuf> = extra_protected
             .iter()
             .filter(|p| p.is_absolute())
@@ -465,6 +608,9 @@ impl FilesScope {
     /// keeps recursive listings out of secret folders and, for remote callers,
     /// inside the allowed tree.
     pub fn listable(&self, entry: &Path, caller: Caller) -> bool {
+        if caller == Caller::WholeDisk {
+            return self.listable_whole_disk(entry);
+        }
         let Some(home) = self.home.as_deref() else { return false };
         let Ok(rel) = entry.strip_prefix(home) else { return false };
         let rel = nfc_parts(rel);
@@ -473,6 +619,21 @@ impl FilesScope {
         }
         // rel.len() == 1: an entry of the shallow home listing.
         caller == Caller::Local || rel.len() == 1 || remote_allows(&rel, Access::Read).is_ok()
+    }
+
+    /// [`listable`](Self::listable) for a whole-disk caller: anything but a
+    /// secret, a protected folder or a secret file name, in or out of home.
+    fn listable_whole_disk(&self, entry: &Path) -> bool {
+        if self.protected.iter().any(|p| starts_with_ci(entry, p)) {
+            return false;
+        }
+        match self.home.as_deref().and_then(|home| entry.strip_prefix(home).ok()) {
+            Some(rel) => {
+                let rel = nfc_parts(rel);
+                !is_secret(&rel) && !whole_disk_secret(&rel)
+            }
+            None => !disk_secret(&disk_parts(entry)),
+        }
     }
 }
 
@@ -511,6 +672,94 @@ pub fn check_guest_path(raw: &str) -> Result<(), Denied> {
         return Err(Denied("protected"));
     }
     Ok(())
+}
+
+/// System secret stores a whole-disk caller may never open, matched from the
+/// disk root, case-insensitively, after a leading `private` (macOS
+/// `/private/etc`). Home secrets are matched separately on every suffix.
+const SYSTEM_SECRETS: &[&[&str]] = &[
+    &["etc", "shadow"],
+    &["etc", "gshadow"],
+    &["etc", "sudoers"],
+    &["etc", "sudoers.d"],
+    &["etc", "ssh"],
+    &["etc", "master.passwd"],
+    &["etc", "allternit"],
+    &["var", "lib", "allternit"],
+    &["var", "db", "dslocal"],
+    &["var", "db", "sudo"],
+    &["Windows", "System32", "config"],
+];
+
+/// The normal components of an absolute canonical path, in NFC, without a
+/// leading macOS `private`. Empty for `/` or a drive root.
+fn disk_parts(path: &Path) -> Vec<String> {
+    let mut parts: Vec<String> = path
+        .components()
+        .filter(|c| matches!(c, Component::Normal(_)))
+        .map(|c| c.as_os_str().to_string_lossy().nfc().collect::<String>())
+        .collect();
+    if parts.first().is_some_and(|p| eq_ci(p, "private")) {
+        parts.remove(0);
+    }
+    parts
+}
+
+/// A path outside home a whole-disk caller may not touch: the home deny-list
+/// at any depth (another user's `.ssh`, `/root/.aws`), a system secret store,
+/// or a secret file name.
+fn disk_secret(parts: &[String]) -> bool {
+    if SYSTEM_SECRETS.iter().any(|s| rel_starts_with_ci(parts, *s)) {
+        return true;
+    }
+    (0..parts.len()).any(|start| is_secret(&parts[start..])) || whole_disk_secret(parts)
+}
+
+/// Extra refusals for a whole-disk caller anywhere: the runtime identity
+/// folder (`.config/allternit`, which holds this computer's device token) at
+/// any depth, and leaf names matching the deny-list's `file_patterns`.
+fn whole_disk_secret(parts: &[String]) -> bool {
+    if parts.windows(2).any(|w| eq_ci(&w[0], ".config") && eq_ci(&w[1], "allternit")) {
+        return true;
+    }
+    parts.last().is_some_and(|leaf| secret_file_name(leaf))
+}
+
+fn file_patterns() -> &'static [String] {
+    static LIST: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| {
+        #[derive(serde::Deserialize)]
+        struct Patterns {
+            file_patterns: Vec<String>,
+        }
+        let list: Patterns = serde_json::from_str(SECRETS_DENY_JSON).expect("assets/secrets-deny.json is valid");
+        list.file_patterns.into_iter().map(|p| fold(&p)).collect()
+    })
+}
+
+/// `name` matches one of the deny-list's file patterns (`*` = any run).
+fn secret_file_name(name: &str) -> bool {
+    let name = fold(name);
+    file_patterns().iter().any(|p| glob(p, &name))
+}
+
+fn glob(pattern: &str, name: &str) -> bool {
+    let pieces: Vec<&str> = pattern.split('*').collect();
+    if pieces.len() == 1 {
+        return pattern == name;
+    }
+    let (first, last) = (pieces[0], pieces[pieces.len() - 1]);
+    if !name.starts_with(first) || name.len() < first.len() + last.len() || !name.ends_with(last) {
+        return false;
+    }
+    let mut rest = &name[first.len()..name.len() - last.len()];
+    for piece in &pieces[1..pieces.len() - 1] {
+        match rest.find(piece) {
+            Some(i) => rest = &rest[i + piece.len()..],
+            None => return false,
+        }
+    }
+    true
 }
 
 /// `~`, `~/x`, absolute and home-relative paths, joined the way the routes

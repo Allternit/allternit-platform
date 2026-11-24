@@ -148,6 +148,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (COMPETITOR_NAMES.test(line)) {
+      // Generation setup and failure examples quote the actual supported provider labels.
+      if (['guides/artifact-modes.mdx', 'guides/agent-steps.mdx', 'guides/image-generation.mdx', 'dev/aci-image-jobs.mdx', 'api/generation-progress.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Allow the OpenAI migration guide to mention OpenAI in the title/body.
       if (mdxPath.endsWith('guides/openai-migration.mdx')) continue;
       // Native session pickup names the other CLIs; that page is the catalog.
@@ -258,7 +260,9 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['guides/claude-organization.mdx', 'operations/claude-linked-billing.mdx', 'admin/external-keys.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Harness & Bots 2.0: runtimes are the coding CLIs themselves (Claude Code, Codex, Antigravity…), so the
       // runtime registry, picker, runtime views, system layers and bot/runtime CLI pages name them and their brains.
-      if (['api/runtimes.mdx', 'build-on-allternit/add-a-runtime.mdx', 'cli/runtime.mdx', 'cli/bot.mdx', 'concepts/agent-model.mdx', 'concepts/control-layer.mdx', 'concepts/system-layers.mdx', 'guides/agent-card.mdx', 'guides/brains-and-access.mdx', 'guides/runtime-views.mdx', 'guides/runtimes.mdx', 'architecture.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      if (['api/runtimes.mdx', 'build-on-allternit/add-a-runtime.mdx', 'cli/runtime.mdx', 'cli/bot.mdx', 'concepts/agent-model.mdx', 'concepts/control-layer.mdx', 'concepts/system-layers.mdx', 'guides/agent-card.mdx', 'guides/brains-and-access.mdx', 'guides/runtime-views.mdx', 'guides/runtimes.mdx', 'architecture.mdx', 'api/agent-sessions.mdx', 'byoc/managed-agents.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Terminal workspace: tabs take the coding agent's name, and the resume/fork table lists each CLI's own commands.
+      if (['code/terminal-and-prompt.mdx', 'code/on-a-phone.mdx', 'api/terminal.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Guard's model picker lists the detected CLI brains and their source ids by name.
       if (mdxPath.endsWith('guides/guard.mdx')) continue;
       // gizzi connect names the plans it signs in to (ChatGPT direct sign-in, plan rows).

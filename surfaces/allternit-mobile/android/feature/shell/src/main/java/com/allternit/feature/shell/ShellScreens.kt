@@ -161,7 +161,6 @@ internal fun ShellHome(
     models: ModelStore,
     menuButton: @Composable () -> Unit,
     onNewChat: (ComposerDraft) -> Unit,
-    onNew: () -> Unit,
     onOpenSection: (RailRow) -> Unit,
     /** Wave F1: Code mode's home (folder, tools, recent threads) replaces the placeholder and the composer starts a thread. */
     codeHome: (@Composable () -> Unit)? = null,
@@ -198,8 +197,6 @@ internal fun ShellHome(
                 if (mode == ShellMode.Code && onCodeSessions != null) {
                     // iOS CodeModeView header: the Code sessions view (CodeSessionsButton), no new-chat pencil.
                     PhoneIconButton(com.allternit.core.design.R.drawable.ph_list_checks, "Code sessions", testTag = "codeSessionsButton", iconSize = 20, onClick = onCodeSessions)
-                } else {
-                    PhoneIconButton(com.allternit.core.design.R.drawable.ph_note_pencil, mode.newLabel, testTag = "chatNewChat", onClick = onNew)
                 }
             },
             // iOS Code launchpad title: the gizzi code lockup.

@@ -19,7 +19,15 @@
 #   - works around Desktop .debs whose bundled sidecars need a newer glibc
 #     than Ubuntu 24.04 has (1.1.14 was built on 26.04): those binaries are
 #     replaced from the signed runtime feed. A no-op once a 24.04-built .deb
-#     ships.
+#     ships;
+#   - installs the Factory pane engine (and allternit-node, when the feed has
+#     it) the way every cloud image does: binaries from the same runtime feed
+#     (the Linux .deb doesn't carry allternit-factory), set up by
+#     install-pane-engine.sh, which cloud-api writes next to this script
+#     (/opt/allternit-orgo/install-pane-engine.sh). They run as supervisord
+#     programs beside the app, as root. Best effort: a feed without them, or an
+#     older cloud-api that didn't write the snippet, leaves terminals as they
+#     were and the setup still finishes.
 #
 # cloud-api writes /etc/allternit/bootstrap.json BEFORE it starts this script,
 # so a run that finishes after cloud-api restarted still pairs the computer.
@@ -36,7 +44,7 @@
 #   ALLTERNIT_ORGO_DISPLAY             - force the X display (e.g. ":99"); by
 #                                        default it is detected at each app start
 #   ALLTERNIT_ORGO_RUNTIME_FEED        - runtime feed for the glibc workaround
-#                                        (default
+#                                        and the pane engine binaries (default
 #                                        https://runtime.allternit.com/stable/linux-x64)
 #
 # Result: /var/lib/allternit-orgo/state is "running", "done" or
@@ -51,6 +59,7 @@ RUNTIME_FEED="${ALLTERNIT_ORGO_RUNTIME_FEED:-https://runtime.allternit.com/stabl
 STATE_DIR=/var/lib/allternit-orgo
 LOG_DIR=/var/log/allternit-orgo
 SUPERVISOR_DIR=/etc/allternit/orgo
+ENGINE_SNIPPET="$(dirname "$0")/install-pane-engine.sh"
 
 # Root is needed (apt, /etc). Orgo runs commands as root today; fall back to
 # passwordless sudo if that ever changes.
@@ -315,7 +324,7 @@ supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 serverurl=unix:///run/allternit-supervisor.sock
 
 [include]
-files = ${SUPERVISOR_DIR}/allternit-desktop.conf
+files = ${SUPERVISOR_DIR}/allternit-desktop.conf ${SUPERVISOR_DIR}/allternit-engine.conf
 EOF
 
 cat > /usr/local/sbin/allternit-orgo-ensure <<'EOF'
@@ -328,6 +337,8 @@ cat > /usr/local/sbin/allternit-orgo-ensure <<'EOF'
 # Otherwise starts our own supervisord with the same program.
 set -u
 PROGRAM=/etc/allternit/orgo/allternit-desktop.conf
+# The pane engine + allternit-node programs (install-pane-engine.sh); may be absent.
+ENGINE=/etc/allternit/orgo/allternit-engine.conf
 SYS_CONF=/etc/supervisor/supervisord.conf
 OWN_CONF=/etc/allternit/orgo/supervisord.conf
 OWN_SOCK=/run/allternit-supervisor.sock
@@ -341,9 +352,13 @@ if [ -f "${SYS_CONF}" ] && [ -d /etc/supervisor/conf.d ] && supervisord_up "${SY
     if [ -S "${OWN_SOCK}" ] && supervisord_up "${OWN_CONF}"; then
         supervisorctl -c "${OWN_CONF}" shutdown >/dev/null 2>&1 || true
     fi
-    if ! cmp -s "${PROGRAM}" /etc/supervisor/conf.d/allternit-desktop.conf; then
-        cp "${PROGRAM}" /etc/supervisor/conf.d/allternit-desktop.conf
-    fi
+    for conf in "${PROGRAM}" "${ENGINE}"; do
+        [ -f "${conf}" ] || continue
+        dest="/etc/supervisor/conf.d/$(basename "${conf}")"
+        if ! cmp -s "${conf}" "${dest}"; then
+            cp "${conf}" "${dest}"
+        fi
+    done
     supervisorctl -c "${CONF}" reread >/dev/null 2>&1 || true
     supervisorctl -c "${CONF}" update >/dev/null 2>&1 || true
 else
@@ -367,6 +382,78 @@ tail -n 20 /var/log/allternit-orgo/allternit-desktop.log >&2 2>/dev/null || true
 exit 1
 EOF
 chmod 0755 /usr/local/sbin/allternit-orgo-ensure
+
+# ---------------------------------------------------------------------------
+# 3b. The Factory pane engine and allternit-node: binaries from the runtime
+#     feed (every hash checked; a download is skipped when the installed copy
+#     already matches), set up by the shared install-pane-engine.sh as
+#     supervisord programs. Best effort, see the header.
+# ---------------------------------------------------------------------------
+ENGINE_DIR=/var/tmp/allternit-engine
+if [ ! -f "${ENGINE_SNIPPET}" ]; then
+    echo "allternit setup: ${ENGINE_SNIPPET} not found; skipping the pane engine"
+else
+    rm -rf "${ENGINE_DIR}"
+    mkdir -p "${ENGINE_DIR}"
+    python3 -I - "${ENGINE_DIR}" "${RUNTIME_FEED}" <<'PY' || echo "allternit setup: warning: pane engine binaries not fetched from ${RUNTIME_FEED}"
+import gzip, hashlib, json, os, sys, urllib.request
+
+out_dir, feed = sys.argv[1], sys.argv[2].rstrip("/")
+base = feed.rsplit("/stable/", 1)[0]
+installed = {
+    "allternit-factory": "/opt/allternit-factory/allternit-factory",
+    "allternit-node": "/opt/allternit-node/allternit-node",
+}
+
+
+def get(url):
+    with urllib.request.urlopen(url, timeout=300) as response:
+        return response.read()
+
+
+def sha_of(path):
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+latest = json.loads(get(feed + "/latest.json"))
+manifest_raw = get(feed + "/" + latest["manifest"])
+want = latest.get("manifestSha256")
+if want and hashlib.sha256(manifest_raw).hexdigest() != want:
+    sys.exit("runtime manifest sha256 mismatch")
+files = json.loads(manifest_raw)["files"]
+for name, dest in installed.items():
+    entry = files.get("bin/" + name)
+    if entry is None:
+        print(f"runtime {latest.get('version')} has no {name}")
+        continue
+    sha = entry["sha256"]
+    if sha_of(dest) == sha:
+        print(f"{name} is current ({latest.get('version')})")
+        continue
+    data = gzip.decompress(get(f"{base}/objects/{sha}.gz"))
+    if hashlib.sha256(data).hexdigest() != sha:
+        sys.exit(f"{name}: sha256 mismatch")
+    target = os.path.join(out_dir, name)
+    with open(target, "wb") as f:
+        f.write(data)
+    os.chmod(target, 0o755)
+    print(f"fetched {name} from runtime {latest.get('version')}")
+PY
+    engine_args=(--init supervisord --supervisor-dir "${SUPERVISOR_DIR}" --log-dir "${LOG_DIR}")
+    [ -f "${ENGINE_DIR}/allternit-factory" ] && engine_args+=(--factory "${ENGINE_DIR}/allternit-factory")
+    [ -f "${ENGINE_DIR}/allternit-node" ] && engine_args+=(--node "${ENGINE_DIR}/allternit-node")
+    if [ -x /opt/allternit-factory/allternit-factory ] || [ -f "${ENGINE_DIR}/allternit-factory" ]; then
+        bash "${ENGINE_SNIPPET}" "${engine_args[@]}" \
+            || echo "allternit setup: warning: install-pane-engine.sh failed; terminals stay as they were"
+    else
+        echo "allternit setup: no allternit-factory available; skipping the pane engine"
+    fi
+    rm -rf "${ENGINE_DIR}"
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Start it.

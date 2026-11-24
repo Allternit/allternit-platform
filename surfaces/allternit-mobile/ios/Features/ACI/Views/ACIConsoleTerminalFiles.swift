@@ -9,7 +9,7 @@ import AllternitFilesKit
 
 /// A shell on this computer through the same terminal service the Code tab
 /// uses (`TerminalServiceClient` over the relay placeholder
-/// `allternit-relay://<computerId>`), drawn by the existing SwiftTerm view.
+/// `allternit-relay://<runtimeId ?? row id>`), drawn by the existing SwiftTerm view.
 /// Foreground only: leaving the tab or backgrounding the app detaches; the
 /// shell keeps running on the computer and is picked up again from Open.
 struct ACIConsoleTerminalTab: View {
@@ -69,7 +69,7 @@ struct ACIConsoleTerminalTab: View {
 
     private func open() {
         session = PtySession(
-            service: TerminalServiceClient(baseURL: RuntimeRelayClient.relayBaseURL(runtimeId: computer.id)),
+            service: TerminalServiceClient(baseURL: RuntimeRelayClient.relayBaseURL(runtimeId: computer.relayId)),
             attachedInstanceName: computer.name)
     }
 
@@ -113,6 +113,8 @@ struct ACIConsoleTerminalTab: View {
 /// clean-ups. The Files drive has no Trash yet, so there is no Trash view.
 struct ACIConsoleFilesTab: View {
     let computer: ACIComputersClient.ConsoleComputer
+    /// Switches the detail to its Settings tab (from a 403 `whole_disk_off`).
+    var openSettings: (() -> Void)? = nil
     @ObservedObject private var drive = FilesDrive.shared
     @State private var view: Mode = .browse
 
@@ -130,8 +132,10 @@ struct ACIConsoleFilesTab: View {
             .padding(.horizontal, 16).padding(.bottom, 8)
             switch view {
             case .browse:
-                if drive.hasFiles(computer.id) {
-                    ACIConsoleFilesPanes(computerId: computer.id, name: computer.name)
+                if drive.hasFiles(computer.relayId) {
+                    ACIConsoleFilesPanes(computerId: computer.relayId, name: computer.name,
+                                         diskRoots: computer.wholeDiskState.showsRootsSwitcher ? computer.wholeDiskState.roots : [],
+                                         openSettings: openSettings)
                 } else {
                     ScrollView {
                         consoleNote("The Files drive isn't on for \(computer.name) yet. Turn it on in Settings, Files, and this computer's folders show here.")
@@ -148,12 +152,16 @@ struct ACIConsoleFilesTab: View {
 private struct ACIConsoleFilesPanes: View {
     let computerId: String
     let name: String
+    let diskRoots: [ACIComputersClient.WholeDiskRoot]
+    let openSettings: (() -> Void)?
     @StateObject private var model: FilesComputerModel
     @Environment(\.horizontalSizeClass) private var sizeClass
 
-    init(computerId: String, name: String) {
+    init(computerId: String, name: String, diskRoots: [ACIComputersClient.WholeDiskRoot], openSettings: (() -> Void)?) {
         self.computerId = computerId
         self.name = name
+        self.diskRoots = diskRoots
+        self.openSettings = openSettings
         _model = StateObject(wrappedValue: FilesComputerModel(computerId: computerId, name: name))
     }
 
@@ -168,7 +176,12 @@ private struct ACIConsoleFilesPanes: View {
                 }
             }
         }
-        .task { await model.load() }
+        .task {
+            model.diskRoots = diskRoots
+            model.openSettings = openSettings
+            await model.load()
+        }
+        .onChange(of: diskRoots) { _, new in model.diskRoots = new }
     }
 
     private var pane: some View {
@@ -322,7 +335,7 @@ struct ACIConsoleDeepLinkSheet: View {
             .task {
                 state = await .run {
                     let all = try await ACIComputersClient.shared.listConsole()
-                    guard let found = all.first(where: { $0.id == computerId }) else {
+                    guard let found = all.first(where: { $0.matches(computerId) }) else {
                         throw ACIComputersClient.Failure.notAvailable
                     }
                     return found

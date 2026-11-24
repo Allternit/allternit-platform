@@ -95,7 +95,15 @@ private enum class ConnStatus(val label: String) { All("All"), Connected("Connec
  * It reuses [ConnectionsStore], [ConnectionRow] and [ConnectSheetHost] from first-run setup, never a second connect screen.
  */
 @Composable
-internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () -> Unit, openAndroidScreen: () -> Unit) {
+internal fun ConnectionsSettingsScreen(
+    onBack: () -> Unit,
+    openPhoneControl: () -> Unit,
+    openAndroidScreen: () -> Unit,
+    /** Harness & Bots 2.0: the bots host for "New bot on <Runtime>" (brains, connections). */
+    botsHost: com.allternit.feature.bots.BotsHost? = null,
+    /** Opens a bot made from a runtime's detail page. */
+    onBotCreated: (String) -> Unit = {},
+) {
     val c = setupColors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -107,6 +115,7 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
     var searchOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var browse by remember { mutableStateOf(false) }
+    var runtimeOpen by remember { mutableStateOf<com.allternit.feature.bots.runtimes.RuntimeEntry?>(null) }
     var status by remember { mutableStateOf(ConnStatus.All) }
     var confirmUnlink by remember { mutableStateOf(false) }
     val uri = LocalUriHandler.current
@@ -299,8 +308,12 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
             if (store.loadError != null) Text(store.loadError ?: "", color = c.errFg, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp).testTag("connectionsError"))
             message?.let { Text(it, color = c.sub, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp)) }
+            // The ChatGPT subscription and Codex CLI sit in one card at the top of Brains (List layout, when both rows
+            // are listed); Codex then leaves Coding tools (iOS groupsAccountPair).
+            val groupsPair = layout == LibraryLayout.List && AccountPair.pairsUp((shown("brains") + shown("tools")).map { it.id })
+            val pairEntries = if (groupsPair) listOf(AccountPair.CHATGPT_ID, AccountPair.CODEX_ID).mapNotNull { id -> (shown("brains") + shown("tools")).firstOrNull { it.id == id } } else emptyList()
             for ((group, title, blurb) in CONNECTION_GROUPS) {
-                val rows = shown(group)
+                val rows = shown(group).filter { !(groupsPair && group == "tools" && it.id == AccountPair.CODEX_ID) }
                 if (rows.isEmpty()) continue
                 Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 18.dp), verticalAlignment = Alignment.Bottom) {
                     Text(title, color = AllternitTheme.colors.textSecondary, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -323,8 +336,10 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
                         if (lay == LibraryLayout.List) {
                             Column(Modifier.fillMaxWidth().background(c.card, RoundedCornerShape(12.dp)).testTag("connectionsGroup_$group")) {
                                 if (group == "brains") {
-                                    brainSections(rows).forEachIndexed { si, (name, list) ->
-                                        if (si > 0) HorizontalDivider(thickness = 0.5.dp, color = c.line)
+                                    val pairIds = pairEntries.map { it.id }.toSet()
+                                    if (pairEntries.isNotEmpty()) AccountPairCard(pairEntries, store, onConnect = { connect(it) }, onDisconnect = { disconnect(it.id, it.name) }, onFallback = ::fallback)
+                                    brainSections(rows.filter { it.id !in pairIds }).forEachIndexed { si, (name, list) ->
+                                        if (si > 0 || pairEntries.isNotEmpty()) HorizontalDivider(thickness = 0.5.dp, color = c.line)
                                         Text(
                                             name.uppercase(), color = c.mut, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp,
                                             modifier = Modifier.fillMaxWidth().background(AllternitTheme.colors.textPrimary.copy(alpha = 0.03f)).padding(horizontal = 16.dp, vertical = 6.dp),
@@ -345,7 +360,13 @@ internal fun ConnectionsSettingsScreen(onBack: () -> Unit, openPhoneControl: () 
                     MoreSection(group, title, store, layout, connector, onFallback = ::fallback, onBrowse = { browse = true })
                 }
             }
+            // Harness & Bots 2.0: how a chat or bot works, in the same List · Grid · Deck (status filters are about connections).
+            if (status == ConnStatus.All) com.allternit.feature.bots.runtimes.RuntimesSection(layout, query) { runtimeOpen = it }
         }
+    }
+    runtimeOpen?.let { r ->
+        androidx.activity.compose.BackHandler { runtimeOpen = null }
+        com.allternit.feature.bots.runtimes.RuntimeDetailScreen(r, botsHost, onBack = { runtimeOpen = null }, onBotCreated = { id -> runtimeOpen = null; onBotCreated(id) })
     }
     if (browse) ConnectionsBrowseScreen(store, connector, onFallback = ::fallback, onBack = { browse = false })
     }

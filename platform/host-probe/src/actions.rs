@@ -135,6 +135,11 @@ pub struct ActionRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub restore_point: Option<String>,
+    /// `snippet.run` only: the snippet body the cloud sends with the approved
+    /// action (its `id` must equal `target`), so the node needs no saved copy.
+    /// Without it the engine reads `<store>/snippets/<target>.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<Snippet>,
 }
 
 /// The way back from a change. It is an action and needs its own approval.
@@ -327,16 +332,21 @@ fn detect_elevated() -> bool {
     false
 }
 
-/// Checks that the cloud issued `approval_id` for this action. The default
-/// accepts any well-formed id (the relay is loopback and the cloud checks the
-/// user); the mounting runtime can plug in a signature check.
+/// Checks that the cloud issued `approval_id` for this action. The engine's
+/// default ([`crate::approval::DenyApprovals`]) refuses everything; the
+/// mounting runtime plugs in [`crate::approval::RelayKeyApproval`], which
+/// checks the cloud's signed `ap1.*` ids with this runtime's relay key.
 pub trait ApprovalVerifier: Send + Sync {
     fn verify(&self, approval_id: &str, action: ActionType, target: &str) -> Result<(), String>;
 }
 
-/// Accepts any well-formed approval id.
+/// Accepts any well-formed approval id. Tests only: no mounted route may use
+/// it (the cloud's signature is the approval).
+#[cfg(test)]
 #[derive(Debug, Default, Clone, Copy)]
-pub struct WellFormedApproval;
+pub(crate) struct WellFormedApproval;
+
+#[cfg(test)]
 
 impl ApprovalVerifier for WellFormedApproval {
     fn verify(&self, _approval_id: &str, _action: ActionType, _target: &str) -> Result<(), String> {
@@ -434,15 +444,19 @@ pub struct ActionEngine<E: Executor> {
 }
 
 impl ActionEngine<SystemExecutor> {
-    /// Real host, store at the runtime home, well-formed approvals.
-    pub fn system() -> Self {
-        ActionEngine::new(SystemExecutor, ChangeStore::open_default())
+    /// Real host, store at the runtime home, approvals checked by `verifier`
+    /// (in production [`crate::approval::RelayKeyApproval`]).
+    pub fn system(verifier: Box<dyn ApprovalVerifier>) -> Self {
+        ActionEngine::new(SystemExecutor, ChangeStore::open_default()).with_verifier(verifier)
     }
 }
 
 /// Run one action on this host with [`ActionEngine::system`]. Blocking.
-pub fn run_action(req: &ActionRequest) -> Result<ActionResult, ActionError> {
-    ActionEngine::system().run(req)
+pub fn run_action(
+    req: &ActionRequest,
+    verifier: Box<dyn ApprovalVerifier>,
+) -> Result<ActionResult, ActionError> {
+    ActionEngine::system(verifier).run(req)
 }
 
 /// How a step's success is judged.
@@ -520,11 +534,13 @@ impl Plan {
 }
 
 impl<E: Executor> ActionEngine<E> {
+    /// Approvals are refused until [`ActionEngine::with_verifier`] plugs in
+    /// a real check.
     pub fn new(exec: E, store: ChangeStore) -> Self {
         ActionEngine {
             exec,
             store,
-            approvals: Box::new(WellFormedApproval),
+            approvals: Box::new(crate::approval::DenyApprovals),
         }
     }
 
@@ -561,7 +577,7 @@ impl<E: Executor> ActionEngine<E> {
             ActionError::Unsupported(format!("actions on {}", std::env::consts::OS))
         })?;
 
-        let plan = self.plan(action, target, os)?;
+        let plan = self.plan(action, target, os, req.snippet.as_ref())?;
         let mut via_helper = false;
         if plan.needs_elevation && !self.exec.elevated() {
             if plan.helper.is_empty() {
@@ -698,7 +714,13 @@ impl<E: Executor> ActionEngine<E> {
 
     // -- planning ----------------------------------------------------------
 
-    fn plan(&self, action: ActionType, target: &str, os: OsFamily) -> Result<Plan, ActionError> {
+    fn plan(
+        &self,
+        action: ActionType,
+        target: &str,
+        os: OsFamily,
+        inline_snippet: Option<&Snippet>,
+    ) -> Result<Plan, ActionError> {
         if target.is_empty() {
             return Err(ActionError::InvalidTarget("target is required".into()));
         }
@@ -714,7 +736,7 @@ impl<E: Executor> ActionEngine<E> {
             ActionType::PortFree => self.plan_port(target, os),
             ActionType::UpdatesInstall => self.plan_updates(target),
             ActionType::SpaceClean => plan_clean(target, os),
-            ActionType::SnippetRun => self.plan_snippet(target, os),
+            ActionType::SnippetRun => self.plan_snippet(target, os, inline_snippet),
         }
     }
 
@@ -982,23 +1004,38 @@ impl<E: Executor> ActionEngine<E> {
         Ok(plan)
     }
 
-    fn plan_snippet(&self, target: &str, os: OsFamily) -> Result<Plan, ActionError> {
+    fn plan_snippet(
+        &self,
+        target: &str,
+        os: OsFamily,
+        inline: Option<&Snippet>,
+    ) -> Result<Plan, ActionError> {
         if !safe_file_name(target) {
             return Err(ActionError::InvalidTarget(format!(
                 "{target:?} is not a snippet id"
             )));
         }
-        let path = self.store.snippets_dir().join(format!("{target}.json"));
-        let snippet: Snippet = match std::fs::read(&path) {
-            Ok(b) => serde_json::from_slice(&b).map_err(|e| {
-                ActionError::InvalidTarget(format!("snippet {target:?} is unreadable: {e}"))
-            })?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(ActionError::TargetNotFound(format!(
-                    "no saved snippet {target:?} on this computer"
-                )))
+        let snippet: Snippet = if let Some(inline) = inline {
+            if inline.id != target {
+                return Err(ActionError::InvalidTarget(format!(
+                    "the snippet sent with the request is {:?}, not {target:?}",
+                    inline.id
+                )));
             }
-            Err(e) => return Err(ActionError::Store(format!("read {}: {e}", path.display()))),
+            inline.clone()
+        } else {
+            let path = self.store.snippets_dir().join(format!("{target}.json"));
+            match std::fs::read(&path) {
+                Ok(b) => serde_json::from_slice(&b).map_err(|e| {
+                    ActionError::InvalidTarget(format!("snippet {target:?} is unreadable: {e}"))
+                })?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(ActionError::TargetNotFound(format!(
+                        "no saved snippet {target:?} on this computer"
+                    )))
+                }
+                Err(e) => return Err(ActionError::Store(format!("read {}: {e}", path.display()))),
+            }
         };
         if snippet.script.trim().is_empty() {
             return Err(ActionError::InvalidTarget(format!(
@@ -1645,12 +1682,13 @@ mod tests {
             target: target.into(),
             approval_id: approval.map(str::to_string),
             restore_point: None,
+            snippet: None,
         }
     }
 
     fn engine(f: Fake) -> ActionEngine<Fake> {
         let store = ChangeStore::new(&f.root);
-        ActionEngine::new(f, store)
+        ActionEngine::new(f, store).with_verifier(Box::new(WellFormedApproval))
     }
 
     fn nginx_linux(tag: &str, state: ServiceState) -> ActionEngine<Fake> {
@@ -1709,6 +1747,58 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ActionError::NotApproved(ref m) if m.contains("another computer")));
         assert!(e.exec.calls().is_empty());
+        cleanup(&e);
+    }
+
+    #[test]
+    fn the_default_verifier_refuses_every_id() {
+        let root = temp_root("deny-default");
+        let f = Fake::new(OsFamily::Linux, &root);
+        let store = ChangeStore::new(&f.root);
+        let e = ActionEngine::new(f, store);
+        let err = e
+            .run(&req("service.stop", "nginx.service", Some("ap-any")))
+            .unwrap_err();
+        assert_eq!(err.http_status(), 403);
+        assert!(e.exec.calls().is_empty());
+        cleanup(&e);
+    }
+
+    #[test]
+    fn cloud_approval_runs_once_and_a_replay_is_refused() {
+        use crate::approval::{mint_for_test, relay_key_from_device_token, RelayKeyApproval};
+        let key = relay_key_from_device_token("tok");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let id = mint_for_test(
+            &key,
+            "rt_box",
+            "service.stop",
+            "nginx.service",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            now + 120,
+        );
+        let e = nginx_linux("cloud-approval", ServiceState::Running)
+            .with_verifier(Box::new(RelayKeyApproval::new(key.clone(), "rt_box")));
+        // Bound to another target: refused, nothing ran, the id is not spent.
+        let err = e
+            .run(&req("service.stop", "sshd.service", Some(&id)))
+            .unwrap_err();
+        assert_eq!(err.code(), "not_approved");
+        assert!(e.exec.calls().is_empty());
+        // The real action passes once.
+        e.run(&req("service.stop", "nginx.service", Some(&id)))
+            .unwrap();
+        assert_eq!(e.exec.calls(), vec!["systemctl stop nginx.service"]);
+        // A second use of the same id is refused by the store claim.
+        let err = e
+            .run(&req("service.stop", "nginx.service", Some(&id)))
+            .unwrap_err();
+        assert_eq!(err.http_status(), 403);
+        assert!(err.to_string().contains("already used"), "{err}");
+        assert_eq!(e.exec.calls().len(), 1);
         cleanup(&e);
     }
 
@@ -2365,6 +2455,38 @@ mod tests {
         assert!(clean_items().iter().all(|i| safe_file_name(i.id)));
         let v = serde_json::to_value(&clean_items()[0]).unwrap();
         assert!(v.get("needsElevation").is_some() && v.get("program").is_none());
+    }
+
+    #[test]
+    fn snippet_runs_from_the_request_with_no_saved_copy() {
+        let root = temp_root("snippet-inline");
+        let f = Fake::new(OsFamily::Linux, &root);
+        f.reply(0, "ok\n", "");
+        let e = engine(f);
+        let sn = Snippet {
+            id: "snp_1".into(),
+            name: "Uptime".into(),
+            script: "uptime".into(),
+            elevated: false,
+            timeout_sec: None,
+        };
+        let r = e
+            .run(&ActionRequest {
+                snippet: Some(sn.clone()),
+                ..req("snippet.run", "snp_1", Some("a1"))
+            })
+            .unwrap();
+        assert_eq!(e.exec.calls(), vec!["sh -c uptime"]);
+        assert!(r.undo.is_none());
+        // The body must be the snippet the approval named.
+        let err = e
+            .run(&ActionRequest {
+                snippet: Some(sn),
+                ..req("snippet.run", "snp_2", Some("a2"))
+            })
+            .unwrap_err();
+        assert_eq!(err.http_status(), 400);
+        cleanup(&e);
     }
 
     #[test]

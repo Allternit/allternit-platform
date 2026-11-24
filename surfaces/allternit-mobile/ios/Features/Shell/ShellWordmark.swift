@@ -1,0 +1,23 @@
+import SwiftUI
+
+/// The drawer header's wordmark for the current mode (moved out of the removed
+/// ModeDialView when Shelves replaced the dial; the sidebar header still shows it).
+struct ShellWordmark: View {
+    let mode: ShellMode
+
+    var body: some View {
+        Group {
+            if mode == .code {
+                // The pixel GIZZI CODE lockup the web drawer shows.
+                GizziCodeWordmark(height: 15)
+            } else if let suffix = mode.wordmarkSuffix {
+                // Suffixed marks run smaller so they fit beside the menu and search.
+                PixelWordmark(height: 12, suffix: suffix)
+            } else {
+                PixelWordmark(height: 16)
+            }
+        }
+        .lineLimit(1)
+        .accessibilityIdentifier("shellWordmark\(mode.rawValue)")
+    }
+}

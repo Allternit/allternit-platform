@@ -1,0 +1,26 @@
+[package]
+name = "allternit-terminal-service"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "The Allternit terminal API (create, list, input, resize, close, stream) over the Factory pane engine socket, shared by allternit-api and allternit-node."
+
+[lib]
+name = "allternit_terminal_service"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+async-stream = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+# SIGTERM for a graceful close.
+libc = "0.2"

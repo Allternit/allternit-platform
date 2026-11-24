@@ -168,6 +168,7 @@ async fn async_pair(
     println!("  Code: {}", start.user_code);
     println!();
     println!("Waiting for approval… (the pairing expires at {})", start.expires_at);
+    println!("On your own computers the pairing command is `gizzi pair`; this node shows as the same computer in Computers.");
 
     if !no_browser {
         open_browser_best_effort(&start.verification_url);

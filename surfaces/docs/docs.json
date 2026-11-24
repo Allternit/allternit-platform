@@ -149,6 +149,7 @@
               "guides/code-session-list",
               "guides/code-linked-prs",
               "guides/motion",
+              "guides/image-generation",
               "guides/computers-and-apps",
               "guides/files-drive",
               "guides/files-sharing",
@@ -156,6 +157,7 @@
               "guides/phone-for-your-bot",
               "guides/phone-skills",
               "guides/phone-app-maps",
+              "guides/phone-titles-and-intros",
               "guides/phone-approvals",
               "guides/usb-agent",
               "guides/files-inbox",
@@ -410,6 +412,7 @@
               "operations/hosted-driver",
               "operations/brain-runner",
               "operations/compute-providers",
+              "operations/cloud-computer-terminals",
               "operations/cloud-computer-network",
               "operations/upstream-funding",
               "operations/claude-linked-billing",
@@ -433,7 +436,8 @@
               "reference/glossary",
               "reference/changelog",
               "dev/computers-console-contract",
-              "dev/computer-pairing"
+              "dev/computer-pairing",
+              "dev/aci-image-jobs"
             ],
             "icon": "/icons/book.svg"
           },
@@ -819,6 +823,7 @@
                   "api/data-retention",
                   "api/embeddings",
                   "api/images",
+                  "api/generation-progress",
                   "api/realtime-audio",
                   "api/cache",
                   "api/context-caches",

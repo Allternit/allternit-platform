@@ -10,19 +10,15 @@ import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -74,9 +70,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -169,27 +165,10 @@ internal val DeckModes = listOf(
     DeckMode("artifact", "Artifact", DesignR.drawable.deck_artifact, null),
 )
 
-/** The one-time swipe tip (iOS ComposerSwipeTipState). */
-private object SwipeTip {
-    const val TEXT = "Swipe the composer up for modes, plugins and artifacts"
-    const val KEY = "allternit.nudge.composer-swipe"
-}
-
 /** Which deck rides under the card (iOS ComposerDeckVariant): Full on Home, Compact in a chat, None on Bots. */
 internal enum class ComposerDeck { None, Compact, Full }
 
-/** The person's fold choice, per device (iOS deckFoldedDefaultsKey). The band is open at rest. */
-private const val DeckFoldedKey = "allternit.composer.deckFolded"
-
-/** Upward travel on the composer that opens the folded deck band (iOS deckSwipeDistance). */
-private val DeckSwipeDistance = 24.dp
-
-/**
- * The home composer (iOS ComposerView, phone, as in the 11-18 build): the once swipe tip or the
- * no-computer chip, the rounded card with a rotating placeholder, and the controls row
- * (+ · Pick a brain ▾ · mic · voice, or Send once there is a draft). The deck band (Agent mode ·
- * Plugins · Artifacts) is folded at rest and opens on focus, a draft, an armed mode, or a swipe up.
- */
+/** One-line rest pill, Runtime/Brain chips, and Tools behind an explicit sliders button. */
 @Composable
 internal fun Composer(
     models: ModelStore,
@@ -217,19 +196,19 @@ internal fun Composer(
     /** iOS ComposerView `playGamesAnytime`: Play shows from the start (Bots, Code threads), not only after 5 s of work. */
     playGamesAnytime: Boolean = false,
     /** A bot chat's Runtime · Brain · Bot chips (Harness & Bots 2.0), drawn where the model chip sits. */
-    agentChips: (@Composable () -> Unit)? = null,
+    agentChips: (@Composable (iconOnly: Boolean) -> Unit)? = null,
+    sessionOpen: Boolean = deck == ComposerDeck.Compact,
+    onNewItem: (() -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val view = LocalView.current
-    val density = LocalDensity.current
     val prefs = remember { context.getSharedPreferences("allternit_shell", Context.MODE_PRIVATE) }
 
     var text by rememberSaveable { mutableStateOf("") }
     val attachments = remember { mutableStateListOf<ComposerAttachment>() }
     var focused by remember { mutableStateOf(false) }
-    var deckFolded by remember { mutableStateOf(prefs.getBoolean(DeckFoldedKey, false)) }
-    var tipSeen by remember { mutableStateOf(prefs.getBoolean(SwipeTip.KEY, false)) }
+    var deckFolded by remember { mutableStateOf(true) }
     var chipDismissed by rememberSaveable { mutableStateOf(false) }
     var agentMode by rememberSaveable { mutableStateOf<String?>(null) }
     var plusOpen by remember { mutableStateOf(false) }
@@ -240,21 +219,14 @@ internal fun Composer(
 
     val hasDraft = text.isNotBlank() || attachments.isNotEmpty()
     val armedMode = DeckModes.firstOrNull { it.id == agentMode }
-    // iOS deckOpen(folded:): open at rest; only the tools tab or a swipe folds it. Focus, typing and modes never change it.
+    // Tools opens only from the sliders button, regardless of typing/focus.
     val deckOpen = deck != ComposerDeck.None && !deckFolded
     val chipVisible = noComputer && !chipDismissed
-    val showsTip = !tipSeen && deck != ComposerDeck.None && deckFolded && !chipVisible
     val canSend = hasDraft && !sendDisabled
 
     fun setDeckFolded(folded: Boolean) {
         Haptics.perform(view, Haptics.Kind.Tap)
         deckFolded = folded
-        prefs.edit().putBoolean(DeckFoldedKey, folded).apply()
-    }
-
-    fun markTipSeen() {
-        tipSeen = true
-        prefs.edit().putBoolean(SwipeTip.KEY, true).apply()
     }
 
     val placeholders = when {
@@ -288,6 +260,8 @@ internal fun Composer(
     // Wave H2: in-field dictation (iOS DictationController on Android SpeechRecognizer), the first-use
     // onboarding sheet, then the RECORD_AUDIO system dialog.
     val dictation = remember { com.allternit.feature.chat.voice.Dictation(context) }
+    val inputMode = LocalInputModeManager.current
+    val rest = !focused && !hasDraft && !isStreaming && !dictation.isRecording && !deckOpen
     var dictationBase by remember { mutableStateOf("") }
     var dictationOnboarding by remember { mutableStateOf(false) }
     androidx.compose.runtime.DisposableEffect(dictation) { onDispose { dictation.stop() } }
@@ -326,7 +300,7 @@ internal fun Composer(
         // A turn needs words (iOS sendMessage guards on the trimmed text); files ride along.
         if (text.isBlank() || sendDisabled || isStreaming) return
         // No brain picked: the picker opens instead of sending (iOS requiresModelPick).
-        if (models.selectedId.isNullOrEmpty()) {
+        if (models.selectedId.isNullOrEmpty() && armedMode?.id != "image") {
             pickerOpen = true
             return
         }
@@ -368,46 +342,32 @@ internal fun Composer(
                 onDismiss = { chipDismissed = true },
             )
         }
-        AnimatedVisibility(visible = showsTip, enter = fadeIn(), exit = fadeOut()) {
-            NoticeCard(
-                icon = com.allternit.core.design.R.drawable.ph_caret_up,
-                title = SwipeTip.TEXT,
-                detail = null,
-                testTag = "composerSwipeTip",
-                dismissLabel = "Dismiss tip",
-                onDismiss = ::markTipSeen,
-            )
-        }
+        LocalComposerOrbs.current(deckOpen, sessionOpen, onNewItem)
 
-        // The card.
-        val cardShape = RoundedCornerShape(18.dp)
-        val swipePx = with(density) { DeckSwipeDistance.toPx() }
+        // Rest is one line. Focus or a draft opens the field without a pointer-focus ring.
+        val cardShape = RoundedCornerShape(if (rest) 28.dp else 18.dp)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .shadow(2.dp, cardShape, ambientColor = Color.Black.copy(alpha = 0.04f), spotColor = Color.Black.copy(alpha = 0.04f))
                 .clip(cardShape)
                 .background(c.bgPanel)
-                .border(BorderStroke(1.dp, if (focused) c.borderStrong else c.borderSubtle), cardShape)
-                .pointerInput(Unit) {
-                    var dy = 0f
-                    detectVerticalDragGestures(
-                        onDragStart = { dy = 0f },
-                        onDragEnd = {
-                            // Up by 24dp opens, down by 24dp closes (iOS nextSwipedOpen).
-                            if (deck == ComposerDeck.None) return@detectVerticalDragGestures
-                            if (-dy >= swipePx && deckFolded) {
-                                markTipSeen()
-                                setDeckFolded(false)
-                            } else if (dy >= swipePx && !deckFolded) {
-                                setDeckFolded(true)
-                            }
-                        },
-                    ) { _, amount -> dy += amount }
-                }
+                .border(BorderStroke(1.dp, if (focused && inputMode.inputMode == InputMode.Keyboard) c.borderStrong else c.borderSubtle), cardShape)
                 .zIndex(1f)
                 .testTag("composerCard"),
         ) {
+            // Expanded chips stay at the top right; scrolling keeps long model/bot names reachable.
+            if (!rest) Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState(), reverseScrolling = true)
+                    .padding(start = 12.dp, end = 8.dp, top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+            ) {
+                if (agentChips != null) agentChips(false) else {
+                    PlainChatRuntimeChip(models, iconOnly = false)
+                    ModelChip(models = models, open = pickerOpen, iconOnly = false) { pickerOpen = true }
+                }
+            }
             if (attachments.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 12.dp),
@@ -416,50 +376,57 @@ internal fun Composer(
                     attachments.forEach { a -> AttachmentChip(a) { attachments.remove(a) } }
                 }
             }
-            Box(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 4.dp)) {
-                if (text.isEmpty()) {
-                    Crossfade(targetState = placeholders[placeholderIndex % placeholders.size], animationSpec = tween(250), label = "placeholder") { p ->
-                        Text(p, color = c.textTertiary, fontSize = 16.sp, lineHeight = 24.sp)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (rest) ComposerPlusButton { plusOpen = true }
+                Box(Modifier.weight(1f).padding(start = if (rest) 0.dp else 16.dp, end = 16.dp, top = if (rest) 12.dp else 14.dp, bottom = if (rest) 12.dp else 4.dp)) {
+                    if (text.isEmpty()) {
+                        Crossfade(targetState = placeholders[placeholderIndex % placeholders.size], animationSpec = tween(250), label = "placeholder") { p ->
+                            Text(p, color = c.textTertiary, fontSize = 16.sp, lineHeight = 24.sp, maxLines = if (rest) 1 else 3, overflow = TextOverflow.Ellipsis)
+                        }
                     }
+                    BasicTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        textStyle = TextStyle(color = c.textPrimary, fontSize = 16.sp, lineHeight = 24.sp, fontFamily = ShellSans),
+                        cursorBrush = SolidColor(c.textPrimary),
+                        maxLines = if (rest) 1 else 6,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { focused = it.isFocused }
+                            .testTag("composerInput")
+                            .semantics { contentDescription = "Message" },
+                    )
                 }
-                BasicTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    textStyle = TextStyle(color = c.textPrimary, fontSize = 16.sp, lineHeight = 24.sp, fontFamily = ShellSans),
-                    cursorBrush = SolidColor(c.textPrimary),
-                    maxLines = 6,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onFocusChanged { focused = it.isFocused }
-                        .testTag("composerInput")
-                        .semantics { contentDescription = "Message" },
-                )
+                // Rest has no hanging controls: icon chips and Tools share the input line.
+                if (rest) {
+                    if (agentChips != null) agentChips(true) else {
+                        PlainChatRuntimeChip(models, iconOnly = true)
+                        ModelChip(models = models, open = pickerOpen, iconOnly = true) { pickerOpen = true }
+                    }
+                    if (deck != ComposerDeck.None) ControlGlyph(DesignR.drawable.ph_sliders_horizontal,
+                        "Show tools", "composerTools") { setDeckFolded(false) }
+                }
             }
-            Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(1.dp).background(c.borderSubtle))
-            // Controls row.
-            Row(
+            if (!rest) Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(1.dp).background(c.borderSubtle))
+            // Expanded composer line: add, Tools, dictation/voice and the turn controls.
+            if (!rest) Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                val plusTurn by animateFloatAsState(if (plusOpen) 45f else 0f, tween(180), label = "plusTurn")
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(c.fillNeutral)
-                        .testTag("composerPlus")
-                        .clickable(role = Role.Button, onClickLabel = "Add to chat") {
-                            Haptics.perform(view, Haptics.Kind.Tap)
-                            plusOpen = true
-                        }
-                        .semantics { contentDescription = "Add to chat" },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(painterResource(com.allternit.core.design.R.drawable.ph_plus), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp).rotate(plusTurn))
-                }
+                ComposerPlusButton { plusOpen = true }
                 Spacer(Modifier.weight(1f))
-                if (agentChips != null) agentChips() else ModelChip(models = models, open = pickerOpen) { pickerOpen = true }
+                if (deck != ComposerDeck.None) ControlGlyph(DesignR.drawable.ph_sliders_horizontal,
+                    if (deckOpen) "Hide tools" else "Show tools", "composerTools") { setDeckFolded(!deckFolded) }
+                if (dictationAvailable) ControlGlyph(
+                    if (dictation.isRecording) DesignR.drawable.ph_microphone_fill else DesignR.drawable.ph_microphone,
+                    if (dictation.isRecording) "Stop dictation" else "Dictate", "composerMic",
+                    tint = if (dictation.isRecording) c.accentPrimary else null,
+                ) { toggleDictation() }
+                ControlGlyph(DesignR.drawable.ph_waveform, "Start voice mode", "composerVoice", enabled = onVoiceMode != null) {
+                    Haptics.perform(view, Haptics.Kind.Tap)
+                    startVoice()
+                }
                 // Play (the waiting games) sits beside Stop; it stays composed so it can tell an open game the reply is ready.
                 com.allternit.feature.chat.games.WaitingGamesPlayButton(busy = isStreaming, anytime = playGamesAnytime, hidden = hasDraft)
                 if (isStreaming) {
@@ -495,33 +462,11 @@ internal fun Composer(
                     ) {
                         Icon(painterResource(DesignR.drawable.ph_arrow_up), contentDescription = null, tint = c.onAccent, modifier = Modifier.size(18.dp))
                     }
-                } else {
-                    Row {
-                        if (dictationAvailable) {
-                            ControlGlyph(
-                                if (dictation.isRecording) DesignR.drawable.ph_microphone_fill else DesignR.drawable.ph_microphone,
-                                if (dictation.isRecording) "Stop dictation" else "Dictate",
-                                "composerMic",
-                                tint = if (dictation.isRecording) c.accentPrimary else null,
-                            ) { toggleDictation() }
-                        }
-                        // iOS draws the voice button at 0.4, disabled, where voice mode has no chat to talk to.
-                        ControlGlyph(com.allternit.core.design.R.drawable.ph_waveform, "Start voice mode", "composerVoice", enabled = onVoiceMode != null) {
-                            Haptics.perform(view, Haptics.Kind.Tap)
-                            startVoice()
-                        }
-                    }
                 }
             }
         }
-
-        // iOS ComposerView: the tab shows only while the band is folded. An open band joins the
-        // card directly (no tab between them); a swipe down on the card folds it.
-        // It leaves at once (no fade) so the opening band is joined to the card from the first frame.
-        AnimatedVisibility(visible = deck != ComposerDeck.None && !deckOpen, enter = fadeIn(), exit = ExitTransition.None) {
-            ToolsTab { setDeckFolded(false) }
-        }
-        AnimatedVisibility(visible = deckOpen, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+        // Tools changes in place; reduced motion never animates the composer's height.
+        if (deckOpen) {
             DeckBand(
                 onHide = { setDeckFolded(true) },
                 compact = deck == ComposerDeck.Compact,
@@ -593,24 +538,25 @@ private fun ControlGlyph(icon: Int, label: String, testTag: String, enabled: Boo
 
 /** Model chip: the matrix mark, the model's short name or "Pick a brain", and ▾ (iOS modelChip). */
 @Composable
-private fun ModelChip(models: ModelStore, open: Boolean, onClick: () -> Unit) {
+private fun ModelChip(models: ModelStore, open: Boolean, iconOnly: Boolean = false, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     val turn by animateFloatAsState(if (open) 180f else 0f, tween(180), label = "chipTurn")
     val label = models.chipLabel
     Row(
         modifier = Modifier
             .heightIn(min = 44.dp)
+            .widthIn(min = if (iconOnly) 44.dp else 0.dp)
             .clip(RoundedCornerShape(10.dp))
             .testTag("composerModelChip")
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) { contentDescription = "Model: $label" }
             .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
     ) {
         if (models.isLoading && models.chatModels.isEmpty()) {
             CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = c.textSecondary)
-            Text("Loading...", color = c.textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            if (!iconOnly) Text("Loading...", color = c.textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         } else {
             Box(
                 Modifier
@@ -620,9 +566,9 @@ private fun ModelChip(models: ModelStore, open: Boolean, onClick: () -> Unit) {
                     .border(1.dp, c.borderSubtle, RoundedCornerShape(6.dp)),
                 contentAlignment = Alignment.Center,
             ) { MatrixLogo(size = 18.dp) }
-            Text(label, color = c.textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp))
+            if (!iconOnly) Text(label, color = c.textSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp))
         }
-        Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(10.dp).rotate(turn))
+        if (!iconOnly) Icon(painterResource(com.allternit.core.design.R.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(10.dp).rotate(turn))
     }
 }
 
@@ -830,31 +776,14 @@ private fun Modifier.drawBehindOutline(color: Color): Modifier = this.then(
     },
 )
 
-/**
- * The grey "tools" pull tab under the card's bottom-left edge (iOS ComposerToolsTab): flat top
- * joined to the card, rounded bottom corners. It shows only while the deck is folded and unfolds
- * it; the open band has no tab (swipe down on the card folds it).
- */
+/** One filled add control, shared by the rest and open composer. */
 @Composable
-private fun ToolsTab(onClick: () -> Unit) {
+private fun ComposerPlusButton(onClick: () -> Unit) {
     val c = AllternitTheme.colors
-    Row(
-        modifier = Modifier
-            .padding(start = 16.dp)
-            .zIndex(1f)
-            .clip(RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp))
-            .background(c.fillNeutral)
-            .testTag("composerToolsTab")
-            .clickable(role = Role.Button, onClickLabel = "Show tools", onClick = onClick)
-            .semantics { contentDescription = "Show tools" }
-            .heightIn(min = 24.dp)
-            .widthIn(min = 44.dp)
-            .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-    ) {
-        Icon(painterResource(DesignR.drawable.ph_caret_down), contentDescription = null, tint = c.textSecondary.copy(alpha = 0.8f), modifier = Modifier.size(9.dp))
-        Text("tools", color = c.textSecondary.copy(alpha = 0.8f), fontSize = 10.sp)
+    Box(Modifier.padding(6.dp).size(44.dp).clip(CircleShape).background(c.textPrimary)
+        .testTag("composerPlus").clickable(role = Role.Button, onClickLabel = "Add to chat", onClick = onClick),
+        contentAlignment = Alignment.Center) {
+        Icon(painterResource(DesignR.drawable.ph_plus), "Add to chat", tint = c.bgPrimary, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -926,6 +855,7 @@ internal fun CodeLaunchComposer(
     onSend: (ComposerDraft) -> Unit,
     onOpenSection: (RailRow) -> Unit,
 ) {
+    val inputMode = LocalInputModeManager.current
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val view = LocalView.current
@@ -972,7 +902,7 @@ internal fun CodeLaunchComposer(
         text = ""
         onSend(draft)
     }
-    val border = if (focused) c.borderStrong else c.borderSubtle
+    val border = if (focused && inputMode.inputMode == InputMode.Keyboard) c.borderStrong else c.borderSubtle
     Column(
         Modifier
             .fillMaxWidth()
@@ -991,6 +921,7 @@ internal fun CodeLaunchComposer(
                 onDismiss = { chipDismissed = true },
             )
         }
+        LocalComposerOrbs.current(false, false, null)
         // The prompt edge: rules, the model ▾, the status dot.
         Row(Modifier.fillMaxWidth().height(36.dp).zIndex(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             DashedRule(border, Modifier.width(10.dp))
@@ -1016,10 +947,10 @@ internal fun CodeLaunchComposer(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Box(
-                Modifier.padding(vertical = 6.dp).size(40.dp).testTag("codeAttach")
+                Modifier.padding(vertical = 6.dp).size(44.dp).clip(CircleShape).background(c.textPrimary).testTag("codeAttach")
                     .clickable(role = Role.Button, onClickLabel = "Attach") { actions.onFiles() },
                 contentAlignment = Alignment.Center,
-            ) { Icon(painterResource(DesignR.drawable.ph_plus), contentDescription = "Attach", tint = c.textSecondary, modifier = Modifier.size(18.dp)) }
+            ) { Icon(painterResource(DesignR.drawable.ph_plus), contentDescription = "Attach", tint = c.bgPrimary, modifier = Modifier.size(18.dp)) }
             Row(Modifier.weight(1f).padding(start = 12.dp, end = 4.dp, top = 9.dp, bottom = 9.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("❯", color = CodeCoral, fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, lineHeight = 22.sp)
                 Box(Modifier.weight(1f)) {

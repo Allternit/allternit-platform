@@ -65,7 +65,13 @@ sealed interface ChatStreamEvent {
     ) : ChatStreamEvent
 
     /** `{"type":"error","error"}` or a `chunk_type:"error"` chunk. */
-    data class StreamError(val message: String) : ChatStreamEvent
+    data class StreamError(val message: String, val code: String? = null, val resetAtMs: Long? = null) : ChatStreamEvent
+
+    /**
+     * `{"type":"tool_progress","toolCallId","toolName","metadata":{progress,progress_detail}}` (platform #2812):
+     * a running tool's live report. The call stays running and keeps the newest [metadata].
+     */
+    data class ToolProgress(val toolCallId: String, val toolName: String, val metadata: JsonObject) : ChatStreamEvent
 
     /** `message_stop`, a `chunk_type:"done"` chunk, or `data: [DONE]`. */
     data object Done : ChatStreamEvent
@@ -87,6 +93,14 @@ sealed interface ChatStreamEvent {
 
 /** Frame decoding, shared by the live stream and tests (feed [SseParser] output in). */
 object AgentChatFrames {
+    /** `reset_at` as epoch seconds or milliseconds, a string of either, or an ISO date; epoch milliseconds, or null. */
+    fun resetAtMillis(v: JsonElement?): Long? {
+        val p = v as? kotlinx.serialization.json.JsonPrimitive ?: return null
+        val n = p.content.trim().toDoubleOrNull()
+        if (n != null) return if (n <= 0.0) null else if (n < 1e12) (n * 1000).toLong() else n.toLong()
+        return runCatching { java.time.OffsetDateTime.parse(p.content.trim()).toInstant().toEpochMilli() }.getOrNull()
+    }
+
     /** Decodes one SSE frame; null for frames the app ignores (unknown types, keep-alives). */
     fun decode(event: SseEvent, json: Json = ApiJson.default): ChatStreamEvent? = decode(event.data, json)
 
@@ -134,7 +148,16 @@ object AgentChatFrames {
                 )
             }
             "message_stop" -> ChatStreamEvent.Done
-            "error" -> ChatStreamEvent.StreamError(frame.str("error") ?: "Stream error")
+            "error" -> ChatStreamEvent.StreamError(
+                frame.str("error") ?: "Stream error",
+                frame.str("code")?.trim()?.takeIf { it.isNotEmpty() },
+                resetAtMillis(frame["reset_at"]),
+            )
+            "tool_progress" -> {
+                val id = frame.str("toolCallId")
+                val metadata = frame["metadata"] as? JsonObject
+                if (id != null && metadata != null) ChatStreamEvent.ToolProgress(id, frame.str("toolName") ?: "media_generate", metadata) else null
+            }
             "artifact", "artifact.created", "artifact-created" -> {
                 val kind = frame.str("kind")
                 val title = frame.str("title")?.trim()

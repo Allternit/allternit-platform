@@ -22,6 +22,7 @@ The API reaches the pane engine over its Unix domain socket (on Windows, a named
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/terminal/create` | Create a terminal session. |
+| GET | `/terminal/list` | List every terminal with its title, cwd, command, state and optional screen preview. |
 | POST | `/terminal/:session_id/input` | Send input to a session. |
 | POST | `/terminal/:session_id/close` | Close a session. |
 | POST | `/terminal/:session_id/resize` | Resize a session. |
@@ -40,7 +41,11 @@ Request body:
   "shell": "/bin/zsh",
   "cwd": "/Users/dev/project",
   "cols": 80,
-  "rows": 24
+  "rows": 24,
+  "command": "bash",
+  "args": ["-lc", "echo hi; sleep 60"],
+  "env": { "MY_VAR": "1" },
+  "title": "probe"
 }
 ```
 
@@ -52,6 +57,12 @@ All fields are optional. Defaults:
 | `cwd` | Current process working directory |
 | `cols` | `80` |
 | `rows` | `24` |
+| `command` | none: the terminal runs `shell` |
+| `args` | `[]` |
+| `env` | `{}` |
+| `title` | none: see [List terminals](#list-terminals) for the name the list shows |
+
+`command` runs that program (with `args`) instead of the shell, and `shell` is then ignored. `env` is added to the terminal's environment over the fixed `TERM=xterm-256color` and `COLORTERM=truecolor`; a key that is empty or contains `=` or a NUL character returns `400`. `title` is the terminal's name in the agent wall and in the list.
 
 If `shell` is empty, or is an absolute path that doesn't exist on that computer (zsh on a Linux cloud computer, for example), the terminal runs that computer's `$SHELL`, else bash, else its default shell, instead of failing with `ENOENT`. On Windows an empty `shell` or any Unix path runs PowerShell. The app asks for `/bin/zsh` and, if an older server still answers `ENOENT`, asks again with an empty `shell`.
 
@@ -66,6 +77,40 @@ Response:
   }
 }
 ```
+
+## List terminals
+
+```bash
+GET /terminal/list?preview=16
+```
+
+Returns every terminal on the pane engine, including terminals that were not created through this API. `preview` is optional: when set (clamped to 1-40), each terminal also carries the last N rows of its visible screen as plain text (ANSI stripped).
+
+```json
+{
+  "terminals": [
+    {
+      "session_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "pane_id": "w4:p2",
+      "title": "probe",
+      "cwd": "/Users/dev/project",
+      "command": ["bash", "-lc", "echo hi; sleep 60"],
+      "running": true,
+      "exit_code": null,
+      "pid": 48213,
+      "created_at": "2026-11-21T17:04:09.512+00:00",
+      "preview": ["hi", "", ""]
+    }
+  ]
+}
+```
+
+- `pane_id` is the pane engine's id for the terminal's pane (the id the Factory agent wall shows). Use it to match an agent-wall pane to its terminal. It is `null` when the engine reports none.
+- `title` is the `title` given at create, else the terminal's own title (set by the program running in it), else the last folder of `cwd`, else `Terminal`.
+- `cwd` is the live working directory from the terminal's pane, else the one it was created with.
+- `command` and `created_at` are known only for terminals created through this API since it started; for others `command` is `[]` and `created_at` is `null`.
+- `preview` is left out for a terminal whose pane could not be read in time. That never fails the list.
+- Errors: `503` when the pane engine cannot be reached.
 
 ## Send input
 
@@ -122,6 +167,17 @@ Response:
 POST /terminal/f47ac10b-58cc-4372-a567-0e02b2c3d479/close
 ```
 
+The body is optional. With no body (older clients) the pane closes at once, as before.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `graceful` | boolean | `false` | Ask the terminal's program to quit before the pane closes: SIGTERM to the pid the engine reports (`factory.terminal.get`), then up to 10 s for it to exit, then the pane closes either way. Only for a terminal created with a `command` (an agent such as `claude --resume <id>`); a plain shell terminal closes as before. Never SIGKILL. |
+
+```bash
+curl -X POST http://127.0.0.1:<api port>/terminal/<id>/close \
+  -H 'content-type: application/json' -d '{"graceful":true}'
+```
+
 Response:
 
 ```json
@@ -153,6 +209,21 @@ data: {"type":"exit","exit_code":0}
 ```
 
 `exit_code` is `null` when the pane engine couldn't read it.
+
+## Cloud computers
+
+On a cloud computer (or a Mac running `allternit-node` with Desktop quit), the same routes reach the computer's `allternit-node` daemon through the runtime relay. It serves them in one of two ways:
+
+- **Pane engine** (the computer's `allternit-factory pane server` answers): the same service and JSON as on Desktop. Terminals survive an `allternit-node` restart, `/terminal/list` returns titles, `preview` rows and `pane_id`, create takes `command`/`args`/`env`/`title`, and `close` takes `{"graceful": true}`.
+- **Fallback** (no pane engine on the image, for example Orgo, headless or older images): the node runs the terminals itself. Create takes the same body, and `/terminal/list` returns them with `pane_id: null` and no `preview`. These terminals end when `allternit-node` restarts, and a graceful close is a plain close.
+
+`/terminal/list` on a cloud computer also returns a top-level `engine` field that says which one is serving:
+
+```json
+{ "terminals": [], "engine": "missing" }
+```
+
+`engine` is `"pane"` or `"missing"`. The node never starts the pane engine. While none has answered, it checks again at most every 30 seconds. See `cmd/allternit-node/README.md` for the socket paths it checks.
 
 ## Error codes
 

@@ -181,6 +181,29 @@ export function InstanceRoutes() {
         return c.json(true)
       },
     )
+    .post(
+      "/reload",
+      describeRoute({
+        summary: "Reload instances when idle",
+        description:
+          "Reload every instance so the provider and model list is read again (a CLI was installed or a sign-in changed). An instance with a running turn or a waiting question reloads once it is idle; nothing running is aborted.",
+        operationId: "instance.reload",
+        responses: {
+          200: {
+            description: "Reload started",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        await Instance.disposeAll()
+        return c.json(true)
+      },
+    )
     .get(
       "/workspace",
       describeRoute({

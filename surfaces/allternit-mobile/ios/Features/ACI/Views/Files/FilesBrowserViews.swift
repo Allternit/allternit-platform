@@ -116,6 +116,8 @@ struct FilesTransferBar: View {
 /// Scans, then Memory, Code, Models and folders the user added.
 struct FilesRootsScreen: View {
     @ObservedObject var model: FilesComputerModel
+    @State private var openedDisk: Root?
+    @State private var openingDisk: String?
 
     var body: some View {
         List {
@@ -140,7 +142,7 @@ struct FilesRootsScreen: View {
                     .listRowBackground(Color.clear)
             } else {
                 Section {
-                    ForEach(model.sortedRoots, id: \.id) { root in
+                    ForEach(model.driveRoots, id: \.id) { root in
                         NavigationLink(value: FilesRoute.folder(rootId: root.id, parentId: root.rootItemId, title: root.name)) {
                             FilesRowLabel(systemImage: FilesFormat.symbol(root.kind), title: root.name,
                                           subtitle: root.usageBytes.map(FilesFormat.bytes))
@@ -148,11 +150,45 @@ struct FilesRootsScreen: View {
                     }
                 }
                 .listRowBackground(Color("FillNeutral"))
+                if !model.diskRoots.isEmpty { wholeDiskSection }
             }
         }
         .filesListStyle()
+        .navigationDestination(item: $openedDisk) { root in
+            FilesFolderScreen(model: model, rootId: root.id, parentId: root.rootItemId, title: root.name)
+        }
         .navigationTitle("Files")
         .refreshable { await model.load() }
+    }
+
+    /// Whole-disk roots after the Files drive; shown only while the setting is on.
+    @ViewBuilder private var wholeDiskSection: some View {
+        Section {
+            ForEach(model.diskRoots) { disk in
+                Button {
+                    Task {
+                        openingDisk = disk.id
+                        defer { openingDisk = nil }
+                        do { openedDisk = try await model.diskRoot(disk) }
+                        catch {
+                            if (error as? FilesError)?.isWholeDiskOff != true { model.notice = FilesComputerModel.message(error) }
+                        }
+                    }
+                } label: {
+                    FilesRowLabel(systemImage: "internaldrive", title: disk.label, subtitle: disk.path)
+                }
+                .disabled(openingDisk != nil)
+            }
+            if let message = model.wholeDiskOffMessage {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(message).font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                    if let open = model.openSettings { ACIPillButton(title: "Open Settings", action: open) }
+                }
+            }
+        } header: {
+            Text("Whole disk")
+        }
+        .listRowBackground(Color("FillNeutral"))
     }
 
     static func requestsLine(_ count: Int) -> String {
@@ -172,6 +208,7 @@ struct FilesFolderScreen: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var isLocked = false
+    @State private var diskOff = false
     @State private var selected: FilesSelection?
     @State private var isAddOpen = false
     @State private var isDropTargeted = false
@@ -203,7 +240,8 @@ struct FilesFolderScreen: View {
                     .listRowBackground(Color.clear)
             } else if let error, items.isEmpty {
                 FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't open \(title)",
-                                  message: error, actionTitle: "Retry", action: { Task { await reload() } })
+                                  message: error, actionTitle: diskOff ? (model.openSettings != nil ? "Open Settings" : nil) : "Retry",
+                                  action: { if diskOff { model.openSettings?() } else { Task { await reload() } } })
                     .listRowBackground(Color.clear)
             } else if items.isEmpty {
                 FriendlyStateView(style: .empty, icon: "folder", title: "Nothing here yet",
@@ -289,12 +327,15 @@ struct FilesFolderScreen: View {
             items = try await model.list(rootId: rootId, parentId: parentId).items
             error = nil
             isLocked = false
+            diskOff = false
         } catch let failure as FilesError where failure.code == .protectedRootLocked {
             isLocked = true
             error = nil
         } catch is CancellationError {
         } catch {
             self.error = FilesComputerModel.message(error)
+            diskOff = (error as? FilesError)?.isWholeDiskOff == true
+            model.noteWholeDiskOff(error)
         }
     }
 

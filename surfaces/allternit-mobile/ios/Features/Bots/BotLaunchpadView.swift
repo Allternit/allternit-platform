@@ -25,8 +25,15 @@ struct BotLaunchpadView: View {
     @State private var busy = false
     @State private var hint: String?
     @State private var isNewBotPresented = false
+    @State private var isPickHowPresented = false
     @State private var isTemplatesPresented = false
     @State private var templateError: String?
+    // Arrivals (I13): the team flies in on entering Bots, a picked bot rises into place.
+    @StateObject private var team = TeamArrivalState()
+    @ObservedObject private var arrivals = ModeArrivalCenter.shared
+    @Namespace private var arrivalSpace
+    @State private var arrivingBotId: String?
+    @State private var arrivalToken = UUID()
 
     private var layout: RosterLayout { RosterLayout(rawValue: layoutRaw) ?? .list }
     private var bots: [AgentRecord] { store.bots }
@@ -37,6 +44,7 @@ struct BotLaunchpadView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                if showsPickHow { pickHowCard }
                 roster
                 header
             }
@@ -49,6 +57,15 @@ struct BotLaunchpadView: View {
         // and so do the header and the Bots rail.
         .background { BotWashedBackground(color: .some(colors.hex(for: selectedBot))).ignoresSafeArea() }
         .claimsBotTint(selectedBotId)
+        .overlay {
+            if let id = arrivingBotId, let bot = bots.first(where: { $0.id == id }) {
+                BotArrivalOverlay(bot: bot, hex: colors.hex(for: bot), namespace: arrivalSpace)
+                    .id(arrivalToken)
+            }
+        }
+        .onAppear { playTeamIfPending() }
+        .onChange(of: arrivals.teamPending) { _, _ in playTeamIfPending() }
+        .onChange(of: selectedBotId) { _, id in startBotArrival(id) }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             BotLaunchComposer(
                 draft: $draft,
@@ -83,6 +100,15 @@ struct BotLaunchpadView: View {
                 }
             }
         }
+        .sheet(isPresented: $isPickHowPresented) {
+            // Harness & Bots 2.0: no bots yet → Create bot opens on the Runtime · Brain picker.
+            NewBotSheet(onBrowseTemplates: { isTemplatesPresented = true }, opensRuntimePicker: true) { outcome in
+                Task {
+                    await refresh()
+                    if let botId = outcome.botIds.first { store.pendingOpenBotId = botId }
+                }
+            }
+        }
         .sheet(isPresented: $isTemplatesPresented) {
             AgentTemplateSheet(onConfirm: createFromTemplate)
         }
@@ -91,6 +117,54 @@ struct BotLaunchpadView: View {
         )) {
             Button("OK", role: .cancel) { templateError = nil }
         } message: { Text(templateError ?? "") }
+    }
+
+    // MARK: - Empty state
+
+    /// No bots yet (and not still loading, not searching).
+    private var showsPickHow: Bool {
+        bots.isEmpty && !hub.isLoading && searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// "Pick how your bot works": the first step of Create bot, the runtime
+    /// (Allternit, Claude Code, Codex, …) and the brain it thinks with.
+    private var pickHowCard: some View {
+        Button {
+            Haptics.selection()
+            isPickHowPresented = true
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "square.stack.3d.up")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 40, height: 40)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Pick how your bot works")
+                        .font(.headline)
+                        .foregroundColor(Color("TextPrimary"))
+                    Text("Choose its runtime (Allternit, Claude Code, Codex and more) and the brain it thinks with.")
+                        .font(.subheadline)
+                        .foregroundColor(Color("TextSecondary"))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(Color("TextTertiary"))
+                    .accessibilityHidden(true)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color("BgPanel")))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle")))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens Create bot on the runtime choices")
+        .accessibilityIdentifier("bots-pick-how")
     }
 
     // MARK: - Roster
@@ -109,6 +183,11 @@ struct BotLaunchpadView: View {
                 }
             }
             .transition(.opacity)
+            .background(alignment: .top) {
+                TeamArrivalWash(hexes: bots.compactMap { colors.hex(for: $0) }, on: team.washOn)
+                    .frame(height: 140)
+                    .padding(.horizontal, -14)
+            }
             // Account bots + the no-computer line (no error when there is no computer).
             AccountBotsStrip(hubError: hub.loadError, hasBots: !bots.isEmpty)
         }
@@ -170,6 +249,9 @@ struct BotLaunchpadView: View {
         return VStack(spacing: 2) {
             Button { open(entry) } label: {
                 RosterFace(entry: entry, size: size).padding(4)
+                    .matchedGeometryEffect(id: entry.botId ?? entry.id, in: arrivalSpace,
+                                           isSource: true)
+                    .teamFlight(index: entryIndex(entry), state: team)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open \(entry.name), \(entry.status.word)")
@@ -376,6 +458,29 @@ struct BotLaunchpadView: View {
 
     /// The @: put the bot in To:, or take it out. The main bot is the
     /// new-project route, so @ on it goes back to "· new project".
+    private func entryIndex(_ entry: RosterEntry) -> Int {
+        entries.firstIndex(where: { $0.id == entry.id }) ?? 0
+    }
+
+    /// Entering Bots with no bot open: fly the team in (after any intro).
+    private func playTeamIfPending() {
+        guard navigator.path.isEmpty, arrivals.consumeTeam() else { return }
+        team.play()
+    }
+
+    /// A bot was picked: wash in its colour, rise it out of a blur, settle it.
+    private func startBotArrival(_ id: String?) {
+        guard let id else { arrivingBotId = nil; return }
+        arrivalToken = UUID()
+        arrivingBotId = id
+        let token = arrivalToken
+        Task { @MainActor in
+            await ModeIntroGate.shared.waitUntilClear()
+            try? await Task.sleep(nanoseconds: 2_300_000_000)
+            if arrivalToken == token { withAnimation(PolishTokens.arrivalBig) { arrivingBotId = nil } }
+        }
+    }
+
     private func toggleTo(_ bot: AgentRecord) {
         hint = nil
         selectedBotId = (selectedBotId == bot.id || bot.isMainBot) ? nil : bot.id

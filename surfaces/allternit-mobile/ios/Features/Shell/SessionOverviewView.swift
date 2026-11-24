@@ -131,7 +131,7 @@ struct SessionOverviewView: View {
             if select.selecting {
                 selectHeader
             } else {
-                // ☰ stays tap-only here: the fan would draw under this cover.
+                // ☰ leaves the overview and opens the shell drawer.
                 PhoneHeader(title: title, wideSides: groups.count > 1, sectionStyle: true, onMenu: onMenu) {
                     if groups.count > 1 { filterMenu }
                     if hasOptions { optionsButton } else { layoutButton }

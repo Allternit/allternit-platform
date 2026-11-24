@@ -21,6 +21,25 @@ struct ChatError: Equatable, Sendable {
     /// Extra buttons for the card (e.g. the Claude organization refusals).
     /// Empty for every other error.
     var actions: [ChatErrorAction] = []
+    /// The typed reason (usage limit, signed out, network, server) when the
+    /// server's error frame or a refusal code said which; nil for plain text.
+    var info: ChatErrorInfo? = nil
+
+    /// A typed failure: the title says what happened (and when a usage limit
+    /// resets), the detail is the server's reason, the action is the way out.
+    init(info: ChatErrorInfo, raw: String, lane: ChatErrorInfo.Lane = .chat) {
+        self.name = info.code
+        self.info = info
+        self.raw = raw
+        self.isModelError = info.action == .pickModel
+        self.title = info.title(lane: lane)
+        self.detail = info.reason
+        if info.action == .connect {
+            self.actions = [info.isChatGPT
+                ? ChatErrorAction(kind: .connectChatGPT, title: info.actionLabel ?? "Connect ChatGPT", systemImage: "link")
+                : ChatErrorAction(kind: .openConnections, title: info.actionLabel ?? "Open Connections", systemImage: "gearshape")]
+        }
+    }
 
     /// Builds a card from the finish frame's metadata fields.
     init(name: String?, message: String?, raw: String) {
@@ -63,6 +82,10 @@ struct ChatErrorAction: Equatable, Sendable, Identifiable {
         case manageClaudeOrg
         /// Open Settings › Connections to link the organization again.
         case linkAgain
+        /// Open the ChatGPT sign-in (the connect sheet) from a signed-out error.
+        case connectChatGPT
+        /// Open Settings › Connections from a signed-out error that is not ChatGPT's.
+        case openConnections
     }
     let kind: Kind
     let title: String
@@ -128,7 +151,7 @@ struct ChatErrorCardView: View {
 
             ForEach(visibleActions) { item in
                 actionButton(title: item.title, systemImage: item.systemImage,
-                             primary: item.kind == .useCredits, action: { onAction(item) })
+                             primary: item.kind == .useCredits || item.kind == .connectChatGPT || item.kind == .openConnections, action: { onAction(item) })
                     .accessibilityLabel(item.title)
             }
 

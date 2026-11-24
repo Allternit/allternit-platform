@@ -2,12 +2,16 @@
 # Build the Allternit Ubuntu desktop Incus image.
 # Run this on an Incus host. It creates a throw-away container,
 # installs the desktop stack, bakes in the allternit-factory binary (the
-# Allternit Factory engine; its pane engine runs the guest's terminals), and
-# publishes the result as a local image named "allternit-desktop".
+# Allternit Factory engine; its pane engine runs the guest's terminals) and the
+# allternit-node daemon (serves the computer's terminals from that engine once
+# it is paired), and publishes the result as a local image named
+# "allternit-desktop". Both are set up by install-pane-engine.sh, the same
+# snippet the headless and Orgo setups run.
 #
 # Environment variables:
 #   FACTORY_BIN     - prebuilt Linux allternit-factory binary (skips the build)
-#   FACTORY_SRC_DIR - allternit-platform checkout to build it from
+#   NODE_BIN        - prebuilt Linux allternit-node binary (skips the build)
+#   FACTORY_SRC_DIR - allternit-platform checkout to build them from
 #                     (default: /tmp/allternit-platform-src; needs Rust and
 #                     Zig 0.15.2 for the pane engine's libghostty-vt)
 #   DRIVER_SRC_DIR  - the driver package to bake in
@@ -78,6 +82,40 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 1b. Build allternit-node for the guest (crate allternit-node-daemon).
+# ---------------------------------------------------------------------------
+if [ -n "${NODE_BIN:-}" ]; then
+    log "using prebuilt allternit-node binary: ${NODE_BIN}"
+    if [ ! -x "${NODE_BIN}" ]; then
+        echo "ERROR: NODE_BIN does not exist or is not executable: ${NODE_BIN}" >&2
+        exit 1
+    fi
+else
+    log "building allternit-node from ${FACTORY_SRC_DIR}"
+    if [ ! -d "${FACTORY_SRC_DIR}" ]; then
+        echo "ERROR: FACTORY_SRC_DIR does not exist: ${FACTORY_SRC_DIR} (or pass NODE_BIN)" >&2
+        exit 1
+    fi
+    if ! command -v cargo >/dev/null 2>&1 && [ -f "${HOME}/.cargo/env" ]; then
+        . "${HOME}/.cargo/env"
+    fi
+    if ! command -v cargo >/dev/null 2>&1; then
+        echo "ERROR: cargo not found. Install Rust, set FACTORY_SRC_DIR, or pass NODE_BIN" >&2
+        exit 1
+    fi
+    (
+        cd "${FACTORY_SRC_DIR}"
+        cargo build --release -p allternit-node-daemon
+    )
+    NODE_BIN="${CARGO_TARGET_DIR:-${FACTORY_SRC_DIR}/target}/release/allternit-node"
+    if [ ! -x "${NODE_BIN}" ]; then
+        echo "ERROR: allternit-node binary not found at ${NODE_BIN}" >&2
+        exit 1
+    fi
+    log "allternit-node binary: ${NODE_BIN}"
+fi
+
+# ---------------------------------------------------------------------------
 # 2. Launch a build container from the Ubuntu cloud image.
 # ---------------------------------------------------------------------------
 log "launching build container ${BUILD_CONTAINER} from ${UBUNTU_IMAGE}"
@@ -139,12 +177,20 @@ apt-get install -y tailscale
 '
 
 # ---------------------------------------------------------------------------
-# 4. Install the allternit-factory runtime and services.
+# 4. Install the pane engine, allternit-node and the desktop services.
 # ---------------------------------------------------------------------------
-log "installing allternit-factory runtime"
-incus exec "${BUILD_CONTAINER}" -- mkdir -p /opt/allternit-factory /opt/allternit-desktop
-incus file push "${FACTORY_BIN}" "${BUILD_CONTAINER}/opt/allternit-factory/allternit-factory"
-incus exec "${BUILD_CONTAINER}" -- chmod +x /opt/allternit-factory/allternit-factory
+# install-pane-engine.sh puts allternit-factory in /opt/allternit-factory and
+# allternit-node in /opt/allternit-node, and writes and enables
+# allternit-factory-pane.service, allternit-node.service and
+# allternit-node.path (both services as root, same socket env).
+log "installing the pane engine and allternit-node"
+incus exec "${BUILD_CONTAINER}" -- mkdir -p /tmp/allternit-engine /opt/allternit-desktop
+incus file push "${FACTORY_BIN}" "${BUILD_CONTAINER}/tmp/allternit-engine/allternit-factory"
+incus file push "${NODE_BIN}" "${BUILD_CONTAINER}/tmp/allternit-engine/allternit-node"
+incus file push "$(dirname "${BASH_SOURCE[0]}")/install-pane-engine.sh" "${BUILD_CONTAINER}/tmp/allternit-engine/install-pane-engine.sh"
+incus exec "${BUILD_CONTAINER}" -- bash /tmp/allternit-engine/install-pane-engine.sh --init systemd \
+    --factory /tmp/allternit-engine/allternit-factory --node /tmp/allternit-engine/allternit-node
+incus exec "${BUILD_CONTAINER}" -- rm -rf /tmp/allternit-engine
 
 cat > /tmp/allternit-desktop-run.sh <<'EOF'
 #!/bin/bash
@@ -204,28 +250,6 @@ WantedBy=multi-user.target
 EOF
 incus file push /tmp/allternit-desktop.service "${BUILD_CONTAINER}/etc/systemd/system/allternit-desktop.service"
 
-cat > /tmp/allternit-factory-pane.service <<'EOF'
-[Unit]
-Description=Allternit Factory pane engine (guest terminals)
-After=network.target systemd-user-sessions.service
-ConditionPathExists=/opt/allternit-factory/allternit-factory
-
-[Service]
-Type=simple
-Environment="HOME=/root"
-# The Factory's agent session: the one `allternit-factory pane tty` reaches.
-Environment="HERDR_SESSION=ao"
-ExecStart=/opt/allternit-factory/allternit-factory pane server
-ExecStop=/bin/kill -TERM $MAINPID
-KillMode=mixed
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-incus file push /tmp/allternit-factory-pane.service "${BUILD_CONTAINER}/etc/systemd/system/allternit-factory-pane.service"
-
 # ---------------------------------------------------------------------------
 # 4b. Install the Allternit Driver (the structured computer-toolset sidecar).
 # ---------------------------------------------------------------------------
@@ -249,7 +273,6 @@ fi
 
 incus exec "${BUILD_CONTAINER}" -- systemctl daemon-reload
 incus exec "${BUILD_CONTAINER}" -- systemctl enable allternit-desktop.service
-incus exec "${BUILD_CONTAINER}" -- systemctl enable allternit-factory-pane.service
 
 # ---------------------------------------------------------------------------
 # 5. Clean up build artifacts to keep the image small.
@@ -266,7 +289,7 @@ incus stop "${BUILD_CONTAINER}"
 
 log "publishing image as ${IMAGE_NAME}"
 incus publish "${BUILD_CONTAINER}" --alias "${IMAGE_NAME}" \
-    description="Allternit Ubuntu 24.04 desktop with XFCE, Chrome, Tailscale, and allternit-factory" \
+    description="Allternit Ubuntu 24.04 desktop with XFCE, Chrome, Tailscale, allternit-factory and allternit-node" \
     --compression=zstd
 
 log "image build complete: ${IMAGE_NAME}"

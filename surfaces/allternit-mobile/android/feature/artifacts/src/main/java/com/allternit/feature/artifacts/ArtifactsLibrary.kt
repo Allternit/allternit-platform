@@ -1,6 +1,5 @@
 package com.allternit.feature.artifacts
 
-import com.allternit.core.design.AllternitSerif
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -28,6 +27,24 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.unit.Dp
+import com.allternit.core.design.DockSpec
+import com.allternit.core.design.DockingBlockTitle
+import com.allternit.core.design.EmptyBox
+import com.allternit.core.design.GlassPill
+import com.allternit.core.design.PolishGlass
+import com.allternit.core.design.PolishHaptic
+import com.allternit.core.design.TabPage
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -59,10 +76,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.api.ApiResult
@@ -282,17 +295,14 @@ fun ArtifactsLibraryScreen(
     }
 
     Box(Modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize().statusBarsPadding().testTag("artifactsLibrary")) {
-        LibraryHeader(
-            title = "",
-            onBack = null,
-            leading = leading,
-            glass = true,
-            trailing = {
-                LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search artifacts", "artifactsSearch") { searching = !searching }
-                LibraryIconButton(DesignR.drawable.ph_sliders_horizontal, "Filter and layout", "artifactsFilter") { filterOpen = true }
-            },
-        )
+    Box(Modifier.fillMaxSize().statusBarsPadding().testTag("artifactsLibrary")) {
+    val gridState = rememberLazyGridState()
+    val density = LocalDensity.current.density
+    val dockOffset = remember(gridState, density) {
+        { if (gridState.firstVisibleItemIndex > 0) DockSpec.DOCK * 2f else gridState.firstVisibleItemScrollOffset / density }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Spacer(Modifier.height(52.dp))
         if (searching) {
             LibrarySearchField(store.query, "Search artifacts", "artifactsSearchField", Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { q ->
                 store.query = q
@@ -304,14 +314,19 @@ fun ArtifactsLibraryScreen(
         val columns = if (layout == LibraryLayout.Grid) 2 else 1
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
+            state = gridState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 84.dp),
+            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, bottom = 84.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             val full: androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
             item(key = "title", span = full) {
-                Text("Artifacts", color = c.textPrimary, fontSize = 30.sp, fontFamily = AllternitSerif, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
+                TabPage(
+                    description = "Docs, sheets, slides and pages you can edit, share and export.",
+                    modifier = Modifier.bleed(14.dp),
+                    title = { Box(Modifier.padding(top = 4.dp).height(DockSpec.BH.dp).semantics { heading(); contentDescription = "Artifacts" }) },
+                ) {}
             }
             item(key = "make", span = full) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -329,22 +344,18 @@ fun ArtifactsLibraryScreen(
             item(key = "tools", span = full) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Or start from your connected tools", color = c.textTertiary, fontSize = 12.sp)
-                    Row(
-                        Modifier.clip(CircleShape).border(BorderStroke(1.dp, c.borderStrong), CircleShape).testTag("artifactsConnectTools")
-                            .clickable(role = Role.Button, onClick = onConnectors).padding(horizontal = 14.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(painterResource(DesignR.drawable.ph_plugs_connected), null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
-                        Text("Connect your tools", color = c.textPrimary, fontSize = 13.sp)
+                    GlassPill(onClick = onConnectors, modifier = Modifier.testTag("artifactsConnectTools"), height = 38.dp) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Icon(painterResource(DesignR.drawable.ph_plugs_connected), null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
+                            Text("Connect your tools", color = c.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                     if (ArtifactOfficeHooks.documents != null) {
-                        Row(
-                            Modifier.clip(CircleShape).border(BorderStroke(1.dp, c.borderStrong), CircleShape).testTag("artifactsOfficeDocuments")
-                                .clickable(role = Role.Button, onClick = { officeOpen = true }).padding(horizontal = 14.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(painterResource(DesignR.drawable.deck_docs), null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
-                            Text("Allternit Office", color = c.textPrimary, fontSize = 13.sp)
+                        GlassPill(onClick = { officeOpen = true }, modifier = Modifier.testTag("artifactsOfficeDocuments"), height = 38.dp) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                Icon(painterResource(DesignR.drawable.deck_docs), null, tint = c.textPrimary, modifier = Modifier.size(14.dp))
+                                Text("Allternit Office", color = c.textPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 }
@@ -411,7 +422,7 @@ fun ArtifactsLibraryScreen(
                                 Icon(painterResource(DesignR.drawable.ph_magnifying_glass), null, tint = c.textSecondary)
                             }
                         else ->
-                            DashedEmpty("No artifacts yet", "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.", Modifier.testTag("artifactsEmpty"))
+                            EmptyBox("No artifacts yet", "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new.", Modifier.testTag("artifactsEmpty"))
                     }
                 }
                 layout == LibraryLayout.Deck -> item(key = "deck", span = full) {
@@ -440,10 +451,24 @@ fun ArtifactsLibraryScreen(
             }
         }
     }
+    DockingBlockTitle("Artifacts", dockOffset, barCenter = 26.dp, modifier = Modifier.fillMaxSize(), top = 56.dp)
+    LibraryHeader(
+        title = "",
+        onBack = null,
+        leading = leading,
+        glass = true,
+        trailing = {
+            LibraryIconButton(DesignR.drawable.ph_magnifying_glass, "Search artifacts", "artifactsSearch") { searching = !searching }
+            LibraryIconButton(DesignR.drawable.ph_sliders_horizontal, "Filter and layout", "artifactsFilter") { filterOpen = true }
+        },
+    )
+    }
 
     // iOS: the floating "New artifact" capsule (its menu is a sheet here, reached by tap).
     LibraryNewButton("New artifact", "artifactsNew", Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 16.dp)) { newOpen = true }
     }
+
+    ArtifactsIntroHost(signedIn)
 
     if (newOpen) {
         NewArtifactSheet(
@@ -513,24 +538,34 @@ private fun filterSummary(s: ArtifactLibraryStore): String = listOfNotNull(
     s.query.takeIf { it.isNotBlank() }?.let { "“$it”" },
 ).joinToString(" · ")
 
-/** A Make something new card (iOS makeSection tile, 136×95 art plus label and description). */
+/** A Make something new card: art on the neutral fill with a soft inner edge. Shrinks a little on tap, with a light haptic. */
 @Composable
 private fun StudioTile(k: StudioKind, selected: Boolean, busy: Boolean, onTap: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val s by animateFloatAsState(if (pressed) 0.94f else 1f, spring(dampingRatio = 0.49f, stiffness = 600f), label = "tilePress")
+    val shape = RoundedCornerShape(14.dp)
     Column(
-        Modifier.width(136.dp).clip(RoundedCornerShape(14.dp))
+        Modifier.width(136.dp).graphicsLayer { scaleX = s; scaleY = s }.clip(shape)
             .testTag("artifactsTile${k.raw}")
-            .clickable(role = Role.Button, onClickLabel = k.description) { Haptics.perform(view, Haptics.Kind.Tap); onTap() }
+            .clickable(interactionSource = source, indication = null, role = Role.Button, onClickLabel = k.description) {
+                PolishHaptic.perform(view, PolishHaptic.Kind.Light); onTap()
+            }
             .semantics { contentDescription = "New ${k.label}" },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
-            Modifier.fillMaxWidth().height(95.dp).clip(RoundedCornerShape(14.dp)).background(c.bgPanel)
-                .border(BorderStroke(if (selected) 2.dp else 1.dp, if (selected) c.textPrimary else c.borderSubtle), RoundedCornerShape(14.dp)),
+            Modifier.fillMaxWidth().height(95.dp).clip(shape).background(PolishGlass.track())
+                .border(BorderStroke(if (selected) 2.dp else 1.dp, if (selected) c.textPrimary else PolishGlass.border()), shape),
             contentAlignment = Alignment.Center,
         ) {
-            ArtifactTileArt(k, Modifier.fillMaxSize().padding(3.dp).clip(RoundedCornerShape(9.dp)))
+            when (k) {
+                StudioKind.Docs, StudioKind.Sheets, StudioKind.Slides ->
+                    ArtifactMiniThumb(k.studioKind.let { if (it == "slides") "slide" else it }, Modifier.width(52.dp).height(66.dp))
+                else -> androidx.compose.foundation.Image(painterResource(k.deck), null, Modifier.fillMaxSize().padding(3.dp))
+            }
             androidx.compose.foundation.Image(
                 painterResource(ArtifactKinds.icon(k.studioKind)), contentDescription = null,
                 modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(16.dp).clip(RoundedCornerShape(4.dp)),
@@ -541,6 +576,14 @@ private fun StudioTile(k: StudioKind, selected: Boolean, busy: Boolean, onTap: (
         Text(k.label, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
         Text(k.description, color = c.textSecondary, fontSize = 11.5.sp, lineHeight = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
+}
+
+/** Widens a child by [by] on each side so a component with its own gutter lines up with the grid's. */
+private fun Modifier.bleed(by: Dp): Modifier = layout { measurable, constraints ->
+    val px = by.roundToPx() * 2
+    val w = constraints.maxWidth + px
+    val p = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+    layout(constraints.maxWidth, p.height) { p.place(-px / 2, 0) }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -605,22 +648,19 @@ private fun ArtifactCard(a: ArtifactSummary, layout: LibraryLayout, modifier: Mo
     }
 }
 
-/** iOS empty state: a dashed rounded box with centred text (and an optional action). */
+/** Empty state in the soft neutral box (no dashes), with an optional action pill. */
 @Composable
 private fun DashedEmpty(title: String, message: String, modifier: Modifier = Modifier, actionTitle: String? = null, onAction: (() -> Unit)? = null) {
     val c = AllternitTheme.colors
-    val stroke = c.borderStrong
     Column(
-        modifier.fillMaxWidth()
-            .drawBehind { drawRoundRect(stroke, style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))), cornerRadius = CornerRadius(12.dp.toPx())) }
-            .padding(horizontal = 16.dp, vertical = 28.dp),
+        modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(PolishGlass.track()).padding(horizontal = 18.dp, vertical = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(title, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
-        Text(message, color = c.textSecondary, fontSize = 12.sp, textAlign = TextAlign.Center)
+        Text(title, color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+        Text(message, color = c.textSecondary, fontSize = 12.sp, lineHeight = 17.sp, textAlign = TextAlign.Center)
         if (actionTitle != null && onAction != null) {
             Text(actionTitle, color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(top = 4.dp).clip(CircleShape).background(c.fillNeutral).clickable(role = Role.Button, onClick = onAction).padding(horizontal = 14.dp, vertical = 8.dp))
+                modifier = Modifier.padding(top = 4.dp).clip(CircleShape).background(Color.White).clickable(role = Role.Button, onClick = onAction).padding(horizontal = 14.dp, vertical = 8.dp))
         }
     }
 }

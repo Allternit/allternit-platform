@@ -12,6 +12,16 @@
 //!
 //! The agent runs on the project's hosted runtime; `status` is `ready` once a
 //! runtime holds it (`runtime_id` set) and `pending` until then.
+//!
+//! Harness & Bots 2.0 (contract "Backend gaps 1-3"): beside `model` (the
+//! brain) an agent carries `runtime` (a registry id, `GET /api/v1/runtimes`;
+//! `allternit` when absent or on an old row), `access` (`plan` | `key` |
+//! `local` | `credits`) and `agent_view` (`{view, look}`). Platform agents run
+//! only on Allternit's hosted runtime, so an explicit `runtime` other than
+//! `allternit` is `422 runtime_not_available` (an unknown one
+//! `runtime_unknown`), and `allternit` then gets the shared brain rules
+//! (`brain_not_fit`, `plan_not_allowed_on_runtime`). The checks run only when
+//! the request sets `runtime`, so old-shape saves never fail.
 
 use axum::{
     extract::{Path, State},
@@ -29,6 +39,7 @@ use super::{
     build_page, new_id, ApiJson, ApiQuery, Page, PageParams, PlatformCaller, PlatformError,
     RouteTable,
 };
+use crate::routes::runtimes::rules as runtime_rules;
 use crate::ApiState;
 
 const MAX_NAME: usize = 100;
@@ -110,12 +121,15 @@ struct AgentRow {
     business_hours: Option<Value>,
     metadata: Value,
     runtime_id: Option<String>,
+    agent_runtime: Option<String>,
+    access: Option<String>,
+    agent_view: Option<Value>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
 
 const COLUMNS: &str = "id, account_id, name, instructions, greeting, model, voice, tools, autonomy, \
-    transfer_targets, business_hours, metadata, runtime_id, created_at, updated_at";
+    transfer_targets, business_hours, metadata, runtime_id, agent_runtime, access, agent_view, created_at, updated_at";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Agent {
@@ -132,6 +146,12 @@ pub struct Agent {
     pub transfer_targets: Vec<String>,
     pub business_hours: Option<Value>,
     pub metadata: Value,
+    /// The runtime that runs the agent (registry id); `allternit` by default.
+    pub runtime: String,
+    /// How the brain is paid for: `plan`, `key`, `local`, `credits`, or null.
+    pub access: Option<String>,
+    /// `{ "view": "allternit"|"runtime"|"split", "look": "terminal"|"desktop" }`, or null.
+    pub agent_view: Option<Value>,
     pub status: &'static str,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -154,6 +174,9 @@ impl From<AgentRow> for Agent {
             transfer_targets: r.transfer_targets,
             business_hours: r.business_hours,
             metadata: r.metadata,
+            runtime: stored_runtime(r.agent_runtime.as_deref()),
+            access: r.access,
+            agent_view: r.agent_view,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -174,6 +197,10 @@ struct CreateAgent {
     transfer_targets: Option<Vec<String>>,
     business_hours: Option<Value>,
     metadata: Option<Value>,
+    runtime: Option<String>,
+    access: Option<String>,
+    #[serde(alias = "agentView")]
+    agent_view: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -191,6 +218,13 @@ struct UpdateAgent {
     #[serde(default, deserialize_with = "double_option")]
     business_hours: Option<Option<Value>>,
     metadata: Option<Value>,
+    runtime: Option<String>,
+    /// `null` clears it; absent leaves it unchanged.
+    #[serde(default, deserialize_with = "double_option")]
+    access: Option<Option<String>>,
+    /// `null` clears it; absent leaves it unchanged.
+    #[serde(default, deserialize_with = "double_option", alias = "agentView")]
+    agent_view: Option<Option<Value>>,
 }
 
 fn double_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
@@ -307,6 +341,66 @@ fn validate_autonomy(level: &str) -> Result<String, PlatformError> {
     Ok(l.to_string())
 }
 
+/// A stored runtime as the API shows it: NULL or empty (rows from before
+/// runtimes) is `allternit`; a known id or alias reads as its canonical id.
+fn stored_runtime(raw: Option<&str>) -> String {
+    let registry = runtime_rules::registry();
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => runtime_rules::RUNTIME_ALLTERNIT.to_string(),
+        Some(id) => registry.normalize_runtime(Some(id)).unwrap_or_else(|_| id.to_string()),
+    }
+}
+
+/// A 422 for a broken runtime rule (`runtime_unknown`, `brain_not_fit`,
+/// `plan_not_allowed_on_runtime`), with the contract's message.
+fn rule_error(err: runtime_rules::RuleError, param: &str) -> PlatformError {
+    PlatformError::unprocessable(err.code(), err.message()).with_param(param)
+}
+
+/// The runtime a request set explicitly: only `allternit` (id or alias) runs a
+/// Platform agent today (`runtime_not_available` otherwise, never stored and
+/// ignored), then checked against the brain it will run (`model`, as sent or
+/// as stored). The canonical id, or a 422. Runs before the model's own format
+/// check so a runtime answer comes first.
+pub fn validate_runtime(runtime: &str, model: &str) -> Result<String, PlatformError> {
+    let registry = runtime_rules::registry();
+    let id = registry.platform_runtime(runtime).map_err(|e| rule_error(e, "runtime"))?;
+    registry.check(&id, runtime_rules::provider_of(model)).map_err(|e| rule_error(e, "model"))?;
+    Ok(id)
+}
+
+fn validate_access(access: &str) -> Result<String, PlatformError> {
+    let a = access.trim();
+    if !runtime_rules::ACCESS.contains(&a) {
+        return Err(invalid("invalid_access", format!("access must be one of {}.", runtime_rules::ACCESS.join(", ")), "access"));
+    }
+    Ok(a.to_string())
+}
+
+const AGENT_VIEWS: [&str; 3] = ["allternit", "runtime", "split"];
+const AGENT_LOOKS: [&str; 2] = ["terminal", "desktop"];
+
+/// `agent_view`: an object with only `view` and/or `look`, each from its list.
+fn validate_agent_view(value: &Value) -> Result<Value, PlatformError> {
+    let bad = || invalid(
+        "invalid_agent_view",
+        format!("agent_view must be {{ \"view\": {}, \"look\": {} }}.", AGENT_VIEWS.join("|"), AGENT_LOOKS.join("|")),
+        "agent_view",
+    );
+    let map = value.as_object().ok_or_else(bad)?;
+    for (key, v) in map {
+        let ok = match key.as_str() {
+            "view" => v.as_str().is_some_and(|s| AGENT_VIEWS.contains(&s)),
+            "look" => v.as_str().is_some_and(|s| AGENT_LOOKS.contains(&s)),
+            _ => false,
+        };
+        if !ok {
+            return Err(bad());
+        }
+    }
+    Ok(value.clone())
+}
+
 fn is_e164(s: &str) -> bool {
     let Some(rest) = s.strip_prefix('+') else { return false };
     (8..=15).contains(&rest.len()) && rest.bytes().all(|b| b.is_ascii_digit()) && !rest.starts_with('0')
@@ -371,7 +465,13 @@ async fn create_agent(
         Some(g) => validate_greeting(g)?,
         None => default_greeting(&name),
     };
+    let agent_runtime = match body.runtime.as_deref() {
+        Some(rt) => validate_runtime(rt, body.model.as_deref().unwrap_or(DEFAULT_MODEL))?,
+        None => runtime_rules::RUNTIME_ALLTERNIT.to_string(),
+    };
     let model = body.model.as_deref().map(validate_model).transpose()?.unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    let access = body.access.as_deref().map(validate_access).transpose()?;
+    let agent_view = body.agent_view.as_ref().map(validate_agent_view).transpose()?;
     let voice = body.voice.as_deref().map(validate_voice).transpose()?.unwrap_or_else(|| DEFAULT_VOICE.to_string());
     let tools = validate_tools(body.tools.as_deref().unwrap_or(&[]))?;
     let autonomy = body.autonomy.as_deref().map(validate_autonomy).transpose()?.unwrap_or_else(|| "ask".to_string());
@@ -400,8 +500,8 @@ async fn create_agent(
         }
     }
     let row = sqlx::query_as::<_, AgentRow>(&format!(
-        "INSERT INTO platform_agents (id, project_id, account_id, name, instructions, greeting, model, voice, tools, autonomy, transfer_targets, business_hours, metadata) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING {COLUMNS}"
+        "INSERT INTO platform_agents (id, project_id, account_id, name, instructions, greeting, model, voice, tools, autonomy, transfer_targets, business_hours, metadata, agent_runtime, access, agent_view) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING {COLUMNS}"
     ))
     .bind(new_id("agent_"))
     .bind(&caller.project_id)
@@ -416,6 +516,9 @@ async fn create_agent(
     .bind(&transfer_targets)
     .bind(&body.business_hours)
     .bind(&metadata)
+    .bind(&agent_runtime)
+    .bind(&access)
+    .bind(&agent_view)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -505,7 +608,21 @@ async fn update_agent(
     let name = body.name.as_deref().map(validate_name).transpose()?.unwrap_or(current.name);
     let instructions = body.instructions.as_deref().map(validate_instructions).transpose()?.unwrap_or(current.instructions);
     let greeting = body.greeting.as_deref().map(validate_greeting).transpose()?.unwrap_or(current.greeting);
+    let agent_runtime = match body.runtime.as_deref() {
+        Some(rt) => validate_runtime(rt, body.model.as_deref().unwrap_or(&current.model))?,
+        None => current.runtime,
+    };
     let model = body.model.as_deref().map(validate_model).transpose()?.unwrap_or(current.model);
+    let access = match body.access {
+        None => current.access,
+        Some(None) => None,
+        Some(Some(a)) => Some(validate_access(&a)?),
+    };
+    let agent_view = match body.agent_view {
+        None => current.agent_view,
+        Some(None) => None,
+        Some(Some(v)) => Some(validate_agent_view(&v)?),
+    };
     let voice = body.voice.as_deref().map(validate_voice).transpose()?.unwrap_or(current.voice);
     let tools = body.tools.as_deref().map(validate_tools).transpose()?.unwrap_or(current.tools);
     let autonomy = body.autonomy.as_deref().map(validate_autonomy).transpose()?.unwrap_or(current.autonomy);
@@ -527,7 +644,8 @@ async fn update_agent(
     };
     let row = sqlx::query_as::<_, AgentRow>(&format!(
         "UPDATE platform_agents SET name = $3, instructions = $4, greeting = $5, model = $6, voice = $7, tools = $8, \
-         autonomy = $9, transfer_targets = $10, business_hours = $11, metadata = $12, updated_at = NOW() \
+         autonomy = $9, transfer_targets = $10, business_hours = $11, metadata = $12, \
+         agent_runtime = $13, access = $14, agent_view = $15, updated_at = NOW() \
          WHERE id = $1 AND project_id = $2 AND deleted_at IS NULL RETURNING {COLUMNS}"
     ))
     .bind(&id)
@@ -542,6 +660,9 @@ async fn update_agent(
     .bind(&transfer_targets)
     .bind(&business_hours)
     .bind(&metadata)
+    .bind(&agent_runtime)
+    .bind(&access)
+    .bind(&agent_view)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| PlatformError::not_found("agent_not_found", "No such agent."))?;

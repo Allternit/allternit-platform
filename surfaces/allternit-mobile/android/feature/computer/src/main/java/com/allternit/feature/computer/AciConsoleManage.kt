@@ -69,9 +69,11 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
+import com.allternit.feature.artifacts.child
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 
 /** One write's outcome (iOS ACIComputersClient.Failure). Asleep and Unavailable never retry or wake. */
@@ -127,13 +129,13 @@ internal data class SshKey(val id: String, val label: String, val fingerprint: S
     }
 }
 
-internal data class CloudBackup(val id: String, val createdAt: String, val sizeBytes: Double?) {
+internal data class CloudBackup(val id: String, val createdAt: String, val sizeBytes: Double?, val kind: String? = null) {
     val instant: Instant? get() = runCatching { Instant.parse(createdAt) }.getOrNull()
 
     companion object {
         fun parse(o: JsonObject): CloudBackup? {
             val size = (o["sizeBytes"] as? JsonPrimitive)?.doubleOrNull
-            return CloudBackup(o.str("id") ?: return null, o.str("createdAt") ?: return null, size)
+            return CloudBackup(o.str("id") ?: return null, o.str("createdAt") ?: return null, size, o.str("kind"))
         }
     }
 }
@@ -194,6 +196,20 @@ internal suspend fun <T> readRows(id: String, tail: String, key: String, parse: 
     }
 
 internal suspend fun consoleBackups(id: String) = readRows(id, "backups", "backups", CloudBackup::parse)
+
+/** The backups list plus the server's `canRestore` (absent, or a bare array, means yes). */
+internal data class BackupList(val backups: List<CloudBackup>, val canRestore: Boolean)
+
+internal suspend fun consoleBackupList(id: String): HostRead<BackupList> =
+    when (val r = AciApi.consoleRead(id, "backups")) {
+        is HostRead.Ok -> {
+            val can = ((r.value as? JsonObject)?.get("canRestore") as? JsonPrimitive)?.booleanOrNull ?: true
+            HostRead.Ok(BackupList(r.value.rows("backups").mapNotNull(CloudBackup::parse), can))
+        }
+        is HostRead.Asleep -> r
+        HostRead.Unavailable -> HostRead.Unavailable
+        is HostRead.Failed -> r
+    }
 
 /**
  * The canonical two-step (LANES-BRIEF "APPROVAL FLOW"): 1) POST approvals {type,target} gives an approvalId bound to
@@ -418,7 +434,7 @@ private fun AddKeySheet(computer: ConsoleComputer, onDone: () -> Unit, onAdded: 
 @Composable
 internal fun BackupsTab(computer: ConsoleComputer, restorePoints: (@Composable (onDone: () -> Unit) -> Unit)?) {
     val scope = rememberCoroutineScope()
-    val backups = rememberHostLoad(computer.id) { if (computer.kind == "cloud") consoleBackups(computer.id) else HostRead.Ok(emptyList()) }
+    val backups = rememberHostLoad(computer.id) { if (computer.kind == "cloud") consoleBackupList(computer.id) else HostRead.Ok(BackupList(emptyList(), true)) }
     var confirming by remember { mutableStateOf<CloudBackup?>(null) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -427,15 +443,17 @@ internal fun BackupsTab(computer: ConsoleComputer, restorePoints: (@Composable (
         CCard {
             CTitle("Daily backups")
             HostNotReady(backups, "Backups aren't available for this computer yet.", "Asleep, not woken. Backups show when it is awake.")
-            (backups.state as? HostRead.Ok)?.value?.let { list ->
+            (backups.state as? HostRead.Ok)?.value?.let { loaded ->
+                val list = loaded.backups
                 if (list.isEmpty()) CNote("No backups yet. The first one is made within a day.")
+                else if (!loaded.canRestore) CNote("Restoring from a backup isn't available for this computer right now.")
                 list.forEach { b ->
                     Row(Modifier.fillMaxWidth().testTag("aciConsoleBackup"), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             CText(consoleWhen(b.createdAt), true, 14, AllternitTheme.colors.textPrimary)
                             CText(listOfNotNull(consoleAgo(b.createdAt), b.sizeBytes?.let { consoleBytes(it) }).joinToString(" · "), false, 12)
                         }
-                        Box(Modifier.alpha(if (busy) 0.45f else 1f)) {
+                        if (loaded.canRestore) Box(Modifier.alpha(if (busy) 0.45f else 1f)) {
                             AciPillButton("Restore", "aciConsoleRestore", label = "Restore backup from ${consoleWhen(b.createdAt)}") { if (!busy) confirming = b }
                         }
                     }
@@ -465,13 +483,13 @@ internal fun BackupsTab(computer: ConsoleComputer, restorePoints: (@Composable (
         AlertDialog(
             onDismissRequest = { confirming = null },
             title = { Text("Restore this backup?") },
-            text = { Text("The computer goes back to this point and restarts. Changes made after it are lost.") },
+            text = { Text("The computer goes back to this point and restarts. Everything changed since that backup is erased and can't be brought back.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirming = null
                     scope.launch {
                         busy = true
-                        val r = AciApi.consoleWrite("POST", computer.id, "backups/restore", buildBody("backupId" to b.id))
+                        val r = AciApi.consoleWrite("POST", computer.id, "backups/restore", JsonObject(mapOf("backupId" to JsonPrimitive(b.id), "confirm" to JsonPrimitive(true))))
                         busy = false
                         message = if (r is ConsoleWrite.Ok) "Restoring from ${consoleWhen(b.createdAt)}. The computer restarts." else consoleFailureText(r)
                     }
@@ -637,7 +655,7 @@ internal fun consoleLocationKey(region: String?): String? {
 }
 
 @Composable
-internal fun SettingsTab(computer: ConsoleComputer, onChanged: () -> Unit, onGone: () -> Unit) {
+internal fun SettingsTab(computer: ConsoleComputer, onChanged: () -> Unit, onGone: () -> Unit, onWholeDisk: (WholeDisk) -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
     var isError by remember { mutableStateOf(false) }
@@ -655,6 +673,16 @@ internal fun SettingsTab(computer: ConsoleComputer, onChanged: () -> Unit, onGon
         }
     }
 
+    WholeDiskCard(computer, busy) { on ->
+        busy = true
+        scope.launch {
+            val r = AciApi.consoleWholeDisk(computer.id, on)
+            busy = false
+            isError = r !is ConsoleWrite.Ok
+            message = if (r is ConsoleWrite.Ok) { if (on) "Whole disk is on." else "Whole disk is off." } else consoleFailureText(r)
+            if (r is ConsoleWrite.Ok) onWholeDisk(wholeDiskAnswer(r.body, on))
+        }
+    }
     when (computer.kind) {
         "cloud" -> CloudSettings(computer, busy) { text, call -> perform(text, call) }
         "paired" -> PairedSettings(computer, busy, { text, call, after -> perform(text, call, after) }, onChanged, onGone)
@@ -663,12 +691,44 @@ internal fun SettingsTab(computer: ConsoleComputer, onChanged: () -> Unit, onGon
     StatusLine(message, isError)
 }
 
+/** The `wholeDisk` of the PATCH answer; when it is unreadable, the state that was asked for. */
+internal fun wholeDiskAnswer(body: JsonElement?, on: Boolean): WholeDisk =
+    WholeDisk.parse((body as? JsonObject).child("wholeDisk")) ?: WholeDisk(on, true, null, emptyList())
+
+/**
+ * "Browse the whole disk": shown only when the row carries `wholeDisk` (an older server omits it). Off by default.
+ * Turning on is a hold-to-confirm with the plain warning; turning off needs no confirm.
+ */
+@Composable
+private fun WholeDiskCard(computer: ConsoleComputer, busy: Boolean, set: (Boolean) -> Unit) {
+    val disk = computer.wholeDisk ?: return
+    var asking by remember { mutableStateOf(false) }
+    CCard {
+        CTitle("Browse the whole disk")
+        when {
+            !disk.available -> CText(disk.reasonCopy)
+            disk.enabled -> {
+                CText("On. Files can open any folder on this computer.")
+                AciPillButton("Turn off", "aciConsoleWholeDiskOff") { if (!busy) set(false) }
+            }
+            asking -> {
+                CText(WholeDisk.WARNING)
+                AciHoldButton("Hold to turn on", "aciConsoleWholeDiskHold", danger = true, enabled = !busy) { asking = false; set(true) }
+                AciPillButton("Cancel", "aciConsoleWholeDiskCancel") { asking = false }
+            }
+            else -> {
+                CText("Off. Files shows only the Files drive.")
+                AciPillButton("Turn on", "aciConsoleWholeDiskOn") { asking = true }
+            }
+        }
+    }
+}
+
 @Composable
 private fun CloudSettings(computer: ConsoleComputer, busy: Boolean, perform: (String, suspend () -> ConsoleWrite) -> Unit) {
     val c = AllternitTheme.colors
     val current = consoleLocationKey(computer.region)
     var location by remember { mutableStateOf(current.orEmpty()) }
-    var confirmMove by remember { mutableStateOf(false) }
     var confirmRestart by remember { mutableStateOf(false) }
     val backups = rememberHostLoad(computer.id) { consoleBackups(computer.id) }
     CCard {
@@ -683,9 +743,12 @@ private fun CloudSettings(computer: ConsoleComputer, busy: Boolean, perform: (St
                 }
             }
         }
-        CText("Moving restarts the computer and takes a few minutes.", false, 12)
-        Box(Modifier.alpha(if (busy || location.isEmpty() || location == current) 0.45f else 1f)) {
-            AciPillButton("Move", "aciConsoleMove") { if (!busy && location.isNotEmpty() && location != current) confirmMove = true }
+        CText("A cloud computer stays in the city it was made in. Moving makes a fresh computer in the city you pick and erases this one's files. Files you pinned on a device stay there. Save anything you need first.", false, 12)
+        val city = LOCATIONS.firstOrNull { it.first == location }?.second ?: location
+        AciHoldButton("Hold to move to $city", "aciConsoleMove", danger = true, enabled = !busy && location.isNotEmpty() && location != current) {
+            perform("Moving. A fresh computer is being set up in $city. This takes a few minutes.") {
+                AciApi.consoleWrite("POST", computer.id, "move", JsonObject(mapOf("location" to JsonPrimitive(location), "confirm" to JsonPrimitive(true))))
+            }
         }
     }
     CCard {
@@ -695,7 +758,7 @@ private fun CloudSettings(computer: ConsoleComputer, busy: Boolean, perform: (St
     }
     CCard {
         CTitle("Rebuild")
-        CText("Rebuild erases the disk and sets the computer up again from the Ubuntu image, in the same location. Your Files drive copy stays.")
+        CText("Rebuild erases the disk and sets the computer up again from the Ubuntu image, in the same location. Files you pinned on a device stay there.")
         RebuildGate(computer, backups, busy, perform)
     }
     CCard {
@@ -708,18 +771,6 @@ private fun CloudSettings(computer: ConsoleComputer, busy: Boolean, perform: (St
         }
         CText("Prices show before you confirm, once they are set.", false, 12)
     }
-    if (confirmMove) AlertDialog(
-        onDismissRequest = { confirmMove = false },
-        title = { Text("Move this computer?") },
-        text = { Text("It restarts, and anything running stops.") },
-        confirmButton = {
-            TextButton(onClick = {
-                confirmMove = false
-                perform("Moving. The computer restarts.") { AciApi.consoleWrite("POST", computer.id, "move", buildBody("location" to location)) }
-            }) { Text("Move to ${LOCATIONS.firstOrNull { it.first == location }?.second ?: location}") }
-        },
-        dismissButton = { TextButton(onClick = { confirmMove = false }) { Text("Cancel") } },
-    )
     if (confirmRestart) AlertDialog(
         onDismissRequest = { confirmRestart = false },
         title = { Text("Restart this computer?") },
@@ -743,7 +794,7 @@ private fun RebuildGate(computer: ConsoleComputer, backups: HostLoad<List<CloudB
             if (fresh != null) {
                 CText("Backup from ${consoleAgo(fresh.createdAt)}.")
                 AciHoldButton("Hold to rebuild", "aciConsoleHoldRebuild", danger = true, enabled = !busy) {
-                    perform("Rebuilding. This takes a few minutes.") { AciApi.consoleWrite("POST", computer.id, "rebuild", null) }
+                    perform("Rebuilding. This takes a few minutes.") { AciApi.consoleWrite("POST", computer.id, "rebuild", JsonObject(mapOf("confirm" to JsonPrimitive(true)))) }
                 }
             } else {
                 CText("Rebuild is held. There is no backup newer than 24 hours, and a rebuild erases the only copy of the disk.", color = warn)
@@ -780,7 +831,7 @@ private fun PairedSettings(
         CTitle("Remove")
         CText("Unpair to take it off your account and away from every agent. The computer itself keeps running at ${computer.provider}.")
         AciHoldButton("Hold to unpair", "aciConsoleHoldUnpair", danger = true, enabled = !busy) {
-            perform("Unpaired.", { AciApi.consolePairedWrite("DELETE", computer.id, null) }) { onChanged(); onGone() }
+            perform("Unpaired.", { AciApi.consoleUnpair(computer.id) }) { onChanged(); onGone() }
         }
     }
 }

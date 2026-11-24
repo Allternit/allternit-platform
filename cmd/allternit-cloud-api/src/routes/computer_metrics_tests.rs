@@ -144,6 +144,9 @@ async fn setup() -> Arc<ApiState> {
     sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 154");
     // Additive and idempotent: the deploy may apply it twice.
     sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 154 again");
+    // One row per machine (step 2.10): the console list reads these columns.
+    let sql = include_str!("../../migrations_pg/159_computer_machine_identity.sql").replace("public.", "");
+    sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 159");
     state
 }
 

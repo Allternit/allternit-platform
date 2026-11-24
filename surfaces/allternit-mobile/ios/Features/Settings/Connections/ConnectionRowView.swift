@@ -78,18 +78,26 @@ struct ConnectionRowView: View {
     /// Replaces the right side (setup: "Use this").
     var customAction: AnyView? = nil
     var compact = false
+    /// A ChatGPT account role (title, badge, "Powers:" line, model count). Nil for every other row.
+    var accountExtras: AccountPair.Extras? = nil
+    /// Draw the role's own mark in place of the vendor logo (the grouped card).
+    var accountMark = false
     let onAction: (ConnRowAction) -> Void
 
     var body: some View {
         let row = store.row(entry.id)
         let blocked = !row.available && row.state != .on
         HStack(alignment: .center, spacing: 12) {
-            ConnLogoView(logo: entry.logo, name: entry.name, size: compact ? 30 : 36)
-                .opacity(blocked ? 0.5 : 1)
-                .saturation(blocked ? 0 : 1)
+            if accountMark, accountExtras != nil {
+                AccountMark(id: entry.id)
+            } else {
+                ConnLogoView(logo: entry.logo, name: entry.name, size: compact ? 30 : 36)
+                    .opacity(blocked ? 0.5 : 1)
+                    .saturation(blocked ? 0 : 1)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(entry.name)
+                    Text(accountExtras?.title ?? entry.name)
                         .font(.system(size: compact ? 15 : 16, weight: .medium))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
@@ -101,6 +109,7 @@ struct ConnectionRowView: View {
                             .padding(.vertical, 1)
                             .background(Capsule().fill(Color("TextPrimary").opacity(0.07)))
                     }
+                    if let badge = accountExtras?.badge { AccountBadge(text: badge) }
                     if let tag {
                         Text("· \(tag)")
                             .font(.system(size: 12))
@@ -108,13 +117,22 @@ struct ConnectionRowView: View {
                             .lineLimit(1)
                     }
                 }
-                ConnStatusLines(entry: entry, store: store, row: row, blocked: blocked)
+                ConnStatusLines(
+                    entry: entry, store: store, row: row, blocked: blocked,
+                    statusOverride: accountExtras.map { AccountPair.statusLine($0, state: row.state, fallback: store.statusLine(entry)) }
+                )
+                if let powers = accountExtras?.powers, !blocked {
+                    Text(powers)
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Color("TextSecondary"))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let customAction {
                 customAction
             } else {
-                ConnRowTrailing(entry: entry, row: row, blocked: blocked, opensPage: opensPage, compact: compact, onAction: onAction)
+                ConnRowTrailing(entry: entry, row: row, blocked: blocked, opensPage: opensPage, compact: compact, accountExtras: accountExtras, onAction: onAction)
             }
         }
         .padding(.horizontal, compact ? 12 : 16)
@@ -133,6 +151,8 @@ struct ConnStatusLines: View {
     let row: ConnectionWire
     let blocked: Bool
     var lineLimit = 2
+    /// A role row's own status words (see `AccountPair.statusLine`).
+    var statusOverride: String? = nil
 
     var body: some View {
         if blocked {
@@ -144,7 +164,7 @@ struct ConnStatusLines: View {
         } else {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if row.state != .off { ConnStatusDot(state: row.state) }
-                Text(store.statusLine(entry))
+                Text(statusOverride ?? store.statusLine(entry))
                     .font(.system(size: 13))
                     .foregroundColor(row.state == .off ? Color("TextTertiary") : Color("TextSecondary"))
                     .lineLimit(lineLimit)
@@ -169,6 +189,7 @@ struct ConnRowTrailing: View {
     var opensPage = false
     var compact = false
     var fill = false
+    var accountExtras: AccountPair.Extras? = nil
     let onAction: (ConnRowAction) -> Void
 
     var body: some View {
@@ -202,13 +223,13 @@ struct ConnRowTrailing: View {
                     .accessibilityLabel("Open \(entry.name)")
             }
         } else if row.state == .on {
-            Button(entry.id == "claude-org" ? "Unlink" : "Disconnect") { onAction(.disconnect) }
+            Button(accountExtras?.disconnectLabel ?? (entry.id == "claude-org" ? "Unlink" : "Disconnect")) { onAction(.disconnect) }
                 .buttonStyle(ConnQuietButtonStyle(fill: fill))
-                .accessibilityLabel(entry.id == "claude-org" ? "Unlink your Claude organization" : "Disconnect \(entry.name)")
+                .accessibilityLabel(entry.id == "claude-org" ? "Unlink your Claude organization" : "\(accountExtras?.disconnectLabel ?? "Disconnect") \(accountExtras?.title ?? entry.name)")
         } else {
-            Button(entry.id == "cloud-computer" ? "See plans" : entry.id == "claude-org" ? "Link" : "Connect") { onAction(.connect) }
+            Button(accountExtras?.connectLabel ?? (entry.id == "cloud-computer" ? "See plans" : entry.id == "claude-org" ? "Link" : "Connect")) { onAction(.connect) }
                 .buttonStyle(ConnQuietButtonStyle(fill: fill))
-                .accessibilityLabel(entry.id == "claude-org" ? "Link your Claude organization" : "Connect \(entry.name)")
+                .accessibilityLabel(entry.id == "claude-org" ? "Link your Claude organization" : "\(accountExtras?.connectLabel ?? "Connect") \(accountExtras?.title ?? entry.name)")
         }
     }
 }

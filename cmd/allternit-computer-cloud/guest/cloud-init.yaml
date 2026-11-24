@@ -92,6 +92,10 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
+  # The pane engine and allternit-node: the same units install-pane-engine.sh
+  # writes (keep them in step). Both run as root, the app's user, and carry
+  # the engine's socket path. Inert until the CI image pipeline places the
+  # binaries (ConditionPathExists).
   - path: /etc/systemd/system/allternit-factory-pane.service
     owner: root:root
     permissions: "0644"
@@ -103,13 +107,54 @@ write_files:
 
       [Service]
       Type=simple
+      User=root
       Environment="HOME=/root"
       Environment="HERDR_SESSION=ao"
+      Environment="ALLTERNIT_FACTORY_PANE_SOCKET=/root/.config/ao/sessions/ao/herdr.sock"
       ExecStart=/opt/allternit-factory/allternit-factory pane server
       ExecStop=/bin/kill -TERM $MAINPID
       KillMode=mixed
       Restart=on-failure
       RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/allternit-node.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Allternit Node Daemon (always-on node.core presence; terminals on the pane engine)
+      After=network-online.target allternit-factory-pane.service
+      Wants=network-online.target
+      ConditionPathExists=/opt/allternit-node/allternit-node
+      ConditionPathExists=/root/.config/allternit/runtime-identity.json
+      StartLimitIntervalSec=0
+
+      [Service]
+      Type=simple
+      User=root
+      Environment="HOME=/root"
+      Environment="ALLTERNIT_RUNTIME_IDENTITY_PATH=/root/.config/allternit/runtime-identity.json"
+      Environment="ALLTERNIT_FACTORY_PANE_SOCKET=/root/.config/ao/sessions/ao/herdr.sock"
+      ExecStart=/opt/allternit-node/allternit-node run
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/allternit-node.path
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Start allternit-node once this computer is paired
+
+      [Path]
+      PathExists=/root/.config/allternit/runtime-identity.json
+      Unit=allternit-node.service
 
       [Install]
       WantedBy=multi-user.target
@@ -163,8 +208,10 @@ runcmd:
   - systemctl enable allternit-desktop.service
   - systemctl start allternit-desktop.service
   - systemctl enable allternit-factory-pane.service
+  - systemctl enable allternit-node.service allternit-node.path
   - systemctl enable allternit-driver.service
-  # Do not start allternit-factory-pane here; the binary is placed by the CI
-  # image pipeline (Phase 15). When present, systemd will start it on next boot.
+  # Do not start allternit-factory-pane or allternit-node here; the binaries
+  # are placed by the CI image pipeline (Phase 15). When present, systemd
+  # starts them on next boot (the node once the computer is paired).
 
 final_message: "Allternit desktop guest is ready."

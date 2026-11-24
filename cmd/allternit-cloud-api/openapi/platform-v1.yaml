@@ -206,6 +206,9 @@ paths:
                   items: { type: string, description: E.164 number }
                 business_hours: { type: object, additionalProperties: true }
                 metadata: { type: object, additionalProperties: true }
+                runtime: { $ref: "#/components/schemas/AgentRuntime" }
+                access: { $ref: "#/components/schemas/AgentAccess" }
+                agent_view: { $ref: "#/components/schemas/AgentView" }
       responses:
         "201":
           description: The new agent.
@@ -258,6 +261,15 @@ paths:
                   items: { type: string }
                 business_hours: { type: [object, "null"], additionalProperties: true }
                 metadata: { type: object, additionalProperties: true }
+                runtime: { $ref: "#/components/schemas/AgentRuntime" }
+                access:
+                  oneOf:
+                    - { $ref: "#/components/schemas/AgentAccess" }
+                    - { type: "null" }
+                agent_view:
+                  oneOf:
+                    - { $ref: "#/components/schemas/AgentView" }
+                    - { type: "null" }
       responses:
         "200":
           description: The updated agent.
@@ -2895,7 +2907,7 @@ components:
         created_at: { type: string, format: date-time }
     Agent:
       type: object
-      required: [id, object, account_id, name, instructions, greeting, model, voice, tools, autonomy, transfer_targets, business_hours, metadata, status, created_at, updated_at]
+      required: [id, object, account_id, name, instructions, greeting, model, voice, tools, autonomy, transfer_targets, business_hours, metadata, runtime, access, agent_view, status, created_at, updated_at]
       properties:
         id: { type: string }
         object: { type: string, const: agent }
@@ -2914,12 +2926,41 @@ components:
           items: { type: string }
         business_hours: { type: [object, "null"], additionalProperties: true }
         metadata: { type: object, additionalProperties: true }
+        runtime: { $ref: "#/components/schemas/AgentRuntime" }
+        access:
+          oneOf:
+            - { $ref: "#/components/schemas/AgentAccess" }
+            - { type: "null" }
+        agent_view:
+          oneOf:
+            - { $ref: "#/components/schemas/AgentView" }
+            - { type: "null" }
         status:
           type: string
           enum: [pending, ready]
           description: "`ready` once the project's hosted runtime holds the agent."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    AgentRuntime:
+      type: string
+      default: allternit
+      examples: [allternit]
+      description: |
+        The runtime that runs the agent. Platform agents run on Allternit's hosted runtime, so the only value is
+        `allternit` (the default; an alias is stored as `allternit`). Any other runtime from `GET /api/v1/runtimes`
+        runs only on a computer: `422 runtime_not_available` (create the agent in the Allternit app instead); an
+        unknown id is `422 runtime_unknown`. Saves without it are never refused for it.
+    AgentAccess:
+      type: string
+      enum: [plan, key, local, credits]
+      description: How the agent's brain is paid for.
+    AgentView:
+      type: object
+      additionalProperties: false
+      description: How the agent's thread is shown. The request may also call it `agentView`.
+      properties:
+        view: { type: string, enum: [allternit, runtime, split] }
+        look: { type: string, enum: [terminal, desktop] }
     KnowledgeFile:
       type: object
       required: [id, object, agent_id, account_id, name, content_type, bytes, chunk_count, created_at]

@@ -293,6 +293,7 @@ pub(crate) fn system_req() -> Req {
         unlocked: true,
         device_name: Some("Replica sync".into()),
         guest: None,
+        whole_disk: false,
     }
 }
 

@@ -545,7 +545,10 @@ async fn handle_relay_socket_open(
         socket_id: socket_id.clone(),
     });
 
-    // Local → relay.
+    // Local → relay. A local socket that ends without a Close frame (reset,
+    // dropped TCP) must still tell the cloud, or the tunneled socket hangs
+    // open: send socket_close 1011 then (the spec's "local failure" code).
+    let mut close_sent = false;
     while let Some(frame) = local_stream.next().await {
         let Ok(frame) = frame else { break };
         let message = match frame {
@@ -572,8 +575,16 @@ async fn handle_relay_socket_open(
         let is_close = matches!(message, NodeMessage::SocketClose { .. });
         let _ = out_tx.send(message);
         if is_close {
+            close_sent = true;
             break;
         }
+    }
+    if !close_sent {
+        let _ = out_tx.send(NodeMessage::SocketClose {
+            socket_id: socket_id.clone(),
+            code: 1011,
+            reason: "Local runtime socket ended".to_string(),
+        });
     }
     state.local_sockets.lock().await.remove(&socket_id);
 }

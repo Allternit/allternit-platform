@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The picture on a "Make something new" tile (allternit-ai
 /// src/views/library/ArtifactMotionTile.tsx, at rest): the finished thing on
-/// the Allternit cream plate, with the kind's stamp (ArtifactKindIcon) in
+/// the tile's neutral fill, with the kind's stamp (ArtifactKindIcon) in
 /// the corner. Scenes are drawn on the web's 220×154 stage and scaled to the
 /// tile (phone row scale 0.582).
 struct ArtifactCreateTileArt: View {
@@ -11,26 +11,14 @@ struct ArtifactCreateTileArt: View {
     private static let stage = CGSize(width: 220, height: 154)
     private static let ink = Color(hex: "#141413")
     private static let coral = Color(hex: "#D97757")
-    private static let cream = Color(hex: "#FDF8F3")
+    private static let cream = Color.white
 
     var body: some View {
         Canvas { context, size in
             let scale = 0.582
             context.scaleBy(x: scale, y: scale)
             let k = kind.tileColor
-            context.fill(Path(CGRect(origin: .zero, size: Self.stage)), with: .color(Self.cream))
-            // Dot grid (radial-gradient 1.1px dots every 12px).
-            var dots = Path()
-            var y = 6.0
-            while y < Self.stage.height {
-                var x = 6.0
-                while x < Self.stage.width {
-                    dots.addEllipse(in: CGRect(x: x - 1.1, y: y - 1.1, width: 2.2, height: 2.2))
-                    x += 12
-                }
-                y += 12
-            }
-            context.fill(dots, with: .color(Self.ink.opacity(0.07)))
+            // No plate and no dots: the tile's neutral fill shows through.
             Self.drawScene(kind, k: k, in: &context)
             Self.drawStamp(kind, in: &context)
         }
@@ -148,7 +136,7 @@ struct ArtifactCreateTileArt: View {
             ctx.drawLayer { layer in
                 layer.clip(to: Path(roundedRect: art, cornerRadius: 8))
                 layer.fill(Path(art), with: .linearGradient(
-                    Gradient(colors: [Color(hex: "#FDE9D2"), Color(hex: "#FFF7ED")]),
+                    Gradient(colors: [Color(hex: "#E8E8E8"), Color(hex: "#FFFFFF")]),
                     startPoint: CGPoint(x: art.midX, y: art.minY), endPoint: CGPoint(x: art.midX, y: art.maxY)))
                 layer.fill(Path(ellipseIn: CGRect(x: 142, y: 32, width: 26, height: 26)), with: .color(coral))
                 let top = art.maxY - 70
@@ -214,7 +202,7 @@ struct ArtifactCreateTileArt: View {
         shadowed.addFilter(.shadow(color: .black.opacity(0.14), radius: 2, y: 1))
         let plate = Path(roundedRect: CGRect(x: 0.6, y: 0.6, width: 46.8, height: 46.8), cornerRadius: 11)
         shadowed.fill(plate, with: .color(cream))
-        c.stroke(plate, with: .color(Color(hex: "#E7DDD2")), lineWidth: 1.2)
+        c.stroke(plate, with: .color(PolishTokens.glassBorder), lineWidth: 1.2)
         c.fill(Path(roundedRect: CGRect(x: 20, y: 8, width: 22, height: 30), cornerRadius: 3),
                with: .linearGradient(Gradient(colors: [spec.from, spec.to]), startPoint: CGPoint(x: 20, y: 8), endPoint: CGPoint(x: 42, y: 38)))
         c.fill(Path(roundedRect: CGRect(x: 22, y: 10, width: 18, height: 26), cornerRadius: 2), with: .color(.white.opacity(0.95)))

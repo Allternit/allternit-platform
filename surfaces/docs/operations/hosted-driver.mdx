@@ -34,7 +34,7 @@ The Mail VPS also runs the prod Postgres, prod allternit-api, MinIO, the trading
 
 ## Headless image
 
-Developer computers boot `allternit-computer-headless` (`ALLTERNIT_HOSTED_DRIVER_IMAGE`), not the full `allternit-cloud-computer` desktop. It's built from the cloud computer image by `cmd/allternit-computer-cloud/guest/build-headless-computer-image.sh`: the desktop session (XFCE, LightDM, VNC, the screen mux) and the services a developer computer doesn't use (printing, Avahi, Tailscale, the subscription gateway) are masked. The Allternit app runs as `allternit-headless.service` in provisioned mode on a bare `Xvfb :0` (`allternit-xvfb.service`, 1280×800, no window manager). It still redeems the bootstrap token, holds the relay and runs allternit-api, gizzi-code, the computer-use sidecars and Chrome.
+Developer computers boot `allternit-computer-headless` (`ALLTERNIT_HOSTED_DRIVER_IMAGE`), not the full `allternit-cloud-computer` desktop. It's built from the cloud computer image by `cmd/allternit-computer-cloud/guest/build-headless-computer-image.sh`: the desktop session (XFCE, LightDM, VNC, the screen mux) and the services a developer computer doesn't use (printing, Avahi, Tailscale, the subscription gateway) are masked. The Allternit app runs as `allternit-headless.service` in provisioned mode on a bare `Xvfb :0` (`allternit-xvfb.service`, 1280×800, no window manager). It still redeems the bootstrap token, holds the relay and runs allternit-api, gizzi-code, the computer-use sidecars and Chrome. The Factory pane engine and `allternit-node` come from the base image; the build reruns `install-pane-engine.sh` (optional `FACTORY_BIN` / `NODE_BIN` replace them). See [Cloud computer terminals](/operations/cloud-computer-terminals).
 
 The `computer` toolset drives that screen through the Allternit Driver that ships in the image (phase D1b): the driver runs as `allternit-driver.service` on a shared session bus (`allternit-session-bus.service`, so the app, the AT-SPI registry and the driver see the same accessibility world on the bare Xvfb), and serves `read_ui`/`act`/`run_batch`/`verify` plus the pixel members over `/run/allternit/driver.sock`. allternit-api reaches it through the guest exec channel and falls back to xdotool/scrot only when the driver doesn't answer. The `browser` toolset uses headless Chrome.
 
@@ -46,7 +46,7 @@ Rebuild it on the Mail VPS after a new cloud computer image or allternit-api:
 API_BINARY=/opt/allternit-api/bin/allternit-api bash cmd/allternit-computer-cloud/guest/build-headless-computer-image.sh
 ```
 
-`bash cmd/allternit-computer-cloud/guest/validate-image.sh allternit-computer-headless` then proves the driver service, its `hello` capability report and a populated `read_ui` on the new image (it launches a throw-away local container; never run it against the fleet).
+`bash cmd/allternit-computer-cloud/guest/validate-image.sh allternit-computer-headless` then proves the driver service, its `hello` capability report, a populated `read_ui`, and that the pane engine answers on the socket `allternit-node` is given, on the new image (it launches a throw-away local container; never run it against the fleet).
 
 ## Internal service token (Desktop and cloud computers)
 

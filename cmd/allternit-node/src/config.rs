@@ -1,5 +1,5 @@
 //! Daemon configuration: identity location, cloud URL, and the `node.core`
-//! scopes (fs roots, exec toggle, desktop launch command).
+//! scopes (fs roots, exec toggle, desktop launch command, pane engine socket).
 //!
 //! Everything is overridable through `~/.config/allternit/node-config.json`
 //! (or `ALLTERNIT_NODE_CONFIG`). Missing fields fall back to safe defaults:
@@ -27,6 +27,10 @@ pub struct NodeConfig {
     /// default is used (`open -na "Allternit Desktop"` on macOS, the
     /// `allternit-desktop` binary on Linux).
     pub desktop_launch: Option<String>,
+    /// The Factory pane engine socket that serves terminals. Unset: the
+    /// engine's own default paths are probed (see `engine::socket_candidates`).
+    /// When no engine answers, terminals fall back to in-process PTYs.
+    pub pane_socket: Option<PathBuf>,
 }
 
 impl Default for NodeConfig {
@@ -41,6 +45,7 @@ impl Default for NodeConfig {
             fs_roots: vec![PathBuf::from(&home)],
             exec_enabled: true,
             desktop_launch: None,
+            pane_socket: None,
         }
     }
 }

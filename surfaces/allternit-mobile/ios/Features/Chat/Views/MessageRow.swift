@@ -88,6 +88,20 @@ struct MessageRow: View {
                     toolStatusLine(toolStatus)
                 }
 
+                // media_generate: the generation's progress (pulse, preview or
+                // frame N of M) while it runs, the failure card if it fails.
+                ForEach(message.toolCalls) { call in
+                    if GenerationProgressStore.isMediaGenerate(call.toolName) {
+                        MediaGenerateCard(
+                            call: call,
+                            isNewestTurn: isLastAssistant,
+                            replyIsLive: message.isStreaming,
+                            onChooseModel: onChooseModel,
+                            onRetry: { onRetry(message.id) }
+                        )
+                    }
+                }
+
                 // One-line run status ("phase - note"), only while busy.
                 if message.isStreaming, let busy = message.busyLine, !busy.isEmpty {
                     Text(busy)
@@ -245,6 +259,8 @@ struct MessageRow: View {
                         onAction: { onErrorAction(message.id, $0) }
                     )
                 }
+
+                ACILocalImageTurnView(messageId: message.id)
 
                 // Inline Artifact Card attachments (typed artifact.created
                 // events) — gated by Settings → Capabilities → Artifacts.

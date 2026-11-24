@@ -916,8 +916,13 @@ struct ACIConsoleSection: View {
 /// is retried; 404/501 shows "not available". Live logs run only while
 /// the Services log view is on screen and the app is in the foreground.
 struct ACIConsoleDetailView: View {
-    let computer: ACIComputersClient.ConsoleComputer
+    /// The row with any whole-disk change the Settings switch made, so Files updates at once.
+    @State private var computer: ACIComputersClient.ConsoleComputer
     @Environment(\.dismiss) private var dismiss
+
+    init(computer: ACIComputersClient.ConsoleComputer) {
+        _computer = State(initialValue: computer)
+    }
 
     private enum Section: String, CaseIterable, Identifiable {
         case overview = "Overview", services = "Services", usage = "Usage", ports = "Ports"
@@ -951,7 +956,7 @@ struct ACIConsoleDetailView: View {
                 if section == .terminal {
                     ACIConsoleTerminalTab(computer: computer)
                 } else if section == .files {
-                    ACIConsoleFilesTab(computer: computer)
+                    ACIConsoleFilesTab(computer: computer, openSettings: { section = .settings })
                 } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
@@ -964,7 +969,8 @@ struct ACIConsoleDetailView: View {
                         case .access: ACIConsoleAccessTab(computer: computer)
                         case .backups: ACIConsoleBackupsTab(computer: computer)
                         case .health: ACIConsoleHealthTab(computer: computer)
-                        case .settings: ACIConsoleSettingsTab(computer: computer)
+                        case .settings:
+                            ACIConsoleSettingsTab(computer: computer, onWholeDisk: { computer.wholeDisk = $0 })
                         }
                     }
                     .padding(16)
@@ -1344,48 +1350,6 @@ private struct ACIConsolePortsTab: View {
 
 // MARK: - Console manage tabs: Access, Backups, Health, Settings
 
-/// Press and hold for one second to confirm (the iOS form of Arc HoldToConfirm).
-/// VoiceOver users get a plain activate action instead of the hold.
-private struct ACIHoldButton: View {
-    let title: String
-    var danger = false
-    var disabled = false
-    let action: () -> Void
-    @State private var progress: CGFloat = 0
-
-    var body: some View {
-        ZStack {
-            GeometryReader { geo in
-                Rectangle()
-                    .fill((danger ? Theme.statusError : Color("TextPrimary")).opacity(0.18))
-                    .frame(width: geo.size.width * progress)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Text(title)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(danger ? Theme.statusError : Color("TextPrimary"))
-        }
-        .frame(maxWidth: .infinity, minHeight: 48)
-        .background(Color("FillNeutral"))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(Color("BorderSubtle"), lineWidth: 1))
-        .opacity(disabled ? 0.45 : 1)
-        .allowsHitTesting(!disabled)
-        .onLongPressGesture(minimumDuration: 1.0, maximumDistance: 40, perform: {
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            action()
-        }, onPressingChanged: { pressing in
-            if pressing { withAnimation(.linear(duration: 1.0)) { progress = 1 } }
-            else { withAnimation(.easeOut(duration: 0.2)) { progress = 0 } }
-        })
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .accessibilityHint("Press and hold to confirm")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { if !disabled { action() } }
-    }
-}
-
 /// Plain sentence for a failed change. Never a status code.
 func consoleFailureText(_ error: Error) -> String {
     switch error {
@@ -1594,6 +1558,7 @@ private struct ACIConsoleBackupsTab: View {
     @State private var busy = false
     @State private var message: String? = nil
     @State private var showPoints = false
+    @State private var canRestore = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1615,7 +1580,7 @@ private struct ACIConsoleBackupsTab: View {
                             titleVisibility: .visible, presenting: confirming) { backup in
             Button("Restore \(consoleWhen(backup.createdAt))", role: .destructive) { Task { await restore(backup) } }
             Button("Cancel", role: .cancel) {}
-        } message: { _ in Text("The computer goes back to this point and restarts. Changes made after it are lost.") }
+        } message: { _ in Text("The computer goes back to this point and restarts. Everything changed since that backup is erased and can't be brought back.") }
     }
 
     @ViewBuilder private var cloudBody: some View {
@@ -1629,6 +1594,7 @@ private struct ACIConsoleBackupsTab: View {
                 VStack(spacing: 8) { consoleNote(m); ACIPillButton(title: "Try again") { attempt += 1 } }
             case .ready(let list):
                 if list.isEmpty { consoleNote("No backups yet. The first one is made within a day.") }
+                if !list.isEmpty && !canRestore { consoleNote("Restoring from a backup isn't available for this computer right now.") }
                 ForEach(list) { b in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -1637,14 +1603,25 @@ private struct ACIConsoleBackupsTab: View {
                                 .font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
                         }
                         Spacer()
-                        ACIPillButton(title: "Restore", accessibilityLabel: "Restore backup from \(consoleWhen(b.createdAt))") { confirming = b }
-                            .disabled(busy)
+                        if canRestore {
+                            ACIPillButton(title: "Restore", accessibilityLabel: "Restore backup from \(consoleWhen(b.createdAt))") { confirming = b }
+                                .disabled(busy)
+                        }
                     }
                 }
             }
             consoleStatusLine(message)
         }
-        .task(id: attempt) { state = .loading; state = await .run { try await ACIComputersClient.shared.cloudBackups(id: computer.id) } }
+        .task(id: attempt) {
+            state = .loading
+            var allowed = true
+            state = await .run {
+                let list = try await ACIComputersClient.shared.cloudBackupList(id: computer.id)
+                allowed = list.canRestore
+                return list.backups
+            }
+            canRestore = allowed
+        }
         consoleCard {
             Text("Restore points and copies").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
             Text("Your existing restore points and \"Download a copy\" stay here.")
@@ -1860,16 +1837,18 @@ struct ACIConsoleFixSheet: View {
 
 private struct ACIConsoleSettingsTab: View {
     let computer: ACIComputersClient.ConsoleComputer
+    var onWholeDisk: (ACIComputersClient.WholeDisk) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
+    @State private var askingWholeDisk = false
     @State private var message: String? = nil
     @State private var isError = false
     @State private var busy = false
 
     // cloud
     private static let locations: [(String, String)] = [("nyc", "New York"), ("chi", "Chicago"), ("lon", "London"), ("syd", "Sydney")]
+    private static func cityName(_ code: String) -> String { locations.first { $0.0 == code }?.1 ?? code }
     @State private var location = ""
     @State private var confirmRestart = false
-    @State private var confirmMove = false
     @State private var backups: ACIConsoleLoad<[ACIComputersClient.CloudBackup]> = .loading
 
     // paired
@@ -1877,6 +1856,7 @@ private struct ACIConsoleSettingsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            wholeDiskCard
             switch computer.kind {
             case "cloud": cloudBody
             case "paired": pairedBody
@@ -1884,6 +1864,45 @@ private struct ACIConsoleSettingsTab: View {
                 consoleNote("This is the computer you are holding. Manage it from Allternit Desktop.")
             }
             consoleStatusLine(message, error: isError)
+        }
+    }
+
+    // MARK: whole disk
+
+    /// "Browse the whole disk": only when the row carries `wholeDisk` (an older server omits it). Off by default;
+    /// turning it on is a hold-to-confirm with the plain warning, turning it off needs no confirm.
+    @ViewBuilder private var wholeDiskCard: some View {
+        if let disk = computer.wholeDisk {
+            consoleCard {
+                Text("Browse the whole disk").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
+                if !disk.available {
+                    Text(disk.reasonCopy).font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                } else if disk.enabled {
+                    Text("On. Files can open any folder on this computer.").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                    ACIPillButton(title: "Turn off") { Task { await setWholeDisk(false) } }.disabled(busy)
+                } else if askingWholeDisk {
+                    Text(ACIComputersClient.wholeDiskWarning).font(.system(size: 13)).foregroundColor(Color("TextPrimary"))
+                    ACIHoldButton(title: "Hold to turn on", danger: true, disabled: busy) {
+                        Task { await setWholeDisk(true) }
+                    }
+                    ACIPillButton(title: "Cancel") { askingWholeDisk = false }
+                } else {
+                    Text("Off. Files shows only the Files drive.").font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
+                    ACIPillButton(title: "Turn on") { askingWholeDisk = true }.disabled(busy)
+                }
+            }
+        }
+    }
+
+    private func setWholeDisk(_ on: Bool) async {
+        busy = true; defer { busy = false }
+        do {
+            let updated = try await ACIComputersClient.shared.setWholeDisk(id: computer.id, on: on)
+            onWholeDisk(updated)
+            askingWholeDisk = false
+            message = on ? "Whole disk is on." : "Whole disk is off."; isError = false
+        } catch {
+            message = consoleFailureText(error); isError = true
         }
     }
 
@@ -1896,17 +1915,14 @@ private struct ACIConsoleSettingsTab: View {
                 ForEach(Self.locations, id: \.0) { Text($0.1).tag($0.0) }
             }
             .pickerStyle(.menu)
-            Text("Moving restarts the computer and takes a few minutes.").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
-            ACIPillButton(title: "Move") { confirmMove = true }
-                .disabled(busy || location.isEmpty || location == currentLocation)
+            Text("A cloud computer stays in the city it was made in. Moving makes a fresh computer in the city you pick and erases this one's files. Files you pinned on a device stay there. Save anything you need first.")
+                .font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+            ACIHoldButton(title: "Hold to move to \(Self.cityName(location))", danger: true,
+                          disabled: busy || location.isEmpty || location == currentLocation) {
+                Task { await perform("Moving. A fresh computer is being set up in \(Self.cityName(location)). This takes a few minutes.") { try await ACIComputersClient.shared.moveCloud(id: computer.id, location: location) } }
+            }
         }
         .onAppear { if location.isEmpty { location = currentLocation ?? "" } }
-        .confirmationDialog("Move this computer?", isPresented: $confirmMove, titleVisibility: .visible) {
-            Button("Move to \(Self.locations.first { $0.0 == location }?.1 ?? location)") {
-                Task { await perform("Moving. The computer restarts.") { try await ACIComputersClient.shared.moveCloud(id: computer.id, location: location) } }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { Text("It restarts, and anything running stops.") }
 
         consoleCard {
             Text("Restart").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
@@ -1922,7 +1938,7 @@ private struct ACIConsoleSettingsTab: View {
 
         consoleCard {
             Text("Rebuild").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
-            Text("Rebuild erases the disk and sets the computer up again from the Ubuntu image, in the same location. Your Files drive copy stays.")
+            Text("Rebuild erases the disk and sets the computer up again from the Ubuntu image, in the same location. Files you pinned on a device stay there.")
                 .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
             rebuildGate
         }
@@ -1996,7 +2012,7 @@ private struct ACIConsoleSettingsTab: View {
                 .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
             ACIHoldButton(title: "Hold to unpair", danger: true, disabled: busy) {
                 Task {
-                    await perform("Unpaired.") { try await ACIComputersClient.shared.removePaired(id: computer.id) }
+                    await perform("Unpaired.") { try await ACIComputersClient.shared.unpair(id: computer.id) }
                     if !isError { dismiss() }
                 }
             }

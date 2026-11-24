@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { progressForwarder } from "../../src/runtime/tools/builtins/media-generate"
 import { PaneRender } from "../../src/runtime/integrations/pane-render"
 import { Instance } from "../../src/runtime/context/project/instance"
 import { tmpdir } from "../fixture/fixture"
@@ -71,5 +72,88 @@ describe("PaneRender", () => {
         expect(await PaneRender.reply({ requestID: "que_nope", result: { ok: true } })).toBe(false)
       },
     })
+  })
+
+  test("browser jobs require the same executor claim for progress and final result", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({ directory: tmp.path, fn: async () => {
+      const abort = new AbortController()
+      const pending = PaneRender.request({ sessionID: "ses_test", kind: "browser-image", engine: "chatgpt-aci", prompt: "A blue mug", format: "canvas", code: "never execute this", width: 1024, height: 1024, title: "Mug" }, { abort: abort.signal, timeoutMs: 900_000 })
+      try {
+        const [request] = await PaneRender.list()
+        expect(request.timeoutMs).toBe(600_000)
+        expect(request).toMatchObject({ format: "html", code: "" })
+        expect(await PaneRender.reply({ requestID: request.id, result: { ok: true } })).toBe(false)
+        const owner = "11111111-1111-4111-8111-111111111111"
+        const other = "22222222-2222-4222-8222-222222222222"
+        expect(await PaneRender.claim({ requestID: request.id, executorID: owner })).toBe(true)
+        expect(await PaneRender.claim({ requestID: request.id, executorID: owner })).toBe(true)
+        expect(await PaneRender.claim({ requestID: request.id, executorID: other })).toBe(false)
+        const detail = { lane: "picture" as const, stage: "drawing" as const, label: "Drawing" }
+        expect(await PaneRender.progress({ requestID: request.id, detail, executorID: other })).toBe(false)
+        expect(await PaneRender.progress({ requestID: request.id, detail: { ...detail, preview: "https://chatgpt.com/private-image" }, executorID: owner })).toBe(false)
+        expect(await PaneRender.progress({ requestID: request.id, detail, executorID: owner })).toBe(true)
+        expect(await PaneRender.reply({ requestID: request.id, executorID: other, result: { ok: false } })).toBe(false)
+        expect(await PaneRender.reply({ requestID: request.id, executorID: owner, result: { ok: false, code: "signed_out", error: "Sign in within this device's ACI browser." } })).toBe(true)
+        expect(await pending).toMatchObject({ ok: false, code: "signed_out" })
+        expect(await PaneRender.list()).toHaveLength(0)
+      } finally {
+        abort.abort()
+        await pending
+      }
+    } })
+  })
+
+  test("incomplete browser-image requests never enter the pending list", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({ directory: tmp.path, fn: async () => {
+      const result = await PaneRender.request({ sessionID: "ses_test", kind: "browser-image", format: "html", code: "", width: 1024, height: 1024, title: "Mug" })
+      expect(result).toMatchObject({ ok: false, code: "invalid_request" })
+      expect(await PaneRender.list()).toHaveLength(0)
+    } })
+  })
+
+  test("progress reports reach the request's listener, and stop when the request ends", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const seen: PaneRender.ProgressDetail[] = []
+        const pending = PaneRender.request(
+          { sessionID: "ses_test", kind: "video", format: "canvas", code: "", width: 64, height: 64, title: "t" },
+          { onProgress: (d) => seen.push(d) },
+        )
+        const [req] = await PaneRender.list()
+        const detail = { lane: "motion", stage: "rendering", label: "Frame 3 of 90", frame: 3, frames: 90 } as const
+        expect(await PaneRender.progress({ requestID: req.id, detail })).toBe(true)
+        expect(await PaneRender.progress({ requestID: "que_unknown", detail })).toBe(false)
+        await PaneRender.reply({ requestID: req.id, result: { ok: false, error: "x" } })
+        await pending
+        expect(await PaneRender.progress({ requestID: req.id, detail })).toBe(false)
+        expect(seen).toEqual([detail])
+      },
+    })
+  })
+
+  test("a progress body is validated", () => {
+    expect(PaneRender.ProgressDetail.safeParse({ lane: "picture", stage: "drawing", label: "x", fraction: 1.5 }).success).toBe(false)
+    expect(PaneRender.ProgressDetail.safeParse({ lane: "picture", stage: "nope", label: "x" }).success).toBe(false)
+    expect(PaneRender.ProgressDetail.safeParse({ lane: "picture", stage: "drawing", label: "x", preview: "javascript:alert(1)" }).success).toBe(false)
+    expect(PaneRender.ProgressDetail.safeParse({ lane: "picture", stage: "drawing", label: "x", preview: "data:image/jpeg;base64,AA==" }).success).toBe(true)
+  })
+
+  test("progress is sent about once a second, but a new stage goes through at once", () => {
+    let t = 0
+    const out: string[] = []
+    const send = progressForwarder((d) => out.push(`${d.stage}:${d.label}`), { now: () => t })
+    const d = (stage: PaneRender.ProgressStage, label: string) => ({ lane: "motion" as const, stage, label })
+    send(d("rendering", "a"))
+    t = 300
+    send(d("rendering", "b"))
+    t = 1000
+    send(d("rendering", "c"))
+    t = 1100
+    send(d("encoding", "d"))
+    expect(out).toEqual(["rendering:a", "rendering:c", "encoding:d"])
   })
 })

@@ -125,21 +125,16 @@ struct ProjectsListView: View {
     var body: some View {
         NavigationStack(path: $navigator.path) {
             ZStack(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    LibrarySectionHeader(title: "Projects", onMenu: openMenu) {
-                        ProjectsPill(searching: $isSearching, filtersActive: filtersOn) { filterPopover }
-                    }
-                    if isSearching || !searchText.isEmpty {
-                        ProjectsSearchField(query: $searchText)
-                    }
-                    HStack(spacing: 8) {
-                        countsLine
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 6)
-                    content
+                PolishedTabPage(
+                    title: "Projects",
+                    description: "Keep a job's chats, tasks and board together, and see what is working.",
+                    introKey: .projects,
+                    hero: { ProjectsIntroHero() }
+                ) {
+                    pageContent
                 }
-                ProjectsNewButton { newProjectTapped() }
+                .refreshable { await reload() }
+                GlassPill(title: "New project", systemImage: "plus") { newProjectTapped() }
                     .padding(.bottom, 14)
                 if showExplainer {
                     ProjectsExplainerCard(
@@ -157,7 +152,14 @@ struct ProjectsListView: View {
                 }
             }
             .background(Color("BgPrimary").ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    PhoneMenuButton(round: true, onOpen: openMenu)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    ProjectsPill(searching: $isSearching, filtersActive: filtersOn) { filterPopover }
+                }
+            }
             .navigationDestination(item: $detailProject) { project in
                 ProjectDetailView(
                     project: project,
@@ -279,19 +281,15 @@ struct ProjectsListView: View {
 
     // MARK: - Content
 
-    /// "1 open · 2 working · 1 needs you" (SessionOverview counts).
-    private var countsLine: some View {
+    /// "2 working · 1 needs you" beside the "Your projects · N open" label
+    /// (SessionOverview counts).
+    private var countsDetail: String {
         let shown = filteredProjects
         let working = shown.filter { $0.working > 0 }.count
         let waiting = shown.filter { $0.waiting > 0 }.count
-        let parts = ["\(shown.count) open",
-                     working > 0 ? "\(working) working" : nil,
-                     waiting > 0 ? "\(waiting) need\(waiting == 1 ? "s" : "") you" : nil].compactMap { $0 }
-        return Text(parts.joined(separator: " · "))
-            .font(.system(size: 12.5))
-            .foregroundColor(Color("TextTertiary"))
-            .lineLimit(1)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        return [working > 0 ? "\(working) working" : nil,
+                waiting > 0 ? "\(waiting) need\(waiting == 1 ? "s" : "") you" : nil]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 
     /// No computer: the computer's lists are empty by design, not failing.
@@ -312,9 +310,7 @@ struct ProjectsListView: View {
         }
         let accountError = noComputer ? library.accountProjectsError : nil
         if noComputer {
-            NeedsComputerLine(text: "Files and runs need a computer")
-                .padding(.top, 12)
-                .padding(.horizontal, 4)
+            ProjectsNeedsComputerCard(text: "Files and runs need a computer")
         }
         let failures = [loadError, botError, codeError, accountError].compactMap { $0 }.uniqued()
         if !failures.isEmpty {
@@ -339,62 +335,58 @@ struct ProjectsListView: View {
     }
 
     @ViewBuilder
-    private var content: some View {
+    private var pageContent: some View {
         let projects = filteredProjects
+        if isSearching || !searchText.isEmpty {
+            ProjectsSearchField(query: $searchText)
+                .padding(.horizontal, -14)
+        }
+        errors
         if projectStore.isLoading && allProjects.isEmpty {
-            Spacer()
             ProgressView()
-            Spacer()
-        } else if projects.isEmpty {
-            ScrollView {
-                errors.padding(.horizontal, 10)
-                Text(searchText.isEmpty
-                     ? "No projects yet. Create one to organize your chats, tasks, code workspaces and design canvases."
-                     : "No projects match your search.")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color("TextTertiary"))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 40)
-            }
-            .refreshable { await reload() }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 60)
         } else {
-            switch layout {
-            case .grid:
-                ScrollView {
-                    VStack(spacing: 0) {
-                        errors
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                            ForEach(projects) { project in card(project, variant: .grid) }
-                        }
-                        .padding(.top, 4)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 84)
+            SectionLabel("Your projects · \(projects.count) open") {
+                if !countsDetail.isEmpty {
+                    Text(countsDetail)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Color("TextSecondary"))
+                        .lineLimit(1)
                 }
-                .refreshable { await reload() }
-            case .list:
-                ScrollView {
+            }
+            if projects.isEmpty {
+                if searchText.isEmpty {
+                    EmptyBox(title: "No projects yet",
+                             line: "Tap New project to start one. Its chats, tasks and files stay together.")
+                } else {
+                    Text("No projects match your search.")
+                        .font(.system(size: 13))
+                        .foregroundColor(Color("TextTertiary"))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                }
+            } else {
+                switch layout {
+                case .grid:
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                        ForEach(projects) { project in card(project, variant: .grid) }
+                    }
+                case .list:
                     LazyVStack(spacing: 8) {
-                        errors
                         ForEach(projects) { project in card(project, variant: .list) }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 4)
-                    .padding(.bottom, 84)
-                }
-                .refreshable { await reload() }
-            case .deck:
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 12) {
-                        ForEach(projects) { project in card(project, variant: .deck) }
+                case .deck:
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(projects) { project in card(project, variant: .deck) }
+                        }
+                        .scrollTargetLayout()
+                        .padding(.horizontal, 14)
                     }
-                    .scrollTargetLayout()
-                    .padding(.horizontal, 24)
-                    .padding(.top, 8)
-                    .padding(.bottom, 84)
+                    .scrollTargetBehavior(.viewAligned)
+                    .padding(.horizontal, -14)
                 }
-                .scrollTargetBehavior(.viewAligned)
             }
         }
     }
@@ -871,6 +863,215 @@ private struct EditProjectDetailsSheet: View {
                 self.error = "Couldn't save. \(FriendlyErrorMessage.from(error.localizedDescription))"
                 saving = false
             }
+        }
+    }
+}
+
+
+// MARK: - No-computer card
+
+/// "Files and runs need a computer": a white card with a small glass Connect
+/// button. Same sheet and same condition as `NeedsComputerLine`.
+private struct ProjectsNeedsComputerCard: View {
+    let text: String
+    @State private var isConnectPresented = false
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "desktopcomputer")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color("TextSecondary"))
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.system(size: 14))
+                .foregroundStyle(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            GlassPill(title: "Connect") { isConnectPresented = true }
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 10)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(scheme == .dark ? Color(white: 0.14) : Color.white)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(PolishTokens.glassBorder, lineWidth: 0.5)
+        )
+        .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
+    }
+}
+
+// MARK: - Intro hero
+
+/// First-visit intro hero (`introProjectsSeenAt`): the project list as it
+/// looks, then the open project's Board with a card moving from Working to
+/// Done. Reduce Motion keeps the list still.
+private struct ProjectsIntroHero: View {
+    private struct Row: Identifiable {
+        let id: String
+        let icon: String
+        let note: String
+        let pill: (String, Color)?
+        let hand: Bool
+        let ring: Color?
+        let ago: String
+    }
+
+    private static let amber = Color(hex: "#B45309")
+    private static let rows: [Row] = [
+        Row(id: "Launch site", icon: "chevron.left.forwardslash.chevron.right", note: "Code · 2 sessions",
+            pill: ("2 working", PolishTokens.coral), hand: false, ring: PolishTokens.coral.opacity(0.55), ago: "now"),
+        Row(id: "Weekly report", icon: "cpu", note: "Bot · 3 bots · Al coordinates",
+            pill: ("1 waiting", amber), hand: true, ring: Color(hex: "#FBBF24"), ago: "1h"),
+        Row(id: "Q4 plan", icon: "bubble.left", note: "Chat · 4 threads", pill: nil, hand: false, ring: nil, ago: "2d")
+    ]
+
+    @State private var phase = 0
+    @Namespace private var cards
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var moved: Bool { phase == 2 }
+
+    private var columns: [(String, [String])] {
+        [("Queued", ["Write the FAQ"]),
+         ("Working", moved ? ["Hero copy"] : ["Hero copy", "Fix checkout"]),
+         ("Done", moved ? ["Fix checkout", "Pick domain"] : ["Pick domain"])]
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color(hex: "#F7F7F7")
+            VStack(alignment: .leading, spacing: 0) {
+                if phase == 0 { list } else { board }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(PolishTokens.glassBorder, lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.06), radius: 12, x: 0, y: 6)
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+        }
+        .frame(height: 200)
+        .clipped()
+        .task { await run() }
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                BlockText("PROJECTS", height: 8, color: PolishTokens.ink)
+                Spacer()
+                Text("3 open").font(.system(size: 10)).foregroundStyle(Color("TextSecondary"))
+            }
+            .padding(.bottom, 3)
+            ForEach(Self.rows) { r in
+                HStack(spacing: 8) {
+                    Image(systemName: r.icon)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color("TextSecondary"))
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Text(r.id).font(.system(size: 12, weight: .semibold)).foregroundStyle(PolishTokens.ink)
+                            if let pill = r.pill {
+                                HStack(spacing: 3) {
+                                    if r.hand { Image(systemName: "hand.raised").font(.system(size: 8)) }
+                                    Text(pill.0).font(.system(size: 9.5, weight: .semibold))
+                                }
+                                .foregroundStyle(pill.1)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(pill.1.opacity(0.12)))
+                            }
+                        }
+                        Text(r.note)
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color("TextTertiary"))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Text(r.ago).font(.system(size: 10)).foregroundStyle(Color("TextTertiary"))
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(r.ring ?? PolishTokens.glassBorder, lineWidth: r.ring == nil ? 0.5 : 1)
+                )
+            }
+        }
+        .transition(.opacity)
+    }
+
+    private var board: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Text("\u{2039} Projects").foregroundStyle(Color("TextSecondary"))
+                Text("/").foregroundStyle(Color("TextTertiary"))
+                Text("Launch site").fontWeight(.bold).foregroundStyle(PolishTokens.ink)
+            }
+            .font(.system(size: 10.5))
+            HStack(spacing: 14) {
+                ForEach(["Overview", "Delegate", "Board"], id: \.self) { t in
+                    Text(t)
+                        .font(.system(size: 11, weight: t == "Board" ? .semibold : .regular))
+                        .foregroundStyle(t == "Board" ? PolishTokens.ink : Color("TextSecondary"))
+                        .padding(.bottom, 5)
+                        .overlay(alignment: .bottom) {
+                            if t == "Board" { Capsule().fill(PolishTokens.ink).frame(height: 2) }
+                        }
+                }
+                Spacer(minLength: 0)
+            }
+            .overlay(alignment: .bottom) { Rectangle().fill(PolishTokens.glassBorder).frame(height: 0.5) }
+            HStack(alignment: .top, spacing: 6) {
+                ForEach(columns, id: \.0) { col in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(col.0).font(.system(size: 9.5, weight: .semibold)).foregroundStyle(Color("TextSecondary"))
+                            .padding(.bottom, 1)
+                        ForEach(col.1, id: \.self) { name in
+                            HStack(spacing: 3) {
+                                if col.0 == "Done" {
+                                    Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Color(hex: "#16A34A"))
+                                }
+                                Text(name).font(.system(size: 9.5, weight: .medium)).foregroundStyle(PolishTokens.ink).lineLimit(1)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white))
+                            .shadow(color: .black.opacity(0.06), radius: 1, x: 0, y: 1)
+                            .matchedGeometryEffect(id: name, in: cards)
+                        }
+                    }
+                    .padding(6)
+                    .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(PolishTokens.neutralFill2))
+                }
+            }
+        }
+        .transition(.opacity)
+    }
+
+    /// List, then the Board, then the card moves; loops until the view goes.
+    private func run() async {
+        guard !reduceMotion else { return }
+        let hold: [UInt64] = [2600, 1100, 2600]
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: hold[phase] * 1_000_000)
+            if Task.isCancelled { return }
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { phase = (phase + 1) % 3 }
         }
     }
 }

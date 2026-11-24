@@ -185,6 +185,37 @@ impl NodeIdentity {
         }
     }
 
+    /// Read the identity file without side effects (no corrupt-file rename).
+    /// For callers that poll it, such as the shim's host credentials.
+    pub(crate) fn load_readonly() -> Option<Self> {
+        let text = std::fs::read_to_string(Self::identity_path()).ok()?;
+        serde_json::from_str::<NodeIdentity>(&text).ok()
+    }
+
+    /// What the `/v1/host/*` routes verify cloud calls with: relay key =
+    /// lowercase `sha256_hex(device_token)`, owner = the paired user id and
+    /// the cloud's runtime id. `None` when unpaired or the token has expired
+    /// (an unparseable expiry fails closed), so every action is refused.
+    pub(crate) fn host_credentials(&self) -> Option<host_probe::http::NodeCredentials> {
+        let token = self.device_token.as_deref().filter(|t| !t.is_empty())?;
+        let owner = self.user_id.as_deref().filter(|u| !u.is_empty())?;
+        let runtime_id = self.runtime_id.as_deref().filter(|r| !r.is_empty())?;
+        if self.expires_at.as_deref().is_some_and(|e| !e.trim().is_empty())
+            && self.seconds_to_expiry().map_or(true, |s| s <= 0)
+        {
+            return None;
+        }
+        let relay_key: String = Sha256::digest(token.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        Some(host_probe::http::NodeCredentials {
+            relay_key,
+            owner: owner.to_string(),
+            runtime_id: runtime_id.to_string(),
+        })
+    }
+
     /// Atomic 0600 write (temp file in the same dir + rename).
     pub(crate) fn save(&self) -> std::io::Result<()> {
         let path = Self::identity_path();
@@ -288,5 +319,32 @@ mod tests {
         };
         identity.apply_session(&session_b);
         assert_eq!(identity.device_token.as_deref(), Some("allternit_runtime_b"));
+    }
+
+    #[test]
+    fn host_credentials_derive_the_relay_key_and_fail_closed() {
+        let mut identity = NodeIdentity::generate();
+        assert!(identity.host_credentials().is_none(), "unpaired refuses");
+
+        identity.runtime_id = Some("rt_x".into());
+        identity.user_id = Some("u1".into());
+        identity.device_token = Some("abc".into());
+        let creds = identity.host_credentials().expect("paired, no expiry");
+        // sha256("abc"): the cloud keys relayed calls and approvals with this.
+        assert_eq!(
+            creds.relay_key,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!((creds.owner.as_str(), creds.runtime_id.as_str()), ("u1", "rt_x"));
+
+        identity.expires_at = Some("2020-01-01T00:00:00Z".into());
+        assert!(identity.host_credentials().is_none(), "expired token refuses");
+        identity.expires_at = Some("not a date".into());
+        assert!(identity.host_credentials().is_none(), "bad expiry fails closed");
+        let later = (time::OffsetDateTime::now_utc() + time::Duration::days(30))
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        identity.expires_at = Some(later);
+        assert!(identity.host_credentials().is_some());
     }
 }

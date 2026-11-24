@@ -30,6 +30,8 @@ Every new frame field is additive. Older apps ignore `source` and `plan` frames 
 
 **How sources travel.** gizzi stores provider citations on the text part as `metadata.sources`, and search and fetch results on the completed tool part as `state.metadata.sources`. Both bridges (allternit-api `v1_routes.rs` and gizzi `agent-compat.ts`) turn these into `source` frames. History reloads read the same fields from `metadata.parts`.
 
+**How tool progress travels.** While a tool call is running, a part whose metadata carries `progress_detail` (today only `media_generate`) makes allternit-api send `{"type":"tool_progress","messageId","toolCallId","toolName","metadata":{"progress","progress_detail","poster"?}}`, once per distinct `progress_detail` and never after the call settles. Clients merge `metadata` into that call's running tool part. Older apps ignore the unknown frame type.
+
 **How plans travel.** Every native plan is written to gizzi's Todo list, and both bridges forward each `todo.updated` event as a `plan` frame.
 
 ### Brains: native or parsed fallback

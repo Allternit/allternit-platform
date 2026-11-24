@@ -31,6 +31,10 @@ public enum FilesError: Error, Sendable, Equatable {
     /// No replica could answer (none, not current, host asleep). SPEC
     /// `replica_unavailable`.
     case replicaUnavailable(String)
+    /// 403 `whole_disk_off`: the path is outside the Files drive and the owner
+    /// has not turned on whole-disk browsing for this computer. Carries the
+    /// server's own plain message.
+    case wholeDiskOff(message: String)
 
     /// The contract error code, when there is one.
     public var code: ErrorCode? {
@@ -48,6 +52,12 @@ public enum FilesError: Error, Sendable, Equatable {
     public var body: ErrorBody? {
         if case .api(_, let body) = self { return body }
         return nil
+    }
+
+    /// True for 403 `whole_disk_off`: Files offers a way to the switch.
+    public var isWholeDiskOff: Bool {
+        if case .wholeDiskOff = self { return true }
+        return false
     }
 
     /// True for auth failures the app fixes by minting a new Files token.
@@ -87,6 +97,7 @@ extension FilesError: LocalizedError {
         case .invalidResponse(let what): return "Unexpected answer from the server (\(what))."
         case .keyUnavailable(let why): return why
         case .replicaUnavailable(let why): return why
+        case .wholeDiskOff(let message): return message
         }
     }
 }
@@ -96,6 +107,14 @@ enum ErrorDecoding {
     /// first, then cloud-api's own relay bodies
     /// (`{"error":"runtime_offline"}`, `{"error":"runtime_warming","retryAfterSeconds":N}`).
     static func error(status: Int, data: Data) -> FilesError {
+        if status == 403,
+           let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           object["error"] as? String == "whole_disk_off" {
+            let text = (object["message"] as? String) ?? ""
+            return .wholeDiskOff(message: text.isEmpty
+                ? "This folder is outside the Files drive. Turn on whole-disk browsing for this computer first."
+                : text)
+        }
         if let body = try? JSONDecoder().decode(ErrorBody.self, from: data) {
             if body.code == .wakeConsentRequired {
                 return .wakeConsentRequired(hint: body.wake, state: body.computerState)

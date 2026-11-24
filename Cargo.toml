@@ -12,6 +12,7 @@ members = [
     "cmd/launcher",
     "factory/engine",
     "factory/pane",
+    "factory/terminal-service",
     "cmd/allternit-factory",
     "domains/kernel/core/kernel-contracts",
     "domains/kernel/core/wasm-runtime",
@@ -157,6 +158,7 @@ allternit-session-manager = { path = "services/session-manager" }
 allternit-vm-executor = { path = "services/vm-executor" }
 allternit-self-improve = { path = "services/self-improve" }
 allternit-factory-engine = { path = "factory/engine" }
+allternit-terminal-service = { path = "factory/terminal-service" }
 allternit-cowork-runtime = { path = "infrastructure/executor/cowork/cowork/allternit-cowork-runtime" }
 allternit-cowork-scheduler = { path = "infrastructure/executor/cowork/cowork/allternit-cowork-scheduler" }
 allternit-workspace-service = { path = "services/workspace-service" }

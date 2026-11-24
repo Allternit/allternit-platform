@@ -46,6 +46,8 @@ struct CodeLaunchComposer: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            ComposerOrbRow(hasActiveSession: sessionId != nil)
+                .padding(.bottom, 6)
             // The computer chip (C4), above the prompt; ✕ folds it into the
             // dot on `+`. Without `+` it stays up (nowhere to fold into).
             ComputerChipSlot(dismissible: onAttach != nil)
