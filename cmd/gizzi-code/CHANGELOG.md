@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 2.21.0 (2026-11-24)
+
+- **Block titles on more views.** Bots, Computers, MCP, Settings and the plugin marketplace title each block by its type.
+- **Runtime and model in the footer.** The prompt footer shows `runtime | model`, the same pair the composer chip shows in the apps.
+
 ## 2.20.0 (2026-11-24)
 
 - **Adopt a terminal session.** `gizzi agents adopt` moves a coding CLI session running in Terminal, iTerm2 or Ghostty into an Allternit terminal, keeping the flags it started with.
