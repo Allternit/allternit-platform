@@ -112,6 +112,8 @@ struct ComposerView: View {
     @State private var isStoreSheetPresented = false
     /// Tools start folded; the sliders button opens the band.
     @State private var deckFolded = true
+    /// The Runtime·Brain chip's width: the gap it leaves in the top border.
+    @State private var chipWidth: CGFloat = 0
     /// One of the deck's sheets is up: keeps the band open under it.
     @State private var deckSheetActive = false
     /// Dictation (C3): the mic left of the voice button.
@@ -383,24 +385,48 @@ struct ComposerView: View {
             RoundedRectangle(cornerRadius: isTerminal ? 0 : (isExpanded ? 22 : 26), style: .continuous)
                 .stroke(keyboardFocused ? Color("TextPrimary") : (accentBorder ?? Color("BorderSubtle")),
                         style: StrokeStyle(lineWidth: keyboardFocused ? 2 : 1, dash: isTerminal ? [4, 4] : []))
+                .mask { borderGapMask }
         )
         .shadow(color: .black.opacity(trayOpen ? 0.10 : 0.04), radius: trayOpen ? 10 : 1, y: trayOpen ? 3 : 1)
         .shadow(color: .black.opacity(0.03), radius: 4, y: 2)
-        // The chip straddles the top border, centred on the line, drawn after
-        // the clip so it is not cut. The page colour behind it cuts the line
-        // like a fieldset legend.
+        // The chip sits on the top border, centred on the line, drawn after
+        // the clip so it is not cut. No box behind it: the border leaves a gap
+        // the chip's width (borderGapMask), like a fieldset legend and like
+        // Code's prompt rule, so it reads the same over any page or backdrop.
+        // The alignment guide sits outside the `if`: an overlay ignores a
+        // guide set inside a conditional, which hung the chip's 44pt frame
+        // down into the card (build 52).
         .overlay(alignment: .topTrailing) {
-            if !isTerminal {
-                chipsGroup
-                    .padding(.horizontal, 4)
-                    .background(Color("BgPrimary"), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .alignmentGuide(VerticalAlignment.top) { d in d[VerticalAlignment.center] }
-                    .padding(.trailing, 18)
+            Group {
+                if !isTerminal {
+                    chipsGroup
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { chipWidth = $0 }
+                }
             }
+            .alignmentGuide(VerticalAlignment.top) { d in d[VerticalAlignment.center] }
+            .padding(.trailing, chipInset)
         }
         // Room above the card so the chip clears the orb row.
         .padding(.top, isTerminal ? 0 : 10)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isExpanded)
+    }
+
+    /// The chip's distance from the card's right edge.
+    private let chipInset: CGFloat = 18
+
+    /// Cuts the chip's width out of the card's top border so the line stops
+    /// either side of the chip. Padded out so the stroke's outer half stays.
+    private var borderGapMask: some View {
+        Rectangle()
+            .padding(-2)
+            .overlay(alignment: .topTrailing) {
+                Rectangle()
+                    .frame(width: isTerminal ? 0 : chipWidth, height: 6)
+                    .alignmentGuide(VerticalAlignment.top) { d in d[VerticalAlignment.center] }
+                    .padding(.trailing, chipInset)
+                    .blendMode(.destinationOut)
+            }
+            .compositingGroup()
     }
 
     /// The Tools tray is open under the card.

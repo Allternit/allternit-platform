@@ -278,7 +278,6 @@ private struct CodePromptEdge: View {
                 brainName: modelLabel,
                 state: chipState,
                 warning: chipState == .needsStep ? "Pair a computer" : nil,
-                background: .clear,
                 action: { showsRuntimeBrain = true }
             )
             DashedHairline(strong: strong, terminal: terminal).frame(width: 10)

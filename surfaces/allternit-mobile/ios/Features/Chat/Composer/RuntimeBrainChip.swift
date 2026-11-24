@@ -24,7 +24,9 @@ enum RuntimeBrainChipState {
 }
 
 /// One chip for "runtime | brain": brand mark, runtime name, divider, brain,
-/// chevron, state dot. Pure view: the caller owns state and the sheet it opens.
+/// chevron, state dot. No box: it sits on a line and the host leaves the
+/// line's gap (the composer card's border, Code's prompt rule). Pure view:
+/// the caller owns state and the sheet it opens.
 struct RuntimeBrainChip: View {
     let runtimeId: String
     let runtimeName: String
@@ -33,8 +35,6 @@ struct RuntimeBrainChip: View {
     var warning: String? = nil
     /// Vendor name when the brain is fixed by the runtime ("Run by <vendor>").
     var lockedVendor: String? = nil
-    /// The surface the chip sits on, so the chip blends into it.
-    var background: Color = Color("BgPrimary")
     var action: () -> Void = {}
 
     private var brainText: String {
@@ -78,7 +78,6 @@ struct RuntimeBrainChip: View {
             }
             .padding(.horizontal, 8)
             .frame(height: 24)
-            .background(background, in: RoundedRectangle(cornerRadius: 8))
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
