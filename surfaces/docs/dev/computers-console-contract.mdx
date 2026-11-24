@@ -245,7 +245,17 @@ Offline, CPU and disk rules push to the phone and Desktop. iOS uses APNs categor
 | `rule` | `offline`, `cpu` or `disk` |
 | `value` | Percent for cpu and disk, minutes for offline |
 
-Rule thresholds live in `computer_alert_rules`. Planned (step 2.8).
+Rule thresholds live in `computer_alert_rules` (migrations 154 and 157). Built in step 2.8: the cloud checks every rule once a minute, sends one alert per incident, and sends nothing more until the computer is back under the threshold. The push also carries `category: "COMPUTER_ALERT"`, `event: "computer.alert"`, `level: "needs_you"`, a title and body in plain words, and the link `/computers/<id>`. It goes out through Web Push (browsers and the Desktop app), APNs and FCM, follows the `computer.alert` notification switch and quiet hours, and is also put on the user event feed as `computer.alert`.
+
+| Route | Purpose |
+|---|---|
+| `GET /api/v1/computers/alert-rules` | `{ rules }` of the caller (owner only) |
+| `POST /api/v1/computers/alert-rules` | `{ rule, threshold?, computerId?, durationMinutes?, enabled? }`; no `computerId` = all your computers; one rule per type per scope (409 `rule_exists`) |
+| `PATCH /api/v1/computers/alert-rules/:id` | `{ threshold?, durationMinutes?, enabled? }` |
+| `DELETE /api/v1/computers/alert-rules/:id` | Remove a rule |
+| `GET /api/v1/computers/alerts?computerId=&limit=` | `{ alerts }`: fired and resolved incidents for the Activity tab, newest first |
+
+Thresholds: `offline` is minutes (1 to 1440, default 10), `cpu` and `disk` are percent (1 to 100, default 90). CPU must stay over for `durationMinutes` (1 to 120, default 5). A computer that is asleep, stopped or starting is not offline. Errors carry `{ error, message }`.
 
 ## Approval, change record and undo
 
@@ -316,7 +326,8 @@ Each computer has its own list of public keys in `computer_ssh_keys` (migration 
 | 154 | `computer_metric_samples`, alert rules |
 | 155 | Taken by `155_platform_agent_runtime.sql` (Harness & Bots P6, #2784) |
 | 156 | `computer_ssh_keys` (step 2.7) |
+| 157 | `computer_alert_state`, `computer_alert_events`, `computer_alert_rules.duration_minutes` (step 2.8) |
 
-Snippets (step 2.9) take the next free number above 156.
+Snippets (step 2.9) take the next free number above 157 (158 unless another PR takes it).
 
 Take the next free number above origin/main and open PRs when the files are written. Production applies migrations through the cloud-api deploy, not sqlx (see the cloud-api deploy notes).

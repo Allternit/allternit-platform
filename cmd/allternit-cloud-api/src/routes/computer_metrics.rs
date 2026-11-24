@@ -27,8 +27,8 @@
 //!   raw samples are kept 48 hours, then rolled up into 5 minute rows
 //!   (averages, weighted by `sample_count`), kept 30 days.
 //!
-//! Alert rules (`computer_alert_rules`, migration 154) are evaluated and
-//! pushed in step 2.8, not here.
+//! Alert rules (`computer_alert_rules`, migration 154) are evaluated by
+//! routes::computer_alerts (step 2.8).
 
 use axum::{
     extract::{Path, Query, State},

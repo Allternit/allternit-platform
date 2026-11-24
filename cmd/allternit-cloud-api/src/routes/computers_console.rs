@@ -140,6 +140,14 @@ pub struct DeviceRow {
 
 async fn list_console(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
     let caller = signed_in_caller(&state, &headers).await?;
+    let computers = load_console(&state.db, &caller.user_id, caller.organization_id.as_deref()).await?;
+    Ok(Json(serde_json::json!({ "computers": computers })).into_response())
+}
+
+/// Every console row `user_id` can see (the route above; also the alert
+/// evaluator, routes::computer_alerts). `organization_id` adds the paired
+/// computers shared through the person's organization.
+pub async fn load_console(db: &sqlx::PgPool, user_id: &str, organization_id: Option<&str>) -> Result<Vec<ConsoleComputer>, sqlx::Error> {
     let cloud: Vec<CloudRow> = sqlx::query_as(
         "SELECT pi.id, pi.status, pi.device_id, d.name AS device_name, d.tailnet_ip,
                 pi.location, h.region AS host_region, ls.snapshot AS last_sample, ls.ts AS last_sample_at
@@ -157,8 +165,8 @@ async fn list_console(State(state): State<Arc<ApiState>>, headers: HeaderMap) ->
          WHERE pi.user_id = $1 AND pi.status <> 'deleted'
          ORDER BY pi.created_at",
     )
-    .bind(&caller.user_id)
-    .fetch_all(&state.db)
+    .bind(user_id)
+    .fetch_all(db)
     .await?;
     let paired: Vec<PairedRow> = sqlx::query_as(
         "SELECT pc.id, pc.name, pc.os, pc.mesh_ip, pc.last_seen_at, pc.runtime_device_id, pc.user_id <> $1 AS shared,
@@ -174,9 +182,9 @@ async fn list_console(State(state): State<Arc<ApiState>>, headers: HeaderMap) ->
            AND pc.provisioned_instance_id IS NULL
          ORDER BY pc.created_at",
     )
-    .bind(&caller.user_id)
-    .bind(&caller.organization_id)
-    .fetch_all(&state.db)
+    .bind(user_id)
+    .bind(organization_id)
+    .fetch_all(db)
     .await?;
     let devices: Vec<DeviceRow> = sqlx::query_as(
         "SELECT d.id, d.name, d.runtime_type, d.hostname, d.platform, d.tailnet_ip, d.status, d.last_seen_at,
@@ -193,12 +201,11 @@ async fn list_console(State(state): State<Arc<ApiState>>, headers: HeaderMap) ->
            AND NOT EXISTS (SELECT 1 FROM provisioned_instances pi WHERE pi.device_id = d.id)
          ORDER BY d.created_at",
     )
-    .bind(&caller.user_id)
-    .fetch_all(&state.db)
+    .bind(user_id)
+    .fetch_all(db)
     .await?;
     let connected = crate::routes::runtime_relay::connected_runtime_ids().await;
-    let computers = build_console(cloud, paired, devices, &connected, Utc::now());
-    Ok(Json(serde_json::json!({ "computers": computers })).into_response())
+    Ok(build_console(cloud, paired, devices, &connected, Utc::now()))
 }
 
 /// Join the three sources into console rows: cloud first, then desks, then
