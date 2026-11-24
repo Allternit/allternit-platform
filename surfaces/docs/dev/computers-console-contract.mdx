@@ -124,7 +124,9 @@ Response: `{ "computers": [ConsoleComputer, ...] }`. Web, CLI and iOS accept thi
 | Field | Meaning |
 |---|---|
 | `id` | Console row id. Cloud = `provisioned_instances.id`, paired = `paired_computers.id`, desktop = `runtime_devices.id`. Every `/computers/:id/*` route takes this id. |
-| `runtimeId` | The `runtime_devices.id` the relay is keyed by. Always sent, null when there is none. Terminals use `row.runtimeId ?? row.id` for `allternit-relay://`. |
+| `runtimeId` | The `runtime_devices.id` the relay is keyed by. Always sent, null when there is none. Terminals use `row.runtimeId ?? row.id` for `allternit-relay://`. When a machine has several runtimes, this is the one holding a relay, else the Desktop, else one that reported lately (step 2.10). This is also the "relay id" Files and the terminal use. |
+| `aliases` | Every other id of the same machine (step 2.10): its other runtime devices and code-paired rows; for a cloud computer, its runtime device. Always sent, `[]` when there are none. Every `/computers/:id/*` route, rename and unpair accept an alias and answer for this row. |
+| `pairedId` | The machine's `paired_computers.id` (screen sharing, Factory peer ticket). Left out when it has none. |
 | `kind` | `cloud`, `paired` or `desktop` |
 | `name`, `group`, `provider`, `region`, `os`, `address` | Display fields |
 | `status` | One of the values below |
@@ -228,8 +230,9 @@ Errors:
 | `GET /api/v1/computers/:id/backups` | `{ backups: [{ id, createdAt, sizeBytes?, kind }], canRestore }`. Finished Orgo daily backups only, newest first. `kind` is `daily` unless Orgo names another. `canRestore` is Orgo's "can be restored now", or null when Orgo does not say. Read only, never wakes the computer. 503 `{ error: "backup_check_failed" }` when Orgo's answer can't be read | built (step 2.6) |
 | `POST /api/v1/computers/:id/backups/restore` | `{ backupId, confirm: true }` returns 202 `{ instance, backupId }`. An in-place restore: same computer, same row id, and what changed since that backup is erased. 400 `{ error: "confirm_required" }`, 400 `{ error: "backup_id_required" }`, 404 `{ error: "backup_not_found" }` (not one of the finished backups), 409 `{ error: "restore_unavailable" }` (Orgo says not now), 409 `{ error: "busy", status }`, 501 `{ error: "not_supported", action: "backup_restore" }` until restores are turned on (below) | built (step 2.6), off by default |
 | `GET /api/v1/computers/templates` | `{ templates: [{ id, name, description? }] }`. An empty list means default Ubuntu only | built (step 2.4) |
-| `PATCH /api/v1/computers/paired/:id` | `{ name }` renames a paired computer | planned (step 2.10) |
-| `DELETE /api/v1/computers/paired/:id` | Remove a paired computer | exists |
+| `PATCH /api/v1/computers/paired/:id` | `{ name }` (1 to 80 characters) returns `{ id, name }`. Renames the whole machine on every surface: `:id` is any console row id or alias, and cloud rows work too. Owner only. 400 `invalid_name`, 403 `not_owner` (shared with you), 404 `not_found` | built (step 2.10) |
+| `POST /api/v1/computers/:id/unpair` | `{ confirm: true }` returns `{ removed: true, id, revokedDevices, removedPaired }`. Removes every alias of the machine at once: revokes each runtime device (Desktop, `gizzi pair`, `ao fabric pair`), deletes its code-paired rows and its name. `:id` is any row id or alias. Owner only. 400 `confirm_required`, 403 `not_owner`, 404 `not_found`, 409 `cloud_computer` (delete a cloud computer from Settings instead). Clients use this for Remove in the console | built (step 2.10) |
+| `DELETE /api/v1/computers/paired/:id` | Removes only that code-paired row (screen sharing). Kept as is for old clients; the machine's runtimes stay paired | exists |
 
 Snippet runs reuse the approval mint above, one approval per computer (type `snippet.run`, target = the snippet id). The command travels inside the approved action: the cloud sends `POST /v1/host/actions` with `{ type, target, approval_id, snippet: { id, name, script, elevated, timeoutSec } }`, the node never fetches it and saves nothing, and `snippet.id` must equal `target`. Without `snippet` the node still reads `<store>/snippets/<id>.json`. The approval binds the snippet id; the cloud is the authority on the text.
 
@@ -331,5 +334,6 @@ Each computer has its own list of public keys in `computer_ssh_keys` (migration 
 | 156 | `computer_ssh_keys` (step 2.7) |
 | 157 | `computer_alert_state`, `computer_alert_events`, `computer_alert_rules.duration_minutes` (step 2.8) |
 | 158 | `computer_snippets`, `computer_snippet_runs` (step 2.9) |
+| 159 | `paired_computers.machine_id`, `hostname`, `platform`; `computer_machine_names` (step 2.10). No back-fill: rows are grouped when the list is read |
 
 Take the next free number above origin/main and open PRs when the files are written. Production applies migrations through the cloud-api deploy, not sqlx (see the cloud-api deploy notes).

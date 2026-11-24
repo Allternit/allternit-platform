@@ -142,7 +142,47 @@ pub struct HostTarget {
 
 /// Resolve console id `id` for `caller` with the console list's access rule.
 /// `None` = missing or someone else's.
+///
+/// Step 2.10: `id` may be the console row id or any of its `aliases` (the
+/// other runtime devices and paired rows of the same machine). A paired or
+/// device target then relays through the machine's preferred runtime (the
+/// console row's `runtimeId`) and reads samples from every member.
 pub async fn resolve_target(db: &PgPool, caller: &Caller, id: &str) -> Result<Option<HostTarget>, sqlx::Error> {
+    let Some(mut target) = resolve_member(db, caller, id).await? else {
+        return Ok(None);
+    };
+    if target.kind != TargetKind::Cloud {
+        let row = crate::routes::computers_console::find_machine(
+            db,
+            &caller.user_id,
+            caller.organization_id.as_deref(),
+            id,
+        )
+        .await?;
+        if let Some(row) = row.filter(|r| r.kind != "cloud") {
+            if row.runtime_id.is_some() {
+                target.runtime_id = row.runtime_id.clone();
+            }
+            // Add the machine's members; keep what the row itself named (a
+            // shared row's linked device is not among the caller's devices).
+            for d in row.member_devices {
+                if !target.sources.devices.contains(&d) {
+                    target.sources.devices.push(d);
+                }
+            }
+            for p in row.member_paired {
+                if !target.sources.paired.contains(&p) {
+                    target.sources.paired.push(p);
+                }
+            }
+        }
+    }
+    Ok(Some(target))
+}
+
+/// The one row `id` names (cloud instance, paired row or runtime device),
+/// before machine grouping.
+async fn resolve_member(db: &PgPool, caller: &Caller, id: &str) -> Result<Option<HostTarget>, sqlx::Error> {
     // A cloud computer: owner only.
     let cloud: Option<(String, Option<String>, Option<Vec<String>>)> = sqlx::query_as(
         "SELECT pi.status, pi.device_id,

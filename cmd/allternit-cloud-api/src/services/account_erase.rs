@@ -182,6 +182,8 @@ pub const ERASE: &[(&str, &str)] = &[
     // Computers console snippets and their run history (migration 158).
     ("computer_snippet_runs", USER),
     ("computer_snippets", USER),
+    // Names the owner gave a machine in the console (migration 159).
+    ("computer_machine_names", USER),
     ("code_environments", USER),
     ("gizzi_instances", USER),
     ("byo_bootstrap_tokens", USER),

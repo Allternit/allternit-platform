@@ -24,6 +24,11 @@ pub(crate) struct CreatePairingRequest {
     pub platform: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// ~/.allternit/machine-id, shared with Desktop and `gizzi pair`, so the
+    /// Computers console shows this node and the computer's other pairings
+    /// as one row (computers console step 2.10).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
     pub public_key: String,
     pub capabilities: Vec<String>,
 }
@@ -364,6 +369,7 @@ mod tests {
             hostname: Some("macbook".into()),
             platform: Some("macos-arm64".into()),
             version: Some("0.9.0".into()),
+            machine_id: Some("Zk3m9QpL2vX8aB4cD6eF7gH1".into()),
             public_key: "PUBKEY".into(),
             capabilities: vec!["runtime:connect".into()],
         };
@@ -375,6 +381,7 @@ mod tests {
                 "hostname": "macbook",
                 "platform": "macos-arm64",
                 "version": "0.9.0",
+                "machineId": "Zk3m9QpL2vX8aB4cD6eF7gH1",
                 "publicKey": "PUBKEY",
                 "capabilities": ["runtime:connect"]
             })

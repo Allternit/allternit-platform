@@ -1,5 +1,6 @@
 //! Computers console list (step 2.1). Pure joins first, then the route
-//! against a test schema with migration 153 applied.
+//! against a test schema with migrations 153, 154 and 159 applied. Step 2.10:
+//! every old pairing path of one machine gives one row.
 
 use axum::http::StatusCode;
 use tower::ServiceExt;
@@ -23,6 +24,7 @@ fn device(id: &str, name: &str, runtime_type: &str, platform: &str) -> DeviceRow
         last_seen_at: at(1),
         last_sample: None,
         last_sample_at: None,
+        machine_id: None,
     }
 }
 
@@ -37,6 +39,9 @@ fn paired(id: &str, name: &str) -> PairedRow {
         shared: false,
         last_sample: None,
         last_sample_at: None,
+        machine_id: None,
+        hostname: None,
+        platform: None,
     }
 }
 
@@ -163,6 +168,10 @@ async fn setup() -> Arc<ApiState> {
     // The list reads the newest heartbeat sample (step 2.2).
     let sql = include_str!("../../migrations_pg/154_computer_metrics.sql").replace("public.", "");
     sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 154");
+    // One row per machine (step 2.10); additive, applied twice like the deploy may.
+    let sql = include_str!("../../migrations_pg/159_computer_machine_identity.sql").replace("public.", "");
+    sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 159");
+    sqlx::raw_sql(&sql).execute(&state.db).await.expect("migration 159 again");
     state
 }
 
@@ -258,4 +267,174 @@ async fn the_console_needs_a_signed_in_caller() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ------------------------------------------------ step 2.10: one machine ----
+
+const MID: &str = "Zk3m9QpL2vX8aB4cD6eF7gH1";
+
+fn on_machine(mut d: DeviceRow, mid: Option<&str>, hostname: &str) -> DeviceRow {
+    d.machine_id = mid.map(str::to_string);
+    d.hostname = Some(hostname.into());
+    d
+}
+
+#[test]
+fn desktop_and_gizzi_pair_on_one_mac_are_one_row() {
+    // Desktop registers "<host> Desktop"; `gizzi pair` registers the hostname.
+    // Both read ~/.allternit/machine-id.
+    let desk = on_machine(device("rt_desk", "joes-mbp Desktop", "desktop", "darwin-arm64"), Some(MID), "joes-mbp.local");
+    let cli = on_machine(device("rt_cli", "joes-mbp", "desktop", "darwin-arm64"), Some(MID), "joes-mbp");
+    let connected: HashSet<String> = ["rt_cli".to_string()].into();
+    let rows = build_console(vec![], vec![], vec![desk, cli], &connected, Utc::now());
+    assert_eq!(rows.len(), 1, "{rows:#?}");
+    let row = &rows[0];
+    assert_eq!(row.id, "rt_desk", "the oldest device names a device-only machine");
+    assert_eq!(row.aliases, vec!["rt_cli".to_string()]);
+    assert_eq!(row.runtime_id.as_deref(), Some("rt_cli"), "the runtime holding a relay wins");
+    assert_eq!(row.machine_key, format!("mid:{MID}"));
+    assert_eq!(row.kind, "desktop");
+}
+
+#[test]
+fn ao_fabric_pair_joins_the_desktop_row() {
+    let desk = on_machine(device("rt_desk", "Studio Desktop", "desktop", "darwin-arm64"), Some(MID), "studio");
+    let ao = on_machine(device("rt_ao", "studio", "ao", "macos-aarch64"), Some(MID), "studio");
+    let rows = build_console(vec![], vec![], vec![desk, ao], &HashSet::new(), Utc::now());
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].aliases, vec!["rt_ao".to_string()]);
+    assert_eq!(rows[0].runtime_id.as_deref(), Some("rt_desk"), "with no relay up, the Desktop serves host data");
+}
+
+#[test]
+fn an_old_gizzi_without_a_machine_id_joins_by_hostname() {
+    let desk = on_machine(device("rt_desk", "Joes-MBP Desktop", "desktop", "darwin-arm64"), Some(MID), "Joes-MBP.local");
+    let old = on_machine(device("rt_old", "joes-mbp", "desktop", "darwin-arm64"), None, "joes-mbp");
+    let rows = build_console(vec![], vec![], vec![desk, old], &HashSet::new(), Utc::now());
+    assert_eq!(rows.len(), 1, "{rows:#?}");
+    assert_eq!(rows[0].aliases, vec!["rt_old".to_string()]);
+}
+
+#[test]
+fn a_code_paired_computer_with_its_machine_id_is_the_desktop_row() {
+    let desk = on_machine(device("rt_desk", "Studio Desktop", "desktop", "darwin-arm64"), Some(MID), "studio");
+    let mut pc = paired("pc_1", "Studio Mac");
+    pc.machine_id = Some(MID.into());
+    let rows = build_console(vec![], vec![pc], vec![desk], &HashSet::new(), Utc::now());
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!((row.id.as_str(), row.paired_id.as_deref()), ("pc_1", Some("pc_1")), "a paired row keeps its id");
+    assert_eq!(row.aliases, vec!["rt_desk".to_string()]);
+    assert_eq!((row.kind, row.runtime_id.as_deref()), ("desktop", Some("rt_desk")));
+    assert_eq!(row.address.as_deref(), Some("100.64.0.9"), "the screen-share mesh address is kept");
+    assert_eq!((row.member_paired.len(), row.member_devices.len()), (1, 1));
+}
+
+#[test]
+fn different_machines_never_merge() {
+    // Two servers with their own machine ids and the same hostname, and two
+    // old ones on a generic hostname: four rows.
+    let a = on_machine(device("rt_a", "web", "vps", "linux-x64"), Some("aaaaaaaaaaaaaaaaaaaa"), "web1");
+    let b = on_machine(device("rt_b", "web", "vps", "linux-x64"), Some("bbbbbbbbbbbbbbbbbbbb"), "web1");
+    let c = on_machine(device("rt_c", "ubuntu", "ao", "linux-x86_64"), None, "ubuntu");
+    let d = on_machine(device("rt_d", "ubuntu 2", "ao", "linux-x86_64"), None, "ubuntu");
+    let mut shared = paired("pc_team", "web");
+    shared.shared = true;
+    shared.machine_id = Some("aaaaaaaaaaaaaaaaaaaa".into());
+    let rows = build_console(vec![], vec![shared], vec![a, b, c, d], &HashSet::new(), Utc::now());
+    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, vec!["pc_team", "rt_a", "rt_b", "rt_c", "rt_d"], "a shared row never joins the caller's machine");
+    assert!(rows.iter().all(|r| r.aliases.is_empty()));
+}
+
+#[test]
+fn the_owners_name_wins_and_shared_rows_keep_theirs() {
+    let desk = on_machine(device("rt_desk", "Studio Desktop", "desktop", "darwin-arm64"), Some(MID), "studio");
+    let mut shared = paired("pc_team", "Team box");
+    shared.shared = true;
+    let mut rows = build_console(vec![], vec![shared], vec![desk], &HashSet::new(), Utc::now());
+    let names = vec![(format!("mid:{MID}"), "Studio".to_string()), ("paired:pc_team".to_string(), "Mine now".to_string())];
+    apply_names(&mut rows, &names);
+    let by_id = |id: &str| rows.iter().find(|r| r.id == id).unwrap().name.clone();
+    assert_eq!(by_id("rt_desk"), "Studio");
+    assert_eq!(by_id("pc_team"), "Team box");
+}
+
+async fn machine_call(state: &Arc<ApiState>, method: &str, uri: &str, body: &str) -> (StatusCode, serde_json::Value) {
+    let res = crate::routes::computer_machines::routes()
+        .merge(crate::routes::paired_computers::routes())
+        .merge(routes())
+        .with_state(state.clone())
+        .oneshot(authed_request(method, uri, body))
+        .await
+        .unwrap();
+    let status = res.status();
+    let bytes = http_body_util::BodyExt::collect(res.into_body()).await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap_or_default())
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn one_machine_is_renamed_and_unpaired_by_any_of_its_ids() {
+    let _g = dev_token_on();
+    let state = setup().await;
+    let db = &state.db;
+    sqlx::raw_sql(&format!(
+        "INSERT INTO runtime_devices (id, user_id, name, runtime_type, hostname, platform, status, last_seen_at, machine_id) VALUES
+           ('rt_desk', '{u}', 'studio Desktop', 'desktop', 'studio.local', 'darwin-arm64', 'online', now(), '{m}'),
+           ('rt_cli', '{u}', 'studio', 'desktop', 'studio', 'darwin-arm64', 'online', now(), '{m}'),
+           ('rt_ao', '{u}', 'studio', 'ao', 'studio', 'macos-aarch64', 'online', now(), '{m}'),
+           ('rt_box', '{u}', 'box', 'vps', 'box1', 'linux-x64', 'online', now(), NULL);
+         INSERT INTO paired_computers (id, user_id, name, os, secret_hash, mesh_ip, machine_id) VALUES
+           ('pc_mac', '{u}', 'Studio Mac', 'macos', 'x', '100.64.0.5', '{m}');",
+        u = DEV_USER,
+        m = MID
+    ))
+    .execute(db)
+    .await
+    .unwrap();
+
+    let (status, body) = call(&state).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rows = body["computers"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "Desktop + gizzi + ao + code pairing of one Mac = one row: {body}");
+    assert_eq!(rows[0]["id"], "pc_mac");
+    assert_eq!(rows[0]["pairedId"], "pc_mac");
+    // Same created_at in this fixture, so compare as a set.
+    let mut aliases: Vec<&str> = rows[0]["aliases"].as_array().unwrap().iter().filter_map(|a| a.as_str()).collect();
+    aliases.sort_unstable();
+    assert_eq!(aliases, vec!["rt_ao", "rt_cli", "rt_desk"]);
+    assert_eq!(rows[1]["aliases"], serde_json::json!([]));
+
+    // Rename by an alias: the name covers the whole machine.
+    let (status, body) = machine_call(&state, "PATCH", "/api/v1/computers/paired/rt_ao", r#"{"name":"  Studio  "}"#).await;
+    assert_eq!((status, body["id"].as_str()), (StatusCode::OK, Some("pc_mac")), "{body}");
+    let (_, body) = call(&state).await;
+    assert_eq!(body["computers"][0]["name"], "Studio");
+    let (status, body) = machine_call(&state, "PATCH", "/api/v1/computers/paired/pc_mac", r#"{"name":""}"#).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_name")));
+    assert!(body["message"].as_str().is_some_and(|m| !m.is_empty()));
+
+    // Unpair needs confirm, then removes every alias at once.
+    let (status, body) = machine_call(&state, "POST", "/api/v1/computers/rt_cli/unpair", "{}").await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("confirm_required")), "{body}");
+    let (status, body) = machine_call(&state, "POST", "/api/v1/computers/rt_cli/unpair", r#"{"confirm":true}"#).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["id"], "pc_mac");
+    let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runtime_devices WHERE revoked_at IS NULL AND id IN ('rt_desk', 'rt_cli', 'rt_ao', 'rt_box')")
+        .fetch_one(db)
+        .await
+        .unwrap();
+    assert_eq!(live, 1, "only the other server's runtime is left");
+    let paired: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM paired_computers").fetch_one(db).await.unwrap();
+    assert_eq!(paired, 0);
+    let names: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM computer_machine_names").fetch_one(db).await.unwrap();
+    assert_eq!(names, 0);
+    let (_, body) = call(&state).await;
+    assert_eq!(body["computers"].as_array().unwrap().len(), 1);
+
+    // Gone ids answer like missing ones, with a plain message.
+    let (status, body) = machine_call(&state, "POST", "/api/v1/computers/rt_desk/unpair", r#"{"confirm":true}"#).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::NOT_FOUND, Some("not_found")));
+    assert!(body["message"].as_str().is_some_and(|m| !m.is_empty()));
 }

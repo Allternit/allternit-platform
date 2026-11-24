@@ -681,6 +681,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::computers_host::routes())
         // Computers console snippets: CRUD + run on many computers, approval required (step 2.9).
         .merge(routes::computer_snippets::routes())
+        // One computer, one row: unpair a whole machine by any of its ids (step 2.10).
+        .merge(routes::computer_machines::routes())
         .merge(routes::computers_cloud::routes())
         // Phone stream relay (Phones 2.0): the account's runtime upserts and
         // lists its registered phones with its device credential.

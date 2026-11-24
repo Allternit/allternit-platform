@@ -86,6 +86,7 @@ impl CloudClient {
             hostname,
             platform,
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            machine_id: shared_machine_id(),
             public_key: identity.public_key.clone(),
             capabilities: DEFAULT_CAPABILITIES.iter().map(|cap| (*cap).to_string()).collect(),
         };
@@ -261,4 +262,59 @@ fn urlencoding_encode(value: &str) -> String {
         }
     }
     out
+}
+
+/// This computer's machine id: ~/.allternit/machine-id, the same file Allternit
+/// Desktop and `gizzi pair` read and write (random, made once, 16-64 of
+/// `[A-Za-z0-9_-]`). Made here when missing. None when the home directory is
+/// unknown or unwritable; the cloud then falls back to hostname + platform.
+pub(crate) fn shared_machine_id() -> Option<String> {
+    let home = crate::ao::native::home_dir()?;
+    machine_id_in(&home.join(".allternit").join("machine-id"))
+}
+
+fn valid_machine_id(value: &str) -> bool {
+    (16..=64).contains(&value.len()) && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn machine_id_in(file: &std::path::Path) -> Option<String> {
+    if let Ok(existing) = std::fs::read_to_string(file) {
+        let existing = existing.trim();
+        if valid_machine_id(existing) {
+            return Some(existing.to_string());
+        }
+    }
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
+    use rand::RngCore as _;
+    let mut bytes = [0u8; 24];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let id = URL_SAFE_NO_PAD.encode(bytes);
+    std::fs::create_dir_all(file.parent()?).ok()?;
+    std::fs::write(file, format!("{id}\n")).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600));
+    }
+    Some(id)
+}
+
+#[cfg(test)]
+mod machine_id_tests {
+    use super::machine_id_in;
+
+    #[test]
+    fn the_machine_id_is_made_once_and_shared() {
+        let dir = std::env::temp_dir().join(format!("ao-machine-id-{}", std::process::id()));
+        let file = dir.join(".allternit").join("machine-id");
+        let _ = std::fs::remove_dir_all(&dir);
+        let made = machine_id_in(&file).expect("made");
+        assert_eq!(made.len(), 32, "24 random bytes, base64url");
+        assert_eq!(machine_id_in(&file).as_deref(), Some(made.as_str()), "read back, not made again");
+        // A file Desktop or gizzi wrote is used as is.
+        std::fs::write(&file, "Zk3m9QpL2vX8aB4cD6eF7gH1\n").unwrap();
+        assert_eq!(machine_id_in(&file).as_deref(), Some("Zk3m9QpL2vX8aB4cD6eF7gH1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
