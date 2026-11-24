@@ -441,6 +441,7 @@ pub mod task_routes;
 pub mod team_skill_routes;
 // Code Mode terminals on the Factory pane engine (Unix socket, or a named
 // pipe on Windows).
+pub mod terminal_list;
 pub mod terminal_routes;
 pub mod token_crypto;
 pub mod tool_routes;
