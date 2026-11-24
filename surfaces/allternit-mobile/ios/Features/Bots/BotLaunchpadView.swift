@@ -876,8 +876,8 @@ struct BotLaunchComposer: View {
             onVoiceMode: toggleDictation,
             placeholderOverride: placeholder,
             accentBorder: colors.hex(for: selectedBot).map { Color(hex: $0).opacity(0.6) },
-            showsPermission: false,
-            orbRowTrailing: AnyView(toRow)
+            orbRowTrailing: AnyView(toRow),
+            showsPermission: false
         )
     }
 
