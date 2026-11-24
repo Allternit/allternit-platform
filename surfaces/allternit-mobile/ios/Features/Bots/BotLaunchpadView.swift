@@ -44,7 +44,7 @@ struct BotLaunchpadView: View {
     var body: some View {
         // BOTS block title (T11): it docks into the PhoneHeader's centre while the
         // page scrolls. The header sits just above this view, so its centre is
-        // half a bar (PhoneHeader.barHeight 52 / 2) above our top edge; the dock draws from the screen's top.
+        // half a bar (PhoneHeaderMetrics.barHeight 52 / 2) above our top edge; the dock draws from the screen's top.
         GeometryReader { geo in
             DockingTitleScrollView(
                 title: "Bots",

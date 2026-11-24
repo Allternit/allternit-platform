@@ -5,6 +5,11 @@ import UIKit
 /// menu on the left, a centered title (and optional subtitle), and the
 /// trailing actions. No separators — content scrolls under it. 52pt tall,
 /// 52pt sides (96pt when the trailing side holds two actions).
+/// PhoneHeader's bar height without its generic parameters, for callers outside it.
+enum PhoneHeaderMetrics {
+    static let barHeight: CGFloat = 52
+}
+
 struct PhoneHeader<Leading: View, Trailing: View>: View {
     var title: String?
     var subtitle: String?
@@ -24,7 +29,7 @@ struct PhoneHeader<Leading: View, Trailing: View>: View {
 
     /// The bar's height, so a screen can compute `barCenter` for the dock:
     /// safe-area top + `barHeight / 2`.
-    static var barHeight: CGFloat { 52 }
+    static var barHeight: CGFloat { PhoneHeaderMetrics.barHeight }
 
     var body: some View {
         let side: CGFloat = wideSides ? 96 : (sectionStyle ? 44 : 52)

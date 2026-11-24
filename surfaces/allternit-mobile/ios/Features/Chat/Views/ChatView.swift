@@ -69,13 +69,13 @@ struct ChatView: View {
                 sessionId: selectedSessionId,
                 viewModel: viewModel,
                 launchStyle: true,
-                launchTopInset: PhoneHeader.barHeight,
+                launchTopInset: PhoneHeaderMetrics.barHeight,
                 chatMenuHoldsExtras: true,
                 onNewChat: startNewChat
             )
             // The launch screen reaches up under the bar so the dock can draw
             // in it (the bar stays on top; the composer does not move).
-            .padding(.top, viewModel.messages.isEmpty ? -PhoneHeader.barHeight : 0)
+            .padding(.top, viewModel.messages.isEmpty ? -PhoneHeaderMetrics.barHeight : 0)
 
         }
         .background(Color("BgPrimary"))

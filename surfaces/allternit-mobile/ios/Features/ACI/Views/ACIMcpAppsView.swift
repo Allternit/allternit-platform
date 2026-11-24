@@ -488,11 +488,11 @@ struct ACIDockReader<Content: View>: View {
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
             .first(where: \.isKeyWindow)?.safeAreaInsets.top ?? 0
-        return safeTop + PhoneHeader.barHeight / 2
+        return safeTop + PhoneHeaderMetrics.barHeight / 2
     }
 
     var body: some View {
-        let center = top.map { Self.headerCenter - $0 } ?? -PhoneHeader.barHeight / 2
+        let center = top.map { Self.headerCenter - $0 } ?? -PhoneHeaderMetrics.barHeight / 2
         content(ACIViewDock(barCenter: center))
             .background(GeometryReader { geo in
                 Color.clear.preference(key: ACIDockTopKey.self, value: geo.frame(in: .global).minY)
