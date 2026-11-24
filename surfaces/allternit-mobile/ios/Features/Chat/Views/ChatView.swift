@@ -241,6 +241,10 @@ struct ChatContentView: View {
     /// Scroll-to-bottom button: the transcript is more than one screen above its end.
     @State private var jumpFar = false
     @ReducedMotion private var reducedMotion
+    /// Chat wait B: the sent message held at the top while the answer grows (see `AnswerRoom`).
+    @State private var answerAnchorId: String?
+    @State private var answerTurnHeight: CGFloat = 0
+    @State private var answerViewport: CGFloat = 0
     /// Home: the web chat launch screen (greeting, composer with its full
     /// deck, the template gallery) and the compact deck in a session. Other
     /// hosts get the plain composer.
@@ -566,6 +570,16 @@ struct ChatContentView: View {
         }
     }
 
+    /// One thread row (terminal or chat).
+    @ViewBuilder
+    private func threadRow(_ message: MessageRecord, hostedRun: PhoneTaskCardModel?) -> some View {
+        if isTerminal {
+            terminalRow(message)
+        } else {
+            messageRow(message, hostedRun: hostedRun)
+        }
+    }
+
     private var sessionLayout: some View {
         VStack(spacing: 0) {
             // Transient load/send failure banner (dismissible).
@@ -592,11 +606,24 @@ struct ChatContentView: View {
                                     .padding(.top, 60)
                             }
                         } else {
-                            ForEach(viewModel.messages) { message in
-                                if isTerminal {
-                                    terminalRow(message)
-                                } else {
-                                    messageRow(message, hostedRun: runHosts[message.id])
+                            if !isTerminal, let parts = AnswerRoom.split(viewModel.messages, anchor: answerAnchorId) {
+                                ForEach(parts.head) { message in
+                                    threadRow(message, hostedRun: runHosts[message.id])
+                                }
+                                // The sent message and the answer under it: measured so the
+                                // room below shrinks by what the answer adds.
+                                VStack(spacing: AnswerRoom.rowSpacing) {
+                                    ForEach(parts.turn) { message in
+                                        threadRow(message, hostedRun: runHosts[message.id])
+                                    }
+                                }
+                                .background(GeometryReader { Color.clear.preference(key: AnswerRoomTurnHeightKey.self, value: $0.size.height) })
+                                Color.clear
+                                    .frame(height: AnswerRoom.room(viewport: answerViewport, turnHeight: answerTurnHeight))
+                                    .accessibilityHidden(true)
+                            } else {
+                                ForEach(viewModel.messages) { message in
+                                    threadRow(message, hostedRun: runHosts[message.id])
                                 }
                             }
                         }
@@ -615,6 +642,27 @@ struct ChatContentView: View {
                     .padding(.vertical, 16)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .background(GeometryReader { Color.clear.preference(key: AnswerRoomViewportKey.self, value: $0.size.height) })
+                .onPreferenceChange(AnswerRoomViewportKey.self) { answerViewport = $0 }
+                .onPreferenceChange(AnswerRoomTurnHeightKey.self) { answerTurnHeight = $0 }
+                .onChange(of: viewModel.isStreaming) { was, now in
+                    // A turn started: anchor the sent message at the top, one scroll.
+                    guard !isTerminal,
+                          let id = AnswerRoom.anchorId(wasStreaming: was, isStreaming: now, messages: viewModel.messages) else { return }
+                    answerAnchorId = id
+                    DispatchQueue.main.async {
+                        if reducedMotion {
+                            scrollProxy.scrollTo(id, anchor: .top)
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.35)) { scrollProxy.scrollTo(id, anchor: .top) }
+                        }
+                    }
+                }
+                .onChange(of: viewModel.currentSessionId) { _, _ in
+                    // Another chat: no anchor, no room.
+                    answerAnchorId = nil
+                    answerTurnHeight = 0
+                }
                 .modifier(JumpDistanceTracker(far: $jumpFar))
                 .overlay(alignment: .bottom) {
                     if showJumpButton {
@@ -628,6 +676,8 @@ struct ChatContentView: View {
                     // Fires on new messages AND on streamed content changes;
                     // the view model's ~50ms flush coalescing bounds the rate.
                     guard let lastId = viewModel.messages.last?.id else { return }
+                    // An anchored turn keeps the sent message at the top while it answers.
+                    guard AnswerRoom.followsBottom(anchored: answerAnchorId != nil, streaming: viewModel.isStreaming) else { return }
                     // Animated scroll lags behind rapid streaming deltas.
                     if viewModel.isStreaming {
                         scrollProxy.scrollTo(lastId, anchor: .bottom)
