@@ -25,7 +25,10 @@ Error = TypedDict('Error', {'error': Dict[str, Any]}, total=False)
 SpendCap = TypedDict('SpendCap', {'object': Literal['spend_cap'], 'project_id': str, 'plan': Literal['sandbox', 'payg', 'growth', 'enterprise'], 'spend_cap_cents': int, 'period': str, 'spent_cents': int, 'spent_microusd': int, 'remaining_cents': int, 'reached': bool, 'payment_method': bool, 'thresholds_sent': List[int]}, total=False)
 ListEnvelope = TypedDict('ListEnvelope', {'data': List[Any], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 Account = TypedDict('Account', {'id': str, 'object': Literal['account'], 'name': str, 'external_ref': Optional[str], 'metadata': Dict[str, Any], 'created_at': str}, total=False)
-Agent = TypedDict('Agent', {'id': str, 'object': Literal['agent'], 'account_id': str, 'name': str, 'instructions': str, 'greeting': str, 'model': str, 'voice': "StockVoice", 'tools': List["AgentTool"], 'autonomy': "Autonomy", 'transfer_targets': List[str], 'business_hours': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'status': Literal['pending', 'ready'], 'created_at': str, 'updated_at': str}, total=False)
+Agent = TypedDict('Agent', {'id': str, 'object': Literal['agent'], 'account_id': str, 'name': str, 'instructions': str, 'greeting': str, 'model': str, 'voice': "StockVoice", 'tools': List["AgentTool"], 'autonomy': "Autonomy", 'transfer_targets': List[str], 'business_hours': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'runtime': "AgentRuntime", 'access': Union["AgentAccess", Optional[Any]], 'agent_view': Union["AgentView", Optional[Any]], 'status': Literal['pending', 'ready'], 'created_at': str, 'updated_at': str}, total=False)
+AgentRuntime = str
+AgentAccess = Literal['plan', 'key', 'local', 'credits']
+AgentView = TypedDict('AgentView', {'view': Literal['allternit', 'runtime', 'split'], 'look': Literal['terminal', 'desktop']}, total=False)
 KnowledgeFile = TypedDict('KnowledgeFile', {'id': str, 'object': Literal['knowledge_file'], 'agent_id': str, 'account_id': str, 'name': str, 'content_type': str, 'bytes': int, 'chunk_count': int, 'created_at': str}, total=False)
 AgentTool = Literal['send_text', 'call', 'email', 'channel_post', 'calendar', 'web_fetch', 'web_search', 'knowledge_search', 'ask_human', 'transfer']
 Autonomy = Literal['draft', 'ask', 'tell', 'limits']
@@ -207,7 +210,7 @@ class AgentsResource:
             return self._client.request("GET", f"/v1/agents", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
         return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
-    def create(self, *, name: str, account_id: str = NOT_GIVEN, instructions: str = NOT_GIVEN, greeting: str = NOT_GIVEN, model: str = NOT_GIVEN, voice: "StockVoice" = NOT_GIVEN, tools: List["AgentTool"] = NOT_GIVEN, autonomy: "Autonomy" = NOT_GIVEN, transfer_targets: List[str] = NOT_GIVEN, business_hours: Dict[str, Any] = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Agent":
+    def create(self, *, name: str, account_id: str = NOT_GIVEN, instructions: str = NOT_GIVEN, greeting: str = NOT_GIVEN, model: str = NOT_GIVEN, voice: "StockVoice" = NOT_GIVEN, tools: List["AgentTool"] = NOT_GIVEN, autonomy: "Autonomy" = NOT_GIVEN, transfer_targets: List[str] = NOT_GIVEN, business_hours: Dict[str, Any] = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, runtime: "AgentRuntime" = NOT_GIVEN, access: "AgentAccess" = NOT_GIVEN, agent_view: "AgentView" = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Agent":
         """Create an agent
 
         A hosted agent for one of your accounts. The greeting must say the caller is talking to an AI
@@ -239,6 +242,12 @@ class AgentsResource:
             _body['business_hours'] = business_hours
         if metadata is not NOT_GIVEN:
             _body['metadata'] = metadata
+        if runtime is not NOT_GIVEN:
+            _body['runtime'] = runtime
+        if access is not NOT_GIVEN:
+            _body['access'] = access
+        if agent_view is not NOT_GIVEN:
+            _body['agent_view'] = agent_view
         return self._client.request("POST", f"/v1/agents", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def get(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Agent":
@@ -248,7 +257,7 @@ class AgentsResource:
         """
         return self._client.request("GET", f"/v1/agents/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def update(self, id: str, *, name: str = NOT_GIVEN, instructions: str = NOT_GIVEN, greeting: str = NOT_GIVEN, model: str = NOT_GIVEN, voice: "StockVoice" = NOT_GIVEN, tools: List["AgentTool"] = NOT_GIVEN, autonomy: "Autonomy" = NOT_GIVEN, transfer_targets: List[str] = NOT_GIVEN, business_hours: Optional[Dict[str, Any]] = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Agent":
+    def update(self, id: str, *, name: str = NOT_GIVEN, instructions: str = NOT_GIVEN, greeting: str = NOT_GIVEN, model: str = NOT_GIVEN, voice: "StockVoice" = NOT_GIVEN, tools: List["AgentTool"] = NOT_GIVEN, autonomy: "Autonomy" = NOT_GIVEN, transfer_targets: List[str] = NOT_GIVEN, business_hours: Optional[Dict[str, Any]] = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, runtime: "AgentRuntime" = NOT_GIVEN, access: Union["AgentAccess", Optional[Any]] = NOT_GIVEN, agent_view: Union["AgentView", Optional[Any]] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Agent":
         """Update an agent
 
         Absent fields are unchanged; `business_hours: null` clears it; arrays and `metadata` replace the old value. The agent's account can't change.
@@ -276,6 +285,12 @@ class AgentsResource:
             _body['business_hours'] = business_hours
         if metadata is not NOT_GIVEN:
             _body['metadata'] = metadata
+        if runtime is not NOT_GIVEN:
+            _body['runtime'] = runtime
+        if access is not NOT_GIVEN:
+            _body['access'] = access
+        if agent_view is not NOT_GIVEN:
+            _body['agent_view'] = agent_view
         return self._client.request("PATCH", f"/v1/agents/{_q(id)}", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def delete(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:

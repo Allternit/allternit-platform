@@ -61,6 +61,7 @@ async fn ctx() -> Ctx {
         include_str!("../../../migrations_pg/003_api_keys.sql"),
         include_str!("../../../migrations_pg/050_platform_api_foundation.sql"),
         include_str!("../../../migrations_pg/063_platform_agents.sql"),
+        include_str!("../../../migrations_pg/155_platform_agent_runtime.sql"),
         include_str!("../../../migrations_pg/064_platform_conversations.sql"),
         include_str!("../../../migrations_pg/067_platform_agent_knowledge.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),

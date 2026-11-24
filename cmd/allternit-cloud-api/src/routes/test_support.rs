@@ -343,6 +343,7 @@ pub async fn platform_schema(db: &sqlx::PgPool) {
         include_str!("../../migrations_pg/057_allternit_events_backbone.sql"),
         include_str!("../../migrations_pg/083_mcp_event_replay.sql"),
         include_str!("../../migrations_pg/063_platform_agents.sql"),
+        include_str!("../../migrations_pg/155_platform_agent_runtime.sql"),
         include_str!("../../migrations_pg/064_platform_conversations.sql"),
         include_str!("../../migrations_pg/067_platform_agent_knowledge.sql"),
         include_str!("../../migrations_pg/070_platform_calls.sql"),
