@@ -152,7 +152,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     val introStore = remember(account?.userId) {
         if (account == null) null else {
             val flags = com.allternit.core.api.MeFlagsClient(ShellApi.okHttp, com.allternit.core.api.ApiConfig().cloudBaseUrl)
-            IntroSeenStore(context, fetch = { flags.read() }, push = { k, iso -> flags.write(k, iso) })
+            IntroSeenStore(context, fetch = { flags.read() }, push = { k, iso -> flags.write(k, iso) }, accountId = account.userId)
         }
     }
     // One chat for the shell (iOS keeps one ChatViewModel): a running reply survives a trip

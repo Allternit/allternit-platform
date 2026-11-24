@@ -27,15 +27,39 @@ object IntroKeys {
  * the account flags (key to iso time, null on failure) and [push] writes one key (true
  * when accepted). Wire them to core:api `MeFlagsClient.read` / `write`; core:design has
  * no network dependency on purpose.
+ *
+ * [accountId] keys the cache per account (one prefs file each), so a second account on the
+ * same phone still sees its intros. The first account to load after the upgrade takes over
+ * the old device-wide entries once, so existing users don't see intros again. Null keeps the
+ * device-wide file.
  */
 class IntroSeenStore(
     context: Context,
     private val fetch: suspend () -> Map<String, String>?,
     private val push: suspend (key: String, iso: String) -> Boolean,
     private val now: () -> String = { Instant.now().toString() },
+    accountId: String? = null,
 ) {
-    private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences("allternit.intro_seen", Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = run {
+        val app = context.applicationContext
+        val legacy = app.getSharedPreferences(LEGACY_FILE, Context.MODE_PRIVATE)
+        if (accountId.isNullOrEmpty()) return@run legacy
+        val mine = app.getSharedPreferences("$LEGACY_FILE.${accountId.hashCode().toUInt().toString(16)}_${accountId.filter { it.isLetterOrDigit() }.take(40)}", Context.MODE_PRIVATE)
+        // One-time move of the pre-account entries (seen times and pending writes) to this account.
+        if (legacy.all.isNotEmpty()) {
+            val edit = mine.edit()
+            for ((k, v) in legacy.all) {
+                if (mine.contains(k)) continue
+                when (v) {
+                    is String -> edit.putString(k, v)
+                    is Boolean -> edit.putBoolean(k, v)
+                }
+            }
+            edit.commit()
+            legacy.edit().clear().commit()
+        }
+        mine
+    }
 
     /** Seen on this device or on the account (as last fetched). */
     fun isSeen(key: String): Boolean = prefs.getString(key, null) != null
@@ -63,6 +87,10 @@ class IntroSeenStore(
     }
 
     private fun pending(key: String) = "pending.$key"
+
+    private companion object {
+        const val LEGACY_FILE = "allternit.intro_seen"
+    }
 }
 
 /**
