@@ -210,6 +210,8 @@ struct MainWorkspaceView: View {
         // Allternit calls: ring polling + the incoming / live call screens.
         .modifier(InappCallHost())
         .modifier(MeetYourBotsHost())
+        // First-visit intro for each mode, driven by the shell mode store (D2).
+        .modeIntros()
         .onReceive(NotificationCenter.default.publisher(for: .openChatSession)) { note in
             // Bot Home / quick task post this: land on Chats with that
             // session loaded, from whichever section is showing.

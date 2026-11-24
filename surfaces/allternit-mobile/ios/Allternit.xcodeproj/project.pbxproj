@@ -536,6 +536,7 @@
 		930C1204768B15212990D2E1 /* ArtifactTemplateCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBAA96AC0F8A8915F6B702DF /* ArtifactTemplateCatalog.swift */; };
 		9318ED9B6A5A6B72F1240BF6 /* WebhookTrigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 202DAEFD590DACDF8429BB4A /* WebhookTrigger.swift */; };
 		93268B9EABC62F8BC790B16F /* ArtifactDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15187B0C77E90FFBEE394F9A /* ArtifactDetailsView.swift */; };
+		937A45ADCE190EA57C4BBA1C /* ModeIntros.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB5C3EAC8540F8EE15999F62 /* ModeIntros.swift */; };
 		9385E59F21D8DFAB0594C4BD /* SignInStageMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A9822297D81E2FB62B5186 /* SignInStageMotion.swift */; };
 		93BBEF8FB0B6058E47480A86 /* ArtifactsLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 384E354DC0746B0247176A44 /* ArtifactsLibraryView.swift */; };
 		93C6789B18079E7BA58BA1E9 /* ThreadShareClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 436DEFC5F3B8C4C5D70DFB98 /* ThreadShareClient.swift */; };
@@ -1630,6 +1631,7 @@
 		A910FCAFD8A6276B70E9FAD2 /* AccountProjectViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProjectViews.swift; sourceTree = "<group>"; };
 		AA92C0E7B1EBF19705E0BD37 /* BotFormSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotFormSheet.swift; sourceTree = "<group>"; };
 		AB32679EDE01EA7A9CE2BACA /* DevServerPortsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevServerPortsView.swift; sourceTree = "<group>"; };
+		AB5C3EAC8540F8EE15999F62 /* ModeIntros.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModeIntros.swift; sourceTree = "<group>"; };
 		ABBB4775FDD12CEECFBA773E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ABC21CF93092F6F12C6D3F1D /* SampleURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleURLProtocol.swift; sourceTree = "<group>"; };
 		AC1278B175922C3190124C76 /* CloudCreditsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudCreditsSheet.swift; sourceTree = "<group>"; };
@@ -2540,6 +2542,7 @@
 				34429F16AC2D1219E4E8CE9C /* BotsDrawerRail.swift */,
 				E44332C83123F7464F36D69E /* CustomizeViews.swift */,
 				66FD35F18B3062FF97F7BF10 /* InboxSheet.swift */,
+				AB5C3EAC8540F8EE15999F62 /* ModeIntros.swift */,
 				C7897BA4CEED5704C356EB36 /* NativeSessionPickerSheet.swift */,
 				746581C22A7F7F2E8019787C /* OverviewBulkActions.swift */,
 				62CD1C9236128076797EBD39 /* OverviewLayoutSwitch.swift */,
@@ -4822,6 +4825,7 @@
 				554F846E9556C106AED8763C /* MiniAppsStoreView.swift in Sources */,
 				01E9BC3F02522F5FC05CBEB2 /* ModeHubSheet.swift in Sources */,
 				CB1B6A64F746242B4BE11833 /* ModeHubSpec.swift in Sources */,
+				937A45ADCE190EA57C4BBA1C /* ModeIntros.swift in Sources */,
 				08FFB4A1BEA034231482CE44 /* ModeOrbView.swift in Sources */,
 				F047EB8C6BDC03144EDF1187 /* ModeTheme.swift in Sources */,
 				E8F0F6894631FBDCAB775A22 /* ModelManagementView.swift in Sources */,
