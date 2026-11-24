@@ -5,6 +5,7 @@ import { useExitOnCtrlCDWithKeybindings } from '../../hooks/useExitOnCtrlCDWithK
 import { useTerminalSize } from '../../hooks/useTerminalSize';
 import { useIsInsideModal, useModalOrTerminalSize } from '../../context/modalContext';
 import { Pane } from '../design-system/Pane';
+import { BlockTitle } from '../BlockTitle';
 import { Tabs, Tab } from '../design-system/Tabs';
 import { Status, buildDiagnostics } from './Status';
 import { Config } from './Config';
@@ -64,7 +65,7 @@ export function Settings({
   const tabs = t8;
   const t9 = defaultTab !== "Config" && defaultTab !== "Gates";
   const t10 = tabsHidden || insideModal ? undefined : contentHeight;
-  const t11 = <Pane color="permission"><Tabs color="permission" selectedTab={selectedTab} onTabChange={setSelectedTab} hidden={tabsHidden} initialHeaderFocused={t9} contentHeight={t10}>{tabs}</Tabs></Pane>;
+  const t11 = <Pane color="permission"><BlockTitle title="SETTINGS" /><Tabs color="permission" selectedTab={selectedTab} onTabChange={setSelectedTab} hidden={tabsHidden} initialHeaderFocused={t9} contentHeight={t10}>{tabs}</Tabs></Pane>;
 
   return t11;
 }

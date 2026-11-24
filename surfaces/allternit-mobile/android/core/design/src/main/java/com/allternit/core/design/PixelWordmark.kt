@@ -27,17 +27,25 @@ val MatrixSand = Color(0xFFD4B08C)
  * 10-unit cells with 8.5 blocks and 1.5 corner radius, the A core block in coral.
  */
 @Composable
-fun PixelWordmark(height: Dp = 16.dp, suffix: String = "", ink: Color = AllternitTheme.colors.textPrimary, modifier: Modifier = Modifier) {
-    val (letters, cols) = PixelGlyphs.layout("TERNIT $suffix".trim())
+fun PixelWordmark(
+    height: Dp = 16.dp,
+    suffix: String = "",
+    ink: Color = AllternitTheme.colors.textPrimary,
+    modifier: Modifier = Modifier,
+    /** Draw only [suffix]: no A:// mark, no TERNIT (Bots and ACI; Eoj 2026-11-24). */
+    wordOnly: Boolean = false,
+) {
+    val bare = wordOnly && suffix.isNotEmpty()
+    val (letters, cols) = if (bare) PixelGlyphs.layout(suffix, start = 0) else PixelGlyphs.layout("TERNIT $suffix".trim())
     val width = height * (cols.toFloat() / PixelGlyphs.ROWS)
-    val label = "Allternit $suffix".trim()
+    val label = if (bare) suffix else "Allternit $suffix".trim()
     Canvas(modifier.size(width, height).semantics { contentDescription = label }) {
         // Fit both ways: when the row is narrower than the wordmark (drawer header with two
         // buttons), scale down instead of drawing past the box into the buttons (Moto/emulator run).
         val scale = minOf(size.height / (PixelGlyphs.ROWS * PixelGlyphs.CELL), size.width / (cols * PixelGlyphs.CELL))
-        PixelGlyphs.markCells.forEach { pixel(it, scale, ink) }
+        if (!bare) PixelGlyphs.markCells.forEach { pixel(it, scale, ink) }
         letters.forEach { pixel(it, scale, ink) }
-        pixel(PixelGlyphs.coreCell, scale, PixelCoral)
+        if (!bare) pixel(PixelGlyphs.coreCell, scale, PixelCoral)
     }
 }
 
@@ -121,9 +129,9 @@ object PixelGlyphs {
     )
 
     /** Every inked letter cell and the total column count (iOS PixelWordmark.layout). */
-    fun layout(word: String): Pair<List<Pair<Int, Int>>, Int> {
+    fun layout(word: String, start: Int = TERNIT_START): Pair<List<Pair<Int, Int>>, Int> {
         val cells = mutableListOf<Pair<Int, Int>>()
-        var col = TERNIT_START
+        var col = start
         for (ch in word.uppercase()) {
             if (ch == ' ') {
                 col += SPACE_COLS

@@ -559,6 +559,10 @@ class BotModeStore(private val context: Context) {
     }
     private val creatingMain = mutableMapOf<String, Deferred<BotsResult<String>>>()
 
+    /** The bot whose page or chat Bots mode is showing now; null on the team page. Set by [BotsModeRoot] from its back stack, read by the shell's mode orb. */
+    var focusedBotId by mutableStateOf<String?>(null)
+    val focusedBot: BotRecord? get() = focusedBotId?.let { id -> agents.firstOrNull { it.id == id } }
+
     /** iOS BotModeStore.bots: pinned first, then by latest thread activity, then by name. */
     val bots: List<BotRecord>
         get() {

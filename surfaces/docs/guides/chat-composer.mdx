@@ -7,15 +7,21 @@ These work the same in Allternit Desktop, on ai.allternit.com (including its pho
 
 ## The text box
 
-At rest the text box is one line: the **+** button, a line to type on, and the send button. Click or tap it and it grows to the full card, with the controls under it. When you reply to something, or attach files on Desktop, a soft grey band appears around it: the reply strip above, the attachment cards below. Clicking the box does not draw a focus ring. A ring shows only when you reach the box with the keyboard.
+At rest the text box is one line: the **+** button, a line to type on, the **mic** and the **voice** button. Click or tap it and it grows to the full card. When you reply to something, or attach files on Desktop, a soft grey band appears around it: the reply strip above, the attachment cards below. Clicking the box does not draw a focus ring. A ring shows only when you reach the box with the keyboard.
 
-Under the open box:
+The **Runtime · Brain** chip sits on the card's top border at the right. It is there in every mode (Home, Bots, Code and ACI), at rest and when the box is open. It shows the runtime's mark and name, then the brain, with a status dot: green when ready, amber when a step is needed, coral while the agent is running. Tap it to open the **Runtime and brain** selector. The selector has a **Runtime** row and a **Brain** row, each with the provider's logo. In a bot chat it also has a **Bot** row. In Code the chip shows Code's own runtime (the paired computer or coding agent) and its model. With no brain picked yet it reads **Pick a brain**. There is no default brain, so send then keeps your message, opens the selector and says **Pick a brain first**. Once you pick one, it stays your brain on every surface until you change it.
+
+The **Agent mode | Plugins | Artifacts** deck is a tray tucked under the composer card. It shows when you open **Tools**.
+
+The box is open while it has focus or a draft. Then these show:
 
 - **+** is the one add button. It opens the menu for files, folders, screenshots, GitHub and the computer. See [Attachments](/guides/attachments). **Draw a sketch** (on a phone, **Sketch**) opens a white canvas with pen, fine, marker, eraser, colors and undo. **Attach** adds the drawing as an image. The iPhone app uses Apple's drawing tools.
-- The **Runtime** chip and the **Brain** chip pick where the agent runs and which model it uses. The **Brain** chip opens the model picker. With no brain picked yet it reads **Pick a brain**. There is no default brain, so send then keeps your message, opens the picker and says **Pick a brain first**. Once you pick one, it stays your brain on every surface until you change it.
-- The **sliders** button opens **Tools**: Agent mode, Plugins and Artifacts. They are not on screen until you open them.
-- The **voice** button (the waveform) starts voice mode. On a phone, the **mic** sits to its left and dictates into the draft; see [Voice](/guides/voice#dictation-on-a-phone). If dictation fails, one plain line says so.
-- The **send** button stays grey until there is something to send.
+- The **sliders** button opens **Tools**. It shows only while the box is open.
+- The **games** button shows only while the box is open.
+- The **mic** dictates into the draft; see [Voice](/guides/voice#dictation-on-a-phone). If dictation fails, one plain line says so.
+- The **voice** button (the waveform) starts voice mode. While there is text in the box, it becomes the **send** button. Send stays grey until there is something to send.
+
+In Bots mode the **To:** recipient sits on the mode orb's row, to the right of the orb.
 
 There is no Output menu. To ask for a kind of result, pick a deck mode such as **Docs** or **Slides**; it asks you which kind to make.
 
@@ -33,7 +39,7 @@ When a session is open, the **New** orb sits at the composer's top right. Tap it
 
 These changes apply to the phone layout on ai.allternit.com and in the m.allternit.com app (including the Android app from Google Play). The hub rises from the bottom edge at full width.
 
-- **Tools are behind the sliders button.** There is no bar under the text box. Tap the **sliders** button to open Tools. Your choice of Agent mode and plugins is remembered on this device.
+- **Tools are behind the sliders button.** There is no bar under the text box. The **sliders** and **games** buttons show only while the box is open. Tap **sliders** to open Tools. Your choice of Agent mode and plugins is remembered on this device.
 - **Permission is in +.** The permission pill is gone from the row. Open **+** and choose **Permission · Auto ›** to pick **Auto**, **Ask** or **Read-only**. The choice is the same one as before (see [Chat sessions](/guides/chat-sessions#approval)). The page links to the permission defaults.
 - **Add to chat** sheet. **+** opens a sheet that groups the ways to add: files and photos (the **Photos** link in the title row opens the file picker, because a web page cannot read your camera roll), the **Computer** row and **Permission**.
 - **Computer chip.** There is no strip at the top. A chip above the text box shows when there is no computer connected (**Connect**), when your computer cannot be reached (**Fix**), while it wakes, or when the compute gate applies. **✕** shrinks it to a dot on **+**; the dot clears when the state changes. The same chip shows in Chat, Bots and Code. Screens with no text box show an empty state with a **Connect** action.
@@ -46,7 +52,7 @@ On a phone, tapping outside the composer closes the keyboard and the text box sh
 
 ## The model picker
 
-The picker lists every model you can use, grouped by provider. Search narrows the list. Nothing is hidden behind the search.
+The picker opens from the **Brain** row of the **Runtime and brain** selector. Each provider shows its logo. It lists every model you can use, grouped by provider. Search narrows the list. Nothing is hidden behind the search.
 
 - **Desktop and the web:** the providers are on the left, each with a ring for its usage limit. The ring is green, then amber at 80%, then red at 95%. The models are in the middle. The model you point at is shown below, with its thinking setting and its account.
 - **Phone and the PWA:** search is on top, with the provider rail on the left (each provider with its ring) and its models beside it. The model you point at is shown at the foot with its thinking setting. The iPhone app groups Allternit Cloud models by vendor and adds **Reasoning** and **Local** filter chips and a status dot on each provider.

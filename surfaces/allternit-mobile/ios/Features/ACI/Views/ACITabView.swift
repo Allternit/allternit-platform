@@ -304,7 +304,10 @@ private struct ACIBrowserLanding: View {
     private static let taglines = ["AI-Powered Browsing", "Navigate with Intelligence", "Your Web, Amplified", "Explore Fearlessly", "Browse. Automate. Build."]
 
     var body: some View {
-        ScrollView {
+        // ACI block title (T11): docks into the ☰-only ACIPhoneHeader above this
+        // view. That header is 52 pt tall and ends where this view starts, so its
+        // centre is 26 pt above our top edge (the dock draws relative to us).
+        DockingTitleScrollView(title: "ACI", chrome: .overlay(barCenter: -26)) {
             VStack(spacing: 0) {
                 Image("MatrixLogo")
                     .resizable()
@@ -347,12 +350,15 @@ private struct ACIBrowserLanding: View {
                 shortcutGrid
             }
             .frame(maxWidth: 560)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 48)
+            // The dock adds 14 pt each side and the title's room above.
+            .padding(.horizontal, 10)
+            .padding(.top, 16)
+            .padding(.bottom, 48)
             .frame(maxWidth: .infinity)
+            // The dock paints its own page fill, so the dots live in the content.
+            .background(alignment: .topLeading) { ACIDotGrid() }
         }
         .scrollDismissesKeyboard(.interactively)
-        .background(alignment: .topLeading) { ACIDotGrid().ignoresSafeArea(edges: .bottom) }
     }
 
     /// The search/URL form: 56 pt neutral field, accent search button.

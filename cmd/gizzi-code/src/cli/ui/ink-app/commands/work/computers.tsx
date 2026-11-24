@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { useState } from 'react'
 import { Pane } from '../../components/design-system/Pane'
+import { BlockTitle } from '../../components/BlockTitle'
 import { Box, Text, useInput } from '../../ink'
 import type { LocalJSXCommandCall } from '../../types/command.js'
 import { bytes, formatPorts, formatServices, uptime, type ConsoleRow } from '@/cli/work/console'
@@ -86,7 +87,7 @@ export function ComputersPane({ onDone }: { onDone: () => void }): React.ReactNo
   return (
     <Pane>
       <Box>
-        <Text bold>Computers</Text>
+        <BlockTitle title="COMPUTERS" />
         {data ? <Text dimColor> · {data.length}</Text> : null}
       </Box>
       {error ? <Text color="warning">{error}</Text> : null}

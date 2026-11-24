@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +14,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -38,6 +43,10 @@ import com.allternit.core.design.AppLogo
 import androidx.compose.ui.Alignment
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyBox
+import com.allternit.core.design.FilterPills
+import com.allternit.core.design.GlassPill
+import com.allternit.core.design.ProvideDockScroll
 import com.allternit.feature.artifacts.LibraryNet
 import com.allternit.feature.artifacts.bool
 import com.allternit.feature.artifacts.friendly
@@ -227,23 +236,29 @@ internal fun AciMcpAppsView(host: AciHost) {
     LaunchedEffect(host.signedIn) { if (host.signedIn) model.refresh() }
     LaunchedEffect(model.signIn) { model.signIn?.let { openExternal(context, it); model.signIn = null } }
 
+    val scroll = rememberScrollState()
+    // The header lives in the scroll so its title docks as the page scrolls (see the clipping note in the PR).
+    ProvideDockScroll(scroll) {
     Column(Modifier.fillMaxSize().testTag("aciMcpApps")) {
-        Column(Modifier.padding(horizontal = 16.dp)) {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 8.dp)) {
             AciViewHeader("MCP Apps", "Connect apps and services the agent can use.", bottom = 16.dp)
             AciSearchField(query, "Search apps", { query = it; limit = 48; if (it.isNotEmpty() && tab == McpTab.Build) tab = McpTab.Discover }, "aciMcpSearch")
-            AciChipRow {
-                McpTab.entries.forEach { t -> AciChip(t.label, tab == t, "aciMcpTab-${t.name}") { tab = t; category = null; collection = null; limit = 48 } }
-                AciChip("＋ Add by URL", false, "aciMcpAdd") { addOpen = true }
-                AciChip("Mini Apps", false, "aciMiniApps") { miniOpen = true }
+            FilterPills(
+                options = McpTab.entries.map { it.label }, selectedIndex = tab.ordinal,
+                onSelect = { i -> tab = McpTab.entries[i]; category = null; collection = null; limit = 48 },
+                modifier = Modifier.padding(vertical = 4.dp), itemTag = { i -> "aciMcpTab-${McpTab.entries[i].name}" },
+            )
+            Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AciGlassAction("＋ Add by URL", "aciMcpAdd") { addOpen = true }
+                AciGlassAction("Mini Apps", "aciMiniApps") { miniOpen = true }
             }
-        }
-        model.notice?.let { n ->
-            Row(Modifier.fillMaxWidth().background(c.fillNeutral).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text(n, color = c.textPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f).testTag("aciMcpNotice"))
-                Text("Dismiss", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.heightIn(min = 44.dp).clickable { model.notice = null }.padding(8.dp))
+            model.notice?.let { n ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp).clip(RoundedCornerShape(20.dp)).background(c.fillNeutral).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text(n, color = c.textPrimary, fontSize = 13.sp, modifier = Modifier.weight(1f).testTag("aciMcpNotice"))
+                    Text("Dismiss", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.heightIn(min = 44.dp).clickable { model.notice = null }.padding(8.dp))
+                }
             }
-        }
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
             when {
                 !host.signedIn -> AciStateCard("Sign in to see your apps", "MCP Apps are saved to your Allternit account.", "Sign in", host.openSignIn)
                 tab == McpTab.Installed -> {
@@ -252,17 +267,21 @@ internal fun AciMcpAppsView(host: AciHost) {
                     when {
                         model.failure != null && !model.loaded -> AciStateCard("Couldn’t load your apps", model.failure.orEmpty(), "Retry", { scope.launch { model.refresh() } })
                         !model.loaded -> AciStateCard("Loading…", "Reading your connected apps.")
-                        list.isEmpty() -> AciStateCard("No apps yet", "Find one in Discover, or add one by its address.", "Open Discover", { tab = McpTab.Discover })
-                        else -> list.forEach { app ->
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                AppLogo(app.name, id = app.logoKey ?: app.appId, size = 40.dp)
-                                Box(Modifier.weight(1f)) {
-                                    AciListRow(app.name, listOfNotNull(app.host, if (app.connected) "Connected" else "Needs sign-in", MCP_MODES.firstOrNull { it.first == app.permissionMode }?.second).joinToString(" · "),
-                                        null, "aciMcpInstalled-${app.appId}") { selected = app }
+                        list.isEmpty() -> EmptyBox("No apps yet", "Find one in Discover, or add one by its address.", Modifier.testTag("aciState"), onClick = { tab = McpTab.Discover })
+                        else -> AciRoundedCard {
+                            list.forEach { app ->
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    AppLogo(app.name, id = app.logoKey ?: app.appId, size = 40.dp)
+                                    Box(Modifier.weight(1f)) {
+                                        AciListRow(app.name, listOfNotNull(app.host, if (app.connected) "Connected" else "Needs sign-in", MCP_MODES.firstOrNull { it.first == app.permissionMode }?.second).joinToString(" · "),
+                                            null, "aciMcpInstalled-${app.appId}") { selected = app }
+                                    }
                                 }
-                            }
-                            if (!app.connected && app.connectorId.isNotEmpty()) {
-                                AciPillButton("Reconnect", "aciMcpReconnect-${app.appId}", "Reconnect ${app.name}") { scope.launch { model.signIn = model.startOAuth(app.connectorId) } }
+                                if (!app.connected && app.connectorId.isNotEmpty()) {
+                                    Box(Modifier.padding(bottom = 10.dp)) {
+                                        AciGlassAction("Reconnect", "aciMcpReconnect-${app.appId}", "Reconnect ${app.name}") { scope.launch { model.signIn = model.startOAuth(app.connectorId) } }
+                                    }
+                                }
                             }
                         }
                     }
@@ -273,29 +292,48 @@ internal fun AciMcpAppsView(host: AciHost) {
                     fun add(e: McpEntry) { if (!e.connected) scope.launch { model.signIn = if (e.shelfConnector) model.connectCatalog(e) else model.installServer(e.id, e.name, e.serverUrl.orEmpty()) } }
                     // The landing shelf (iOS DirectoryHero): curated collections above the list until a search, category or collection narrows it.
                     if (query.isBlank() && category == null && collection == null) AciDirectoryHero(all, { add(it) }, { collection = it; limit = 48 })
-                    mcpCollections.firstOrNull { it.id == collection }?.let { col -> AciPillButton("${col.title}  ✕", "aciMcpCollectionClear", "Show every app") { collection = null } }
-                    AciChipRow {
-                        AciChip("All", category == null, "aciMcpCat-all") { category = null; collection = null; limit = 48 }
-                        cats.forEach { cat -> AciChip(cat, category == cat, "aciMcpCat-$cat") { category = cat; limit = 48 } }
-                    }
+                    mcpCollections.firstOrNull { it.id == collection }?.let { col -> AciGlassAction("${col.title}  ✕", "aciMcpCollectionClear", "Show every app") { collection = null } }
+                    FilterPills(
+                        options = listOf("All") + cats, selectedIndex = (cats.indexOf(category) + 1).coerceAtLeast(0),
+                        onSelect = { i -> if (i == 0) { category = null; collection = null } else category = cats[i - 1]; limit = 48 },
+                        modifier = Modifier.padding(vertical = 4.dp), itemTag = { i -> if (i == 0) "aciMcpCat-all" else "aciMcpCat-${cats[i - 1]}" },
+                    )
                     val q = query.trim().lowercase()
                     val colKeys = mcpCollections.firstOrNull { it.id == collection }?.ids?.toSet()
                     val list = all.filter { (category == null || it.category == category) && (colKeys == null || mcpRankKey(it.id) in colKeys) && (q.isEmpty() || it.name.lowercase().contains(q) || it.description.lowercase().contains(q)) }
-                    if (list.isEmpty()) AciStateCard("No apps found", if (q.isEmpty()) "Nothing is listed here yet." else "No apps match your search.")
-                    list.take(limit).forEach { e ->
-                        AciAppRow(e, if (e.connected) "Connected" else "Add", "aciMcpEntry-${e.id}") { add(e) }
+                    if (list.isEmpty()) EmptyBox("No apps found", if (q.isEmpty()) "Nothing is listed here yet." else "No apps match your search.", Modifier.testTag("aciState"))
+                    else AciRoundedCard {
+                        list.take(limit).forEach { e ->
+                            AciAppRow(e, if (e.connected) "Connected" else "Add", "aciMcpEntry-${e.id}") { add(e) }
+                        }
                     }
-                    if (list.size > limit) AciPillButton("Show more", "aciMcpMore") { limit += 48 }
+                    if (list.size > limit) AciGlassAction("Show more", "aciMcpMore") { limit += 48 }
                 }
                 else -> AciMcpBuildTab(model)
             }
+            }
         }
+    }
     }
     if (addOpen) AciAddByUrlSheet(onDismiss = { addOpen = false }) { url -> model.signIn = model.addByUrl(url); addOpen = false }
     selected?.let { app -> AciInstalledAppSheet(app, model, onDismiss = { selected = null }) }
     if (miniOpen) {
         Dialog(onDismissRequest = { miniOpen = false }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) { AciMiniAppsStore(onClose = { miniOpen = false }) }
     }
+}
+
+/** A glass pill action (Connect, Add by URL, Install...). 44 dp tall; [label] is the spoken name when it differs from the title. */
+@Composable
+internal fun AciGlassAction(title: String, testTag: String, label: String? = null, onClick: () -> Unit) {
+    GlassPill(onClick, Modifier.testTag(testTag).semantics(mergeDescendants = true) { contentDescription = label ?: title }, height = 44.dp) {
+        Text(title, color = AllternitTheme.colors.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** A rounded (radius 20) neutral-fill card that groups list rows. */
+@Composable
+internal fun AciRoundedCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(AllternitTheme.colors.fillNeutral).padding(horizontal = 14.dp), content = content)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

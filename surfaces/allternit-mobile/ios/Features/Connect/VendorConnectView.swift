@@ -66,6 +66,8 @@ final class OneStepConnect: ObservableObject {
 struct VendorConnectView: View {
     /// Offer "Make it my main bot" on the connected bot (Meet your bots → who leads).
     var offerMain = false
+    /// The docking title; callers can word it for their sheet.
+    var title = "Add a Connected bot"
     /// A Connected bot was added; `mainBotId` is set when it was made the main bot.
     var onConnected: ((_ firstBotId: String?, _ mainBotId: String?) -> Void)? = nil
 
@@ -76,7 +78,7 @@ struct VendorConnectView: View {
     @State private var open: ConnectProduct?
 
     var body: some View {
-        List {
+        DockingTitleList(title: title) {
             if !auth.isSignedIn {
                 FriendlyStateView(style: .empty, icon: "person.crop.circle", title: "Sign in to connect a bot",
                                   message: "Connected bots connect to your Allternit account.",
@@ -119,8 +121,6 @@ struct VendorConnectView: View {
                 }
             }
         }
-        .navigationTitle("Add a Connected bot")
-        .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
         .task { if products == nil { await load() } }
         .sheet(item: $open) { p in

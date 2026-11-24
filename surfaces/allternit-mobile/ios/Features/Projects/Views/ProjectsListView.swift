@@ -310,7 +310,7 @@ struct ProjectsListView: View {
         }
         let accountError = noComputer ? library.accountProjectsError : nil
         if noComputer {
-            ProjectsNeedsComputerCard(text: "Files and runs need a computer")
+            NeedsComputerLine(text: "Files and runs need a computer", style: .card)
         }
         let failures = [loadError, botError, codeError, accountError].compactMap { $0 }.uniqued()
         if !failures.isEmpty {
@@ -867,43 +867,6 @@ private struct EditProjectDetailsSheet: View {
     }
 }
 
-
-// MARK: - No-computer card
-
-/// "Files and runs need a computer": a white card with a small glass Connect
-/// button. Same sheet and same condition as `NeedsComputerLine`.
-private struct ProjectsNeedsComputerCard: View {
-    let text: String
-    @State private var isConnectPresented = false
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "desktopcomputer")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Color("TextSecondary"))
-                .accessibilityHidden(true)
-            Text(text)
-                .font(.system(size: 14))
-                .foregroundStyle(Color("TextSecondary"))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            GlassPill(title: "Connect") { isConnectPresented = true }
-        }
-        .padding(.leading, 16)
-        .padding(.trailing, 10)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(scheme == .dark ? Color(white: 0.14) : Color.white)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(PolishTokens.glassBorder, lineWidth: 0.5)
-        )
-        .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
-    }
-}
 
 // MARK: - Intro hero
 

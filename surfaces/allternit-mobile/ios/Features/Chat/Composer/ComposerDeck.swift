@@ -80,6 +80,10 @@ struct ComposerDeckBand: View {
     /// True while one of the band's sheets is up, so the folded band does not
     /// close under it when the keyboard focus moves (contract C1).
     var onSheetActive: ((Bool) -> Void)? = nil
+    /// The card's radius (expanded) — the tray's bottom corners match it.
+    var cornerRadius: CGFloat = 22
+    /// How far the tray tucks under the card's bottom edge.
+    private let overlap: CGFloat = 18
 
     @EnvironmentObject private var modeStore: AppModeStore
     @EnvironmentObject private var agentModeStore: AgentModeStore
@@ -113,19 +117,21 @@ struct ComposerDeckBand: View {
             }
             .padding(.horizontal, variant == .full ? 16 : 12)
         }
-        // Tucked 8pt under the card: the band's top padding clears it.
-        .padding(.top, (variant == .full ? 14 : 12) + 8)
+        // Tucked under the card (the card keeps four round corners and sits
+        // above): top padding = overlap + 8 clears it.
+        .padding(.top, overlap + 8)
         .padding(.bottom, variant == .full ? 8 : 6)
-        .frame(minHeight: (variant == .full ? 52 : 40) + 8)
+        .frame(minHeight: (variant == .full ? 52 : 40) + overlap)
         .background(
-            UnevenRoundedRectangle(bottomLeadingRadius: 16, bottomTrailingRadius: 16)
-                .fill(Color("BgPanel"))
+            UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius)
+                .fill(Color("FillNeutral"))
         )
         .overlay(
-            DeckOutline()
+            DeckOutline(radius: cornerRadius)
                 .stroke(Color("BorderSubtle"), lineWidth: 1)
         )
-        .padding(.top, -8)
+        .padding(.horizontal, 6)
+        .padding(.top, -overlap)
         .onChange(of: isManagePluginsPresented || isArtifactsPresented) { _, active in
             onSheetActive?(active)
         }
@@ -287,8 +293,9 @@ struct ComposerDeckBand: View {
 
 /// Sides and bottom of the deck tray — its top edge hides under the card.
 private struct DeckOutline: Shape {
+    var radius: CGFloat = 16
     func path(in rect: CGRect) -> Path {
-        let r: CGFloat = 16
+        let r: CGFloat = radius
         var path = Path()
         path.move(to: CGPoint(x: rect.minX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - r))

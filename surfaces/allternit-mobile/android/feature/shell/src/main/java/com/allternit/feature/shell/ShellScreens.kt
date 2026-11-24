@@ -1,6 +1,5 @@
 package com.allternit.feature.shell
 
-import com.allternit.core.design.GizziCodeWordmark
 import com.allternit.core.design.AProtocolMark
 import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
@@ -25,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +34,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -67,6 +69,12 @@ import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.Haptics
+import com.allternit.core.design.rememberDockOffset
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import com.allternit.core.design.DockingBlockTitle
+import androidx.compose.ui.zIndex
 import com.allternit.core.design.ModeAccents
 import com.allternit.core.design.R as DesignR
 import com.allternit.feature.onboarding.R as OnboardingR
@@ -163,7 +171,7 @@ internal fun ShellHome(
     onNewChat: (ComposerDraft) -> Unit,
     onOpenSection: (RailRow) -> Unit,
     /** Wave F1: Code mode's home (folder, tools, recent threads) replaces the placeholder and the composer starts a thread. */
-    codeHome: (@Composable () -> Unit)? = null,
+    codeHome: (@Composable (ScrollState) -> Unit)? = null,
     /** Code mode's header button: the Code sessions view (iOS CodeSessionsButton → CodeOverview). */
     onCodeSessions: (() -> Unit)? = null,
     /** Code mode's composer deck row (iOS CodeDeckRow): environment, folder, branch, worktree, permission, usage, view menu. */
@@ -173,7 +181,29 @@ internal fun ShellHome(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var phoneArmed by remember { mutableStateOf(false) }
+    // Home launch: the A://TERNIT block title docks into the top bar when the launch content scrolls (T8).
+    val homeScroll = rememberScrollState()
+    val homeDock = rememberDockOffset(homeScroll)
+    // Code launch: GIZZI CODE docks into the bar the same way (T13); CodeHome scrolls on this state.
+    val codeScroll = rememberScrollState()
+    val codeDock = rememberDockOffset(codeScroll)
+    val codeDocks = mode == ShellMode.Code && codeHome != null && onCodeSessions != null
+    // T13: the bar keeps the selected computer's name (iOS ShellHeaderTitle); "Code" when none is selected.
+    var computerName by remember { mutableStateOf<String?>(null) }
+    val codeHost = codeActions?.host
+    LaunchedEffect(codeDocks, codeHost) {
+        if (codeDocks && codeHost != null) {
+            val relay = codeHost.backend.relay
+            computerName = relay.listDevices()?.firstOrNull { it.id == relay.activeRuntimeId }?.name?.takeIf { it.isNotBlank() }
+        }
+    }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        Box(Modifier.fillMaxWidth().zIndex(1f)) {
+        if (mode == ShellMode.Home) {
+            HomeDockTitle("TERNIT", homeDock, markPrefix = true, markLabel = "Allternit")
+        } else if (codeDocks) {
+            HomeDockTitle("GIZZI CODE", codeDock)
+        }
         PhoneHeader(
             // Home has no header title (Eoj 2026-11-20): the A:// mark on the page is the brand.
             title = if (mode == ShellMode.Home) "" else mode.label,
@@ -182,7 +212,13 @@ internal fun ShellHome(
             trailing = {
                 if (mode == ShellMode.Home) {
                     Box {
-                        PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
+                        com.allternit.core.design.GlassPill(
+                            onClick = { menuOpen = true },
+                            modifier = Modifier.testTag("chatOptions").semantics { contentDescription = "Chat options" },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+                        ) {
+                            Icon(painterResource(com.allternit.core.design.R.drawable.ph_dots_three), contentDescription = null, tint = AllternitTheme.colors.textPrimary, modifier = Modifier.size(20.dp))
+                        }
                         ChatOptionsMenu(
                             expanded = menuOpen,
                             phoneArmed = phoneArmed,
@@ -196,21 +232,53 @@ internal fun ShellHome(
                 }
                 if (mode == ShellMode.Code && onCodeSessions != null) {
                     // iOS CodeModeView header: the Code sessions view (CodeSessionsButton), no new-chat pencil.
-                    PhoneIconButton(com.allternit.core.design.R.drawable.ph_list_checks, "Code sessions", testTag = "codeSessionsButton", iconSize = 20, onClick = onCodeSessions)
+                    com.allternit.core.design.GlassPill(
+                        onClick = onCodeSessions,
+                        modifier = Modifier.testTag("codeSessionsButton").semantics { contentDescription = "Code sessions" },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+                    ) {
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_list_checks), contentDescription = null, tint = AllternitTheme.colors.textPrimary, modifier = Modifier.size(20.dp))
+                    }
                 }
             },
             // iOS Code launchpad title: the gizzi code lockup.
-            titleContent = if (mode == ShellMode.Code && onCodeSessions != null) ({ GizziCodeWordmark(height = 15.dp) }) else null,
+            // T13: the bar keeps its name until the first letter of GIZZI CODE flies, fades over that flight,
+            // and returns on scroll up; docked, the block title itself holds the bar centre.
+            titleContent = if (codeDocks) ({
+                val nLetters = remember { com.allternit.core.design.titleCells("GIZZI CODE").n }
+                Text(
+                    text = computerName ?: mode.label,
+                    color = AllternitTheme.colors.textPrimary,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = (-0.2).sp,
+                    maxLines = 1,
+                    modifier = Modifier.graphicsLayer {
+                        alpha = 1f - com.allternit.core.design.dockLetterProgress(
+                            (codeDock() / com.allternit.core.design.DockSpec.DOCK).coerceIn(0f, 1f), nLetters, 0,
+                        )
+                    },
+                )
+            }) else null,
         )
+        }
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            if (mode == ShellMode.Home) LaunchGreeting()
+            if (mode == ShellMode.Home) {
+                // Scrolls only when the content overflows (small phone, big font); a tall phone keeps the big title.
+                Column(Modifier.fillMaxSize().verticalScroll(homeScroll)) {
+                    // Room for the big title, which sits in window coordinates under the bar. Carries the old mark's tag.
+                    Spacer(Modifier.height(HOME_DOCK_TITLE_ROOM).testTag("homeMark"))
+                    LaunchGreeting(showMark = false)
+                }
+            }
             else if (codeHome != null && mode == ShellMode.Code) {
                 Column(Modifier.fillMaxSize()) {
                     // iOS CodeModeView: What's new sits right under the sessions button.
                     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp).padding(top = 2.dp), horizontalArrangement = Arrangement.End) {
                         com.allternit.feature.code.CodeWhatsNewButton()
                     }
-                    Box(Modifier.weight(1f).fillMaxWidth()) { codeHome() }
+                    Box(Modifier.weight(1f).fillMaxWidth()) { codeHome(codeScroll) }
                 }
             } else ModeArrives(mode)
         }
@@ -232,30 +300,73 @@ internal fun ShellHome(
     }
 }
 
+private val HOME_DOCK_TITLE_ROOM = 96.dp
+
+/** The A://TERNIT block title, drawn in window coordinates like DockTitleLayer (which has no markPrefix). */
+@Composable
+private fun HomeDockTitle(text: String, scrollOffset: () -> Float, markPrefix: Boolean = false, markLabel: String? = null) {
+    var originX by remember { mutableStateOf(0) }
+    var originY by remember { mutableStateOf(0) }
+    val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val w = (cfg.screenWidthDp * density.density).toInt()
+    val h = (cfg.screenHeightDp * density.density).toInt()
+    Box(
+        Modifier
+            .onPlacedAt { x, y -> originX = x; originY = y }
+            .layout { m, _ ->
+                val placeable = m.measure(androidx.compose.ui.unit.Constraints.fixed(w, h))
+                layout(0, 0) { placeable.place(androidx.compose.ui.unit.IntOffset(-originX, -originY)) }
+            },
+    ) {
+        DockingBlockTitle(text, scrollOffset, markPrefix = markPrefix, markLabel = markLabel)
+    }
+}
+
+private fun Modifier.onPlacedAt(f: (Int, Int) -> Unit): Modifier =
+    this.onGloballyPositioned { c ->
+        val p = c.positionInWindow()
+        f(p.x.toInt(), p.y.toInt())
+    }
+
 /**
  * iOS ChatLaunchGreeting on the main chat: the A:// mark (not Gizzi), 22dp, over a 32sp serif
  * headline. Pinned to the reference build's line.
  */
 @Composable
-internal fun LaunchGreeting() {
+internal fun LaunchGreeting(showMark: Boolean = true) {
     val c = AllternitTheme.colors
+    // Panel A: fades up 8dp on open. Reduced motion (animations off) shows it at rest.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val reduced = remember {
+        android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    }
+    val rise = remember { androidx.compose.animation.core.Animatable(if (reduced) 1f else 0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { rise.animateTo(1f, com.allternit.core.design.Motion.standardSpring()) }
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 24.dp)
+            .graphicsLayer {
+                alpha = rise.value.coerceIn(0f, 1f)
+                translationY = (1f - rise.value) * 8.dp.toPx()
+            },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        AProtocolMark(height = 22.dp, modifier = Modifier.testTag("homeMark"))
+        if (showMark) AProtocolMark(height = 22.dp, modifier = Modifier.testTag("homeMark"))
         Text(
             text = "What are we working on?",
             color = c.textPrimary,
-            lineHeight = 38.sp,
+            lineHeight = 39.sp,
             fontFamily = AllternitSerif,
-            letterSpacing = (-0.64).sp,
+            letterSpacing = (-1.04).sp, // panel A: tracking -0.4 tighter than the old -0.64
             textAlign = TextAlign.Center,
             // One line like iOS: 32sp, stepping down on narrower phones instead of wrapping.
             maxLines = 1,
             softWrap = false,
-            autoSize = TextAutoSize.StepBased(minFontSize = 22.sp, maxFontSize = 32.sp, stepSize = 1.sp),
+            autoSize = TextAutoSize.StepBased(minFontSize = 23.sp, maxFontSize = 33.sp, stepSize = 1.sp),
             modifier = Modifier.fillMaxWidth().testTag("homeGreeting"),
         )
     }

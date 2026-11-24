@@ -332,7 +332,12 @@ internal fun Composer(
         if (phoneArmed) {
             Row(Modifier.padding(bottom = 6.dp)) { PhoneArmedChip(onClear = onClearPhone) }
         }
-        AnimatedVisibility(visible = chipVisible, enter = fadeIn(), exit = fadeOut()) {
+        AnimatedVisibility(
+            visible = chipVisible,
+            enter = fadeIn(),
+            // Panel A: the card leaves on a spring (slides down and fades), not a bare fade.
+            exit = androidx.compose.animation.slideOutVertically(com.allternit.core.design.Motion.standardSpring()) { it / 2 } + fadeOut(),
+        ) {
             NoticeCard(
                 icon = com.allternit.core.design.R.drawable.ph_desktop,
                 title = NoComputerCopy.TITLE,
@@ -588,7 +593,10 @@ private fun NoticeCard(icon: Int, title: String, detail: String?, testTag: Strin
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(painterResource(icon), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
+        // Panel A: the glyph sits in a circle.
+        Box(Modifier.size(28.dp).clip(CircleShape).background(c.bgPrimary), contentAlignment = Alignment.Center) {
+            Icon(painterResource(icon), contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(14.dp))
+        }
         Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
             Text(title, color = c.textPrimary, fontSize = 14.sp, lineHeight = 18.sp, maxLines = 2, fontWeight = if (detail != null) FontWeight.SemiBold else FontWeight.Normal)
             if (detail != null) Text(detail, color = c.textSecondary, fontSize = 13.sp, lineHeight = 17.sp)

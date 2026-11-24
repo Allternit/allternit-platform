@@ -26,17 +26,26 @@ struct ACIExtensionsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                ACIViewHeader(title: "ACI Extensions", bottom: 16)
-                    .padding(.horizontal, 16)
-                Section {
-                    content
-                        .padding(.horizontal, 16)
-                        .padding(.top, 16)
-                        .padding(.bottom, 48)
-                } header: {
-                    bar.background(Color("BgPrimary"))
+        ACIDockReader { dock in
+            ACIDockingScroll(title: "ACI Extensions", dock: dock) {
+                // The scroll view starts under the ACI header, so the pinned bar
+                // pins at its top edge: below the docked title, never under it.
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    ACIViewHeader(title: "ACI Extensions", bottom: 16, dock: dock)
+                        .padding(.horizontal, 2)
+                    Section {
+                        content
+                            .padding(.horizontal, 2)
+                            .padding(.top, 16)
+                            .padding(.bottom, 48)
+                    } header: {
+                        VStack(spacing: 0) {
+                            bar
+                            categoryPills
+                        }
+                        .padding(.horizontal, -14)
+                        .background(Color("BgPrimary"))
+                    }
                 }
             }
         }
@@ -57,16 +66,26 @@ struct ACIExtensionsView: View {
 
     private var bar: some View {
         ACICompactBar(query: $query, searchLabel: "Search extensions", placeholder: "Search extensions") {
-            ACIBarChip(title: "All", isOn: category == nil) { category = nil }
-            ForEach(ACIExtension.Category.allCases, id: \.self) { item in
-                ACIBarChip(title: item.label, isOn: category == item) { category = item }
-            }
+            EmptyView()
         } actions: {
             ACIBarIcon(systemName: "storefront", label: showMarketplace ? "My Extensions" : "Marketplace", isOn: showMarketplace) {
                 showMarketplace.toggle()
             }
             ACIBarIcon(systemName: "plus", label: "Upload Extension") { showUpload = true }
         }
+    }
+
+    /// The category filter, as FilterPills ("" is All).
+    private var categoryPills: some View {
+        FilterPills<String>(
+            items: [FilterPills<String>.Item(id: "", title: "All")]
+                + ACIExtension.Category.allCases.map { FilterPills<String>.Item(id: $0.rawValue, title: $0.label) },
+            selection: Binding(
+                get: { category?.rawValue ?? "" },
+                set: { category = ACIExtension.Category(rawValue: $0) }
+            )
+        )
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder
@@ -90,27 +109,15 @@ struct ACIExtensionsView: View {
         } else if filtered.isEmpty {
             let filteredOut = !query.isEmpty || category != nil
             VStack(spacing: 16) {
-                VStack(spacing: 8) {
-                    Image(systemName: "puzzlepiece.extension")
-                        .font(.system(size: 52, weight: .thin))
-                        .foregroundColor(Color("TextTertiary"))
-                    Text("No extensions found")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color("TextPrimary"))
-                    Text(filteredOut ? "Try adjusting your filters or search query." : "Install ACI extensions to give your agent new capabilities.")
-                        .font(.system(size: 14))
-                        .foregroundColor(Color("TextSecondary"))
-                        .multilineTextAlignment(.center)
-                    ACIPrimaryButton(title: filteredOut ? "Clear filters" : "Browse marketplace", height: 40) {
-                        if filteredOut {
-                            query = ""
-                            category = nil
-                        } else {
-                            showMarketplace = true
-                        }
+                EmptyBox(icon: "puzzlepiece.extension", title: "No extensions found",
+                         line: filteredOut ? "Try adjusting your filters or search query." : "Install ACI extensions to give your agent new capabilities.")
+                GlassPill(title: filteredOut ? "Clear filters" : "Browse marketplace") {
+                    if filteredOut {
+                        query = ""
+                        category = nil
+                    } else {
+                        showMarketplace = true
                     }
-                    .frame(maxWidth: 220)
-                    .padding(.top, 4)
                 }
                 VStack(spacing: 4) {
                     Text("Build your own extensions")
@@ -137,8 +144,8 @@ struct ACIExtensionsView: View {
                 .padding(20)
                 .frame(maxWidth: .infinity)
                 .background(Color("BgPanel"))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color("BorderSubtle"), lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
             }
             .padding(.vertical, 48)
         } else {
@@ -411,17 +418,8 @@ private struct ACIExtensionCard: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel(`extension`.owned ? "Remove extension" : "Uninstall extension")
                 } else {
-                    Button(action: onInstall) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus").font(.system(size: 14, weight: .bold))
-                            Text("Install Extension").font(.system(size: 14, weight: .medium))
-                        }
-                        .foregroundColor(Color("OnAccent"))
-                        .frame(maxWidth: .infinity, minHeight: 36)
-                        .background(Color("AccentPrimary"))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(.plain)
+                    GlassPill(title: "Install Extension", systemImage: "plus", action: onInstall)
+                        .frame(maxWidth: .infinity)
                 }
             }
             .frame(minHeight: 36)
@@ -429,8 +427,8 @@ private struct ACIExtensionCard: View {
         }
         .padding(20)
         .background(Color("BgPanel"))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color("BorderSubtle"), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
     }
 }
 
@@ -541,10 +539,11 @@ private struct ACIExtensionDetailSheet: View {
                         .buttonStyle(.plain)
                     }
                     if isMarketplace || !`extension`.installed {
-                        ACIPrimaryButton(title: "Install Extension", height: 44) {
+                        GlassPill(title: "Install Extension", systemImage: "plus") {
                             perform(.install)
                             dismiss()
                         }
+                        .frame(maxWidth: .infinity)
                     } else {
                         HStack(spacing: 8) {
                             ACIPillButton(title: `extension`.enabled ? "Disable" : "Enable") {

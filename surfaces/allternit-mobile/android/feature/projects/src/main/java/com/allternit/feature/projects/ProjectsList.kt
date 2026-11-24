@@ -73,6 +73,7 @@ import com.allternit.core.design.GlassPill
 import com.allternit.core.design.IntroKeys
 import com.allternit.core.design.IntroSeenStore
 import com.allternit.core.design.IntroSheet
+import com.allternit.core.design.LocalIntroSeenStore
 import com.allternit.core.design.PolishGlass
 import com.allternit.core.design.SectionLabel
 import com.allternit.core.design.TabPage
@@ -108,7 +109,7 @@ class ProjectsNav(
     val openBotProject: ((projectId: String) -> Unit)? = null,
     /** Opens the connect-a-computer flow; the no-computer card shows its glass Connect button only when this is set. */
     val onConnect: (() -> Unit)? = null,
-    /** The shell's intro store (wired to MeFlagsClient); null falls back to a device-only store. */
+    /** An intro store for this screen; null uses the shell's shared [LocalIntroSeenStore] (null there too = no intro). */
     val introStore: IntroSeenStore? = null,
 )
 
@@ -156,7 +157,7 @@ fun ProjectsListScreen(
     var pendingOpenId by remember { mutableStateOf(initialProjectId) }
     val gridState = rememberLazyGridState()
     val density = LocalDensity.current.density
-    val introStore = remember(nav.introStore) { nav.introStore ?: IntroSeenStore(context, { null }, { _, _ -> false }) }
+    val introStore = nav.introStore ?: LocalIntroSeenStore.current
     var introOpen by remember { mutableStateOf(false) }
 
     fun reload() { scope.launch { store.load() } }
@@ -171,10 +172,11 @@ fun ProjectsListScreen(
     }
 
     LaunchedEffect(signedIn) { if (signedIn) store.load() }
-    LaunchedEffect(signedIn) {
+    LaunchedEffect(signedIn, introStore) {
+        val intro = introStore ?: return@LaunchedEffect
         if (signedIn) {
-            introStore.refresh()
-            if (!introStore.isSeen(IntroKeys.PROJECTS)) introOpen = true
+            intro.refresh()
+            if (!intro.isSeen(IntroKeys.PROJECTS)) introOpen = true
         }
     }
     LaunchedEffect(store.projects) {
@@ -321,7 +323,7 @@ fun ProjectsListScreen(
         if (introOpen) IntroSheet(
             title = "Keep each job in one place.",
             line = "A project keeps its chats, tasks and board together. See what's working and what is waiting on you.",
-            onContinue = { introOpen = false; scope.launch { introStore.markSeen(IntroKeys.PROJECTS) } },
+            onContinue = { introOpen = false; scope.launch { introStore?.markSeen(IntroKeys.PROJECTS) } },
             eyebrow = { BlockText("PROJECTS", height = 10.dp, color = PolishGlass.Coral) },
             hero = { ProjectsIntroHero() },
         )

@@ -231,6 +231,8 @@ struct PolishCard<Logo: View, Action: View, Extras: View, Controls: View>: View 
     var footer: String? = nil
     var footerIcon: String? = nil
     var tileHeight: CGFloat = 88
+    /// Card corner radius (18 everywhere except Customize "For you": 20).
+    var radius: CGFloat = 18
     let onOpen: () -> Void
     @ViewBuilder let logo: () -> Logo
     @ViewBuilder let action: () -> Action
@@ -295,8 +297,8 @@ struct PolishCard<Logo: View, Action: View, Extras: View, Controls: View>: View 
         }
         .padding(4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color("BgPanel")))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Color("BgPanel")))
+        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
         .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
         .overlay(alignment: .topTrailing) {
             action().padding(12)
@@ -315,10 +317,10 @@ private struct PolishPressStyle: ButtonStyle {
 
 extension PolishCard where Extras == EmptyView, Controls == EmptyView {
     init(name: String, description: String? = nil, status: PolishStatus? = nil, statusLabel: String? = nil,
-         footer: String? = nil, footerIcon: String? = nil, tileHeight: CGFloat = 88, onOpen: @escaping () -> Void,
+         footer: String? = nil, footerIcon: String? = nil, tileHeight: CGFloat = 88, radius: CGFloat = 18, onOpen: @escaping () -> Void,
          @ViewBuilder logo: @escaping () -> Logo, @ViewBuilder action: @escaping () -> Action) {
         self.init(name: name, description: description, status: status, statusLabel: statusLabel, footer: footer,
-                  footerIcon: footerIcon, tileHeight: tileHeight, onOpen: onOpen, logo: logo, action: action,
+                  footerIcon: footerIcon, tileHeight: tileHeight, radius: radius, onOpen: onOpen, logo: logo, action: action,
                   extras: { EmptyView() }, controls: { EmptyView() })
     }
 }

@@ -70,48 +70,42 @@ struct GroupsListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        DockingTitleList(title: "Group chats") {
             if !store.groups.isEmpty {
-                HStack {
-                    Text("\(store.groups.count) OPEN")
-                        .font(.system(size: 11, weight: .semibold))
-                        .tracking(0.6)
-                        .foregroundColor(Color("TextTertiary"))
-                    Spacer()
-                    ProjectsPill(searching: $searching, filtersActive: false, searchLabel: "Search group chats",
-                                 filterLabel: "Layout") {
-                        OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list).padding(12)
+                VStack(spacing: 0) {
+                    SectionLabel("\(store.groups.count) OPEN") {
+                        ProjectsPill(searching: $searching, filtersActive: false, searchLabel: "Search group chats",
+                                     filterLabel: "Layout") {
+                            OverviewLayoutSwitch(raw: $layoutRaw, fallback: .list).padding(12)
+                        }
+                    }
+                    if searching || !query.isEmpty {
+                        ProjectsSearchField(query: $query, placeholder: "Search group chats")
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 4)
-                if searching || !query.isEmpty {
-                    ProjectsSearchField(query: $query, placeholder: "Search group chats")
-                }
+                .plainGroupRow(top: 4, bottom: 4)
             }
             if layout != .list && !store.groups.isEmpty {
-                ScrollView {
-                    OverviewCards(items: cards, layout: layout) { item in
-                        if let group = store.groups.first(where: { $0.id == item.id }) {
-                            GroupAvatarStack(members: group.members, size: layout.faceSize)
-                        }
-                    } onOpen: { item in
-                        navigator.open(.group(item.id))
+                OverviewCards(items: cards, layout: layout) { item in
+                    if let group = store.groups.first(where: { $0.id == item.id }) {
+                        GroupAvatarStack(members: group.members, size: layout.faceSize)
                     }
-                    .padding(.vertical, 8)
+                } onOpen: { item in
+                    navigator.open(.group(item.id))
                 }
-                .refreshable { await store.refreshGroups() }
+                .padding(.vertical, 8)
+                .plainGroupRow(top: 0, bottom: 0, side: 0)
             } else {
-                groupList
+                groupRows
             }
         }
+        .refreshable { await store.refreshGroups() }
         .background(Color("BgPrimary"))
-        .navigationTitle("Group chats")
-        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { isCreating = true } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("New group chat")
+                GlassPill(title: "New group", systemImage: "plus", accessibilityLabelText: "New group chat") {
+                    isCreating = true
+                }
             }
         }
         .task { await store.refreshGroups() }
@@ -134,27 +128,76 @@ struct GroupsListView: View {
         }
     }
 
-    private var groupList: some View {
-        List {
-            if let error = store.groupsError, store.groups.isEmpty {
-                FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load group chats",
-                                  message: error, actionTitle: "Retry", action: { Task { await store.refreshGroups() } })
-            } else if store.groups.isEmpty {
-                FriendlyStateView(style: .empty, icon: "person.3", title: "Group chats",
-                                  message: "No group chats yet.",
-                                  actionTitle: "New group chat", action: { isCreating = true })
-            } else {
-                ForEach(shownGroups) { group in
-                    NavigationLink(value: BotRoute.group(group.id)) { GroupRowLabel(group: group) }
-                        .swipeActions {
-                            Button("Delete", role: .destructive) {
-                                Task { try? await store.deleteGroup(group.id) }
-                            }
+    @ViewBuilder
+    private var groupRows: some View {
+        if let error = store.groupsError, store.groups.isEmpty {
+            FriendlyStateView(style: .error, icon: "exclamationmark.triangle", title: "Couldn't load group chats",
+                              message: error, actionTitle: "Retry", action: { Task { await store.refreshGroups() } })
+                .plainGroupRow(top: 0, bottom: 0, side: 0)
+        } else if store.groups.isEmpty {
+            VStack(spacing: 12) {
+                EmptyBox(icon: "person.3", title: "Group chats", line: "No group chats yet.")
+                GlassPill(title: "New group chat", systemImage: "plus") { isCreating = true }
+            }
+            .plainGroupRow(top: 8, bottom: 8)
+        } else {
+            let groups = shownGroups
+            ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                Button { navigator.open(.group(group.id)) } label: {
+                    HStack(spacing: 8) {
+                        GroupRowLabel(group: group)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Color("TextTertiary"))
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .contentShape(Rectangle())
+                    .background(
+                        UnevenRoundedRectangle(topLeadingRadius: index == 0 ? 20 : 0,
+                                               bottomLeadingRadius: index == groups.count - 1 ? 20 : 0,
+                                               bottomTrailingRadius: index == groups.count - 1 ? 20 : 0,
+                                               topTrailingRadius: index == 0 ? 20 : 0,
+                                               style: .continuous)
+                            .fill(PolishTokens.neutralFill)
+                    )
+                    .overlay(alignment: .bottom) {
+                        if index < groups.count - 1 {
+                            Rectangle().fill(PolishTokens.glassBorder).frame(height: 0.5).padding(.leading, 58)
                         }
+                    }
+                }
+                .buttonStyle(GroupRowPressStyle())
+                .plainGroupRow(top: 0, bottom: 0)
+                .swipeActions {
+                    Button("Delete", role: .destructive) {
+                        Task { try? await store.deleteGroup(group.id) }
+                    }
                 }
             }
         }
-        .refreshable { await store.refreshGroups() }
+    }
+}
+
+/// .98 press on the base spring for the group rows.
+private struct GroupRowPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? PolishTokens.pressRow : 1)
+            .animation(reduceMotion ? nil : PolishTokens.base, value: configuration.isPressed)
+    }
+}
+
+private extension View {
+    /// A List row with no chrome, so the card inside it shows.
+    func plainGroupRow(top: CGFloat, bottom: CGFloat, side: CGFloat = 14) -> some View {
+        self.listRowInsets(EdgeInsets(top: top, leading: side, bottom: bottom, trailing: side))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
     }
 }
 

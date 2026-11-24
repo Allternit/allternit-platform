@@ -35,6 +35,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.zIndex
+import com.allternit.core.design.DockSpec
+import com.allternit.core.design.LocalDockOffset
+import com.allternit.core.design.ProvideDockScroll
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -112,7 +118,8 @@ fun AciRoot(host: AciHost) {
     Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().testTag("aciScreen")) {
         // The browser and a run bring their own top bar.
         if (tab != AciTab.Agent || landing) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) { host.menuButton() }
+            // zIndex keeps the menu button above the docking ACI title's band on the landing.
+            Row(Modifier.fillMaxWidth().zIndex(2f).padding(horizontal = 8.dp, vertical = 4.dp)) { host.menuButton() }
         }
         val list = devices.orEmpty()
         if (tab == AciTab.Agent && landing && list.isNotEmpty()) {
@@ -256,6 +263,7 @@ private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> U
         if (agentActive) onRunGoal(value) else onOpen(AciWebInput.resolve(value))
         input = ""
     }
+    val dockScroll = rememberScrollState()
     Box(Modifier.fillMaxSize()) {
         val dot = c.textPrimary.copy(alpha = 0.18f)
         Canvas(Modifier.fillMaxSize()) {
@@ -270,11 +278,14 @@ private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> U
                 y += step
             }
         }
+        ProvideDockScroll(dockScroll) {
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 48.dp).testTag("aciLanding"),
+            Modifier.fillMaxSize().verticalScroll(dockScroll).padding(horizontal = 24.dp, vertical = 48.dp).testTag("aciLanding"),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 560.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                // ACI is the block title (docks into the bar as the landing scrolls); the random title below is the page line.
+                AciViewHeader("ACI", bottom = 16.dp)
                 // iOS ACIBrowserLanding: the Matrix construct mark, 84pt.
                 androidx.compose.foundation.Image(painterResource(DesignR.drawable.matrix_logo), contentDescription = "Allternit", modifier = Modifier.padding(bottom = 24.dp).size(84.dp))
                 Text(title, color = c.textPrimary, fontSize = 32.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 8.dp))
@@ -384,6 +395,7 @@ private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> U
                 }
             }
         }
+        }
     }
 }
 
@@ -407,9 +419,15 @@ private val TAGLINES = listOf("AI-Powered Browsing", "Navigate with Intelligence
 @Composable
 internal fun AciViewHeader(title: String, subtitle: String? = null, bottom: Dp = 24.dp) {
     val c = AllternitTheme.colors
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, color = c.textPrimary, fontSize = 30.sp, fontFamily = AllternitSerif, fontWeight = FontWeight.Medium, letterSpacing = (-0.3).sp)
+    val dock = LocalDockOffset.current
+    // With a dock scroll the header draws above the page (zIndex) so the docked letters stay over the content.
+    Column(Modifier.fillMaxWidth().then(if (dock != null) Modifier.zIndex(1f) else Modifier).padding(top = 8.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, color = c.textPrimary, fontSize = 30.sp, fontFamily = AllternitSerif, fontWeight = FontWeight.Medium, letterSpacing = (-0.3).sp,
+            modifier = if (dock != null) Modifier.alpha(0f).clearAndSetSemantics { } else Modifier)
         if (subtitle != null) Text(subtitle, color = c.textSecondary, fontSize = 14.sp)
+        if (dock != null) {
+            AciDockOverlay(title, dock, counterScroll = true, titleTop = { y -> (y + 8f).dp }, barCenter = { DockSpec.BAR_CENTER.dp })
+        }
     }
 }
 

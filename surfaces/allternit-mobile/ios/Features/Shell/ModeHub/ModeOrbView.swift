@@ -18,8 +18,6 @@ struct ModeOrbView: View {
     @State private var open = false
     @State private var lens: ShellMode?
     @State private var pressing = false
-    @State private var holdTask: Task<Void, Never>?
-    @State private var held = false
     @State private var collapseTask: Task<Void, Never>?
     @Namespace private var ns
 
@@ -69,11 +67,8 @@ struct ModeOrbView: View {
         .animation(reduced ? nil : ModeHubSpec.pillSpring, value: open)
         .animation(reduced ? nil : ModeHubSpec.tickSpring, value: pressing)
         .onDisappear {
-            holdTask?.cancel()
-            holdTask = nil
             collapseTask?.cancel()
             pressing = false
-            held = false
         }
         .accessibilityElement(children: .contain)
         .accessibilityAction(.escape) { collapse() }
@@ -89,10 +84,21 @@ struct ModeOrbView: View {
             .id(mode)
             .transition(reduced ? .identity : .scale(scale: 0.5).combined(with: .opacity))
             .matchedGeometryEffect(id: "orb", in: ns)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in beginPress() }
-                    .onEnded { _ in endPress() }
+            // System tap + long-press: both reset on cancel (sheet presenting, drawer drag,
+            // keyboard tap recognizer), so a cancelled press can never leave the orb stuck.
+            .onTapGesture { expand() }
+            .onLongPressGesture(
+                minimumDuration: ModeHubSpec.holdDuration,
+                maximumDistance: 40,
+                perform: {
+                    pressing = false
+                    ModeHubSpec.fire(.holdComplete)
+                    onHold()
+                },
+                onPressingChanged: { down in
+                    if down { Haptics.prepare() }
+                    pressing = down
+                }
             )
             .accessibilityElement()
             .accessibilityLabel(focusedBot.map { "Bots, in chat with \($0.botDisplayName)" } ?? "Mode: \(mode.label)")
@@ -100,30 +106,6 @@ struct ModeOrbView: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { expand() }
             .accessibilityAction(named: "Open all modes") { ModeHubSpec.fire(.holdComplete); onHold() }
-    }
-
-    private func beginPress() {
-        guard holdTask == nil else { return }
-        held = false
-        pressing = true
-        Haptics.prepare()
-        holdTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(ModeHubSpec.holdDuration * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            held = true
-            pressing = false
-            ModeHubSpec.fire(.holdComplete)
-            onHold()
-        }
-    }
-
-    private func endPress() {
-        let wasHeld = held
-        holdTask?.cancel()
-        holdTask = nil
-        pressing = false
-        if !wasHeld { expand() }
-        held = false
     }
 
     // MARK: Pill

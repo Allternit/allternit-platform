@@ -204,6 +204,7 @@
 		386D2CA58D7ADC8EE57497E5 /* Entities.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79C58B39750008BDE881C8B /* Entities.swift */; };
 		38A21D077FB35B0271481ABF /* VoiceLevels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B7EE56C7F845B79AB23830A /* VoiceLevels.swift */; };
 		38B67F5CE4E225E2E829C361 /* FloorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80892D21D74BD73AA56EE32 /* FloorClient.swift */; };
+		393E51E80BCC795F1F6C7168 /* RuntimeBrainChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E2BBF4136DF51497239C132 /* RuntimeBrainChip.swift */; };
 		3957E06834F85090B3F7EB1C /* AgentHubStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54A65D23DCABF32B76CA2982 /* AgentHubStore.swift */; };
 		3A2939F18A731584F1F4BF3E /* MemoryDriveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BC7009B64E30A104CD2DDBA /* MemoryDriveView.swift */; };
 		3A3594E65AEFB1F3D49BB605 /* AgentAsk.swift in Sources */ = {isa = PBXBuildFile; fileRef = 524692B6BCBF0E1A9ADEC749 /* AgentAsk.swift */; };
@@ -1465,6 +1466,7 @@
 		6D1CF76A3B4AF38B5A019D23 /* DeepLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkTests.swift; sourceTree = "<group>"; };
 		6D5F0FBBDFDA61BCA336D35B /* TwinSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwinSettingsView.swift; sourceTree = "<group>"; };
 		6DFB9B97883E321CD83A1FA4 /* ActionSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionSheets.swift; sourceTree = "<group>"; };
+		6E2BBF4136DF51497239C132 /* RuntimeBrainChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeBrainChip.swift; sourceTree = "<group>"; };
 		6E3675D6BEA522D8A6837910 /* IMQuickPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMQuickPanel.swift; sourceTree = "<group>"; };
 		6E66655A443CC48590BB98C9 /* VoiceKeyHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceKeyHandoff.swift; sourceTree = "<group>"; };
 		6E79642FCCC464D9E8C120AB /* InfrastructureSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfrastructureSettingsView.swift; sourceTree = "<group>"; };
@@ -2936,6 +2938,7 @@
 				486A51068DADFBA03C5C2A3D /* ComposerDeckState.swift */,
 				3C3116EAFF64AFF4D77AA58E /* ComposerView.swift */,
 				D69F5A35B9CCBC47EE3A7F17 /* ContextUsageMeter.swift */,
+				6E2BBF4136DF51497239C132 /* RuntimeBrainChip.swift */,
 			);
 			path = Composer;
 			sourceTree = "<group>";
@@ -5052,6 +5055,7 @@
 				78FE5164B1AE4E7A2896406A /* RunOnPhoneEntry.swift in Sources */,
 				4EE1B451BAB87F861DB27E87 /* RunStatusViews.swift in Sources */,
 				B004C06C44D2029F36D32DAC /* RunTreeModel.swift in Sources */,
+				393E51E80BCC795F1F6C7168 /* RuntimeBrainChip.swift in Sources */,
 				7F305FAA9919CBCC051D503A /* RuntimeLookView.swift in Sources */,
 				EBD76249148F2229E7E2D842 /* RuntimeModel.swift in Sources */,
 				647EC3F1139D16E46441BD26 /* RuntimeOperationsClient.swift in Sources */,

@@ -440,16 +440,17 @@ struct PhoneSettingsPage<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        ScrollView {
+        // The title is a block title that spells itself into the nav bar as the
+        // page scrolls (DockingTitleScrollView, chrome .navigationBar).
+        DockingTitleScrollView(title: title, chrome: .navigationBar) {
             VStack(alignment: .leading, spacing: 0) {
                 content
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(EdgeInsets(top: 4, leading: 16, bottom: 32, trailing: 16))
         }
-        .background(Color("BgPrimary").ignoresSafeArea())
+        // Kept for the back button label on pushed pages and for VoiceOver.
         .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

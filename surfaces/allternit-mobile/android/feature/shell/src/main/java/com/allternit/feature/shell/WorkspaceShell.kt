@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.dp
 import com.allternit.core.api.gen.AgentSession
 import com.allternit.core.auth.Account
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.IntroSeenStore
+import com.allternit.core.design.LocalIntroSeenStore
 import androidx.compose.foundation.layout.size
 import com.allternit.core.design.PolishHaptic
 import com.allternit.core.design.R as DesignR
@@ -145,6 +147,14 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
         ShellSessionsStore().also { it.seenPrefs = context.getSharedPreferences("allternit_shell", android.content.Context.MODE_PRIVATE) }
     }
     val models = remember { ModelStore(context) }
+    // The one first-visit intro store for the signed-in app (every tab's intro reads it through
+    // LocalIntroSeenStore). Null while signed out, so no intro shows then.
+    val introStore = remember(account?.userId) {
+        if (account == null) null else {
+            val flags = com.allternit.core.api.MeFlagsClient(ShellApi.okHttp, com.allternit.core.api.ApiConfig().cloudBaseUrl)
+            IntroSeenStore(context, fetch = { flags.read() }, push = { k, iso -> flags.write(k, iso) }, accountId = account.userId)
+        }
+    }
     // One chat for the shell (iOS keeps one ChatViewModel): a running reply survives a trip
     // to the home and back. It shares the shell's OkHttp client and API.
     val chatBackend = remember { ChatBackends.create(context, ShellApi.okHttp, ShellApi.api) }
@@ -364,7 +374,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 onPickMode = ::pickMode,
                 onOpenHub = { focusManager.clearFocus(); hubOpen = true },
                 onNew = newAction ?: ::newItem,
-                onQuickTask = { focusManager.clearFocus(); quickTaskOpen = true })
+                onQuickTask = { focusManager.clearFocus(); quickTaskOpen = true },
+                focusedBot = if (mode == ShellMode.Bots) botsStore.focusedBot else null)
         }
     }
     // Wave F3: ACI mode's host (iOS ACITabView): the relay for runs and workflows, ☰, sign-in.
@@ -388,6 +399,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 openSessionId(id)
             },
             backdrop = { scopeId -> ProjectBackdrop(scopeId) },
+            // The no-computer card's Connect opens Computers, the same place ChatRuntime.onPair and Meetings go.
+            onConnect = { page = ShellPage.Section(RailRow("computers", "Computers", DesignR.drawable.ph_desktop)) },
             openBotProject = { id ->
                 mode = ShellMode.Bots
                 ShellModePrefs.save(context, ShellMode.Bots)
@@ -500,7 +513,11 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     }
 
     // Every Text in the shell uses the bundled sans (iOS SF Pro sizes); the headline sets Serif itself.
-    CompositionLocalProvider(LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = ShellSans), LocalComposerOrbs provides composerChrome) {
+    CompositionLocalProvider(
+        LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = ShellSans),
+        LocalComposerOrbs provides composerChrome,
+        LocalIntroSeenStore provides introStore,
+    ) {
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
@@ -588,8 +605,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 voiceOnOpen = true
                                 page = ShellPage.Chat(session = null, draft = ComposerDraft())
                             },
-                            codeHome = if (mode == ShellMode.Code) ({
-                                com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it })
+                            codeHome = if (mode == ShellMode.Code) ({ codeScroll ->
+                                com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it }, dockScroll = codeScroll)
                             }) else null,
                             onCodeSessions = if (mode == ShellMode.Code) ({ codeRoute = com.allternit.feature.code.CodeRoute.Overview }) else null,
                             codeActions = if (mode == ShellMode.Code) CodeComposerActions(
@@ -675,6 +692,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                     backend = chatBackend,
                                     menuButton = shellMenuButton,
                                     openSignIn = { page = ShellPage.Settings },
+                                    introStore = introStore,
                                 ),
                             )
                             // Wave F4a: Cowork (iOS CoworkWorkspaceView; the tasks sheet from the composer's plus), Models, Phones.
@@ -911,6 +929,10 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 )
             }
         }
+
+        // First-visit mode intros and the Bots arrivals (web W12/W13, iOS I12/I13).
+        ModeIntroHost(mode, botsStore)
+        ModeArrivals(mode, onBotsHome = page == ShellPage.Home, botsStore = botsStore)
 
         ModeHubSheet(
             visible = hubOpen,

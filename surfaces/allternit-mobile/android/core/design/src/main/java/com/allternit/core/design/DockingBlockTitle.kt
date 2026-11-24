@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -130,13 +132,33 @@ fun dockFrame(y: Float, n: Int, reduced: Boolean): DockFrame {
 fun dockLetterProgress(t: Float, n: Int, letter: Int): Float =
     dockEase((t * (n + 0.6f) - letter).coerceIn(0f, 1f))
 
-/** Columns a string takes: 6 per glyph, 3 per space, minus the trailing gap. */
+/** Columns the character [ch] advances (glyph 6, punctuation width + 1, space 3, undrawn 0), as web `layoutBlockText`. */
+private fun advanceOf(ch: Char): Int = when {
+    ch == ' ' -> DockSpec.GLYPH_SPACE
+    BlockGlyphs.glyphs.containsKey(ch) -> DockSpec.GLYPH_PITCH
+    else -> BlockGlyphs.punct[ch]?.let { it.w + 1 } ?: 0
+}
+
+/** The cells of one drawn character at column [col], or null when it has no glyph or punctuation entry. */
+private fun cellsOf(ch: Char): List<Pair<Int, Int>>? = BlockGlyphs.glyphs[ch] ?: BlockGlyphs.punct[ch]?.cells
+
+/** Columns a string takes: 6 per glyph, punctuation width + 1, 3 per space, minus the trailing gap. */
 fun blockCols(s: String): Int {
     var col = 0
-    for (ch in s.uppercase()) {
-        col += if (ch == ' ') DockSpec.GLYPH_SPACE else if (BlockGlyphs.glyphs.containsKey(ch)) DockSpec.GLYPH_PITCH else 0
-    }
+    for (ch in s.uppercase()) col += advanceOf(ch)
     return max(0, col - 1)
+}
+
+/** First text column after the A:// mark prefix (15 mark columns + 1 gap). */
+const val DOCK_MARK_TEXT_START = 16
+
+/** Mark columns (the A:// mark spans columns 0..14). */
+const val DOCK_MARK_COLS = 15
+
+/** Big height for a single line of [cols] columns in a view [viewW] dp wide: shrinks to fit [viewW] - 28, never wraps. */
+fun dockMarkBigHeight(cols: Int, viewW: Float): Float {
+    val avail = viewW - 28f
+    return if (cols * DockSpec.BH / 5f > avail && cols > 0) max(1f, avail * 5f / cols) else DockSpec.BH
 }
 
 fun wrapLines(text: String, bh: Float = DockSpec.BH, maxWidth: Float = DockSpec.TITLE_MAX_WIDTH): List<String> {
@@ -154,10 +176,10 @@ fun wrapLines(text: String, bh: Float = DockSpec.BH, maxWidth: Float = DockSpec.
 }
 
 /** A cell of the big (wrapped) title. [bx] is in columns inside its line, [li] the line, [letter] the letter index. */
-class BigCell(val bx: Int, val by: Int, val li: Int, val letter: Int)
+class BigCell(val bx: Int, val by: Int, val li: Int, val letter: Int, val mark: Boolean = false, val core: Boolean = false)
 
 /** A cell of the docked (single row) title, columns and rows. */
-class SmallCell(val x: Int, val y: Int)
+class SmallCell(val x: Int, val y: Int, val mark: Boolean = false, val core: Boolean = false)
 
 class TitleCells(
     val big: List<BigCell>,
@@ -167,36 +189,56 @@ class TitleCells(
     /** Columns of the single-line docked title. */
     val cols: Int,
     val lines: Int,
+    /** True when letter 0 is the A:// mark. */
+    val markPrefix: Boolean = false,
 )
 
-/** big[i] pairs with small[i] (same glyph order). Glyph table is the generated [BlockGlyphs]. */
-fun titleCells(text: String): TitleCells {
-    val lines = wrapLines(text)
+/**
+ * big[i] pairs with small[i] (same glyph order). Glyph and punctuation tables are the generated [BlockGlyphs],
+ * advanced the way web `layoutBlockText` does. Only drawn characters count as letters.
+ *
+ * [markPrefix] puts the A:// mark first as ONE letter (cells from [PixelGlyphs.markCells], core [PixelGlyphs.coreCell]),
+ * then a 1-column gap, and starts [text] at column 16. A mark title is always one line (it fits by shrinking, see
+ * [dockMarkBigHeight]).
+ */
+fun titleCells(text: String, markPrefix: Boolean = false): TitleCells {
+    val lines = if (markPrefix) listOf(text) else wrapLines(text)
+    val start = if (markPrefix) DOCK_MARK_TEXT_START else 0
     val big = ArrayList<BigCell>()
+    val small = ArrayList<SmallCell>()
     var letter = 0
+    if (markPrefix) {
+        for ((x, y) in PixelGlyphs.markCells) {
+            val core = (x to y) == PixelGlyphs.coreCell
+            big += BigCell(x, y, 0, 0, mark = true, core = core)
+            small += SmallCell(x, y, mark = true, core = core)
+        }
+        letter = 1
+    }
     lines.forEachIndexed { li, ln ->
-        var col = 0
+        var col = if (li == 0) start else 0
         for (ch in ln.uppercase()) {
             if (ch == ' ') {
                 col += DockSpec.GLYPH_SPACE
                 continue
             }
-            BlockGlyphs.glyphs[ch]?.forEach { (x, y) -> big += BigCell(x + col, y, li, letter) }
-            col += DockSpec.GLYPH_PITCH
+            val cs = cellsOf(ch) ?: continue
+            cs.forEach { (x, y) -> big += BigCell(x + col, y, li, letter) }
+            col += advanceOf(ch)
             letter++
         }
     }
-    val small = ArrayList<SmallCell>()
-    var col = 0
+    var col = start
     for (ch in text.uppercase()) {
         if (ch == ' ') {
             col += DockSpec.GLYPH_SPACE
             continue
         }
-        BlockGlyphs.glyphs[ch]?.forEach { (x, y) -> small += SmallCell(x + col, y) }
-        col += DockSpec.GLYPH_PITCH
+        val cs = cellsOf(ch) ?: continue
+        cs.forEach { (x, y) -> small += SmallCell(x + col, y) }
+        col += advanceOf(ch)
     }
-    return TitleCells(big, small, letter, col - 1, lines.size)
+    return TitleCells(big, small, letter, max(0, col - 1), lines.size, markPrefix)
 }
 
 /** True when the system animator duration scale is 0 (Android's reduce-motion switch). */
@@ -208,20 +250,53 @@ fun rememberSystemReduceMotion(): Boolean {
     }
 }
 
-/** A scroll offset provider in dp for [DockingBlockTitle] and [dockDescription]. */
+/**
+ * A scroll offset provider in dp for [DockingBlockTitle] and [dockDescription]. When the content does not
+ * overflow (nothing to scroll in either direction) the offset stays 0, so a short page's title does not dock.
+ */
 @Composable
 fun rememberDockOffset(state: ScrollState): () -> Float {
     val d = LocalDensity.current.density
-    return remember(state, d) { { state.value / d } }
+    return remember(state, d) {
+        { if (state.canScrollForward || state.canScrollBackward) state.value / d else 0f }
+    }
 }
 
 @Composable
 fun rememberDockOffset(state: LazyListState): () -> Float {
     val d = LocalDensity.current.density
     return remember(state, d) {
-        { if (state.firstVisibleItemIndex > 0) DockSpec.DOCK * 2f else state.firstVisibleItemScrollOffset / d }
+        {
+            when {
+                !state.canScrollForward && !state.canScrollBackward -> 0f
+                state.firstVisibleItemIndex > 0 -> DockSpec.DOCK * 2f
+                else -> state.firstVisibleItemScrollOffset / d
+            }
+        }
     }
 }
+
+/**
+ * The page scroll in dp that the nearest [ProvideDockScroll] gave, or null when no screen
+ * provides one. Shared headers (LibraryHeader, SPage, ACI headers) dock only when this is
+ * non-null, so a screen that never opts in keeps today's header. A provided offset of 0
+ * (page at rest) means "docking page, title big", which is not the same as "no provider".
+ */
+val LocalDockOffset = compositionLocalOf<(() -> Float)?> { null }
+
+/** Gives headers inside [content] (LibraryHeader, SPage, ACI headers) the page scroll [offset] in dp. */
+@Composable
+fun ProvideDockScroll(offset: () -> Float, content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalDockOffset provides offset, content = content)
+}
+
+@Composable
+fun ProvideDockScroll(state: ScrollState, content: @Composable () -> Unit) =
+    ProvideDockScroll(rememberDockOffset(state), content)
+
+@Composable
+fun ProvideDockScroll(state: LazyListState, content: @Composable () -> Unit) =
+    ProvideDockScroll(rememberDockOffset(state), content)
 
 @Composable
 fun DockingBlockTitle(
@@ -231,7 +306,9 @@ fun DockingBlockTitle(
     barCenter: Dp = DockSpec.BAR_CENTER.dp,
     top: Dp = DockSpec.TOP.dp,
     reduceMotion: Boolean = rememberSystemReduceMotion(),
-) = DockingBlockTitle(text, rememberDockOffset(scrollState), barCenter, modifier, top, reduceMotion)
+    markPrefix: Boolean = false,
+    markLabel: String? = null,
+) = DockingBlockTitle(text, rememberDockOffset(scrollState), barCenter, modifier, top, reduceMotion, markPrefix, markLabel)
 
 @Composable
 fun DockingBlockTitle(
@@ -241,7 +318,9 @@ fun DockingBlockTitle(
     barCenter: Dp = DockSpec.BAR_CENTER.dp,
     top: Dp = DockSpec.TOP.dp,
     reduceMotion: Boolean = rememberSystemReduceMotion(),
-) = DockingBlockTitle(text, rememberDockOffset(listState), barCenter, modifier, top, reduceMotion)
+    markPrefix: Boolean = false,
+    markLabel: String? = null,
+) = DockingBlockTitle(text, rememberDockOffset(listState), barCenter, modifier, top, reduceMotion, markPrefix, markLabel)
 
 /**
  * The page title that moves into the top bar one letter per scroll step. Draw it as an overlay over
@@ -251,6 +330,10 @@ fun DockingBlockTitle(
  *
  * [scrollOffset] is the page scroll in dp. [barCenter] is the docked title's vertical centre (71 dp,
  * Freeweights 75 dp); the hairline sits at the bottom of the bar, 2 x [barCenter].
+ * [markPrefix] draws the A:// mark first as one letter, then [text] from column 16, on one line that shrinks to fit
+ * (Home: the mark plus "TERNIT"); [markLabel] is then the accessibility label (default [text]). The mark's core
+ * cell is always coral and the docked flash skips the mark. Short pages (no overflow) never dock: use
+ * [rememberDockOffset] (or [ProvideDockScroll]) so the offset stays 0.
  * Haptics: [Haptics.Kind.Tap] each time a letter lands, [Haptics.Kind.Success] when the title docks
  * (the closest shared kinds to selection and soft).
  */
@@ -262,8 +345,10 @@ fun DockingBlockTitle(
     modifier: Modifier = Modifier,
     top: Dp = DockSpec.TOP.dp,
     reduceMotion: Boolean = rememberSystemReduceMotion(),
+    markPrefix: Boolean = false,
+    markLabel: String? = null,
 ) {
-    val cells = remember(text) { titleCells(text) }
+    val cells = remember(text, markPrefix) { titleCells(text, markPrefix) }
     val n = cells.n
     val colors = AllternitTheme.colors
     val ink = colors.textPrimary
@@ -272,7 +357,7 @@ fun DockingBlockTitle(
     val view = LocalView.current
 
     // One spring per letter (not per cell), driven by the scroll target.
-    val letterAnims = remember(text) { List(max(n, 0)) { Animatable(0f) } }
+    val letterAnims = remember(text, markPrefix) { List(max(n, 0)) { Animatable(0f) } }
     letterAnims.forEachIndexed { l, anim ->
         LaunchedEffect(text, l, reduceMotion) {
             if (reduceMotion) {
@@ -307,7 +392,7 @@ fun DockingBlockTitle(
     // Coral flash after dock: one clock, per-letter-column delay.
     val maxDelayMs = cells.cols * DockSpec.FLASH_STAGGER_MS
     val flashTotalMs = DockSpec.FLASH_MS + maxDelayMs
-    val flash = remember(text) { Animatable(0f) }
+    val flash = remember(text, markPrefix) { Animatable(0f) }
     LaunchedEffect(text, reduceMotion) {
         snapshotFlowOf { !reduceMotion && dockFrame(scrollOffset(), n, false).docked }
             .distinctUntilChanged()
@@ -326,24 +411,24 @@ fun DockingBlockTitle(
             .fillMaxSize()
             .semantics {
                 heading()
-                contentDescription = text
+                contentDescription = markLabel ?: text
             },
     ) {
         val d = density
         val y = max(0f, scrollOffset())
         val frame = dockFrame(y, n, reduceMotion)
-        val bh = DockSpec.BH
+        val viewW = size.width / d
+        val bh = if (cells.markPrefix) dockMarkBigHeight(cells.cols, viewW) else DockSpec.BH
         val sh = DockSpec.SH
         val b = bh / 5f
         val s = sh / 5f
         val topDp = top.value
         val hc = barCenter.value
-        val viewW = size.width / d
         val sx0 = viewW / 2f - cells.cols * s / 2f
         val sy0 = hc - sh / 2f
 
         // Band that holds the waiting letters; collapses at t .82 -> 1.
-        val titleH = cells.lines * bh + (cells.lines - 1) * (DockSpec.LG - bh)
+        val titleH = cells.lines * bh + (cells.lines - 1) * (bh * 1.36f - bh)
         val bandH = (titleH + DockSpec.BAND_PAD) * frame.bandFactor
         if (bandH > 0.5f) {
             val bandTop = (topDp - 8f) * d
@@ -376,7 +461,7 @@ fun DockingBlockTitle(
             val c = cells.big[i]
             val sm = cells.small[i]
             val x0 = DockSpec.LEFT + c.bx * b
-            val y0 = topDp - shiftY + c.li * DockSpec.LG + c.by * b
+            val y0 = topDp - shiftY + c.li * (bh * 1.36f) + c.by * b
             val x1 = sx0 + sm.x * s
             val y1 = sy0 + sm.y * s
 
@@ -395,6 +480,8 @@ fun DockingBlockTitle(
             val x = x0 + (x1 - x0) * pk
             val yy = y0 + (y1 - y0) * pk + hop
             val color = when {
+                c.core -> CORAL
+                c.mark && frame.docked -> ink
                 frame.docked -> {
                     val local = (flashClockMs - sm.x * DockSpec.FLASH_STAGGER_MS) / DockSpec.FLASH_MS
                     if (local > 0f && local < 1f) lerp(ink, CORAL, sin(PI.toFloat() * local)) else ink
@@ -461,8 +548,9 @@ fun blockLayout(text: String): Pair<List<Pair<Int, Int>>, Int> {
             col += DockSpec.GLYPH_SPACE
             continue
         }
-        BlockGlyphs.glyphs[ch]?.let { g -> cells += g.map { (x, y) -> (x + col) to y } }
-        col += DockSpec.GLYPH_PITCH
+        val g = cellsOf(ch) ?: continue
+        cells += g.map { (x, y) -> (x + col) to y }
+        col += advanceOf(ch)
     }
     return cells to max(0, col - 1)
 }

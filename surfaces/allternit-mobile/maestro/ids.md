@@ -17,7 +17,7 @@ When a flow gains an `id:` selector, add its row here in the same change.
 | `loginSkipAuth` | 01 | `ios/App/AllternitApp.swift:456` | `android/feature/onboarding/.../SignInScreen.kt` |
 | `chatNewChat` | 02 | `ios/Features/Chat/Views/ChatView.swift:63` | `android/feature/shell/.../ShellScreens.kt` |
 | `composerInput` | 02 | `ios/Features/Chat/Composer/ComposerView.swift:355` | `android/feature/shell/.../Composer.kt` |
-| `phoneMenuButton` | 02, 04, 05, 07, 08, 09, 19 | `ios/Features/Shell/PhoneHeader.swift:192` | `android/feature/shell/.../ModeFan.kt` |
+| `phoneMenuButton` | 02, 04, 05, 07, 08, 09, 19 | `ios/Features/Shell/PhoneHeader.swift:192` | `android/feature/shell/.../WorkspaceShell.kt` (ShellMenuButton) |
 | `modeDial` | 03, 08, 09 | `ios/Features/Shell/ModeDialView.swift:433` | `android/feature/shell/.../ShellDrawer.kt` |
 | `modeFanCardbots` | 03 | `ios/Features/Shell/ModeDialView.swift:370` (built as "modeFanCard\(mode.rawValue)") | `android/feature/shell/.../ModeFan.kt` |
 | `drawerRowprojects` | 04 | `ios/Features/History/Views/HistorySidebarView.swift:408` (rail row id projects) | `android/feature/shell/.../ShellDrawer.kt` |
@@ -223,3 +223,12 @@ composerToolsTab, composerDeck, deckPluginsMore, deckPluginsManage, deckPlugin<n
 
 ## Claude organization + Connected apps (Android)
 connected-apps-page, connected-apps-empty, connected-app-<id>, connected-app-sheet, connected-app-cap, connected-app-cap-down, connected-app-cap-up, connected-app-save, connected-app-revoke, connected-app-revoke-confirm, privacyConnectedApps, claude-org-link, claude-org-relink, claude-org-unlink, claude-org-unlink-confirm, error-use-credits, error-link-again, error-manage-claude-org, error-linked-platforms
+
+## Mode arrivals (Android, D10)
+
+Non-interactive overlays: they take no touches and are hidden from accessibility, so flows can only assert them for presence, never tap them.
+
+| ID | What |
+|---|---|
+| teamArrival | The team flying up into the Bots roster (1.1 s) |
+| botArrival | The wash and big avatar when a bot opens (2.3 s) |

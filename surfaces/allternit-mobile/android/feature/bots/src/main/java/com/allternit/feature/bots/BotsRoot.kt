@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,6 +30,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -59,6 +64,7 @@ import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.Haptics
+import com.allternit.core.design.ProvideDockScroll
 import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.feature.artifacts.LibraryIconButton
 import com.allternit.feature.artifacts.LibrarySearchField
@@ -260,6 +266,22 @@ sealed interface BotRoute {
     data object Office : BotRoute
 }
 
+/** The bot a pushed route is about, for the mode orb's face; null for team-level routes. */
+internal fun BotRoute.focusedBotId(): String? = when (this) {
+    is BotRoute.Chat -> botId
+    is BotRoute.Page -> botId
+    is BotRoute.Threads -> botId
+    is BotRoute.Tasks -> botId
+    is BotRoute.Channels -> botId
+    is BotRoute.Computer -> botId
+    is BotRoute.Stage -> botId
+    is BotRoute.Home -> botId
+    is BotRoute.Settings -> botId
+    is BotRoute.BotHome -> botId
+    is BotRoute.FileEditor -> botId
+    else -> null
+}
+
 /** Bots mode's back stack (iOS BotNavigator). */
 class BotNavigator {
     val path = mutableStateListOf<BotRoute>()
@@ -329,11 +351,18 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
     BackHandler(enabled = nav.path.isNotEmpty()) { nav.back() }
 
     val top = nav.path.lastOrNull()
+    // The shell's mode orb shows this bot's face; the team page (and leaving Bots mode) clears it.
+    val focusId = top?.focusedBotId()
+    LaunchedEffect(focusId) { store.focusedBotId = focusId }
+    DisposableEffect(store) { onDispose { store.focusedBotId = null } }
     if (top != null) {
         Box(Modifier.fillMaxSize().background(c.bgPrimary)) { BotRouteDestination(top, host, store, nav) }
         return
     }
 
+    // BOTS is the block title: it docks into the bar as the launchpad scrolls (only when signed in, where there is a page to scroll).
+    val dockScroll = rememberScrollState()
+    val rootBody: @Composable () -> Unit = {
     Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().testTag("botsModeRoot")) {
         LibraryHeader(
             title = "Bots", onBack = null, leading = host.menuButton,
@@ -361,9 +390,11 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
                 actionTitle = "Sign in", onAction = host.openSignIn,
             ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_house), null, tint = c.accentPrimary, modifier = Modifier.size(28.dp)) }
         } else {
-            BotLaunchpad(host, store, nav, query, Modifier.weight(1f))
+            BotLaunchpad(host, store, nav, query, Modifier.weight(1f), dockScroll)
         }
     }
+    }
+    if (host.signedIn) ProvideDockScroll(dockScroll, rootBody) else rootBody()
 
     if (optionsOpen) BotsOptionsSheet(
         waiting = store.waitingCount, paused = pause.paused,
@@ -450,7 +481,7 @@ private sealed interface RosterEntry {
  * thread for it; a send to the team starts a bot project the main bot coordinates.
  */
 @Composable
-private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator, query: String, modifier: Modifier) {
+private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator, query: String, modifier: Modifier, dockScroll: ScrollState) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -538,7 +569,9 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
     }
 
     Column(modifier.fillMaxWidth()) {
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = 8.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        Column(Modifier.weight(1f).verticalScroll(dockScroll).padding(top = 8.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            // Room for the BOTS block title, which sits in the page under the bar and docks into it as this column scrolls.
+            Spacer(Modifier.height(16.dp))
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("YOUR TEAM", color = c.textTertiary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp, modifier = Modifier.padding(horizontal = 20.dp))
                 when (layout) {
@@ -671,7 +704,9 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
 @Composable
 private fun RosterFace(e: RosterEntry, size: androidx.compose.ui.unit.Dp) {
     val c = AllternitTheme.colors
-    Box(Modifier.size(size)) {
+    val botId = (e as? RosterEntry.Bot)?.bot?.id
+    if (botId != null) DisposableEffect(botId) { onDispose { BotRosterPositions.faces.remove(botId) } }
+    Box(Modifier.size(size).then(if (botId != null) Modifier.onGloballyPositioned { BotRosterPositions.faces[botId] = it.boundsInRoot() } else Modifier)) {
         Box(Modifier.size(size).clip(CircleShape).background(c.bgSecondary), contentAlignment = Alignment.Center) {
             when (e) {
                 is RosterEntry.Bot -> BotAvatar(e.bot, size * 0.84f)
@@ -852,3 +887,12 @@ private fun BotRouteDestination(route: BotRoute, host: BotsHost, store: BotModeS
 
 @Composable
 internal fun LibrarySpinnerBox() = com.allternit.feature.artifacts.LibrarySpinner("Loading")
+
+/**
+ * Where each bot's face sits on the Bots home right now (window coordinates), written by the roster as it
+ * lays out and removed when a face leaves the screen. The shell's team arrival lands on these spots; with
+ * none registered the roster is not on screen and the arrival is skipped.
+ */
+object BotRosterPositions {
+    val faces: SnapshotStateMap<String, androidx.compose.ui.geometry.Rect> = androidx.compose.runtime.mutableStateMapOf()
+}

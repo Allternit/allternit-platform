@@ -57,7 +57,6 @@ import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
-import com.allternit.core.design.Haptics
 import com.allternit.core.design.R as DesignR
 import kotlinx.coroutines.launch
 
@@ -126,7 +125,9 @@ internal fun ModelPickerSheet(models: ModelStore, onOpenSection: (RailRow) -> Un
         onDismissRequest = onDismiss,
         sheetState = state,
         containerColor = c.bgPrimary,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        // Panel A: the sheet floats, inset 6 from the sides and bottom, radius 36.
+        shape = RoundedCornerShape(36.dp),
+        modifier = Modifier.padding(horizontal = 6.dp).padding(bottom = 6.dp),
         dragHandle = null,
     ) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f).testTag("modelPicker")) {
@@ -256,12 +257,14 @@ private fun FilterChip(label: String, on: Boolean, onClick: () -> Unit) {
     val c = AllternitTheme.colors
     Text(
         label,
-        color = if (on) c.textPrimary else c.textSecondary,
+        // Panel A: the picked chip is black (ink) with page-colour text.
+        color = if (on) c.bgPrimary else c.textSecondary,
         fontSize = 12.sp,
+        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
         modifier = Modifier
             .clip(CircleShape)
-            .background(if (on) c.fillNeutral else Color.Transparent)
-            .border(1.dp, if (on) c.accentPrimary.copy(alpha = 0.5f) else c.borderSubtle, CircleShape)
+            .background(if (on) c.textPrimary else Color.Transparent)
+            .border(1.dp, if (on) c.textPrimary else c.borderSubtle, CircleShape)
             .clickable(role = Role.Checkbox, onClick = onClick)
             .semantics { selected = on }
             .padding(horizontal = 10.dp, vertical = 3.dp),
@@ -333,9 +336,12 @@ private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allterni
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            // Panel A: the picked row is filled and its name bold.
+            .background(if (selectedRow) c.fillNeutral else Color.Transparent)
             .testTag("modelRow${m.id}")
             .clickable(role = Role.Button) {
-                Haptics.perform(view, Haptics.Kind.Tap)
+                com.allternit.core.design.PolishHaptic.perform(view, com.allternit.core.design.PolishHaptic.Kind.Selection)
                 // iOS ModelPickerSheet.choose: a locked Cloud row opens Cloud credits and keeps the old selection.
                 val locked = if (m.cloudProvider != null || m.id.startsWith(ModelStore.CLOUD_PREFIX)) {
                     com.allternit.feature.billing.CloudCreditsGate.lockedRequest(m.name, m.cloudProvider, m.inputPer1mUsd, m.outputPer1mUsd)
@@ -353,7 +359,7 @@ private fun ModelRow(m: PickerModel, models: ModelStore, onLocked: (com.allterni
         ProviderMark(m.provider, 24.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(m.name, color = c.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Text(m.name, color = c.textPrimary, fontSize = 14.sp, fontWeight = if (selectedRow) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (m.isDefault) RowBadge("Default")
             }
             Text(rowSubtitle(m), color = c.textSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)

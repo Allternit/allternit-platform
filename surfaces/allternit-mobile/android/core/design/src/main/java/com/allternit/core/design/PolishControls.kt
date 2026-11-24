@@ -27,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,6 +45,7 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -177,6 +179,8 @@ fun FilterPills(
     modifier: Modifier = Modifier,
     /** Optional test tag per option (null for none). */
     itemTag: ((Int) -> String?)? = null,
+    /** Optional leading icon per option: a drawable id, or null for a text-only pill. */
+    icon: ((Int) -> Int?)? = null,
 ) {
     val colors = AllternitTheme.colors
     val view = LocalView.current
@@ -209,7 +213,17 @@ fun FilterPills(
                         }
                         .padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center,
-                ) { Text(label, color = text, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+                ) {
+                    val iconRes = icon?.invoke(i)
+                    if (iconRes == null) {
+                        Text(label, color = text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
+                            Icon(painterResource(iconRes), contentDescription = null, tint = text, modifier = Modifier.size(14.dp))
+                            Text(label, color = text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
             }
         }
     }

@@ -9,7 +9,7 @@ struct MarketplaceView: View {
     @State private var searchTask: Task<Void, Never>? = nil
 
     var body: some View {
-        List {
+        DockingTitleList(title: "Marketplace") {
             if store.isLoading && store.listings.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -34,20 +34,24 @@ struct MarketplaceView: View {
                 .listRowSeparator(.hidden)
             } else {
                 ForEach(store.listings) { listing in
-                    NavigationLink(destination: MarketplaceListingDetailView(listingId: listing.id)) {
+                    ZStack {
                         MarketplaceListingRow(listing: listing)
+                        NavigationLink(destination: MarketplaceListingDetailView(listingId: listing.id)) {
+                            EmptyView()
+                        }
+                        .opacity(0)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(listing.title). \(listing.description)")
                     .accessibilityHint("Opens details")
+                    .accessibilityAddTraits(.isButton)
+                    .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
         .background(Color("BgPrimary"))
-        .navigationTitle("Discover agents | bots")
-        .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search agents")
         .onChange(of: searchText) { _, newValue in
             searchTask?.cancel()
@@ -94,7 +98,20 @@ private struct MarketplaceListingRow: View {
             .font(.caption2)
             .foregroundColor(Color("TextSecondary"))
         }
-        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(PolishTokens.neutralFill))
+    }
+}
+
+/// .94 press for the Install and Rate buttons.
+private struct MarketplacePressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? PolishTokens.pressPill : 1)
+            .animation(reduceMotion ? nil : PolishTokens.press, value: configuration.isPressed)
     }
 }
 
@@ -144,9 +161,13 @@ struct MarketplaceListingDetailView: View {
                                     Text("Install")
                                 }
                             }
+                            .buttonStyle(MarketplacePressStyle())
+                            .foregroundColor(Color("AccentPrimary"))
                             .disabled(isInstalling)
                         }
                         Button("Rate this agent") { isRatingPresented = true }
+                            .buttonStyle(MarketplacePressStyle())
+                            .foregroundColor(Color("AccentPrimary"))
                         if let installError {
                             Text(installError)
                                 .font(.caption)
@@ -175,7 +196,7 @@ struct MarketplaceListingDetailView: View {
                                 }
                             }
                         } header: {
-                            Text("Reviews (\(detail.listing.ratingCount))")
+                            SectionLabel("Reviews (\(detail.listing.ratingCount))").textCase(nil)
                         }
                     }
                 }
