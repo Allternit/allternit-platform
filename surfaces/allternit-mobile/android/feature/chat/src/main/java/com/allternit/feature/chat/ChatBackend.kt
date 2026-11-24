@@ -59,6 +59,14 @@ class ChatBackend(
     private fun v1(vararg segments: String): HttpUrl =
         config.apiBaseUrl.newBuilder().apply { segments.forEach { addPathSegment(it) } }.build()
 
+    /** Authenticated sync only; image execution stays in this phone's WebView. */
+    internal suspend fun imageSync(method: String, id: String? = null, action: String? = null, body: String? = null): ApiResult<kotlinx.serialization.json.JsonElement> {
+        val parts = mutableListOf("pane-render")
+        if (id != null) parts += id
+        if (action != null) parts += action
+        return ApiCall.execute(okHttp, json, ApiCall.request(method, v1(*parts.toTypedArray()), body), kotlinx.serialization.json.JsonElement.serializer())
+    }
+
     // MARK: Sessions
 
     /**
@@ -384,7 +392,7 @@ class ChatBackend(
      * [ChatStreamEvent.Failed]: 503 `runtime_warming` (the caller waits and retries),
      * `runtime_offline`, 409 `no_brain`, 428 / `compute_required` (no computer).
      */
-    fun streamTurn(runtimeId: String, body: AgentChatRequest): Flow<ChatStreamEvent> {
+    fun streamTurn(runtimeId: String, body: AgentChatRequest, personTurn: Boolean = false): Flow<ChatStreamEvent> {
         val envelope = buildJsonObject {
             put("method", "POST")
             put("path", "/api/agent-chat")
@@ -392,7 +400,9 @@ class ChatBackend(
                 put("accept", "text/event-stream")
                 put("content-type", "application/json")
             })
-            put("body", json.encodeToString(AgentChatRequest.serializer(), body))
+            val encoded = json.encodeToJsonElement(AgentChatRequest.serializer(), body) as JsonObject
+            val marked = if (personTurn) JsonObject(encoded + ("metadata" to JsonObject((encoded["metadata"] as? JsonObject).orEmpty() + ("turn" to JsonPrimitive("person"))))) else encoded
+            put("body", marked.toString())
             put("bodyEncoding", "utf8")
         }.toString()
         val request = ApiCall.request("POST", relay.proxyUrl(runtimeId), envelope, accept = "text/event-stream")

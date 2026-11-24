@@ -370,6 +370,8 @@ internal fun copyText(context: Context, label: String, text: String) {
 @Composable
 private fun ArtifactBody(a: ArtifactV2, dark: Boolean) {
     val c = AllternitTheme.colors
+    // Downloads, option B: a stored picture loads with its poster sharpening by the real bytes in, then shows.
+    if (a.kind == "image" && a.body.trim().startsWith("https://")) { ByteLoadedImage(a); return }
     when (val r = remember(a.id, a.version, dark) { render(a, dark) }) {
         is Render.Page -> ArtifactPageWebView(r.source, Modifier.fillMaxSize())
         is Render.Live -> ArtifactLiveWebView(r.route, Modifier.fillMaxSize())
@@ -467,7 +469,8 @@ private fun ExportSheet(a: ArtifactV2, onPdf: () -> Unit, onDismiss: () -> Unit)
                 LibraryRowButton("Save or share file", DesignR.drawable.ph_arrow_down, "v2ArtifactSaveFile") {
                     status = "Preparing file…"
                     scope.launch {
-                        val data = withContext(Dispatchers.IO) { fetchBytes(a.body.trim()) }
+                        // Downloads, option B: the status line carries real bytes, percent and ETA while the file is fetched.
+                        val data = withContext(Dispatchers.IO) { fetchBytesWithProgress(a.body.trim()) { p -> status = ByteProgressText.status("Saving", p) } }
                         if (data == null) {
                             status = "The file couldn't be read. Try the export again."
                         } else {
@@ -506,4 +509,38 @@ internal fun pdfBytes(a: ArtifactV2): ByteArray? {
         if (b.startsWith("data:") || b.startsWith("https://") || b.startsWith("/api/")) fetchBytes(b)
         else android.util.Base64.decode(b, android.util.Base64.DEFAULT)
     }.getOrNull()?.takeIf { it.isNotEmpty() }
+}
+
+/** A stored picture over https: [ByteLoadingView] while its bytes arrive, then the picture itself (inline, so it does not download twice). */
+@Composable
+private fun ByteLoadedImage(a: ArtifactV2) {
+    val url = a.body.trim()
+    var progress by remember(url) { androidx.compose.runtime.mutableStateOf<ByteProgress?>(null) }
+    val loaded by androidx.compose.runtime.produceState<LoadedImage>(LoadedImage.Loading, url) {
+        value = withContext(Dispatchers.IO) {
+            val bytes = fetchBytesWithProgress(url) { p -> progress = p }
+            // Over 12 MB, or unreadable: let the page fetch it itself rather than hold it in memory twice.
+            if (bytes == null || bytes.size > 12 * 1024 * 1024) LoadedImage.Direct
+            else LoadedImage.Data("data:${sniffImageMime(bytes)};base64," + android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+        }
+    }
+    when (val l = loaded) {
+        LoadedImage.Loading -> ByteLoadingView(ByteLoading.poster(a.meta), progress, Modifier.fillMaxSize().testTag("v2ImageLoading"))
+        LoadedImage.Direct -> ArtifactPageWebView(PageSource.Html(ArtifactHTML.image(url)), Modifier.fillMaxSize())
+        is LoadedImage.Data -> ArtifactPageWebView(PageSource.Html(ArtifactHTML.image(l.url)), Modifier.fillMaxSize())
+    }
+}
+
+private sealed interface LoadedImage {
+    data object Loading : LoadedImage
+    data object Direct : LoadedImage
+    data class Data(val url: String) : LoadedImage
+}
+
+internal fun sniffImageMime(b: ByteArray): String = when {
+    b.size > 3 && b[0] == 0x89.toByte() && b[1] == 'P'.code.toByte() -> "image/png"
+    b.size > 2 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte() -> "image/jpeg"
+    b.size > 3 && b[0] == 'G'.code.toByte() && b[1] == 'I'.code.toByte() -> "image/gif"
+    b.size > 11 && b[8] == 'W'.code.toByte() && b[9] == 'E'.code.toByte() -> "image/webp"
+    else -> "image/png"
 }

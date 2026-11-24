@@ -23,7 +23,10 @@ export namespace PaneRender {
     id: Identifier.schema("question"),
     sessionID: Identifier.schema("session"),
     /** check: artifact_check — the app renders an artifact (code = its body) at each width and reports what it saw. */
-    kind: z.enum(["image", "video", "check"]),
+    kind: z.enum(["image", "video", "check", "browser-image"]),
+    /** Device-local ACI provider request. Never interpreted as drawing code. */
+    engine: z.literal("chatgpt-aci").optional(),
+    prompt: z.string().trim().min(1).max(16_000).optional(),
     format: Format,
     code: z.string(),
     width: z.number().int(),
@@ -84,6 +87,7 @@ export namespace PaneRender {
     width: z.number().optional(),
     height: z.number().optional(),
     error: z.string().optional(),
+    code: z.string().optional(),
   })
   export type Result = z.infer<typeof Result>
 
@@ -135,7 +139,7 @@ export namespace PaneRender {
   export const TIMEOUT_MS = 60_000
 
   const state = Instance.state(async () => {
-    const pending: Record<string, { info: Request; resolve: (r: Result) => void; timer: ReturnType<typeof setTimeout> }> = {}
+    const pending: Record<string, { info: Request; resolve: (r: Result) => void; timer: ReturnType<typeof setTimeout>; executorID?: string }> = {}
     return { pending }
   })
 
@@ -150,8 +154,11 @@ export namespace PaneRender {
   ): Promise<Result> {
     const s = await state()
     const id = Identifier.ascending("question")
-    const timeoutMs = options.timeoutMs ?? TIMEOUT_MS
-    const info: Request = { ...input, id, time: Date.now(), timeoutMs }
+    const timeoutMs = input.kind === "browser-image" ? Math.min(options.timeoutMs ?? 600_000, 600_000) : options.timeoutMs ?? TIMEOUT_MS
+    if (input.kind === "browser-image" && (input.engine !== "chatgpt-aci" || !input.prompt?.trim() || input.prompt.length > 16_000)) {
+      return { ok: false, error: "The local ACI image request needs an engine and a prompt of 1–16000 characters.", code: "invalid_request" }
+    }
+    const info: Request = Request.parse({ ...input, ...(input.kind === "browser-image" ? { code: "", format: "html" } : {}), id, time: Date.now(), timeoutMs })
     log.info("requesting", { id, kind: input.kind, format: input.format, width: input.width, height: input.height })
     return new Promise<Result>((resolve) => {
       const unsubscribe = options.onProgress
@@ -166,6 +173,7 @@ export namespace PaneRender {
           unsubscribed = true
           unsubscribe?.()
         }
+        options.abort?.removeEventListener("abort", onAbort)
         resolve(result)
       }
       const finish = (result: Result) => {
@@ -175,28 +183,43 @@ export namespace PaneRender {
         delete s.pending[id]
         done(result)
       }
+      const onAbort = () => finish({ ok: false, error: "Cancelled.", ...(input.kind === "browser-image" ? { code: "cancelled" } : {}) })
       const timer = setTimeout(
         () =>
           finish({
             ok: false,
-            error: `No app rendered the ${input.kind}. The session isn't open in an Allternit app right now, or the render ran past ${Math.round(timeoutMs / 1000)}s.`,
+            error: input.kind === "browser-image"
+              ? "This device's ACI browser did not finish the image. Open the originating chat in the local Allternit app and check ACI sign-in or verification. Check the ChatGPT conversation before making a new request; this request will not be resubmitted."
+              : `No app rendered the ${input.kind}. The session isn't open in an Allternit app right now, or the render ran past ${Math.round(timeoutMs / 1000)}s.`,
+            ...(input.kind === "browser-image" ? { code: "unavailable" } : {}),
           }),
         timeoutMs,
       )
       s.pending[id] = { info, resolve: done, timer }
       if (options.abort?.aborted) return finish({ ok: false, error: "Cancelled." })
-      options.abort?.addEventListener("abort", () => finish({ ok: false, error: "Cancelled." }), { once: true })
+      options.abort?.addEventListener("abort", onAbort, { once: true })
       Bus.publish(Event.Requested, info)
     })
   }
 
-  export async function reply(input: { requestID: string; result: Result }): Promise<boolean> {
+  /** Only one local app may execute a browser job, even with two chat views open. */
+  export async function claim(input: { requestID: string; executorID: string }): Promise<boolean> {
+    const s = await state()
+    const entry = s.pending[input.requestID]
+    if (!entry || entry.info.kind !== "browser-image" || !/^[A-Za-z0-9_-]{16,128}$/.test(input.executorID)) return false
+    if (entry.executorID && entry.executorID !== input.executorID) return false
+    entry.executorID = input.executorID
+    return true
+  }
+
+  export async function reply(input: { requestID: string; result: Result; executorID?: string }): Promise<boolean> {
     const s = await state()
     const entry = s.pending[input.requestID]
     if (!entry) {
       log.warn("reply for unknown request", { requestID: input.requestID })
       return false
     }
+    if (entry.info.kind === "browser-image" && (!entry.executorID || entry.executorID !== input.executorID)) return false
     clearTimeout(entry.timer)
     delete s.pending[input.requestID]
     Bus.publish(Event.Replied, { sessionID: entry.info.sessionID, requestID: input.requestID, ok: input.result.ok })
@@ -205,10 +228,12 @@ export namespace PaneRender {
   }
 
   /** The app reports how far a pending request is. False when no such request is waiting. */
-  export async function progress(input: { requestID: string; detail: ProgressDetail }): Promise<boolean> {
+  export async function progress(input: { requestID: string; detail: ProgressDetail; executorID?: string }): Promise<boolean> {
     const s = await state()
     const entry = s.pending[input.requestID]
     if (!entry) return false
+    if (entry.info.kind === "browser-image" && (!entry.executorID || entry.executorID !== input.executorID)) return false
+    if (entry.info.kind === "browser-image" && input.detail.preview && !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(input.detail.preview)) return false
     Bus.publish(Event.Progress, { sessionID: entry.info.sessionID, requestID: input.requestID, detail: input.detail })
     return true
   }

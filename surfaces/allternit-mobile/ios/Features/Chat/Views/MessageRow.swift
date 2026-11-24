@@ -260,6 +260,8 @@ struct MessageRow: View {
                     )
                 }
 
+                ACILocalImageTurnView(messageId: message.id)
+
                 // Inline Artifact Card attachments (typed artifact.created
                 // events) — gated by Settings → Capabilities → Artifacts.
                 if settings.artifactsEnabled {

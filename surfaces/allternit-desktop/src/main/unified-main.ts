@@ -21,6 +21,7 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import * as os from 'node:os';
 import { execFile } from 'node:child_process';
+import { runAciImage, cancelAciImage, teardownAciImages, showAciImageBrowser, readAciImageArtifact } from './aci-image.js';
 import { createMotionRender } from './motion-render.js';
 import Store from 'electron-store';
 import log from 'electron-log';
@@ -145,6 +146,7 @@ import {
   installWindowOpenGuard,
   openExternalAllowlisted,
   assertTrustedSender,
+  isTrustedAppUrl,
 } from './security.js';
 import { resolveDevUserDataPath } from './desktop-data-dir.js';
 import { coworkDeviceHeaders, coworkDeviceInfo, isInAppBrowsableUrl } from './cowork-device.js';
@@ -2787,6 +2789,7 @@ async function handleProtocolCallback(url: string | null): Promise<void> {
   }
 
   try {
+    await teardownAciImages();
     const handled = await authManager.handleCallbackUrl(url);
     log.info('[Main] handleCallbackUrl result:', handled);
     if (handled && mainWindow) {
@@ -2984,6 +2987,16 @@ app.whenReady().then(async () => {
 
   protocol.handle('allternit-api', async (request) => {
     const url = new URL(request.url);
+    if (url.hostname === 'local' && url.pathname.startsWith('/aci-images/')) {
+      const caller = request.headers.get('origin');
+      const referrer = request.headers.get('referer');
+      if (!(caller && caller !== 'null' && isTrustedAppUrl(caller)) && !(referrer && isTrustedAppUrl(referrer))) return new Response(null, { status: 403 });
+      if (request.method !== 'GET') return new Response(null, { status: 405 });
+      const identity = authManager.getSessionSnapshot()?.userId;
+      const bytes = await readAciImageArtifact(url.pathname.slice('/aci-images/'.length), identity);
+      if (!bytes || identity !== authManager.getSessionSnapshot()?.userId) return new Response(null, { status: 404 });
+      return new Response(new Uint8Array(bytes), { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Access-Control-Allow-Origin': caller && caller !== 'null' ? caller : 'null', 'Vary': 'Origin' } });
+    }
     // D16: the window's person-act marker rides in the URL because Chromium
     // drops custom headers on the /api redirect; never forwarded as-is.
     const personMarked = takeDesktopProofParam(url);
@@ -4829,7 +4842,17 @@ ipcMain.handle('auth:list-accounts', async () => authManager.listAccounts());
 handleGuarded('auth:forget-account', async (_event, userId: string) => {
   await authManager.forgetAccount(userId);
 });
+handleGuarded('aci-image:run', (event, request: unknown) => runAciImage(event.sender, request, () => authManager.getSessionSnapshot()?.userId));
+handleGuarded('aci-image:read', async (_event, id: unknown) => {
+  const identity = authManager.getSessionSnapshot()?.userId;
+  const bytes = await readAciImageArtifact(id, identity);
+  return bytes && identity === authManager.getSessionSnapshot()?.userId ? `data:image/png;base64,${bytes.toString('base64')}` : null;
+});
+handleGuarded('aci-image:show', () => showAciImageBrowser());
+handleGuarded('aci-image:cancel', (event, requestId: string) => cancelAciImage(event.sender, requestId));
+
 handleGuarded('auth:sign-out', async () => {
+  await teardownAciImages();
   // First, while the Clerk session can still revoke the Files key: removes
   // every Finder location of the account and the files macOS kept for them.
   await filesDriveManager.signOut();

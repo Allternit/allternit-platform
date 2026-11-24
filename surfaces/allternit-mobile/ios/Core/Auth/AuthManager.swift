@@ -426,6 +426,7 @@ final class AuthManager: ObservableObject {
     }
 
     func signOut() async throws {
+        ACIBrowserImageJob.shared.signOut()
         if SampleWorkspace.isEnabled { return }
         guard isClerkConfigured else {
             isSkippingAuth = false
@@ -447,6 +448,7 @@ final class AuthManager: ObservableObject {
 
     /// Nothing of the account stays on the Home Screen or in Spotlight.
     func clearSystemSurfaces() {
+        ACIBrowserImageJob.shared.signOut()
         StatusSnapshotWriter.clear()
         FilesDriveBridge.shared.clearLocal()
         SpotlightIndexer.removeAll()
@@ -570,6 +572,7 @@ enum AccountSwitchCleanup {
     /// and once more after a person switch's sign-out, so a store that
     /// refilled while sign-out was in flight is empty again.
     static func resetLocalState(reason: AccountSwitchReason) {
+        ACIBrowserImageJob.shared.signOut()
         if SampleWorkspace.isEnabled { return }
         DecisionsStore.shared.reset()
         BYOCStore.shared.reset()

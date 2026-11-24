@@ -73,7 +73,21 @@ final class ShellSessionsStore: ObservableObject {
     /// Computer sessions and cloud plan chats load independently: a computer
     /// that is missing or failing never hides plan chats (the "brain runner"
     /// path has no computer at all).
+    /// Phone-owned image history remains available without probing a runtime.
+    func loadLocalImages() {
+        let local = ACILocalImageStore.shared.sessions()
+        sessions = (sessions.filter { !ACILocalImageStore.isLocal($0.id) } + local).sorted { Self.timestamp(of: $0) > Self.timestamp(of: $1) }
+        hasLoaded = true
+        isLoading = false
+        loadError = nil
+    }
+
     func load() async {
+        let localImages = ACILocalImageStore.shared.sessions()
+        if !localImages.isEmpty {
+            sessions = (sessions.filter { !ACILocalImageStore.isLocal($0.id) } + localImages).sorted { Self.timestamp(of: $0) > Self.timestamp(of: $1) }
+            hasLoaded = true
+        }
         if !hasLoaded { isLoading = true }
         loadError = nil
         async let computerResult: Result<[AgentSession], Error> = {
@@ -91,7 +105,7 @@ final class ShellSessionsStore: ObservableObject {
             return
         }
 
-        var merged: [AgentSession] = []
+        var merged: [AgentSession] = localImages
         var computerError: Error?
         var planError: Error?
         switch computer {
@@ -109,7 +123,7 @@ final class ShellSessionsStore: ObservableObject {
         let computerBroken = computerError.map { !Self.isNoComputer($0) } ?? false
         let planFailed = planError != nil
         let showError: Bool
-        if computerError != nil && planFailed { showError = true }
+        if computerError != nil && planFailed && merged.isEmpty { showError = true }
         else if computerBroken && merged.isEmpty { showError = true }
         else { showError = false }
 
@@ -216,6 +230,11 @@ final class ShellSessionsStore: ObservableObject {
     /// Rename from a card's ⋯ menu: `PATCH /api/v1/agent-sessions/:id`
     /// `{ name }` (renameOverviewItem). Optimistic; restored on failure.
     func rename(id: String, to name: String) async throws {
+        if ACILocalImageStore.isLocal(id) {
+            try ACILocalImageStore.shared.rename(id, title: name)
+            sessions = sessions.filter { $0.id != id } + ACILocalImageStore.shared.sessions().filter { $0.id == id }
+            return
+        }
         let before = sessions
         sessions = sessions.map { $0.id == id ? $0.renamed(name) : $0 }
         struct Body: Encodable { let name: String }
@@ -232,6 +251,11 @@ final class ShellSessionsStore: ObservableObject {
     /// Code's setCodeSessionArchived sends). It leaves the open lists and
     /// stays under the drawer's Archived filter.
     func archive(id: String) async throws {
+        if ACILocalImageStore.isLocal(id) {
+            try ACILocalImageStore.shared.archive(id, archived: true)
+            sessions = sessions.filter { $0.id != id } + ACILocalImageStore.shared.sessions().filter { $0.id == id }
+            return
+        }
         let before = remove(id: id)
         struct Body: Encodable {
             struct Metadata: Encodable { let archived: Bool }

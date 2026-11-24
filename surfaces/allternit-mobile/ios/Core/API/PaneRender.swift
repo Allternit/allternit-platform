@@ -1,12 +1,17 @@
 import Foundation
+import CoreFoundation
 
 /// A session agent's request for the app to render something (gizzi
 /// `PaneRender.Request`; web pane-render-bridge.ts): a `media_generate`
 /// image or video drawn from code, or an `artifact_check` of an artifact at
 /// each width. The phone answers it the way the web app does.
 struct PaneRenderRequest: Sendable {
-    enum Kind: String, Sendable { case image, video, check }
+    enum Kind: String, Sendable { case image, video, check; case browserImage = "browser-image" }
 
+    let engine: String?
+    let prompt: String?
+    let toolCall: String?
+    let toolMessageId: String?
     let requestId: String
     let sessionId: String
     let kind: Kind
@@ -39,15 +44,30 @@ struct PaneRenderRequest: Sendable {
             return nil
         }
         func num(_ keys: String...) -> Double? {
-            for k in keys { if let n = obj[k] as? NSNumber { return n.doubleValue } }
+            for k in keys { if let n = obj[k] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() { return n.doubleValue } }
             return nil
         }
         guard let requestId = str("request_id", "requestId", "id"),
               let sessionId = str("session_id", "sessionId", "sessionID"),
               let format = str("format"),
-              let code = obj["code"] as? String, !code.isEmpty,
+              let code = obj["code"] as? String,
               let width = num("width"), let height = num("height") else { return nil }
-        let kind = Kind(rawValue: str("kind") ?? "image") ?? .image
+        guard let kind = Kind(rawValue: str("kind") ?? "image"),
+              width.isFinite, height.isFinite, (1...4096).contains(width), (1...4096).contains(height) else { return nil }
+        let prompt = obj["prompt"] as? String
+        if kind == .browserImage {
+            guard str("engine") == "chatgpt-aci", format == "html", code.isEmpty,
+                  let prompt, (1...16000).contains(prompt.count), !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            guard let timeout = num("timeoutMs", "timeout_ms"), timeout.isFinite, timeout > 0, timeout <= 600_000,
+                  let time = num("time"), time.isFinite else { return nil }
+            let age = Date().timeIntervalSince1970 * 1000 - time
+            guard age >= -30_000, age <= timeout else { return nil }
+        } else if code.isEmpty { return nil }
+        self.engine = str("engine")
+        self.prompt = prompt
+        let tool = obj["toolCall"] as? [String: Any]
+        self.toolCall = tool?["callID"] as? String ?? str("toolCall", "tool_call")
+        self.toolMessageId = tool?["messageID"] as? String
         self.requestId = requestId
         self.sessionId = sessionId
         self.kind = kind
@@ -103,6 +123,8 @@ struct PaneRenderResult: Codable, Sendable {
     var width: Int? = nil
     var height: Int? = nil
     var error: String? = nil
+    var code: String? = nil
+    var executorId: String? = nil
 
     static func failed(_ message: String) -> PaneRenderResult {
         PaneRenderResult(ok: false, error: message)

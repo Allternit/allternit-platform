@@ -149,6 +149,7 @@
               "guides/code-session-list",
               "guides/code-linked-prs",
               "guides/motion",
+              "guides/image-generation",
               "guides/computers-and-apps",
               "guides/files-drive",
               "guides/files-sharing",
@@ -434,7 +435,8 @@
               "reference/glossary",
               "reference/changelog",
               "dev/computers-console-contract",
-              "dev/computer-pairing"
+              "dev/computer-pairing",
+              "dev/aci-image-jobs"
             ],
             "icon": "/icons/book.svg"
           },
@@ -820,6 +822,7 @@
                   "api/data-retention",
                   "api/embeddings",
                   "api/images",
+                  "api/generation-progress",
                   "api/realtime-audio",
                   "api/cache",
                   "api/context-caches",

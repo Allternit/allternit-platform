@@ -326,7 +326,7 @@ internal fun Composer(
         // A turn needs words (iOS sendMessage guards on the trimmed text); files ride along.
         if (text.isBlank() || sendDisabled || isStreaming) return
         // No brain picked: the picker opens instead of sending (iOS requiresModelPick).
-        if (models.selectedId.isNullOrEmpty()) {
+        if (models.selectedId.isNullOrEmpty() && armedMode?.id != "image") {
             pickerOpen = true
             return
         }

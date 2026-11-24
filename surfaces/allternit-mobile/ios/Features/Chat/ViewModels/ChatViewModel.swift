@@ -251,7 +251,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// Starts a fresh chat; `ephemeral: true` enters incognito mode (the
     /// ghost-button path), the default false exits it.
     func startNewSession(ephemeral: Bool = false) {
-        stopStreaming()
+        stopStreaming(cancelBrowserImage: false)
         discardTemporaryBackingSession()
         transientError = nil
         messages = []
@@ -265,7 +265,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     }
 
     func loadSession(_ sessionId: String) {
-        stopStreaming()
+        if currentSessionId == sessionId, browserImageTask != nil { return }
+        stopStreaming(cancelBrowserImage: false)
         // Opening a real conversation exits temporary mode.
         discardTemporaryBackingSession()
         isTemporaryChat = false
@@ -280,6 +281,12 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         hasLocalPersonTurns = false
         resetPlanThread()
 
+        // Local outputs are visible immediately, even if the old runtime is offline.
+        messages = ACILocalImageStore.shared.messages(sessionId: sessionId)
+        if ACILocalImageStore.isLocal(sessionId) {
+            hasLocalPersonTurns = true
+            return
+        }
         if PlanThreadClient.isThreadId(sessionId) {
             loadPlanThread(sessionId)
             return
@@ -293,6 +300,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 // Ignore stale responses if the user switched sessions mid-flight.
                 guard self.currentSessionId == sessionId else { return }
                 self.messages = records.map(Self.mapRecord)
+                self.refreshLocalImageTurns()
                 await self.loadBranches()
             } catch {
                 self.transientError = "Couldn't load the conversation: \(FriendlyErrorMessage.from(error.localizedDescription))"
@@ -426,14 +434,36 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     case .connected:
                         failures = 0
                         warned = false
+                        if !Task.isCancelled, isChatVisible, pendingBrowserImage == nil, !ACIBrowserImageJob.shared.isBusy,
+                           let pending = try? await chatClient.pendingPaneRenders(),
+                           let request = pending.first(where: { $0.kind == .browserImage && $0.sessionId == currentSessionId }) {
+                            let limit = min(request.timeoutMs ?? 600_000, 600_000) / 1000
+                            if request.time.map({ Date().timeIntervalSince1970 - $0 / 1000 <= limit }) == true,
+                               NativePaneRenderer.shared.take(request.requestId) {
+                                browserConsentEpoch = ACIBrowserImageJob.shared.epoch
+                                browserOrigin = request.sessionId
+                                browserReplyClient = chatClient
+                                pendingBrowserImage = request
+                            }
+                        }
                     case .cursor(let id):
                         cursor = id
                     case .handedOff(let from, let to):
                         if sessions.contains(from) { sessions.insert(to) }
                     case .paneRender(let request):
-                        guard sessions.contains(request.sessionId), NativePaneRenderer.shared.take(request.requestId) else { continue }
+                        guard !Task.isCancelled, sessions.contains(request.sessionId) else { continue }
                         let limit = (request.timeoutMs ?? 60_000) / 1000
                         if let time = request.time, Date().timeIntervalSince1970 - time / 1000 > limit { continue }
+                        if request.kind == .browserImage {
+                            guard request.sessionId == currentSessionId, isChatVisible, pendingBrowserImage == nil, !ACIBrowserImageJob.shared.isBusy,
+                                  NativePaneRenderer.shared.take(request.requestId) else { continue }
+                            browserConsentEpoch = ACIBrowserImageJob.shared.epoch
+                            browserOrigin = request.sessionId
+                            browserReplyClient = chatClient
+                            pendingBrowserImage = request
+                            continue
+                        }
+                        guard NativePaneRenderer.shared.take(request.requestId) else { continue }
                         Task { [chatClient] in
                             let result = await NativePaneRenderer.shared.run(request, client: chatClient)
                             await Self.sendPaneRenderReply(request, result: result, client: chatClient, onProblem: onProblem)
@@ -470,9 +500,12 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         client: AgentChatClient,
         onProblem: @MainActor (String) -> Void
     ) async {
+        // Claim conflicts belong to the existing executor. Never post an unowned refusal.
+        guard request.kind != .browserImage || result.executorId != nil else { return }
         for attempt in 1...3 {
             do {
-                try await client.replyPaneRender(requestId: request.requestId, result: result)
+                let accepted = try await client.replyPaneRender(requestId: request.requestId, result: result)
+                if !accepted, request.kind == .browserImage { onProblem("The image request is no longer waiting. Check the ACI ChatGPT conversation before starting another image.") }
                 return
             } catch {
                 if attempt == 3 {
@@ -512,7 +545,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// are the composer's staged files — each is uploaded
     /// (`POST /api/v1/uploads`) before the stream starts and referenced from
     /// the agent-chat body; an upload failure fails the send.
-    func sendMessage(_ text: String, attachments: [StagedAttachment] = [], runtimeModelId: String? = nil, effort: String? = nil, enrich: Bool = true, clientLocation: AgentChatClient.ClientLocation? = nil) {
+    func sendMessage(_ text: String, attachments: [StagedAttachment] = [], runtimeModelId: String? = nil, effort: String? = nil, enrich: Bool = true, clientLocation: AgentChatClient.ClientLocation? = nil, personInitiated: Bool = false) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isStreaming, !isCreatingSession else { return }
 
@@ -525,7 +558,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         // A card's Share location parks the fix in PendingClientLocation, then sends a
         // short message; this send picks it up (once, and only while it is fresh).
         let location = clientLocation ?? PendingClientLocation.take()
-        startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId, clientLocation: location)
+        startStream(text: streamText, runtimeModelId: runtimeModelId, effort: effort, stagedAttachments: attachments, userMessageId: userMessageId, clientLocation: location, personInitiated: personInitiated)
     }
 
     /// The live voice session, if any (set by VoiceHost); `control` events go to it.
@@ -601,7 +634,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         // feed back to that message and send the new text.
         if currentSessionId == nil, PersonModels.isPersonOnly(runtimeModelId) || ModelStore.shared.routesDirect(runtimeModelId) {
             messages.removeSubrange(index...)
-            sendMessage(ToolOptionsStore.shared.enrichedText(newText), attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false)
+            sendMessage(ToolOptionsStore.shared.enrichedText(newText), attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false, personInitiated: true)
             return
         }
         guard let sessionId = currentSessionId else {
@@ -626,7 +659,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             self.isCreatingSession = false
             // Re-apply active composer prefixes to the edited resend.
             let enriched = ToolOptionsStore.shared.enrichedText(newText)
-            self.sendMessage(enriched, attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false)
+            self.sendMessage(enriched, attachments: attachments, runtimeModelId: runtimeModelId, effort: effort, enrich: false, personInitiated: true)
         }
     }
 
@@ -665,7 +698,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// never-landed rollback removes it along with the placeholder.
     /// `stagedAttachments` are uploaded first; `preparedRefs` skips the
     /// upload step (retry of an already-uploaded send).
-    private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil, clientLocation: AgentChatClient.ClientLocation? = nil) {
+    private func startStream(text trimmed: String, runtimeModelId: String?, effort: String? = nil, stagedAttachments: [StagedAttachment] = [], preparedRefs: [AttachmentRef]? = nil, userMessageId: String? = nil, clientLocation: AgentChatClient.ClientLocation? = nil, personInitiated: Bool = false) {
         // A locked Allternit Cloud model (D9): nothing is sent; the text goes
         // back to the composer and the credits sheet opens. The 402 is the backstop.
         if let modelId = runtimeModelId, ModelStore.shared.isCloudLocked(modelId) {
@@ -679,6 +712,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         if let modelId = runtimeModelId, PersonModels.isPersonOnly(modelId) || routesCloudDirect(modelId) {
             startPersonStream(text: trimmed, modelId: modelId,
                               hasAttachments: !stagedAttachments.isEmpty || !(preparedRefs ?? []).isEmpty)
+            return
+        }
+        if ACILocalImageStore.isLocal(currentSessionId) {
+            transientError = "This image history is on your iPhone. Choose ChatGPT for text chat, or start a new chat for this model."
             return
         }
         transientError = nil
@@ -744,7 +781,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     attachments: attachmentRefs.isEmpty ? nil : attachmentRefs,
                     tools: ToolOptionsStore.shared.optionsForSend,
                     workdir: self.threadProjectId.map { ProjectFolderStore.shared.folder(for: $0)?.path ?? "" },
-                    clientLocation: clientLocation
+                    clientLocation: clientLocation,
+                    personInitiated: personInitiated
                 ) {
                     try Task.checkCancellation()
                     if self.apply(event, to: assistantId) {
@@ -798,6 +836,134 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         }
     }
 
+    // Browser-image jobs are person-confirmed actions, never inferred from message text.
+    @Published var pendingBrowserImage: PaneRenderRequest?
+    @Published var imageBrowserPresented = false
+    var isChatVisible = false
+    private var browserImageTask: Task<Void, Never>?
+    private var browserReplyClient: AgentChatClient?
+    private var browserConsentEpoch = 0
+    private var browserOrigin: String?
+
+    func requestLocalBrowserImage(_ prompt: String) {
+        guard !isStreaming, isChatVisible, pendingBrowserImage == nil, !ACIBrowserImageJob.shared.isBusy else { return }
+        let id = "local-" + UUID().uuidString
+        if currentSessionId == nil {
+            do { currentSessionId = try ACILocalImageStore.shared.createChat(history: messages) }
+            catch { transientError = "Couldn't save image history on this iPhone. Free some space and try again."; return }
+        }
+        guard let origin = currentSessionId else { return }
+        if ACILocalImageStore.isLocal(origin) { hasLocalPersonTurns = true }
+        let payload: [String: Any] = ["id": id, "sessionID": origin, "toolCall": id,
+            "kind": "browser-image", "engine": "chatgpt-aci", "prompt": prompt,
+            "format": "html", "code": "", "width": 1024, "height": 1024, "timeoutMs": 600000, "time": Date().timeIntervalSince1970 * 1000]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8), let request = PaneRenderRequest(payload: json) else {
+            transientError = "Enter an image prompt of 1 to 16000 characters."
+            return
+        }
+        browserConsentEpoch = ACIBrowserImageJob.shared.epoch
+        browserOrigin = currentSessionId
+        browserReplyClient = nil
+        pendingBrowserImage = request
+    }
+
+    func declineBrowserImage() {
+        guard let request = pendingBrowserImage else { return }
+        pendingBrowserImage = nil
+        if let client = browserReplyClient, browserConsentEpoch == ACIBrowserImageJob.shared.epoch {
+            let consentEpoch = browserConsentEpoch
+            Task {
+                guard consentEpoch == ACIBrowserImageJob.shared.epoch else { return }
+                let executorId = UUID().uuidString
+                do {
+                    try await client.claimBrowserImage(requestId: request.requestId, executorId: executorId)
+                    guard consentEpoch == ACIBrowserImageJob.shared.epoch else { return }
+                    try await client.replyPaneRender(requestId: request.requestId,
+                        result: PaneRenderResult(ok: false, error: "The person declined the image prompt.", code: "cancelled", executorId: executorId))
+                } catch { /* Another device already owns it; never alter that job. */ }
+            }
+        }
+        browserReplyClient = nil
+    }
+
+    func confirmBrowserImage() {
+        guard let request = pendingBrowserImage, isChatVisible, browserOrigin == currentSessionId, request.sessionId == currentSessionId,
+              browserConsentEpoch == ACIBrowserImageJob.shared.epoch,
+              !ACIBrowserImageJob.shared.isBusy, UIApplication.shared.applicationState == .active else { declineBrowserImage(); return }
+        if let time = request.time, Date().timeIntervalSince1970 - time / 1000 > min(request.timeoutMs ?? 600_000, 600_000) / 1000 {
+            declineBrowserImage()
+            transientError = "This image request expired. Start a new image action."
+            return
+        }
+        // Confirmation is valid only in the originating chat, before opening the browser.
+        pendingBrowserImage = nil
+        let client = browserReplyClient
+        browserReplyClient = nil
+        imageBrowserPresented = true
+        let local = client == nil
+        let assistantId = UUID().uuidString
+        let callId = request.toolCall ?? request.requestId
+        let origin = request.sessionId
+        let owner = ACILocalImageStore.shared.owner
+        let executionEpoch = ACIBrowserImageJob.shared.epoch
+        if local {
+            do {
+                try ACILocalImageStore.shared.begin(sessionId: origin, id: request.requestId,
+                    messageId: assistantId, prompt: request.prompt ?? "", history: messages)
+            } catch {
+                imageBrowserPresented = false
+                transientError = "Couldn't save this image job on your iPhone. Free some space and try again."
+                return
+            }
+            hasLocalPersonTurns = true
+            refreshLocalImageTurns()
+            isStreaming = true
+            streamingMessageId = assistantId
+        }
+        browserImageTask = Task { [weak self, chatClient] in
+            guard let self else { return }
+            let result = await NativePaneRenderer.shared.run(request, client: client ?? chatClient, browserConfirmed: true, browserLocal: local)
+            if let client {
+                if owner == ACILocalImageStore.shared.owner, executionEpoch == ACIBrowserImageJob.shared.epoch || result.code == "cancelled" {
+                    await Self.sendPaneRenderReply(request, result: result, client: client, onProblem: { self.transientError = $0 })
+                }
+            } else {
+                do {
+                    try ACILocalImageStore.shared.finish(sessionId: origin, id: request.requestId, owner: owner, result: result)
+                } catch {
+                    if self.currentSessionId == origin {
+                        self.transientError = "The image could not be saved locally. Check the ACI ChatGPT conversation before trying again."
+                    }
+                }
+                // A different chat may now be open. File/history routing uses only the
+                // captured native origin, and the visible feed refreshes only its own turns.
+                self.refreshLocalImageTurns()
+                if self.streamingMessageId == assistantId {
+                    self.isStreaming = false
+                    self.streamingMessageId = nil
+                }
+            }
+            GenerationProgressStore.shared.clear(callId)
+            self.browserImageTask = nil
+        }
+    }
+
+    func refreshLocalImageTurns() {
+        guard let id = currentSessionId else { return }
+        let local = ACILocalImageStore.shared.messages(sessionId: id)
+        guard !local.isEmpty else { return }
+        let imageIds = Set((ACILocalImageStore.shared.threads[id]?.turns ?? []).flatMap { [$0.messageId, $0.id + "-user"] })
+        messages.removeAll { imageIds.contains($0.id) }
+        let existing = Set(messages.map(\.id))
+        messages.append(contentsOf: local.filter { !existing.contains($0.id) })
+        messages.sort { $0.createdAt < $1.createdAt }
+        if let streamingMessageId, let message = local.first(where: { $0.id == streamingMessageId }), !message.isStreaming {
+            isStreaming = false
+            self.streamingMessageId = nil
+        }
+    }
+
     // MARK: - The person's own plan (contract §9.3, §9.9)
 
     /// True once this chat has turns sent to a person model. They live only
@@ -838,6 +1004,12 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         // No tools here: the web search / research markers mean nothing to the vendor (a style prefix stays).
         let history = Self.personHistory(messages, text: ToolOptionsStore.shared.withoutToolMarkers(text))
         let vendor = PersonModels.vendorName(for: modelId)
+        let localOrigin = ACILocalImageStore.isLocal(currentSessionId) ? currentSessionId : nil
+        let localOwner = ACILocalImageStore.shared.owner
+        if let localOrigin, let user = messages.last(where: { $0.role == "user" }) {
+            do { try ACILocalImageStore.shared.appendText(sessionId: localOrigin, message: user) }
+            catch { transientError = "Couldn't save this message on your iPhone."; return }
+        }
 
         let assistantId = UUID().uuidString
         messages.append(MessageRecord(id: assistantId, role: "assistant", content: "", isStreaming: true))
@@ -862,6 +1034,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     }
                 }
                 self.finishStreaming(messageId: assistantId)
+                if let localOrigin, ACILocalImageStore.shared.owner == localOwner,
+                   let reply = self.messages.first(where: { $0.id == assistantId }) {
+                    try ACILocalImageStore.shared.appendText(sessionId: localOrigin, message: reply)
+                }
                 if PlanThreadClient.isStored(model: modelId),
                    let reply = self.messages.first(where: { $0.id == assistantId }), !reply.content.isEmpty {
                     self.savePlanTurn(role: "assistant", content: reply.content, model: modelId)
@@ -1103,7 +1279,12 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
 
     /// Stop button: cancels the local consumer and aborts the server-side
     /// generation (POST /api/v1/agent-sessions/:id/abort).
-    func stopStreaming() {
+    func stopStreaming(cancelBrowserImage: Bool = true) {
+        declineBrowserImage()
+        if cancelBrowserImage {
+            browserImageTask?.cancel()
+            ACIBrowserImageJob.shared.cancel()
+        }
         let sessionId = currentSessionId
 
         streamTask?.cancel()
@@ -1116,7 +1297,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
         isStreaming = false
         streamingMessageId = nil
 
-        if let sessionId {
+        if let sessionId, !ACILocalImageStore.isLocal(sessionId) {
             Task { [chatClient] in
                 try? await chatClient.abort(sessionId: sessionId)
             }
@@ -1131,6 +1312,8 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     /// session's messages — the canonical server state IS the reconcile path
     /// (the live protocol has no reply-state endpoint to diff against).
     func handleScenePhase(_ phase: ScenePhase) {
+        // Local image jobs own their lifecycle and report paused/reconnecting themselves.
+        if browserImageTask != nil, hasLocalPersonTurns { return }
         switch phase {
         case .background:
             streamTask?.cancel()
@@ -1185,6 +1368,7 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             // while the reload was in flight.
             guard self.currentSessionId == sessionId, self.streamTask == nil else { return }
             self.messages = records.map(Self.mapRecord)
+                self.refreshLocalImageTurns()
             self.transientError = nil
             await self.loadBranches()
         } catch {

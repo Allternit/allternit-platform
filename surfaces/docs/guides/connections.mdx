@@ -34,8 +34,8 @@ When you connect an app from **More**, it leaves the catalog and moves into **Ap
 | --- | --- |
 | Desktop and ai.allternit.com | The toolbar sits beside the page heading. **Find more connections** is a dialog. |
 | Phone layout and the m.allternit.com app | The toolbar is in the top bar, with a round back button. **More** and browse are full-screen sheets. |
-| iPhone app | Settings › Connections has the same toolbar in the top bar and no new tab. Deck snaps card by card. In the List view, **ChatGPT subscription** (a device sign-in that powers chat models and pictures, with a model count when known) and **Codex CLI** (its own sign-in that powers coding runs) sit together in one card at the top of Your AI; signing out of one does not sign out the other. Grid and Deck show them as separate cards. |
-| Android app | The same toolbar and the same three views as the iPhone app. The native app is not on Google Play yet; until it is, Android uses the m.allternit.com app. |
+| iPhone app | Settings › Connections has the same toolbar in the top bar and no new tab. Deck snaps card by card. In the List view, **ChatGPT subscription** (a device sign-in that powers chat models, with a model count when known) and **Codex CLI** (its own sign-in that powers coding runs) sit together in one card at the top of Your AI; signing out of one does not sign out the other. Grid and Deck show them as two separate cards with the same titles, badges and **Powers** line. |
+| Android app | The same toolbar and the same three views as the iPhone app. In the List view, **ChatGPT subscription** and **Codex CLI** sit together at the top of Brains (see [The ChatGPT account](#the-chatgpt-account-two-connections)). The native app is not on Google Play yet; until it is, Android uses the m.allternit.com app. |
 | Gizzi Code | `gizzi connect --status connected` or `--status needs` filters the list, and `gizzi connect more` lists the catalog. See [Connect](/cli/connect#find-more-connections). |
 
 ## The four status words
@@ -124,6 +124,10 @@ Allternit never sees your password for a plan or an app. Plan sign-ins happen on
 ### Setting up on the first day
 
 The first-run setup has four steps: your AI, your phone, your main bot, and connected. There is no computer step. If you need a computer later, **Add a computer** is offered as "Later, if you need it". See [Use the AI plan you already pay for](/guides/use-your-plan) for which plans work where.
+
+### The ChatGPT account: two connections
+
+ChatGPT shows as two separate rows, grouped in one card at the top of Brains in the List view. **ChatGPT subscription** (badge: Device sign-in) is the sign-in for chat models, and shows how many models it lists when the server says. **Codex CLI** (badge: Own sign-in) is its own sign-in for coding runs, with **Set up** and **Sign out**. They can use the same ChatGPT account, but each signs in and reports on its own, and signing out of one does not sign out the other. When only one of the two is listed, they stay as ordinary rows. In Grid and Deck they stay separate cards (Codex stays under Coding tools) with the same titles, badges and **Powers** line as the List rows. On Android the status reads "Signed in" or "Not signed in" and the sign-in error points you to **Connect**, because the ChatGPT sign-in belongs to your account and not to the phone; the iPhone app names the phone because its sign-in runs on the phone.
 
 ## Remove a connection
 
@@ -214,6 +218,17 @@ The Coding tools group is only for CLI brains: Claude Code, Codex, Grok and the 
 - **Add a coding tool** at the bottom shows every other tool Allternit supports: Gemini CLI, GitHub Copilot CLI, Aider, Amp, Goose, Crush, Cline, Kilo Code, Factory Droid, Augment Auggie, OpenHands, Continue and more. **Install** runs a pinned installer, then the same sign-in.
 - **Add your own** registers a CLI that isn't listed. Give its command and how it takes a prompt (for example `-p {prompt}`), and optionally a model flag, a sign-in check and an install command. It then installs, signs in and works as a brain like the others, and you can remove it any time. Custom tools are only available on your own computer, not on a shared hosted runtime.
 
+### The ChatGPT account on Desktop and the web
+
+In Settings → Connections, ChatGPT shows as two rows under one heading, **ChatGPT account · two separate connections**, at the top of Brains:
+
+| Row | Badge | What it powers | Sign-in |
+| --- | --- | --- | --- |
+| **ChatGPT subscription** | Device sign-in | Chat models. Shows "Signed in on this computer" and how many models it lists, when the server says. | **Connect** starts the device sign-in. |
+| **Codex CLI** | Own sign-in | Coding runs. | **Set up** installs and signs in the Codex tool. |
+
+They can use the same ChatGPT account, but each one signs in and reports on its own, so signing out of one does not sign out the other. When only one of the two is listed it shows alone with its badge and its **Powers** line. A chat sign-in failure offers **Connect ChatGPT**, which opens this row. Images use a separate website sign-in in this device’s ACI browser; OAuth authorization does not sign that browser in. See [When it fails](/guides/agent-steps#when-it-fails).
+
 Two kinds of brains live elsewhere:
 
 - **Local models** on your own computer are under **Settings → Models**.
@@ -229,3 +244,12 @@ Two kinds of brains live elsewhere:
 - [Connect (terminal)](/cli/connect)
 - [Connections API](/api/connections) (for developers)
 - [Add a connection to the registry](/build-on-allternit/add-a-connection) (for developers)
+
+
+## ChatGPT image generation uses a separate connection
+
+ChatGPT device sign-in enables chat models. It does not enable the hosted `image_generation` tool through the direct subscription-token Responses API. OpenAI lists that tool as unsupported on this route in its [preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
+
+ChatGPT can still make pictures through its signed-in browser session. The device-local ACI image lane uses that device’s own browser and confirms each prompt. Browser sign-in and image capability must be ready on that same device; OAuth chat authorization alone does not establish image readiness. It does not use the Sessions subscription gateway. See [Make an image in ACI](/guides/image-generation).
+
+Codex CLI’s native image tool is a separate candidate engine. The 2026-11-23 probe generated a real image, but a product bridge and surface checks are required before Allternit can offer it as a generation engine. A successful Codex probe does not change the direct-token API’s supported tools.

@@ -298,6 +298,8 @@ internal data class ConnectionWire(
     val fallbacks: List<String> = emptyList(),
     val source: String? = null,
     val personOnly: Boolean = false,
+    /** How many models the row lists (the ChatGPT subscription row shows it); 0 when none are known. */
+    val modelCount: Int = 0,
 ) {
     val runtimeId: String? get() = source?.takeIf { it.startsWith("runtime:") }?.removePrefix("runtime:")
 
@@ -309,6 +311,7 @@ internal data class ConnectionWire(
                 reasonCode = v["reason_code"].str(), runsOn = v["runs_on"].str(), available = v["available"].bool() ?: true,
                 unavailableReason = v["unavailable_reason"].str(), fallbacks = v["fallbacks"].arr().mapNotNull { it.str() },
                 source = v["source"].str(), personOnly = v["person_only"].bool() == true,
+                modelCount = v["models"].arr().size,
             )
         }
     }

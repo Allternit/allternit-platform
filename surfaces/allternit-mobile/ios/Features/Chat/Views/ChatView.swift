@@ -124,6 +124,10 @@ struct ChatView: View {
             // Drawer rows: this chat shows "Working" while it streams and is never unread.
             sessions.setActive(viewModel.currentSessionId, streaming: viewModel.isStreaming)
             guard !viewModel.isStreaming else { return }
+            if ACILocalImageStore.isLocal(viewModel.currentSessionId) {
+                sessions.loadLocalImages()
+                return
+            }
             if sessions.session(id: viewModel.currentSessionId) == nil || viewModel.currentSessionId != nil {
                 await sessions.load()
                 if let id = viewModel.currentSessionId { sessions.markSeen(id) }
@@ -378,6 +382,8 @@ struct ChatContentView: View {
             }
         }
         .onDisappear {
+            viewModel.isChatVisible = false
+            viewModel.declineBrowserImage()
             // Leaving the thread ends the call (the engine owns the mic) — but
             // not when the full-screen cover is what covered this view.
             if voiceHost.presentation != .full { voiceHost.end() }
@@ -391,12 +397,24 @@ struct ChatContentView: View {
         // with its editor's requests, so it isn't started twice.
         .task(id: artifactStudio == nil ? (viewModel.currentSessionId ?? sessionId ?? "") : "") {
             guard artifactStudio == nil, !SampleWorkspace.isEnabled,
-                  let id = viewModel.currentSessionId ?? sessionId, !id.isEmpty else { return }
+                  let id = viewModel.currentSessionId ?? sessionId, !id.isEmpty, !ACILocalImageStore.isLocal(id) else { return }
             await viewModel.servePaneArtifactRequests(
                 sessionId: id,
                 run: nil,
                 onProblem: { viewModel.transientError = $0 }
             )
+        }
+        .alert("Send this image prompt to ChatGPT?", isPresented: Binding(
+            get: { viewModel.pendingBrowserImage != nil },
+            set: { _ in }
+        )) {
+            Button("Send exact prompt") { viewModel.confirmBrowserImage() }
+            Button("Cancel", role: .cancel) { viewModel.declineBrowserImage() }
+        } message: {
+            Text((viewModel.pendingBrowserImage?.prompt ?? "") + "\n\nUses ChatGPT in this phone's ACI browser. Website sign-in is separate from ChatGPT text-chat authorization.")
+        }
+        .sheet(isPresented: $viewModel.imageBrowserPresented) {
+            ACIWebBrowserView(initialURL: URL(string: "https://chatgpt.com/")!, onExit: { viewModel.imageBrowserPresented = false })
         }
         .sheet(isPresented: $isModelPickerPresented) {
             ModelPickerSheet(modelStore: modelStore)
@@ -407,7 +425,12 @@ struct ChatContentView: View {
             inputText = prompt
             DispatchQueue.main.async { OnboardingStore.shared.pendingPrompt = nil }
         }
+        .onReceive(ACILocalImageStore.shared.$threads) { _ in
+            // @Published emits before assignment; refresh on the next main-actor turn.
+            Task { @MainActor in viewModel.refreshLocalImageTurns() }
+        }
         .onAppear {
+            viewModel.isChatVisible = true
             viewModel.sessionContext = sessionContext
             if let sessionId = sessionId {
                 viewModel.loadSession(sessionId)
@@ -708,6 +731,14 @@ struct ChatContentView: View {
 
             // Pictures and clips being made: one chip each, tap for the full
             // view, press and hold to peek (the strip draws nothing when idle).
+            if modelStore.selectedModelId?.hasPrefix("chatgpt/") == true || viewModel.pendingBrowserImage != nil {
+                Button("Create image in ChatGPT", systemImage: "photo") {
+                    viewModel.requestLocalBrowserImage(inputText)
+                }
+                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isStreaming)
+                .font(.footnote)
+            }
+            ACILocalImageOutputs(sessionId: viewModel.currentSessionId)
             RunningGenerationsStrip()
                 // A signed-out error card's "Connect ChatGPT" opens the sign-in here.
                 .sheet(item: $connectSheet) { sheet in
@@ -750,7 +781,7 @@ struct ChatContentView: View {
                 isRunning: viewModel.isStreaming,
                 onStop: { viewModel.stopStreaming() },
                 onSend: { text in
-                    viewModel.sendMessage(text, attachments: attachmentStore.attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
+                    viewModel.sendMessage(text, attachments: attachmentStore.attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend, personInitiated: true)
                     attachmentStore.clear()
                 },
                 onOpenTerminal: { terminal ? onLeaveTerminal?() : onEnterTerminal?() },
@@ -826,7 +857,7 @@ struct ChatContentView: View {
                     self.editingMessageId = nil
                     viewModel.resendEditedMessage(editingMessageId, newText: inputText, attachments: attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
                 } else {
-                    viewModel.sendMessage(inputText, attachments: attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend)
+                    viewModel.sendMessage(inputText, attachments: attachments, runtimeModelId: modelForSend, effort: modelStore.effortForSend, personInitiated: true)
                 }
                 inputText = ""
             },
@@ -1511,7 +1542,7 @@ private struct TerminalQuestionCards: View {
             QuestionCardView(request: request)
         }
         .task(id: "\(sessionId ?? "")|\(isLast)|\(message.isStreaming)") {
-            guard isLast, !message.isStreaming, let sessionId else { return }
+            guard isLast, !message.isStreaming, let sessionId, !ACILocalImageStore.isLocal(sessionId) else { return }
             await asks.refresh(sessionId: sessionId)
         }
     }
