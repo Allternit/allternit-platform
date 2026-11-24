@@ -1867,9 +1867,9 @@ private struct ACIConsoleSettingsTab: View {
 
     // cloud
     private static let locations: [(String, String)] = [("nyc", "New York"), ("chi", "Chicago"), ("lon", "London"), ("syd", "Sydney")]
+    private static func cityName(_ code: String) -> String { locations.first { $0.0 == code }?.1 ?? code }
     @State private var location = ""
     @State private var confirmRestart = false
-    @State private var confirmMove = false
     @State private var backups: ACIConsoleLoad<[ACIComputersClient.CloudBackup]> = .loading
 
     // paired
@@ -1896,17 +1896,14 @@ private struct ACIConsoleSettingsTab: View {
                 ForEach(Self.locations, id: \.0) { Text($0.1).tag($0.0) }
             }
             .pickerStyle(.menu)
-            Text("Moving restarts the computer and takes a few minutes.").font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
-            ACIPillButton(title: "Move") { confirmMove = true }
-                .disabled(busy || location.isEmpty || location == currentLocation)
+            Text("A cloud computer stays in the city it was made in. Moving makes a fresh computer in the city you pick and erases this one's files. Files you pinned on a device stay there. Save anything you need first.")
+                .font(.system(size: 12)).foregroundColor(Color("TextTertiary"))
+            ACIHoldButton(title: "Hold to move to \(Self.cityName(location))", danger: true,
+                          disabled: busy || location.isEmpty || location == currentLocation) {
+                Task { await perform("Moving. A fresh computer is being set up in \(Self.cityName(location)). This takes a few minutes.") { try await ACIComputersClient.shared.moveCloud(id: computer.id, location: location) } }
+            }
         }
         .onAppear { if location.isEmpty { location = currentLocation ?? "" } }
-        .confirmationDialog("Move this computer?", isPresented: $confirmMove, titleVisibility: .visible) {
-            Button("Move to \(Self.locations.first { $0.0 == location }?.1 ?? location)") {
-                Task { await perform("Moving. The computer restarts.") { try await ACIComputersClient.shared.moveCloud(id: computer.id, location: location) } }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { Text("It restarts, and anything running stops.") }
 
         consoleCard {
             Text("Restart").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
@@ -1922,7 +1919,7 @@ private struct ACIConsoleSettingsTab: View {
 
         consoleCard {
             Text("Rebuild").font(.system(size: 13, weight: .semibold)).foregroundColor(Color("TextPrimary"))
-            Text("Rebuild erases the disk and sets the computer up again from the Ubuntu image, in the same location. Your Files drive copy stays.")
+            Text("Rebuild erases the disk and sets the computer up again from the Ubuntu image, in the same location. Files you pinned on a device stay there.")
                 .font(.system(size: 13)).foregroundColor(Color("TextSecondary"))
             rebuildGate
         }

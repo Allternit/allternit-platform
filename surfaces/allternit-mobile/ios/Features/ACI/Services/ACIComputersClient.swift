@@ -500,11 +500,17 @@ final class ACIComputersClient: Sendable {
     }
 
     /// Cloud settings: restart, move (`location` = nyc | chi | lon | syd), rebuild.
+    /// Move and rebuild erase the disk, so both send `confirm: true` (the
+    /// caller shows a hold-to-confirm first); without it the server answers 400.
     func restartCloud(id: String) async throws { _ = try await cloud(hostPath(id, "restart"), method: "POST") }
     func moveCloud(id: String, location: String) async throws {
-        _ = try await cloud(hostPath(id, "move"), method: "POST", body: jsonBody(["location": location]))
+        let body = try? JSONSerialization.data(withJSONObject: ["location": location, "confirm": true] as [String: Any])
+        _ = try await cloud(hostPath(id, "move"), method: "POST", body: body)
     }
-    func rebuildCloud(id: String) async throws { _ = try await cloud(hostPath(id, "rebuild"), method: "POST") }
+    func rebuildCloud(id: String) async throws {
+        let body = try? JSONSerialization.data(withJSONObject: ["confirm": true])
+        _ = try await cloud(hostPath(id, "rebuild"), method: "POST", body: body)
+    }
 
     /// Paired computers: rename and remove (`DELETE /api/v1/computers/paired/:id` exists today).
     func renamePaired(id: String, name: String) async throws {

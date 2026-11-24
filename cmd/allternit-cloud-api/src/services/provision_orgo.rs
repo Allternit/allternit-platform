@@ -1046,6 +1046,14 @@ impl ProvisionBackend for OrgoBackend {
         if let Some(resolution) = &self.config.resolution {
             body["resolution"] = resolution.as_str().into();
         }
+        // Orgo never places a computer outside the asked city: a full city
+        // is a 503 `REGION_UNAVAILABLE` and nothing is made.
+        if let Some(region) = &spec.region {
+            body["region"] = region.as_str().into();
+        }
+        if let Some(template) = &spec.template {
+            body["template_ref"] = template.as_str().into();
+        }
         self.creating
             .lock()
             .unwrap()
@@ -1230,6 +1238,117 @@ impl ProvisionBackend for OrgoBackend {
         let id = self.require_id(name).await?;
         self.push_file_to(&id, file).await
     }
+
+    /// `POST /computers/{id}/restart`. Orgo answers 409 (`stopped`) for a
+    /// computer that is not running; that 409 is passed on, never a wake.
+    async fn restart(&self, name: &str) -> Result<(), ProvisionError> {
+        let id = self.require_id(name).await?;
+        let (status, json) = self
+            .send(
+                reqwest::Method::POST,
+                &format!("/computers/{id}/restart"),
+                Some(&serde_json::json!({})),
+                None,
+            )
+            .await?;
+        if is_success(status) {
+            Ok(())
+        } else {
+            Err(orgo_error(status, &json))
+        }
+    }
+
+    /// `GET /computers/{id}/backups`: the newest finished daily backup.
+    async fn latest_backup_at(&self, name: &str) -> Result<Option<DateTime<Utc>>, ProvisionError> {
+        let id = self.require_id(name).await?;
+        let (status, json) = self
+            .send(
+                reqwest::Method::GET,
+                &format!("/computers/{id}/backups"),
+                None,
+                None,
+            )
+            .await?;
+        if !is_success(status) {
+            return Err(orgo_error(status, &json));
+        }
+        parse_orgo_backups(&json)
+            .map(|list| list.newest_finished_at())
+            .map_err(|message| ProvisionError::Api { status: 502, message })
+    }
+}
+
+/// Backup statuses that mean "finished and restorable". A backup with no
+/// status counts as finished (Orgo lists finished daily backups); any other
+/// status, known-bad or unknown, does not, so an unfamiliar state can never
+/// let a rebuild erase the disk.
+const ORGO_BACKUP_DONE: [&str; 9] =
+    ["completed", "complete", "ready", "available", "succeeded", "success", "done", "finished", "ok"];
+
+/// Read an Orgo `GET /computers/{id}/backups` answer.
+///
+/// Orgo's docs say only that it "lists the computer's daily backups and
+/// whether it can be restored now"; the item shape is not published and no
+/// real answer has been read yet (step 2.6, 2026-11-22: there was no live
+/// Orgo computer to ask). So the list is read from `backups`, `data` or
+/// `items` (or a bare array), each item needs an id and an RFC 3339 or unix
+/// time, and the answer fails closed: a missing list, or a non-empty list
+/// with no item we can read, is an error (never "no backups"), so the
+/// rebuild check says "couldn't check" instead of guessing.
+pub(crate) fn parse_orgo_backups(json: &serde_json::Value) -> Result<CloudBackupList, String> {
+    let items = if let Some(array) = json.as_array() {
+        array
+    } else {
+        ["backups", "data", "items"]
+            .iter()
+            .find_map(|key| json.get(*key).and_then(|value| value.as_array()))
+            .ok_or_else(|| "orgo backups answer has no backup list".to_string())?
+    };
+    let mut backups: Vec<CloudBackup> = items.iter().filter_map(orgo_backup).collect();
+    if backups.is_empty() && !items.is_empty() {
+        return Err(format!("orgo backups answer: none of {} items could be read", items.len()));
+    }
+    backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    let can_restore = ["can_restore", "canRestore", "restorable", "can_restore_now"]
+        .iter()
+        .find_map(|key| json.get(*key).and_then(|value| value.as_bool()));
+    Ok(CloudBackupList { backups, can_restore })
+}
+
+fn orgo_backup(item: &serde_json::Value) -> Option<CloudBackup> {
+    if !item.is_object() {
+        return None;
+    }
+    let id = string_field(item, &["id", "backup_id", "backupId", "snapshot_id"])?;
+    let created_at = ["created_at", "createdAt", "completed_at", "completedAt", "taken_at", "timestamp", "date"]
+        .iter()
+        .find_map(|key| item.get(*key).and_then(backup_time))?;
+    let finished = match string_field(item, &["status", "state"]) {
+        None => true,
+        Some(status) => ORGO_BACKUP_DONE.contains(&status.to_ascii_lowercase().as_str()),
+    };
+    let size_bytes = ["size_bytes", "sizeBytes", "bytes"]
+        .iter()
+        .find_map(|key| item.get(*key).and_then(|value| value.as_u64()));
+    let kind = string_field(item, &["kind", "type"])
+        .map(|kind| kind.to_ascii_lowercase())
+        .unwrap_or_else(|| "daily".to_string());
+    Some(CloudBackup { id, created_at, size_bytes, kind, finished })
+}
+
+/// An RFC 3339 string, or unix seconds (milliseconds above 10^11).
+fn backup_time(value: &serde_json::Value) -> Option<DateTime<Utc>> {
+    match value {
+        serde_json::Value::String(text) => DateTime::parse_from_rfc3339(text)
+            .ok()
+            .map(|at| at.with_timezone(&Utc)),
+        serde_json::Value::Number(number) => {
+            let raw = number.as_i64()?;
+            let seconds = if raw > 100_000_000_000 { raw / 1000 } else { raw };
+            DateTime::<Utc>::from_timestamp(seconds, 0)
+        }
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1403,7 +1522,327 @@ pub(crate) async fn fail_background_create(
     }
 }
 
+/// The Orgo name of a computer moved to `city`: the base name (any earlier
+/// `-<city>` suffix dropped) plus `-<city>`. Names are unique in a workspace
+/// and the old computer still exists while the new one is created. Base
+/// names end in 12 hex chars, so a city suffix is never mistaken for one;
+/// the longest base (58) plus 4 stays under Orgo's and Incus's 63.
+pub(crate) fn moved_computer_name(current: &str, city: &str) -> String {
+    let base = CLOUD_LOCATIONS
+        .iter()
+        .find_map(|c| current.strip_suffix(&format!("-{c}")))
+        .unwrap_or(current);
+    format!("{base}-{city}")
+}
+
 impl ProvisioningService {
+    /// The caller's live cloud computer for a console route. The console row
+    /// id of a cloud computer is `provisioned_instances.id`; a paired or
+    /// desktop id, another user's computer or a deleted one is 404
+    /// `not_a_cloud_computer`. Same owner rule as start/stop.
+    pub(crate) async fn console_cloud_row(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+    ) -> Result<InstanceRow, CloudActionError> {
+        match self.fetch_row(instance_id, Some(user_id)).await {
+            Ok(row) if row.status != "deleted" => Ok(row),
+            Ok(_) | Err(ApiError::NotFound(_)) => Err(CloudActionError::NotACloudComputer),
+            Err(error) => Err(CloudActionError::Api(error)),
+        }
+    }
+
+    /// `POST /api/v1/computers/:id/restart`: reboot a running Orgo computer.
+    /// A computer that is not running is 409 `asleep` (never woken here).
+    pub async fn restart_cloud(&self, instance_id: &str, user_id: &str) -> Result<InstanceView, CloudActionError> {
+        let row = self.console_cloud_row(instance_id, user_id).await?;
+        match row.status.as_str() {
+            "running" => {}
+            "stopped" | "sleeping" | "suspended" => {
+                return Err(CloudActionError::Asleep { status: row.status })
+            }
+            _ => return Err(CloudActionError::Busy { status: row.status }),
+        }
+        let backend = self.backend_for_row(&row).await?;
+        match backend.restart(&row.incus_name).await {
+            Ok(()) => {}
+            Err(ProvisionError::Api { status: 409, .. }) => {
+                return Err(CloudActionError::Asleep { status: row.status })
+            }
+            Err(ProvisionError::Api { status: 501, .. }) => {
+                return Err(CloudActionError::NotSupported("restart"))
+            }
+            Err(error) => return Err(CloudActionError::Api(error.to_api_error())),
+        }
+        sqlx::query(
+            "UPDATE provisioned_instances SET last_activity_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        )
+        .bind(&row.id)
+        .execute(&self.db)
+        .await
+        .map_err(ApiError::from)?;
+        Ok(self.get_for_user(&row.id, user_id).await?)
+    }
+
+    /// `POST /api/v1/computers/:id/rebuild`: delete the Orgo computer and
+    /// create + first-boot a new one in the same city, size and template.
+    ///
+    /// Held until a backup check passes: without an Orgo daily backup newer
+    /// than [`REBUILD_BACKUP_MAX_AGE_HOURS`] it is 409 `no_recent_backup` and
+    /// nothing destructive runs. The row id stays the same (Orgo computers
+    /// are found by their name, `incus_name`, which is kept), so console row
+    /// ids, metrics and approvals keep pointing at it. The old runtime
+    /// device is revoked and the row takes a new pairing code; the new
+    /// computer pairs on first boot like a new one.
+    pub async fn rebuild_cloud(&self, instance_id: &str, user_id: &str) -> Result<InstanceView, CloudActionError> {
+        let row = self.console_cloud_row(instance_id, user_id).await?;
+        if row.is_free() {
+            return Err(CloudActionError::NotSupported("rebuild"));
+        }
+        if !matches!(row.status.as_str(), "running" | "stopped" | "sleeping") {
+            return Err(CloudActionError::Busy { status: row.status });
+        }
+        let Some(host_id) = row.host_id.clone() else {
+            return Err(CloudActionError::Busy { status: row.status });
+        };
+        let backend = self.backend_for_row(&row).await?;
+        if backend.provider() != ORGO_SCHEME {
+            return Err(CloudActionError::NotSupported("rebuild"));
+        }
+        let latest = backend
+            .latest_backup_at(&row.incus_name)
+            .await
+            .map_err(|error| {
+                tracing::warn!(id = %row.id, %error, "rebuild: backup list unreadable; held");
+                CloudActionError::BackupCheckFailed(error.to_string())
+            })?;
+        let fresh = latest.is_some_and(|at| Utc::now() - at <= Duration::hours(REBUILD_BACKUP_MAX_AGE_HOURS));
+        if !fresh {
+            return Err(CloudActionError::NoRecentBackup { latest });
+        }
+        let (location, template): (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT location, template FROM provisioned_instances WHERE id = $1")
+                .bind(&row.id)
+                .fetch_one(&self.db)
+                .await
+                .map_err(ApiError::from)?;
+
+        // Destructive from here on.
+        match backend.delete(&row.incus_name).await {
+            Ok(()) | Err(ProvisionError::NotFound(_)) => {}
+            Err(error) => return Err(CloudActionError::Api(error.to_api_error())),
+        }
+        // Revoke first: revoke_device finds the paired link through the
+        // row's device_id, which the update below clears.
+        if let Some(device_id) = &row.device_id {
+            revoke_device(&self.db, device_id).await?;
+        }
+        let pairing_code = crate::routes::runtime_pairing::random_secret(24);
+        let pairing_code_hash = crate::routes::runtime_pairing::sha256_hex(pairing_code.as_bytes());
+        let pairing_expires_at = Utc::now() + self.defaults.pairing_ttl;
+        sqlx::query(
+            r#"
+            UPDATE provisioned_instances
+            SET status = 'provisioning', device_id = NULL,
+                pairing_code_hash = $2, pairing_expires_at = $3,
+                error_message = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            "#,
+        )
+        .bind(&row.id)
+        .bind(&pairing_code_hash)
+        .bind(pairing_expires_at)
+        .execute(&self.db)
+        .await
+        .map_err(ApiError::from)?;
+        if row.status == "running" {
+            record_instance_stopped(&self.db, &row.id, "rebuild").await?;
+        }
+        let bootstrap = BootstrapContract {
+            api: self.defaults.api_base.clone(),
+            token: pairing_code,
+            instance_id: row.id.clone(),
+            user_id: row.user_id.clone(),
+            expires_at: pairing_expires_at.to_rfc3339(),
+        };
+        let placement = CloudPlacement {
+            location: location.clone(),
+            template,
+            idempotency_key: Some(Uuid::new_v4().to_string()),
+        };
+        let result = self
+            .drive_create(
+                &row.id,
+                &host_id,
+                &row.incus_name,
+                &self.defaults.image,
+                row.size(),
+                row.allocation(),
+                ComputeClass::for_owner(&row.user_id, &row.tier),
+                CpuShare::default(),
+                &bootstrap,
+                &placement,
+            )
+            .await;
+        if let Err(error) = result {
+            tracing::warn!(id = %row.id, %error, "rebuild: create failed after delete; marking error");
+            sqlx::query(
+                "UPDATE provisioned_instances SET status = 'error', error_message = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+            )
+            .bind(format!("rebuild: {error}"))
+            .bind(&row.id)
+            .execute(&self.db)
+            .await
+            .map_err(ApiError::from)?;
+            self.release_allocation(&host_id, row.allocation()).await;
+            return Err(if is_region_unavailable(&error) {
+                CloudActionError::RegionUnavailable { location }
+            } else {
+                CloudActionError::Api(error)
+            });
+        }
+        tracing::info!(id = %row.id, "cloud computer rebuilt; first boot running");
+        Ok(self.get_for_user(&row.id, user_id).await?)
+    }
+
+    /// `POST /api/v1/computers/:id/move` `{ location, confirm: true }`: put
+    /// the computer in another city (Eoj, 2026-11-21).
+    ///
+    /// Orgo keeps a computer in the city it was created in, and copies and
+    /// backups restore only there, so a move is a fresh computer in the new
+    /// city: the disk is erased (clients say so on a hold-to-confirm sheet).
+    /// The new computer is created FIRST, under `<base name>-<city>`, and the
+    /// old one is deleted only once that create succeeds, so a full city
+    /// (503 `region_unavailable`) or any other refusal leaves the old
+    /// computer exactly as it was. The row id stays the same (console row
+    /// ids, metrics and approvals keep pointing at it); the old runtime
+    /// device is revoked and the new computer pairs on first boot.
+    pub async fn move_cloud(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+        location: &str,
+    ) -> Result<InstanceView, CloudActionError> {
+        let row = self.console_cloud_row(instance_id, user_id).await?;
+        if row.is_free() {
+            return Err(CloudActionError::NotSupported("move"));
+        }
+        let Ok(Some(target)) = normalize_location(Some(location)) else {
+            return Err(CloudActionError::InvalidLocation);
+        };
+        if !matches!(row.status.as_str(), "running" | "stopped" | "sleeping") {
+            return Err(CloudActionError::Busy { status: row.status });
+        }
+        let Some(host_id) = row.host_id.clone() else {
+            return Err(CloudActionError::Busy { status: row.status });
+        };
+        let backend = self.backend_for_row(&row).await?;
+        if backend.provider() != ORGO_SCHEME {
+            return Err(CloudActionError::NotSupported("move"));
+        }
+        let (current, template): (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT location, template FROM provisioned_instances WHERE id = $1")
+                .bind(&row.id)
+                .fetch_one(&self.db)
+                .await
+                .map_err(ApiError::from)?;
+        if current.as_deref() == Some(target.as_str()) {
+            return Err(CloudActionError::SameLocation { location: target });
+        }
+        let new_name = moved_computer_name(&row.incus_name, &target);
+
+        // The new computer's one-time pairing code goes on the row before it
+        // boots; the old computer is already paired and does not use it.
+        let pairing_code = crate::routes::runtime_pairing::random_secret(24);
+        let pairing_code_hash = crate::routes::runtime_pairing::sha256_hex(pairing_code.as_bytes());
+        let pairing_expires_at = Utc::now() + self.defaults.pairing_ttl;
+        sqlx::query(
+            "UPDATE provisioned_instances SET pairing_code_hash = $2, pairing_expires_at = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        )
+        .bind(&row.id)
+        .bind(&pairing_code_hash)
+        .bind(pairing_expires_at)
+        .execute(&self.db)
+        .await
+        .map_err(ApiError::from)?;
+        let bootstrap = BootstrapContract {
+            api: self.defaults.api_base.clone(),
+            token: pairing_code,
+            instance_id: row.id.clone(),
+            user_id: row.user_id.clone(),
+            expires_at: pairing_expires_at.to_rfc3339(),
+        };
+        let placement = CloudPlacement {
+            location: Some(target.clone()),
+            template,
+            idempotency_key: Some(Uuid::new_v4().to_string()),
+        };
+        // Create first: on any refusal nothing of the old computer changed.
+        if let Err(error) = self
+            .drive_create(
+                &row.id,
+                &host_id,
+                &new_name,
+                &self.defaults.image,
+                row.size(),
+                row.allocation(),
+                ComputeClass::for_owner(&row.user_id, &row.tier),
+                CpuShare::default(),
+                &bootstrap,
+                &placement,
+            )
+            .await
+        {
+            tracing::warn!(id = %row.id, %error, location = %target, "move: create in the new city refused; old computer kept");
+            return Err(if is_region_unavailable(&error) {
+                CloudActionError::RegionUnavailable { location: Some(target) }
+            } else {
+                CloudActionError::Api(error)
+            });
+        }
+
+        // The new computer exists: retire the old one.
+        match backend.delete(&row.incus_name).await {
+            Ok(()) | Err(ProvisionError::NotFound(_)) => {}
+            Err(error) => {
+                tracing::error!(id = %row.id, old = %row.incus_name, %error, "move: old computer not deleted");
+                crate::services::ops_alert::send_once(
+                    &format!("move-delete:{}", row.id),
+                    "A moved cloud computer left its old computer behind".to_string(),
+                    format!(
+                        "Instance: {}\nOld Orgo computer: {}\nNew: {new_name} ({target})\nError: {error}\n\n\
+                         The row now points at the new computer. Delete the old one in Orgo so it stops billing.",
+                        row.id, row.incus_name
+                    ),
+                );
+            }
+        }
+        // Revoke first: revoke_device finds the paired link through the
+        // row's device_id, which the update below clears.
+        if let Some(device_id) = &row.device_id {
+            revoke_device(&self.db, device_id).await?;
+        }
+        sqlx::query(
+            r#"
+            UPDATE provisioned_instances
+            SET status = 'provisioning', device_id = NULL, incus_name = $2, location = $3,
+                error_message = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            "#,
+        )
+        .bind(&row.id)
+        .bind(&new_name)
+        .bind(&target)
+        .execute(&self.db)
+        .await
+        .map_err(ApiError::from)?;
+        if row.status == "running" {
+            record_instance_stopped(&self.db, &row.id, "move").await?;
+        }
+        tracing::info!(id = %row.id, from = ?current, to = %target, "cloud computer moved; first boot running");
+        Ok(self.get_for_user(&row.id, user_id).await?)
+    }
+
     /// True when a computer of this owner/tier failed its first boot in the
     /// last [`FIRST_BOOT_BACKOFF_MINUTES`]: a new Orgo attempt waits, so a
     /// deterministic failure (bad .deb URL) cannot buy a computer per call.
@@ -1734,6 +2173,12 @@ pub(crate) mod tests {
         workspace_status: u16,
         /// Answer `POST /computers` with HTTP 500 and this body.
         create_refusal: Option<serde_json::Value>,
+        /// The status for `create_refusal` (0 = 500).
+        create_refusal_status: u16,
+        /// The `GET /computers/{id}/backups` answer (Null = no backups).
+        backups: serde_json::Value,
+        /// Refuse creates in this city only (503 REGION_UNAVAILABLE).
+        full_city: Option<String>,
     }
 
     type FakeState = Arc<Mutex<Fake>>;
@@ -1793,8 +2238,23 @@ pub(crate) mod tests {
                 )
             }
             ("POST", ["computers"]) => {
+                if fake.full_city.is_some() && json_body["region"].as_str() == fake.full_city.as_deref() {
+                    return reply(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        serde_json::json!({
+                            "error": "No server in that city has room right now.",
+                            "code": "REGION_UNAVAILABLE",
+                            "region": fake.full_city.clone(),
+                            "retryable": true
+                        }),
+                    );
+                }
                 if let Some(body) = fake.create_refusal.clone() {
-                    return reply(StatusCode::INTERNAL_SERVER_ERROR, body);
+                    let status = match fake.create_refusal_status {
+                        0 => StatusCode::INTERNAL_SERVER_ERROR,
+                        code => StatusCode::from_u16(code).unwrap(),
+                    };
+                    return reply(status, body);
                 }
                 let name = json_body["name"].as_str().unwrap_or("").to_string();
                 if fake.computers.iter().any(|(_, n, _)| *n == name) {
@@ -1856,6 +2316,22 @@ pub(crate) mod tests {
                         reply(StatusCode::OK, serde_json::json!({}))
                     }
                     ("PATCH", ["auto-stop"]) => reply(StatusCode::OK, serde_json::json!({})),
+                    ("POST", ["restart"]) => {
+                        if fake.computers[index].2 != "running" {
+                            return reply(
+                                StatusCode::CONFLICT,
+                                serde_json::json!({ "error": "not running", "code": "stopped" }),
+                            );
+                        }
+                        reply(StatusCode::OK, serde_json::json!({ "success": true }))
+                    }
+                    ("GET", ["backups"]) => {
+                        let backups = match &fake.backups {
+                            serde_json::Value::Null => serde_json::json!({ "backups": [] }),
+                            other => other.clone(),
+                        };
+                        reply(StatusCode::OK, backups)
+                    }
                     ("POST", ["bash"]) => {
                         let command = json_body["command"].as_str().unwrap_or("").to_string();
                         fake.bash.push(command.clone());
@@ -1947,6 +2423,8 @@ pub(crate) mod tests {
             user_data: String::new(),
             instance_id: "pi_abc".to_string(),
             class: ComputeClass::Paid,
+            region: None,
+            template: None,
         }
     }
 
@@ -2037,6 +2515,175 @@ pub(crate) mod tests {
     /// A real [`OrgoBackend`] on a fake Orgo API whose `POST /computers`
     /// answers Orgo's out-of-memory refusal (for the provisioning service's
     /// capacity-fallback tests). The state counts the create attempts.
+    /// The requests a fake Orgo saw: `(method, path, idempotency key, body)`.
+    pub(crate) type SeenLog = Vec<(String, String, Option<String>, serde_json::Value)>;
+
+    /// A real Orgo backend on a fake Orgo whose first boot succeeds. With
+    /// `city_full`, every create is Orgo's 503 `REGION_UNAVAILABLE`. Returns
+    /// the backend, a reader of the requests seen and a setter for the
+    /// backups answer.
+    pub(crate) async fn console_orgo(
+        city_full: bool,
+    ) -> (Arc<dyn ProvisionBackend>, impl Fn() -> SeenLog, impl Fn(serde_json::Value)) {
+        console_orgo_with(Fake {
+            setup_result: "done".to_string(),
+            create_refusal: city_full.then(|| {
+                serde_json::json!({
+                    "error": "No server in London has room right now.",
+                    "code": "REGION_UNAVAILABLE",
+                    "region": "lon",
+                    "retryable": true
+                })
+            }),
+            create_refusal_status: if city_full { 503 } else { 0 },
+            ..Fake::default()
+        })
+        .await
+    }
+
+    /// Like [`console_orgo`], but only creates in `city` are refused.
+    pub(crate) async fn console_orgo_full_city(
+        city: &str,
+    ) -> (Arc<dyn ProvisionBackend>, impl Fn() -> SeenLog, impl Fn(serde_json::Value)) {
+        console_orgo_with(Fake {
+            setup_result: "done".to_string(),
+            full_city: Some(city.to_string()),
+            ..Fake::default()
+        })
+        .await
+    }
+
+    async fn console_orgo_with(
+        fake: Fake,
+    ) -> (Arc<dyn ProvisionBackend>, impl Fn() -> SeenLog, impl Fn(serde_json::Value)) {
+        let (base, fake) = serve(fake).await;
+        let reader = fake.clone();
+        let seen = move || {
+            reader
+                .lock()
+                .unwrap()
+                .seen
+                .iter()
+                .map(|s| (s.method.clone(), s.path.clone(), s.idempotency.clone(), s.body.clone()))
+                .collect()
+        };
+        let set_backups = move |value: serde_json::Value| fake.lock().unwrap().backups = value;
+        (Arc::new(backend(&base)) as Arc<dyn ProvisionBackend>, seen, set_backups)
+    }
+
+    #[tokio::test]
+    async fn create_sends_the_city_and_template_and_a_full_city_is_region_unavailable() {
+        let (base, fake) = serve(Fake::default()).await;
+        let orgo = backend(&base);
+        let spec = ProvisionSpec {
+            region: Some("syd".to_string()),
+            template: Some("system/coding@1.0.4".to_string()),
+            ..paid_spec("allternit-pi-city")
+        };
+        orgo.create(&spec).await.unwrap();
+        let create = fake
+            .lock()
+            .unwrap()
+            .seen
+            .iter()
+            .find(|s| s.method == "POST" && s.path == "/computers")
+            .cloned()
+            .unwrap();
+        assert_eq!(create.body["region"], "syd");
+        assert_eq!(create.body["template_ref"], "system/coding@1.0.4");
+
+        // Without a city or template neither key is sent.
+        let (base, fake) = serve(Fake::default()).await;
+        backend(&base).create(&paid_spec("allternit-pi-plain")).await.unwrap();
+        let body = fake.lock().unwrap().seen.last().unwrap().body.clone();
+        assert!(body.get("region").is_none() && body.get("template_ref").is_none(), "{body}");
+
+        let (full, _, _) = console_orgo(true).await;
+        let error = full
+            .create(&ProvisionSpec { region: Some("lon".to_string()), ..paid_spec("allternit-pi-full") })
+            .await
+            .unwrap_err();
+        assert!(matches!(&error, ProvisionError::Api { status: 503, .. }), "{error:?}");
+        assert!(is_region_unavailable(&error.to_api_error()), "{error:?}");
+        // Not the capacity refusal: no fallback to another pool or city.
+        assert!(!error.to_api_error().to_string().contains(CLOUD_POOL_FULL));
+    }
+
+    #[tokio::test]
+    async fn restart_posts_restart_only_while_running() {
+        let (base, fake) = serve(Fake {
+            computers: vec![fake_computer("c_1", "allternit-pi-r", "running")],
+            ..Fake::default()
+        })
+        .await;
+        let orgo = backend(&base);
+        orgo.restart("allternit-pi-r").await.unwrap();
+        assert!(fake
+            .lock()
+            .unwrap()
+            .seen
+            .iter()
+            .any(|s| s.method == "POST" && s.path == "/computers/c_1/restart"));
+        fake.lock().unwrap().computers[0].2 = "frozen".to_string();
+        let error = orgo.restart("allternit-pi-r").await.unwrap_err();
+        assert!(matches!(error, ProvisionError::Api { status: 409, .. }), "{error:?}");
+        // A 409 is passed on: nothing started the computer.
+        assert!(!fake.lock().unwrap().seen.iter().any(|s| s.path.ends_with("/start")));
+    }
+
+    #[test]
+    fn backups_read_finished_items_newest_first_and_fail_closed_on_unknown_shapes() {
+        let json = serde_json::json!({ "can_restore": true, "backups": [
+            { "id": "b1", "created_at": "2026-11-19T03:00:00Z", "status": "completed", "size_bytes": 2048 },
+            { "id": "b2", "created_at": "2026-11-20T03:00:00Z" },
+            { "id": "b3", "created_at": "2026-11-21T03:00:00Z", "status": "failed" },
+            { "id": "b4", "created_at": "2026-11-21T04:00:00Z", "status": "something_new" },
+            { "id": "b5", "status": "completed" }
+        ]});
+        let list = parse_orgo_backups(&json).unwrap();
+        assert_eq!(list.can_restore, Some(true));
+        assert_eq!(
+            list.finished().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+            ["b2", "b1"],
+            "failed, unknown-status and timeless items are left out"
+        );
+        assert_eq!(list.newest_finished_at().unwrap().to_rfc3339(), "2026-11-20T03:00:00+00:00");
+        assert_eq!(
+            serde_json::to_value(list.finished().last().unwrap()).unwrap(),
+            serde_json::json!({ "id": "b1", "createdAt": "2026-11-19T03:00:00Z", "sizeBytes": 2048, "kind": "daily" })
+        );
+
+        // A bare array and unix seconds read too.
+        let bare = parse_orgo_backups(&serde_json::json!([{ "backup_id": 7, "createdAt": 1_763_694_000 }])).unwrap();
+        assert_eq!(bare.backups[0].id, "7");
+        assert!(bare.newest_finished_at().is_some());
+        // An empty list is "no backups"; no list, or items we can't read, is an error.
+        assert_eq!(parse_orgo_backups(&serde_json::json!({ "backups": [] })).unwrap().newest_finished_at(), None);
+        assert!(parse_orgo_backups(&serde_json::json!({ "error": "x" })).is_err());
+        assert!(parse_orgo_backups(&serde_json::json!({ "backups": null })).is_err());
+        assert!(parse_orgo_backups(&serde_json::json!({ "backups": [{ "when": "today" }] })).is_err());
+    }
+
+    #[test]
+    fn locations_are_the_four_cities_only() {
+        assert_eq!(normalize_location(None), Ok(None));
+        assert_eq!(normalize_location(Some("  ")), Ok(None));
+        assert_eq!(normalize_location(Some(" LON ")), Ok(Some("lon".to_string())));
+        assert_eq!(normalize_location(Some("dfw")), Err(()));
+        assert_eq!(normalize_location(Some("us")), Err(()));
+        assert!(STARTER_TEMPLATES.iter().all(|t| starter_template(t.id).is_some()));
+        assert!(starter_template("default/claude-code@1.0.0").is_none());
+    }
+
+    #[test]
+    fn a_moved_computer_takes_its_base_name_and_the_new_city() {
+        let base = "allternit-credit-abcdefghijklmnopqrstuvwxyz01-0123456789ab";
+        assert_eq!(moved_computer_name(base, "lon"), format!("{base}-lon"));
+        // A second move replaces the city, it does not stack suffixes.
+        assert_eq!(moved_computer_name(&format!("{base}-lon"), "syd"), format!("{base}-syd"));
+        assert!(moved_computer_name(base, "nyc").len() <= 63);
+    }
+
     pub(crate) async fn capacity_refusing_orgo() -> (Arc<dyn ProvisionBackend>, impl Fn() -> usize) {
         let (base, fake) = serve(Fake {
             create_refusal: Some(serde_json::json!({
