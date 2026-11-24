@@ -9,20 +9,22 @@ import SwiftUI
 /// hamburger-menu header instead — factored out so neither duplicates the
 /// stores or list sections.
 struct ModelManagementView: View {
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var modelStore = ModelStore.shared
     @StateObject private var store = ProviderManagementStore()
 
     var body: some View {
         ModelManagementListContent(modelStore: modelStore, store: store)
-            .navigationTitle("Models & Engines")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    GlassCircleButton(systemImage: "chevron.left", label: "Back", size: 36) { dismiss() }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: { Task { await store.load() } }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.subheadline)
+                    GlassCircleButton(systemImage: "arrow.clockwise", label: "Refresh", size: 36) {
+                        Task { await store.load() }
                     }
-                    .accessibilityLabel("Refresh")
                     .disabled(store.isLoading)
                 }
             }
@@ -40,20 +42,28 @@ struct ModelManagementListContent: View {
     @State private var providerQuery = ""
 
     var body: some View {
-        List {
-            selectedModelSection
-            enginesSection
+        PolishedTabPage(
+            title: "Freeweights",
+            description: "Open-weights models with checked licenses. Download one to this iPhone, or send a pull to your computer.",
+            taller: true,
+            introKey: .freeweights,
+            hero: { FreeweightsIntroHero() }
+        ) {
             FreeweightsSection(store: freeweights)
-            StudioJobsSection()
-            Section {
+            VStack(alignment: .leading, spacing: 12) {
+                selectedModelSection
+                enginesSection
+                StudioJobsSection()
                 NavigationLink("Benchmark") {
                     BenchmarkView()
                 }
+                .font(.subheadline)
             }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(PolishTokens.neutralFill))
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color("BgPrimary"))
+        .background(Color(.systemBackground))
         .freeweightsDetailSheet(freeweights)
         .task {
             modelStore.fetchModelsIfNeeded()
