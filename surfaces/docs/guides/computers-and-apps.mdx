@@ -109,6 +109,10 @@ Settings → Computers (and the Computers tab on your phone) has a **Restore poi
 
 Your cloud computer is also backed up off-site every night, encrypted, and kept for 8 days. Restore points don't replace that backup: they live on the same host as the computer.
 
+### Restoring a daily backup from the Computers console
+
+The console's **Backups** tab (and `gizzi computers backups <computer>` in the terminal) lists the daily backups of a cloud computer. **Restore** puts the computer back to that backup, in place: everything changed since that backup is erased and can't be brought back. The app asks first, and `gizzi computers restore <computer> <backup>` asks too unless you pass `--yes`. If Restore is missing, your account can't restore that computer right now. Any error shows the server's own message.
+
 ## Connected tools
 
 MCP tools belong to the session's tool belt. Connect the server, complete its authentication, and check the available tools before assigning work that relies on it. CLI harness sessions can receive the session's tools and instructions through the CLI tool bridge; supported computer operations still require a reachable host.

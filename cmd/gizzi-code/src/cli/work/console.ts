@@ -91,6 +91,41 @@ export async function hostGet<T>(id: string, path: string): Promise<T> {
   return (await (await request(`/api/v1/computers/${encodeURIComponent(id)}/host/${path}`)).json()) as T
 }
 
+export type Backup = { id: string; createdAt: string; sizeBytes?: number; kind?: string }
+export type BackupList = { backups: Backup[]; canRestore: boolean }
+
+export const RESTORE_WARNING = "Restoring is in place: everything changed since that backup is erased and can't be brought back."
+
+/** Every backups error body carries a plain `message`; show it as is (including 501 while the server gate is off). */
+async function backupsRequest(path: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(`${cloudBase()}${path}`, {
+    ...init,
+    headers: { ...(await authHeaders()), ...(init.headers as Record<string, string>) },
+    signal: init.signal ?? AbortSignal.timeout(15_000),
+  })
+  if (res.ok) return res
+  if (res.status === 401 || res.status === 403) throw new Error("Not signed in, or this computer is not yours. Run `gizzi login`.")
+  const body = (await res.json().catch(() => ({}))) as { message?: string }
+  if (body.message) throw new Error(body.message)
+  if (res.status === 404 || res.status === 501) throw new Unavailable()
+  throw new Error("That didn't work. Nothing was changed.")
+}
+
+/** `GET /api/v1/computers/:id/backups`: `{ backups, canRestore }` (a bare array means restore is allowed). */
+export async function listBackups(id: string): Promise<BackupList> {
+  const body = (await (await backupsRequest(`/api/v1/computers/${encodeURIComponent(id)}/backups`)).json()) as Backup[] | { backups?: Backup[]; canRestore?: boolean }
+  return Array.isArray(body) ? { backups: body, canRestore: true } : { backups: body.backups ?? [], canRestore: body.canRestore ?? true }
+}
+
+/** `POST /api/v1/computers/:id/backups/restore` with `confirm: true` (202). Callers ask the person first. */
+export async function restoreBackup(id: string, backupId: string): Promise<void> {
+  await backupsRequest(`/api/v1/computers/${encodeURIComponent(id)}/backups/restore`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ backupId, confirm: true }),
+  })
+}
+
 /** Server-sent events: yields one parsed `LogLine` per `data:` line. */
 export async function* streamLogs(id: string, unit: string, signal?: AbortSignal): AsyncGenerator<LogLine> {
   const res = await request(`/api/v1/computers/${encodeURIComponent(id)}/host/logs/stream?unit=${encodeURIComponent(unit)}`, {
