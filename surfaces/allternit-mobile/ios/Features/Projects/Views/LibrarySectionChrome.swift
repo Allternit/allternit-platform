@@ -223,6 +223,7 @@ struct LibraryFloatingBar<NewMenu: View>: View {
     }
 
     private func openSearch() {
+        if glass { Haptics.light() }
         open = true
         focused = true
     }
@@ -253,16 +254,26 @@ extension LibraryFloatingBar where NewMenu == EmptyView {
 }
 
 /// `.phone-float-*` surface: elevated fill, hairline, soft shadow.
+/// `glass`: the polish neutral glass instead (every bar face is 46 tall, so
+/// radius 23 draws the same circle and capsule).
 private struct FloatSurface<S: Shape>: ViewModifier {
     let shape: S
+    var glass = false
     @Environment(\.colorScheme) private var scheme
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content
-            .background(shape.fill(Color("BgPanel")))
-            .overlay(shape.stroke(Color("BorderStrong"), lineWidth: 0.5))
-            .shadow(color: .black.opacity(scheme == .dark ? 0.45 : 0.14), radius: 8, x: 0, y: 4)
-            .contentShape(shape)
+        if glass {
+            content
+                .polishGlass(cornerRadius: 23)
+                .contentShape(shape)
+        } else {
+            content
+                .background(shape.fill(Color("BgPanel")))
+                .overlay(shape.stroke(Color("BorderStrong"), lineWidth: 0.5))
+                .shadow(color: .black.opacity(scheme == .dark ? 0.45 : 0.14), radius: 8, x: 0, y: 4)
+                .contentShape(shape)
+        }
     }
 }
 
