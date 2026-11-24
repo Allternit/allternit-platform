@@ -19,6 +19,12 @@ object TerminalColors {
     val key = Color(0xFF1D2126)
     val keyPressed = Color(0xFF2A2F36)
     val line = Color(0xFF23272D)
+    // The coding-agent composer on the terminal (iOS CodeInk(terminal: true), GizziCodeWordmark.coral, Theme.status*).
+    val tertiary = Color(0xB39AA0A8)
+    val keyBorder = Color(0xFF2C3137)
+    val coral = Color(0xFFD97757)
+    val success = Color(0xFF4ADE80)
+    val warning = Color(0xFFFBBF24)
 }
 
 /** One cell's look; colors are palette indexes (0-255), packed 24-bit RGB (|0x1000000), or -1 for default. */
@@ -429,9 +435,18 @@ class VtScreen(var cols: Int = 80, var rows: Int = 24) {
 
     // MARK: drawing
 
-    /** Scrollback plus the visible grid as styled text (the alternate screen is drawn whole, with no scrollback). */
-    fun render(): AnnotatedString {
-        var last = rows - 1
+    /**
+     * The screen's rows as text, top to bottom (xterm `translateToString(true)`: trailing blanks trimmed), for
+     * the agent-frame parser. Every row of the active grid, including any the view leaves undrawn.
+     */
+    fun visibleRows(): List<String> = List(rows) { y -> String(g.cells[y]).trimEnd(' ') }
+
+    /**
+     * Scrollback plus the visible grid as styled text (the alternate screen is drawn whole, with no scrollback).
+     * The last [hideLast] grid rows are left out: a coding agent's own input box the composer replaces.
+     */
+    fun render(hideLast: Int = 0): AnnotatedString {
+        var last = rows - 1 - hideLast.coerceIn(0, rows - 1)
         if (!altScreen) while (last > cy && g.cells[last].all { it == ' ' }) last--
         return buildAnnotatedString {
             fun line(text: CharArray, st: List<CellStyle>, cursorAt: Int) {

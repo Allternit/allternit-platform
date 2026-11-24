@@ -178,6 +178,68 @@ internal object CodeApi {
         return b.codeCall("POST", "/v1/pty/${encode(ptyId)}/preview/token", body, "open the preview").map { (it as? JsonObject).str("token").orEmpty() }
     }
 
+    // Terminal service (cmd/allternit-api terminal_routes.rs; web lib/terminal-api.ts, iOS TerminalServiceClient):
+    // the pane-engine shells the Code terminal's tiles run in, as on Desktop, the web and iOS. The relay reaches
+    // these on the computer's runtime; gizzi-code's `/v1/pty` is not served there (only ports and the dev
+    // preview below still use it, on a gizzi-code pty).
+
+    /**
+     * `POST /terminal/create {shell, cols, rows, cwd?}` → the terminal id (`data.session_id`). zsh is only the
+     * default: where the computer has none, an empty shell runs its own default (iOS create's retry).
+     */
+    suspend fun createTerminal(b: ChatBackend, cols: Int, rows: Int, cwd: String? = null): CodeResult<String> {
+        var r = createTerminal(b, "/bin/zsh", cols, rows, cwd)
+        if (r is CodeResult.Failed && MISSING_SHELL.containsMatchIn(r.message)) r = createTerminal(b, "", cols, rows, cwd)
+        // The computer's own words (status set) become a friendly sentence; relay failures already are one.
+        return if (r is CodeResult.Failed && r.status != null) CodeResult.Failed(FriendlyErrorMessage.from(r.message, "start a shell"), r.status) else r
+    }
+
+    private val MISSING_SHELL = Regex("ENOENT|doesn't exist|No such file")
+
+    private suspend fun createTerminal(b: ChatBackend, shell: String, cols: Int, rows: Int, cwd: String?): CodeResult<String> {
+        val body = buildJsonObject {
+            put("shell", shell); put("cols", cols); put("rows", rows)
+            if (cwd != null) put("cwd", cwd)
+        }.toString()
+        return when (val r = b.runtimeJson("POST", "/terminal/create", body)) {
+            is RuntimeCall.Ok -> {
+                val o = r.body as? JsonObject
+                val id = o.str("sessionId") ?: o.str("session_id") ?: o.child("data").str("session_id")
+                when {
+                    o.bool("success") == false -> CodeResult.Failed(o.str("message") ?: "The shell didn't start.", 500)
+                    id.isNullOrEmpty() -> CodeResult.Failed("Your computer didn't return a terminal.")
+                    else -> CodeResult.Ok(id)
+                }
+            }
+            RuntimeCall.NoComputer -> CodeResult.NoComputer
+            // The raw message is kept so the missing-shell retry can read it.
+            is RuntimeCall.Http -> CodeResult.Failed(r.message ?: r.code ?: "HTTP ${r.status}", r.status)
+            is RuntimeCall.Failed -> CodeResult.Failed(r.message)
+        }
+    }
+
+    /** `POST /terminal/:id/input {content}`: raw bytes for the pty (a real pty reads '\r' as Enter). 404 = the terminal is gone. */
+    suspend fun terminalInput(b: ChatBackend, id: String, content: String): CodeResult<Unit> {
+        val body = buildJsonObject { put("session_id", id); put("content", content) }.toString()
+        return b.codeCall("POST", "/terminal/${encode(id)}/input", body, "send the keys").map { }
+    }
+
+    /** `POST /terminal/:id/resize {cols, rows}`. 404 = the terminal is gone. */
+    suspend fun resizeTerminal(b: ChatBackend, id: String, cols: Int, rows: Int): CodeResult<Unit> {
+        val body = buildJsonObject { put("session_id", id); put("cols", cols); put("rows", rows) }.toString()
+        return b.codeCall("POST", "/terminal/${encode(id)}/resize", body, "resize the shell").map { }
+    }
+
+    /** `POST /terminal/:id/close`: ends the shell on the computer (an unknown id is fine). */
+    suspend fun closeTerminal(b: ChatBackend, id: String) {
+        val body = buildJsonObject { put("session_id", id) }.toString()
+        b.codeCall("POST", "/terminal/${encode(id)}/close", body, "close the shell")
+    }
+
+    /** `GET /terminal/:id/stream`: the SSE path (scrollback replay, then live output, then `exit`). */
+    fun terminalStreamPath(id: String): String = "/terminal/${encode(id)}/stream"
+
+    // gizzi-code ptys (`/v1/pty`): the Computers console terminal (feature/computer) still opens these.
     suspend fun createPty(b: ChatBackend, title: String?, target: String? = null): CodeResult<String> {
         val body = buildJsonObject { if (title != null) put("title", title) }.toString()
         return b.codeCall("POST", "/v1/pty/create", body, "start a shell", target).map { (it as? JsonObject).str("id").orEmpty() }
