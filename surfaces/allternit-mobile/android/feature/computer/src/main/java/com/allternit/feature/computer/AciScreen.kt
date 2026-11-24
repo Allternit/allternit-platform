@@ -38,10 +38,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.zIndex
 import com.allternit.core.design.DockSpec
 import com.allternit.core.design.LocalDockOffset
-import com.allternit.core.design.ProvideDockScroll
+import com.allternit.core.design.PixelWordmark
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -119,8 +121,15 @@ fun AciRoot(host: AciHost) {
     Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().testTag("aciScreen")) {
         // The browser and a run bring their own top bar.
         if (tab != AciTab.Agent || landing) {
-            // zIndex keeps the menu button above the docking ACI title's band on the landing.
-            Row(Modifier.fillMaxWidth().zIndex(2f).padding(horizontal = 8.dp, vertical = 4.dp)) { host.menuButton() }
+            // On the landing the ACI wordmark (the word alone) sits centred in the bar, like Home, Bots and Code.
+            Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                host.menuButton()
+                if (tab == AciTab.Agent && landing) {
+                    Box(Modifier.align(Alignment.Center).semantics(mergeDescendants = true) { heading() }) {
+                        PixelWordmark(height = 16.dp, suffix = "ACI", wordOnly = true)
+                    }
+                }
+            }
         }
         val list = devices.orEmpty()
         if (tab == AciTab.Agent && landing && list.isNotEmpty()) {
@@ -270,7 +279,6 @@ private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> U
         if (agentActive) onRunGoal(value) else onOpen(AciWebInput.resolve(value))
         input = ""
     }
-    val dockScroll = rememberScrollState()
     Box(Modifier.fillMaxSize()) {
         val dot = c.textPrimary.copy(alpha = 0.18f)
         Canvas(Modifier.fillMaxSize()) {
@@ -285,16 +293,11 @@ private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> U
                 y += step
             }
         }
-        ProvideDockScroll(dockScroll) {
         Column(
-            Modifier.fillMaxSize().verticalScroll(dockScroll).padding(horizontal = 24.dp, vertical = 48.dp).testTag("aciLanding"),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 48.dp).testTag("aciLanding"),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 560.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                // ACI is the block title (docks into the bar as the landing scrolls); the random title below is the page line.
-                AciViewHeader("ACI", bottom = 16.dp)
-                // iOS ACIBrowserLanding: the Matrix construct mark, 84pt.
-                androidx.compose.foundation.Image(painterResource(DesignR.drawable.matrix_logo), contentDescription = "Allternit", modifier = Modifier.padding(bottom = 24.dp).size(84.dp))
                 Text(title, color = c.textPrimary, fontSize = 32.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(bottom = 32.dp)) {
                     Box(Modifier.width(32.dp).height(1.dp).background(c.borderStrong))
@@ -400,7 +403,6 @@ private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> U
                     }
                 }
             }
-        }
         }
     }
 }

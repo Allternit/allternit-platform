@@ -68,7 +68,7 @@ struct ACITabView: View {
     var body: some View {
         VStack(spacing: 0) {
             if showsHeader {
-                ACIPhoneHeader {
+                ACIPhoneHeader(showsWordmark: nav.tab == .agent && isLanding) {
                     isSidebarOpen.toggle()
                 }
             }
@@ -319,17 +319,10 @@ private struct ACIBrowserLanding: View {
     private static let taglines = ["AI-Powered Browsing", "Navigate with Intelligence", "Your Web, Amplified", "Explore Fearlessly", "Browse. Automate. Build."]
 
     var body: some View {
-        // ACI block title (T11): docks into the ☰-only ACIPhoneHeader above this
-        // view. That header is 52 pt tall and ends where this view starts, so its
-        // centre is 26 pt above our top edge (the dock draws relative to us).
-        DockingTitleScrollView(title: "ACI", chrome: .overlay(barCenter: -26)) {
+        // The ACI wordmark sits in ACIPhoneHeader's centre (the mode's title,
+        // like Home, Bots and Code), so the page starts with its own title.
+        ScrollView {
             VStack(spacing: 0) {
-                Image("MatrixLogo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 84, height: 84)
-                    .padding(.bottom, 24)
-                    .accessibilityLabel("Allternit")
                 Text(title)
                     .font(.system(size: 32, weight: .medium))
                     .foregroundColor(Color("TextPrimary"))
@@ -365,15 +358,12 @@ private struct ACIBrowserLanding: View {
                 shortcutGrid
             }
             .frame(maxWidth: 560)
-            // The dock adds 14 pt each side and the title's room above.
-            .padding(.horizontal, 10)
-            .padding(.top, 16)
-            .padding(.bottom, 48)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 48)
             .frame(maxWidth: .infinity)
-            // The dock paints its own page fill, so the dots live in the content.
-            .background(alignment: .topLeading) { ACIDotGrid() }
         }
         .scrollDismissesKeyboard(.interactively)
+        .background(alignment: .topLeading) { ACIDotGrid().ignoresSafeArea(edges: .bottom) }
     }
 
     /// The search/URL form: 56 pt neutral field, accent search button.

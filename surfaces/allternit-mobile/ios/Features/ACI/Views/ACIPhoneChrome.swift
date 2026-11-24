@@ -7,8 +7,11 @@ import SwiftUI
 
 // MARK: - Header
 
-/// PhoneHeader on ACI: each view names itself below, so the bar keeps only ☰.
+/// PhoneHeader on ACI: ☰, and on the landing the ACI wordmark centred in the
+/// bar. The other ACI views name themselves below and dock into its centre.
 struct ACIPhoneHeader: View {
+    /// The landing: "ACI" in pixel type, the word alone (as the drawer shows it).
+    var showsWordmark = false
     var onMenu: () -> Void
 
     var body: some View {
@@ -19,6 +22,12 @@ struct ACIPhoneHeader: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+        .overlay {
+            if showsWordmark {
+                ShellWordmark(mode: .aci)
+                    .accessibilityAddTraits(.isHeader)
+            }
+        }
         .background(Color("BgPrimary"))
     }
 }
