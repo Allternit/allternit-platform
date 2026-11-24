@@ -2,9 +2,6 @@ package com.allternit.feature.artifacts
 
 import android.graphics.BitmapFactory
 import android.provider.Settings
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -22,8 +19,6 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -32,6 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.DotField
+import com.allternit.core.design.DotFieldMode
+import com.allternit.core.design.DotPattern
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
@@ -173,9 +171,9 @@ private fun download(client: okhttp3.OkHttpClient, url: String, onProgress: ((By
     }
 
 /**
- * Download option B, "sharpens as it loads": the poster goes from blurred to sharp by the real fraction of bytes in;
- * an unknown size holds the blur at 16 and shows a small spinner. The status line gives bytes, percent and ETA ("— ETA"
- * when there is none). Reduced motion: the blur steps with the bytes and nothing animates or spins.
+ * Download "sharpens as it loads": the poster is a dot halftone that gets finer by the real fraction of bytes in;
+ * an unknown size holds the coarse pitch and shows a small spinner. The status line gives bytes, percent and ETA ("— ETA"
+ * when there is none). Reduced motion: the halftone is a fixed medium pitch and nothing animates or spins.
  */
 @Composable
 internal fun ByteLoadingView(posterUrl: String?, progress: ByteProgress?, modifier: Modifier = Modifier, verb: String = "Loading") {
