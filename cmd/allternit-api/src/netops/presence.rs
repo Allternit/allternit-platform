@@ -83,20 +83,27 @@ pub async fn live_sessions(runtime_id: &str) -> Value {
     .await;
     let mut list = match fetched {
         Some(l) => l,
-        None => tokio::task::spawn_blocking(move || {
-            allternit_factory_engine::agents::live_sessions::discover(&person, None)
-                .into_iter()
-                .filter_map(|s| serde_json::to_value(s).ok())
-                .collect()
-        })
-        .await
-        .unwrap_or_default(),
+        None => discover_here(person).await.unwrap_or_default(),
     };
     for s in &mut list {
         s["machine"] = json!(runtime_id);
+        // The holder's own flags stay on this computer: they can name files, profiles or keys.
+        if let Some(o) = s.as_object_mut() {
+            o.remove("carriedFlags");
+        }
     }
     list.truncate(MAX_SESSIONS);
     Value::Array(list)
+}
+
+/// The live sessions this process can see itself (session files, the process table, hooks), without
+/// the Factory engine. Pane-only entries need the engine; pane-held processes still show as held by
+/// `Allternit` from their parent process.
+async fn discover_here(person: String) -> Result<Vec<Value>, tokio::task::JoinError> {
+    tokio::task::spawn_blocking(move || {
+        allternit_factory_engine::agents::live_sessions::discover(&person, None).into_iter().filter_map(|s| serde_json::to_value(s).ok()).collect()
+    })
+    .await
 }
 
 /// One `{botId, failoverRuntimeId}` per always-on bot that has a failover computer.
@@ -194,8 +201,10 @@ pub fn record_failovers(db: &crate::db::DbHandle, owner: &str, reply: &Value) ->
 }
 
 /// `GET /live-sessions` (under `/api/v1`): this computer's live agent sessions, proxied from the
-/// Factory engine (`GET /api/factory/sessions`). The address prefix is the caller's username
-/// (email local-part). Engine down → 502 with the usual transport error, never an empty list.
+/// Factory engine (`GET /api/factory/sessions`), which also knows the panes. The address prefix is
+/// the caller's username (email local-part). Engine down or failing → the same discovery run here
+/// as a library (session files and the process table, so every holder still shows); only if that
+/// fails too → 502 with the usual transport error, never an empty list.
 async fn live_sessions_route(Extension(user): Extension<AuthUser>) -> Response {
     let person = user
         .email
@@ -205,13 +214,23 @@ async fn live_sessions_route(Extension(user): Extension<AuthUser>) -> Response {
         .map(str::to_string)
         .unwrap_or_else(allternit_factory_engine::agents::live_sessions::default_person);
     let url = format!("{}/api/factory/sessions?person={}", crate::factory_proxy::engine_url(), urlencoding::encode(&person));
-    match crate::net_client::client().get(url).timeout(Duration::from_secs(10)).send().await {
+    let engine_err = match crate::net_client::client().get(url).timeout(Duration::from_secs(10)).send().await {
         Ok(r) if r.status().is_success() => match r.json::<Value>().await {
-            Ok(v) => Json(v).into_response(),
-            Err(e) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": { "code": "transport", "fact": format!("the Factory engine's reply was not JSON: {e}"), "action": "Update Allternit and retry." } }))).into_response(),
+            Ok(v) if v.is_array() => return Json(v).into_response(),
+            Ok(_) => "the Factory engine's reply was not a session list".to_string(),
+            Err(e) => format!("the Factory engine's reply was not JSON: {e}"),
         },
-        Ok(r) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": { "code": "transport", "fact": format!("the Factory engine answered {}", r.status()), "action": "Retry; if it persists run `gizzi agents doctor`." } }))).into_response(),
-        Err(e) => (StatusCode::BAD_GATEWAY, Json(json!({ "error": { "code": "transport", "fact": format!("the Factory engine is not reachable: {e}"), "action": "Start the Factory engine (allternit-factory serve; Allternit Desktop starts it) and retry." } }))).into_response(),
+        Ok(r) => format!("the Factory engine answered {}", r.status()),
+        Err(e) => format!("the Factory engine is not reachable: {e}"),
+    };
+    tracing::debug!("live sessions: {engine_err}; discovering here");
+    match discover_here(person).await {
+        Ok(list) => Json(Value::Array(list)).into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": { "code": "transport", "fact": format!("{engine_err}, and session discovery here failed: {e}"), "action": "Start the Factory engine (allternit-factory serve; Allternit Desktop starts it) and retry." } })),
+        )
+            .into_response(),
     }
 }
 
