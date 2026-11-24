@@ -16,6 +16,7 @@ Complete REST API documentation for the Cowork Runtime system.
 - [Approvals](#approvals)
 - [Attachments](#attachments)
 - [Code Environments](#code-environments)
+- [Account Flags](#account-flags)
 - [Account Preferences](#account-preferences)
 - [Common Types](#common-types)
 - [Error Responses](#error-responses)
@@ -954,6 +955,50 @@ the service). Per-plan included minutes and concurrency caps
 The web view is behind `flags.meetings` (read-only) on `GET /api/v1/me/flags`: off unless
 `ALLTERNIT_MEETINGS_ENABLED=1`, the user is in `ALLTERNIT_MEETINGS_USER_IDS`, or
 an admin.
+
+---
+
+## Account Flags
+
+Small per-account UI flags that follow the person across Desktop, web, phone
+and Android. Stored in the Clerk user's `unsafe_metadata` (Clerk deep-merges,
+so other keys survive). Code: `src/routes/me_flags.rs`.
+
+```http
+GET /api/v1/me/flags
+PUT /api/v1/me/flags
+```
+
+**Auth:** a Clerk session or an `allternit_*` API token with the `account`
+scope. `GET` also accepts a paired computer's runtime device credential and
+answers as its owner; a `PUT` with a device credential is `403`.
+
+`GET` returns `{ "flags": { ... } }` with all 9 time keys below (an ISO-8601
+time string, or `null` when unset), plus the read-only server booleans
+`meetings` and `files_drive`.
+
+| Key | Used by |
+|---|---|
+| `botsIntroSeenAt` | "Meet your bots" and the Bots mode intro |
+| `introHomeSeenAt` | Home mode intro |
+| `introCodeSeenAt` | Code mode intro |
+| `introAciSeenAt` | Computers (ACI) mode intro |
+| `introProjectsSeenAt` | Projects mode intro |
+| `introArtifactsSeenAt` | Artifacts mode intro |
+| `introAutomationSeenAt` | Automation mode intro |
+| `introCustomizeSeenAt` | Customize mode intro |
+| `introFreeweightsSeenAt` | Freeweights (models) mode intro |
+
+`PUT` takes a non-empty JSON object of those keys and returns the same shape
+as `GET`.
+
+- A value is an RFC 3339 time string of at most 40 characters, for example
+  `{ "introHomeSeenAt": "2026-11-23T12:00:00.000Z" }`.
+- A value of JSON `null` clears the key (Clerk removes a metadata key set to
+  `null`). Example: `{ "introHomeSeenAt": null }`. Use this to reset intros.
+- An unknown key (including `meetings` and `files_drive`), a non-object body, an
+  empty body, or any other value type answers `400 BAD_REQUEST`; nothing is saved.
+- A missing `CLERK_SECRET_KEY` or a Clerk failure answers `503`.
 
 ---
 
