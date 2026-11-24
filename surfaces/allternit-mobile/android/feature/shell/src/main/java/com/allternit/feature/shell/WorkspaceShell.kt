@@ -373,7 +373,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 onPickMode = ::pickMode,
                 onOpenHub = { focusManager.clearFocus(); hubOpen = true },
                 onNew = newAction ?: ::newItem,
-                onQuickTask = { focusManager.clearFocus(); quickTaskOpen = true })
+                onQuickTask = { focusManager.clearFocus(); quickTaskOpen = true },
+                focusedBot = if (mode == ShellMode.Bots) botsStore.focusedBot else null)
         }
     }
     // Wave F3: ACI mode's host (iOS ACITabView): the relay for runs and workflows, ☰, sign-in.

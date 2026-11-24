@@ -47,6 +47,7 @@ internal fun ComposerOrbs(
     onOpenHub: () -> Unit,
     onNew: () -> Unit,
     onQuickTask: () -> Unit,
+    focusedBot: com.allternit.feature.bots.BotRecord? = null,
 ) {
     var modesExpanded by remember(mode) { mutableStateOf(false) }
     var newExpanded by remember(mode) { mutableStateOf(false) }
@@ -56,7 +57,7 @@ internal fun ComposerOrbs(
     Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         ModeOrb(mode, modesExpanded, { modesExpanded = it; newExpanded = false },
             onPick = { modesExpanded = false; onPickMode(it) },
-            onOpenHub = { modesExpanded = false; newExpanded = false; onOpenHub() }, botsWaiting = botsWaiting)
+            onOpenHub = { modesExpanded = false; newExpanded = false; onOpenHub() }, botsWaiting = botsWaiting, focusedBot = focusedBot)
         Spacer(Modifier.weight(1f))
         if (sessionOpen && !modesExpanded) {
             NewOrb(mode, newExpanded, { newExpanded = it }, onNew, onQuickTask)
