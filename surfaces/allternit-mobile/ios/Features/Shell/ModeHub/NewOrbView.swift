@@ -91,6 +91,8 @@ struct NewOrbView: View {
 struct ComposerOrbRow: View {
     let hasActiveSession: Bool
     var toolsOpen = false
+    /// Optional content right of the mode orb (the Bots home "To:" chip).
+    var trailing: AnyView? = nil
     @EnvironmentObject private var modeStore: AppModeStore
     @Environment(\.modeHubPresented) private var hubPresented
     @State private var quickTaskPresented = false
@@ -105,6 +107,9 @@ struct ComposerOrbRow: View {
                                 userInfo: ["from": from.hubId, "to": mode.hubId])
                         },
                         onHold: { NotificationCenter.default.post(name: ModeHubSpec.openModeHub, object: nil) })
+            if let trailing {
+                trailing.layoutPriority(-1)
+            }
             Spacer(minLength: 8)
             if hasActiveSession && !hubPresented && !toolsOpen {
                 NewOrbView(mode: modeStore.shellMode, onNew: {
