@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.rememberDockOffset
 import com.allternit.feature.artifacts.LibrarySheet
 import com.allternit.feature.artifacts.LibrarySheetAction
 import com.allternit.feature.artifacts.relativeTime
@@ -200,8 +201,9 @@ internal fun CodeOverviewScreen(host: CodeHost, onBack: () -> Unit, onOpen: (Str
     var acting by remember { mutableStateOf<CodeSessionRow?>(null) }
     LaunchedEffect(Unit) { host.reloadSessions() }
     val all = host.sessions()
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val shown = all.filter { (filter == null && it.status != CodeSessionStatus.Archived || it.status == filter) && it.title.contains(query, ignoreCase = true) }
-    CodeScaffold(title = "Code threads", subtitle = "${all.count { it.status != CodeSessionStatus.Archived }} threads", onBack = onBack, backTag = "codeOverviewBack") {
+    CodeScaffold(title = "Code threads", subtitle = "${all.count { it.status != CodeSessionStatus.Archived }} threads", onBack = onBack, backTag = "codeOverviewBack", dockScroll = rememberDockOffset(listState)) {
         Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(12.dp)) {
             if (query.isEmpty()) Text("Search threads", color = c.textTertiary, fontSize = 15.sp)
             BasicTextField(query, { query = it }, singleLine = true, textStyle = TextStyle(color = c.textPrimary, fontSize = 15.sp), cursorBrush = SolidColor(c.accentCode), modifier = Modifier.fillMaxWidth().testTag("codeOverviewSearch"))
@@ -219,7 +221,7 @@ internal fun CodeOverviewScreen(host: CodeHost, onBack: () -> Unit, onOpen: (Str
                 "Start a thread from the composer and it appears here.",
             )
         } else {
-            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("codeOverviewList")) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("codeOverviewList"), state = listState) {
                 items(shown, key = { it.id }) { s -> SessionRow(s, onMore = { acting = s }, onClick = { onOpen(s.id) }) }
             }
         }
@@ -290,7 +292,8 @@ internal fun CodeComputerScreen(host: CodeHost, onBack: () -> Unit) {
         failed = list == null
         devices = list
     }
-    CodeScaffold(title = "Computer", subtitle = "Where Code runs your commands", onBack = onBack, backTag = "codeComputerBack") {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    CodeScaffold(title = "Computer", subtitle = "Where Code runs your commands", onBack = onBack, backTag = "codeComputerBack", dockScroll = rememberDockOffset(listState)) {
         val list = devices
         when {
             list == null && !failed -> Loading()
@@ -301,7 +304,7 @@ internal fun CodeComputerScreen(host: CodeHost, onBack: () -> Unit) {
                     CodePill("Open Apps & Extensions", testTag = "codeComputerConnect") { host.openConnections() }
                 }
             }
-            else -> LazyColumn(Modifier.fillMaxSize().testTag("codeComputerList")) {
+            else -> LazyColumn(Modifier.fillMaxSize().testTag("codeComputerList"), state = listState) {
                 item {
                     CodeRow(
                         title = "Automatic", detail = "Use whichever of your computers is online", testTag = "codeComputerAuto",
