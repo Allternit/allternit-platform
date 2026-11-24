@@ -2,6 +2,7 @@ package com.allternit.feature.automation
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,7 +40,9 @@ import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
+import com.allternit.core.design.GlassPill
 import com.allternit.core.design.Haptics
+import com.allternit.core.design.PolishGlass
 import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.core.design.R as DesignR
 
@@ -54,18 +57,29 @@ internal fun AutoScaffold(title: String, onBack: () -> Unit, backTag: String, tr
     }
 }
 
+/** No computer on the account: a white card with a glass Connect button, never a red error (iOS #2827). */
 @Composable
 internal fun NoComputerState(modifier: Modifier = Modifier, onRetry: (() -> Unit)?) {
     val c = AllternitTheme.colors
-    FriendlyState(
-        style = FriendlyStyle.Error,
-        title = "Connect a computer or Allternit Cloud",
-        message = "Open Allternit Desktop on your computer, or wake your cloud computer, then retry.",
-        modifier = modifier.testTag("automationNoComputer"),
-        actionTitle = if (onRetry != null) "Retry" else null,
-        onAction = onRetry,
-        icon = { Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textSecondary, modifier = Modifier.size(28.dp)) },
-    )
+    val shape = RoundedCornerShape(18.dp)
+    Row(
+        modifier.fillMaxWidth().testTag("automationNoComputer")
+            .clip(shape).background(if (PolishGlass.isDark()) c.bgPanel else Color.White)
+            .border(1.dp, PolishGlass.border(), shape)
+            .padding(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Automation tasks run on your computer", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text("Open Allternit Desktop, or wake your cloud computer.", color = c.textSecondary, fontSize = 12.sp)
+        }
+        if (onRetry != null) {
+            GlassPill(onClick = onRetry, height = 36.dp, modifier = Modifier.testTag("automationConnect")) {
+                Text("Connect", color = c.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
 }
 
 @Composable

@@ -37,12 +37,40 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
-import com.allternit.feature.artifacts.LibraryHeader
-import com.allternit.feature.artifacts.LibraryIconButton
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import com.allternit.core.design.BlockText
+import com.allternit.core.design.DockSpec
+import com.allternit.core.design.DockingBlockTitle
+import com.allternit.core.design.EmptyBox
+import com.allternit.core.design.FilterPills
+import com.allternit.core.design.GlassCircleButton
+import com.allternit.core.design.GlassPill
+import com.allternit.core.design.IntroKeys
+import com.allternit.core.design.IntroSeenStore
+import com.allternit.core.design.IntroSheet
+import com.allternit.core.design.PolishGlass
+import com.allternit.core.design.SlidingSegmented
+import com.allternit.core.design.TabPage
+import com.allternit.core.design.wrapLines
+import com.allternit.core.design.SectionLabel as PolishSectionLabel
+import com.allternit.feature.artifacts.glassSurface
 import com.allternit.feature.artifacts.LibrarySearchField
 import com.allternit.feature.artifacts.LibrarySheet
 import com.allternit.feature.artifacts.LibrarySheetAction
-import com.allternit.feature.artifacts.PillRow
 import com.allternit.feature.artifacts.relativeTime
 import com.allternit.feature.artifacts.parseTime
 import com.allternit.feature.bots.RoutineRule
@@ -57,6 +85,8 @@ class AutomationHost(
     val backend: ChatBackend,
     val menuButton: @Composable () -> Unit,
     val openSignIn: () -> Unit,
+    /** First-visit intro state (`introAutomationSeenAt`). Null means no intro (the shell wires it in). */
+    val introStore: IntroSeenStore? = null,
 )
 
 private enum class Top(val label: String) { Scheduled("Scheduled"), Board("Board") }
@@ -65,6 +95,10 @@ private enum class TaskTab(val label: String, val type: TaskType?) {
 }
 internal enum class RoutinesView(val label: String) { List("List"), Graph("Graph"), Calendar("Calendar") }
 private enum class TaskSort(val label: String) { Date("Date"), Name("Name"), Type("Type") }
+
+private const val PAGE_TITLE = "Automation Tasks"
+private const val PAGE_LINE = "Goals, routines and loops that run on your computer and report back."
+private const val HEADER_HEIGHT = 52
 
 /** The drawer's Automation Tasks row (iOS AutomationTasksPhoneView; the Scheduled / Board pair is iOS's Tasks bar). */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,35 +112,69 @@ fun AutomationRoot(host: AutomationHost) {
     var view by remember { mutableStateOf(RoutinesView.List) }
     var sort by remember { mutableStateOf(TaskSort.Date) }
     var query by remember { mutableStateOf("") }
+    var searchOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<AutoTask?>(null) }
     var creating by remember { mutableStateOf(false) }
     var slotCron by remember { mutableStateOf<String?>(null) }
     var local by remember { mutableStateOf(false) }
     var hbAgent by remember { mutableStateOf<String?>(null) }
     var refreshing by remember { mutableStateOf(false) }
+    var showIntro by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
 
     LaunchedEffect(store, host.signedIn) { if (host.signedIn) store.load() }
+    LaunchedEffect(host.introStore, host.signedIn) {
+        val intro = host.introStore ?: return@LaunchedEffect
+        if (!host.signedIn) return@LaunchedEffect
+        intro.refresh()
+        showIntro = !intro.isSeen(IntroKeys.AUTOMATION)
+    }
 
     if (local) {
         AutomationLocalScreen(host, onBack = { local = false })
         return
     }
 
-    Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().testTag("automationHub")) {
-        LibraryHeader(
-            title = "Automation Tasks", onBack = null, leading = host.menuButton, glass = true,
-            trailing = { LibraryIconButton(DesignR.drawable.ph_plus, "New task", "automationNew") { slotCron = null; creating = true } },
-        )
-        PillRow(Top.entries, top, { it.label }, { "automationTop${it.name}" }, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { top = it }
-        when {
-            !host.signedIn -> EmptyState("Sign in to see your automations", "Routines, goals and loops run on your bots, so they belong to your account.", Modifier.padding(horizontal = 20.dp), "Sign in", host.openSignIn)
-            top == Top.Board -> TasksBoardScreen(host, onScheduled = { top = Top.Scheduled })
-            else -> {
-                PillRow(TaskTab.entries, tab, { t -> t.label + (t.type?.let { ty -> " " + store.of(ty).size } ?: if (store.tasks.isNotEmpty()) " " + store.tasks.size else "") }, { "automationTab${it.name}" }, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { tab = it }
-                if (tab != TaskTab.Goals) PillRow(RoutinesView.entries, view, { it.label }, { "automationView${it.name}" }, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { view = it }
-                if (view == RoutinesView.List || tab == TaskTab.Goals) {
-                    LibrarySearchField(query, "Search tasks", "automationSearch", Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { query = it }
-                    PillRow(TaskSort.entries, sort, { "Sort: " + it.label }, { "automationSort${it.name}" }, Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { sort = it }
+    val density = LocalDensity.current
+    val statusTop = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+    val titleTop = statusTop + HEADER_HEIGHT.dp + 4.dp
+    val titleLines = remember { wrapLines(PAGE_TITLE).size }
+    val titleHeight = (titleLines * DockSpec.BH + (titleLines - 1) * 0.36f * DockSpec.BH).dp
+    val newTask = { slotCron = null; creating = true }
+    val listMode = view == RoutinesView.List || tab == TaskTab.Goals
+
+    Box(Modifier.fillMaxSize().background(c.bgPrimary).testTag("automationHub")) {
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = { scope.launch { refreshing = true; store.load(); refreshing = false } },
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            LazyColumn(
+                Modifier.fillMaxSize().testTag("automationList"), state = listState,
+                contentPadding = PaddingValues(top = titleTop, bottom = 96.dp),
+            ) {
+                item("page") {
+                    TabPage(
+                        description = PAGE_LINE,
+                        title = { Spacer(Modifier.fillMaxWidth().height(titleHeight).semantics { heading(); contentDescription = PAGE_TITLE }) },
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            if (host.signedIn && store.noComputer) NoComputerState(onRetry = { scope.launch { store.load() } })
+                            if (host.signedIn) SlidingSegmented(Top.entries.map { it.label }, top.ordinal, { top = Top.entries[it] }, Modifier.testTag("automationTop"))
+                            if (host.signedIn && top == Top.Scheduled) {
+                                FilterPills(
+                                    TaskTab.entries.map { t -> t.label + (t.type?.let { ty -> " " + store.of(ty).size } ?: if (store.tasks.isNotEmpty()) " " + store.tasks.size else "") },
+                                    tab.ordinal, { tab = TaskTab.entries[it] }, Modifier.testTag("automationTabs"),
+                                )
+                                if (tab != TaskTab.Goals) SlidingSegmented(RoutinesView.entries.map { it.label }, view.ordinal, { view = RoutinesView.entries[it] }, Modifier.testTag("automationViews"))
+                                if (listMode) {
+                                    if (searchOpen || query.isNotEmpty()) LibrarySearchField(query, "Search tasks", "automationSearch") { query = it }
+                                    FilterPills(TaskSort.entries.map { "Sort: " + it.label }, sort.ordinal, { sort = TaskSort.entries[it] }, Modifier.testTag("automationSort"))
+                                }
+                            }
+                        }
+                        if (host.signedIn && top == Top.Scheduled && listMode) PolishSectionLabel("Your tasks")
+                    }
                 }
                 val shown = run {
                     val base = store.tasks.filter { tab.type == null || it.type == tab.type }.filter { query.isBlank() || it.name.contains(query, true) || it.instruction.contains(query, true) }
@@ -116,31 +184,75 @@ fun AutomationRoot(host: AutomationHost) {
                         TaskSort.Date -> base.sortedByDescending { parseTime(it.createdAt) }
                     }
                 }
-                store.actionError?.let { Text(it, color = com.allternit.core.design.AllternitStatic.StatusError, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp).testTag("automationActionError")) }
-                PullToRefreshBox(isRefreshing = refreshing, onRefresh = { scope.launch { refreshing = true; store.load(); refreshing = false } }, modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    when {
-                        store.loading && !store.loaded -> Loading()
-                        store.noComputer -> NoComputerState { scope.launch { store.load() } }
-                        store.error != null && store.tasks.isEmpty() -> ErrorState("Couldn't load your automations", store.error.orEmpty(), { scope.launch { store.load() } })
-                        tab == TaskTab.Heartbeats && view == RoutinesView.List -> HeartbeatsTab(store, hbAgent) { hbAgent = it }
-                        view == RoutinesView.Graph && tab != TaskTab.Goals -> AutomationGraph(store, shown.filter { it.type != TaskType.Goal }, tab == TaskTab.All, onOpen = { selected = it })
-                        view == RoutinesView.Calendar && tab != TaskTab.Goals -> AutomationCalendar(store, shown.filter { it.type != TaskType.Goal }, onOpen = { selected = it }, onNewAt = { cron -> slotCron = cron; creating = true })
-                        shown.isEmpty() -> EmptyState(
-                            if (query.isBlank()) "No ${(tab.type?.plural ?: "tasks").lowercase()} yet" else "No matches",
-                            if (query.isBlank()) "Schedule a task and a bot runs it for you on time." else "Nothing matches that search.",
-                            Modifier.padding(horizontal = 20.dp), if (query.isBlank()) "New task" else null, { slotCron = null; creating = true },
-                        )
-                        else -> LazyColumn(Modifier.fillMaxSize().testTag("automationList"), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            items(shown, key = { it.key }) { t -> TaskCard(store, t, onOpen = { selected = t }) }
-                            item("local") { LocalLink { local = true } }
-                            if (store.heartbeatsAway && (tab == TaskTab.Heartbeats || tab == TaskTab.All)) item("away") {
-                                Text("Agent heartbeats live on your computer. Connect it to see them here.", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(8.dp))
+                when {
+                    !host.signedIn -> item("signedOut") { EmptyState("Sign in to see your automations", "Routines, goals and loops run on your bots, so they belong to your account.", Modifier.padding(horizontal = 20.dp), "Sign in", host.openSignIn) }
+                    top == Top.Board -> item("board") { Box(Modifier.fillParentMaxHeight()) { TasksBoardScreen(host, onScheduled = { top = Top.Scheduled }) } }
+                    else -> {
+                        store.actionError?.let { err -> item("actionError") { Text(err, color = com.allternit.core.design.AllternitStatic.StatusError, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp).testTag("automationActionError")) } }
+                        when {
+                            store.loading && !store.loaded -> item("loading") { Box(Modifier.fillParentMaxHeight(0.5f)) { Loading() } }
+                            store.noComputer -> item("noComputerEmpty") { Column { PolishSectionLabel("Your tasks", Modifier.padding(horizontal = 14.dp)); NoTasksBox(null, null, null) } }
+                            store.error != null && store.tasks.isEmpty() -> item("error") { ErrorState("Couldn't load your automations", store.error.orEmpty(), { scope.launch { store.load() } }) }
+                            tab == TaskTab.Heartbeats && view == RoutinesView.List -> item("heartbeats") { Box(Modifier.fillParentMaxHeight()) { HeartbeatsTab(store, hbAgent) { hbAgent = it } } }
+                            view == RoutinesView.Graph && tab != TaskTab.Goals -> item("graph") { Box(Modifier.fillParentMaxHeight()) { AutomationGraph(store, shown.filter { it.type != TaskType.Goal }, tab == TaskTab.All, onOpen = { selected = it }) } }
+                            view == RoutinesView.Calendar && tab != TaskTab.Goals -> item("calendar") { Box(Modifier.fillParentMaxHeight()) { AutomationCalendar(store, shown.filter { it.type != TaskType.Goal }, onOpen = { selected = it }, onNewAt = { cron -> slotCron = cron; creating = true }) } }
+                            shown.isEmpty() -> item("empty") { NoTasksBox(tab.type, query.ifBlank { null }, newTask) }
+                            else -> {
+                                items(shown, key = { it.key }) { t -> Box(Modifier.padding(horizontal = 14.dp, vertical = 5.dp)) { TaskCard(store, t, onOpen = { selected = t }) } }
+                                item("local") { Box(Modifier.padding(horizontal = 6.dp)) { LocalLink { local = true } } }
+                                if (store.heartbeatsAway && (tab == TaskTab.Heartbeats || tab == TaskTab.All)) item("away") {
+                                    Text("Agent heartbeats live on your computer. Connect it to see them here.", color = c.textTertiary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 22.dp, vertical = 8.dp))
+                                }
                             }
                         }
                     }
                 }
             }
         }
+
+        // The title is drawn over the page, under the header buttons, and docks into the bar as the list scrolls.
+        DockingBlockTitle(
+            PAGE_TITLE, listState, Modifier.fillMaxSize(),
+            barCenter = statusTop + (HEADER_HEIGHT / 2).dp, top = titleTop,
+        )
+
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().height(HEADER_HEIGHT.dp).padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Box(Modifier.glassSurface(CircleShape), contentAlignment = Alignment.Center) { host.menuButton() }
+            if (host.signedIn && top == Top.Scheduled && listMode) {
+                GlassCircleButton(
+                    onClick = { searchOpen = !searchOpen; if (!searchOpen) query = "" },
+                    contentDescription = "Search tasks", modifier = Modifier.testTag("automationSearchButton"),
+                ) { Icon(painterResource(DesignR.drawable.ph_magnifying_glass), null, tint = c.textPrimary, modifier = Modifier.size(18.dp)) }
+            }
+        }
+
+        if (host.signedIn) {
+            GlassPill(
+                onClick = newTask,
+                modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp).testTag("automationNew").semantics { contentDescription = "New task" },
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(painterResource(DesignR.drawable.ph_plus), null, tint = c.textPrimary, modifier = Modifier.size(16.dp))
+                    Text("New task", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+
+    if (showIntro) {
+        IntroSheet(
+            title = "Work that runs without you.",
+            line = "Set a goal, a routine on a schedule, or a loop. It runs on your computer and reports back.",
+            eyebrow = { BlockText("AUTOMATION TASKS", height = 8.dp, color = PolishGlass.Coral) },
+            hero = { AutomationIntroHero() },
+            onContinue = {
+                showIntro = false
+                scope.launch { host.introStore?.markSeen(IntroKeys.AUTOMATION) }
+            },
+        )
     }
 
     selected?.let { t ->
@@ -148,6 +260,27 @@ fun AutomationRoot(host: AutomationHost) {
         AutomationTaskDetailSheet(store, current, onClose = { selected = null })
     }
     if (creating) AutomationWizardSheet(store, kind = null, slotCron = slotCron, onClose = { creating = false })
+}
+
+/** The empty box under "Your tasks": a clock, the title and one grey line (no computer, filtered, or nothing yet). */
+@Composable
+private fun NoTasksBox(type: TaskType?, query: String?, onNew: (() -> Unit)?) {
+    val c = AllternitTheme.colors
+    val title = when {
+        query != null -> "No matches"
+        type == null || type == TaskType.Heartbeat -> "No automation tasks yet"
+        else -> "No ${type.plural.lowercase()} yet"
+    }
+    val line = when {
+        query != null -> "Nothing matches that search."
+        type == null || type == TaskType.Heartbeat -> "Tap New task to set up your first Goal, Routine or Loop."
+        else -> "Tap New task to set up your first ${type.label}."
+    }
+    EmptyBox(
+        title, line, Modifier.padding(horizontal = 14.dp).testTag("automationEmpty"),
+        onClick = if (query == null) onNew else null,
+        icon = { Icon(painterResource(DesignR.drawable.ph_clock), null, tint = c.textPrimary, modifier = Modifier.size(16.dp)) },
+    )
 }
 
 @Composable
