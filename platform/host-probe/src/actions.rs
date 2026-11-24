@@ -135,6 +135,11 @@ pub struct ActionRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub restore_point: Option<String>,
+    /// `snippet.run` only: the snippet body the cloud sends with the approved
+    /// action (its `id` must equal `target`), so the node needs no saved copy.
+    /// Without it the engine reads `<store>/snippets/<target>.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<Snippet>,
 }
 
 /// The way back from a change. It is an action and needs its own approval.
@@ -572,7 +577,7 @@ impl<E: Executor> ActionEngine<E> {
             ActionError::Unsupported(format!("actions on {}", std::env::consts::OS))
         })?;
 
-        let plan = self.plan(action, target, os)?;
+        let plan = self.plan(action, target, os, req.snippet.as_ref())?;
         let mut via_helper = false;
         if plan.needs_elevation && !self.exec.elevated() {
             if plan.helper.is_empty() {
@@ -709,7 +714,13 @@ impl<E: Executor> ActionEngine<E> {
 
     // -- planning ----------------------------------------------------------
 
-    fn plan(&self, action: ActionType, target: &str, os: OsFamily) -> Result<Plan, ActionError> {
+    fn plan(
+        &self,
+        action: ActionType,
+        target: &str,
+        os: OsFamily,
+        inline_snippet: Option<&Snippet>,
+    ) -> Result<Plan, ActionError> {
         if target.is_empty() {
             return Err(ActionError::InvalidTarget("target is required".into()));
         }
@@ -725,7 +736,7 @@ impl<E: Executor> ActionEngine<E> {
             ActionType::PortFree => self.plan_port(target, os),
             ActionType::UpdatesInstall => self.plan_updates(target),
             ActionType::SpaceClean => plan_clean(target, os),
-            ActionType::SnippetRun => self.plan_snippet(target, os),
+            ActionType::SnippetRun => self.plan_snippet(target, os, inline_snippet),
         }
     }
 
@@ -993,23 +1004,38 @@ impl<E: Executor> ActionEngine<E> {
         Ok(plan)
     }
 
-    fn plan_snippet(&self, target: &str, os: OsFamily) -> Result<Plan, ActionError> {
+    fn plan_snippet(
+        &self,
+        target: &str,
+        os: OsFamily,
+        inline: Option<&Snippet>,
+    ) -> Result<Plan, ActionError> {
         if !safe_file_name(target) {
             return Err(ActionError::InvalidTarget(format!(
                 "{target:?} is not a snippet id"
             )));
         }
-        let path = self.store.snippets_dir().join(format!("{target}.json"));
-        let snippet: Snippet = match std::fs::read(&path) {
-            Ok(b) => serde_json::from_slice(&b).map_err(|e| {
-                ActionError::InvalidTarget(format!("snippet {target:?} is unreadable: {e}"))
-            })?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(ActionError::TargetNotFound(format!(
-                    "no saved snippet {target:?} on this computer"
-                )))
+        let snippet: Snippet = if let Some(inline) = inline {
+            if inline.id != target {
+                return Err(ActionError::InvalidTarget(format!(
+                    "the snippet sent with the request is {:?}, not {target:?}",
+                    inline.id
+                )));
             }
-            Err(e) => return Err(ActionError::Store(format!("read {}: {e}", path.display()))),
+            inline.clone()
+        } else {
+            let path = self.store.snippets_dir().join(format!("{target}.json"));
+            match std::fs::read(&path) {
+                Ok(b) => serde_json::from_slice(&b).map_err(|e| {
+                    ActionError::InvalidTarget(format!("snippet {target:?} is unreadable: {e}"))
+                })?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(ActionError::TargetNotFound(format!(
+                        "no saved snippet {target:?} on this computer"
+                    )))
+                }
+                Err(e) => return Err(ActionError::Store(format!("read {}: {e}", path.display()))),
+            }
         };
         if snippet.script.trim().is_empty() {
             return Err(ActionError::InvalidTarget(format!(
@@ -1656,6 +1682,7 @@ mod tests {
             target: target.into(),
             approval_id: approval.map(str::to_string),
             restore_point: None,
+            snippet: None,
         }
     }
 
@@ -2428,6 +2455,38 @@ mod tests {
         assert!(clean_items().iter().all(|i| safe_file_name(i.id)));
         let v = serde_json::to_value(&clean_items()[0]).unwrap();
         assert!(v.get("needsElevation").is_some() && v.get("program").is_none());
+    }
+
+    #[test]
+    fn snippet_runs_from_the_request_with_no_saved_copy() {
+        let root = temp_root("snippet-inline");
+        let f = Fake::new(OsFamily::Linux, &root);
+        f.reply(0, "ok\n", "");
+        let e = engine(f);
+        let sn = Snippet {
+            id: "snp_1".into(),
+            name: "Uptime".into(),
+            script: "uptime".into(),
+            elevated: false,
+            timeout_sec: None,
+        };
+        let r = e
+            .run(&ActionRequest {
+                snippet: Some(sn.clone()),
+                ..req("snippet.run", "snp_1", Some("a1"))
+            })
+            .unwrap();
+        assert_eq!(e.exec.calls(), vec!["sh -c uptime"]);
+        assert!(r.undo.is_none());
+        // The body must be the snippet the approval named.
+        let err = e
+            .run(&ActionRequest {
+                snippet: Some(sn),
+                ..req("snippet.run", "snp_2", Some("a2"))
+            })
+            .unwrap_err();
+        assert_eq!(err.http_status(), 400);
+        cleanup(&e);
     }
 
     #[test]

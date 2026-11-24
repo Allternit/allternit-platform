@@ -217,8 +217,11 @@ Errors:
 | `GET /api/v1/computers/:id/ssh-keys` | `{ keys: [{ id, label, fingerprint, kind, keyType, createdAt, expiresAt }], connect }`. Oldest first. `kind` is `computer` (a person's key, `expiresAt` null) or `agent` (short-lived, `expiresAt` set). The key itself is never sent back. `connect` is `{ host, port, user, command }` from Orgo while the computer runs and has keys, otherwise null. Never wakes the computer | built (step 2.7) |
 | `POST /api/v1/computers/:id/ssh-keys` | `{ label, publicKey, kind?, expiresInMinutes? }` returns 201 with the key's fields plus `requiresRestart` (and a `message` when it is true). `expiresInMinutes` is for agent keys only: default 60, 5 to 1440. 400 `{ error }` with a plain `message`: `private_key` (nothing is stored), `invalid_public_key`, `one_key_only`, `public_key_required`, `too_many_keys` (20 keys or 16 KB), `invalid_kind`, `invalid_expiry`. 409 `key_exists`, 409 `asleep` or `busy` | built (step 2.7) |
 | `DELETE /api/v1/computers/:id/ssh-keys/:keyId` | `{ removed, requiresRestart }`. Removing the last key turns SSH off on the computer. 404 `key_not_found` | built (step 2.7) |
-| `GET /api/v1/computers/snippets` | `{ snippets: [{ id, name, command, description? }] }` (a bare array is also accepted) | planned (step 2.9) |
-| `POST /api/v1/computers/snippets/:id/run` | `{ computers: [], approvalConfirmed }` returns `{ runs: [{ computerId, approvalId, changeId, status, error }] }` | planned (step 2.9) |
+| `GET /api/v1/computers/snippets` | `{ snippets: [{ id, name, command, description?, elevated, timeoutSec?, createdAt, updatedAt }] }` (a bare array is also accepted) | built (step 2.9) |
+| `POST /api/v1/computers/snippets` | `{ name, command, description?, elevated?, timeoutSec? }` returns 201 with the snippet. Limits: 100 per user, name 80, description 280, command 32 KB | built (step 2.9) |
+| `PATCH` or `PUT` `/api/v1/computers/snippets/:id` | any of the same fields; `DELETE` returns `{ removed: true }`. Owner only, others get 404 | built (step 2.9) |
+| `GET /api/v1/computers/snippets/runs?computerId=&limit=` | `{ runs: [{ id, snippetId, snippetName, computerId, approvalId, changeId, status, error, message, createdAt }] }`, newest first, for the Activity tab | built (step 2.9) |
+| `POST /api/v1/computers/snippets/:id/run` | `{ computers: [], approvalConfirmed }` (1 to 25 computers; `approvalConfirmed` must be `true`, else 400 `approval_required`) returns `{ runs: [{ computerId, approvalId, changeId, status, error, message }] }`. `status` is `done`, `failed`, `needs_elevation`, `refused`, `asleep`, `offline`, `not_supported` or `not_found`; `error` and `message` are one plain sentence for every status but `done`. Asleep computers are never woken | built (step 2.9) |
 | `POST /api/v1/computers/:id/restart` | No body. `{ instance }`. 409 `{ error: "asleep", status }` when it is not running (never woken), 409 `{ error: "busy", status }` mid-change | built (step 2.4) |
 | `POST /api/v1/computers/:id/move` | `{ location, confirm: true }` returns 202 `{ instance }` (status `provisioning`, same row id). It starts a fresh computer in the new city and erases this one's files: Orgo keeps a computer in the city it was created in, and backups restore only there. The new computer is created first and the old one deleted after, so a refusal changes nothing. 400 `{ error: "confirm_required" }`, 400 `{ error: "invalid_location", locations }`, 409 `{ error: "same_location", location }`, 503 `{ error: "region_unavailable", location }` (old computer kept) | built (step 2.4) |
 | `POST /api/v1/computers/:id/rebuild` | `{ confirm: true }` returns 202 `{ instance }` (status `provisioning` during first boot, same row id). 400 `{ error: "confirm_required" }`. 409 `{ error: "no_recent_backup", latestBackupAt, maxAgeHours: 48 }`: nothing was deleted. 503 `{ error: "region_unavailable", location }`, 503 `{ error: "backup_check_failed" }` | built (step 2.4) |
@@ -228,7 +231,7 @@ Errors:
 | `PATCH /api/v1/computers/paired/:id` | `{ name }` renames a paired computer | planned (step 2.10) |
 | `DELETE /api/v1/computers/paired/:id` | Remove a paired computer | exists |
 
-Snippet runs reuse the approval mint above, one approval per computer.
+Snippet runs reuse the approval mint above, one approval per computer (type `snippet.run`, target = the snippet id). The command travels inside the approved action: the cloud sends `POST /v1/host/actions` with `{ type, target, approval_id, snippet: { id, name, script, elevated, timeoutSec } }`, the node never fetches it and saves nothing, and `snippet.id` must equal `target`. Without `snippet` the node still reads `<store>/snippets/<id>.json`. The approval binds the snippet id; the cloud is the authority on the text.
 
 For the routes above that act on cloud computers (restart, move, rebuild, backups, SSH keys), `:id` must be one of the caller's own cloud rows. A paired or desktop id is 404 `{ error: "not_a_cloud_computer" }`, and a computer on a host that cannot do the action is 501 `{ error: "not_supported", action }`. Every error body also carries a plain `message` that clients can show as it is.
 
@@ -327,7 +330,6 @@ Each computer has its own list of public keys in `computer_ssh_keys` (migration 
 | 155 | Taken by `155_platform_agent_runtime.sql` (Harness & Bots P6, #2784) |
 | 156 | `computer_ssh_keys` (step 2.7) |
 | 157 | `computer_alert_state`, `computer_alert_events`, `computer_alert_rules.duration_minutes` (step 2.8) |
-
-Snippets (step 2.9) take the next free number above 157 (158 unless another PR takes it).
+| 158 | `computer_snippets`, `computer_snippet_runs` (step 2.9) |
 
 Take the next free number above origin/main and open PRs when the files are written. Production applies migrations through the cloud-api deploy, not sqlx (see the cloud-api deploy notes).
