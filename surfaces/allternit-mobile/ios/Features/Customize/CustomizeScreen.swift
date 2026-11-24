@@ -556,7 +556,7 @@ struct CustomizeScreen: View {
         )
         .padding(.bottom, 32)
         if !rest.isEmpty {
-            landingSection("For you") { cardGrid(Array(rest.prefix(6))) }
+            landingSection("For you") { cardGrid(Array(rest.prefix(6)), radius: 20) }
         }
         if rest.count > 6 {
             landingSection("More \(section.label.lowercased())", onShowAll: { showAll = true }) {
@@ -680,15 +680,15 @@ struct CustomizeScreen: View {
         }
     }
 
-    private func cardGrid(_ list: [CustomizeItem]) -> some View {
+    private func cardGrid(_ list: [CustomizeItem], radius: CGFloat = 18) -> some View {
         PolishCardGrid {
-            ForEach(list) { itemCard($0) }
+            ForEach(list) { itemCard($0, radius: radius) }
         }
     }
 
     /// ItemCard (PreviewCard): glyph tile with a round + / ✓, status dot,
     /// name, description, "by author · Category".
-    private func itemCard(_ item: CustomizeItem) -> some View {
+    private func itemCard(_ item: CustomizeItem, radius: CGFloat = 18) -> some View {
         let isPending = pending.contains(item.id)
         let meta = [item.author.map { "by \($0)" }, item.category.map(Self.titleCase)].compactMap { $0 }.joined(separator: " · ")
         return PolishCard(
@@ -697,6 +697,7 @@ struct CustomizeScreen: View {
             status: isPending ? .attention : item.enabled ? .ok : .idle,
             statusLabel: isPending ? "Adding" : item.enabled ? "Added" : "Not added",
             footer: meta.isEmpty ? nil : meta,
+            radius: radius,
             onOpen: { open(item) },
             logo: { PhIcon(section.icon, size: 36).foregroundColor(Color("TextSecondary")) },
             action: {

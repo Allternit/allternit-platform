@@ -94,11 +94,16 @@ struct GlassPill: View {
 }
 
 /// Filter pills: the picked pill is an ink chip that slides to the new pick.
+/// An item may carry an SF Symbol `icon` shown before the title.
 struct FilterPills<ID: Hashable>: View {
     struct Item: Identifiable {
         let id: ID
         let title: String
-        init(id: ID, title: String) { self.id = id; self.title = title }
+        let icon: String?
+        let accessibilityID: String?
+        init(id: ID, title: String, icon: String? = nil, accessibilityID: String? = nil) {
+            self.id = id; self.title = title; self.icon = icon; self.accessibilityID = accessibilityID
+        }
     }
 
     let items: [Item]
@@ -107,37 +112,52 @@ struct FilterPills<ID: Hashable>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(items) { item in
-                    let picked = item.id == selection
-                    Button {
-                        guard !picked else { return }
-                        Haptics.selection()
-                        withAnimation(reduceMotion ? nil : PolishTokens.base) { selection = item.id }
-                    } label: {
-                        Text(item.title)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(picked ? Color("BgPrimary") : PolishTokens.ink)
-                            .padding(.horizontal, 14)
-                            .frame(height: 34)
-                            .background {
-                                if picked {
-                                    Capsule().fill(PolishTokens.ink)
-                                        .matchedGeometryEffect(id: "filterPick", in: ns)
-                                } else {
-                                    Capsule().fill(PolishTokens.neutralFill)
-                                }
-                            }
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(PolishPressStyle(scale: PolishTokens.pressPill))
-                    .accessibilityLabel(item.title)
-                    .accessibilityAddTraits(picked ? [.isButton, .isSelected] : .isButton)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(items) { item in pill(item) }
+                }
+                .padding(.horizontal, 14)
+            }
+            .onChange(of: selection) { _, id in
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
+            }
+        }
+    }
+
+    private func pill(_ item: Item) -> some View {
+        let picked = item.id == selection
+        return Button {
+            guard !picked else { return }
+            Haptics.selection()
+            withAnimation(reduceMotion ? nil : PolishTokens.base) { selection = item.id }
+        } label: {
+            HStack(spacing: 6) {
+                if let icon = item.icon {
+                    Image(systemName: icon).font(.system(size: 12, weight: .semibold))
+                }
+                Text(item.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .fixedSize()
+            }
+            .foregroundStyle(picked ? Color("BgPrimary") : PolishTokens.ink)
+            .padding(.horizontal, 14)
+            .frame(height: 34)
+            .background {
+                if picked {
+                    Capsule().fill(PolishTokens.ink)
+                        .matchedGeometryEffect(id: "filterPick", in: ns)
+                } else {
+                    Capsule().fill(PolishTokens.neutralFill)
                 }
             }
-            .padding(.horizontal, 14)
+            .contentShape(Capsule())
         }
+        .buttonStyle(PolishPressStyle(scale: PolishTokens.pressPill))
+        .id(item.id)
+        .accessibilityLabel(item.title)
+        .accessibilityAddTraits(picked ? [.isButton, .isSelected] : .isButton)
+        .accessibilityIdentifier(item.accessibilityID ?? "")
     }
 }
 

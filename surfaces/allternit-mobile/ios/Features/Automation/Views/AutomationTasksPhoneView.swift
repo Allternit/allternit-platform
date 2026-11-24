@@ -202,7 +202,7 @@ struct AutomationTasksPhoneView: View {
                 hero: { AutomationIntroHero() }
             ) {
                 VStack(alignment: .leading, spacing: 12) {
-                    if noComputer { AutomationNeedsComputerCard(text: "Automation tasks run on your computer") }
+                    if noComputer { NeedsComputerLine(text: "Automation tasks run on your computer", style: .card) }
                     if let error { errorBanner(error) }
                     if let actionError = store.actionError { errorBanner(actionError) }
                     typeAndViewBar
@@ -223,10 +223,12 @@ struct AutomationTasksPhoneView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            AutomationGlassBar(
+            LibraryFloatingBar(
                 query: $searchQuery,
                 placeholder: "Search automation tasks",
                 newLabel: "New task",
+                wide: .new,
+                glass: true,
                 newMenu: {
                     Button { newTask = NewTask(kind: activeKind ?? .routine) } label: { Label("Set up manually", systemImage: "plus") }
                     Button(action: startWithAssistant) { Label("Create with Assistant", systemImage: "cpu") }
@@ -277,8 +279,15 @@ struct AutomationTasksPhoneView: View {
     /// rather than behind the filter button.
     private var typeAndViewBar: some View {
         VStack(alignment: .leading, spacing: 10) {
-            AutomationTypeTabs(selection: $activeTab)
-                .padding(.horizontal, -14)
+            FilterPills(
+                items: TaskTab.allCases.map {
+                    .init(id: $0, title: $0.label, icon: $0.icon, accessibilityID: "automationTab\($0.rawValue)")
+                },
+                selection: $activeTab
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Task type")
+            .padding(.horizontal, -14)
             SlidingSegmented(
                 items: RoutinesView.allCases.map { .init(id: $0.rawValue, title: $0.label) },
                 selection: $routinesViewRaw
@@ -1204,188 +1213,6 @@ private struct LoopRunHistorySection: View {
 }
 
 // MARK: - Type tabs and view switch
-
-/// Filter pills with Desktop's labels and icons: the picked pill is an ink
-/// chip that slides to the new pick (FilterPills look, plus the type icon and
-/// the Agent Heartbeats filter). It scrolls sideways on a narrow screen.
-private struct AutomationTypeTabs: View {
-    @Binding var selection: AutomationTasksPhoneView.TaskTab
-    @Namespace private var ns
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(AutomationTasksPhoneView.TaskTab.allCases, id: \.self) { tab in
-                        let on = selection == tab
-                        Button {
-                            guard !on else { return }
-                            Haptics.selection()
-                            withAnimation(reduceMotion ? nil : PolishTokens.base) { selection = tab }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: tab.icon).font(.system(size: 12, weight: .semibold))
-                                Text(tab.label).font(.system(size: 14, weight: .semibold)).fixedSize()
-                            }
-                            .foregroundStyle(on ? Color("BgPrimary") : PolishTokens.ink)
-                            .padding(.horizontal, 14)
-                            .frame(height: 34)
-                            .background {
-                                if on {
-                                    Capsule().fill(PolishTokens.ink)
-                                        .matchedGeometryEffect(id: "automationFilterPick", in: ns)
-                                } else {
-                                    Capsule().fill(PolishTokens.neutralFill)
-                                }
-                            }
-                            .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .id(tab)
-                        .accessibilityLabel(tab.label)
-                        .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
-                        .accessibilityIdentifier("automationTab\(tab.rawValue)")
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-            .onChange(of: selection) { _, tab in
-                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(tab, anchor: .center) }
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Task type")
-    }
-}
-
-/// White card for the no-computer state: the line plus a glass Connect button
-/// that opens the connect kit (same sheet NeedsComputerLine opens). Never red.
-private struct AutomationNeedsComputerCard: View {
-    let text: String
-    @State private var isConnectPresented = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "desktopcomputer")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Color("TextSecondary"))
-                .accessibilityHidden(true)
-            Text(text)
-                .font(.system(size: 13))
-                .foregroundStyle(Color("TextSecondary"))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            GlassPill(title: "Connect") { isConnectPresented = true }
-        }
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(PolishTokens.glassBorder, lineWidth: 0.5))
-        .accessibilityElement(children: .contain)
-        .sheet(isPresented: $isConnectPresented) { ConnectComputerSheet() }
-    }
-}
-
-/// Floating bottom bar, glass: a round search button that opens a search pill,
-/// and a "New task" pill with the same menu as before (LibraryFloatingBar's
-/// `.new` behaviour with the polish glass surface).
-private struct AutomationGlassBar<NewMenu: View>: View {
-    @Binding var query: String
-    let placeholder: String
-    let newLabel: String
-    @ViewBuilder var newMenu: () -> NewMenu
-
-    @State private var open = false
-    @FocusState private var focused: Bool
-
-    private var searching: Bool { open || !query.isEmpty }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            if searching {
-                searchPill
-            } else {
-                Button {
-                    Haptics.light()
-                    open = true
-                    focused = true
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(PolishTokens.ink)
-                        .frame(width: 46, height: 46)
-                        .polishGlass(cornerRadius: 23)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(placeholder)
-                Spacer(minLength: 0)
-            }
-            Menu { newMenu() } label: { newFace }
-                .accessibilityLabel(newLabel)
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 14)
-    }
-
-    private var searchPill: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 16))
-                .foregroundStyle(Color("TextSecondary"))
-            TextField(placeholder, text: $query)
-                .font(.system(size: 16))
-                .foregroundStyle(PolishTokens.ink)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.search)
-                .focused($focused)
-                .onChange(of: focused) { _, isFocused in
-                    if !isFocused && query.isEmpty { open = false }
-                }
-            Button {
-                query = ""
-                open = false
-                focused = false
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color("TextSecondary"))
-                    .frame(width: 28, height: 28)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Clear search")
-        }
-        .padding(.leading, 16)
-        .padding(.trailing, 8)
-        .frame(height: 46)
-        .frame(maxWidth: .infinity)
-        .polishGlass(cornerRadius: 23)
-    }
-
-    @ViewBuilder
-    private var newFace: some View {
-        if searching {
-            Image(systemName: "plus")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(PolishTokens.ink)
-                .frame(width: 46, height: 46)
-                .polishGlass(cornerRadius: 23)
-        } else {
-            HStack(spacing: 8) {
-                Image(systemName: "plus").font(.system(size: 17, weight: .semibold))
-                Text(newLabel).font(.system(size: 16, weight: .medium)).lineLimit(1)
-            }
-            .foregroundStyle(PolishTokens.ink)
-            .padding(.horizontal, 18)
-            .frame(height: 46)
-            .polishGlass(cornerRadius: 23)
-        }
-    }
-}
 
 // MARK: - Intro hero
 
