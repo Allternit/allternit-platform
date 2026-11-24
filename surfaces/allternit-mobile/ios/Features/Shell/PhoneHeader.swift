@@ -12,10 +12,19 @@ struct PhoneHeader<Leading: View, Trailing: View>: View {
     var wideSides: Bool = false
     /// Section screens (PhoneSectionHeader) use 17pt titles and 12pt insets.
     var sectionStyle: Bool = false
+    /// True while a docking title (`DockingTitleScrollView` with
+    /// `.overlay(barCenter:)`) is mounted over this bar. The dock draws its own
+    /// title in the centre slot, so the text title is hidden to avoid showing it
+    /// twice. The slot keeps its width, so the sides stay put. Default off.
+    var dockMounted: Bool = false
     @ViewBuilder var leading: () -> Leading
     @ViewBuilder var trailing: () -> Trailing
     /// A bot's colour on the Bots home: the bar shows its slice of the wash.
     @Environment(\.botTint) private var botTint
+
+    /// The bar's height, so a screen can compute `barCenter` for the dock:
+    /// safe-area top + `barHeight / 2`.
+    static var barHeight: CGFloat { 52 }
 
     var body: some View {
         let side: CGFloat = wideSides ? 96 : (sectionStyle ? 44 : 52)
@@ -23,7 +32,7 @@ struct PhoneHeader<Leading: View, Trailing: View>: View {
             HStack(spacing: 0) { leading() }
                 .frame(width: side, alignment: .leading)
             VStack(spacing: 0) {
-                if let title, !title.isEmpty {
+                if let title, !title.isEmpty, !dockMounted {
                     Text(title)
                         .font(.system(size: sectionStyle ? 17 : 16, weight: .semibold))
                         .tracking(-0.2)
@@ -32,7 +41,7 @@ struct PhoneHeader<Leading: View, Trailing: View>: View {
                         .truncationMode(.tail)
                         .accessibilityAddTraits(.isHeader)
                 }
-                if let subtitle, !subtitle.isEmpty {
+                if let subtitle, !subtitle.isEmpty, !dockMounted {
                     Text(subtitle)
                         .font(.system(size: 12))
                         .foregroundColor(Color("TextSecondary"))
@@ -40,6 +49,7 @@ struct PhoneHeader<Leading: View, Trailing: View>: View {
                 }
             }
             .frame(maxWidth: .infinity)
+            .accessibilityHidden(dockMounted)
             HStack(spacing: 0) {
                 if Trailing.self == EmptyView.self {
                     trailing()
@@ -71,6 +81,7 @@ extension PhoneHeader where Leading == PhoneMenuButton {
         subtitle: String? = nil,
         wideSides: Bool = false,
         sectionStyle: Bool = false,
+        dockMounted: Bool = false,
         onMenu: @escaping () -> Void,
         @ViewBuilder trailing: @escaping () -> Trailing
     ) {
@@ -78,6 +89,7 @@ extension PhoneHeader where Leading == PhoneMenuButton {
         self.subtitle = subtitle
         self.wideSides = wideSides
         self.sectionStyle = sectionStyle
+        self.dockMounted = dockMounted
         self.leading = { PhoneMenuButton(round: sectionStyle, onOpen: onMenu) }
         self.trailing = trailing
     }
