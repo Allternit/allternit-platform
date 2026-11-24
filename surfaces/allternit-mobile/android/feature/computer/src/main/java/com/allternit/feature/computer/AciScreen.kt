@@ -35,6 +35,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.zIndex
+import com.allternit.core.design.DockSpec
+import com.allternit.core.design.LocalDockOffset
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -407,9 +412,15 @@ private val TAGLINES = listOf("AI-Powered Browsing", "Navigate with Intelligence
 @Composable
 internal fun AciViewHeader(title: String, subtitle: String? = null, bottom: Dp = 24.dp) {
     val c = AllternitTheme.colors
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, color = c.textPrimary, fontSize = 30.sp, fontFamily = AllternitSerif, fontWeight = FontWeight.Medium, letterSpacing = (-0.3).sp)
+    val dock = LocalDockOffset.current
+    // With a dock scroll the header draws above the page (zIndex) so the docked letters stay over the content.
+    Column(Modifier.fillMaxWidth().then(if (dock != null) Modifier.zIndex(1f) else Modifier).padding(top = 8.dp, bottom = bottom), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, color = c.textPrimary, fontSize = 30.sp, fontFamily = AllternitSerif, fontWeight = FontWeight.Medium, letterSpacing = (-0.3).sp,
+            modifier = if (dock != null) Modifier.alpha(0f).clearAndSetSemantics { } else Modifier)
         if (subtitle != null) Text(subtitle, color = c.textSecondary, fontSize = 14.sp)
+        if (dock != null) {
+            AciDockOverlay(title, dock, counterScroll = true, titleTop = { y -> (y + 8f).dp }, barCenter = { DockSpec.BAR_CENTER.dp })
+        }
     }
 }
 
