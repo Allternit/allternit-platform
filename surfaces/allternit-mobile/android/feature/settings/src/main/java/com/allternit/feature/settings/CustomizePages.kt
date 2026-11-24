@@ -266,8 +266,6 @@ private val CATALOG = listOf(
     CatalogSkill("codex-mobile-app-design", "Mobile App Design", "Mobile app UI and UX design.", "create", "Codex"),
 )
 
-private const val OFFICIAL_SKILL_ID = "allternit-allternit-codebase-to-course"
-
 @Composable
 private fun SkillDirectory(host: SettingsHost, query: String) {
     val scope = rememberCoroutineScope()
@@ -296,8 +294,6 @@ private fun SkillDirectory(host: SettingsHost, query: String) {
         val rows = CATALOG
             .filter { (category == null || it.category == category) && (query.isBlank() || it.name.contains(query, ignoreCase = true) || it.blurb.contains(query, ignoreCase = true)) }
         if (rows.isEmpty()) StateBox("No skills match", "Try another word or category.", null, null) else {
-            val official = CATALOG.first { it.id == OFFICIAL_SKILL_ID }
-            if (category == null && query.isBlank()) OfficialSkillCard(official, added = official.id in have, busy = busy == official.id) { install(official.id) }
             CCard(Modifier.padding(top = 8.dp)) {
                 rows.forEachIndexed { i, s ->
                     if (i > 0) SDivider()
@@ -317,34 +313,6 @@ private fun SkillDirectory(host: SettingsHost, query: String) {
         }
     }
     SError(error)
-}
-
-/** The official skill hero card (radius 24). Tapping it, or Add, installs it. */
-@Composable
-private fun OfficialSkillCard(s: CatalogSkill, added: Boolean, busy: Boolean, onAdd: () -> Unit) {
-    val state = if (busy) "Adding..." else if (added) "Added" else "Add"
-    Box(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
-            .background(Brush.linearGradient(listOf(Color(0xFF1C1C1C), Color(0xFF2B2B2B))))
-            .clickable(enabled = !added && !busy, role = Role.Button, onClickLabel = "Add ${s.name}") { onAdd() }
-            .semantics { contentDescription = "Official skill: ${s.name}. ${s.blurb} $state" }
-            .testTag("directory_${s.id}")
-            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 14.dp),
-    ) {
-        Column {
-            androidx.compose.material3.Text("A://TERNIT SKILLS", color = Color.White, fontSize = 12.sp, letterSpacing = 2.sp, fontFamily = FontFamily.Monospace)
-            androidx.compose.material3.Text("OFFICIAL SKILL", color = Color.White.copy(alpha = 0.6f), fontSize = 9.5.sp, letterSpacing = 2.sp, modifier = Modifier.padding(top = 12.dp))
-            androidx.compose.material3.Text(s.name, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp))
-            androidx.compose.material3.Text(s.blurb, color = Color.White.copy(alpha = 0.75f), fontSize = 11.5.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp))
-            Row(
-                Modifier.padding(top = 12.dp).clip(RoundedCornerShape(50)).background(Color.White).padding(horizontal = 13.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                Icon(painterResource(if (added) DesignR.drawable.ph_check_bold else DesignR.drawable.ph_plus_bold), contentDescription = null, tint = Color(0xFF1F1E1D), modifier = Modifier.size(13.dp))
-                androidx.compose.material3.Text(state, color = Color(0xFF1F1E1D), fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
 }
 
 /** The connector list. [onlyConnected] is the Customize "Yours" view. */
