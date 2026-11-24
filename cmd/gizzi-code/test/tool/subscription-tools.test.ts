@@ -348,24 +348,24 @@ describe("subscription capability tools", () => {
 })
 
 describe("media_generate subscription lane", () => {
-  test("image.generate through the forwarder: confirmed, verified, attached", async () => {
+  // #2819: for images, `subscription` is a legacy alias of the device-local ACI lane,
+  // never a remote route. It never reaches the subscription forwarder.
+  test("an image on the subscription lane runs as aci and never reaches the forwarder", async () => {
     const calls = gateway({ caps: [cap("image.generate")], artifact: PNG })
     const tool = await MediaGenerateTool.init()
     const c = ctx(async () => ({ humanAction: "ha_img" }))
     const result = await tool.execute({ kind: "image", prompt: "a lighthouse at dawn", title: "Lighthouse", lane: "subscription" }, c.ctx)
-    expect(c.asks[0]).toMatchObject({ permission: "subscription", patterns: ["chatgpt:image.generate"] })
-    expect(posts(calls)[0].body).toMatchObject({ capability: "image.generate", prompt: "a lighthouse at dawn", routing: { provider: "chatgpt" } })
-    expect(posts(calls)[0].headers["x-allternit-human-action"]).toBe("ha_img")
-    expect(result.metadata).toMatchObject({ ok: true, lane: "subscription", provider: "chatgpt", taskID: "t1" })
-    expect(result.attachments?.[0]).toMatchObject({ mime: "image/png", filename: "Lighthouse.png" })
+    expect(result.metadata).toMatchObject({ ok: false, lane: "aci" })
+    expect(c.asks.filter((a: any) => a?.permission === "subscription")).toHaveLength(0)
+    expect(posts(calls)).toHaveLength(0)
   })
 
   test("D16: no human action → nothing submitted", async () => {
     const calls = gateway({ caps: [cap("image.generate")], artifact: PNG })
     const tool = await MediaGenerateTool.init()
-    await expect(
-      tool.execute({ kind: "image", prompt: "x", lane: "subscription" }, ctx(async () => undefined).ctx),
-    ).rejects.toBeInstanceOf(SubscriptionNotConfirmedError)
+    const result = await tool.execute({ kind: "image", prompt: "x", lane: "subscription" }, ctx(async () => undefined).ctx)
+    expect(result.metadata).toMatchObject({ ok: false, lane: "aci" })
+    expect(result.output).toContain("Nothing was sent")
     expect(posts(calls)).toHaveLength(0)
   })
 
@@ -374,7 +374,7 @@ describe("media_generate subscription lane", () => {
     const tool = await MediaGenerateTool.init()
     const c = ctx(async () => ({ humanAction: "ha" }))
     const result = await tool.execute({ kind: "image", prompt: "x", lane: "subscription" }, c.ctx)
-    expect(result.metadata).toMatchObject({ ok: false, lane: "subscription" })
+    expect(result.metadata).toMatchObject({ ok: false, lane: "aci" })
     expect(result.output).toContain("Nothing was sent")
     expect(c.asks).toHaveLength(0)
     expect(posts(calls)).toHaveLength(0)
