@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import chalk, { nearestAnsi256 } from "../../src/shared/util/chalk"
+import { dotMode } from "../../src/shared/util/dot-progress"
 import { DOT_FPS, ToolPrinter, dotBandFrame, dotProgressText, fitMiddle, progressDetailOf, shouldAnimateDots, normalizeTool, shortPath } from "../../src/cli/commands/run-print"
 import { Highlight } from "../../src/shared/util/highlight"
 import { TurnSummary } from "../../src/shared/util/turn-summary"
@@ -159,5 +160,12 @@ describe("braille dot progress", () => {
     p.update(part)
     p.update(part)
     expect(lines.filter((l) => plain(l).includes("Queued"))).toHaveLength(1)
+  })
+  test("Ink app: still when reduced motion, NO_COLOR or not a TTY; animate otherwise", () => {
+    expect(dotMode(false, {}, true)).toBe("animate")
+    expect(dotMode(true, {}, true)).toBe("still")
+    expect(dotMode(false, { NO_COLOR: "1" }, true)).toBe("still")
+    expect(dotMode(false, {}, false)).toBe("still")
+    expect(dotProgressText({ label: "Queued" })).toBe("Queued")
   })
 })
