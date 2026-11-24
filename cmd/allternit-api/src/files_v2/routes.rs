@@ -92,6 +92,8 @@ pub fn routes<S: Clone + Send + Sync + 'static>(files: Arc<FilesV2>) -> Router<S
         // checks here before any handler runs. Inside the Extension layer,
         // which it reads. Every route merged above is covered.
         .layer(axum::middleware::from_fn(shares::gate))
+        // Whole-disk files (step 2.11): grants only a signed relayed request.
+        .layer(axum::middleware::from_fn(crate::files_scope::whole_disk_gate))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(Extension(files));
     Router::new().nest("/files/v2", v2)
@@ -191,16 +193,27 @@ async fn list_roots(Extension(files): Files, req: Req) -> Res<RootsResponse> {
             tracing::warn!(error = ?v.fail(e).body.message, "files v2: memory drive view not refreshed");
         }
         let all = v.drive.roots()?;
-        let out = all.iter().map(|r| roots::to_wire(v, r, &all, &req)).collect::<Result<Vec<_>, _>>()?;
+        // Disk roots stay hidden from another device without the whole-disk grant (step 2.11).
+        let out = all
+            .iter()
+            .filter(|r| v.check_disk_root(&req, r).is_ok())
+            .map(|r| roots::to_wire(v, r, &all, &req))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Json(RootsResponse { computer_id: v.cfg.computer_id.clone(), roots: out, freshness: live() }))
     })
     .await
 }
 
-async fn add_root(Extension(files): Files, req: Req, body: Result<Json<AddRootRequest>, JsonRejection>) -> Res<RootResponse> {
-    let body = json(body)?;
+async fn add_root(Extension(files): Files, req: Req, raw: Result<Bytes, BytesRejection>) -> Res<RootResponse> {
+    let raw = bytes(raw)?;
+    // `kind: "disk"` (whole-disk files, step 2.11) is not a contract field of
+    // `AddRootRequest`, so it is read beside it.
+    let disk = serde_json::from_slice::<serde_json::Value>(&raw)
+        .ok()
+        .is_some_and(|v| v.get("kind").and_then(|k| k.as_str()) == Some("disk"));
+    let body: AddRootRequest = serde_json::from_slice(&raw).map_err(|e| ApiError::invalid(format!("Invalid body: {e}")))?;
     run(&files, move |v| {
-        let rec = roots::add_user_root(v, &req, &body.name, &body.local_path, body.policy)?;
+        let rec = roots::add_user_root(v, &req, &body.name, &body.local_path, body.policy, disk)?;
         let all = v.drive.roots()?;
         Ok(Json(RootResponse { root: roots::to_wire(v, &rec, &all, &req)? }))
     })
@@ -216,12 +229,13 @@ async fn update_root(
     let body = json(body)?;
     run(&files, move |v| {
         let mut rec = v.drive.root(&root_id)?;
+        v.check_disk_root(&req, &rec)?;
         if let Some(name) = &body.name {
             let name = naming::validate_name(name)?;
             meta::set_root_name(&v.meta.lock().expect("meta lock"), &root_id, &name)?;
         }
         if let Some(policy) = body.policy {
-            roots::check_policy_change(&rec, &req, &policy)?;
+            roots::check_policy_change(&rec, &req, &policy, v.is_disk_root(&rec))?;
             rec = v.drive.update_root_policy(&root_id, policy)?;
         }
         let all = v.drive.roots()?;
@@ -230,9 +244,10 @@ async fn update_root(
     .await
 }
 
-async fn remove_root(Extension(files): Files, _req: Req, Path(root_id): Path<String>) -> Result<StatusCode, ApiError> {
+async fn remove_root(Extension(files): Files, req: Req, Path(root_id): Path<String>) -> Result<StatusCode, ApiError> {
     run(&files, move |v| {
         let rec = v.drive.root(&root_id)?;
+        v.check_disk_root(&req, &rec)?;
         if rec.kind != allternit_files_core::RootKind::UserAdded {
             return Err(ApiError::forbidden("Only folders you added can be removed. Built-in folders stay.").into());
         }

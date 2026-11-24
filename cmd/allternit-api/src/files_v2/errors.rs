@@ -34,6 +34,10 @@ pub fn status_for(code: ErrorCode) -> StatusCode {
 pub struct ApiError {
     pub status: StatusCode,
     pub body: ErrorBody,
+    /// A code outside the generated `ErrorCode` set, sent as both `error` and
+    /// `code`. Only `whole_disk_off` (the cloud's error for whole-disk files,
+    /// step 2.11) uses it.
+    pub raw_code: Option<&'static str>,
 }
 
 impl ApiError {
@@ -50,7 +54,17 @@ impl ApiError {
                 current: None,
                 missing_chunks: None,
             },
+            raw_code: None,
         }
+    }
+
+    /// `403 whole_disk_off`, the cloud's relay-gate error, word for word: a
+    /// relayed caller without the signed whole-disk grant reached a path or a
+    /// disk root outside the home folder.
+    pub fn whole_disk_off() -> Self {
+        let mut out = Self::new(ErrorCode::Forbidden, crate::files_scope::WHOLE_DISK_OFF_MESSAGE);
+        out.raw_code = Some("whole_disk_off");
+        out
     }
 
     /// The engine's error. `current` is the item for `rev_mismatch`, already
@@ -90,6 +104,14 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if let Some(code) = self.raw_code {
+            let mut v = serde_json::to_value(&self.body).unwrap_or_default();
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("error".into(), code.into());
+                obj.insert("code".into(), code.into());
+            }
+            return (self.status, Json(v)).into_response();
+        }
         (self.status, Json(self.body)).into_response()
     }
 }

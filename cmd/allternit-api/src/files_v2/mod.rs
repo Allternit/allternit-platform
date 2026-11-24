@@ -60,6 +60,8 @@ mod storage;
 mod sync;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod whole_disk_tests;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -291,6 +293,7 @@ impl Inner {
     /// not protected (section 8).
     pub fn guard(&self, req: &Req, root_id: &str, need: Need) -> Result<RootRecord, Fail> {
         let root = self.drive.root(root_id)?;
+        self.check_disk_root(req, &root)?;
         if let Some(g) = &req.guest {
             shares::check_root(g, &root, need)?;
         }
@@ -306,6 +309,29 @@ impl Inner {
             Need::Write if !root.policy.write => Err(ApiError::forbidden("This folder is read-only.").into()),
             _ => Ok(root),
         }
+    }
+
+    /// A folder the owner added outside the home folder (whole-disk files,
+    /// step 2.11). Built-in and provider roots (Models, the Memory Drive view)
+    /// may sit outside home too and are not disk roots.
+    pub fn is_disk_root(&self, root: &RootRecord) -> bool {
+        root.kind == allternit_files_core::RootKind::UserAdded && self.scope.is_disk_path(&root.local_path)
+    }
+
+    /// A disk root (outside the home folder, step 2.11) is never open to a
+    /// guest, and open to another device only with the signed whole-disk
+    /// grant: `403 whole_disk_off` otherwise.
+    pub fn check_disk_root(&self, req: &Req, root: &RootRecord) -> Result<(), ApiError> {
+        if !self.is_disk_root(root) {
+            return Ok(());
+        }
+        if req.guest.is_some() {
+            return Err(ApiError::forbidden("This folder can't be shared."));
+        }
+        if req.relayed && !req.whole_disk {
+            return Err(ApiError::whole_disk_off());
+        }
+        Ok(())
     }
 
     /// An item and its root after the checks. A guest must stay inside its
@@ -450,6 +476,10 @@ pub(crate) struct Req {
     pub device_name: Option<String>,
     /// Set by [`shares::gate`] for a verified `Files-Guest` request.
     pub guest: Option<Arc<shares::Guest>>,
+    /// A relayed owner request that `files_scope::whole_disk_gate` granted
+    /// (cloud-signed, `x-allternit-whole-disk: on`, step 2.11). Disk roots
+    /// are hidden and refused (`whole_disk_off`) for a relayed caller without it.
+    pub whole_disk: bool,
 }
 
 fn header(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -468,6 +498,7 @@ impl Req {
                 unlocked: false,
                 device_name: None,
                 guest: Some(g.clone()),
+                whole_disk: false,
             });
         }
         if shares::has_guest_scheme(&parts.headers) {
@@ -495,7 +526,8 @@ impl Req {
             },
             None => PrincipalRef { kind: PrincipalKind::Owner, id: user.user_id.clone(), display_name: user.name.clone() },
         };
-        Ok(Self { principal, user_id: user.user_id.clone(), relayed, unlocked, device_name, guest: None })
+        let whole_disk = relayed && parts.extensions.get::<crate::files_scope::WholeDiskGrant>().is_some();
+        Ok(Self { principal, user_id: user.user_id.clone(), relayed, unlocked, device_name, guest: None, whole_disk })
     }
 
     /// Conflict-copy device name: request field, else the header, else the

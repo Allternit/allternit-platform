@@ -688,7 +688,7 @@ impl Source {
             return Ok(body);
         }
         Err(match serde_json::from_slice::<ErrorBody>(&body) {
-            Ok(b) => ApiError { status: status_for(b.code.clone()), body: b },
+            Ok(b) => ApiError { status: status_for(b.code.clone()), body: b, raw_code: None },
             Err(_) => ApiError::new(ErrorCode::Internal, format!("The computer the file is on answered {status}.")),
         })
     }
