@@ -343,6 +343,12 @@ pub struct OrgoConfig {
     /// How long the first-boot script may run.
     pub setup_timeout: StdDuration,
     pub poll_interval: StdDuration,
+    /// `ALLTERNIT_ORGO_BACKUP_RESTORE=1` turns on restoring from a daily
+    /// backup. Off by default: Orgo's restore body is not published and no
+    /// real restore has been sent yet, and a restore Orgo reads as "as a
+    /// new computer" would make a second, billed computer outside our rows.
+    /// Turn it on only after one real in-place restore was checked.
+    pub backup_restore: bool,
 }
 
 fn env_opt(name: &str) -> Option<String> {
@@ -384,6 +390,8 @@ impl OrgoConfig {
             create_wait: seconds("ALLTERNIT_ORGO_CREATE_WAIT_SECONDS", 600),
             setup_timeout: seconds("ALLTERNIT_ORGO_SETUP_TIMEOUT_SECONDS", 1500),
             poll_interval: StdDuration::from_secs(5),
+            backup_restore: env_opt("ALLTERNIT_ORGO_BACKUP_RESTORE")
+                .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")),
         }
     }
 
@@ -1275,8 +1283,14 @@ impl ProvisionBackend for OrgoBackend {
         }
     }
 
-    /// `GET /computers/{id}/backups`: the newest finished daily backup.
+    /// The newest finished daily backup (rebuild check).
     async fn latest_backup_at(&self, name: &str) -> Result<Option<DateTime<Utc>>, ProvisionError> {
+        Ok(self.list_backups(name).await?.newest_finished_at())
+    }
+
+    /// `GET /computers/{id}/backups`, read by [`parse_orgo_backups`]. An
+    /// answer we cannot read is an error (502), never an empty list.
+    async fn list_backups(&self, name: &str) -> Result<CloudBackupList, ProvisionError> {
         let id = self.require_id(name).await?;
         let (status, json) = self
             .send(
@@ -1289,10 +1303,63 @@ impl ProvisionBackend for OrgoBackend {
         if !is_success(status) {
             return Err(orgo_error(status, &json));
         }
-        parse_orgo_backups(&json)
-            .map(|list| list.newest_finished_at())
-            .map_err(|message| ProvisionError::Api { status: 502, message })
+        parse_orgo_backups(&json).map_err(|message| ProvisionError::Api { status: 502, message })
     }
+
+    /// `POST /computers/{id}/backup/restore`, in place only. Gated by
+    /// [`OrgoConfig::backup_restore`]. Orgo answers an in-place restore with
+    /// an operation (`action: "restore"`, `poll_url`) on this computer; any
+    /// other answer (a new computer's record, or nothing we can read) is a
+    /// 502 and logged for an operator, because it may mean Orgo made a copy.
+    async fn restore_backup(&self, name: &str, backup_id: &str) -> Result<(), ProvisionError> {
+        if !self.config.backup_restore {
+            return Err(unsupported("backup restores"));
+        }
+        let id = self.require_id(name).await?;
+        let (status, json) = self
+            .send(
+                reqwest::Method::POST,
+                &format!("/computers/{id}/backup/restore"),
+                Some(&serde_json::json!({ "backup_id": backup_id, "in_place": true })),
+                None,
+            )
+            .await?;
+        if !is_success(status) {
+            return Err(orgo_error(status, &json));
+        }
+        if restore_reply_is_in_place(&id, &json) {
+            return Ok(());
+        }
+        tracing::error!(
+            computer = %id,
+            %name,
+            reply_id = ?string_field(&json, &["id"]),
+            "orgo: backup restore answer is not an in-place restore; check the workspace for a stray copy"
+        );
+        Err(ProvisionError::Api {
+            status: 502,
+            message: "orgo: backup restore answer is not an in-place restore".to_string(),
+        })
+    }
+}
+
+/// True when an Orgo restore answer is an operation on `source_id` itself:
+/// `action: "restore"`, its `desktop_id`, or a `poll_url` under it.
+fn restore_reply_is_in_place(source_id: &str, json: &serde_json::Value) -> bool {
+    let operation = json
+        .get("operation")
+        .filter(|value| value.is_object())
+        .unwrap_or(json);
+    let action_is_restore = string_field(operation, &["action"])
+        .is_some_and(|action| action.eq_ignore_ascii_case("restore"));
+    let on_source = string_field(operation, &["desktop_id", "computer_id"])
+        .is_some_and(|desktop| desktop == source_id);
+    let polled_here = string_field(operation, &["poll_url"])
+        .or_else(|| string_field(json, &["poll_url"]))
+        .is_some_and(|url| url.contains(&format!("/computers/{source_id}/operations/")));
+    let names_other = string_field(operation, &["desktop_id", "computer_id"])
+        .is_some_and(|desktop| desktop != source_id);
+    !names_other && (action_is_restore || on_source || polled_here)
 }
 
 /// Backup statuses that mean "finished and restorable". A backup with no
@@ -1598,6 +1665,89 @@ impl ProvisioningService {
         .execute(&self.db)
         .await
         .map_err(ApiError::from)?;
+        Ok(self.get_for_user(&row.id, user_id).await?)
+    }
+
+    /// The caller's Orgo computer row and its backend, for the backup routes.
+    async fn backup_row(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+        action: &'static str,
+    ) -> Result<(InstanceRow, Arc<dyn ProvisionBackend>), CloudActionError> {
+        let row = self.console_cloud_row(instance_id, user_id).await?;
+        if row.is_free() {
+            return Err(CloudActionError::NotSupported(action));
+        }
+        let backend = self.backend_for_row(&row).await?;
+        if backend.provider() != ORGO_SCHEME {
+            return Err(CloudActionError::NotSupported(action));
+        }
+        Ok((row, backend))
+    }
+
+    /// `GET /api/v1/computers/:id/backups`: the Orgo daily backups that are
+    /// finished, newest first. Read only, never wakes the computer. A
+    /// computer Orgo has not made yet has none.
+    pub async fn cloud_backups(&self, instance_id: &str, user_id: &str) -> Result<CloudBackupList, CloudActionError> {
+        let (row, backend) = self.backup_row(instance_id, user_id, "backups").await?;
+        match backend.list_backups(&row.incus_name).await {
+            Ok(list) => Ok(CloudBackupList {
+                backups: list.finished().cloned().collect(),
+                can_restore: list.can_restore,
+            }),
+            Err(ProvisionError::NotFound(_)) => Ok(CloudBackupList::default()),
+            Err(ProvisionError::Api { status: 501, .. }) => Err(CloudActionError::NotSupported("backups")),
+            Err(error) => {
+                tracing::warn!(id = %row.id, %error, "backups: list unreadable");
+                Err(CloudActionError::BackupCheckFailed(error.to_string()))
+            }
+        }
+    }
+
+    /// `POST /api/v1/computers/:id/backups/restore`: put the computer's disk
+    /// back to one of its finished daily backups, in place (same row, same
+    /// Orgo computer). The id must be in the current list, and Orgo must not
+    /// say the computer cannot be restored now. Erases what changed since
+    /// that backup; the route asks for `{confirm: true}` first.
+    pub async fn restore_cloud_backup(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+        backup_id: &str,
+    ) -> Result<InstanceView, CloudActionError> {
+        let (row, backend) = self.backup_row(instance_id, user_id, "backup_restore").await?;
+        if !matches!(row.status.as_str(), "running" | "stopped" | "sleeping") {
+            return Err(CloudActionError::Busy { status: row.status });
+        }
+        let list = backend.list_backups(&row.incus_name).await.map_err(|error| {
+            tracing::warn!(id = %row.id, %error, "restore: backup list unreadable; held");
+            CloudActionError::BackupCheckFailed(error.to_string())
+        })?;
+        if !list.finished().any(|backup| backup.id == backup_id) {
+            return Err(CloudActionError::BackupNotFound);
+        }
+        if list.can_restore == Some(false) {
+            return Err(CloudActionError::RestoreUnavailable);
+        }
+        match backend.restore_backup(&row.incus_name, backup_id).await {
+            Ok(()) => {}
+            Err(ProvisionError::Api { status: 409, .. }) => {
+                return Err(CloudActionError::Busy { status: row.status })
+            }
+            Err(ProvisionError::Api { status: 501, .. }) => {
+                return Err(CloudActionError::NotSupported("backup_restore"))
+            }
+            Err(error) => return Err(CloudActionError::Api(error.to_api_error())),
+        }
+        sqlx::query(
+            "UPDATE provisioned_instances SET last_activity_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        )
+        .bind(&row.id)
+        .execute(&self.db)
+        .await
+        .map_err(ApiError::from)?;
+        tracing::info!(id = %row.id, %backup_id, "cloud computer restoring from a daily backup");
         Ok(self.get_for_user(&row.id, user_id).await?)
     }
 
@@ -2199,6 +2349,9 @@ pub(crate) mod tests {
         backups: serde_json::Value,
         /// Refuse creates in this city only (503 REGION_UNAVAILABLE).
         full_city: Option<String>,
+        /// The `POST /computers/{id}/backup/restore` answer (Null = an
+        /// in-place restore operation on that computer).
+        restore_reply: serde_json::Value,
     }
 
     type FakeState = Arc<Mutex<Fake>>;
@@ -2352,6 +2505,19 @@ pub(crate) mod tests {
                         };
                         reply(StatusCode::OK, backups)
                     }
+                    ("POST", ["backup", "restore"]) => {
+                        let answer = match &fake.restore_reply {
+                            serde_json::Value::Null => serde_json::json!({
+                                "id": "op_1",
+                                "desktop_id": id,
+                                "action": "restore",
+                                "status": "pending",
+                                "poll_url": format!("/api/computers/{id}/operations/op_1"),
+                            }),
+                            other => other.clone(),
+                        };
+                        reply(StatusCode::ACCEPTED, answer)
+                    }
                     ("POST", ["bash"]) => {
                         let command = json_body["command"].as_str().unwrap_or("").to_string();
                         fake.bash.push(command.clone());
@@ -2422,6 +2588,7 @@ pub(crate) mod tests {
             create_wait: StdDuration::from_secs(5),
             setup_timeout: StdDuration::from_secs(5),
             poll_interval: StdDuration::from_millis(5),
+            backup_restore: true,
         }
     }
 
@@ -2682,6 +2849,35 @@ pub(crate) mod tests {
         assert!(parse_orgo_backups(&serde_json::json!({ "error": "x" })).is_err());
         assert!(parse_orgo_backups(&serde_json::json!({ "backups": null })).is_err());
         assert!(parse_orgo_backups(&serde_json::json!({ "backups": [{ "when": "today" }] })).is_err());
+    }
+
+    #[tokio::test]
+    async fn backup_restore_is_in_place_only_and_off_unless_turned_on() {
+        let computers = vec![fake_computer("c_1", "allternit-u-r", "running")];
+        // Off (the default): nothing is sent.
+        let (base, fake) = serve(Fake { computers: computers.clone(), ..Fake::default() }).await;
+        let off = OrgoBackend::new(&base, "k", "ws_1", OrgoConfig { backup_restore: false, ..test_config() }).unwrap();
+        let refused = off.restore_backup("allternit-u-r", "b1").await.unwrap_err();
+        assert!(matches!(refused, ProvisionError::Api { status: 501, .. }));
+        assert!(!fake.lock().unwrap().seen.iter().any(|s| s.path.ends_with("/backup/restore")));
+
+        // On: an in-place operation on the same computer is accepted.
+        let (base, fake) = serve(Fake { computers: computers.clone(), ..Fake::default() }).await;
+        backend(&base).restore_backup("allternit-u-r", "b1").await.unwrap();
+        let sent = fake.lock().unwrap().seen.iter().find(|s| s.path.ends_with("/backup/restore")).map(|s| s.body.clone());
+        assert_eq!(sent.unwrap(), serde_json::json!({ "backup_id": "b1", "in_place": true }));
+
+        // An answer that names another computer (a restore as a new
+        // computer) or nothing we can read is an error, never success.
+        for answer in [
+            serde_json::json!({ "id": "c_2", "status": "creating", "poll_url": "/api/computers/c_2/operations/op_9" }),
+            serde_json::json!({ "action": "restore", "desktop_id": "c_2" }),
+            serde_json::json!({ "success": true }),
+        ] {
+            let (base, _) = serve(Fake { computers: computers.clone(), restore_reply: answer.clone(), ..Fake::default() }).await;
+            let error = backend(&base).restore_backup("allternit-u-r", "b1").await.unwrap_err();
+            assert!(matches!(error, ProvisionError::Api { status: 502, .. }), "{answer}");
+        }
     }
 
     #[test]

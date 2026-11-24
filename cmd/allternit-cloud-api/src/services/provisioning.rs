@@ -486,6 +486,11 @@ pub enum CloudActionError {
     InvalidLocation,
     /// A move to the city the computer is already in.
     SameLocation { location: String },
+    /// A restore asked for a backup id that is not one of the computer's
+    /// finished daily backups.
+    BackupNotFound,
+    /// The provider says this computer cannot be restored right now.
+    RestoreUnavailable,
     Api(ApiError),
 }
 
@@ -494,8 +499,21 @@ impl CloudActionError {
     pub fn parts(&self) -> (u16, serde_json::Value) {
         use serde_json::json;
         match self {
-            Self::NotACloudComputer => (404, json!({ "error": "not_a_cloud_computer" })),
-            Self::Asleep { status } => (409, json!({ "error": "asleep", "status": status })),
+            Self::NotACloudComputer => (
+                404,
+                json!({
+                    "error": "not_a_cloud_computer",
+                    "message": "This works only on your Allternit Cloud computers.",
+                }),
+            ),
+            Self::Asleep { status } => (
+                409,
+                json!({
+                    "error": "asleep",
+                    "status": status,
+                    "message": "This computer is asleep. Wake it first; the console never wakes it for you.",
+                }),
+            ),
             Self::Busy { status } => (
                 409,
                 json!({
@@ -504,7 +522,14 @@ impl CloudActionError {
                     "message": "This computer is in the middle of another change. Try again in a few minutes. Nothing was changed.",
                 }),
             ),
-            Self::NotSupported(what) => (501, json!({ "error": "not_supported", "action": what })),
+            Self::NotSupported(what) => (
+                501,
+                json!({
+                    "error": "not_supported",
+                    "action": what,
+                    "message": "This computer can't do that yet. Nothing was changed.",
+                }),
+            ),
             Self::NoRecentBackup { latest } => (
                 409,
                 json!({
@@ -518,7 +543,7 @@ impl CloudActionError {
                 503,
                 json!({
                     "error": "backup_check_failed",
-                    "message": "Couldn't check this computer's backups, so the rebuild is held. Nothing was changed.",
+                    "message": "Couldn't read this computer's backups, so nothing was changed. Try again in a few minutes.",
                 }),
             ),
             Self::RegionUnavailable { location } => (
@@ -548,9 +573,33 @@ impl CloudActionError {
                     "message": format!("This computer is already in {}.", city_name(location)),
                 }),
             ),
+            Self::BackupNotFound => (
+                404,
+                json!({
+                    "error": "backup_not_found",
+                    "message": "That backup is no longer there. Backups are kept for 7 days. Nothing was changed.",
+                }),
+            ),
+            Self::RestoreUnavailable => (
+                409,
+                json!({
+                    "error": "restore_unavailable",
+                    "message": "This computer can't be restored right now. Try again in a few minutes. Nothing was changed.",
+                }),
+            ),
             Self::Api(error) => match error {
-                ApiError::NotFound(_) => (404, json!({ "error": "not_a_cloud_computer" })),
-                other => (503, json!({ "error": "unavailable", "message": other.to_string() })),
+                ApiError::NotFound(_) => Self::NotACloudComputer.parts(),
+                other => {
+                    // The provider's own text is logged, never shown.
+                    tracing::warn!(error = %other, "cloud action failed");
+                    (
+                        503,
+                        json!({
+                            "error": "unavailable",
+                            "message": "Couldn't reach this computer's host. Try again in a few minutes.",
+                        }),
+                    )
+                }
             },
         }
     }
@@ -630,6 +679,15 @@ pub trait ProvisionBackend: Send + Sync + std::fmt::Debug {
     /// there is none. Read before a rebuild.
     async fn latest_backup_at(&self, _name: &str) -> Result<Option<DateTime<Utc>>, ProvisionError> {
         Err(unsupported("daily backups"))
+    }
+    /// The provider's daily backups (Orgo `GET /computers/{id}/backups`).
+    async fn list_backups(&self, _name: &str) -> Result<CloudBackupList, ProvisionError> {
+        Err(unsupported("daily backups"))
+    }
+    /// Put the computer's disk back to daily backup `backup_id`, in place
+    /// (same computer, same id). Never a restore as a new computer.
+    async fn restore_backup(&self, _name: &str, _backup_id: &str) -> Result<(), ProvisionError> {
+        Err(unsupported("backup restores"))
     }
 
     // -- Customer restore points and downloadable copies -------------------
@@ -7058,7 +7116,9 @@ pub(crate) mod pg_tests {
                 service.restart_cloud(computer, user).await.unwrap_err(),
                 service.rebuild_cloud(computer, user).await.unwrap_err(),
             ] {
-                assert_eq!(error.parts(), (404, serde_json::json!({ "error": "not_a_cloud_computer" })));
+                assert_eq!(error.parts().0, 404);
+                assert_eq!(error.parts().1["error"], "not_a_cloud_computer");
+                assert!(error.parts().1["message"].is_string());
             }
         }
 
@@ -7125,6 +7185,81 @@ pub(crate) mod pg_tests {
     }
 
     #[tokio::test]
+    async fn backups_list_finished_ones_and_restore_needs_a_listed_id_on_the_owners_computer() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, seen, set_backups) = orgo::tests::console_orgo(false).await;
+        let service = console_service(&pool, orgo);
+        let view = service
+            .create_placed("user_1", Some("sub_1"), &CloudPlacement { location: Some("nyc".to_string()), ..Default::default() })
+            .await
+            .unwrap();
+        let id = view.id.clone();
+        for _ in 0..200 {
+            if seen().iter().any(|(_, _, _, body)| {
+                body["command"].as_str().is_some_and(|c| c.contains("allternit-orgo-ensure"))
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        set_status(&pool, &id, "running").await;
+
+        // Paired/desktop ids and other users' computers: 404 not_a_cloud_computer.
+        for (computer, user) in [("pc_box", "user_1"), (id.as_str(), "user_2")] {
+            for error in [
+                service.cloud_backups(computer, user).await.unwrap_err(),
+                service.restore_cloud_backup(computer, user, "b1").await.unwrap_err(),
+            ] {
+                assert_eq!((error.parts().0, error.parts().1["error"].clone()), (404, serde_json::json!("not_a_cloud_computer")));
+            }
+        }
+
+        // Only finished backups are listed, newest first.
+        let day = |hours: i64| (Utc::now() - Duration::hours(hours)).to_rfc3339();
+        set_backups(serde_json::json!({ "backups": [
+            { "id": "b_old", "created_at": day(50), "size_bytes": 5_000_000_000u64 },
+            { "id": "b_new", "created_at": day(2) },
+            { "id": "b_bad", "created_at": day(1), "status": "failed" }
+        ]}));
+        let list = service.cloud_backups(&id, "user_1").await.unwrap();
+        assert_eq!(list.backups.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["b_new", "b_old"]);
+        assert_eq!(serde_json::to_value(&list.backups[1]).unwrap()["sizeBytes"], 5_000_000_000u64);
+
+        // A failed or unknown backup id is 404 backup_not_found; nothing sent.
+        for missing in ["b_bad", "nope"] {
+            let error = service.restore_cloud_backup(&id, "user_1", missing).await.unwrap_err();
+            assert_eq!(error.parts().0, 404);
+            assert_eq!(error.parts().1["error"], "backup_not_found");
+        }
+        assert!(!seen().iter().any(|(_, p, _, _)| p.ends_with("/backup/restore")));
+
+        // Orgo says "not now": 409 restore_unavailable; nothing sent.
+        set_backups(serde_json::json!({ "can_restore": false, "backups": [{ "id": "b_new", "created_at": day(2) }] }));
+        let error = service.restore_cloud_backup(&id, "user_1", "b_new").await.unwrap_err();
+        assert_eq!((error.parts().0, error.parts().1["error"].clone()), (409, serde_json::json!("restore_unavailable")));
+        assert!(!seen().iter().any(|(_, p, _, _)| p.ends_with("/backup/restore")));
+
+        // A listed backup restores in place: same row, one restore call, no delete or create.
+        set_backups(serde_json::json!({ "backups": [{ "id": "b_new", "created_at": day(2) }] }));
+        let creates_before = seen().iter().filter(|(m, p, _, _)| m == "POST" && p == "/computers").count();
+        let restored = service.restore_cloud_backup(&id, "user_1", "b_new").await.unwrap();
+        assert_eq!(restored.id, id);
+        let log = seen();
+        let restores: Vec<_> = log.iter().filter(|(m, p, _, _)| m == "POST" && p.ends_with("/backup/restore")).collect();
+        assert_eq!(restores.len(), 1);
+        assert_eq!(restores[0].3["backup_id"], "b_new");
+        assert!(!log.iter().any(|(m, _, _, _)| m == "DELETE"));
+        assert_eq!(log.iter().filter(|(m, p, _, _)| m == "POST" && p == "/computers").count(), creates_before);
+
+        // An answer we can't read holds the restore (503), never guesses.
+        set_backups(serde_json::json!({ "unexpected": true }));
+        let error = service.restore_cloud_backup(&id, "user_1", "b_new").await.unwrap_err();
+        assert_eq!((error.parts().0, error.parts().1["error"].clone()), (503, serde_json::json!("backup_check_failed")));
+        assert!(service.cloud_backups(&id, "user_1").await.is_err());
+    }
+
+    #[tokio::test]
     async fn move_creates_in_the_new_city_first_and_a_full_city_keeps_the_old_computer() {
         let pool = migrated_pool().await;
         insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
@@ -7156,7 +7291,7 @@ pub(crate) mod pg_tests {
         // Paired/desktop ids and other users' computers: 404.
         for (computer, user) in [("pc_box", "user_1"), (id.as_str(), "user_2")] {
             let error = service.move_cloud(computer, user, "syd").await.unwrap_err();
-            assert_eq!(error.parts(), (404, serde_json::json!({ "error": "not_a_cloud_computer" })));
+            assert_eq!((error.parts().0, error.parts().1["error"].clone()), (404, serde_json::json!("not_a_cloud_computer")));
         }
         // Not a city, or the city it is already in.
         assert_eq!(service.move_cloud(&id, "user_1", "dfw").await.unwrap_err().parts().1["error"], "invalid_location");
