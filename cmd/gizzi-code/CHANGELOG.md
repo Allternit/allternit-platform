@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 2.20.0 (2026-11-24)
+
+- **Adopt a terminal session.** `gizzi agents adopt` moves a coding CLI session running in Terminal, iTerm2 or Ghostty into an Allternit terminal, keeping the flags it started with.
+- **Live sessions for every coding CLI.** Each session reports who holds it, the flags it carries and whether it can move.
+- **Pictures and clips.** Images and motion are routed by the prompt; ChatGPT pictures run in this device's ACI browser and report progress (`pane_render.progress`) while they render.
+- **Clearer chat errors.** The chat stream carries the error code and when a limit resets.
+- **Plan rules per runtime.** Runtimes follow the plan's rules, the server checks them, and installs warn first.
+- **Computers console.** Restore from a backup works from the CLI again.
+- **Block titles.** TUI views title each block by its type.
+- **Fixes.** The ChatGPT connection row is device sign-in only, model refresh is safe when idle, and teleport falls back past a stale `ALLTERNIT_API_TOKEN`.
+
 ## 2.19.0 (2026-11-21)
 
 - **Runtimes, brains and bots.** Gizzi reads the shared runtime registry (`GET /api/v1/runtimes`, v3): every coding CLI is a runtime with its own look, brains and options, the same list Desktop, web and the phone apps show. `gizzi runtime` lists them.
