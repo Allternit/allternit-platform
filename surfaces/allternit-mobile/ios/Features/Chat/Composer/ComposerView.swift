@@ -61,6 +61,8 @@ struct ComposerView: View {
     var placeholderOverride: String? = nil
     /// The picked bot's colour on the card's border (Bots home To: chip).
     var accentBorder: Color? = nil
+    /// Content on the mode orb's row, right of the orb (Bots home To: chip).
+    var orbRowTrailing: AnyView? = nil
     /// "Permission · Auto ›" in the + sheet (chat only; the Bots home and bot
     /// threads have none). The composer row has no permission pill (C2).
     var showsPermission: Bool = true
@@ -429,7 +431,8 @@ struct ComposerView: View {
 
     private var modeOrbRow: some View {
         ComposerOrbRow(hasActiveSession: hasActiveSession,
-                       toolsOpen: deck != .none && (deckBandOpen || forcedDeckOpen))
+                       toolsOpen: deck != .none && (deckBandOpen || forcedDeckOpen),
+                       trailing: orbRowTrailing)
             .padding(.horizontal, 16)
             .padding(.bottom, 6)
             .zIndex(2)

@@ -720,8 +720,8 @@ struct AtButton: View {
 
 // MARK: - Launch composer
 
-/// The launch composer resting at the bottom of the Bots home: the "To:" row
-/// (who gets it, with the caret menu), then the composer card.
+/// The launch composer resting at the bottom of the Bots home: the composer
+/// card, whose mode orb row carries "To:" (who gets it, with the caret menu).
 struct BotLaunchComposer: View {
     @Binding var draft: String
     let selectedBot: AgentRecord?
@@ -748,7 +748,6 @@ struct BotLaunchComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            toRow
             card
             if let hint {
                 Text(hint)
@@ -761,7 +760,7 @@ struct BotLaunchComposer: View {
         .padding(.top, 6)
         .padding(.bottom, 8)
         .background(
-            // The blurred band the "To:" chip rides in; content scrolls behind it.
+            // The blurred band the orb row (with the "To:" chip) rides in; content scrolls behind it.
             // web: inset -34px above the To: row, 96% page colour, 14px blur,
             // fading in over the first 22px.
             Rectangle().fill(.ultraThinMaterial)
@@ -842,6 +841,7 @@ struct BotLaunchComposer: View {
         }
         .font(.system(size: 12.5))
         .foregroundColor(Color("TextTertiary"))
+        .padding(.leading, 6)
     }
 
     @ViewBuilder
@@ -865,7 +865,8 @@ struct BotLaunchComposer: View {
             onVoiceMode: toggleDictation,
             placeholderOverride: placeholder,
             accentBorder: colors.hex(for: selectedBot).map { Color(hex: $0).opacity(0.6) },
-            showsPermission: false
+            showsPermission: false,
+            orbRowTrailing: AnyView(toRow)
         )
     }
 
