@@ -95,14 +95,14 @@ private fun DrawScope.pixel(cell: Pair<Int, Int>, scale: Float, color: Color) {
     )
 }
 
-/** The grid and glyph table, copied from iOS PixelWordmark.swift. */
+/** The grid, copied from iOS PixelWordmark.swift. Letters come from the generated [BlockGlyphs]. */
 object PixelGlyphs {
     const val CELL = 10f
     const val BLOCK = 8.5f
     const val ROWS = 5
     private const val TERNIT_START = 16
-    private const val PITCH = 6
-    private const val SPACE_COLS = 3
+    private const val PITCH = BlockGlyphs.PITCH
+    private const val SPACE_COLS = BlockGlyphs.SPACE
 
     val markCells: List<Pair<Int, Int>> = listOf(
         2 to 0, 1 to 1, 3 to 1, 0 to 2, 1 to 2, 3 to 2, 4 to 2, 0 to 3, 4 to 3, 0 to 4, 4 to 4,
@@ -120,21 +120,6 @@ object PixelGlyphs {
         ".###..###.#####.#####.###....####..###..####..#####",
     )
 
-    private fun g(vararg cells: Int): List<Pair<Int, Int>> = cells.toList().chunked(2).map { it[0] to it[1] }
-
-    private val glyphs: Map<Char, List<Pair<Int, Int>>> = mapOf(
-        'T' to g(0, 0, 1, 0, 2, 0, 3, 0, 4, 0, 2, 1, 2, 2, 2, 3, 2, 4),
-        'E' to g(0, 0, 1, 0, 2, 0, 3, 0, 4, 0, 0, 1, 0, 2, 1, 2, 2, 2, 3, 2, 0, 3, 0, 4, 1, 4, 2, 4, 3, 4, 4, 4),
-        'R' to g(0, 0, 1, 0, 2, 0, 3, 0, 0, 1, 4, 1, 0, 2, 1, 2, 2, 2, 3, 2, 0, 3, 2, 3, 0, 4, 3, 4, 4, 4),
-        'N' to g(0, 0, 0, 1, 1, 1, 0, 2, 2, 2, 0, 3, 3, 3, 0, 4, 4, 0, 4, 1, 4, 2, 4, 3, 4, 4),
-        'I' to g(1, 0, 2, 0, 3, 0, 2, 1, 2, 2, 2, 3, 1, 4, 2, 4, 3, 4),
-        'S' to g(0, 0, 1, 0, 2, 0, 3, 0, 4, 0, 0, 1, 0, 2, 1, 2, 2, 2, 3, 2, 4, 2, 4, 3, 0, 4, 1, 4, 2, 4, 3, 4, 4, 4),
-        'O' to g(0, 0, 0, 1, 0, 2, 0, 3, 0, 4, 4, 0, 4, 1, 4, 2, 4, 3, 4, 4, 1, 0, 2, 0, 3, 0, 1, 4, 2, 4, 3, 4),
-        'A' to g(2, 0, 1, 1, 3, 1, 0, 2, 1, 2, 2, 2, 3, 2, 4, 2, 0, 3, 4, 3, 0, 4, 4, 4),
-        'B' to g(0, 0, 0, 1, 0, 2, 0, 3, 0, 4, 1, 0, 2, 0, 3, 0, 4, 1, 1, 2, 2, 2, 3, 2, 4, 3, 1, 4, 2, 4, 3, 4),
-        'C' to g(0, 0, 1, 0, 2, 0, 3, 0, 4, 0, 0, 1, 0, 2, 0, 3, 0, 4, 1, 4, 2, 4, 3, 4, 4, 4),
-    )
-
     /** Every inked letter cell and the total column count (iOS PixelWordmark.layout). */
     fun layout(word: String): Pair<List<Pair<Int, Int>>, Int> {
         val cells = mutableListOf<Pair<Int, Int>>()
@@ -144,7 +129,7 @@ object PixelGlyphs {
                 col += SPACE_COLS
                 continue
             }
-            glyphs[ch]?.let { glyph -> cells += glyph.map { (x, y) -> (x + col) to y } }
+            BlockGlyphs.glyphs[ch]?.let { glyph -> cells += glyph.map { (x, y) -> (x + col) to y } }
             col += PITCH
         }
         return cells to (col - 1)
