@@ -41,11 +41,11 @@ enum AnswerRoom {
 
 /// The anchored turn's height and the scroll view's height, read by two backgrounds.
 struct AnswerRoomTurnHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 struct AnswerRoomViewportKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
