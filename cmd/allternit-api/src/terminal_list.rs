@@ -33,6 +33,8 @@ pub(crate) struct TerminalRecord {
     pub cwd: Option<String>,
     /// RFC 3339, UTC.
     pub created_at: String,
+    /// Created with a `command` (not a shell): a graceful close may SIGTERM it.
+    pub custom_command: bool,
 }
 
 pub(crate) type TerminalRecords = Arc<Mutex<HashMap<String, TerminalRecord>>>;
