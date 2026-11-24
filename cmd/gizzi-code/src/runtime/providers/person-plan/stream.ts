@@ -11,7 +11,37 @@ export type ChatMessage = { role: "system" | "user" | "assistant"; content: stri
 export type TurnEvent =
   | { type: "delta"; text: string }
   | { type: "done"; inputTokens?: number; outputTokens?: number; incomplete?: string }
-  | { type: "error"; code?: string; message: string }
+  | { type: "error"; code?: string; message: string; resetAt?: string }
+
+/**
+ * A usage-limit reset time as an ISO string, from whatever the provider
+ * carried: `resets_at` / `reset_at` (epoch seconds, epoch ms or ISO),
+ * `resets_in_seconds` / `retry_after` (seconds from now), or a `Retry-After`
+ * header (seconds or HTTP date). Returns undefined when none is present or
+ * parseable. Never guesses.
+ */
+export function readResetAt(source: unknown, headers?: { get(name: string): string | null }, now: number = Date.now()): string | undefined {
+  const toIso = (ms: number) => (Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : undefined)
+  const o = source && typeof source === "object" ? (source as Record<string, unknown>) : undefined
+  const at = o?.resets_at ?? o?.reset_at ?? o?.resetsAt ?? o?.resetAt
+  if (typeof at === "number") return toIso(at < 1e12 ? at * 1000 : at)
+  if (typeof at === "string" && at.trim()) {
+    const n = Number(at)
+    if (Number.isFinite(n)) return toIso(n < 1e12 ? n * 1000 : n)
+    const t = Date.parse(at)
+    if (Number.isFinite(t)) return toIso(t)
+  }
+  const inS = o?.resets_in_seconds ?? o?.reset_in_seconds ?? o?.retry_after
+  if (typeof inS === "number" && inS > 0) return toIso(now + inS * 1000)
+  const header = headers?.get("retry-after")?.trim()
+  if (header) {
+    const n = Number(header)
+    if (Number.isFinite(n) && n > 0) return toIso(now + n * 1000)
+    const t = Date.parse(header)
+    if (Number.isFinite(t)) return toIso(t)
+  }
+  return undefined
+}
 
 /** Raw SSE frames: `{event, data}` per blank-line-separated block. */
 export async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<{ event?: string; data: string }> {
@@ -103,21 +133,23 @@ export function chatgptErrorText(code: string | undefined, status?: number, deta
 }
 
 /** Error code + detail from a non-2xx Responses reply (`{error:{code,message}}` or `{detail}`). */
-export function readErrorBody(text: string): { code?: string; message?: string; fallbacks?: string[] } {
+export function readErrorBody(text: string, headers?: { get(name: string): string | null }): { code?: string; message?: string; fallbacks?: string[]; resetAt?: string } {
   try {
     const body = JSON.parse(text) as { error?: unknown; detail?: unknown; message?: unknown; fallbacks?: unknown }
     if (body.error && typeof body.error === "object") {
       const e = body.error as { code?: unknown; message?: unknown; type?: unknown }
       return {
         fallbacks: stringList(body.fallbacks),
+        resetAt: readResetAt(e, headers) ?? readResetAt(body, headers),
         code: typeof e.code === "string" ? e.code : typeof e.type === "string" ? e.type : undefined,
         message: typeof e.message === "string" ? e.message : undefined,
       }
     }
-    if (typeof body.error === "string") return { code: body.error, message: typeof body.message === "string" ? body.message : undefined }
-    if (typeof body.detail === "string") return { message: body.detail }
+    if (typeof body.error === "string") return { code: body.error, message: typeof body.message === "string" ? body.message : undefined, resetAt: readResetAt(body, headers) }
+    if (typeof body.detail === "string") return { message: body.detail, resetAt: readResetAt(body, headers) }
   } catch {}
-  return text.trim() ? { message: text.trim().slice(0, 300) } : {}
+  const resetAt = readResetAt(undefined, headers)
+  return text.trim() ? { message: text.trim().slice(0, 300), resetAt } : resetAt ? { resetAt } : {}
 }
 
 /**
@@ -158,12 +190,14 @@ export async function* parseResponsesStream(body: ReadableStream<Uint8Array>): A
     }
     if (type === "response.failed") {
       const code: string | undefined = ev.response?.error?.code ?? undefined
-      yield { type: "error", code, message: chatgptErrorText(code, undefined, ev.response?.error?.message) }
+      const resetAt = readResetAt(ev.response?.error) ?? readResetAt(ev.response)
+      yield { type: "error", code, message: chatgptErrorText(code, undefined, ev.response?.error?.message), ...(resetAt ? { resetAt } : {}) }
       return
     }
     if (type === "error") {
       const code: string | undefined = ev.code ?? ev.error?.code ?? undefined
-      yield { type: "error", code, message: chatgptErrorText(code, undefined, ev.message ?? ev.error?.message) }
+      const resetAt = readResetAt(ev.error) ?? readResetAt(ev)
+      yield { type: "error", code, message: chatgptErrorText(code, undefined, ev.message ?? ev.error?.message), ...(resetAt ? { resetAt } : {}) }
       return
     }
   }
