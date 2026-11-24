@@ -660,7 +660,7 @@ internal fun MainStep(model: MeetYourBotsModel) {
     }
     when (leadSheet) {
         "vendor" -> com.allternit.feature.bots.VendorConnectSheet(offerMain = true, onDismiss = { leadSheet = null }) { first, main -> adopt(listOfNotNull(main ?: first)) }
-        "new" -> com.allternit.feature.bots.NewBotSheet(store = botsStore, onBrowseTemplates = null, onDismiss = { leadSheet = null }) { ids -> adopt(ids) }
+        "new" -> com.allternit.feature.bots.NewBotSheet(store = botsStore, onBrowseTemplates = null, onDismiss = { leadSheet = null }, onCreated = { ids -> adopt(ids) })
         "import" -> com.allternit.feature.bots.ImportBotSheet(onDismiss = { leadSheet = null }) { ids -> adopt(ids) }
     }
     val isPrimary = model.mainChoice == MeetMainChoice.Primary

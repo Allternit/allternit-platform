@@ -944,6 +944,8 @@ mod tests {
                 snapshot_deleted_at TIMESTAMPTZ,
                 restored_from TEXT,
                 tier TEXT NOT NULL DEFAULT 'paid',
+                location TEXT,
+                template TEXT,
                 last_activity_at TIMESTAMPTZ,
                 last_owner_activity_at TIMESTAMPTZ,
                 next_wake_at TIMESTAMPTZ,
