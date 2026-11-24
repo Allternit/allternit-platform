@@ -235,13 +235,13 @@ struct ConnectionsSettingsView: View {
         return [("Works on any device", anyDevice), ("Needs your computer", computer), ("Coming soon", soon)].filter { !$0.1.isEmpty }
     }
 
-    @ViewBuilder
     /// The ChatGPT subscription and Codex CLI sit in one card at the top of Brains
     /// (List layout, when both rows are listed). Codex then leaves Coding tools.
     private var groupsAccountPair: Bool {
         layout == .list && AccountPair.pairsUp(visible.map(\.id))
     }
 
+    @ViewBuilder
     private func groupSection(_ group: ConnGroup) -> some View {
         let rows = visible.filter { $0.group == group && !(groupsAccountPair && group == .tools && $0.id == AccountPair.codexId) }
         let pairEntries = (group == .brains && groupsAccountPair)
