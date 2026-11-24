@@ -683,6 +683,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::computer_snippets::routes())
         // One computer, one row: unpair a whole machine by any of its ids (step 2.10).
         .merge(routes::computer_machines::routes())
+        // Whole-disk file roots on servers, setting-gated, default off (step 2.11).
+        .merge(routes::computer_file_roots::routes())
         .merge(routes::computers_cloud::routes())
         // Phone stream relay (Phones 2.0): the account's runtime upserts and
         // lists its registered phones with its device credential.
