@@ -294,32 +294,23 @@ struct HistorySidebarView: View {
 
     private var inboxCount: Int { inbox.items.count }
 
-    /// 40pt neutral circle (`phone-round-btn`), red count top-right.
+    /// 40pt glass circle (GlassCircleButton), red count top-right.
     private func roundButton(systemName: String, label: String, id: String, badge: Int = 0, action: @escaping () -> Void) -> some View {
-        Button {
-            Haptics.light()
-            action()
-        } label: {
-            Image(systemName: systemName)
-                .font(.system(size: 18, weight: .regular))
-                .foregroundColor(Color("TextPrimary"))
-                .frame(width: 40, height: 40)
-                .background(Circle().fill(Color("FillNeutral")))
-                .overlay(alignment: .topTrailing) {
-                    if badge > 0 {
-                        Text(badge > 99 ? "99+" : "\(badge)")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 4)
-                            .frame(minWidth: 16, minHeight: 16)
-                            .background(Capsule().fill(Theme.statusError))
-                    }
+        GlassCircleButton(systemImage: systemName, label: label, size: 40, action: action)
+            .overlay(alignment: .topTrailing) {
+                if badge > 0 {
+                    Text(badge > 99 ? "99+" : "\(badge)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 4)
+                        .frame(minWidth: 16, minHeight: 16)
+                        .background(Capsule().fill(Theme.statusError))
+                        .offset(x: 4, y: -4)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-        .accessibilityIdentifier(id)
+            }
+            .accessibilityIdentifier(id)
     }
 
     // MARK: - Rail rows
@@ -419,7 +410,7 @@ struct HistorySidebarView: View {
         }
         .foregroundColor(Color("TextPrimary"))
         .padding(.horizontal, 12)
-        .frame(height: 46)
+        .frame(height: 50)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(row.isActive ? Color("BorderStrong").opacity(0.65) : Color.clear)
@@ -434,7 +425,7 @@ struct HistorySidebarView: View {
         } label: {
             navRowLabel(row)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DrawerRowPressStyle())
         .drawerRow()
         .accessibilityLabel(row.badge > 0 ? "\(row.label), \(row.badge) waiting" : row.label)
         .accessibilityAddTraits(row.isActive ? [.isSelected] : [])
@@ -492,7 +483,7 @@ struct HistorySidebarView: View {
                     } label: {
                         recentRowBody(session)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(DrawerRowPressStyle())
                     .drawerRow()
                     .accessibilityIdentifier("pinnedRow\(session.id)")
                 }
@@ -757,7 +748,7 @@ struct HistorySidebarView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
-        .frame(minHeight: 44)
+        .frame(minHeight: 48)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(isSelected ? Color("BorderStrong").opacity(0.65) : Color.clear)
@@ -777,7 +768,7 @@ struct HistorySidebarView: View {
         } label: {
             recentRowBody(session)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DrawerRowPressStyle())
         .drawerRow()
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
@@ -865,9 +856,10 @@ struct HistorySidebarView: View {
                     .background(Circle().fill(Color("BorderStrong")))
             }
             .frame(width: 44, height: 44)
+            .polishGlass(cornerRadius: 22)
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DrawerCirclePressStyle())
         .accessibilityLabel("\(authManager.displayName). Settings\(usageText)")
         .accessibilityIdentifier("drawerSettings")
     }
@@ -930,12 +922,14 @@ struct HistorySidebarView: View {
             .foregroundColor(Color("TextPrimary"))
             .padding(.horizontal, 18)
             .frame(height: 44)
-            .glassSurface(cornerRadius: 22)
+            .polishGlass(cornerRadius: 22)
             .shadow(color: Color.black.opacity(0.10), radius: 8, x: 0, y: 4)
         } primaryAction: {
             Haptics.light()
             newItem()
         }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(DrawerCirclePressStyle(scale: PolishTokens.pressPill))
         .accessibilityLabel("\(newLabel). Press and hold for more ways to start")
         .accessibilityIdentifier("drawerNewPill")
     }
@@ -1198,6 +1192,28 @@ private extension View {
             .listRowInsets(EdgeInsets(top: 0, leading: inset ? 8 : 0, bottom: 0, trailing: inset ? 8 : 0))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
+    }
+}
+
+/// Drawer row press: a rounded neutral highlight under the finger.
+private struct DrawerRowPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(configuration.isPressed ? Color("FillNeutral") : Color.clear)
+            )
+    }
+}
+
+/// Press scale for the drawer's glass controls (off under Reduce Motion).
+private struct DrawerCirclePressStyle: ButtonStyle {
+    var scale: CGFloat = PolishTokens.pressButton
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .animation(reduceMotion ? nil : PolishTokens.press, value: configuration.isPressed)
     }
 }
 

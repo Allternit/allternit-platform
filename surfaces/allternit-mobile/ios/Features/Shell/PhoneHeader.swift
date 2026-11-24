@@ -40,8 +40,17 @@ struct PhoneHeader<Leading: View, Trailing: View>: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            HStack(spacing: 2) { trailing() }
-                .frame(width: side, alignment: .trailing)
+            HStack(spacing: 0) {
+                if Trailing.self == EmptyView.self {
+                    trailing()
+                } else {
+                    // The right-hand actions share one glass pill (D12).
+                    HStack(spacing: 2) { trailing() }
+                        .padding(.horizontal, 2)
+                        .polishGlass(cornerRadius: 22)
+                }
+            }
+            .frame(width: side, alignment: .trailing)
         }
         .frame(height: 52)
         .padding(.horizontal, sectionStyle ? 12 : 6)
@@ -131,42 +140,34 @@ struct PhoneMenuButton: View {
     @EnvironmentObject private var modeStore: AppModeStore
 
     var body: some View {
-        Button(action: onOpen) {
+        // Glass circle with no mode dot on its corner (D1). The mode stays
+        // in the accessibility value.
+        Button {
+            Haptics.light()
+            onOpen()
+        } label: {
             Image(systemName: "line.3.horizontal")
-                .font(.system(size: glyphSize ?? (round ? 18 : 20), weight: .regular))
-                .foregroundColor(tint ?? Color("TextPrimary"))
+                .font(.system(size: glyphSize ?? 17, weight: .semibold))
+                .foregroundStyle(tint ?? PolishTokens.ink)
+                .frame(width: 40, height: 40)
+                .polishGlass(cornerRadius: 20)
                 .frame(width: 44, height: 44)
-                .background(Circle().fill(round ? Color("FillNeutral") : Color.clear))
-                .overlay(alignment: .bottomTrailing) {
-                    MenuModeBadge(mode: modeStore.shellMode, fill: tint ?? Color("TextPrimary"))
-                        .offset(x: -4, y: -4)
-                }
                 .contentShape(Circle())
         }
-        .buttonStyle(PhonePressStyle())
+        .buttonStyle(PhoneMenuPressStyle())
         .accessibilityLabel("Open menu")
         .accessibilityValue("\(modeStore.shellMode.label) mode")
         .accessibilityIdentifier("phoneMenuButton")
     }
 }
 
-/// The current mode's icon in a 15 pt dot on ☰'s corner. The glyph is
-/// knocked out, so it reads on any header colour.
-struct MenuModeBadge: View {
-    let mode: ShellMode
-    var fill: Color = Color("TextPrimary")
-
-    var body: some View {
-        ZStack {
-            Circle().fill(fill)
-            Image(systemName: mode.icon)
-                .font(.system(size: 7.5, weight: .bold))
-                .blendMode(.destinationOut)
-        }
-        .compositingGroup()
-        .frame(width: 15, height: 15)
-        .accessibilityHidden(true)
-        .accessibilityIdentifier("phoneMenuModeBadge\(mode.rawValue)")
+/// Press scale for the glass ☰ (polish press spring, off under Reduce Motion).
+private struct PhoneMenuPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? PolishTokens.pressButton : 1)
+            .animation(reduceMotion ? nil : PolishTokens.press, value: configuration.isPressed)
     }
 }
 

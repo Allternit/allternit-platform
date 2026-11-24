@@ -43,7 +43,7 @@ struct MainWorkspaceView: View {
 
     /// Arc spring.smooth: critically damped, never overshoots the edge.
     private var drawerAnimation: Animation {
-        Motion.pick(Motion.drawer, reduced: reduceMotion)
+        Motion.pick(PolishTokens.push, reduced: reduceMotion)
     }
 
     var body: some View {
@@ -508,14 +508,20 @@ struct MainWorkspaceView: View {
                 .accessibilityAddTraits(.isButton)
                 .accessibilityHidden(!isSidebarOpen)
         }
-        .clipShape(RoundedRectangle(cornerRadius: reduceMotion ? 0 : 36 * p, style: .continuous))
-        // Scale from the leading edge so the page's left edge sits exactly on
-        // the drawer's right edge (visible sliver = screen - drawer width).
-        .scaleEffect(reduceMotion ? 1 : 1 - 0.06 * p, anchor: UnitPoint(x: 0, y: 0.5))
-        .offset(x: reduceMotion ? 0 : p * sidebarWidth)
+        // Polish push: x 300, scale .92, radius 38, dim .06.
+        .overlay {
+            PolishTokens.pushDim
+                .opacity(p)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: reduceMotion ? 0 : PolishTokens.pushCornerRadius * p, style: .continuous))
+        .scaleEffect(reduceMotion ? 1 : 1 - (1 - PolishTokens.pushScale) * p)
+        .offset(x: reduceMotion ? 0 : p * PolishTokens.pushX)
     }
 
     private func setSidebar(_ open: Bool) {
+        if open != isSidebarOpen { open ? Haptics.light() : Haptics.soft() }
         withAnimation(drawerAnimation) {
             isSidebarOpen = open
             dragOffset = 0
