@@ -58,6 +58,10 @@ import com.allternit.core.api.ApiResult
 import com.allternit.core.design.AllternitRadii
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.Haptics
+import com.allternit.core.design.LocalDockOffset
+import com.allternit.core.design.ProvideDockScroll
+import com.allternit.feature.artifacts.DockTitleLayer
+import androidx.compose.ui.zIndex
 import com.allternit.feature.artifacts.LibraryNet
 import com.allternit.feature.artifacts.friendly
 import kotlinx.serialization.json.JsonElement
@@ -153,27 +157,34 @@ internal fun SPage(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = AllternitTheme.colors
-    Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().navigationBarsPadding().testTag(tag)) {
-        Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 12.dp)) {
-            Box(Modifier.align(Alignment.CenterStart)) {
-                when {
-                    leading != null -> leading()
-                    onBack != null -> SRoundButton(DesignR.drawable.ph_caret_left, "Back", "settingsBack", onBack)
+    val scroll = rememberScrollState()
+    // Every settings page docks its title: the big title sits under the bar and spells into the bar's centre.
+    ProvideDockScroll(scroll) {
+        val offset = LocalDockOffset.current
+        Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().navigationBarsPadding().testTag(tag)) {
+            Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 12.dp).zIndex(1f)) {
+                if (offset != null && title.isNotBlank()) DockTitleLayer(title, offset)
+                Box(Modifier.align(Alignment.CenterStart)) {
+                    when {
+                        leading != null -> leading()
+                        onBack != null -> SRoundButton(DesignR.drawable.ph_caret_left, "Back", "settingsBack", onBack)
+                    }
                 }
+                Box(Modifier.align(Alignment.CenterEnd)) { trailing() }
             }
-            Text(
-                title, color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.align(Alignment.Center).padding(horizontal = 52.dp).semantics { contentDescription = title },
-            )
-            Box(Modifier.align(Alignment.CenterEnd)) { trailing() }
+            Column(
+                Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                // Room for the big title (it flies up into the bar as this column scrolls).
+                Spacer(Modifier.height(SETTINGS_DOCK_TITLE_ROOM))
+                content()
+            }
         }
-        Column(
-            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            content = content,
-        )
     }
 }
+
+private val SETTINGS_DOCK_TITLE_ROOM = 48.dp
 
 /** `roundButton`: a 40dp filled circle. */
 @Composable
