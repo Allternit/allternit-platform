@@ -659,7 +659,7 @@ enum ModelProviderNames {
         return pid == "allternit" ? 0 : local.contains(pid) ? 2 : 1
     }
 
-    /// The letter on a provider's tile: the vendor's, not "Your …".
+    /// Vendor key letter, used only for plan sign-in status matching (never drawn).
     static func mark(_ pid: String) -> String {
         switch pid {
         case "plan-claude", "claude-org": return "C"
@@ -670,10 +670,47 @@ enum ModelProviderNames {
         default: return String(name(pid).prefix(1))
         }
     }
+
+    /// Brand logo asset (`applogo-*`) for a provider or runtime id, or nil when
+    /// the catalog has no mark for it (the tile then shows a neutral glyph).
+    static func logoAsset(_ pid: String) -> String? {
+        let id = pid.lowercased()
+        let key = logoAliases[id] ?? id
+        let direct = "applogo-" + key.replacingOccurrences(of: "-", with: "")
+        return knownLogos.contains(direct) ? direct : nil
+    }
+
+    private static let logoAliases: [String: String] = [
+        "claude-code": "claude", "claude-cli": "claude", "plan-claude": "claude", "claude-org": "claude",
+        "anthropic": "anthropic",
+        "codex-cli": "codex", "plan-chatgpt": "codex", "chatgpt-phone": "codex", "chatgpt": "codex",
+        "qwen-cli": "qwencli", "qwen": "qwen", "qwen-code": "qwencli",
+        "cursor-agent": "cursoragent", "cursor": "cursor",
+        "kimi": "kimi", "kimi-cli": "kimicli", "kimi-code": "kimicli", "plan-kimi": "kimi", "moonshot": "kimi",
+        "grok": "grok", "plan-grok": "grok", "xai": "grok",
+        "gemini-cli": "gemini", "gemini": "gemini", "google": "google",
+        "copilot": "githubcopilot", "github-copilot": "githubcopilot",
+        "ollama": "ollama", "omlx": "ollama", "local-brain": "ollama", "allternit-sidecar": "ollama",
+        "z-ai": "zai", "zhipu": "zai",
+        "bedrock": "amazonbedrock", "amazon-bedrock": "amazonbedrock",
+    ]
+
+    /// Logos shipped in Assets.xcassets/AppLogos that runtimes and providers use.
+    private static let knownLogos: Set<String> = [
+        "applogo-claude", "applogo-anthropic", "applogo-codex", "applogo-openai",
+        "applogo-qwen", "applogo-qwencli", "applogo-cursor", "applogo-cursoragent",
+        "applogo-kimi", "applogo-kimicli", "applogo-grok", "applogo-gemini", "applogo-google",
+        "applogo-githubcopilot", "applogo-ollama", "applogo-zai", "applogo-amazonbedrock",
+        "applogo-antigravity", "applogo-opencode", "applogo-openrouter", "applogo-mistral",
+        "applogo-deepseek", "applogo-codebuddy", "applogo-qodercli", "applogo-qoderclicn",
+        "applogo-kirocli", "applogo-omp", "applogo-deveco", "applogo-qwenpaw", "applogo-reasonix",
+        "applogo-aider", "applogo-amp", "applogo-goose", "applogo-openclaw", "applogo-hermes",
+        "applogo-pi", "applogo-traecli", "applogo-mcode", "applogo-dsh",
+    ]
 }
 
-/// Provider mark: the A:// matrix for Allternit Cloud, else the provider's
-/// initial on a neutral tile.
+/// Provider mark: the A:// matrix for Allternit Cloud, else the brand logo
+/// from the app-logo catalog, else a neutral glyph (never a letter).
 struct ModelProviderMark: View {
     let providerId: String
     var size: CGFloat = 18
@@ -685,10 +722,16 @@ struct ModelProviderMark: View {
                     .resizable()
                     .scaledToFit()
                     .padding(size * 0.08)
+            } else if let asset = ModelProviderNames.logoAsset(providerId) {
+                Image(asset)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.2))
+                    .padding(size * 0.1)
             } else {
-                Text(ModelProviderNames.mark(providerId))
-                    .font(.system(size: size * 0.55, weight: .semibold))
-                    .foregroundColor(Color("TextPrimary"))
+                Image(systemName: "terminal")
+                    .font(.system(size: size * 0.5, weight: .semibold))
+                    .foregroundColor(Color("TextSecondary"))
             }
         }
         .frame(width: size, height: size)
