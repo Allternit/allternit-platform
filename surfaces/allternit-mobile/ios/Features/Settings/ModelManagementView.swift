@@ -9,18 +9,14 @@ import SwiftUI
 /// hamburger-menu header instead — factored out so neither duplicates the
 /// stores or list sections.
 struct ModelManagementView: View {
-    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var modelStore = ModelStore.shared
     @StateObject private var store = ProviderManagementStore()
 
     var body: some View {
         ModelManagementListContent(modelStore: modelStore, store: store)
+            .navigationTitle("Models & Engines")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationBarBackButtonHidden(true)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    GlassCircleButton(systemImage: "chevron.left", label: "Back", size: 36) { dismiss() }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     GlassCircleButton(systemImage: "arrow.clockwise", label: "Refresh", size: 36) {
                         Task { await store.load() }
@@ -42,28 +38,29 @@ struct ModelManagementListContent: View {
     @State private var providerQuery = ""
 
     var body: some View {
-        PolishedTabPage(
-            title: "Freeweights",
-            description: "Open-weights models with checked licenses. Download one to this iPhone, or send a pull to your computer.",
-            taller: true,
-            introKey: .freeweights,
-            hero: { FreeweightsIntroHero() }
-        ) {
-            FreeweightsSection(store: freeweights)
-            VStack(alignment: .leading, spacing: 12) {
-                selectedModelSection
-                enginesSection
-                StudioJobsSection()
+        List {
+            selectedModelSection
+            enginesSection
+            Section {
+                FreeweightsSection(store: freeweights)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 14))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            } header: {
+                Text("Freeweights")
+            } footer: {
+                Text("Open-weights models with checked licenses. Download one to this iPhone, or send a pull to your computer.")
+            }
+            StudioJobsSection()
+            Section {
                 NavigationLink("Benchmark") {
                     BenchmarkView()
                 }
-                .font(.subheadline)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(PolishTokens.neutralFill))
         }
-        .background(Color(.systemBackground))
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color("BgPrimary"))
         .freeweightsDetailSheet(freeweights)
         .task {
             modelStore.fetchModelsIfNeeded()

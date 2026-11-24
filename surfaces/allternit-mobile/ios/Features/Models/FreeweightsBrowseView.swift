@@ -337,6 +337,41 @@ struct FreeweightsSection: View {
     }
 }
 
+/// The dedicated Freeweights page: the docking title, the grey line, the
+/// first-visit intro and the same search, "Models" card and uploads as the
+/// section. Back and refresh are glass circle buttons.
+struct FreeweightsPage: View {
+    @StateObject private var store = FreeweightsBrowseStore()
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        PolishedTabPage(
+            title: "Freeweights",
+            description: "Open-weights models with checked licenses. Download one to this iPhone, or send a pull to your computer.",
+            taller: true,
+            introKey: .freeweights,
+            hero: { FreeweightsIntroHero() }
+        ) {
+            FreeweightsSection(store: store)
+        }
+        .background(Color(.systemBackground))
+        .freeweightsDetailSheet(store)
+        .refreshable { await store.reload() }
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                GlassCircleButton(systemImage: "chevron.left", label: "Back", size: 36) { dismiss() }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                GlassCircleButton(systemImage: "arrow.clockwise", label: "Refresh", size: 36) {
+                    Task { await store.reload() }
+                }
+            }
+        }
+    }
+}
+
 extension View {
     /// Presents the Freeweights detail sheet for `store.selected`. Attach
     /// to the page that holds `FreeweightsSection`.
