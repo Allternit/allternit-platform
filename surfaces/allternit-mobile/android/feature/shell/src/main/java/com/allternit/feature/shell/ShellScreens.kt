@@ -42,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -182,7 +183,13 @@ internal fun ShellHome(
             trailing = {
                 if (mode == ShellMode.Home) {
                     Box {
-                        PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
+                        com.allternit.core.design.GlassPill(
+                            onClick = { menuOpen = true },
+                            modifier = Modifier.testTag("chatOptions").semantics { contentDescription = "Chat options" },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+                        ) {
+                            Icon(painterResource(com.allternit.core.design.R.drawable.ph_dots_three), contentDescription = null, tint = AllternitTheme.colors.textPrimary, modifier = Modifier.size(20.dp))
+                        }
                         ChatOptionsMenu(
                             expanded = menuOpen,
                             phoneArmed = phoneArmed,
@@ -196,7 +203,13 @@ internal fun ShellHome(
                 }
                 if (mode == ShellMode.Code && onCodeSessions != null) {
                     // iOS CodeModeView header: the Code sessions view (CodeSessionsButton), no new-chat pencil.
-                    PhoneIconButton(com.allternit.core.design.R.drawable.ph_list_checks, "Code sessions", testTag = "codeSessionsButton", iconSize = 20, onClick = onCodeSessions)
+                    com.allternit.core.design.GlassPill(
+                        onClick = onCodeSessions,
+                        modifier = Modifier.testTag("codeSessionsButton").semantics { contentDescription = "Code sessions" },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+                    ) {
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_list_checks), contentDescription = null, tint = AllternitTheme.colors.textPrimary, modifier = Modifier.size(20.dp))
+                    }
                 }
             },
             // iOS Code launchpad title: the gizzi code lockup.
@@ -239,8 +252,22 @@ internal fun ShellHome(
 @Composable
 internal fun LaunchGreeting() {
     val c = AllternitTheme.colors
+    // Panel A: fades up 8dp on open. Reduced motion (animations off) shows it at rest.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val reduced = remember {
+        android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    }
+    val rise = remember { androidx.compose.animation.core.Animatable(if (reduced) 1f else 0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { rise.animateTo(1f, com.allternit.core.design.Motion.standardSpring()) }
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 24.dp)
+            .graphicsLayer {
+                alpha = rise.value.coerceIn(0f, 1f)
+                translationY = (1f - rise.value) * 8.dp.toPx()
+            },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -248,14 +275,14 @@ internal fun LaunchGreeting() {
         Text(
             text = "What are we working on?",
             color = c.textPrimary,
-            lineHeight = 38.sp,
+            lineHeight = 39.sp,
             fontFamily = AllternitSerif,
-            letterSpacing = (-0.64).sp,
+            letterSpacing = (-1.04).sp, // panel A: tracking -0.4 tighter than the old -0.64
             textAlign = TextAlign.Center,
             // One line like iOS: 32sp, stepping down on narrower phones instead of wrapping.
             maxLines = 1,
             softWrap = false,
-            autoSize = TextAutoSize.StepBased(minFontSize = 22.sp, maxFontSize = 32.sp, stepSize = 1.sp),
+            autoSize = TextAutoSize.StepBased(minFontSize = 23.sp, maxFontSize = 33.sp, stepSize = 1.sp),
             modifier = Modifier.fillMaxWidth().testTag("homeGreeting"),
         )
     }
