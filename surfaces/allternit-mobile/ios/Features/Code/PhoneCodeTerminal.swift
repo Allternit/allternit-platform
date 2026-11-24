@@ -451,7 +451,7 @@ struct AgentComposerBar: View {
 
     // MARK: Status edge
 
-    private var statusColor: Color {
+    private var statusColor: SwiftUI.Color {
         switch frame.status {
         case .idle: return Theme.statusSuccess
         case .working: return GizziCodeWordmark.coral
