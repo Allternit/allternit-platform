@@ -327,15 +327,14 @@ struct ComposerView: View {
                 .padding(.top, 12)
             }
 
-            // Focused: Runtime + Brain on the top-right line.
+            // Focused: the usage meter, top right, below the chip on the border.
             if isExpanded {
                 HStack(spacing: 8) {
                     Spacer(minLength: 0)
-                    chipsGroup
                     ComposerUsageMeter(sessionId: sessionId, refreshKey: isStreaming ? "streaming" : "idle")
                 }
                 .padding(.horizontal, 12)
-                .padding(.top, 10)
+                .padding(.top, 16)
             }
 
             HStack(alignment: .center, spacing: 6) {
@@ -357,8 +356,11 @@ struct ComposerView: View {
                 )
                 .accessibilityIdentifier("composerInput")
                 if !isExpanded {
-                    chipsGroup
-                    if deck != .none, !isTerminal { toolsButton }
+                    // Rest: + | text | mic | voice. Games stays mounted, hidden.
+                    gamesButton
+                        .opacity(0)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                     sendSlot
                 }
             }
@@ -380,9 +382,28 @@ struct ComposerView: View {
                 .stroke(keyboardFocused ? Color("TextPrimary") : (accentBorder ?? Color("BorderSubtle")),
                         style: StrokeStyle(lineWidth: keyboardFocused ? 2 : 1, dash: isTerminal ? [4, 4] : []))
         )
-        .shadow(color: .black.opacity(0.04), radius: 1, y: 1)
+        .shadow(color: .black.opacity(trayOpen ? 0.10 : 0.04), radius: trayOpen ? 10 : 1, y: trayOpen ? 3 : 1)
         .shadow(color: .black.opacity(0.03), radius: 4, y: 2)
+        // The chip straddles the top border, centred on the line, drawn after
+        // the clip so it is not cut. The page colour behind it cuts the line
+        // like a fieldset legend.
+        .overlay(alignment: .topTrailing) {
+            if !isTerminal {
+                chipsGroup
+                    .padding(.horizontal, 4)
+                    .background(Color("BgPrimary"), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .alignmentGuide(VerticalAlignment.top) { d in d[VerticalAlignment.center] }
+                    .padding(.trailing, 18)
+            }
+        }
+        // Room above the card so the chip clears the orb row.
+        .padding(.top, isTerminal ? 0 : 10)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isExpanded)
+    }
+
+    /// The Tools tray is open under the card.
+    private var trayOpen: Bool {
+        deck != .none && !isTerminal && (deckBandOpen || forcedDeckOpen)
     }
 
     /// The bare filled "+" (Add to chat).
@@ -439,6 +460,7 @@ struct ComposerView: View {
             if deck != .none, !isTerminal {
                 toolsButton
             }
+            gamesButton
 
             Spacer(minLength: 0)
 
@@ -458,12 +480,16 @@ struct ComposerView: View {
         .accessibilityLabel(deckBandOpen ? "Hide tools" : "Tools")
     }
 
+    /// Play (the waiting games): beside Tools when expanded, hidden at rest.
+    private var gamesButton: some View {
+        WaitingGamesPlayButton(busy: isStreaming, anytime: playGamesAnytime, hidden: hasDraft)
+    }
+
     /// Phone: voice and send share one slot (ChatComposer phoneSendSlotTaken).
     /// Play (the waiting games) sits beside Stop; it stays mounted so it can
     /// tell an open game the reply is ready.
     private var sendSlot: some View {
         HStack(spacing: 8) {
-            WaitingGamesPlayButton(busy: isStreaming, anytime: playGamesAnytime, hidden: hasDraft)
             // Dictation fills the draft, which swaps voice for Send: keep the
             // mic here while recording so it can be stopped.
             if dictation.isRecording, hasDraft, !isStreaming, !isTerminal { micButton }
