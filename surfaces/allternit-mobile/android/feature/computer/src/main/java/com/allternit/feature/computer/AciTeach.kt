@@ -3,7 +3,13 @@ package com.allternit.feature.computer
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import com.allternit.core.design.ProvideDockScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -181,13 +187,17 @@ fun AciTeachScreen(host: AciHost, onRun: (String) -> Unit, onBack: () -> Unit) {
         else { review = name to text; note = ""; reviewError = null; events = emptyList(); struck.clear() }
     }
 
-    AciFullPage {
+    val listScroll = rememberScrollState()
+    val dockList = selected == null && review == null
+    val teachBody: @Composable () -> Unit = {
         Column(Modifier.fillMaxSize().testTag("aciTeach")) {
             AciTopBar("Teach", "ACI", { if (selected != null) selected = null else onBack() }) {
                 if (selected == null && review == null) Text("Profile", color = c.textPrimary, fontSize = 14.sp, modifier = Modifier.heightIn(min = 44.dp).clickable { profileOpen = true }.padding(8.dp).testTag("aciTeachProfile"))
                 if (selected == null && review == null) Text("Import", color = c.textPrimary, fontSize = 14.sp, modifier = Modifier.heightIn(min = 44.dp).clickable { picker.launch(arrayOf("*/*")) }.padding(8.dp).testTag("aciTeachImport"))
             }
-            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(listScroll).padding(horizontal = 16.dp, vertical = 8.dp)) {
+                // Room for the big docked title (it flies up into the top bar as the list scrolls).
+                if (dockList) Spacer(Modifier.height(48.dp))
                 notice?.let { Text(it, color = c.textPrimary, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp).clickable { notice = null }.testTag("aciTeachNotice")) }
                 val sel = selected
                 val rev = review
@@ -237,13 +247,16 @@ fun AciTeachScreen(host: AciHost, onRun: (String) -> Unit, onBack: () -> Unit) {
                         Text("Click through the flow once in Allternit Desktop or the Allternit browser extension. We record the path and save it as a skill the agent can replay.", color = c.textSecondary, fontSize = 13.sp)
                         AciPillButton("Import a recording", "aciTeachImportEmpty") { picker.launch(arrayOf("*/*")) }
                     }
-                    else -> list.forEach { s ->
-                        AciListRow(s.title, listOfNotNull(s.subtitle, if (s.raw.str("skill_path") != null) "Skill saved" else null, if (s.raw.str("routine_id") != null) "Scheduled" else null).joinToString(" · "), null, "aciTeachSkill-${s.id}") { selected = s }
+                    else -> Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.fillNeutral).padding(horizontal = 14.dp)) {
+                        list.forEach { s ->
+                            AciListRow(s.title, listOfNotNull(s.subtitle, if (s.raw.str("skill_path") != null) "Skill saved" else null, if (s.raw.str("routine_id") != null) "Scheduled" else null).joinToString(" · "), null, "aciTeachSkill-${s.id}") { selected = s }
+                        }
                     }
                 }
             }
         }
     }
+    AciFullPage { if (dockList) ProvideDockScroll(listScroll) { teachBody() } else teachBody() }
     if (profileOpen) TeachProfileSheet(client, onDismiss = { profileOpen = false })
     scheduleFor?.let { skill ->
         TeachScheduleSheet(skill, onDismiss = { scheduleFor = null }) { _ ->
