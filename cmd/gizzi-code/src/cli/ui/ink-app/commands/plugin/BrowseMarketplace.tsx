@@ -26,6 +26,7 @@ import { PluginTrustWarning } from './PluginTrustWarning';
 import { buildPluginDetailsMenuOptions, extractGitHubRepo, type InstallablePlugin, PluginSelectionKeyHint } from './pluginDetailsHelpers';
 import type { ViewState as ParentViewState } from './types';
 import { usePagination } from './usePagination';
+import { BlockTitle } from '../../components/BlockTitle';
 type Props = {
   error: string | null;
   setError: (error: string | null) => void;
@@ -580,6 +581,7 @@ export function BrowseMarketplace({
   if (viewState === 'marketplace-list') {
     if (marketplaces.length === 0) {
       return <Box flexDirection="column">
+          <BlockTitle title="MARKETPLACE" />
           <Box marginBottom={1}>
             <Text bold>Select marketplace</Text>
           </Box>
@@ -595,6 +597,7 @@ export function BrowseMarketplace({
         </Box>;
     }
     return <Box flexDirection="column">
+        <BlockTitle title="MARKETPLACE" />
         <Box marginBottom={1}>
           <Text bold>Select marketplace</Text>
         </Box>
