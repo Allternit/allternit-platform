@@ -30,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -262,6 +263,22 @@ sealed interface BotRoute {
     data object Office : BotRoute
 }
 
+/** The bot a pushed route is about, for the mode orb's face; null for team-level routes. */
+internal fun BotRoute.focusedBotId(): String? = when (this) {
+    is BotRoute.Chat -> botId
+    is BotRoute.Page -> botId
+    is BotRoute.Threads -> botId
+    is BotRoute.Tasks -> botId
+    is BotRoute.Channels -> botId
+    is BotRoute.Computer -> botId
+    is BotRoute.Stage -> botId
+    is BotRoute.Home -> botId
+    is BotRoute.Settings -> botId
+    is BotRoute.BotHome -> botId
+    is BotRoute.FileEditor -> botId
+    else -> null
+}
+
 /** Bots mode's back stack (iOS BotNavigator). */
 class BotNavigator {
     val path = mutableStateListOf<BotRoute>()
@@ -331,6 +348,10 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
     BackHandler(enabled = nav.path.isNotEmpty()) { nav.back() }
 
     val top = nav.path.lastOrNull()
+    // The shell's mode orb shows this bot's face; the team page (and leaving Bots mode) clears it.
+    val focusId = top?.focusedBotId()
+    LaunchedEffect(focusId) { store.focusedBotId = focusId }
+    DisposableEffect(store) { onDispose { store.focusedBotId = null } }
     if (top != null) {
         Box(Modifier.fillMaxSize().background(c.bgPrimary)) { BotRouteDestination(top, host, store, nav) }
         return

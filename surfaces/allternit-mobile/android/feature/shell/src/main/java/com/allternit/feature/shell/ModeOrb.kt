@@ -121,6 +121,8 @@ internal fun ModeOrb(
     onOpenHub: () -> Unit,
     modifier: Modifier = Modifier,
     botsWaiting: Int = 0,
+    /** The bot Bots mode is focused on (page or chat); its face replaces the mode icon. A bot with no avatar shows Gizzi (web W14, iOS I14). Null shows the mode icon. */
+    focusedBot: com.allternit.feature.bots.BotRecord? = null,
 ) {
     val c = AllternitTheme.colors
     val view = LocalView.current
@@ -153,13 +155,17 @@ internal fun ModeOrb(
                     )
                     .semantics {
                         role = Role.Button
-                        contentDescription = "Mode: ${mode.label}. Change mode"
+                        contentDescription = if (focusedBot != null) "Mode: ${mode.label}, ${focusedBot.displayName}. Change mode" else "Mode: ${mode.label}. Change mode"
                         onClick(label = "Shows the modes") { onExpandedChange(true); true }
                         customActions = listOf(CustomAccessibilityAction("Show all modes") { onOpenHub(); true })
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(painterResource(mode.icon), contentDescription = null, tint = mode.accent, modifier = Modifier.size(16.dp))
+                if (focusedBot != null) {
+                    com.allternit.feature.bots.BotAvatar(focusedBot, size = 30.dp)
+                } else {
+                    Icon(painterResource(mode.icon), contentDescription = null, tint = mode.accent, modifier = Modifier.size(16.dp))
+                }
             }
             if (mode != ShellMode.Bots && botsWaiting > 0) {
                 ModeDialBadge(botsWaiting, Modifier.align(Alignment.TopEnd).padding(end = 0.dp))
