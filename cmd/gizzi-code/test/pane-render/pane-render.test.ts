@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { PaneRender } from "../../src/runtime/integrations/pane-render"
 import { Instance } from "../../src/runtime/context/project/instance"
+import { progressForwarder } from "../../src/runtime/tools/builtins/media-generate"
 import { tmpdir } from "../fixture/fixture"
 
 describe("PaneRender", () => {
@@ -71,5 +72,49 @@ describe("PaneRender", () => {
         expect(await PaneRender.reply({ requestID: "que_nope", result: { ok: true } })).toBe(false)
       },
     })
+  })
+
+  test("progress reports reach the request's listener, and stop when the request ends", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const seen: PaneRender.ProgressDetail[] = []
+        const pending = PaneRender.request(
+          { sessionID: "ses_test", kind: "video", format: "canvas", code: "", width: 64, height: 64, title: "t" },
+          { onProgress: (d) => seen.push(d) },
+        )
+        const [req] = await PaneRender.list()
+        const detail = { lane: "motion", stage: "rendering", label: "Frame 3 of 90", frame: 3, frames: 90 } as const
+        expect(await PaneRender.progress({ requestID: req.id, detail })).toBe(true)
+        expect(await PaneRender.progress({ requestID: "que_unknown", detail })).toBe(false)
+        await PaneRender.reply({ requestID: req.id, result: { ok: false, error: "x" } })
+        await pending
+        expect(await PaneRender.progress({ requestID: req.id, detail })).toBe(false)
+        expect(seen).toEqual([detail])
+      },
+    })
+  })
+
+  test("a progress body is validated", () => {
+    expect(PaneRender.ProgressDetail.safeParse({ lane: "picture", stage: "drawing", label: "x", fraction: 1.5 }).success).toBe(false)
+    expect(PaneRender.ProgressDetail.safeParse({ lane: "picture", stage: "nope", label: "x" }).success).toBe(false)
+    expect(PaneRender.ProgressDetail.safeParse({ lane: "picture", stage: "drawing", label: "x", preview: "javascript:alert(1)" }).success).toBe(false)
+    expect(PaneRender.ProgressDetail.safeParse({ lane: "picture", stage: "drawing", label: "x", preview: "data:image/jpeg;base64,AA==" }).success).toBe(true)
+  })
+
+  test("progress is sent about once a second, but a new stage goes through at once", () => {
+    let t = 0
+    const out: string[] = []
+    const send = progressForwarder((d) => out.push(`${d.stage}:${d.label}`), { now: () => t })
+    const d = (stage: PaneRender.ProgressStage, label: string) => ({ lane: "motion" as const, stage, label })
+    send(d("rendering", "a"))
+    t = 300
+    send(d("rendering", "b"))
+    t = 1000
+    send(d("rendering", "c"))
+    t = 1100
+    send(d("encoding", "d"))
+    expect(out).toEqual(["rendering:a", "rendering:c", "encoding:d"])
   })
 })

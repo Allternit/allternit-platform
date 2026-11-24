@@ -5400,6 +5400,34 @@
         "allternit/cmd/allternit-api/src/bot_brain.rs",
         "allternit/cmd/allternit-api/src/runtime_live.rs"
       ]
+    },
+    {
+      "id": "feature:media-generation",
+      "label": "Picture and motion generation with live progress",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "media_generate makes pictures and motion pieces: the app renders the agent's code (native lane) or a connected subscription draws it. The tool reports live progress (progress label plus progress_detail: stage, frame N of M, preview thumbnail, real download bytes) which the chat card and the Motion editor show.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/gizzi-code/src/runtime/server",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit-ai/src/components/ai-elements",
+        "allternit-ai/src/lib/media"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-21",
+          "note": "Eoj approved the generation-experience plan (~/.claude/plans/generation-experience-2026-11-20.md): one progress contract (PaneRender.ProgressDetail, POST /pane-render/:id/progress, pane_render.progress event, forwarded by media_generate as metadata.progress_detail) that every surface mirrors."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/media-generate.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/pane-render/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes/pane-render.ts",
+        "allternit-ai/src/components/ai-elements/GeneratedMediaCard.tsx",
+        "allternit-ai/src/components/ai-elements/process/RenderingCard.tsx"
+      ]
     }
   ],
   "journeys": [
@@ -6043,6 +6071,32 @@
       "evidence": [
         "allternit/surfaces/docs/guides/claude-organization.mdx",
         "allternit/surfaces/docs/operations/claude-linked-billing.mdx"
+      ]
+    },
+    {
+      "id": "journey:watch-a-generation",
+      "label": "Watch a picture or motion piece being made",
+      "description": "From asking for a picture or video to seeing it arrive, with live progress on the way.",
+      "steps": [
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/tools",
+          "says": "The agent calls media_generate; the tool asks the app to render and forwards its progress as metadata.progress and progress_detail."
+        },
+        {
+          "at": "allternit-ai/src/lib/media",
+          "says": "The app renders in its own engine and posts stage, frame N of M and a small preview to /pane-render/:id/progress about once a second."
+        },
+        {
+          "at": "allternit-ai/src/components/ai-elements",
+          "says": "The chat card shows the stage, frame count and preview, then the finished picture or video."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/builtins/media-generate.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/pane-render/index.ts",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes/pane-render.ts",
+        "allternit-ai/src/components/ai-elements/GeneratedMediaCard.tsx",
+        "allternit-ai/src/components/ai-elements/process/RenderingCard.tsx"
       ]
     }
   ]

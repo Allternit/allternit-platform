@@ -87,8 +87,45 @@ export namespace PaneRender {
   })
   export type Result = z.infer<typeof Result>
 
+  /**
+   * Live progress of one generation (picture or motion). The single shape every
+   * surface mirrors: gizzi-code (this file), ai (TS), iOS (Swift), Android (Kotlin).
+   * `media_generate` puts it in tool metadata as `progress_detail`, beside
+   * `progress` (a short label that is always the current one).
+   * Fields that are unknown are absent, never zero or a guess.
+   */
+  export const ProgressStage = z.enum(["queued", "drawing", "rendering", "encoding", "saving", "downloading"])
+  export type ProgressStage = z.infer<typeof ProgressStage>
+
+  export const ProgressDetail = z.object({
+    lane: z.enum(["picture", "motion"]),
+    stage: ProgressStage,
+    /** What is happening, in plain words ("Drawing frame 12 of 180"). */
+    label: z.string().max(200),
+    /** Motion: the frame being drawn (1-based) and the total. */
+    frame: z.number().int().min(0).optional(),
+    frames: z.number().int().min(1).optional(),
+    /** 0 to 1, of the current stage. */
+    fraction: z.number().min(0).max(1).optional(),
+    /** URL or data URL of a thumbnail, 320px on the long side or smaller. */
+    preview: z
+      .string()
+      .max(400_000)
+      .refine((v) => /^(https?:\/\/|data:image\/|\/)/.test(v), "preview must be an http(s) URL, a data:image URL or an API path")
+      .optional(),
+    /** Downloading: real bytes so far and in all (absent when the size is unknown), and seconds left. */
+    bytes: z.number().int().min(0).optional(),
+    total_bytes: z.number().int().min(0).optional(),
+    eta_s: z.number().min(0).optional(),
+  })
+  export type ProgressDetail = z.infer<typeof ProgressDetail>
+
   export const Event = {
     Requested: BusEvent.define("pane_render.requested", Request),
+    Progress: BusEvent.define(
+      "pane_render.progress",
+      z.object({ sessionID: z.string(), requestID: z.string(), detail: ProgressDetail }),
+    ),
     Replied: BusEvent.define(
       "pane_render.replied",
       z.object({ sessionID: z.string(), requestID: z.string(), ok: z.boolean() }),
@@ -104,7 +141,12 @@ export namespace PaneRender {
 
   export async function request(
     input: Omit<Request, "id" | "time" | "timeoutMs">,
-    options: { timeoutMs?: number; abort?: AbortSignal } = {},
+    options: {
+      timeoutMs?: number
+      abort?: AbortSignal
+      /** Called for each progress report the app sends for this request. Unsubscribed when the request ends. */
+      onProgress?: (detail: ProgressDetail) => void
+    } = {},
   ): Promise<Result> {
     const s = await state()
     const id = Identifier.ascending("question")
@@ -112,12 +154,26 @@ export namespace PaneRender {
     const info: Request = { ...input, id, time: Date.now(), timeoutMs }
     log.info("requesting", { id, kind: input.kind, format: input.format, width: input.width, height: input.height })
     return new Promise<Result>((resolve) => {
+      const unsubscribe = options.onProgress
+        ? Bus.subscribe(Event.Progress, (event) => {
+            if (event.properties.requestID === id) options.onProgress?.(event.properties.detail)
+          })
+        : undefined
+      // Every way out (reply, timeout, abort) goes through here, so the progress subscription never outlives the request.
+      let unsubscribed = false
+      const done = (result: Result) => {
+        if (!unsubscribed) {
+          unsubscribed = true
+          unsubscribe?.()
+        }
+        resolve(result)
+      }
       const finish = (result: Result) => {
         const entry = s.pending[id]
         if (!entry) return
         clearTimeout(entry.timer)
         delete s.pending[id]
-        resolve(result)
+        done(result)
       }
       const timer = setTimeout(
         () =>
@@ -127,7 +183,7 @@ export namespace PaneRender {
           }),
         timeoutMs,
       )
-      s.pending[id] = { info, resolve, timer }
+      s.pending[id] = { info, resolve: done, timer }
       if (options.abort?.aborted) return finish({ ok: false, error: "Cancelled." })
       options.abort?.addEventListener("abort", () => finish({ ok: false, error: "Cancelled." }), { once: true })
       Bus.publish(Event.Requested, info)
@@ -145,6 +201,15 @@ export namespace PaneRender {
     delete s.pending[input.requestID]
     Bus.publish(Event.Replied, { sessionID: entry.info.sessionID, requestID: input.requestID, ok: input.result.ok })
     entry.resolve(input.result)
+    return true
+  }
+
+  /** The app reports how far a pending request is. False when no such request is waiting. */
+  export async function progress(input: { requestID: string; detail: ProgressDetail }): Promise<boolean> {
+    const s = await state()
+    const entry = s.pending[input.requestID]
+    if (!entry) return false
+    Bus.publish(Event.Progress, { sessionID: entry.info.sessionID, requestID: input.requestID, detail: input.detail })
     return true
   }
 

@@ -17,5 +17,15 @@ export const PaneRenderRoutes = lazy(() =>
         const found = await PaneRender.reply({ requestID, result: c.req.valid("json") })
         return found ? c.json(true) : c.json({ error: "Unknown request" }, 404)
       },
+    )
+    .post(
+      "/:requestID/progress",
+      validator("param", z.object({ requestID: z.string() })),
+      validator("json", PaneRender.ProgressDetail),
+      async (c) => {
+        const { requestID } = c.req.valid("param")
+        const found = await PaneRender.progress({ requestID, detail: c.req.valid("json") })
+        return found ? c.json(true) : c.json({ error: "Unknown request" }, 404)
+      },
     ),
 )

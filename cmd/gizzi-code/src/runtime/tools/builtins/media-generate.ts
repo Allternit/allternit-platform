@@ -16,8 +16,43 @@ interface Meta {
   width?: number
   height?: number
   video?: PaneRender.Video
+  /** Last preview frame of a native video (data:image URL), for the card's blur-up. */
+  poster?: string
 }
 const meta = (m: Meta): Meta => m
+
+/**
+ * Turn progress reports into tool metadata updates: at most about one a second,
+ * except that a change of stage always goes through at once (the card must not
+ * show "drawing" after the render moved on). Reports in between are dropped;
+ * the next one carries the newer numbers.
+ */
+export function progressForwarder(
+  emit: (detail: PaneRender.ProgressDetail) => void,
+  options: { intervalMs?: number; now?: () => number } = {},
+) {
+  const intervalMs = options.intervalMs ?? 1000
+  const now = options.now ?? Date.now
+  let lastAt = -Infinity
+  let lastStage: PaneRender.ProgressStage | undefined
+  return (detail: PaneRender.ProgressDetail) => {
+    const t = now()
+    if (detail.stage === lastStage && t - lastAt < intervalMs) return
+    lastAt = t
+    lastStage = detail.stage
+    emit(detail)
+  }
+}
+
+/** The live metadata a running generation reports: `progress` is the current label, `progress_detail` the full report. */
+function reportProgress(ctx: Tool.Context, title: string, extra: Record<string, unknown> = {}) {
+  return progressForwarder((detail) =>
+    ctx.metadata({
+      title: `${title} — ${detail.label}`,
+      metadata: { ...extra, progress: detail.label, progress_detail: detail },
+    }),
+  )
+}
 
 const MAX_CODE = 400_000
 const MIN_SIDE = 64
@@ -60,6 +95,14 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
   const motionBlur = Math.min(8, Math.max(1, Math.round(params.motionBlur ?? 4)))
   const frames = Math.round(duration * fps)
 
+  // Newest preview frame, kept before throttling so the final result carries the latest one.
+  let poster: string | undefined
+  const forward = reportProgress(ctx, `Video: ${title}`, { lane: "native" })
+  const onProgress = (detail: PaneRender.ProgressDetail) => {
+    if (detail.preview) poster = detail.preview
+    forward(detail)
+  }
+
   const result = await PaneRender.request(
     {
       sessionID: ctx.sessionID,
@@ -75,7 +118,7 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
       title,
       toolCall: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
     },
-    { abort: ctx.abort, timeoutMs: videoTimeoutMs(frames, motionBlur) },
+    { abort: ctx.abort, timeoutMs: videoTimeoutMs(frames, motionBlur), onProgress },
   )
 
   if (!result.ok || !result.video) {
@@ -89,7 +132,7 @@ async function renderVideo(params: VideoParams, title: string, ctx: Tool.Context
   return {
     title: `Video: ${title}`,
     output: `Rendered "${title}" (${width}×${height}, ${duration}s at ${fps}fps${sound}). Video: ${result.video.url}. It's in the session's Outputs. The contact sheet (six stills across the video, timestamped) is attached: check motion, framing and text against the request, and if anything is off, call again with the same title and fixed code.`,
-    metadata: meta({ ok: true, lane: "native", format: "canvas", width, height, video: result.video }),
+    metadata: meta({ ok: true, lane: "native", format: "canvas", width, height, video: result.video, ...(poster && poster.length <= 400_000 ? { poster } : {}) }),
     ...(result.image
       ? { attachments: [{ type: "file" as const, mime: "image/png", url: result.image, filename: `${title} contact sheet.png` }] }
       : {}),
@@ -119,6 +162,9 @@ async function subscriptionImage(prompt: string, title: string, provider: string
     prompt,
     title,
     summary: `Make an image with your ${providerName(chosen)} subscription: "${title}"`,
+    // Gateway artifact.partial events: a picture taking shape, shown as the preview.
+    onPartial: reportProgress(ctx, `Image: ${title}`, { lane: "subscription", provider: chosen }),
+    progressLane: "picture",
   })
   const images = result.files.filter((f) => f.mime.startsWith("image/"))
   const outcome = describeOutcome({ ...result, files: images }, chosen, "image")
@@ -217,7 +263,7 @@ export const MediaGenerateTool = Tool.define("media_generate", {
         title,
         toolCall: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
       },
-      { abort: ctx.abort },
+      { abort: ctx.abort, onProgress: reportProgress(ctx, `Image: ${title}`, { lane: "native" }) },
     )
 
     if (!result.ok || !result.image) {
