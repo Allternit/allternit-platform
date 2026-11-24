@@ -928,7 +928,6 @@ struct HistorySidebarView: View {
             Haptics.light()
             newItem()
         }
-        .menuStyle(.borderlessButton)
         .buttonStyle(DrawerCirclePressStyle(scale: PolishTokens.pressPill))
         .accessibilityLabel("\(newLabel). Press and hold for more ways to start")
         .accessibilityIdentifier("drawerNewPill")
