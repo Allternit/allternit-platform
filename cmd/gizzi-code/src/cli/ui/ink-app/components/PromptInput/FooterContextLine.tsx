@@ -13,6 +13,7 @@ import { getDisplayedThinkingLabel } from '../../utils/effort.js'
 import { formatTokens } from '../../utils/format.js'
 import { renderModelSetting } from '../../utils/model/model'
 import { getCurrentUsage } from '../../utils/tokens.js'
+import { listRuntimes } from '@/runtime/providers/discovery/runtime-registry'
 
 /**
  * Second footer line, laid out like Kimi Code's: the model and effort on the
@@ -27,6 +28,11 @@ export function FooterContextLine({ messages }: { messages: Message[] }): React.
   const botChat = useSyncExternalStore(onActiveBotChatChange, getActiveBotChat)
   const model = useMainLoopModel()
   const effortValue = useAppState(s => s.effortValue)
+  // The runtime a plain session runs on (same rule as /runtime): the CLI the
+  // model's provider belongs to, else Allternit. A /runtime pick switches the
+  // model, so the footer follows it.
+  const provider = model.split('/')[0]
+  const runtimeName = listRuntimes().find(r => r.tool && r.tool === provider)?.name ?? 'Allternit'
   const total = getContextWindowForModel(model)
   const usage = getCurrentUsage(messages)
   const used = usage
@@ -55,7 +61,7 @@ export function FooterContextLine({ messages }: { messages: Message[] }): React.
     <Box flexGrow={1} flexDirection="column">
     <Box justifyContent="space-between" gap={1}>
       <Text dimColor={true} wrap="truncate-end">
-        {renderModelSetting(model)}
+        {runtimeName} | {renderModelSetting(model)}
         {effort ? `  effort: ${effort}` : ''}
       </Text>
       <Box flexShrink={0}>
