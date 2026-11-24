@@ -1,17 +1,22 @@
 import SwiftUI
 
 /// Mode orb (contract "Mode orb" + "Timings and motion").
-/// Rest: a 36 pt glass orb with the current mode's icon. Tap: it opens into a
-/// pill of the four modes (light haptic). Hold 450 ms (medium haptic): opens
-/// the hub sheet via `onHold`. Dragging across the pill moves the lens
-/// (selection haptic); lifting on a mode picks it. Reduce Motion: states
-/// change at once, no springs, no press scale.
+/// Rest: a 36 pt interactive glass orb with the current mode's icon. Tap: it
+/// opens into a glass pill of the four modes (light haptic). Hold 450 ms
+/// (medium haptic): opens the hub sheet via `onHold`; with no `onHold` the orb
+/// is tap-only (the drawer's switcher). Dragging across the pill moves the lens
+/// (selection haptic); lifting on a mode picks it (medium haptic). Reduce
+/// Motion: states change at once, no springs, no press scale.
 struct ModeOrbView: View {
     let mode: ShellMode
+    /// Orb diameter (the drawer matches its 40 pt glass buttons).
+    var size: CGFloat = 36
     /// A mode was picked in the pill.
     var onSelect: (ShellMode) -> Void
-    /// The hold completed: open the hub sheet.
-    var onHold: () -> Void
+    /// The hold completed: open the hub sheet. nil = no hold (tap-only orb).
+    var onHold: (() -> Void)?
+    /// The pill opened (true) or folded back to the orb (false).
+    var onOpenChange: ((Bool) -> Void)? = nil
 
     @ReducedMotion private var reduced
     @ObservedObject private var botStore = BotModeStore.shared
@@ -61,8 +66,8 @@ struct ModeOrbView: View {
             }
         }
         .padding(open ? 4 : 0)
-        .frame(minWidth: 36, minHeight: 36)
-        .glassSurface(cornerRadius: 999)
+        .frame(minWidth: size, minHeight: size)
+        .polishGlass(cornerRadius: 999, interactive: true)
         .scaleEffect(pressing && !reduced ? ModeHubSpec.holdPressScale : 1)
         .animation(reduced ? nil : ModeHubSpec.pillSpring, value: open)
         .animation(reduced ? nil : ModeHubSpec.tickSpring, value: pressing)
@@ -77,35 +82,47 @@ struct ModeOrbView: View {
     // MARK: Rest orb
 
     private var orb: some View {
-        slotGlyph(mode, size: 16, weight: .semibold)
-            .foregroundStyle(mode.accent)
-            .frame(width: 36, height: 36)
-            .contentShape(Circle())
-            .id(mode)
-            .transition(reduced ? .identity : .scale(scale: 0.5).combined(with: .opacity))
-            .matchedGeometryEffect(id: "orb", in: ns)
-            // System tap + long-press: both reset on cancel (sheet presenting, drawer drag,
-            // keyboard tap recognizer), so a cancelled press can never leave the orb stuck.
-            .onTapGesture { expand() }
-            .onLongPressGesture(
-                minimumDuration: ModeHubSpec.holdDuration,
-                maximumDistance: 40,
-                perform: {
-                    pressing = false
-                    ModeHubSpec.fire(.holdComplete)
-                    onHold()
-                },
-                onPressingChanged: { down in
-                    if down { Haptics.prepare() }
-                    pressing = down
-                }
-            )
-            .accessibilityElement()
-            .accessibilityLabel(focusedBot.map { "Bots, in chat with \($0.botDisplayName)" } ?? "Mode: \(mode.label)")
-            .accessibilityHint("Tap to switch mode, hold for all modes")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { expand() }
-            .accessibilityAction(named: "Open all modes") { ModeHubSpec.fire(.holdComplete); onHold() }
+        holdable(
+            slotGlyph(mode, size: 16, weight: .semibold)
+                .foregroundStyle(mode.accent)
+                .frame(width: size, height: size)
+                .contentShape(Circle())
+                .id(mode)
+                .transition(reduced ? .identity : .scale(scale: 0.5).combined(with: .opacity))
+                .matchedGeometryEffect(id: "orb", in: ns)
+                // System tap + long-press: both reset on cancel (sheet presenting, drawer drag,
+                // keyboard tap recognizer), so a cancelled press can never leave the orb stuck.
+                .onTapGesture { expand() }
+                .accessibilityElement()
+                .accessibilityLabel(focusedBot.map { "Bots, in chat with \($0.botDisplayName)" } ?? "Mode: \(mode.label)")
+                .accessibilityHint(onHold == nil ? "Tap to switch mode" : "Tap to switch mode, hold for all modes")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { expand() }
+        )
+    }
+
+    /// The hold that opens the hub sheet, only when the host gives `onHold`.
+    @ViewBuilder
+    private func holdable(_ glyph: some View) -> some View {
+        if let onHold {
+            glyph
+                .onLongPressGesture(
+                    minimumDuration: ModeHubSpec.holdDuration,
+                    maximumDistance: 40,
+                    perform: {
+                        pressing = false
+                        ModeHubSpec.fire(.holdComplete)
+                        onHold()
+                    },
+                    onPressingChanged: { down in
+                        if down { Haptics.prepare() }
+                        pressing = down
+                    }
+                )
+                .accessibilityAction(named: "Open all modes") { ModeHubSpec.fire(.holdComplete); onHold() }
+        } else {
+            glyph
+        }
     }
 
     // MARK: Pill
@@ -121,6 +138,8 @@ struct ModeOrbView: View {
                 Text(m.hubLabel)
                     .font(.system(size: 12.5, weight: current ? .semibold : .medium))
                     .lineLimit(1)
+                    // The drawer header is narrower than the composer row.
+                    .minimumScaleFactor(0.8)
             }
             .foregroundStyle(current ? Color.primary : Color.secondary)
             .padding(.horizontal, 10)
@@ -154,6 +173,7 @@ struct ModeOrbView: View {
         ModeHubSpec.fire(.orbTap)
         lens = mode
         withOptionalAnimation { open = true }
+        onOpenChange?(true)
         scheduleCollapse()
     }
 
@@ -161,8 +181,10 @@ struct ModeOrbView: View {
         collapseTask?.cancel()
         lens = nil
         withOptionalAnimation { open = false }
+        onOpenChange?(false)
     }
 
+    /// The pill folds back into the orb, which arrives showing the new mode's icon.
     private func pick(_ m: ShellMode) {
         ModeHubSpec.fire(.openItem)
         collapse()
@@ -181,5 +203,35 @@ struct ModeOrbView: View {
 
     private func withOptionalAnimation(_ body: () -> Void) {
         if reduced { body() } else { withAnimation(ModeHubSpec.pillSpring, body) }
+    }
+}
+
+/// The shell's mode orb on the current mode. A pick switches mode with the
+/// polish crossfade (a fade under Reduce Motion) and posts the arrive event.
+/// `opensShelves`: the hold opens the hub sheet (the composer orb and ACI's
+/// floating orb); the drawer's switcher is tap-only.
+struct ShellModeOrb: View {
+    var size: CGFloat = 36
+    var opensShelves = true
+    var onOpenChange: ((Bool) -> Void)? = nil
+
+    @EnvironmentObject private var modeStore: AppModeStore
+    @ReducedMotion private var reduced
+
+    var body: some View {
+        ModeOrbView(mode: modeStore.shellMode,
+                    size: size,
+                    onSelect: select,
+                    onHold: opensShelves ? { NotificationCenter.default.post(name: ModeHubSpec.openModeHub, object: nil) } : nil,
+                    onOpenChange: onOpenChange)
+    }
+
+    private func select(_ mode: ShellMode) {
+        let from = modeStore.shellMode
+        withAnimation(Motion.pick(PolishTokens.base, reduced: reduced)) {
+            modeStore.setShellMode(mode)
+        }
+        NotificationCenter.default.post(name: ModeHubSpec.modeArrive, object: nil,
+                                        userInfo: ["from": from.hubId, "to": mode.hubId])
     }
 }

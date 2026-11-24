@@ -8,6 +8,7 @@ import SwiftUI
 /// hairline border and soft shadow on top.
 private struct PolishGlass: ViewModifier {
     let cornerRadius: CGFloat
+    let interactive: Bool
     @Environment(\.colorScheme) private var scheme
 
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: cornerRadius, style: .continuous) }
@@ -15,16 +16,17 @@ private struct PolishGlass: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(shape.fill(scheme == .dark ? Color(white: 0.14).opacity(0.78) : PolishTokens.glassFill))
-            .glassSurface(cornerRadius: cornerRadius)
+            .glassSurface(cornerRadius: cornerRadius, interactive: interactive)
             .overlay(shape.strokeBorder(scheme == .dark ? Color.white.opacity(0.10) : PolishTokens.glassBorder, lineWidth: 0.5))
             .shadow(color: Color.black.opacity(scheme == .dark ? 0.35 : 0.08), radius: 10, x: 0, y: 3)
     }
 }
 
 extension View {
-    /// Neutral glass surface from the polish contract.
-    func polishGlass(cornerRadius: CGFloat = 20) -> some View {
-        modifier(PolishGlass(cornerRadius: cornerRadius))
+    /// Neutral glass surface from the polish contract. `interactive`: the
+    /// glass answers touches on iOS 26 (see `glassSurface`).
+    func polishGlass(cornerRadius: CGFloat = 20, interactive: Bool = false) -> some View {
+        modifier(PolishGlass(cornerRadius: cornerRadius, interactive: interactive))
     }
 }
 

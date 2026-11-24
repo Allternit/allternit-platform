@@ -10,7 +10,7 @@ import UIKit
 /// Arc drawer (HistorySidebarView): min(80% of the screen, 360) wide (D5). It
 /// springs in from the left edge and the page pushes right with it, scaled to
 /// 0.94 with ~36 pt corners (the menu button rides on the page). It closes
-/// with a tap on the visible page strip or a drag/flick back to the edge. The drawer mode icon opens Shelves. Cowork is NOT a mode; it's a composer-level toggle inside Home.
+/// with a tap on the visible page strip or a drag/flick back to the edge. The drawer's mode orb opens the four-mode pill; only a hold on the composer (or ACI) mode orb opens Shelves. Cowork is NOT a mode; it's a composer-level toggle inside Home.
 struct MainWorkspaceView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @ObservedObject private var botColors = BotColorStore.shared

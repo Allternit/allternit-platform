@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// New orb (contract "New orb" + "Visibility"; mockup `NewPill`).
-/// Rest: a 36 pt glass orb with a compose icon, above the composer's top-right.
+/// Rest: a 36 pt interactive glass orb with a compose icon, above the composer's top-right.
 /// Tap (light haptic): it opens into a pill. The mode's main item sits at the
 /// right end where the orb was; "Quick task" sits to its left and only when
 /// `showQuick` is true (a session is open). Picking an item (medium haptic)
@@ -45,7 +45,7 @@ struct NewOrbView: View {
         }
         .padding(open ? 4 : 0)
         .frame(minWidth: 36, minHeight: 36)
-        .glassSurface(cornerRadius: 999)
+        .polishGlass(cornerRadius: 999, interactive: true)
         .animation(reduced ? nil : ModeHubSpec.pillSpring, value: open)
         .onDisappear { collapseTask?.cancel() }
         .accessibilityAction(.escape) { collapse() }
@@ -99,14 +99,7 @@ struct ComposerOrbRow: View {
 
     var body: some View {
         HStack {
-            ModeOrbView(mode: modeStore.shellMode,
-                        onSelect: { mode in
-                            let from = modeStore.shellMode
-                            modeStore.setShellMode(mode)
-                            NotificationCenter.default.post(name: ModeHubSpec.modeArrive, object: nil,
-                                userInfo: ["from": from.hubId, "to": mode.hubId])
-                        },
-                        onHold: { NotificationCenter.default.post(name: ModeHubSpec.openModeHub, object: nil) })
+            ShellModeOrb()
             if let trailing {
                 trailing.layoutPriority(-1)
             }

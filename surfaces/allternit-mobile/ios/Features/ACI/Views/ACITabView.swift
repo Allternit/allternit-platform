@@ -13,6 +13,7 @@ import SwiftUI
 ///   - `.extensions` — ACI Extensions.
 ///
 /// Pair / Teach suggestions sit at the top of the canvas until dismissed once.
+/// The mode orb floats at the bottom (ACI has no composer to carry it).
 struct ACITabView: View {
     @Binding var isSidebarOpen: Bool
     @Binding var selectedSessionId: String?
@@ -117,6 +118,20 @@ struct ACITabView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(Color("BgPrimary"))
+        }
+        // ACI has no composer, so its mode orb floats at the bottom of the
+        // screens under the ACI header, with the composer orb's tap (four
+        // modes) and hold (Shelves). The browser and a run bring their own
+        // bottom bars; a browser chat's composer carries the orb.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if showsHeader {
+                HStack {
+                    ShellModeOrb()
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+            }
         }
         .background(Color("BgPrimary"))
         .task { await relay.refresh() }
