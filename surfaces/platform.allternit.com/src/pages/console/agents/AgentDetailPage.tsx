@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   AlertCircleIcon,
@@ -23,6 +23,7 @@ import {
   toolNames,
 } from "@/lib/managed-agents";
 import { MonoChip, Badge, SkeletonCard } from "@/components/console-ui";
+import { RuntimeLabel, agentAccess, agentRuntimeId, useRuntimes } from "./RuntimeBrainPicker";
 
 function StatusBadge({ status }: { status: string }): React.ReactNode {
   const cls =
@@ -43,6 +44,12 @@ export function AgentDetailPage(): React.ReactNode {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
+  const runtimes = useRuntimes();
+  // Save-time notes from the form (e.g. runtime_not_installed); the save itself succeeded.
+  const location = useLocation();
+  const saveWarnings = ((location.state as { warnings?: Array<{ code: string; message: string }> } | null)?.warnings ?? []).filter(
+    (w) => typeof w?.message === "string"
+  );
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -160,8 +167,17 @@ export function AgentDetailPage(): React.ReactNode {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <MonoChip>{agent.id}</MonoChip>
-            <span className="font-mono text-[12px] text-[var(--text-secondary)]">{agent.model}</span>
+            <span className="text-[12px] text-[var(--text-secondary)]">
+              <RuntimeLabel runtimes={runtimes} runtimeId={agentRuntimeId(agent)} access={agentAccess(agent, runtimes)} />
+            </span>
+            <span aria-hidden className="text-[12px] text-[var(--text-tertiary)]">·</span>
+            <span className="font-mono text-[12px] text-[var(--text-secondary)]" title="Brain">{agent.model}</span>
           </div>
+          {saveWarnings.map((w) => (
+            <p key={w.code + w.message} role="status" className="m-0 text-[12px] text-[var(--status-warning)]">
+              {w.message}
+            </p>
+          ))}
           {agent.description && (
             <p className="m-0 text-[13px] text-[var(--text-secondary)]">{agent.description}</p>
           )}
