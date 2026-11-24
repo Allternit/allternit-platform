@@ -410,6 +410,7 @@
               "operations/hosted-driver",
               "operations/brain-runner",
               "operations/compute-providers",
+              "operations/cloud-computer-terminals",
               "operations/cloud-computer-network",
               "operations/upstream-funding",
               "operations/claude-linked-billing",

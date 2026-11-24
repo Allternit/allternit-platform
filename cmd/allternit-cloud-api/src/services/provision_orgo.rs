@@ -58,8 +58,9 @@
 //! /computers/{id}/bash` (300 s max per call). So a create is: `POST
 //! /computers` (hourly billing, `Idempotency-Key` = our instance id, name = our
 //! `incus_name`), wait for `running`, write `/etc/allternit/bootstrap.json`,
-//! write `cmd/allternit-computer-cloud/guest/orgo/setup.sh` and start it
-//! detached (`setsid nohup`), poll its state file until `done` or `failed`
+//! write `cmd/allternit-computer-cloud/guest/orgo/setup.sh` (and beside it
+//! `guest/install-pane-engine.sh`, the pane engine + allternit-node setup every
+//! cloud image shares) and start it detached (`setsid nohup`), poll its state file until `done` or `failed`
 //! (each poll is one short bash call), then run the ensure script. The script
 //! installs the Desktop .deb (`ALLTERNIT_ORGO_DESKTOP_DEB_URL`, sha256 checked
 //! when `ALLTERNIT_ORGO_DESKTOP_DEB_SHA256` is set; the 633 MB .deb is too big
@@ -118,6 +119,11 @@ const DEFAULT_ORGO_API_BASE: &str = "https://www.orgo.ai/api";
 pub const ORGO_SETUP_SCRIPT: &str =
     include_str!("../../../allternit-computer-cloud/guest/orgo/setup.sh");
 const SETUP_PATH: &str = "/opt/allternit-orgo/setup.sh";
+/// The pane engine + allternit-node setup shared by every cloud image. The
+/// setup script runs it from its own folder.
+pub const PANE_ENGINE_SCRIPT: &str =
+    include_str!("../../../allternit-computer-cloud/guest/install-pane-engine.sh");
+const PANE_ENGINE_PATH: &str = "/opt/allternit-orgo/install-pane-engine.sh";
 const SETUP_STATE_PATH: &str = "/var/lib/allternit-orgo/state";
 const SETUP_LOG_PATH: &str = "/var/log/allternit-orgo/setup.log";
 /// Starts supervisord and the app (installed by the setup script). Exit 3 =
@@ -913,6 +919,17 @@ impl OrgoBackend {
         for file in files {
             self.push_file_to(&id, file).await?;
         }
+        self.push_file_to(
+            &id,
+            &InstanceFile {
+                path: PANE_ENGINE_PATH.to_string(),
+                content: PANE_ENGINE_SCRIPT.as_bytes().to_vec(),
+                uid: 0,
+                gid: 0,
+                mode: "0700".to_string(),
+            },
+        )
+        .await?;
         self.push_file_to(
             &id,
             &InstanceFile {
@@ -2047,25 +2064,28 @@ pub(crate) mod tests {
 
     #[test]
     fn setup_script_parses_as_bash() {
-        let mut child = std::process::Command::new("bash")
-            .arg("-n")
-            .stdin(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("bash");
-        use std::io::Write as _;
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(ORGO_SETUP_SCRIPT.as_bytes())
-            .unwrap();
-        let output = child.wait_with_output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        // Both scripts first boot writes to the computer.
+        for script in [ORGO_SETUP_SCRIPT, PANE_ENGINE_SCRIPT] {
+            let mut child = std::process::Command::new("bash")
+                .arg("-n")
+                .stdin(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("bash");
+            use std::io::Write as _;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(script.as_bytes())
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     #[cfg(unix)]

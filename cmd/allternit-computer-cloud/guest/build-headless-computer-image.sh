@@ -35,6 +35,14 @@
 #   API_BINARY   - optional Linux allternit-api binary to install over the
 #                  app's bundled one (e.g. the host's deployed
 #                  /opt/allternit-api/bin/allternit-api from main)
+#   FACTORY_BIN  - optional Linux allternit-factory binary to install over the
+#                  base image's /opt/allternit-factory one
+#   NODE_BIN     - optional Linux allternit-node binary to install over the
+#                  base image's /opt/allternit-node one
+#                  (both default to what the base image has: build-image.sh,
+#                  the desktop-image workflow, bakes them in. Step 2c reruns
+#                  install-pane-engine.sh either way, so the pane engine and
+#                  allternit-node units match the other images.)
 #   KEEP_BUILDER - if set, do not delete the build container
 
 set -euo pipefail
@@ -57,6 +65,11 @@ fi
 if [ -n "${API_BINARY:-}" ]; then
     [ -x "${API_BINARY}" ] || { echo "ERROR: ${API_BINARY} is not an executable" >&2; exit 1; }
 fi
+for bin in "${FACTORY_BIN:-}" "${NODE_BIN:-}"; do
+    if [ -n "${bin}" ]; then
+        [ -x "${bin}" ] || { echo "ERROR: ${bin} is not an executable" >&2; exit 1; }
+    fi
+done
 
 log "launching ${BASE_IMAGE} as ${BUILD_CONTAINER}"
 incus launch --quiet "${BASE_IMAGE}" "${BUILD_CONTAINER}" -c limits.cpu=2 -c limits.memory=3GiB -c limits.cpu.priority=1
@@ -136,6 +149,24 @@ if [ -n "${API_BINARY:-}" ]; then
     '
 fi
 
+# 2c. The pane engine and allternit-node (install-pane-engine.sh, the snippet
+#     every image runs): the base image's binaries unless FACTORY_BIN /
+#     NODE_BIN replace them.
+log "installing the pane engine and allternit-node"
+incus exec "${BUILD_CONTAINER}" -- mkdir -p /root/allternit-engine
+incus file push --quiet "$(dirname "${BASH_SOURCE[0]}")/install-pane-engine.sh" "${BUILD_CONTAINER}/root/allternit-engine/install-pane-engine.sh"
+ENGINE_ARGS=(--init systemd)
+if [ -n "${FACTORY_BIN:-}" ]; then
+    incus file push --quiet "${FACTORY_BIN}" "${BUILD_CONTAINER}/root/allternit-engine/allternit-factory"
+    ENGINE_ARGS+=(--factory /root/allternit-engine/allternit-factory)
+fi
+if [ -n "${NODE_BIN:-}" ]; then
+    incus file push --quiet "${NODE_BIN}" "${BUILD_CONTAINER}/root/allternit-engine/allternit-node"
+    ENGINE_ARGS+=(--node /root/allternit-engine/allternit-node)
+fi
+incus exec "${BUILD_CONTAINER}" -- bash /root/allternit-engine/install-pane-engine.sh "${ENGINE_ARGS[@]}"
+incus exec "${BUILD_CONTAINER}" -- rm -rf /root/allternit-engine
+
 # 3. The app as a headless service (provisioned mode, no window system).
 #    A shared session bus gives the app, the AT-SPI registry and the
 #    Allternit Driver one accessibility world on the bare Xvfb screen.
@@ -151,11 +182,13 @@ Description=Allternit headless session bus (shared D-Bus session for the compute
 [Service]
 Type=simple
 ExecStart=/usr/bin/dbus-daemon --session --nofork --address=unix:path=/run/allternit/bus
-ExecStartPost=/bin/sh -c "printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/allternit/bus\n' > /run/allternit/session-bus.env"
+# No single quotes anywhere in this sh -c block: one here once ended the
+# block early and turned the address into .../busn.
+ExecStartPost=/bin/sh -c "echo DBUS_SESSION_BUS_ADDRESS=unix:path=/run/allternit/bus > /run/allternit/session-bus.env"
 Restart=always
 RestartSec=2
 RuntimeDirectory=allternit
-# Shared with the driver's socket; neither unit may delete it when it stops.
+# Shared with the driver socket; neither unit may delete it when it stops.
 RuntimeDirectoryPreserve=yes
 
 [Install]
