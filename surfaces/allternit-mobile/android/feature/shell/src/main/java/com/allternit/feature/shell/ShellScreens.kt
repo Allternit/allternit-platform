@@ -68,6 +68,12 @@ import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.Haptics
+import com.allternit.core.design.rememberDockOffset
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import com.allternit.core.design.DockingBlockTitle
+import androidx.compose.ui.zIndex
 import com.allternit.core.design.ModeAccents
 import com.allternit.core.design.R as DesignR
 import com.allternit.feature.onboarding.R as OnboardingR
@@ -174,7 +180,14 @@ internal fun ShellHome(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var phoneArmed by remember { mutableStateOf(false) }
+    // Home launch: the A://TERNIT block title docks into the top bar when the launch content scrolls (T8).
+    val homeScroll = rememberScrollState()
+    val homeDock = rememberDockOffset(homeScroll)
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        Box(Modifier.fillMaxWidth().zIndex(1f)) {
+        if (mode == ShellMode.Home) {
+            HomeDockTitle(homeDock)
+        }
         PhoneHeader(
             // Home has no header title (Eoj 2026-11-20): the A:// mark on the page is the brand.
             title = if (mode == ShellMode.Home) "" else mode.label,
@@ -215,8 +228,16 @@ internal fun ShellHome(
             // iOS Code launchpad title: the gizzi code lockup.
             titleContent = if (mode == ShellMode.Code && onCodeSessions != null) ({ GizziCodeWordmark(height = 15.dp) }) else null,
         )
+        }
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            if (mode == ShellMode.Home) LaunchGreeting()
+            if (mode == ShellMode.Home) {
+                // Scrolls only when the content overflows (small phone, big font); a tall phone keeps the big title.
+                Column(Modifier.fillMaxSize().verticalScroll(homeScroll)) {
+                    // Room for the big title, which sits in window coordinates under the bar. Carries the old mark's tag.
+                    Spacer(Modifier.height(HOME_DOCK_TITLE_ROOM).testTag("homeMark"))
+                    LaunchGreeting(showMark = false)
+                }
+            }
             else if (codeHome != null && mode == ShellMode.Code) {
                 Column(Modifier.fillMaxSize()) {
                     // iOS CodeModeView: What's new sits right under the sessions button.
@@ -245,12 +266,41 @@ internal fun ShellHome(
     }
 }
 
+private val HOME_DOCK_TITLE_ROOM = 96.dp
+
+/** The A://TERNIT block title, drawn in window coordinates like DockTitleLayer (which has no markPrefix). */
+@Composable
+private fun HomeDockTitle(scrollOffset: () -> Float) {
+    var originX by remember { mutableStateOf(0) }
+    var originY by remember { mutableStateOf(0) }
+    val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val w = (cfg.screenWidthDp * density.density).toInt()
+    val h = (cfg.screenHeightDp * density.density).toInt()
+    Box(
+        Modifier
+            .onPlacedAt { x, y -> originX = x; originY = y }
+            .layout { m, _ ->
+                val placeable = m.measure(androidx.compose.ui.unit.Constraints.fixed(w, h))
+                layout(0, 0) { placeable.place(androidx.compose.ui.unit.IntOffset(-originX, -originY)) }
+            },
+    ) {
+        DockingBlockTitle("TERNIT", scrollOffset, markPrefix = true, markLabel = "Allternit")
+    }
+}
+
+private fun Modifier.onPlacedAt(f: (Int, Int) -> Unit): Modifier =
+    this.onGloballyPositioned { c ->
+        val p = c.positionInWindow()
+        f(p.x.toInt(), p.y.toInt())
+    }
+
 /**
  * iOS ChatLaunchGreeting on the main chat: the A:// mark (not Gizzi), 22dp, over a 32sp serif
  * headline. Pinned to the reference build's line.
  */
 @Composable
-internal fun LaunchGreeting() {
+internal fun LaunchGreeting(showMark: Boolean = true) {
     val c = AllternitTheme.colors
     // Panel A: fades up 8dp on open. Reduced motion (animations off) shows it at rest.
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -271,7 +321,7 @@ internal fun LaunchGreeting() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        AProtocolMark(height = 22.dp, modifier = Modifier.testTag("homeMark"))
+        if (showMark) AProtocolMark(height = 22.dp, modifier = Modifier.testTag("homeMark"))
         Text(
             text = "What are we working on?",
             color = c.textPrimary,
