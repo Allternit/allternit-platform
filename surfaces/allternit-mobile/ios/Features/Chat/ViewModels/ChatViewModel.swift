@@ -376,7 +376,11 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             projectId: sessionContext.projectId,
             ephemeral: sessionContext.ephemeral,
             persona: sessionContext.persona,
-            permissionMode: sessionContext.permissionMode
+            permissionMode: sessionContext.permissionMode,
+            // A chat without a bot runs on the composer's picked runtime.
+            extraMetadata: sessionContext.agentId == nil
+                ? ChatRuntimeStore.shared.sessionMetadata(in: RuntimeRegistryStore.shared.runtimes)
+                : [:]
         )
         currentSessionId = session.id
         return session.id

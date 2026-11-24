@@ -405,49 +405,14 @@ struct ComposerView: View {
                 if let chatBot {
                     ComposerAgentChips(bot: chatBot)
                 } else {
-                    modelChip
+                    // Harness & Bots 2.0: Runtime + Brain in every chat.
+                    ComposerChatChips(hasActiveSession: hasActiveSession) { isModelPickerPresented = true }
                 }
                 // How full this chat's context is, and the plan's usage.
                 ComposerUsageMeter(sessionId: sessionId, refreshKey: isStreaming ? "streaming" : "idle")
                 sendSlot
             }
         }
-    }
-
-    /// Model chip: provider mark + name (parenthetical dropped on the phone) + ▾.
-    private var modelChip: some View {
-        Button(action: { isModelPickerPresented = true }) {
-            HStack(spacing: 4) {
-                if modelStore.isLoading && modelStore.models.isEmpty {
-                    ProgressView()
-                        .controlSize(.mini)
-                    Text("Loading...")
-                        .font(.system(size: 14, weight: .medium))
-                } else {
-                    Image("MatrixLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 18, height: 18)
-                        .frame(width: 20, height: 20)
-                        .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color("BorderSubtle"), lineWidth: 1))
-                    Text(ComposerModelLabel.label(modelStore))
-                        .font(.system(size: 14, weight: .medium))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .opacity(0.8)
-                    .rotationEffect(.degrees(isModelPickerPresented ? 180 : 0))
-            }
-            .foregroundColor(isTerminal ? TerminalTheme.dim : Color("TextSecondary"))
-            .padding(.horizontal, 6)
-            .frame(height: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Model: \(ComposerModelLabel.label(modelStore))")
     }
 
     /// Phone: voice and send share one slot (ChatComposer phoneSendSlotTaken).

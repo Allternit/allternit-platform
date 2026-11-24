@@ -145,8 +145,11 @@ final class AgentChatClient: ObservableObject, @unchecked Sendable {
                        projectId: String? = nil,
                        ephemeral: Bool = false,
                        persona: String? = nil,
-                       permissionMode: String? = nil) async throws -> AgentSession {
-        var metadata: [String: String] = [:]
+                       permissionMode: String? = nil,
+                       extraMetadata: [String: String] = [:]) async throws -> AgentSession {
+        // Harness & Bots 2.0: a plain chat started on a runtime other than
+        // Allternit carries `runtime` + `brainMode`/`harness` (ChatRuntimeStore).
+        var metadata: [String: String] = extraMetadata
         if let agentModeId { metadata["agentModeId"] = agentModeId }
         // The composer's Auto · Ask · Read-only pill (web permission-mode.ts),
         // read by the agent-chat bridge as `permissionMode`.

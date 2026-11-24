@@ -123,6 +123,10 @@ struct HistorySidebarView: View {
         .sheet(isPresented: $isSettingsPresented) {
             SettingsView()
         }
+        // Connections › Runtimes "New chat on …" closes Settings onto the chat.
+        .onReceive(NotificationCenter.default.publisher(for: .shellNewChatOnRuntime)) { _ in
+            isSettingsPresented = false
+        }
         .sheet(isPresented: $isQuickTaskPresented) {
             QuickTaskSheet()
         }

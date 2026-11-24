@@ -12,12 +12,28 @@ import SwiftUI
 struct NewBotSheet: View {
     /// "Start from a team": a project with its bots and plan laid out.
     var onBrowseTemplates: (() -> Void)? = nil
+    /// Connections › Runtimes "New bot on <Runtime>": the runtime is preselected.
+    var runtimeId: String? = nil
+    /// Bots empty state "Pick how your bot works": opens the Runtime · Brain picker first.
+    var opensRuntimePicker: Bool = false
     var onCreated: (BotSetupOutcome) -> Void
 
     @StateObject private var model = BotFormModel(mode: .create)
+    @State private var preselected = false
 
     var body: some View {
-        BotFormSheet(model: model, onBrowseTemplates: onBrowseTemplates, onCreated: onCreated)
+        BotFormSheet(model: model, onBrowseTemplates: onBrowseTemplates, onCreated: onCreated,
+                     opensLayers: opensRuntimePicker)
+            .onAppear {
+                guard !preselected, let runtimeId, !runtimeId.isEmpty else { return }
+                preselected = true
+                var brain = model.layersBrain
+                brain["runtime"] = .string(runtimeId)
+                if brain["modelRef"] == nil, !model.modelId.isEmpty, !model.provider.isEmpty {
+                    brain["modelRef"] = .object(["providerID": .string(model.provider), "modelID": .string(model.modelId)])
+                }
+                model.applyLayers(brain: brain, view: model.agentViewMode, look: model.agentLook)
+            }
     }
 }
 
@@ -42,6 +58,8 @@ private struct BotFormSheet: View {
     var onBrowseTemplates: (() -> Void)? = nil
     var onCreated: ((BotSetupOutcome) -> Void)? = nil
     var onSaved: (() -> Void)? = nil
+    /// Open the Runtime · Brain picker as the sheet appears.
+    var opensLayers: Bool = false
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var auth = AuthManager.shared
@@ -51,12 +69,15 @@ private struct BotFormSheet: View {
     @State private var advancedOpen = false
     @State private var vendorOpen = false
     @State private var layersOpen = false
+    @State private var openedLayers = false
     @State private var starterDraft = ""
     @State private var ownDraft = ""
 
     init(model: BotFormModel, onBrowseTemplates: (() -> Void)? = nil,
-         onCreated: ((BotSetupOutcome) -> Void)? = nil, onSaved: (() -> Void)? = nil) {
+         onCreated: ((BotSetupOutcome) -> Void)? = nil, onSaved: (() -> Void)? = nil,
+         opensLayers: Bool = false) {
         _model = ObservedObject(wrappedValue: model)
+        self.opensLayers = opensLayers
         self.onBrowseTemplates = onBrowseTemplates
         self.onCreated = onCreated
         self.onSaved = onSaved
@@ -99,6 +120,11 @@ private struct BotFormSheet: View {
         .interactiveDismissDisabled(busy)
         .task {
             if model.isEditing { await model.loadBot() } else { await model.loadRuntimeOptions() }
+        }
+        .onAppear {
+            guard opensLayers, !model.isEditing, !openedLayers else { return }
+            openedLayers = true
+            layersOpen = true
         }
         .sheet(isPresented: $vendorOpen) {
             NavigationStack {

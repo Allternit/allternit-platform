@@ -163,7 +163,11 @@ struct ConnectionsSettingsView: View {
             ForEach(ConnGroup.allCases, id: \.self) { group in
                 groupSection(group)
             }
-            if visible.isEmpty {
+            // Harness & Bots 2.0: the runtimes (status filters don't apply to them).
+            if status == .all {
+                RuntimesConnectionsSection(layout: layout, query: query)
+            }
+            if visible.isEmpty && !runtimesMatch {
                 Text(query.isEmpty && status == .all ? "Nothing here yet." : query.isEmpty ? "Nothing is \(status.label.lowercased())." : "Nothing matches “\(query)”.")
                     .font(.system(size: 14))
                     .foregroundColor(Color("TextSecondary"))
@@ -181,6 +185,15 @@ struct ConnectionsSettingsView: View {
             guard store.isListed(e.id), status.matches(store.state(e.id)) else { return false }
             return q.isEmpty || e.name.lowercased().contains(q) || (e.blurb ?? "").lowercased().contains(q)
                 || e.group.title.lowercased().contains(q)
+        }
+    }
+
+    /// The Runtimes section shows something (it has no status filter).
+    private var runtimesMatch: Bool {
+        guard status == .all else { return false }
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return q.isEmpty || "runtimes".contains(q) || RuntimeRegistryStore.shared.runtimes.contains {
+            [$0.name, $0.vendor, $0.categoryLabel].joined(separator: " ").lowercased().contains(q)
         }
     }
 

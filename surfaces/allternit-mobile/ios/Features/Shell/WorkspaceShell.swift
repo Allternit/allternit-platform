@@ -173,6 +173,15 @@ struct MainWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: .shellOpenDrawer)) { _ in
             setSidebar(true)
         }
+        // Connections › Runtimes "New chat on <Runtime>": a fresh chat on Chats
+        // (ChatRuntimeStore already holds the runtime).
+        .onReceive(NotificationCenter.default.publisher(for: .shellNewChatOnRuntime)) { _ in
+            isOverviewPresented = false
+            selectedSessionId = nil
+            modeStore.selectBarItem(.chats)
+            setSidebar(false)
+            NotificationCenter.default.post(name: .shellNewChat, object: nil)
+        }
         // Universal Links + push taps (DeepLinkRouter) and the Meet your bots intro.
         .modifier(DeepLinkHost())
         // Allternit calls: ring polling + the incoming / live call screens.
