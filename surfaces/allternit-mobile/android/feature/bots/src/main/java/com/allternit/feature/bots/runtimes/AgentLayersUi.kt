@@ -198,6 +198,8 @@ fun AgentLayerSheet(
     registryNotice: RegistryNotice? = null,
     brainsLoading: Boolean = false,
     onOpenConnections: (() -> Unit)? = null,
+    /** A plain chat's runtime availability line (pair a computer / not installed), drawn above the sentence. */
+    extra: (@Composable () -> Unit)? = null,
 ) {
     val c = AllternitTheme.colors
     LibrarySheet(
@@ -221,6 +223,7 @@ fun AgentLayerSheet(
                 }
             }
             note?.let { SwitchNote(it) }
+            extra?.invoke()
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.padding(top = 6.dp).size(6.dp).clip(CircleShape).background(Color(0xFF1F6F45)))
                 Text(model.sentence, color = c.textSecondary, fontSize = 13.sp)
@@ -286,7 +289,7 @@ private fun LayerHeader(layer: AgentLayer, value: String, locked: Boolean, expan
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChoiceLayout(choices: List<LayerChoice>, layout: LibraryLayout, label: String, botFace: @Composable (com.allternit.feature.bots.BotRecord, Dp) -> Unit, onPick: (LayerChoice) -> Unit) {
+internal fun ChoiceLayout(choices: List<LayerChoice>, layout: LibraryLayout, label: String, botFace: @Composable (com.allternit.feature.bots.BotRecord, Dp) -> Unit, onPick: (LayerChoice) -> Unit) {
     val c = AllternitTheme.colors
     if (choices.isEmpty()) {
         Text("Nothing matches.", color = c.textTertiary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
@@ -472,7 +475,7 @@ internal fun SwitchNote(text: String) {
 }
 
 @Composable
-private fun NoticeLine(text: String, action: String?, onAction: (() -> Unit)?, warn: Boolean) {
+internal fun NoticeLine(text: String, action: String?, onAction: (() -> Unit)?, warn: Boolean) {
     val c = AllternitTheme.colors
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fillNeutral).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {

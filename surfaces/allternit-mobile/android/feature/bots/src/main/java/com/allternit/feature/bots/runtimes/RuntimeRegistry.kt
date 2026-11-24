@@ -91,6 +91,8 @@ data class RuntimeEntry(
     val legacyHarness: String?,
     val legacyUhp: List<String>,
     val docs: String?,
+    /** Subscription plans allowed inside this runtime (registry `plans`); null on an older server, see [plansOf]. */
+    val plans: List<String>? = null,
 ) {
     /** The tokens for [look] (falls back to the other look, like web `runtimeTokens`). */
     fun tokens(look: String? = null): LookTokens? {
@@ -234,6 +236,7 @@ object RuntimeRegistry {
             desktop = (look?.get("desktop") as? JsonObject)?.let(::parseTokens),
             liveUi = live?.let { LiveUi(it.s("label") ?: "${o.s("name") ?: id} web app", it.i("port")) },
             legacyHarness = legacy.s("harness"), legacyUhp = legacy.strs("uhp"), docs = o.s("docs"),
+            plans = (o["plans"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
         )
     }
 
@@ -353,3 +356,15 @@ internal fun JsonObject?.s(key: String): String? = (this?.get(key) as? JsonPrimi
 private fun JsonObject?.i(key: String): Int? = (this?.get(key) as? JsonPrimitive)?.intOrNull
 private fun JsonObject?.b(key: String): Boolean? = (this?.get(key) as? JsonPrimitive)?.booleanOrNull
 private fun JsonObject?.strs(key: String): List<String> = (this?.get(key) as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
+
+/** Plan display names (ALLOWED-RULE PLAN_NAMES). */
+val PLAN_NAMES = mapOf("claude" to "Claude", "chatgpt" to "ChatGPT", "kimi" to "Kimi", "gemini" to "Gemini", "copilot" to "Copilot")
+
+/** Built-in `plans` for a registry body without them (ALLOWED-RULE table). */
+private val FALLBACK_PLANS = mapOf(
+    "allternit" to listOf("claude", "chatgpt", "kimi", "gemini", "copilot"), "claude" to listOf("claude"), "claude-code" to listOf("claude"),
+    "codex" to listOf("chatgpt"), "kimi" to listOf("kimi"), "antigravity" to listOf("gemini"), "copilot" to listOf("copilot"),
+)
+
+/** The plans a runtime allows: the registry's list, else the built-in table, else none. */
+fun plansOf(r: RuntimeEntry): List<String> = r.plans ?: FALLBACK_PLANS[r.id] ?: FALLBACK_PLANS[r.tool?.removeSuffix("-cli")].orEmpty()
