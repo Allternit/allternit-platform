@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -159,7 +160,6 @@ fun AciRoot(host: AciHost) {
             when (tab) {
                 AciTab.Agent -> when (val d = destination) {
                     AciDestination.Landing -> AciBrowserLanding(
-                        controls = { host.composerControls(false) { destination = AciDestination.Landing } },
                         onOpen = { destination = AciDestination.Browser(it) },
                         onRunGoal = { destination = AciDestination.Agent(it) },
                     )
@@ -181,6 +181,13 @@ fun AciRoot(host: AciHost) {
                 })
                 AciTab.Apps -> AciMcpAppsView(host)
                 AciTab.Extensions -> AciExtensionsView()
+            }
+        }
+        // ACI has no composer, so its mode orb sits at the bottom of the screens under the ACI header
+        // (iOS ACITabView): tap shows the four modes, hold opens Shelves. The browser and a run carry it in their bars.
+        if (tab != AciTab.Agent || landing) {
+            Box(Modifier.fillMaxWidth().navigationBarsPadding().testTag("aciModeOrb")) {
+                host.composerControls(false) { destination = AciDestination.Landing }
             }
         }
     }
@@ -244,7 +251,7 @@ private fun AciTargetPicker(backend: ChatBackend, devices: List<AciDevice>, modi
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> Unit, controls: @Composable () -> Unit = {}) {
+private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> Unit) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val shortcuts = remember { AciShortcutsStore(context) }
@@ -294,7 +301,6 @@ private fun AciBrowserLanding(onOpen: (String) -> Unit, onRunGoal: (String) -> U
                     Text(tagline.uppercase(), color = c.textSecondary, fontSize = 14.sp, letterSpacing = 1.1.sp, maxLines = 1)
                     Box(Modifier.width(32.dp).height(1.dp).background(c.borderStrong))
                 }
-                controls()
                 // The search/URL form: 56 dp neutral field, accent button.
                 Row(
                     Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(12.dp)).background(c.fillNeutral)

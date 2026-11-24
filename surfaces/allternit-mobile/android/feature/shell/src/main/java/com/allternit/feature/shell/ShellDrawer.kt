@@ -72,7 +72,7 @@ import com.allternit.core.design.Haptics
 import com.allternit.core.design.R as DesignR
 
 /**
- * The drawer (iOS HistorySidebarView, phone Arc drawer). Top line: the mode dial, the pixel
+ * The drawer (iOS HistorySidebarView, phone Arc drawer). Top line: the mode orb, the pixel
  * wordmark, Inbox and Search. Then the mode's rail rows and More, Recents with "View all ›" and
  * the filter, and a floating footer: the account avatar (Settings), the Phones button and the
  * mode's New pill.
@@ -82,8 +82,9 @@ internal fun ShellDrawer(
     mode: ShellMode,
     account: Account?,
     store: ShellSessionsStore,
-    onModeDial: () -> Unit,
-    /** Bots' waiting count on the mode dial (iOS ModeDialButton badge). */
+    /** A mode picked in the drawer's mode orb (tap-only; Shelves is the composer orb's hold). */
+    onPickMode: (ShellMode) -> Unit,
+    /** Bots' waiting count on the mode orb (iOS drawer orb badge). */
     botsWaiting: Int = 0,
     onRow: (RailRow) -> Unit,
     onOpenSession: (AgentSession) -> Unit,
@@ -116,7 +117,7 @@ internal fun ShellDrawer(
     val rows = railRows(mode)
     Box(modifier.fillMaxSize().statusBarsPadding()) {
         Column(Modifier.fillMaxSize()) {
-            DrawerHeader(mode = mode, onModeDial = onModeDial, botsWaiting = botsWaiting, onInbox = onInbox, inboxCount = inboxCount, onSearch = onSearch)
+            DrawerHeader(mode = mode, onPickMode = onPickMode, botsWaiting = botsWaiting, onInbox = onInbox, inboxCount = inboxCount, onSearch = onSearch)
             LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 items(rows.filter { it.id !in hidden }, key = { "rail-${it.id}" }) { row -> DrawerNavRow(row.label, row.icon, "drawerRow${row.id}") { onRow(row) } }
                 item(key = "rail-more") {
@@ -192,7 +193,7 @@ internal fun ShellDrawer(
 
 /** `phone-drawer-top-modes`: the mode dial, the wordmark, Inbox and Search (iOS header). */
 @Composable
-private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, botsWaiting: Int, onInbox: () -> Unit, inboxCount: Int, onSearch: () -> Unit) {
+private fun DrawerHeader(mode: ShellMode, onPickMode: (ShellMode) -> Unit, botsWaiting: Int, onInbox: () -> Unit, inboxCount: Int, onSearch: () -> Unit) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     Row(
@@ -200,8 +201,8 @@ private fun DrawerHeader(mode: ShellMode, onModeDial: () -> Unit, botsWaiting: I
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // The mode icon opens Shelves after closing the drawer.
-        ModeDialButton(mode = mode, botsWaiting = botsWaiting, onOpenHub = onModeDial)
+        // The regular four-mode switcher; Shelves opens only from the composer (or ACI) orb's hold.
+        DrawerModeOrb(mode = mode, botsWaiting = botsWaiting, onPickMode = onPickMode)
         // ShellWordmark: A://TERNIT on Home; Bots and ACI show their word alone (Eoj 2026-11-24).
         Box(
             modifier = Modifier.padding(start = 6.dp).weight(1f).heightIn(min = 44.dp).testTag("shellWordmark${mode.raw}"),
