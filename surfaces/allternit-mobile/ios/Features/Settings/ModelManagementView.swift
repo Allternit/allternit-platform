@@ -62,6 +62,7 @@ struct ModelManagementListContent: View {
         .scrollContentBackground(.hidden)
         .background(Color("BgPrimary"))
         .freeweightsDetailSheet(freeweights)
+        .firstVisitIntro(key: .freeweights, hero: { FreeweightsIntroHero() })
         .task {
             modelStore.fetchModelsIfNeeded()
             await store.load()
