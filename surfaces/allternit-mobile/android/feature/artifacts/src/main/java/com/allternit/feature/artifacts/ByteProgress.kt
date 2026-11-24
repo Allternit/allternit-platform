@@ -22,7 +22,6 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -184,12 +183,16 @@ internal fun ByteLoadingView(posterUrl: String?, progress: ByteProgress?, modifi
     val context = LocalContext.current
     val reduce = remember(context) { runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false) }
     val line = ByteProgressText.status(verb, progress ?: ByteProgress(0))
-    val poster by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, posterUrl) {
-        value = posterUrl?.let { u -> withContext(Dispatchers.IO) { fetchBytesWithProgress(u, null)?.let { b -> BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap() } } }
+    val poster by produceState<android.graphics.Bitmap?>(null, posterUrl) {
+        value = posterUrl?.let { u -> withContext(Dispatchers.IO) { fetchBytesWithProgress(u, null)?.let { b -> BitmapFactory.decodeByteArray(b, 0, b.size) } } }
     }
-    val blur by animateFloatAsState(ByteProgressText.blur(progress).toFloat(), if (reduce) tween(0) else tween(250), label = "posterBlur")
     Box(modifier.fillMaxSize().background(c.fillNeutral).semantics { contentDescription = line }, contentAlignment = Alignment.BottomCenter) {
-        poster?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(blur.dp)) }
+        // Dots, not blur: the poster as halftone, finer with the real byte fraction (unknown total holds coarse); no poster yet = the band field.
+        val shown = poster
+        DotField(
+            if (shown != null) DotFieldMode.Halftone(shown, progress?.fraction?.toFloat()?.coerceIn(0f, 1f)) else DotFieldMode.Field(DotPattern.Band),
+            Modifier.fillMaxSize(),
+        )
         Row(
             Modifier.padding(bottom = 14.dp).background(c.bgPanel, CircleShape).border(1.dp, c.borderSubtle, CircleShape).padding(horizontal = 12.dp, vertical = 7.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,

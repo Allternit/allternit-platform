@@ -41,7 +41,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
@@ -72,6 +71,9 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.DotField
+import com.allternit.core.design.DotFieldMode
+import com.allternit.core.design.DotPattern
 import com.allternit.core.design.R as DesignR
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -237,20 +239,26 @@ private fun FullFrame(detail: GenerationProgressDetail?, lane: GenerationLane, m
     }
 }
 
-/** The picture of the generation: the pulse until something real arrives. */
+/**
+ * The picture of the generation: the dot field until something real arrives (light band at 45% while queued, full
+ * while drawing); a picture's real preview as a halftone that gets finer with the real fraction (replaces the blur;
+ * an unknown fraction holds the coarse pitch, saving is solid); a motion frame as the plain image.
+ */
 @Composable
 private fun Art(detail: GenerationProgressDetail?, thumb: String?, lane: GenerationLane, modifier: Modifier) {
-    val reduce = rememberReducedMotion()
     val source = thumb ?: detail?.takeIf { it.hasPreview }?.preview
     val bmp = source?.let { PreviewCache.bitmap(it) }
-    if (bmp == null) { BlockPulse(modifier); return }
-    val target = if (lane == GenerationLane.Picture && thumb == null) (detail?.previewBlur ?: 0).toFloat() else 0f
-    val blurDp by animateFloatAsState(target, if (reduce) tween(0) else tween(300), label = "previewBlur")
-    Image(
-        bmp.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop,
-        // Modifier.blur works from Android 12 (API 31); older phones show the preview with its fade only.
-        modifier = modifier.then(if (blurDp > 0.5f) Modifier.blur(blurDp.dp) else Modifier).scale(if (blurDp > 0.5f) 1.06f else 1f),
-    )
+    if (bmp == null) {
+        DotField(DotFieldMode.Field(DotPattern.Band, if (detail?.stage == GenerationStage.Queued) 0.45f else 1f), modifier)
+        return
+    }
+    if (lane == GenerationLane.Picture && thumb == null) {
+        val saving = detail?.stage == GenerationStage.Saving || detail?.stage == GenerationStage.Downloading
+        val fraction = if (saving) 1f else detail?.fraction?.toFloat()?.coerceIn(0f, 1f)
+        DotField(DotFieldMode.Halftone(bmp, fraction), modifier)
+        return
+    }
+    Image(bmp.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = modifier)
 }
 
 @Composable
@@ -335,7 +343,7 @@ private fun HistoryMotion(detail: GenerationProgressDetail?, storedThumbs: List<
             if (counting) Text(main.lowercase(), color = c.textSecondary, fontSize = 13.sp, style = TNUM)
         }
         if (shots.isEmpty()) {
-            BlockPulse(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(c.fillNeutral))
+            DotField(DotFieldMode.Field(DotPattern.Band), Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(c.fillNeutral))
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 shots.forEachIndexed { k, src ->
