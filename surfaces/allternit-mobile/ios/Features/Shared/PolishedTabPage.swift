@@ -5,6 +5,11 @@ struct SectionLabel<Trailing: View>: View {
     let title: String
     @ViewBuilder var trailing: () -> Trailing
 
+    init(_ title: String, @ViewBuilder trailing: @escaping () -> Trailing) {
+        self.title = title
+        self.trailing = trailing
+    }
+
     var body: some View {
         HStack {
             Text(title)

@@ -151,7 +151,6 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     val chat = remember(account?.userId) { ChatViewModel(chatBackend, context.contentResolver).also { it.attachBrowserImages(context, account?.userId ?: "signed-out") } }
     DisposableEffect(chat) { onDispose { chat.dispose() } }
     com.allternit.feature.chat.BrowserImageHost(chat)
-    val hold = remember { MenuHoldState() }
     var hubOpen by remember { mutableStateOf(false) }
     val drawer = remember { AnchoredDraggableState(if (launch.sidebar) DrawerValue.Open else DrawerValue.Closed) }
     // Wave C sheets: Inbox (drawer tray), Quick task and Continue CLI session (New pill hold).
