@@ -3054,6 +3054,35 @@
       ]
     },
     {
+      "id": "feature:terminal-workspace",
+      "label": "Allternit as the terminal workspace",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Code -> Terminal drives the coding agents people already run. When Claude Code, Codex, Kimi, Antigravity, opencode or Gizzi runs in a Code terminal, the web/desktop, iOS and Android clients read the agent's screen (one parser: TypeScript reference, Swift and Kotlin ports locked by a shared fixture corpus), hide its own input box and show Allternit's composer: Message <agent>, a Working chip with Stop, Yes/No/numbered buttons for permission prompts, a mode button, and slash and @ menus; an unrecognised screen shows the full terminal. Terminals show as live preview cards in List, Grid and Deck and in an opaque Terminals menu with titles, folders and status (pairing terminals to bot panes by pane_id on /terminal/list). 'On this Mac' / 'On your computer' rows list agent sessions running outside Allternit with Move here, Open a copy and New session here (POST /api/v1/live-sessions/adopt; `gizzi agents adopt`). Cloud terminals run on the pane engine: the terminal routes live in one terminal-service crate used by allternit-api and allternit-node, and the node falls back to its own PTY when no pane engine is reachable. Paths not listed until they merge: allternit-ai src/lib/terminal/agent-frame.ts, src/views/code/agent-composer.tsx, src/views/code/terminal-sessions.store.ts, src/views/code/OnThisComputerRows.tsx, src/components/session-overview/TerminalPreview.tsx and src/lib/agents/live-sessions-api.ts; platform factory/terminal-service; iOS Features/Code/AgentFrame.swift and OnYourComputer.swift; Android feature/code AgentFrame.kt; gizzi factory/adopt.ts.",
+      "touches": [
+        "allternit/factory/engine/src/agents",
+        "allternit/cmd/allternit-api/src/terminal_routes.rs",
+        "allternit/cmd/allternit-node",
+        "allternit/cmd/gizzi-code/src/cli",
+        "allternit-ai/src/views/code",
+        "allternit/surfaces/allternit-mobile/ios",
+        "allternit/surfaces/allternit-mobile/android"
+      ],
+      "decisions": [
+        {
+          "on": "2026-11-21",
+          "note": "Eoj: one train at the end; node kept; parser stays on the client (TS reference, Swift/Kotlin ports locked by a shared fixture corpus)"
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/code/terminal-and-prompt.mdx",
+        "allternit/surfaces/docs/guides/live-sessions.mdx",
+        "allternit/surfaces/docs/api/terminal.mdx",
+        "allternit/factory/engine/src/agents/harness_table.rs",
+        "allternit/factory/engine/src/agents/adopt.rs"
+      ]
+    },
+    {
       "id": "feature:live-session-delivery",
       "label": "Messages into running CLI sessions (push/turn/pull)",
       "product": "product:ai-allternit",
@@ -5440,6 +5469,63 @@
     }
   ],
   "journeys": [
+    {
+      "id": "journey:move-terminal-session-into-allternit",
+      "label": "Move a Terminal session into Allternit",
+      "description": "From a Claude Code (or Codex, Kimi, Grok, Antigravity, Gizzi, opencode, Qwen) session open in macOS Terminal to the same session running in an Allternit terminal.",
+      "steps": [
+        {
+          "at": "allternit/factory/engine/src/agents",
+          "says": "Discovery lists every live session with its holders (pid, app, start time), carried flags and whether it can move (movable)."
+        },
+        {
+          "at": "allternit-ai/src/views/code",
+          "says": "On this Mac rows in the Terminals menu, the overview and the phone sessions sheet offer Move here, Open a copy and New session here; a move shows the command and kept flags and asks first."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/netops/presence.rs",
+          "says": "POST /api/v1/live-sessions/adopt rechecks the holder, waits for idle, sends SIGTERM to that pid only and starts the resume command in an Allternit terminal; the job reports waiting_idle, stopping, starting, done or failed."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/cli",
+          "says": "gizzi agents adopt does the same from a shell, with --copy, --new and --cancel."
+        },
+        {
+          "at": "allternit/surfaces/allternit-mobile/ios",
+          "says": "The iPhone and Android apps show the same rows as On your computer and open the moved terminal as a tab."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/live-sessions.mdx",
+        "allternit/surfaces/docs/api/terminal.mdx"
+      ]
+    },
+    {
+      "id": "journey:drive-claude-code-from-the-composer",
+      "label": "Drive Claude Code from the Allternit composer",
+      "description": "From running a coding agent in Code -> Terminal to answering its permission prompts and stopping it without touching its own input box.",
+      "steps": [
+        {
+          "at": "allternit/cmd/allternit-api/src/terminal_routes.rs",
+          "says": "The terminal service creates the shell and streams its screen; /terminal/list carries titles, folders and pane_id."
+        },
+        {
+          "at": "allternit-ai/src/views/code",
+          "says": "The client reads the agent's frame, hides its input box and shows Message Claude Code, a Working chip with Stop, Yes/No buttons for a permission prompt, and a mode button that cycles the agent's modes."
+        },
+        {
+          "at": "allternit/surfaces/allternit-mobile/ios",
+          "says": "The iPhone and Android apps run ports of the same parser against the same fixture corpus."
+        },
+        {
+          "at": "allternit-ai/src/views/code",
+          "says": "The Terminals menu and the Code overview cards show each terminal's title, folder, agent and state (Working, Needs you, Idle) with the last lines of its screen; exit returns the full shell."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/code/terminal-and-prompt.mdx"
+      ]
+    },
     {
       "id": "journey:agents-on-one-canvas",
       "label": "Several agents restyle one design canvas",

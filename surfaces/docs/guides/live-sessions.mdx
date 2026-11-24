@@ -23,7 +23,28 @@ If nothing is running, the command says so. It never invents a session.
 
 ## Move a session into Allternit
 
-`gizzi agents adopt` takes a session that is running in macOS Terminal (or iTerm2, Ghostty) and resumes it in an Allternit terminal.
+A session running in macOS Terminal (or iTerm2, Ghostty) can move into an Allternit terminal, so you can drive it from the composer, watch it on a live card and reach it from your phone. You have three choices for each session:
+
+- **Move** stops the old process once the agent is idle and resumes the same session in Allternit.
+- **Open a copy** forks the session into Allternit. The old one keeps running and nothing is signalled.
+- **New session here** starts a fresh session of the same tool in the same folder. The old one is untouched.
+
+Not every tool can do all three. See [Harness support](/code/terminal-and-prompt#harness-support).
+
+### On Desktop and ai.allternit.com
+
+1. Open **Code** and look under **On this Mac** in the Terminals menu (or at the bottom of the Code overview).
+2. Pick **Move here**, **Open a copy** or **New session here** on the session's row.
+3. For a move, check the command and the flags it keeps (for example `--dangerously-skip-permissions`), then confirm. The row follows the move: **Waiting** for the agent to go idle, **Stopping**, **Starting**. You can cancel while it waits.
+4. The session opens as a tab. The old Terminal window stays open and shows the exit.
+
+### On a phone
+
+On the iPhone app, Android app and the phone layout, open the Code session list. **On your computer** (the iPhone and Android apps) or **On this Mac** (the phone layout and PWA) lists the same sessions with the same three choices. A move always asks in a sheet first, and the moved session opens as a terminal tab. The phone must reach your computer through the relay. See [Code on a phone](/code/on-a-phone).
+
+### From the command line
+
+`gizzi agents adopt` does the same from a shell.
 
 ```bash
 gizzi agents adopt <session> [--copy | --new] [--cancel] [--yes] [--json]
@@ -93,65 +114,6 @@ How each harness's processes map to a session id, cheapest reliable source first
 
 Carried flags go right after the command name. The table lives in one place, `factory/engine/src/agents/harness_table.rs`; clients read only `movable`, `carriedFlags`, `canCopy` and the three `*Command` fields. Listing sessions never signals, writes to or types into a process: it reads the process table (`ps`), each process's argv and folder, and for Codex, Gizzi and Antigravity the files it holds open (`lsof`), each with a short timeout.
 
-## Move, copy or open a new session
-
-`POST /api/v1/live-sessions/adopt` (behind your sign-in, like the list) moves a session from Terminal, iTerm2 or Ghostty into an Allternit terminal, opens a copy of it, or opens a new session of the same CLI in its folder. allternit-api runs it as a library, so it works while the Factory engine is down (Desktop quit).
-
-```bash
-curl -X POST http://127.0.0.1:<api port>/api/v1/live-sessions/adopt \
-  -H 'content-type: application/json' \
-  -d '{"sessionId":"<id>","harness":"claude","mode":"move","cols":120,"rows":40}'
-```
-
-The request names only the session (`harness` + `sessionId`) and the terminal size. The folder, the terminal's name and the carried flags come from the live session itself, so a client cannot add its own command line. `new` can name the session by `address` instead of `sessionId` (a process whose session id was not found still has an address).
-
-| `mode` | What it does | Answer |
-|---|---|---|
-| `move` | Stops the old process, then resumes the same session id in a new Allternit terminal (the Move command above, with the carried flags) | `202 {jobId, state}`; the job runs on |
-| `copy` | Opens a fork of the session in a new terminal (the Copy command). No signal. Needs `canCopy` | `200 {terminalId}` |
-| `new` | Opens a new session of the same CLI with the carried flags in the session's folder. No signal | `200 {terminalId}` |
-| `cancel` | Cancels a Move that is still `waiting_idle` | `200 {jobId, state: "failed", code: "cancelled"}` |
-
-### How a Move runs
-
-1. It takes a per-session lock. A second adopt for the same session while one runs gets `409 adopt_in_progress`.
-2. Right before it acts, it runs discovery again for that session: exactly one holder, outside Allternit, with the same pid and start time it first saw, and `movable` is `now`.
-3. `busy`: state `waiting_idle`. It looks again every 2 s for up to 5 minutes (cancelable), then fails with `still_busy`.
-4. State `stopping`: it checks the pid's start time once more and sends **SIGTERM** to that pid only. It waits up to 15 s for the process to exit; a start time that changes means the pid now belongs to another process, so pid reuse can't fool it.
-5. Not exited after 15 s: failed `did_not_exit`, and **nothing is started**. There is no SIGKILL, ever. Quit the CLI in its own window and try again.
-6. Exited: state `starting`. It creates the Allternit terminal with the Move command in the session's folder (through your login shell, so the CLI gets the PATH your own terminal has), then `done` with `terminalId`. If that create fails, the job fails with `start_failed` and `error` holds the exact command to run by hand.
-
-The old Terminal window stays open, showing that the CLI exited. Allternit never closes or types into another app's window.
-
-The job shows on the session as `move: {jobId, state, terminalId?, code?, error?}` (`state` is `waiting_idle`, `stopping`, `starting`, `done` or `failed`) in `GET /api/v1/live-sessions`, and at `GET /api/v1/live-sessions/adopt/<jobId>` (useful when the session left the list). Both are kept for 10 minutes after the job ends.
-
-### Error codes
-
-Errors are JSON: `{"error": "<code>", "message": "…"}`. On a running Move the same codes land in `move.code`.
-
-| Status | Code | Meaning |
-|---|---|---|
-| 400 | `bad_request` | The body is not `{sessionId, harness, mode, cols, rows}`, or `sessionId` is not a plain id |
-| 400 | `unknown_harness` | Not a harness in the table above |
-| 404 | `not_found` | No live session with that harness and id on this computer |
-| 404 | `no_job` | Cancel, or a job lookup, with no Move job |
-| 409 | `adopt_in_progress` | Another adopt for this session is running |
-| 409 | `session_open_elsewhere` | More than one process holds the session (or an unidentified process of the same CLI may); only one writer per session id |
-| 409 | `already_here` | It already runs in an Allternit terminal |
-| 409 | `no_holder` | No running process holds it, so there is nothing to move |
-| 409 | `holder_unverified` | The holder's start time could not be read, so it is not stopped |
-| 409 | `holder_changed` | The holder's pid or start time changed since the job began; nothing was stopped |
-| 409 | `still_busy` | Still working after 5 minutes; nothing was stopped |
-| 409 | `did_not_exit` | Still running 15 s after SIGTERM; nothing was started |
-| 409 | `session_gone` | The session stopped by itself before it was moved |
-| 409 | `too_late` | Cancel after the Move left `waiting_idle` |
-| 422 | `no_resume` | The harness can't resume this session by id (use `new`) |
-| 422 | `no_copy` | The harness can't fork a session |
-| 422 | `no_cwd` | The session's folder is not known |
-| 502 | `start_failed` | The terminal did not start; `message` has the command to run by hand |
-
-A runtime older than this answers `404` for the route: keep today's behavior and hide Move, Copy and New.
-
 ## How `doing` is worked out
 
 Allternit reads what the agent already records, and never asks the agent to report:
@@ -177,3 +139,62 @@ Only the folder name leaves your computer, not the full path. To share full path
 - Heartbeat: the 60-second runtime presence heartbeat carries `sessions` (up to 100), so the cloud can show your sessions to your team. `carriedFlags` and the three `*Command` fields are removed first.
 - Adopt: `factory/engine/src/agents/adopt.rs` holds the decision, the stop-and-wait and the job registry; allternit-api (`cmd/allternit-api/src/netops/presence.rs`) passes it the terminal create, because the create path lives in allternit-api, which depends on the engine.
 - Hooks: sessions that only report through Gizzi hooks are read from `~/.allternit/live-sessions/hooks.json` and listed while their last hook is under 10 minutes old.
+
+### Move, copy or open a new session (API)
+
+`POST /api/v1/live-sessions/adopt` (behind your sign-in, like the list) moves a session from Terminal, iTerm2 or Ghostty into an Allternit terminal, opens a copy of it, or opens a new session of the same CLI in its folder. allternit-api runs it as a library, so it works while the Factory engine is down (Desktop quit).
+
+```bash
+curl -X POST http://127.0.0.1:<api port>/api/v1/live-sessions/adopt \
+  -H 'content-type: application/json' \
+  -d '{"sessionId":"<id>","harness":"claude","mode":"move","cols":120,"rows":40}'
+```
+
+The request names only the session (`harness` + `sessionId`) and the terminal size. The folder, the terminal's name and the carried flags come from the live session itself, so a client cannot add its own command line. `new` can name the session by `address` instead of `sessionId` (a process whose session id was not found still has an address).
+
+| `mode` | What it does | Answer |
+|---|---|---|
+| `move` | Stops the old process, then resumes the same session id in a new Allternit terminal (the Move command above, with the carried flags) | `202 {jobId, state}`; the job runs on |
+| `copy` | Opens a fork of the session in a new terminal (the Copy command). No signal. Needs `canCopy` | `200 {terminalId}` |
+| `new` | Opens a new session of the same CLI with the carried flags in the session's folder. No signal | `200 {terminalId}` |
+| `cancel` | Cancels a Move that is still `waiting_idle` | `200 {jobId, state: "failed", code: "cancelled"}` |
+
+#### How a Move runs
+
+1. It takes a per-session lock. A second adopt for the same session while one runs gets `409 adopt_in_progress`.
+2. Right before it acts, it runs discovery again for that session: exactly one holder, outside Allternit, with the same pid and start time it first saw, and `movable` is `now`.
+3. `busy`: state `waiting_idle`. It looks again every 2 s for up to 5 minutes (cancelable), then fails with `still_busy`.
+4. State `stopping`: it checks the pid's start time once more and sends **SIGTERM** to that pid only. It waits up to 15 s for the process to exit; a start time that changes means the pid now belongs to another process, so pid reuse can't fool it.
+5. Not exited after 15 s: failed `did_not_exit`, and **nothing is started**. There is no SIGKILL, ever. Quit the CLI in its own window and try again.
+6. Exited: state `starting`. It creates the Allternit terminal with the Move command in the session's folder (through your login shell, so the CLI gets the PATH your own terminal has), then `done` with `terminalId`. If that create fails, the job fails with `start_failed` and `error` holds the exact command to run by hand.
+
+The old Terminal window stays open, showing that the CLI exited. Allternit never closes or types into another app's window.
+
+The job shows on the session as `move: {jobId, state, terminalId?, code?, error?}` (`state` is `waiting_idle`, `stopping`, `starting`, `done` or `failed`) in `GET /api/v1/live-sessions`, and at `GET /api/v1/live-sessions/adopt/<jobId>` (useful when the session left the list). Both are kept for 10 minutes after the job ends.
+
+#### Error codes
+
+Errors are JSON: `{"error": "<code>", "message": "…"}`. On a running Move the same codes land in `move.code`.
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `bad_request` | The body is not `{sessionId, harness, mode, cols, rows}`, or `sessionId` is not a plain id |
+| 400 | `unknown_harness` | Not a harness in the table above |
+| 404 | `not_found` | No live session with that harness and id on this computer |
+| 404 | `no_job` | Cancel, or a job lookup, with no Move job |
+| 409 | `adopt_in_progress` | Another adopt for this session is running |
+| 409 | `session_open_elsewhere` | More than one process holds the session (or an unidentified process of the same CLI may); only one writer per session id |
+| 409 | `already_here` | It already runs in an Allternit terminal |
+| 409 | `no_holder` | No running process holds it, so there is nothing to move |
+| 409 | `holder_unverified` | The holder's start time could not be read, so it is not stopped |
+| 409 | `holder_changed` | The holder's pid or start time changed since the job began; nothing was stopped |
+| 409 | `still_busy` | Still working after 5 minutes; nothing was stopped |
+| 409 | `did_not_exit` | Still running 15 s after SIGTERM; nothing was started |
+| 409 | `session_gone` | The session stopped by itself before it was moved |
+| 409 | `too_late` | Cancel after the Move left `waiting_idle` |
+| 422 | `no_resume` | The harness can't resume this session by id (use `new`) |
+| 422 | `no_copy` | The harness can't fork a session |
+| 422 | `no_cwd` | The session's folder is not known |
+| 502 | `start_failed` | The terminal did not start; `message` has the command to run by hand |
+
+A runtime older than this answers `404` for the route: keep today's behavior and hide Move, Copy and New.
