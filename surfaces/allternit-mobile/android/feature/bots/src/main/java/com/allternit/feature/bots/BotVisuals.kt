@@ -135,6 +135,9 @@ internal sealed interface AvatarSource {
     }
 }
 
+/** True when the bot has a face of its own (the primary orb, a sprite, a picture or a mark), false when it would fall back to the generic Gizzi tile. */
+val BotRecord.hasOwnFace: Boolean get() = isPrimaryTemplateBot || AvatarSource.resolve(this) != AvatarSource.Gizzi
+
 /** A bot's face (iOS BotAvatarView): the primary bot is the Allternit orb; otherwise its sprite, picture, Gizzi or mark. */
 @Composable
 fun BotAvatar(bot: BotRecord, size: Dp = 40.dp, live: Boolean = false, working: Boolean = false) {
