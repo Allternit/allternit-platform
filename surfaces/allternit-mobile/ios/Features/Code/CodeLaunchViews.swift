@@ -720,41 +720,55 @@ struct CodeStartScreen: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                CodeGlassRoundButton(icon: "chevron.left", label: "Back to Code sessions", action: onBack)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
+        GeometryReader { proxy in
+            ZStack(alignment: .top) {
+                // The GIZZI CODE block title sits above the greeting and docks
+                // into the back button's row if the page ever scrolls (T8: it
+                // stays big while everything fits).
+                DockingTitleScrollView(title: "GIZZI CODE", chrome: .overlay(barCenter: 30)) {
+                    VStack(spacing: 0) {
+                        // Room for the back button's row.
+                        Color.clear.frame(height: 52)
+                        Spacer(minLength: 24)
+                        VStack(spacing: 14) {
+                            Image("GizziMascot")
+                                .resizable()
+                                .interpolation(.none)
+                                .scaledToFit()
+                                .frame(width: 72, height: 72)
+                                .offset(y: bob ? -4 : 0)
+                                .accessibilityHidden(true)
+                            Text(hello)
+                                .font(.system(size: 26, weight: .semibold, design: .serif))
+                                .foregroundColor(Color("TextPrimary"))
+                                .accessibilityAddTraits(.isHeader)
+                        }
+                        Spacer(minLength: 24)
 
-            Spacer(minLength: 24)
-            VStack(spacing: 14) {
-                Image("GizziMascot")
-                    .resizable()
-                    .interpolation(.none)
-                    .scaledToFit()
-                    .frame(width: 72, height: 72)
-                    .offset(y: bob ? -4 : 0)
-                    .accessibilityHidden(true)
-                Text(hello)
-                    .font(.system(size: 26, weight: .semibold, design: .serif))
-                    .foregroundColor(Color("TextPrimary"))
-                    .accessibilityAddTraits(.isHeader)
-            }
-            Spacer(minLength: 24)
-
-            VStack(alignment: .leading, spacing: 8) {
-                ComputerChipSlot(dismissible: false)
-                HStack(spacing: 6) {
-                    computerChip
-                    repoChip
-                    Spacer(minLength: 0)
+                        VStack(alignment: .leading, spacing: 8) {
+                            ComputerChipSlot(dismissible: false)
+                            HStack(spacing: 6) {
+                                computerChip
+                                repoChip
+                                Spacer(minLength: 0)
+                            }
+                            composer
+                        }
+                        .padding(.bottom, 10)
+                    }
+                    .frame(maxWidth: .infinity,
+                           minHeight: proxy.size.height - DockTitleLayout(text: "GIZZI CODE")
+                            .titleHeight(width: proxy.size.width) - 20)
                 }
-                composer
+                .scrollDismissesKeyboard(.interactively)
+
+                HStack {
+                    CodeGlassRoundButton(icon: "chevron.left", label: "Back to Code sessions", action: onBack)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 10)
         }
         .onAppear {
             guard !reduced else { return }
