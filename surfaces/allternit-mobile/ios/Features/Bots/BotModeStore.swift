@@ -38,6 +38,10 @@ final class BotModeStore: ObservableObject {
     @Published var pendingRoute: BotRoute?
     /// Set by the drawer's Home: back to the Bots home (root of the stack).
     @Published var pendingHome = false
+    /// The bot whose page or chat is on screen in Bots mode (nil on the team
+    /// page or in another mode). `BotsModeRootView` keeps it current; the mode
+    /// orb shows that bot's face.
+    @Published var focusedBotId: String?
     private let hub = AgentHubStore.shared
     private let client = BotModeClient.shared
     private let chatClient = AgentChatClient()

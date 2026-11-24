@@ -14,6 +14,7 @@ struct ModeOrbView: View {
     var onHold: () -> Void
 
     @ReducedMotion private var reduced
+    @ObservedObject private var botStore = BotModeStore.shared
     @State private var open = false
     @State private var lens: ShellMode?
     @State private var pressing = false
@@ -23,6 +24,35 @@ struct ModeOrbView: View {
     @Namespace private var ns
 
     private let tickRowHeight: CGFloat = 36
+
+    /// In Bots mode, the bot whose page or chat is open; its face replaces the icon.
+    private var focusedBot: AgentRecord? {
+        guard mode == .bots, let id = botStore.focusedBotId else { return nil }
+        return botStore.bots.first { $0.id == id }
+    }
+
+    /// The Bots slot: the bot's round face while one is open, else the plain icon.
+    /// Swaps with a crossfade and scale on the polish spring; instantly under Reduce Motion.
+    @ViewBuilder
+    private func slotGlyph(_ m: ShellMode, size: CGFloat, weight: Font.Weight) -> some View {
+        ZStack {
+            if m == .bots, let bot = focusedBot {
+                BotAvatarView(bot: bot, size: size + 6)
+                    .frame(width: size + 6, height: size + 6)
+                    .clipShape(Circle())
+                    .background(Circle().fill(Color("FillNeutral")))
+                    .id("bot-\(bot.id)")
+                    .transition(reduced ? .identity : .scale(scale: 0.6).combined(with: .opacity))
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: m.icon)
+                    .font(.system(size: size, weight: weight))
+                    .id("icon-\(m.rawValue)")
+                    .transition(reduced ? .identity : .scale(scale: 0.6).combined(with: .opacity))
+            }
+        }
+        .animation(reduced ? nil : PolishTokens.base, value: m == .bots ? focusedBot?.id : nil)
+    }
 
     var body: some View {
         HStack(spacing: 2) {
@@ -52,8 +82,7 @@ struct ModeOrbView: View {
     // MARK: Rest orb
 
     private var orb: some View {
-        Image(systemName: mode.icon)
-            .font(.system(size: 16, weight: .semibold))
+        slotGlyph(mode, size: 16, weight: .semibold)
             .foregroundStyle(mode.accent)
             .frame(width: 36, height: 36)
             .contentShape(Circle())
@@ -66,7 +95,7 @@ struct ModeOrbView: View {
                     .onEnded { _ in endPress() }
             )
             .accessibilityElement()
-            .accessibilityLabel("Mode: \(mode.label)")
+            .accessibilityLabel(focusedBot.map { "Bots, in chat with \($0.botDisplayName)" } ?? "Mode: \(mode.label)")
             .accessibilityHint("Tap to switch mode, hold for all modes")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { expand() }
@@ -106,8 +135,7 @@ struct ModeOrbView: View {
             pick(m)
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: m.icon)
-                    .font(.system(size: 14, weight: current ? .bold : .regular))
+                slotGlyph(m, size: 14, weight: current ? .bold : .regular)
                 Text(m.hubLabel)
                     .font(.system(size: 12.5, weight: current ? .semibold : .medium))
                     .lineLimit(1)
@@ -126,7 +154,7 @@ struct ModeOrbView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(m.label)
+        .accessibilityLabel(m == .bots ? (focusedBot.map { "Bots, in chat with \($0.botDisplayName)" } ?? m.label) : m.label)
         .accessibilityAddTraits(current ? [.isSelected] : [])
         .transition(reduced ? .identity : .scale(scale: 0.8).combined(with: .opacity))
         // Press-and-slide across the pill moves the lens.
