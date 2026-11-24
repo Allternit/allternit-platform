@@ -1013,7 +1013,7 @@ private struct CustomizeIntroHero: View {
                             .foregroundStyle(Color("TextSecondary"))
                             .frame(maxWidth: .infinity)
                             .frame(height: 42)
-                            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.white))
+                            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color("BgPanel")))
                             .overlay(alignment: .topTrailing) {
                                 let on = j == 0 && added
                                 ZStack {
@@ -1034,7 +1034,7 @@ private struct CustomizeIntroHero: View {
                     }
                     .padding(4)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(PolishTokens.neutralFill2))
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(PolishTokens.neutralFill))
                 }
             }
             .id(tab.id)
@@ -1042,7 +1042,7 @@ private struct CustomizeIntroHero: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: "#FAFAFA"))
+        .background(Color("BgPrimary"))
         .task {
             if reduceMotion { added = true; return }
             while !Task.isCancelled {
