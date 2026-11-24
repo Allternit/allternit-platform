@@ -1,6 +1,5 @@
 package com.allternit.feature.shell
 
-import com.allternit.core.design.GizziCodeWordmark
 import com.allternit.core.design.AProtocolMark
 import com.allternit.core.design.AllternitSerif
 import androidx.compose.foundation.BorderStroke
@@ -25,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -170,7 +170,7 @@ internal fun ShellHome(
     onNewChat: (ComposerDraft) -> Unit,
     onOpenSection: (RailRow) -> Unit,
     /** Wave F1: Code mode's home (folder, tools, recent threads) replaces the placeholder and the composer starts a thread. */
-    codeHome: (@Composable () -> Unit)? = null,
+    codeHome: (@Composable (ScrollState) -> Unit)? = null,
     /** Code mode's header button: the Code sessions view (iOS CodeSessionsButton → CodeOverview). */
     onCodeSessions: (() -> Unit)? = null,
     /** Code mode's composer deck row (iOS CodeDeckRow): environment, folder, branch, worktree, permission, usage, view menu. */
@@ -183,10 +183,25 @@ internal fun ShellHome(
     // Home launch: the A://TERNIT block title docks into the top bar when the launch content scrolls (T8).
     val homeScroll = rememberScrollState()
     val homeDock = rememberDockOffset(homeScroll)
+    // Code launch: GIZZI CODE docks into the bar the same way (T13); CodeHome scrolls on this state.
+    val codeScroll = rememberScrollState()
+    val codeDock = rememberDockOffset(codeScroll)
+    val codeDocks = mode == ShellMode.Code && codeHome != null && onCodeSessions != null
+    // T13: the bar keeps the selected computer's name (iOS ShellHeaderTitle); "Code" when none is selected.
+    var computerName by remember { mutableStateOf<String?>(null) }
+    val codeHost = codeActions?.host
+    LaunchedEffect(codeDocks, codeHost) {
+        if (codeDocks && codeHost != null) {
+            val relay = codeHost.backend.relay
+            computerName = relay.listDevices()?.firstOrNull { it.id == relay.activeRuntimeId }?.name?.takeIf { it.isNotBlank() }
+        }
+    }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Box(Modifier.fillMaxWidth().zIndex(1f)) {
         if (mode == ShellMode.Home) {
-            HomeDockTitle(homeDock)
+            HomeDockTitle("TERNIT", homeDock, markPrefix = true, markLabel = "Allternit")
+        } else if (codeDocks) {
+            HomeDockTitle("GIZZI CODE", codeDock)
         }
         PhoneHeader(
             // Home has no header title (Eoj 2026-11-20): the A:// mark on the page is the brand.
@@ -226,7 +241,25 @@ internal fun ShellHome(
                 }
             },
             // iOS Code launchpad title: the gizzi code lockup.
-            titleContent = if (mode == ShellMode.Code && onCodeSessions != null) ({ GizziCodeWordmark(height = 15.dp) }) else null,
+            // T13: the bar keeps its name until the first letter of GIZZI CODE flies, fades over that flight,
+            // and returns on scroll up; docked, the block title itself holds the bar centre.
+            titleContent = if (codeDocks) ({
+                val nLetters = remember { com.allternit.core.design.titleCells("GIZZI CODE").n }
+                Text(
+                    text = computerName ?: mode.label,
+                    color = AllternitTheme.colors.textPrimary,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = (-0.2).sp,
+                    maxLines = 1,
+                    modifier = Modifier.graphicsLayer {
+                        alpha = 1f - com.allternit.core.design.dockLetterProgress(
+                            (codeDock() / com.allternit.core.design.DockSpec.DOCK).coerceIn(0f, 1f), nLetters, 0,
+                        )
+                    },
+                )
+            }) else null,
         )
         }
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -244,7 +277,7 @@ internal fun ShellHome(
                     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp).padding(top = 2.dp), horizontalArrangement = Arrangement.End) {
                         com.allternit.feature.code.CodeWhatsNewButton()
                     }
-                    Box(Modifier.weight(1f).fillMaxWidth()) { codeHome() }
+                    Box(Modifier.weight(1f).fillMaxWidth()) { codeHome(codeScroll) }
                 }
             } else ModeArrives(mode)
         }
@@ -270,7 +303,7 @@ private val HOME_DOCK_TITLE_ROOM = 96.dp
 
 /** The A://TERNIT block title, drawn in window coordinates like DockTitleLayer (which has no markPrefix). */
 @Composable
-private fun HomeDockTitle(scrollOffset: () -> Float) {
+private fun HomeDockTitle(text: String, scrollOffset: () -> Float, markPrefix: Boolean = false, markLabel: String? = null) {
     var originX by remember { mutableStateOf(0) }
     var originY by remember { mutableStateOf(0) }
     val cfg = androidx.compose.ui.platform.LocalConfiguration.current
@@ -285,7 +318,7 @@ private fun HomeDockTitle(scrollOffset: () -> Float) {
                 layout(0, 0) { placeable.place(androidx.compose.ui.unit.IntOffset(-originX, -originY)) }
             },
     ) {
-        DockingBlockTitle("TERNIT", scrollOffset, markPrefix = true, markLabel = "Allternit")
+        DockingBlockTitle(text, scrollOffset, markPrefix = markPrefix, markLabel = markLabel)
     }
 }
 

@@ -1,6 +1,7 @@
 package com.allternit.feature.code
 
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
@@ -136,13 +137,20 @@ private val CodeGreetings = listOf(
  * thread's Panes, and threads in the Code sessions view (the checklist in the header), as on iOS.
  */
 @Composable
-fun CodeHome(host: CodeHost, store: CodeStore, onRoute: (CodeRoute) -> Unit) {
+fun CodeHome(
+    host: CodeHost,
+    store: CodeStore,
+    onRoute: (CodeRoute) -> Unit,
+    /** The shell's scroll state: when set, room is left for the big GIZZI CODE title the shell draws and docks (T13). */
+    dockScroll: androidx.compose.foundation.ScrollState? = null,
+) {
     val c = AllternitTheme.colors
     var folder by remember { mutableStateOf<CodeResult<CodeFolder>?>(null) }
     val greeting = remember { CodeGreetings.random() }
     LaunchedEffect(Unit) { host.reloadSessions() }
     LaunchedEffect(Unit) { folder = CodeApi.folder(host.backend) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("codeHome")) {
+    Column(Modifier.fillMaxSize().verticalScroll(dockScroll ?: rememberScrollState()).testTag("codeHome")) {
+        if (dockScroll != null) Spacer(Modifier.height(96.dp))
         if (folder == CodeResult.NoComputer) {
             // iOS ConnectComputerView over the launchpad.
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp).testTag("codeHomeNoComputer"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
