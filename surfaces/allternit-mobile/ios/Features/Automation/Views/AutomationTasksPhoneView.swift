@@ -26,6 +26,8 @@ struct AutomationTasksPhoneView: View {
     @State private var loops: [AutomationLoop] = []
     @State private var isLoading = false
     @State private var error: String? = nil
+    /// No computer paired: the lists are empty by design, not failing.
+    @State private var noComputer = false
     @State private var runningTaskId: String? = nil
     @State private var selectedTask: AutomationTaskItem? = nil
     @State private var selectedRoutine: RoutineSelection? = nil
@@ -202,10 +204,14 @@ struct AutomationTasksPhoneView: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    if noComputer {
+                        NeedsComputerLine(text: "Automation tasks run on your computer")
+                            .padding(.bottom, 8)
+                    }
                     if let error { errorBanner(error) }
                     if let actionError = store.actionError { errorBanner(actionError) }
                     typeAndViewBar.padding(.bottom, 12)
-                    keepAwakeBanner
+                    if !noComputer { keepAwakeBanner }
                     mainContent.padding(.top, 20)
                 }
                 .padding(.horizontal, 16)
@@ -542,13 +548,15 @@ struct AutomationTasksPhoneView: View {
         defer { isLoading = false }
         await store.load()
         await cron.refresh()
-        var failed = store.loadError != nil
+        var failures: [String] = store.loadError.map { [$0] } ?? []
         do {
             loops = try await AutomationClient.shared.listLoops()
         } catch {
-            failed = true
+            failures.append(error.localizedDescription)
         }
-        error = failed ? "Failed to load automation tasks" : nil
+        // No computer is not a failure: one neutral line, like Projects.
+        noComputer = !failures.isEmpty && failures.allSatisfy { ProjectsLibraryStore.isNoComputerMessage($0) }
+        error = failures.isEmpty || noComputer ? nil : "Failed to load automation tasks"
     }
 
     /// The run happens on the server; pick up its result shortly.
