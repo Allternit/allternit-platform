@@ -22,12 +22,23 @@ import SwiftUI
 //
 // Bot Home saves on Save (whole config, unknown keys kept). The bot form gets
 // the result through `BotFormModel.applyLayers` and saves with the bot.
+//
+// Plain chats (the composer's one Runtime·Brain chip) open the `.chat` target:
+// Runtime and Brain only, no Bot layer and no View switch. Runtime rows say
+// what each runtime needs (pair a computer, not installed) from
+// `ChatRuntimeStore`; the Brain layer lists the chat models `ModelPickerSheet`
+// offers (plan and subscription models included), with a last row that opens
+// `ModelPickerSheet` for effort, limits and device models. Picks apply on tap
+// to `ChatRuntimeStore.runtimeId` and `ModelStore.selectedModelId`; a runtime
+// pick in a chat already under way opens a fresh chat on it.
 // -----------------------------------------------------------------------------
 
 struct BotBrainPickerSheet: View {
     private enum Target {
         case agent(AgentRecord)
         case form(BotFormModel)
+        /// A plain chat; `hasActiveSession` = a runtime pick opens a fresh chat.
+        case chat(hasActiveSession: Bool)
     }
 
     /// One layer of the picker; the composer chips open the sheet on one.
@@ -44,6 +55,7 @@ struct BotBrainPickerSheet: View {
     @StateObject private var modelStore = ModelStore.shared
     @StateObject private var hubStore = AgentHubStore.shared
     @ObservedObject private var connections = ConnectionsStore.shared
+    @ObservedObject private var chatRuntime = ChatRuntimeStore.shared
     @EnvironmentObject private var agentModeStore: AgentModeStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -60,6 +72,11 @@ struct BotBrainPickerSheet: View {
     @State private var isSaving = false
     @State private var saveError: String?
     @State private var dirty = false
+    /// Chat target: the runtime row whose "what it needs" line is shown.
+    @State private var focusedRuntime: String?
+    @State private var isPairingPresented = false
+    @State private var isModelOptionsPresented = false
+    @State private var creditsRequest: CloudCreditsRequest?
 
     /// Bot Home: picks save to the bot. The composer chips pass the layer
     /// that was tapped, so its choices are open.
@@ -93,12 +110,30 @@ struct BotBrainPickerSheet: View {
         _look = State(initialValue: form.agentLook)
     }
 
+    /// A plain chat (the composer's Runtime·Brain chip): picks apply on tap to
+    /// the chat stores; there is nothing to save.
+    init(chat hasActiveSession: Bool, open layer: Layer = .runtime) {
+        _target = State(initialValue: .chat(hasActiveSession: hasActiveSession))
+        _openLayer = State(initialValue: layer == .bot ? .runtime : layer)
+        _brain = State(initialValue: [:])
+        _view = State(initialValue: "allternit")
+        _look = State(initialValue: nil)
+    }
+
     // MARK: Derived state
+
+    private var isChat: Bool { if case .chat = target { return true } else { return false } }
+    private var chatHasSession: Bool { if case .chat(let s) = target { return s } else { return false } }
+    /// Layers this target shows: a plain chat has no Bot layer.
+    private var layers: [Layer] { isChat ? [.runtime, .brain] : Layer.allCases }
 
     private var layout: OverviewLayout { OverviewLayout(stored: layoutRaw) ?? .grid }
 
     private var resolved: [String: JSONValue] { RuntimeRegistry.resolveRuntime(brain, in: registry.runtimes) }
-    private var runtimeId: String { resolved["runtime"]?.jString ?? "allternit" }
+    private var runtimeId: String {
+        if isChat { return chatRuntime.runtimeId }
+        return resolved["runtime"]?.jString ?? "allternit"
+    }
     private var runtime: RuntimeEntry? { registry.runtime(runtimeId) }
     private var runtimeName: String {
         if runtimeId == "custom" { return "Custom harness" }
@@ -106,6 +141,10 @@ struct BotBrainPickerSheet: View {
     }
 
     private var modelRef: (provider: String, model: String)? {
+        if isChat {
+            guard let id = modelStore.selectedModelId, let slash = id.firstIndex(of: "/") else { return nil }
+            return (String(id[..<slash]), String(id[id.index(after: slash)...]))
+        }
         guard let ref = brain["modelRef"]?.jObject,
               let p = ref["providerID"]?.jString, let m = ref["modelID"]?.jString, !p.isEmpty, !m.isEmpty else { return nil }
         return (p, m)
@@ -114,6 +153,7 @@ struct BotBrainPickerSheet: View {
     private var botName: String {
         switch target {
         case .agent(let a): return a.botDisplayName
+        case .chat: return "This chat"
         case .form(let f):
             let name = f.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
             return name.isEmpty ? "This bot" : name
@@ -124,6 +164,7 @@ struct BotBrainPickerSheet: View {
         switch target {
         case .agent(let a): return Self.connectedVendor(a)
         case .form(let f): return f.connectedVendor
+        case .chat: return nil
         }
     }
     private var locked: Bool { connectedVendor != nil }
@@ -137,8 +178,10 @@ struct BotBrainPickerSheet: View {
         let needsSignIn: Bool
     }
 
-    /// The bot form's model list (never person-only), default first.
+    /// The bot form's model list (never person-only), default first. A plain
+    /// chat lists what `ModelPickerSheet` offers, the person's plans included.
     private var brains: [BrainChoice] {
+        if isChat { return chatBrains }
         var seen = Set<String>()
         let rows = modelStore.automationModels
             .filter { !$0.isHidden && !$0.provider.hasPrefix("openrouter") }
@@ -155,6 +198,29 @@ struct BotBrainPickerSheet: View {
         return out
     }
 
+    /// `ModelPickerSheet`'s rows (hidden ones only when current), the person's
+    /// plans first, then Allternit Cloud, providers and local, each vendor's
+    /// default first. The id is the full catalog id `selectedModelId` takes.
+    private var chatBrains: [BrainChoice] {
+        let selected = modelStore.selectedModelId
+        var seen = Set<String>()
+        var out: [BrainChoice] = []
+        let rows = modelStore.chatModels
+            .filter { !$0.isHidden || $0.id == selected }
+            .sorted { Self.chatOrder($0).lexicographicallyPrecedes(Self.chatOrder($1)) }
+        for m in rows where seen.insert(m.id).inserted {
+            out.append(BrainChoice(id: m.id, provider: m.provider, model: m.shortName, name: m.name,
+                                   access: RuntimeRegistry.accessOf(providerId: m.provider),
+                                   needsSignIn: needsSignIn(m.provider)))
+        }
+        return out
+    }
+
+    /// Sort key for chat brains: provider group, vendor default, vendor rank.
+    private static func chatOrder(_ m: RuntimeModel) -> [Int] {
+        [ModelProviderNames.rank(m.provider), m.isDefault ? 0 : 1, m.rank ?? 999]
+    }
+
     /// From the Connections rows: a sign-in that expired or needs fixing.
     private func needsSignIn(_ pid: String) -> Bool {
         let ids: Set<String> = [pid, "\(pid)-key", "plan-\(pid)"]
@@ -162,11 +228,13 @@ struct BotBrainPickerSheet: View {
     }
 
     private var currentBrain: BrainChoice? {
+        if isChat { return brains.first { $0.id == modelStore.selectedModelId } }
         guard let ref = modelRef else { return nil }
         return brains.first { $0.id == "\(ref.provider)/\(ref.model)" }
     }
 
     private var brainName: String {
+        if isChat { return ComposerModelLabel.label(modelStore) }
         if let currentBrain { return currentBrain.name }
         if let ref = modelRef { return modelStore.models.first { $0.id == "\(ref.provider)/\(ref.model)" }?.name ?? ref.model }
         return "Default model"
@@ -181,6 +249,9 @@ struct BotBrainPickerSheet: View {
     private var sentence: String {
         if let vendor = connectedVendor {
             return "\(botName) is run by \(vendor). Allternit shows its work and keeps the record."
+        }
+        if isChat {
+            return "This chat works with \(runtimeName) and thinks with \(brainName), \(RuntimeRegistry.accessPhrase(brainAccess, providerId: modelRef?.provider))."
         }
         return "\(botName) works with \(runtimeName) and thinks with \(brainName), \(RuntimeRegistry.accessPhrase(brainAccess, providerId: modelRef?.provider))."
     }
@@ -237,20 +308,42 @@ struct BotBrainPickerSheet: View {
             .navigationTitle("Runtime and brain")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: save) {
-                        if isSaving { ProgressView() } else { Text(isForm ? "Done" : "Save").fontWeight(.semibold) }
+                if isChat {
+                    // Chat picks already applied on tap: nothing to cancel or save.
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dismiss() }
+                            .fontWeight(.semibold)
+                            .accessibilityIdentifier("runtimeBrainDone")
                     }
-                    .disabled(isSaving || (!dirty && !isForm))
+                } else {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Cancel") { dismiss() }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: save) {
+                            if isSaving { ProgressView() } else { Text(isForm ? "Done" : "Save").fontWeight(.semibold) }
+                        }
+                        .disabled(isSaving || (!dirty && !isForm))
+                    }
                 }
             }
             .task {
                 registry.refreshIfNeeded()
                 modelStore.fetchModelsIfNeeded()
-                if hubStore.agents.isEmpty { hubStore.fetchAgentsIfNeeded() }
+                if isChat {
+                    chatRuntime.refreshIfNeeded()
+                } else if hubStore.agents.isEmpty {
+                    hubStore.fetchAgentsIfNeeded()
+                }
+            }
+            .sheet(isPresented: $isPairingPresented, onDismiss: { chatRuntime.refreshIfNeeded(force: true) }) {
+                RuntimePairingView()
+            }
+            .sheet(isPresented: $isModelOptionsPresented) {
+                ModelPickerSheet(modelStore: modelStore)
+            }
+            .sheet(item: $creditsRequest) { request in
+                CloudCreditsSheet(request: request)
             }
         }
     }
@@ -259,7 +352,19 @@ struct BotBrainPickerSheet: View {
 
     // MARK: Header
 
+    @ViewBuilder
     private var header: some View {
+        if isChat {
+            Text("Where this chat runs and the brain it thinks with. Allternit runs anywhere; the others run on your computer.")
+                .font(.system(size: 14))
+                .foregroundColor(Color("TextSecondary"))
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            botHeader
+        }
+    }
+
+    private var botHeader: some View {
         HStack(spacing: 12) {
             botFace(size: 40)
             VStack(alignment: .leading, spacing: 2) {
@@ -295,6 +400,8 @@ struct BotBrainPickerSheet: View {
         switch target {
         case .agent(let a):
             BotAvatarView(bot: a, size: size).accessibilityHidden(true)
+        case .chat:
+            EmptyView()
         case .form(let f):
             Text(String(botName.prefix(1)).uppercased())
                 .font(.system(size: size * 0.45, weight: .semibold))
@@ -337,7 +444,7 @@ struct BotBrainPickerSheet: View {
 
     private var rail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Layer.allCases) { layer in
+            ForEach(layers) { layer in
                 layerSection(layer)
             }
             HStack(alignment: .top, spacing: 12) {
@@ -466,6 +573,7 @@ struct BotBrainPickerSheet: View {
             emptyLine("No runtimes match “\(query)”.")
         } else {
             choices(runtimeChoices.map { r in
+                if isChat { return chatRuntimeChoice(r) }
                 var badges: [Badge] = []
                 if r.hasLiveApp { badges.append(Badge(text: "Live app", tone: .live)) }
                 badges.append(Badge(text: r.brainsLabel, tone: .plain))
@@ -474,10 +582,75 @@ struct BotBrainPickerSheet: View {
                 }
                 return Choice(id: r.id, name: r.name, detail: r.status?.label ?? "\(r.categoryLabel) · \(r.vendor)",
                               mark: .provider(r.id), badges: badges, ok: true, selected: r.id == runtimeId)
-            }) { id in
-                if let r = registry.runtime(id) { pickRuntime(r) }
+            }, idPrefix: isChat ? "chatRuntime-" : nil) { id in
+                if let r = registry.runtime(id) { isChat ? pickChatRuntime(r) : pickRuntime(r) }
             }
+            if isChat { runtimeNeeds }
         }
+    }
+
+    /// Chat target: a runtime row with what it needs right now (the old
+    /// runtime sheet's lines). Rows that can't run stay tappable: a tap shows
+    /// how to fix it below the list.
+    private func chatRuntimeChoice(_ r: RuntimeEntry) -> Choice {
+        let a = chatRuntime.availability(r, installed: registry.installed)
+        var badges: [Badge] = []
+        if r.hasLiveApp { badges.append(Badge(text: "Live app", tone: .live)) }
+        switch a {
+        case .needsComputer: badges.append(Badge(text: "Needs a computer", tone: .warn))
+        case .notInstalled: badges.append(Badge(text: "Not installed", tone: .warn))
+        case .ready, .checking: badges.append(Badge(text: r.brainsLabel, tone: .plain))
+        }
+        return Choice(id: r.id, name: r.name, detail: chatRuntimeDetail(r, a), mark: .provider(r.id),
+                      badges: badges, ok: true, selected: r.id == runtimeId)
+    }
+
+    private func chatRuntimeDetail(_ r: RuntimeEntry, _ a: ChatRuntimeAvailability) -> String {
+        switch a {
+        case .ready: return r.id == "allternit" ? "Runs anywhere · \(r.brainsLabel)" : "\(r.categoryLabel) · \(r.brainsLabel)"
+        case .checking: return "Checking your computer…"
+        case .needsComputer: return "Needs a computer"
+        case .notInstalled(let computer): return "Not installed on \(computer)"
+        }
+    }
+
+    /// The tapped (or picked) runtime that can't run yet: why, and the fix.
+    @ViewBuilder
+    private var runtimeNeeds: some View {
+        let id = focusedRuntime ?? runtimeId
+        if let r = registry.runtime(id),
+           case let a = chatRuntime.availability(r, installed: registry.installed),
+           let message = a.message(r.name) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(message, systemImage: a == .needsComputer ? "desktopcomputer" : "exclamationmark.triangle")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextPrimary"))
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    if a == .needsComputer {
+                        needsButton("Pair a computer") { isPairingPresented = true }
+                    }
+                    needsButton("Check again") { chatRuntime.refreshIfNeeded(force: true) }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private func needsButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color("TextPrimary"))
+                .padding(.horizontal, 14)
+                .frame(minHeight: 44)
+                .background(Capsule().fill(Color("BgPanel")))
+                .overlay(Capsule().stroke(Color("BorderSubtle")))
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -491,6 +664,7 @@ struct BotBrainPickerSheet: View {
                     .font(.system(size: 13, weight: .medium))
                     .frame(minHeight: 44)
             }
+            if isChat { modelOptionsRow }
         } else if brains.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Text("No brains yet. Connect a plan, an API key or a local model.")
@@ -512,22 +686,62 @@ struct BotBrainPickerSheet: View {
             }
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("BgPanel")))
+            if isChat { modelOptionsRow }
         } else if brainChoices.isEmpty {
             emptyLine("No brains match “\(query)”.")
+            if isChat { modelOptionsRow }
         } else {
             choices(brainChoices.prefix(48).map { b in
                 let ok = runtime.map { RuntimeRegistry.fits($0, providerId: b.provider) } ?? true
                 var badges = [Badge(text: b.access.label, tone: .access(b.access))]
                 if b.needsSignIn { badges.append(Badge(text: "Needs sign-in", tone: .warn)) }
                 let phrase = RuntimeRegistry.accessPhrase(b.access, providerId: b.provider)
+                if isChat, modelStore.isCloudLocked(b.id) { badges.append(Badge(text: "Needs credits", tone: .warn)) }
+                let selected = isChat ? b.id == modelStore.selectedModelId
+                    : (modelRef.map { "\($0.provider)/\($0.model)" == b.id } ?? false)
                 return Choice(id: b.id, name: b.name,
                               detail: ok ? phrase.prefix(1).uppercased() + phrase.dropFirst() : "Not with \(runtimeName)",
-                              mark: .provider(b.provider), badges: badges, ok: ok,
-                              selected: modelRef.map { "\($0.provider)/\($0.model)" == b.id } ?? false)
-            }) { id in
-                if let b = brains.first(where: { $0.id == id }) { pickBrain(b) }
+                              mark: .provider(b.provider), badges: badges, ok: ok, selected: selected)
+            }, idPrefix: isChat ? "chatBrain-" : nil) { id in
+                if let b = brains.first(where: { $0.id == id }) { isChat ? pickChatBrain(b) : pickBrain(b) }
             }
+            if isChat { modelOptionsRow }
         }
+    }
+
+    /// Chat target: everything else `ModelPickerSheet` has (effort, limit
+    /// rings, sign-in rows, models on this iPhone and other devices).
+    private var modelOptionsRow: some View {
+        Button {
+            Haptics.selection()
+            isModelOptionsPresented = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(width: 28, height: 28)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("FillNeutral")))
+                    .accessibilityHidden(true)
+                Text("Model options, effort and limits")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color("TextTertiary"))
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 52)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color("BgPanel")))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color("BorderSubtle")))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens every model with its effort and limits")
+        .accessibilityIdentifier("runtimeBrainModelOptions")
     }
 
     @ViewBuilder
@@ -578,6 +792,45 @@ struct BotBrainPickerSheet: View {
         dirty = true
     }
 
+    /// Chat target: the old runtime sheet's path. A runtime that can't run yet
+    /// shows its fix; in a chat already under way a pick opens a fresh chat on
+    /// it (`ChatRuntimeStore.start`), otherwise the Brain layer opens next.
+    private func pickChatRuntime(_ r: RuntimeEntry) {
+        Haptics.selection()
+        let availability = chatRuntime.availability(r, installed: registry.installed)
+        guard availability == .ready else {
+            focusedRuntime = r.id
+            return
+        }
+        let selected = r.id == chatRuntime.runtimeId
+        let fresh = chatHasSession && !selected
+        chatRuntime.start(r, chatHasSession: fresh)
+        focusedRuntime = nil
+        if fresh {
+            dismiss()
+            return
+        }
+        // The brain stays the person's pick; say so when it can't run here.
+        if let ref = modelRef, !RuntimeRegistry.fits(r, providerId: ref.provider) {
+            note = "\(r.name) can't run \(brainName). Pick a brain that fits."
+        } else {
+            note = nil
+        }
+        openLayer = .brain
+    }
+
+    /// Chat target: the model sheet's path (a locked Cloud row opens the
+    /// credits sheet and keeps the old selection).
+    private func pickChatBrain(_ b: BrainChoice) {
+        Haptics.selection()
+        if modelStore.isCloudLocked(b.id) {
+            creditsRequest = CloudCreditsGate.request(modelId: b.id, reason: AccountPlanStore.shared.cloudModels?.reason)
+            return
+        }
+        modelStore.userSelectedModel(b.id)
+        note = nil
+    }
+
     private func pickBrain(_ b: BrainChoice) {
         var next = brain
         next.removeValue(forKey: "autoSwitchedFrom")
@@ -614,6 +867,8 @@ struct BotBrainPickerSheet: View {
         switch target {
         case .form(let form):
             form.applyLayers(brain: finalBrain, view: view, look: resolvedLook)
+            dismiss()
+        case .chat:
             dismiss()
         case .agent(let agent):
             isSaving = true
@@ -660,13 +915,13 @@ struct BotBrainPickerSheet: View {
     }
 
     @ViewBuilder
-    private func choices(_ items: [Choice], onPick: @escaping (String) -> Void) -> some View {
+    private func choices(_ items: [Choice], idPrefix: String? = nil, onPick: @escaping (String) -> Void) -> some View {
         switch layout {
         case .list:
             VStack(spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     if index > 0 { Divider().padding(.leading, 52) }
-                    choiceButton(item, onPick: onPick) { listRow(item) }
+                    choiceButton(item, idPrefix: idPrefix, onPick: onPick) { listRow(item) }
                 }
             }
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color("BgPanel")))
@@ -674,14 +929,14 @@ struct BotBrainPickerSheet: View {
         case .grid:
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                 ForEach(items) { item in
-                    choiceButton(item, onPick: onPick) { card(item, deck: false) }
+                    choiceButton(item, idPrefix: idPrefix, onPick: onPick) { card(item, deck: false) }
                 }
             }
         case .deck:
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 10) {
                     ForEach(items) { item in
-                        choiceButton(item, onPick: onPick) { card(item, deck: true).frame(width: 172) }
+                        choiceButton(item, idPrefix: idPrefix, onPick: onPick) { card(item, deck: true).frame(width: 172) }
                     }
                 }
                 .padding(.vertical, 2)
@@ -689,7 +944,7 @@ struct BotBrainPickerSheet: View {
         }
     }
 
-    private func choiceButton<Content: View>(_ item: Choice, onPick: @escaping (String) -> Void,
+    private func choiceButton<Content: View>(_ item: Choice, idPrefix: String?, onPick: @escaping (String) -> Void,
                                              @ViewBuilder content: () -> Content) -> some View {
         Button { onPick(item.id) } label: { content() }
             .buttonStyle(.plain)
@@ -697,6 +952,7 @@ struct BotBrainPickerSheet: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(([item.name, item.detail] + item.badges.map(\.text)).joined(separator: ", "))
             .accessibilityAddTraits(item.selected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityIdentifier(idPrefix.map { $0 + item.id } ?? "")
     }
 
     @ViewBuilder

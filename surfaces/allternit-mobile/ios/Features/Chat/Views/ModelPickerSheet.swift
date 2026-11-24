@@ -754,20 +754,20 @@ extension EnvironmentValues {
     }
 }
 
-/// The composer's chips in a bot chat (Harness & Bots 2.0 step 26; web
-/// ComposerAgentChips, approved mockup a2): runtime (mark + name), brain
-/// (mark + name) and bot (avatar + name), where a plain chat shows the model
-/// chip. Each chip opens the layered picker (`BotBrainPickerSheet`) on that
-/// layer. On a narrow row the runtime and bot chips drop their names, as the
-/// web does at phone width. A Connected bot shows locked "Run by <Vendor>"
-/// chips for runtime and brain.
+/// The bot chat's one Runtime·Brain chip (Harness & Bots 2.0; web
+/// ComposerAgentChips): runtime mark + name | brain, with the state dot and a
+/// warning when the brain can't run in the runtime. It opens the layered
+/// picker (`BotBrainPickerSheet`) with its Bot layer. A Connected bot shows
+/// locked "Run by <Vendor>" and opens on the Bot layer.
 struct ComposerAgentChips: View {
     let bot: AgentRecord
+    /// Rest state: the brain name is shortened. The chip stays one chip.
     var iconOnly = false
 
     @ObservedObject private var registry = RuntimeRegistryStore.shared
     @ObservedObject private var modelStore = ModelStore.shared
     @ObservedObject private var hubStore = AgentHubStore.shared
+    @ObservedObject private var chatRuntime = ChatRuntimeStore.shared
     @Environment(\.chatBotOpen) private var openBot
     @State private var openLayer: BotBrainPickerSheet.Layer?
 
@@ -783,8 +783,9 @@ struct ComposerAgentChips: View {
         return RuntimeRegistry.resolveRuntime(b, in: registry.runtimes)
     }
     private var runtimeId: String { brain["runtime"]?.jString ?? "allternit" }
+    private var runtime: RuntimeEntry? { registry.runtime(runtimeId) }
     private var runtimeName: String {
-        runtimeId == "custom" ? "Custom harness" : (registry.runtime(runtimeId)?.name ?? runtimeId)
+        runtimeId == "custom" ? "Custom harness" : (runtime?.name ?? runtimeId)
     }
     private var providerId: String? { brain["modelRef"]?.jObject?["providerID"]?.jString }
     private var brainName: String {
@@ -792,15 +793,31 @@ struct ComposerAgentChips: View {
               let p = ref["providerID"]?.jString, let m = ref["modelID"]?.jString else { return "Default model" }
         let name = modelStore.models.first { $0.id == "\(p)/\(m)" }?.name ?? m
         let trimmed = name.replacingOccurrences(of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
-        return trimmed.isEmpty ? name : trimmed
+        let label = trimmed.isEmpty ? name : trimmed
+        return iconOnly ? Self.short(label, 16) : label
+    }
+    private var misfit: String? {
+        guard vendor == nil, let runtime, let providerId, !RuntimeRegistry.fits(runtime, providerId: providerId) else { return nil }
+        return "brain can't run in \(runtimeName)"
+    }
+    /// Green when the runtime can run now; amber when it needs a step.
+    private var state: RuntimeBrainChipState {
+        guard vendor == nil, let runtime else { return .ready }
+        switch chatRuntime.availability(runtime, installed: registry.installed) {
+        case .ready, .checking: return .ready
+        case .needsComputer, .notInstalled: return .needsStep
+        }
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            row(namedRuntime: !iconOnly, namedBrain: !iconOnly, namedBot: !iconOnly)
-            row(namedRuntime: false, namedBrain: !iconOnly, namedBot: false)
-            row(namedRuntime: false, namedBrain: false, namedBot: false)
+        // A Connected bot: the vendor's mark, "Connected | Run by <Vendor>".
+        RuntimeBrainChip(runtimeId: vendor?.lowercased() ?? runtimeId, runtimeName: vendor == nil ? runtimeName : "Connected",
+                         brainName: brainName,
+                         state: state, warning: misfit, lockedVendor: vendor) {
+            Haptics.selection()
+            openLayer = vendor == nil ? .runtime : .bot
         }
+        .fixedSize()
         .sheet(item: $openLayer) { layer in
             BotBrainPickerSheet(agent: current, open: layer, onPickBot: openBot)
         }
@@ -808,80 +825,12 @@ struct ComposerAgentChips: View {
             registry.refreshIfNeeded()
             modelStore.fetchModelsIfNeeded()
         }
-    }
-
-    private func row(namedRuntime: Bool, namedBrain: Bool, namedBot: Bool) -> some View {
-        HStack(spacing: 4) {
-            chip(.runtime, named: namedRuntime)
-            chip(.brain, named: namedBrain)
-            chip(.bot, named: namedBot)
+        .task(id: runtimeId) {
+            if vendor == nil, runtimeId != "allternit" { chatRuntime.refreshIfNeeded() }
         }
-        .fixedSize()
     }
 
     static func short(_ s: String, _ max: Int) -> String {
         s.count > max ? String(s.prefix(max - 1)) + "…" : s
-    }
-
-    private func text(_ layer: BotBrainPickerSheet.Layer) -> String {
-        if let vendor, layer != .bot { return "Run by \(vendor)" }
-        switch layer {
-        case .runtime: return runtimeName
-        case .brain: return brainName
-        case .bot: return current.botDisplayName
-        }
-    }
-
-    @ViewBuilder
-    private func icon(_ layer: BotBrainPickerSheet.Layer) -> some View {
-        if vendor != nil && layer != .bot {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(Color("TextSecondary"))
-                .frame(width: 18, height: 18)
-                .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 5))
-                .accessibilityHidden(true)
-        } else {
-            switch layer {
-            case .runtime: ModelProviderMark(providerId: runtimeId, size: 18)
-            case .brain: ModelProviderMark(providerId: providerId ?? runtimeId, size: 18)
-            case .bot: BotAvatarView(bot: current, size: 18).accessibilityHidden(true)
-            }
-        }
-    }
-
-    private func chip(_ layer: BotBrainPickerSheet.Layer, named: Bool) -> some View {
-        let locked = vendor != nil && layer != .bot
-        let label = text(layer)
-        return Button {
-            guard !locked else { return }
-            Haptics.selection()
-            openLayer = layer
-        } label: {
-            HStack(spacing: 4) {
-                icon(layer)
-                if named || (locked && !iconOnly) {
-                    // Long names are cut by length: the row is measured at
-                    // its ideal width (ViewThatFits), where truncation never runs.
-                    Text(Self.short(label, layer == .brain ? 16 : 13))
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                }
-                if !locked {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .opacity(0.7)
-                }
-            }
-            .foregroundColor(Color(locked ? "TextTertiary" : "TextSecondary"))
-            .padding(.horizontal, 4)
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(locked)
-        .accessibilityLabel("\(layer.rawValue): \(label)\(locked ? ", locked" : "")")
-        .accessibilityHint(locked ? "" : "Shows the \(layer.rawValue.lowercased()) choices")
-        .accessibilityIdentifier("composerChip-\(layer.rawValue.lowercased())")
     }
 }
