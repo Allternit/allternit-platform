@@ -74,6 +74,7 @@ import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.DotField
 import com.allternit.core.design.DotFieldMode
 import com.allternit.core.design.DotPattern
+import com.allternit.core.design.DotRevealStyle
 import com.allternit.core.design.R as DesignR
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -201,6 +202,11 @@ internal fun GenerationProgress(
     val elapsed = entry?.let { ((now - it.startedAtMs) / 1000).coerceAtLeast(0) } ?: 0L
     val main = GenerationProgressDetail.mainLine(detail, lane)
     val fraction = GenerationProgressDetail.barFraction(detail)
+    // Remember how this picture card looked, so the finished image replaces it with cells (field only) or a crossfade (halftone).
+    if (lane == GenerationLane.Picture) {
+        val halftone = detail?.hasPreview == true
+        androidx.compose.runtime.SideEffect { store.noteShown(callId, halftone) }
+    }
     val speak = fraction?.let { "$main, ${Math.round(it * 100)} percent" } ?: main
     Box(
         modifier.semantics(mergeDescendants = true) {
@@ -467,7 +473,7 @@ internal fun MediaGenerateCard(
                 lane = lane, aspect = GenerationProgressDetail.aspect(call), onChooseModel = onChooseModel, onConnect = onConnect, onRetry = onRetry,
             )
         }
-        call.state == ToolState.Done -> BrowserImageResult(call)
+        call.state == ToolState.Done -> RevealedImageResult(call, store)
         else -> Unit
     }
 }
@@ -553,4 +559,46 @@ internal fun RunningStrip(modifier: Modifier = Modifier, store: GenerationProgre
         }
     }
     opened?.let { id -> GenerationSheet(id, store.entry(id)?.detail?.lane ?: GenerationLane.Picture, null, onDismiss = { opened = null }, store = store) }
+}
+
+
+/** Decodes a finished picture for the reveal; null when it is missing, too big, or not an image. */
+private fun revealBitmap(call: ToolCallRecord): Bitmap? = runCatching {
+    val result = org.json.JSONObject((call.browserImageResult ?: call.output).orEmpty())
+    if (!result.optBoolean("ok")) return null
+    val source = result.optString("localImage").ifBlank { result.optString("image") }
+    if (source.length > 12 * 1024 * 1024) return null
+    val bytes = if (source.startsWith("data:image/png;base64,")) Base64.decode(source.substringAfter(','), Base64.DEFAULT) else LocalImageStore.readImage(source)
+    if (bytes == null || bytes.size > 8 * 1024 * 1024) return null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth !in 1..4096 || bounds.outHeight !in 1..4096) return null
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+}.getOrNull()
+
+/**
+ * The finished picture. When this chat just watched the call run, the card it replaces was a dot field or a halftone
+ * preview: the image blooms in cell by cell (field only) or crossfades from the halftone, over 0.8 s, then it is the
+ * plain picture. A chat that reloads a finished call, or reduced motion, shows the picture at once.
+ */
+@Composable
+private fun RevealedImageResult(call: ToolCallRecord, store: GenerationProgressStore) {
+    val wasHalftone = remember(call.id) { store.takeRevealStyle(call.id) }
+    if (wasHalftone == null) { BrowserImageResult(call); return }
+    var revealing by remember(call.id) { mutableStateOf(true) }
+    val bmp by androidx.compose.runtime.produceState<Bitmap?>(null, call.id) { value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { revealBitmap(call) } }
+    val decoded = bmp
+    val ratio = GenerationProgressDetail.aspect(call) ?: decoded?.let { it.width.toFloat() / it.height } ?: 1f
+    if (!revealing) { BrowserImageResult(call); return }
+    val shape = RoundedCornerShape(16.dp)
+    Box(Modifier.fillMaxWidth().aspectRatio(ratio).clip(shape)) {
+        DotField(
+            if (decoded == null) DotFieldMode.Field(DotPattern.Band)
+            else DotFieldMode.Reveal(decoded, if (wasHalftone) DotRevealStyle.Crossfade else DotRevealStyle.Cells, 0.8f),
+            Modifier.fillMaxSize(),
+            onRevealed = { revealing = false },
+        )
+    }
+    // Not an image we can draw here (or too big): hand straight to the plain result.
+    androidx.compose.runtime.LaunchedEffect(decoded, call.id) { if (decoded == null) { delay(1500); if (bmp == null) revealing = false } }
 }

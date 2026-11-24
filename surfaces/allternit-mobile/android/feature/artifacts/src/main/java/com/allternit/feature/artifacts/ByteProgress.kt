@@ -176,7 +176,7 @@ private fun download(client: okhttp3.OkHttpClient, url: String, onProgress: ((By
  * when there is none). Reduced motion: the halftone is a fixed medium pitch and nothing animates or spins.
  */
 @Composable
-internal fun ByteLoadingView(posterUrl: String?, progress: ByteProgress?, modifier: Modifier = Modifier, verb: String = "Loading") {
+internal fun ByteLoadingView(posterUrl: String?, progress: ByteProgress?, modifier: Modifier = Modifier, verb: String = "Loading", onPoster: (android.graphics.Bitmap?) -> Unit = {}) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val reduce = remember(context) { runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false) }
@@ -184,6 +184,7 @@ internal fun ByteLoadingView(posterUrl: String?, progress: ByteProgress?, modifi
     val poster by produceState<android.graphics.Bitmap?>(null, posterUrl) {
         value = posterUrl?.let { u -> withContext(Dispatchers.IO) { fetchBytesWithProgress(u, null)?.let { b -> BitmapFactory.decodeByteArray(b, 0, b.size) } } }
     }
+    androidx.compose.runtime.LaunchedEffect(poster) { onPoster(poster) }
     Box(modifier.fillMaxSize().background(c.fillNeutral).semantics { contentDescription = line }, contentAlignment = Alignment.BottomCenter) {
         // Dots, not blur: the poster as halftone, finer with the real byte fraction (unknown total holds coarse); no poster yet = the band field.
         val shown = poster
