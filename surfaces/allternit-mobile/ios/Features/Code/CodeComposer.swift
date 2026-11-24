@@ -54,7 +54,8 @@ struct CodeLaunchComposer: View {
             if contextBarRaw == CodeContextBarPosition.above.rawValue {
                 CodeContextBar(state: contextState, terminal: terminal)
             }
-            CodePromptEdge(strong: isFocused, terminal: terminal, isRunning: isRunning, usage: lastRunUsage)
+            CodePromptEdge(strong: isFocused, terminal: terminal, isRunning: isRunning, usage: lastRunUsage,
+                           onPair: { self.sheet = .pairing })
                 .zIndex(1)
             HStack(alignment: .bottom, spacing: 4) {
                 if let onAttach {
@@ -231,9 +232,19 @@ private struct CodePromptEdge: View {
     var terminal: Bool
     var isRunning: Bool
     var usage: CodeRunUsage?
+    var onPair: () -> Void = {}
 
     @StateObject private var modelStore = ModelStore.shared
-    @State private var showsModels = false
+    @StateObject private var environmentStore = EnvironmentStore.shared
+    @ObservedObject private var relay = RuntimeRelayStore.shared
+    @State private var showsRuntimeBrain = false
+
+    /// Amber when Code is set to a cloud computer that is not paired.
+    private var chipState: RuntimeBrainChipState {
+        if isRunning { return .running }
+        if environmentStore.environment == .cloud && relay.activeDevice == nil { return .needsStep }
+        return .ready
+    }
 
     private var ink: CodeInk { CodeInk(terminal: terminal) }
 
@@ -259,36 +270,25 @@ private struct CodePromptEdge: View {
                 }
             }
             DashedHairline(strong: strong, terminal: terminal).frame(minWidth: 8)
-            Button(action: { showsModels = true }) {
-                HStack(spacing: 5) {
-                    Image("MatrixLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 14, height: 14)
-                    Text(modelLabel)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(ink.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(ink.secondary)
-                }
-                .frame(minHeight: 36)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Model: \(modelLabel)")
-            Circle()
-                .fill(isRunning ? GizziCodeWordmark.coral : Color(hex: "#8EAB84"))
-                .frame(width: 6, height: 6)
-                .accessibilityHidden(true)
+            RuntimeBrainChip(
+                runtimeId: "gizzi",
+                runtimeName: "gizzi",
+                brainName: modelLabel,
+                state: chipState,
+                warning: chipState == .needsStep ? "Pair a computer" : nil,
+                background: .clear,
+                action: { showsRuntimeBrain = true }
+            )
             DashedHairline(strong: strong, terminal: terminal).frame(width: 10)
         }
         .frame(height: 36)
         .padding(.bottom, -18)
         .task { modelStore.fetchModelsIfNeeded() }
-        .sheet(isPresented: $showsModels) { ModelPickerSheet(modelStore: modelStore) }
+        .sheet(isPresented: $showsRuntimeBrain) {
+            CodeEnvironmentSheet(onPair: onPair, modelStore: modelStore)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
     }
 }
 
@@ -712,6 +712,10 @@ enum CodeWorktree {
 /// on, and "Pair or configure runtime…".
 private struct CodeEnvironmentSheet: View {
     let onPair: () -> Void
+    /// Set when opened from the prompt chip: adds the brain row and the
+    /// "Runtime and brain" title. Code's own stores only, never chat's.
+    var modelStore: ModelStore? = nil
+    @State private var showsModels = false
     @StateObject private var environmentStore = EnvironmentStore.shared
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @Environment(\.dismiss) private var dismiss
@@ -719,6 +723,22 @@ private struct CodeEnvironmentSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
+                if let modelStore {
+                    Text("Runtime and brain")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Color("TextPrimary"))
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 8)
+                        .accessibilityAddTraits(.isHeader)
+                    section("Brain")
+                    row(
+                        icon: "sparkles",
+                        title: ComposerModelLabel.label(modelStore),
+                        subtitle: "The model Code runs with",
+                        selected: false
+                    ) { showsModels = true }
+                    Divider().padding(.vertical, 6)
+                }
                 section("This computer")
                 row(
                     icon: "desktopcomputer",
@@ -780,6 +800,9 @@ private struct CodeEnvironmentSheet: View {
         }
         .background(Color("BgPanel"))
         .task { await relay.refresh() }
+        .sheet(isPresented: $showsModels) {
+            if let modelStore { ModelPickerSheet(modelStore: modelStore) }
+        }
     }
 
     private func section(_ title: String) -> some View {
