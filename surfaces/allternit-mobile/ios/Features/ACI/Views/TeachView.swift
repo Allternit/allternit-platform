@@ -70,23 +70,32 @@ struct TeachView: View {
         return false
     }
 
+    /// The list page: no skill is open and no recording is in review. "Teach"
+    /// is a block title that docks into the nav bar there. Once a skill or a
+    /// recording is open, the editor keeps its own header.
+    private var isListPage: Bool { review == nil && selected == nil }
+
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            if signedOut {
-                TeachBanner(text: "\(TeachClient.signInToSave) Recording and review still work here.", tone: .info)
-            } else if let failure, !isComputerOffline {
-                TeachBanner(text: failure.message, tone: .error, onRetry: { Task { await load() } })
+        Group {
+            if isListPage {
+                NavigationStack {
+                    DockingTitleScrollView(title: "Teach", chrome: .navigationBar) {
+                        VStack(spacing: 0) {
+                            banners
+                            if showList { skillList(scrolls: false) }
+                            detail
+                                .frame(maxWidth: .infinity, minHeight: 320)
+                        }
+                    }
+                    .background(Color("BgPrimary").ignoresSafeArea())
+                    .navigationTitle("Teach")
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) { backButton }
+                    }
+                }
+            } else {
+                editorBody
             }
-            if let notice {
-                TeachBanner(text: notice, tone: .info, onDismiss: { self.notice = nil })
-            }
-            if showList {
-                skillList
-                Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
-            }
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color("BgPrimary").ignoresSafeArea())
         .task { await load() }
@@ -96,36 +105,7 @@ struct TeachView: View {
             importRecording(result)
         }
         .sheet(item: $sheet) { sheet in
-            switch sheet {
-            case .replay(let skill):
-                TeachReplaySheet(skill: skill) { values in
-                    self.sheet = nil
-                    replay(skill, values: values)
-                }
-            case .schedule(let skill):
-                TeachScheduleSheet(skill: skill) { routineId in
-                    self.sheet = nil
-                    notice = "“\(skill.title)” is scheduled. It’s in Automation Tasks."
-                    if let next = skill.with(["routine_id": .string(routineId)]) { Task { await save(next) } }
-                }
-            case .run(let skill):
-                TeachRunSheet(skill: skill) {
-                    self.sheet = nil
-                    if skill.inputs.isEmpty {
-                        replay(skill, values: [:])
-                    } else {
-                        // The sheet closes first; the inputs sheet follows.
-                        Task {
-                            try? await Task.sleep(nanoseconds: 350_000_000)
-                            self.sheet = .replay(skill)
-                        }
-                    }
-                }
-            case .skillFile(let skill):
-                TeachSkillFileSheet(skill: skill)
-            case .profile:
-                TeachProfileSheet()
-            }
+            sheetContent(sheet)
         }
         .sheet(isPresented: $isConnectOpen, onDismiss: { Task { await load() } }) {
             ConnectComputerSheet()
@@ -135,6 +115,79 @@ struct TeachView: View {
         } message: {
             Text("The agent won't be able to replay it any more.")
         }
+    }
+
+    @ViewBuilder
+    private var banners: some View {
+        if signedOut {
+            TeachBanner(text: "\(TeachClient.signInToSave) Recording and review still work here.", tone: .info)
+        } else if let failure, !isComputerOffline {
+            TeachBanner(text: failure.message, tone: .error, onRetry: { Task { await load() } })
+        }
+        if let notice {
+            TeachBanner(text: notice, tone: .info, onDismiss: { self.notice = nil })
+        }
+    }
+
+    private var editorBody: some View {
+        VStack(spacing: 0) {
+            header
+            banners
+            if showList {
+                skillList(scrolls: true)
+                Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
+            }
+            detail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private func sheetContent(_ sheet: Sheet) -> some View {
+        switch sheet {
+        case .replay(let skill):
+            TeachReplaySheet(skill: skill) { values in
+                self.sheet = nil
+                replay(skill, values: values)
+            }
+        case .schedule(let skill):
+            TeachScheduleSheet(skill: skill) { routineId in
+                self.sheet = nil
+                notice = "“\(skill.title)” is scheduled. It’s in Automation Tasks."
+                if let next = skill.with(["routine_id": .string(routineId)]) { Task { await save(next) } }
+            }
+        case .run(let skill):
+            TeachRunSheet(skill: skill) {
+                self.sheet = nil
+                if skill.inputs.isEmpty {
+                    replay(skill, values: [:])
+                } else {
+                    // The sheet closes first; the inputs sheet follows.
+                    Task {
+                        try? await Task.sleep(nanoseconds: 350_000_000)
+                        self.sheet = .replay(skill)
+                    }
+                }
+            }
+        case .skillFile(let skill):
+            TeachSkillFileSheet(skill: skill)
+        case .profile:
+            TeachProfileSheet()
+        }
+    }
+
+    private var backButton: some View {
+        Button { dismiss() } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "chevron.left").font(.system(size: 15, weight: .bold))
+                Text("ACI").font(.system(size: 15))
+            }
+            .foregroundColor(Color("TextPrimary"))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back to ACI")
     }
 
     // MARK: - Header
@@ -148,17 +201,7 @@ struct TeachView: View {
                 .foregroundColor(Color("TextPrimary"))
                 .accessibilityAddTraits(.isHeader)
             HStack {
-                Button { dismiss() } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.left").font(.system(size: 15, weight: .bold))
-                        Text("ACI").font(.system(size: 15))
-                    }
-                    .foregroundColor(Color("TextPrimary"))
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back to ACI")
+                backButton
                 Spacer()
             }
         }
@@ -169,53 +212,64 @@ struct TeachView: View {
 
     // MARK: - Skill list (TeachSkillList)
 
-    private var skillList: some View {
+    private func skillList(scrolls: Bool) -> some View {
         VStack(spacing: 0) {
             HStack {
-                Text("SKILLS")
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(1.3)
-                    .foregroundColor(Color("TextTertiary"))
+                SectionLabel("Skills")
                 Spacer()
                 if review == nil {
-                    Button { isImporting = true } label: {
-                        HStack(spacing: 4) {
-                            PhIcon("record-fill", size: 11).foregroundColor(Theme.statusError)
-                            Text("Teach").font(.system(size: 12))
-                        }
-                        .foregroundColor(Color("TextSecondary"))
-                        .padding(.horizontal, 8)
-                        .frame(minHeight: 40)
-                        .contentShape(Rectangle())
+                    Button {
+                        Haptics.light()
+                        isImporting = true
+                    } label: {
+                        PhIcon("record-fill", size: 15)
+                            .foregroundColor(Theme.statusError)
+                            .frame(width: 40, height: 40)
+                            .polishGlass(cornerRadius: 20)
+                            .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(TeachGlassPress())
                     .accessibilityLabel("Teach: import a recording")
                 }
             }
             .padding(.horizontal, 14)
             .padding(.top, 10)
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    if loading && skills.isEmpty {
-                        Text("Loading skills…")
-                            .font(.system(size: 12))
-                            .foregroundColor(Color("TextTertiary"))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                    }
-                    ForEach(skills) { skill in
-                        skillRow(skill)
-                    }
-                    ForEach(unanalyzed) { contract in
-                        contractRow(contract)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 10)
+            skillRows(scrolls: scrolls)
+        }
+        .frame(maxHeight: scrolls ? UIScreen.main.bounds.height * 0.38 : nil)
+        .fixedSize(horizontal: false, vertical: !scrolls || skills.count + unanalyzed.count <= 3)
+    }
+
+    /// The captured rows in one rounded card; they scroll on their own only
+    /// beside an open skill (the list page scrolls as a whole).
+    @ViewBuilder
+    private func skillRows(scrolls: Bool) -> some View {
+        if scrolls {
+            ScrollView { skillRowsCard.padding(.horizontal, 8).padding(.bottom, 10) }
+        } else {
+            skillRowsCard.padding(.horizontal, 8).padding(.bottom, 10)
+        }
+    }
+
+    private var skillRowsCard: some View {
+        LazyVStack(spacing: 4) {
+            if loading && skills.isEmpty {
+                Text("Loading skills…")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color("TextTertiary"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+            }
+            ForEach(skills) { skill in
+                skillRow(skill)
+            }
+            ForEach(unanalyzed) { contract in
+                contractRow(contract)
             }
         }
-        .frame(maxHeight: UIScreen.main.bounds.height * 0.38)
-        .fixedSize(horizontal: false, vertical: skills.count + unanalyzed.count <= 3)
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color("BgPanel")))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
     }
 
     private func skillRow(_ skill: TeachSkill) -> some View {
@@ -522,6 +576,7 @@ struct TeachView: View {
             return
         }
         review = Review(har: text, fileName: url.lastPathComponent)
+        Haptics.soft()
     }
 
     private func analyze() {
@@ -1508,5 +1563,17 @@ private struct TeachSecondaryButton: ButtonStyle {
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
             .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+
+/// Glass circle press: the polish button press (.88) on the polish spring.
+private struct TeachGlassPress: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? PolishTokens.pressButton : 1)
+            .animation(reduceMotion ? nil : PolishTokens.press, value: configuration.isPressed)
     }
 }

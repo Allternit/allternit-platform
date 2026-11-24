@@ -66,13 +66,15 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            ScrollView {
+            // "Settings" is a block title that docks into the nav bar as the page scrolls.
+            DockingTitleScrollView(title: "Settings", chrome: .navigationBar) {
                 VStack(spacing: 4) {
                     ForEach(Array(SettingsRoot.entries.enumerated()), id: \.offset) { _, entry in
                         entryView(entry)
                     }
                 }
-                .padding(EdgeInsets(top: 8, leading: 16, bottom: 32, trailing: 16))
+                // The dock adds 14pt per side, so 2 here keeps the 16pt gutter.
+                .padding(EdgeInsets(top: 8, leading: 2, bottom: 32, trailing: 2))
             }
             .background(Color("BgPrimary").ignoresSafeArea())
             .navigationTitle("Settings")
@@ -217,7 +219,7 @@ struct SettingsView: View {
             accountsCard
         case .group(let label, let rows):
             VStack(spacing: 0) {
-                PhoneSettingsLabel(text: label)
+                SectionLabel(label).padding(EdgeInsets(top: 18, leading: 2, bottom: 8, trailing: 2))
                 PhoneSettingsCard {
                     ForEach(Array(rows.enumerated()), id: \.element) { index, row in
                         if index > 0 { PhoneCardDivider() }
@@ -227,7 +229,7 @@ struct SettingsView: View {
             }
         case .appearance:
             VStack(spacing: 0) {
-                PhoneSettingsLabel(text: "Appearance")
+                SectionLabel("Appearance").padding(EdgeInsets(top: 18, leading: 2, bottom: 8, trailing: 2))
                 PhoneSettingsCard { AppearanceTiles() }
             }
         case .advanced:
@@ -236,7 +238,7 @@ struct SettingsView: View {
                     PhoneSettingsRowContent(title: "Advanced", systemImage: "wrench",
                                             value: "\(SettingsRoot.advancedPageCount()) pages") { PhoneRowChevron() }
                 }
-                .buttonStyle(PhoneRowButtonStyle())
+                .buttonStyle(SettingsRowPress())
                 .accessibilityIdentifier("settingsAdvancedRow")
             }
             .padding(.top, 18)
@@ -258,12 +260,13 @@ struct SettingsView: View {
                 PhoneSettingsRowContent(title: row.title, systemImage: "safari",
                                         value: settings.openLinksIn.label) { PhoneRowChevron() }
             }
-            .buttonStyle(PhoneRowButtonStyle())
+            .buttonStyle(SettingsRowPress())
         case .haptics:
             PhoneToggleRow(title: row.title, systemImage: "iphone.radiowaves.left.and.right", isOn: $hapticsOn)
-                .onChange(of: hapticsOn) { _, on in if on { Haptics.light() } }
+                .onChange(of: hapticsOn) { _, on in if on { Haptics.light() } else { Haptics.selection() } }
         case .reduceMotion:
             PhoneToggleRow(title: row.title, systemImage: "figure.walk.motion", isOn: $appearance.reduceMotion)
+                .onChange(of: appearance.reduceMotion) { _, _ in Haptics.selection() }
         }
     }
 
@@ -286,7 +289,7 @@ struct SettingsView: View {
                     PhoneRowChevron()
                 }
             }
-            .buttonStyle(PhoneRowButtonStyle())
+            .buttonStyle(SettingsRowPress())
         }
     }
 
@@ -294,7 +297,7 @@ struct SettingsView: View {
         Button(action: action) {
             PhoneSettingsRowContent(title: title, systemImage: systemImage) { PhoneRowChevron() }
         }
-        .buttonStyle(PhoneRowButtonStyle())
+        .buttonStyle(SettingsRowPress())
     }
 
     /// Row values: the version on About, the plan on Billing, "N% used" on
@@ -366,7 +369,7 @@ struct SettingsView: View {
                         .padding(.vertical, 10)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(PhoneRowButtonStyle())
+                    .buttonStyle(SettingsRowPress())
                 }
             }
             if leaveFailed {
@@ -432,7 +435,7 @@ struct SettingsView: View {
             .frame(minHeight: 56)
             .contentShape(Rectangle())
         }
-        .buttonStyle(PhoneRowButtonStyle())
+        .buttonStyle(SettingsRowPress())
         .disabled(switchingTo != nil)
         .accessibilityAddTraits(active ? .isSelected : [])
         .accessibilityHint(active ? "Opens your profile" : "Switches to this account")
@@ -476,7 +479,7 @@ struct SettingsView: View {
                 .frame(minHeight: 56)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(PhoneRowButtonStyle())
+            .buttonStyle(SettingsRowPress())
             .accessibilityLabel("\(account.name), \(account.email)")
             .accessibilityHint("Signs out, then opens sign-in for this account")
 
@@ -523,7 +526,7 @@ struct SettingsView: View {
             .frame(minHeight: 56)
             .contentShape(Rectangle())
         }
-        .buttonStyle(PhoneRowButtonStyle())
+        .buttonStyle(SettingsRowPress())
         .disabled(leaving != nil || switchingTo != nil)
         .accessibilityHint("Signs out, then opens an empty sign-in")
     }
@@ -672,7 +675,7 @@ struct SettingsView: View {
             VStack(spacing: 4) {
                 ForEach(SettingsAdvancedSection.allCases, id: \.self) { section in
                     VStack(spacing: 0) {
-                        PhoneSettingsLabel(text: section.label)
+                        SectionLabel(section.label).padding(EdgeInsets(top: 18, leading: 2, bottom: 8, trailing: 2))
                         PhoneSettingsCard {
                             rows(SettingsRoot.advancedItems(section))
                             advancedExtras(section)
@@ -709,13 +712,15 @@ struct SettingsView: View {
                     PhoneSettingsRowContent(title: "Meetings", systemImage: "video",
                                             value: Self.meetingsRuleLabel(meetings.settings?.autoJoin)) { PhoneRowChevron() }
                 }
-                .buttonStyle(PhoneRowButtonStyle())
+                .buttonStyle(SettingsRowPress())
                 .accessibilityIdentifier("settingsMeetingsRow")
             }
             PhoneCardDivider()
             PhoneToggleRow(title: "Save chat drafts", systemImage: "square.and.arrow.down", isOn: $settings.autoSave)
+                .onChange(of: settings.autoSave) { _, _ in Haptics.selection() }
             PhoneCardDivider()
             PhoneToggleRow(title: "Waiting games", systemImage: "gamecontroller", isOn: $waitingGames)
+                .onChange(of: waitingGames) { _, _ in Haptics.selection() }
         case .computers:
             // Native: the iPhone app's own phone link (App Store build).
             PhoneCardDivider()
@@ -726,7 +731,7 @@ struct SettingsView: View {
                     value: appPhone.credentials == nil ? "Off" : "Paired"
                 ) { PhoneRowChevron() }
             }
-            .buttonStyle(PhoneRowButtonStyle())
+            .buttonStyle(SettingsRowPress())
             if filesDrive.isEnabled {
                 // Files drive dashboard: devices + wake setting, shares, audit.
                 PhoneCardDivider()
@@ -734,7 +739,7 @@ struct SettingsView: View {
                     PhoneSettingsRowContent(title: "Files", systemImage: "folder",
                                             value: filesDrive.computers.count == 1 ? "1 computer" : "\(filesDrive.computers.count) computers") { PhoneRowChevron() }
                 }
-                .buttonStyle(PhoneRowButtonStyle())
+                .buttonStyle(SettingsRowPress())
                 .accessibilityIdentifier("settingsFilesRow")
             }
         case .developer:
@@ -785,7 +790,7 @@ struct SettingsView: View {
             .frame(minHeight: 50)
             .contentShape(Rectangle())
         }
-        .buttonStyle(PhoneRowButtonStyle())
+        .buttonStyle(SettingsRowPress())
         .accessibilityLabel("System status")
         .accessibilityValue(systemStatus?.line ?? "")
         .accessibilityHint("Opens status.allternit.com")
@@ -992,5 +997,17 @@ struct RememberedAccountAvatar: View {
             .foregroundColor(Color("BgPrimary"))
             .frame(width: size, height: size)
             .background(Color("TextPrimary"))
+    }
+}
+
+/// Root and Advanced rows: the neutral highlight plus a .98 press (PolishTokens.pressRow).
+private struct SettingsRowPress: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? Color("FillNeutral") : Color.clear)
+            .scaleEffect(configuration.isPressed ? PolishTokens.pressRow : 1)
+            .animation(reduceMotion ? nil : PolishTokens.press, value: configuration.isPressed)
     }
 }
