@@ -785,7 +785,7 @@ struct BotLaunchComposer: View {
 
     private var toRow: some View {
         HStack(spacing: 8) {
-            Text("To:")
+            Text("To:").fixedSize()
             if let bot = selectedBot {
                 Button { onPick(nil) } label: {
                     HStack(spacing: 4) {
@@ -796,7 +796,7 @@ struct BotLaunchComposer: View {
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(selectedStatus.tone)
                         }
-                        Text("×").foregroundColor(Color("TextSecondary"))
+                        Text("×").foregroundColor(Color("TextSecondary")).fixedSize()
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
@@ -837,7 +837,6 @@ struct BotLaunchComposer: View {
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color("BorderStrong")))
             }
             .accessibilityLabel("Choose who to send to")
-            Spacer(minLength: 0)
         }
         .font(.system(size: 12.5))
         .foregroundColor(Color("TextTertiary"))
