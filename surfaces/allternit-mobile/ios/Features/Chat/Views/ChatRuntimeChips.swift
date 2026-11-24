@@ -1,11 +1,12 @@
 import SwiftUI
 import UIKit
 
-// Harness & Bots 2.0 in every chat (not only bot chats): the composer shows a
-// Runtime chip and a Brain chip in place of the model pill. Allternit is the
-// default runtime. Picking another runtime starts a chat on it when a paired
-// computer that has the runtime is online; otherwise the choice stays visible
-// with what's missing ("runs on a computer" / "isn't installed on …").
+// Harness & Bots 2.0 in every chat (not only bot chats): the composer shows
+// one Runtime·Brain chip in place of the model pill, and it opens the layered
+// picker ("Runtime and brain", `BotBrainPickerSheet` chat target). Allternit
+// is the default runtime. Picking another runtime starts a chat on it when a
+// paired computer that has the runtime is online; otherwise the choice stays
+// visible with what's missing ("runs on a computer" / "isn't installed on …").
 //
 // The new chat is created by ChatViewModel.ensureSessionId, which stamps the
 // session with `metadata.runtime` + the legacy `brainMode`/`harness` (the
@@ -111,19 +112,22 @@ final class ChatRuntimeStore: ObservableObject {
     }
 }
 
-/// Runtime + Brain chips for a chat without a bot (the bot chat keeps
-/// `ComposerAgentChips`, which adds the Bot chip).
+/// The plain chat's one Runtime·Brain chip (a bot chat has
+/// `ComposerAgentChips`). It opens the layered picker on its chat target
+/// ("Runtime and brain": Runtime and Brain, no Bot layer).
 struct ComposerChatChips: View {
+    /// Rest state: the brain name is shortened. The chip stays one chip.
     var iconOnly = false
-    /// The chat already has a session (a pick then opens a fresh chat).
+    /// The chat already has a session (a runtime pick then opens a fresh chat).
     let hasActiveSession: Bool
-    /// Opens the brain (model) picker.
+    /// Kept for the composer hosts' signature. The model sheet now opens from
+    /// the picker's "Model options, effort and limits" row.
     let onBrain: () -> Void
 
     @ObservedObject private var store = ChatRuntimeStore.shared
     @ObservedObject private var registry = RuntimeRegistryStore.shared
     @ObservedObject private var modelStore = ModelStore.shared
-    @State private var isRuntimePickerPresented = false
+    @State private var isPickerPresented = false
 
     private var runtime: RuntimeEntry? { registry.runtime(store.runtimeId) }
     private var runtimeName: String { runtime?.name ?? "Allternit" }
@@ -133,260 +137,41 @@ struct ComposerChatChips: View {
     }
     private var brainName: String {
         if modelStore.isLoading && modelStore.models.isEmpty { return "Loading…" }
-        return ComposerModelLabel.label(modelStore)
+        let name = ComposerModelLabel.label(modelStore)
+        return iconOnly ? ComposerAgentChips.short(name, 16) : name
     }
     /// The picked brain can't run in the picked runtime.
-    private var brainMisfit: Bool {
-        guard let runtime, let providerId else { return false }
-        return !RuntimeRegistry.fits(runtime, providerId: providerId)
+    private var misfit: String? {
+        guard let runtime, let providerId, !RuntimeRegistry.fits(runtime, providerId: providerId) else { return nil }
+        return "brain can't run in \(runtimeName)"
+    }
+    /// Green when the runtime can run now; amber when it needs a step
+    /// (pair a computer, not installed).
+    private var state: RuntimeBrainChipState {
+        guard let runtime else { return .ready }
+        switch store.availability(runtime, installed: registry.installed) {
+        case .ready, .checking: return .ready
+        case .needsComputer, .notInstalled: return .needsStep
+        }
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            row(namedRuntime: !iconOnly, namedBrain: !iconOnly)
-            row(namedRuntime: false, namedBrain: !iconOnly)
-            row(namedRuntime: false, namedBrain: false)
+        RuntimeBrainChip(runtimeId: store.runtimeId, runtimeName: runtimeName, brainName: brainName,
+                         state: state, warning: misfit) {
+            Haptics.selection()
+            isPickerPresented = true
         }
-        .sheet(isPresented: $isRuntimePickerPresented) {
-            ChatRuntimePickerSheet(hasActiveSession: hasActiveSession)
+        .fixedSize()
+        .sheet(isPresented: $isPickerPresented) {
+            BotBrainPickerSheet(chat: hasActiveSession)
         }
         .task {
             registry.refreshIfNeeded()
             modelStore.fetchModelsIfNeeded()
         }
-    }
-
-    private func row(namedRuntime: Bool, namedBrain: Bool) -> some View {
-        HStack(spacing: 4) {
-            chip(
-                label: runtimeName, named: namedRuntime, maxChars: 13,
-                mark: AnyView(ModelProviderMark(providerId: store.runtimeId, size: 18)),
-                a11y: "Runtime: \(runtimeName)", hint: "Shows the runtime choices", id: "composerChip-runtime"
-            ) {
-                isRuntimePickerPresented = true
-            }
-            chip(
-                label: brainName, named: namedBrain, maxChars: 16,
-                mark: AnyView(ModelProviderMark(providerId: providerId ?? store.runtimeId, size: 18)),
-                a11y: "Brain: \(brainName)\(brainMisfit ? ", can't run in \(runtimeName)" : "")",
-                hint: "Shows the brain choices", id: "composerChip-brain", warn: brainMisfit
-            ) {
-                onBrain()
-            }
+        .task(id: store.runtimeId) {
+            // Only a computer runtime needs the paired-computer check.
+            if store.runtimeId != "allternit" { store.refreshIfNeeded() }
         }
-        .fixedSize()
-    }
-
-    private func chip(label: String, named: Bool, maxChars: Int, mark: AnyView, a11y: String, hint: String,
-                      id: String, warn: Bool = false, action: @escaping () -> Void) -> some View {
-        Button {
-            Haptics.selection()
-            action()
-        } label: {
-            HStack(spacing: 4) {
-                mark.accessibilityHidden(true)
-                if named {
-                    Text(ComposerAgentChips.short(label, maxChars))
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                }
-                if warn {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(Theme.statusWarning)
-                        .accessibilityHidden(true)
-                }
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .opacity(0.7)
-            }
-            .foregroundColor(Color("TextSecondary"))
-            .padding(.horizontal, 4)
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(a11y)
-        .accessibilityHint(hint)
-        .accessibilityIdentifier(id)
-    }
-}
-
-/// The plain chat's runtime choices. Every runtime stays listed; one that
-/// can't run yet says why, with the way to fix it.
-struct ChatRuntimePickerSheet: View {
-    let hasActiveSession: Bool
-
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var store = ChatRuntimeStore.shared
-    @ObservedObject private var registry = RuntimeRegistryStore.shared
-    @State private var query = ""
-    @State private var focused: String?
-    @State private var isPairingPresented = false
-
-    private var choices: [RuntimeEntry] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return registry.runtimes
-            .filter { !$0.more || $0.id == store.runtimeId || !q.isEmpty }
-            .filter { q.isEmpty || [$0.name, $0.vendor, $0.categoryLabel].joined(separator: " ").lowercased().contains(q) }
-    }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Where this chat runs. Allternit runs anywhere; the others run on your computer.")
-                        .font(.subheadline)
-                        .foregroundColor(Color("TextSecondary"))
-                        .fixedSize(horizontal: false, vertical: true)
-                    searchField
-                    switch registry.status {
-                    case .error: notice("Couldn't load the latest runtimes. Showing the built-in list.")
-                    case .stale: notice("You're offline. Showing the saved list of runtimes.")
-                    default: EmptyView()
-                    }
-                    if choices.isEmpty {
-                        Text("No runtimes match “\(query)”.")
-                            .font(.subheadline)
-                            .foregroundColor(Color("TextSecondary"))
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(Array(choices.enumerated()), id: \.element.id) { i, r in
-                                if i > 0 { PhoneCardDivider() }
-                                row(r)
-                            }
-                        }
-                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color("BgPanel")))
-                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color("BorderSubtle")))
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .background(Color("BgPrimary").ignoresSafeArea())
-            .navigationTitle("Runtime")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }.fontWeight(.semibold)
-                }
-            }
-            .refreshable { await store.refresh() }
-            .task {
-                registry.refreshIfNeeded()
-                store.refreshIfNeeded()
-            }
-            .sheet(isPresented: $isPairingPresented, onDismiss: { store.refreshIfNeeded(force: true) }) {
-                RuntimePairingView()
-            }
-        }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(Color("TextTertiary"))
-                .accessibilityHidden(true)
-            TextField("Search runtimes", text: $query)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-        }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 44)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color("FillNeutral")))
-    }
-
-    private func notice(_ text: String) -> some View {
-        Label(text, systemImage: "info.circle")
-            .font(.footnote)
-            .foregroundColor(Color("TextSecondary"))
-    }
-
-    private func row(_ r: RuntimeEntry) -> some View {
-        let availability = store.availability(r, installed: registry.installed)
-        let selected = r.id == store.runtimeId
-        let showNote = focused == r.id || (selected && availability != .ready)
-        return VStack(alignment: .leading, spacing: 8) {
-            Button {
-                Haptics.selection()
-                if availability == .ready {
-                    store.start(r, chatHasSession: hasActiveSession && !selected)
-                    dismiss()
-                } else {
-                    focused = r.id
-                }
-            } label: {
-                HStack(spacing: 12) {
-                    ModelProviderMark(providerId: r.id, size: 28)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(r.name)
-                            .font(.body.weight(.medium))
-                            .foregroundColor(Color("TextPrimary"))
-                        Text(detail(r, availability))
-                            .font(.footnote)
-                            .foregroundColor(Color("TextSecondary"))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 8)
-                    if availability == .checking {
-                        ProgressView().controlSize(.small)
-                    } else if selected {
-                        Image(systemName: "checkmark")
-                            .font(.body.weight(.semibold))
-                            .foregroundColor(Color("TextPrimary"))
-                            .accessibilityHidden(true)
-                    }
-                }
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(r.name), \(detail(r, availability))")
-            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-            .accessibilityIdentifier("chatRuntime-\(r.id)")
-
-            if showNote, let message = availability.message(r.name) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label(message, systemImage: availability == .needsComputer ? "desktopcomputer" : "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundColor(Color("TextPrimary"))
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
-                        if availability == .needsComputer {
-                            actionButton("Pair a computer") { isPairingPresented = true }
-                        }
-                        actionButton("Check again") { store.refreshIfNeeded(force: true) }
-                    }
-                }
-                .padding(.leading, 40)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
-    private func detail(_ r: RuntimeEntry, _ a: ChatRuntimeAvailability) -> String {
-        switch a {
-        case .ready: return r.id == "allternit" ? "Runs anywhere · \(r.brainsLabel)" : "\(r.categoryLabel) · \(r.brainsLabel)"
-        case .checking: return "Checking your computer…"
-        case .needsComputer: return "Needs a computer"
-        case .notInstalled(let computer): return "Not installed on \(computer)"
-        }
-    }
-
-    private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.footnote.weight(.semibold))
-                .foregroundColor(Color("TextPrimary"))
-                .padding(.horizontal, 14)
-                .frame(minHeight: 44)
-                .background(Capsule().fill(Color("FillNeutral")))
-                .overlay(Capsule().stroke(Color("BorderSubtle")))
-        }
-        .buttonStyle(.plain)
     }
 }
