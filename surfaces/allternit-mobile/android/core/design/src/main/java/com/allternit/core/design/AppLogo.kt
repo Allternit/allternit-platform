@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -23,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -46,6 +48,11 @@ object AppLogoCatalog {
         "google" to "google", "gemini" to "googlegemini", "moonshot" to "moonshot", "kimi" to "kimi",
         "local-brain" to "ollama", "allternit-sidecar" to "allternit", "omlx" to "ollama",
         "copilot" to "githubcopilot", "z-ai" to "zai", "z.ai" to "zai",
+        // Runtime and brain ids (gizzi cli-catalog, subscription and plan ids).
+        "cursor-agent" to "cursoragent", "kimi-cli" to "kimi", "plan-kimi" to "kimi", "qwen-cli" to "qwencli",
+        "claude-code" to "claude", "claude-cli" to "claude", "claude-org" to "claude", "plan-claude" to "claude",
+        "codex-cli" to "codex", "plan-chatgpt" to "codex", "chatgpt-phone" to "codex", "plan-grok" to "grok",
+        "gemini-cli" to "googlegemini", "kiro-cli" to "kirocli",
     )
 
     /** The logo key for a provider or brain id (anthropic, openai, deepseek, zai, copilot and so on). */
@@ -109,5 +116,29 @@ fun AppLogo(name: String, modifier: Modifier = Modifier, id: String? = null, url
         val image = bundled ?: favicon
         if (image != null) Image(image.asImageBitmap(), null, Modifier.size((size.value * 0.58f).dp), contentScale = ContentScale.Fit)
         else Text(AppLogoCatalog.initials(name), color = Color(0xFF6B6B6B), fontSize = (size.value * 0.34f).sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/**
+ * A runtime or brain mark by id (cursor-agent, kimi-cli, plan-claude, codebuddy ...): the bundled brand logo on the white tile,
+ * else a neutral terminal glyph on the neutral tile. Never a text initial.
+ */
+@Composable
+fun ProviderLogoMark(key: String, size: Dp) {
+    val context = LocalContext.current
+    val c = AllternitTheme.colors
+    val bitmap = remember(key) {
+        val id = key.lowercase().removePrefix("subs-")
+        listOf(id, id.removeSuffix("-cli")).distinct().firstNotNullOfOrNull { AppLogoCatalog.bitmap(context, AppLogoCatalog.providerKey(it), it, null) }
+    }
+    val shape = RoundedCornerShape((size.value * 0.24f).dp)
+    if (bitmap != null) {
+        Box(Modifier.size(size).clip(shape).background(Color.White).border(1.dp, c.borderSubtle, shape), contentAlignment = Alignment.Center) {
+            Image(bitmap.asImageBitmap(), null, Modifier.size((size.value * 0.58f).dp), contentScale = ContentScale.Fit)
+        }
+    } else {
+        Box(Modifier.size(size).clip(shape).background(c.fillNeutral).border(1.dp, c.borderSubtle, shape), contentAlignment = Alignment.Center) {
+            Icon(painterResource(R.drawable.ph_terminal_window), null, tint = c.textSecondary, modifier = Modifier.size((size.value * 0.5f).dp))
+        }
     }
 }
