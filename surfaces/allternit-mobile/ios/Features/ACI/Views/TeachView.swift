@@ -72,7 +72,8 @@ struct TeachView: View {
 
     /// The list page: no skill is open and no recording is in review. "Teach"
     /// is a block title that docks into the nav bar there. Once a skill or a
-    /// recording is open, the editor keeps its own header.
+    /// recording is open (load() opens the first skill, so that is the usual
+    /// case), the editor keeps its own header with the title already docked.
     private var isListPage: Bool { review == nil && selected == nil }
 
     var body: some View {
@@ -195,10 +196,10 @@ struct TeachView: View {
     /// PhoneTeachOverlay: "‹ ACI" back, "Teach" title.
     private var header: some View {
         ZStack {
-            Text("Teach")
-                .font(.system(size: 22, weight: .medium, design: .serif))
-                .tracking(-0.2)
-                .foregroundColor(Color("TextPrimary"))
+            // The docked form of the list page's block title: the editor's
+            // list and form scroll on their own, so the title sits docked.
+            PixelWordmark(height: PolishTokens.smallHeight, suffix: "Teach", wordOnly: true,
+                          ink: PolishTokens.ink)
                 .accessibilityAddTraits(.isHeader)
             HStack {
                 backButton

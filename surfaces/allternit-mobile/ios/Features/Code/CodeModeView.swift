@@ -57,8 +57,6 @@ struct CodeModeView: View {
     @ObservedObject private var backdrops = StageBackdropStore.shared
     @State private var isBackgroundPresented = false
     @State private var draft = ""
-    /// Launchpad scroll offset (T13): drives the computer name's fade in the bar.
-    @State private var launchOffset: CGFloat = 0
     @State private var greeting = CodeModeView.greetings.randomElement() ?? "What's up next?"
     @AppStorage("allternit:code:show-usage") private var showUsage = false
     @AppStorage(CodePermissionMode.storageKey) private var permissionRaw = CodePermissionMode.manual.rawValue
@@ -121,7 +119,6 @@ struct CodeModeView: View {
         VStack(spacing: 0) {
             ConnectComputerView()
             header
-                .zIndex(1)
             ZStack {
                 Group {
                     if let thread {
@@ -136,10 +133,7 @@ struct CodeModeView: View {
                         )
                         .id(thread.id)
                     } else {
-                        // The launchpad reaches up under the bar so the GIZZI CODE
-                        // dock can draw in it; the bar stays on top.
                         launchpad
-                            .padding(.top, -Self.barHeight)
                     }
                 }
                 .opacity(shellOpen ? 0 : 1)
@@ -279,23 +273,7 @@ struct CodeModeView: View {
             headerTitle(ink: ink)
                 .padding(.horizontal, inThread && activeSessionId != nil && !shellOpen ? 100 : 56)
         }
-        .background {
-            // On the launchpad the centre of the bar is open for the docking title.
-            (darkChrome ? TerminalPalette.background : Color("BgPrimary"))
-                .mask(DockHeaderHole(active: thread == nil && !shellOpen))
-        }
-    }
-
-    private static let barHeight: CGFloat = 52
-
-    /// T13: the computer's name keeps the bar until the first letter of
-    /// GIZZI CODE starts to fly, fades out over that flight, and comes back
-    /// when the page scrolls up.
-    private var computerNameOpacity: Double {
-        let n = max(1, DockTitleLayout(text: "GIZZI CODE").letters)
-        let firstFlight = Double(PolishTokens.dock) / (Double(n) + 0.6)
-        if reduceMotion { return launchOffset >= PolishTokens.dock / 2 ? 0 : 1 }
-        return 1 - DockMath.clamp(Double(launchOffset) / firstFlight)
+        .background(darkChrome ? TerminalPalette.background : Color("BgPrimary"))
     }
 
     /// Between ☰ and the right icons: the gizzi code lockup on the launchpad,
@@ -346,10 +324,10 @@ struct CodeModeView: View {
             .disabled(activeSessionId == nil)
             .accessibilityLabel("Session: \(threadTitle)")
         } else {
-            // Launchpad: the computer's name (T13); GIZZI CODE docks over it.
-            ShellHeaderTitle(ink: ink, fallback: "No computer")
-                .opacity(computerNameOpacity)
-                .accessibilityHidden(computerNameOpacity < 0.05)
+            // Launchpad: the GIZZI CODE wordmark. The computer's name sits by
+            // the computer icon in the composer's deck row.
+            ShellWordmark(mode: .code)
+                .accessibilityAddTraits(.isHeader)
         }
     }
 
@@ -399,23 +377,8 @@ struct CodeModeView: View {
 
     private var launchpad: some View {
         VStack(spacing: 0) {
-            DockingTitleScrollView(title: "GIZZI CODE",
-                                   chrome: .overlay(barCenter: Self.barHeight / 2)) {
+            ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Room for the bar the page reaches under, and the offset reader.
-                    Color.clear.frame(height: Self.barHeight)
-                        .background(GeometryReader { g in
-                            Color.clear.preference(key: CodeLaunchOffsetKey.self,
-                                                   value: -g.frame(in: .named("codeLaunch")).minY)
-                        })
-                    // What's new sits right under the sessions button.
-                    HStack {
-                        Spacer()
-                        CodeWhatsNewButton()
-                    }
-                    .padding(.horizontal, -4)
-                    .padding(.bottom, 8)
-
                     Text(greetingText)
                         .font(.system(size: 28, weight: .semibold, design: .serif))
                         .tracking(-0.56)
@@ -450,11 +413,20 @@ struct CodeModeView: View {
                         .padding(.top, 24)
                     }
                 }
+                .padding(.horizontal, 14)
+                .padding(.top, 28)
                 .padding(.bottom, 24)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .coordinateSpace(name: "codeLaunch")
-            .onPreferenceChange(CodeLaunchOffsetKey.self) { launchOffset = max(0, $0) }
+            // What's new sits right under the sessions button.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Spacer()
+                    CodeWhatsNewButton()
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 2)
+            }
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await loadSessions() }
 
@@ -894,7 +866,6 @@ private enum CodeSessionsZoomID {
 /// The shell header's title: the computer's name and a live status dot.
 private struct ShellHeaderTitle: View {
     let ink: Color
-    var fallback = "Shell"
     @ObservedObject private var relay = RuntimeRelayStore.shared
 
     var body: some View {
@@ -903,7 +874,7 @@ private struct ShellHeaderTitle: View {
             Circle()
                 .fill((device?.isOnline ?? false) ? Theme.statusSuccess : TerminalPalette.secondary)
                 .frame(width: 8, height: 8)
-            Text(device.map { $0.name.isEmpty ? "Allternit runtime" : $0.name } ?? fallback)
+            Text(device.map { $0.name.isEmpty ? "Allternit runtime" : $0.name } ?? "Shell")
                 .font(.system(size: 15, weight: .semibold, design: .monospaced))
                 .foregroundColor(ink)
                 .lineLimit(1)
@@ -911,10 +882,4 @@ private struct ShellHeaderTitle: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(device?.name ?? "Computer"), \((device?.isOnline ?? false) ? "online" : "offline")")
     }
-}
-
-/// The Code launchpad's scroll offset, read from its first row.
-private struct CodeLaunchOffsetKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
