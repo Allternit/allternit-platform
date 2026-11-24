@@ -15,22 +15,28 @@ final class ModeIntroGate: ObservableObject {
     static let shared = ModeIntroGate()
 
     /// An intro is being looked up (seen flag) for the mode that just arrived.
-    @Published fileprivate(set) var isPending = false
+    @Published fileprivate(set) var isPending = false { didSet { resumeIfClear() } }
     /// An intro sheet is on screen.
-    @Published fileprivate(set) var isShowing = false
+    @Published fileprivate(set) var isShowing = false { didSet { resumeIfClear() } }
 
     var isHolding: Bool { isPending || isShowing }
+
+    /// Callers parked in `waitUntilClear`, resumed on the main actor when both flags clear.
+    private var waiters: [CheckedContinuation<Void, Never>] = []
 
     private init() {}
 
     /// Returns once no intro is pending or showing.
     func waitUntilClear() async {
-        while isHolding {
-            _ = await Publishers.CombineLatest($isPending, $isShowing)
-                .map { $0 || $1 }
-                .values
-                .first(where: { !$0 })
-        }
+        guard isHolding else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    private func resumeIfClear() {
+        guard !isHolding, !waiters.isEmpty else { return }
+        let ready = waiters
+        waiters.removeAll()
+        ready.forEach { $0.resume() }
     }
 }
 
