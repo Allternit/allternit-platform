@@ -189,7 +189,7 @@ struct FreeweightsSection: View {
     @ObservedObject private var auth = AuthManager.shared
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 16) {
             browseSection
             if auth.isSignedIn, !store.myRepos.isEmpty || store.myReposFailed {
                 myUploadsSection
@@ -198,30 +198,55 @@ struct FreeweightsSection: View {
         .task(id: auth.isSignedIn) { await store.reloadMine() }
     }
 
+    /// Rows grouped in one rounded card on the neutral fill (radius 20).
+    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(spacing: 0) { content() }
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(PolishTokens.neutralFill))
+    }
+
     private var myUploadsSection: some View {
-        Section {
-            if store.myRepos.isEmpty {
-                Text("Couldn't load your uploads. Pull to refresh.")
-                    .font(.subheadline)
-                    .foregroundColor(Color("TextSecondary"))
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("My uploads")
+            card {
+                if store.myRepos.isEmpty {
+                    Text("Couldn't load your uploads. Pull to refresh.")
+                        .font(.subheadline)
+                        .foregroundColor(Color("TextSecondary"))
+                        .padding(14)
+                }
+                ForEach(Array(store.myRepos.enumerated()), id: \.element.id) { i, repo in
+                    if i > 0 { Divider().padding(.leading, 14) }
+                    FreeweightsMyRepoRow(repo: repo)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-            ForEach(store.myRepos) { repo in
-                FreeweightsMyRepoRow(repo: repo)
-            }
-        } header: {
-            Text("My uploads")
-        } footer: {
             Text("Upload from the Freeweights site or the fw command on your computer. This list follows each scan.")
+                .font(.caption)
+                .foregroundColor(Color("TextSecondary"))
+                .padding(.horizontal, 4)
         }
     }
 
     private var browseSection: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 12) {
             searchField
+
+            if let age = store.staleAge {
+                Text("Offline copy from \(Self.ageText(age)). Pull to refresh.")
+                    .font(.caption)
+                    .foregroundColor(Color("TextSecondary"))
+                    .padding(.horizontal, 4)
+            }
+
+            SectionLabel("Models")
 
             if store.isLoading && store.results.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 20)
             } else if store.downReason != nil, store.results.isEmpty {
                 FriendlyInlineStateView(
                     style: .offline,
@@ -239,33 +264,28 @@ struct FreeweightsSection: View {
                     message: "Try a family name like qwen, gemma or deepseek."
                 )
             } else {
-                ForEach(store.results) { model in
-                    Button { store.selected = model } label: {
-                        FreeweightsRow(model: model, row: store.catalog[model.id])
+                card {
+                    ForEach(Array(store.results.enumerated()), id: \.element.id) { i, model in
+                        if i > 0 { Divider().padding(.leading, 66) }
+                        Button { store.selected = model } label: {
+                            FreeweightsRow(model: model, row: store.catalog[model.id])
+                        }
+                        .buttonStyle(FreeweightsPressRowStyle())
                     }
-                    .buttonStyle(.plain)
                 }
                 if store.nextCursor != nil {
-                    Button {
-                        Task { await store.loadMore() }
-                    } label: {
-                        HStack {
-                            Text("Show more")
-                                .font(.subheadline.weight(.medium))
-                            if store.isLoadingMore { ProgressView().padding(.leading, 4) }
+                    HStack {
+                        Spacer()
+                        if store.isLoadingMore {
+                            ProgressView()
+                        } else {
+                            GlassPill(title: "Show more") {
+                                Task { await store.loadMore() }
+                            }
                         }
-                        .frame(maxWidth: .infinity, alignment: .center)
+                        Spacer()
                     }
-                    .disabled(store.isLoadingMore)
                 }
-            }
-        } header: {
-            Text("Freeweights")
-        } footer: {
-            if let age = store.staleAge {
-                Text("Offline copy from \(Self.ageText(age)). Pull to refresh.")
-            } else {
-                Text("Open-weights models with checked licenses. Download one to this iPhone, or send a pull to your computer.")
             }
         }
         .task {
@@ -292,7 +312,7 @@ struct FreeweightsSection: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(Color("TextSecondary"))
             TextField("Search Freeweights", text: $store.query)
-                .font(.subheadline)
+                .font(.system(size: 13.5))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
@@ -305,6 +325,9 @@ struct FreeweightsSection: View {
                 .accessibilityLabel("Clear search")
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(PolishTokens.neutralFill))
     }
 
     static func ageText(_ age: TimeInterval) -> String {
@@ -316,7 +339,7 @@ struct FreeweightsSection: View {
 
 extension View {
     /// Presents the Freeweights detail sheet for `store.selected`. Attach
-    /// to the List that holds `FreeweightsSection`.
+    /// to the page that holds `FreeweightsSection`.
     func freeweightsDetailSheet(_ store: FreeweightsBrowseStore) -> some View {
         modifier(FreeweightsDetailSheetModifier(store: store))
     }
@@ -343,8 +366,8 @@ private struct FreeweightsRow: View {
         HStack(spacing: 12) {
             icon
                 .frame(width: 40, height: 40)
-                .background(Color("BgPanel"))
-                .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMD))
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(row?.displayName ?? model.name)
@@ -378,7 +401,8 @@ private struct FreeweightsRow: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color("TextSecondary").opacity(0.6))
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Shows license, size and Send to computer")
@@ -424,8 +448,19 @@ private struct FreeweightsBadge: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
-        .background(Color("TextSecondary").opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSM / 2))
+        .background(Color(.systemBackground))
+        .clipShape(Capsule())
+    }
+}
+
+/// Press highlight for a row in the Freeweights card.
+private struct FreeweightsPressRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(configuration.isPressed ? Color("TextPrimary").opacity(0.06) : Color.clear)
+            )
     }
 }
 
@@ -1337,6 +1372,131 @@ enum FreeweightsFormat {
         case "publisher_hash", "pinned": return Theme.statusInfo
         case "unverified": return Theme.statusWarning
         default: return Color("TextSecondary")
+        }
+    }
+}
+
+// MARK: - First-visit intro hero
+
+/// The Freeweights intro hero: real model rows. Florence-2-base downloads with
+/// a progress ring and gets an "On this iPhone" tag; gpt2 is pulled to the
+/// computer. Loops; Reduce Motion shows the finished state.
+struct FreeweightsIntroHero: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pct: Double = 0
+    @State private var sent = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            BlockText("FREEWEIGHTS", height: 8)
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass").font(.system(size: 10))
+                Text("Search Freeweights").font(.system(size: 10))
+            }
+            .foregroundStyle(Color("TextSecondary"))
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(PolishTokens.neutralFill))
+
+            heroRow(name: "Florence-2-base", org: "microsoft", size: "930.3 MB", icon: "photo") {
+                if pct >= 1 {
+                    Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(Color("TextSecondary"))
+                } else {
+                    ZStack {
+                        Circle().stroke(PolishTokens.neutralFill, lineWidth: 2.5)
+                        Circle().trim(from: 0, to: pct)
+                            .stroke(PolishTokens.ink, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                        Image(systemName: "arrow.down").font(.system(size: 8, weight: .semibold))
+                    }
+                    .frame(width: 22, height: 22)
+                }
+            } extra: {
+                if pct >= 1 {
+                    HStack(spacing: 2) {
+                        Image(systemName: "iphone").font(.system(size: 7))
+                        Text("On this iPhone").font(.system(size: 8.5, weight: .semibold))
+                    }
+                    .foregroundStyle(Color(red: 21 / 255, green: 128 / 255, blue: 61 / 255))
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Capsule().fill(Color(red: 22 / 255, green: 163 / 255, blue: 74 / 255).opacity(0.12)))
+                    .transition(.scale.combined(with: .opacity))
+                }
+            }
+            heroRow(name: "gpt2", org: "openai-community", size: "5.63 GB", icon: "text.alignleft") {
+                if sent {
+                    HStack(spacing: 3) {
+                        Image(systemName: "laptopcomputer").font(.system(size: 10))
+                        Text("Sent").font(.system(size: 9.5, weight: .semibold))
+                        Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
+                    }
+                    .foregroundStyle(Color(red: 21 / 255, green: 128 / 255, blue: 61 / 255))
+                    .transition(.scale.combined(with: .opacity))
+                } else {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.down").font(.system(size: 9))
+                        Text("Pull").font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .foregroundStyle(PolishTokens.ink)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Color(.systemBackground)))
+                    .overlay(Capsule().strokeBorder(PolishTokens.glassBorder, lineWidth: 0.5))
+                }
+            } extra: { EmptyView() }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.systemBackground))
+        .task { await run() }
+    }
+
+    private func heroRow<Right: View, Extra: View>(
+        name: String, org: String, size: String, icon: String,
+        @ViewBuilder right: () -> Right, @ViewBuilder extra: () -> Extra
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundStyle(Color("TextSecondary"))
+                .frame(width: 24, height: 24)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(PolishTokens.neutralFill))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.system(size: 11, weight: .semibold))
+                Text(org).font(.system(size: 9)).foregroundStyle(Color("TextSecondary"))
+                HStack(spacing: 3) {
+                    heroTag("MIT", dot: true)
+                    heroTag("text")
+                    heroTag(size)
+                    extra()
+                }
+            }
+            Spacer(minLength: 0)
+            right()
+        }
+        .padding(.vertical, 7)
+        .padding(.horizontal, 4)
+    }
+
+    private func heroTag(_ text: String, dot: Bool = false) -> some View {
+        HStack(spacing: 2) {
+            if dot { Circle().fill(Color(red: 34 / 255, green: 160 / 255, blue: 107 / 255)).frame(width: 4, height: 4) }
+            Text(text).font(.system(size: 8.5)).foregroundStyle(Color("TextSecondary")).lineLimit(1)
+        }
+        .padding(.horizontal, 5).padding(.vertical, 1)
+        .background(Capsule().fill(PolishTokens.neutralFill))
+    }
+
+    @MainActor private func run() async {
+        if reduceMotion { pct = 1; sent = true; return }
+        while !Task.isCancelled {
+            pct = 0; sent = false
+            try? await Task.sleep(for: .milliseconds(700))
+            while pct < 1, !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(60))
+                withAnimation(.linear(duration: 0.06)) { pct = min(1, pct + 0.05) }
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+            withAnimation(PolishTokens.press) { sent = true }
+            try? await Task.sleep(for: .milliseconds(3000))
         }
     }
 }

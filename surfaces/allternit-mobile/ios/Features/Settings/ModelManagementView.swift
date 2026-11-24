@@ -18,11 +18,9 @@ struct ModelManagementView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: { Task { await store.load() } }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.subheadline)
+                    GlassCircleButton(systemImage: "arrow.clockwise", label: "Refresh", size: 36) {
+                        Task { await store.load() }
                     }
-                    .accessibilityLabel("Refresh")
                     .disabled(store.isLoading)
                 }
             }
@@ -43,7 +41,16 @@ struct ModelManagementListContent: View {
         List {
             selectedModelSection
             enginesSection
-            FreeweightsSection(store: freeweights)
+            Section {
+                FreeweightsSection(store: freeweights)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 14))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            } header: {
+                Text("Freeweights")
+            } footer: {
+                Text("Open-weights models with checked licenses. Download one to this iPhone, or send a pull to your computer.")
+            }
             StudioJobsSection()
             Section {
                 NavigationLink("Benchmark") {
@@ -55,6 +62,7 @@ struct ModelManagementListContent: View {
         .scrollContentBackground(.hidden)
         .background(Color("BgPrimary"))
         .freeweightsDetailSheet(freeweights)
+        .firstVisitIntro(key: .freeweights, hero: { FreeweightsIntroHero() })
         .task {
             modelStore.fetchModelsIfNeeded()
             await store.load()

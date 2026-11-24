@@ -50,7 +50,7 @@ struct ChatView: View {
                 onMenu: { isSidebarOpen = true }
             ) {
                 HStack(spacing: 0) {
-                    // Share link moved into ⋯ so ⋯ fits beside New chat.
+                    // Share link moved into ⋯ (New is the New orb above the composer).
                     PhoneIconButton(systemName: "ellipsis", label: "Chat options") {
                         isChatMenuOpen = true
                     }
@@ -58,10 +58,6 @@ struct ChatView: View {
                         ChatMenuPopover(items: menuItems, onSelect: selectMenuItem, onClose: { isChatMenuOpen = false })
                             .presentationCompactAdaptation(.popover)
                     }
-                    PhoneIconButton(systemName: "square.and.pencil", label: "New chat") {
-                        startNewChat()
-                    }
-                    .accessibilityIdentifier("chatNewChat")
                 }
             }
             .zIndex(1)
@@ -73,6 +69,7 @@ struct ChatView: View {
                 chatMenuHoldsExtras: true,
                 onNewChat: startNewChat
             )
+
         }
         .background(Color("BgPrimary"))
         .sheet(isPresented: $isShareLinkPresented) {
@@ -1104,8 +1101,8 @@ struct ChatLaunchGreeting: View {
             }
             .accessibilityHidden(true)
             Text(Self.sessionTitle())
-                .font(.system(size: 32, design: .serif))
-                .tracking(-0.64)
+                .font(.system(size: 33, design: .serif))
+                .tracking(-0.4)
                 .lineSpacing(2)
                 .foregroundColor(Color("TextPrimary"))
                 .multilineTextAlignment(.center)
@@ -1123,7 +1120,7 @@ struct ChatLaunchGreeting: View {
             if reduceMotion || !firstMount {
                 revealed = true
             } else {
-                withAnimation(.easeOut(duration: 0.6)) { revealed = true }
+                withAnimation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.5)) { revealed = true }
             }
         }
     }

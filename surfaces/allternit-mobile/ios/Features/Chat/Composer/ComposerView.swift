@@ -102,14 +102,14 @@ struct ComposerView: View {
     /// prompt (once per install via AppPermission.microphone).
     @State private var isMicPrimingPresented = false
     @State private var isFocused = false
+    @State private var keyboardFocused = false
     @State private var placeholderIndex = 0
     // Purchase pages go to the browser via the Open links in rule (step 30).
     @Environment(\.openURL) private var openURL
     /// The In-App Purchase sheet, where the App Store sells plans.
     @State private var isStoreSheetPresented = false
-    /// Deck fold: open at rest; the "tools" tab or a swipe folds it, and the
-    /// choice persists per device.
-    @State private var deckFolded = UserDefaults.standard.bool(forKey: deckFoldedDefaultsKey)
+    /// Tools start folded; the sliders button opens the band.
+    @State private var deckFolded = true
     /// One of the deck's sheets is up: keeps the band open under it.
     @State private var deckSheetActive = false
     /// Dictation (C3): the mic left of the voice button.
@@ -157,6 +157,7 @@ struct ComposerView: View {
     private var placeholder: String {
         if isTerminal { return "describe the task…" }
         if let placeholderOverride { return placeholderOverride }
+        if !isExpanded { return "Type or hold to talk" }
         guard deck == .full else { return "Reply…" }
         let list = ComposerPlaceholders.list(agentMode: agentOn, tile: agentOn ? agentModeStore.selectedTile(for: mode) : nil)
         return list[placeholderIndex % list.count]
@@ -202,6 +203,8 @@ struct ComposerView: View {
                     }
             }
 
+            modeOrbRow
+
             card
                 .zIndex(1)
                 .simultaneousGesture(
@@ -213,18 +216,6 @@ struct ComposerView: View {
                             setDeckFolded(!next)
                         }
                 )
-
-            // The tab shows only while the band is folded. An open band
-            // joins the card directly; a swipe down on the card folds it.
-            if deck != .none, !isTerminal, !(deckBandOpen || forcedDeckOpen) {
-                HStack {
-                    ComposerToolsTab { setDeckFolded(false) }
-                    Spacer()
-                }
-                .padding(.leading, 16)
-                .zIndex(1)
-                .transition(.opacity)
-            }
 
             if deck != .none, !isTerminal, deckBandOpen || forcedDeckOpen {
                 ComposerDeckBand(
@@ -238,7 +229,7 @@ struct ComposerView: View {
             }
         }
         .animation(reduceMotion ? nil : Motion.deck, value: deckBandOpen || forcedDeckOpen)
-        .animation(DeckMotion.animation, value: deck)
+        .animation(reduceMotion ? nil : DeckMotion.animation, value: deck)
         .background(ComposerFrameReporter())
         .onChange(of: dictation.transcript) { _, transcript in
             guard dictation.isRecording || !transcript.isEmpty else { return }
@@ -304,6 +295,23 @@ struct ComposerView: View {
 
     // MARK: Card
 
+    /// Rest = one pill; focused, drafting, attached or recording = the open
+    /// card (chips line, text, then the controls row).
+    private var isExpanded: Bool {
+        isFocused || hasDraft || dictation.isRecording || isStreaming || dictation.errorMessage != nil || ((deckBandOpen || forcedDeckOpen) && deck != .none && !isTerminal)
+    }
+
+    private var chipsGroup: some View {
+        Group {
+            if let chatBot {
+                ComposerAgentChips(bot: chatBot, iconOnly: !isExpanded)
+            } else {
+                // Harness & Bots 2.0: Runtime + Brain in every chat.
+                ComposerChatChips(iconOnly: !isExpanded, hasActiveSession: hasActiveSession) { isModelPickerPresented = true }
+            }
+        }
+    }
+
     private var card: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Phone: attachment previews above the text (no room for a card row).
@@ -319,7 +327,19 @@ struct ComposerView: View {
                 .padding(.top, 12)
             }
 
-            HStack(alignment: .top, spacing: 6) {
+            // Focused: Runtime + Brain on the top-right line.
+            if isExpanded {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    chipsGroup
+                    ComposerUsageMeter(sessionId: sessionId, refreshKey: isStreaming ? "streaming" : "idle")
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+            }
+
+            HStack(alignment: .center, spacing: 6) {
+                if !isExpanded, showsAttach { plusButton(size: 36) }
                 if isTerminal {
                     Text("❯")
                         .font(.system(size: 15, weight: .semibold, design: .monospaced))
@@ -331,30 +351,67 @@ struct ComposerView: View {
                     placeholder: placeholder,
                     isEnabled: !isUsageLocked,
                     terminal: isTerminal,
-                    onFocusChange: { isFocused = $0 }
+                    onFocusChange: { isFocused = $0; if !$0 { keyboardFocused = false } },
+                    onKeyboardFocusChange: { keyboardFocused = $0 },
+                    singleLineRest: !isExpanded
                 )
                 .accessibilityIdentifier("composerInput")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 4)
-
-            controlsRow
-                .padding(.vertical, 8)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
+                if !isExpanded {
+                    chipsGroup
+                    if deck != .none, !isTerminal { toolsButton }
+                    sendSlot
                 }
-                .padding(.horizontal, 8)
+            }
+            .padding(.horizontal, isExpanded ? 16 : 8)
+            .padding(.top, isExpanded ? 6 : 8)
+            .padding(.bottom, isExpanded ? 4 : 8)
+
+            if isExpanded {
+                controlsRow
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 8)
+            }
         }
         .background(Color("BgPanel"))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: isTerminal ? 0 : (isExpanded ? 22 : 26), style: .continuous))
         .overlay(
-            // Quiet card: hairline border that steps up on focus.
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(accentBorder ?? (isFocused ? Color("BorderStrong") : Color("BorderSubtle")), lineWidth: 1)
+            // Touch keeps the quiet border. Hardware focus gets a visible cue.
+            RoundedRectangle(cornerRadius: isTerminal ? 0 : (isExpanded ? 22 : 26), style: .continuous)
+                .stroke(keyboardFocused ? Color("TextPrimary") : (accentBorder ?? Color("BorderSubtle")),
+                        style: StrokeStyle(lineWidth: keyboardFocused ? 2 : 1, dash: isTerminal ? [4, 4] : []))
         )
         .shadow(color: .black.opacity(0.04), radius: 1, y: 1)
         .shadow(color: .black.opacity(0.03), radius: 4, y: 2)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isExpanded)
+    }
+
+    /// The bare filled "+" (Add to chat).
+    private func plusButton(size: CGFloat) -> some View {
+        Button(action: openPlusSheet) {
+            Image(systemName: "plus")
+                .font(.system(size: size > 40 ? 20 : 17, weight: .medium))
+                .foregroundColor(Color("TextSecondary"))
+                .rotationEffect(.degrees(isPlusSheetPresented ? 45 : 0))
+                .frame(width: size, height: size)
+                .background(Color("FillNeutral"), in: Circle())
+                // The folded computer chip.
+                .overlay(alignment: .topTrailing) {
+                    if showsComputerChip { ComputerChipDot().offset(x: -3, y: 3) }
+                }
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+                .composerPlusZoomSource(plusZoom, enabled: !reduceMotion)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add to chat")
+    }
+
+    private var modeOrbRow: some View {
+        ComposerOrbRow(hasActiveSession: hasActiveSession,
+                       toolsOpen: deck != .none && (deckBandOpen || forcedDeckOpen))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 6)
+            .zIndex(2)
     }
 
     /// The + sheet shows "Permission · Auto ›" where the pill used to show.
@@ -377,42 +434,28 @@ struct ComposerView: View {
 
     private var controlsRow: some View {
         HStack(spacing: 6) {
-            HStack(spacing: 4) {
-                if showsAttach {
-                    Button(action: openPlusSheet) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundColor(Color("TextSecondary"))
-                            .rotationEffect(.degrees(isPlusSheetPresented ? 45 : 0))
-                            .frame(width: 44, height: 44)
-                            .background(Color("FillNeutral"), in: Circle())
-                            // The folded computer chip.
-                            .overlay(alignment: .topTrailing) {
-                                if showsComputerChip { ComputerChipDot().offset(x: -3, y: 3) }
-                            }
-                            .composerPlusZoomSource(plusZoom, enabled: !reduceMotion)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Add to chat")
-                }
-                // Permission (Auto · Ask · Read-only) lives in the + sheet (C2).
+            if showsAttach { plusButton(size: 44) }
+            // Permission (Auto · Ask · Read-only) lives in the + sheet (C2).
+            if deck != .none, !isTerminal {
+                toolsButton
             }
-            .fixedSize()
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 8) {
-                if let chatBot {
-                    ComposerAgentChips(bot: chatBot)
-                } else {
-                    // Harness & Bots 2.0: Runtime + Brain in every chat.
-                    ComposerChatChips(hasActiveSession: hasActiveSession) { isModelPickerPresented = true }
-                }
-                // How full this chat's context is, and the plan's usage.
-                ComposerUsageMeter(sessionId: sessionId, refreshKey: isStreaming ? "streaming" : "idle")
-                sendSlot
-            }
+            sendSlot
         }
+    }
+
+    private var toolsButton: some View {
+        Button { setDeckFolded(deckBandOpen) } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundColor(Color("TextSecondary"))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(deckBandOpen ? "Hide tools" : "Tools")
     }
 
     /// Phone: voice and send share one slot (ChatComposer phoneSendSlotTaken).
@@ -732,6 +775,8 @@ struct ComposerTextView: UIViewRepresentable {
     /// Code mode: monospace font on the terminal palette.
     var terminal: Bool = false
     var onFocusChange: ((Bool) -> Void)? = nil
+    var onKeyboardFocusChange: ((Bool) -> Void)? = nil
+    var singleLineRest = false
 
     /// 16pt: iOS zooms fields under 16px, so the phone keeps every field there
     /// (phone.css), with the web's 24pt line.
@@ -755,7 +800,10 @@ struct ComposerTextView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = ComposerEditorView()
+        textView.onKeyboardFocusChange = { focused in
+            context.coordinator.parent.onKeyboardFocusChange?(focused)
+        }
         textView.delegate = context.coordinator
         textView.font = uiFont
         textView.textColor = uiTextColor
@@ -786,6 +834,7 @@ struct ComposerTextView: UIViewRepresentable {
 
     func updateUIView(_ textView: UITextView, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.placeholderLabel.numberOfLines = singleLineRest ? 1 : 0
         textView.isEditable = isEnabled
         context.coordinator.placeholderLabel.attributedText = NSAttributedString(string: placeholder, attributes: [
             .font: uiFont,
@@ -814,6 +863,10 @@ struct ComposerTextView: UIViewRepresentable {
             // An empty field is as tall as its wrapped placeholder.
             let label = context.coordinator.placeholderLabel
             fit.height = max(fit.height, label.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+        }
+        if singleLineRest {
+            uiView.isScrollEnabled = false
+            return CGSize(width: width, height: 24)
         }
         let maxHeight: CGFloat = 24 * 6
         uiView.isScrollEnabled = fit.height > maxHeight + 1
@@ -919,32 +972,27 @@ private struct ComposerFrameReporter: View {
     }
 }
 
-/// The grey "tools" pull tab under the composer's bottom-left edge: flat top
-/// joined to the card, rounded bottom corners. It shows only while the deck
-/// is folded and unfolds it; the open band has no tab (swipe down folds it).
-struct ComposerToolsTab: View {
-    let action: () -> Void
+/// UIKit focus navigation and physical key presses identify keyboard input.
+/// Touch clears the cue before the editor becomes first responder.
+final class ComposerEditorView: UITextView {
+    var onKeyboardFocusChange: ((Bool) -> Void)?
 
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                Text("tools")
-                    .font(.system(size: 10))
-            }
-            .foregroundColor(Color("TextSecondary").opacity(0.8))
-            .padding(.horizontal, 10)
-            .frame(minWidth: 44, minHeight: 24)
-            .background(
-                UnevenRoundedRectangle(bottomLeadingRadius: 10, bottomTrailingRadius: 10, style: .continuous)
-                    .fill(Color("FillNeutral"))
-            )
-            .contentShape(Rectangle())
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        onKeyboardFocusChange?(false)
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.key != nil }) { onKeyboardFocusChange?(true) }
+        super.pressesBegan(presses, with: event)
+    }
+
+    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+        super.didUpdateFocus(in: context, with: coordinator)
+        if context.nextFocusedView === self, !context.focusHeading.isEmpty {
+            onKeyboardFocusChange?(true)
+        } else if context.previouslyFocusedView === self {
+            onKeyboardFocusChange?(false)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Show tools")
-        .accessibilityHint("Swipe down on the message box to hide them again")
-        .accessibilityAddTraits(.isButton)
     }
 }

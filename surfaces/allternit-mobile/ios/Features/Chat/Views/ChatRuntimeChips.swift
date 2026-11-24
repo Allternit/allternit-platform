@@ -114,6 +114,7 @@ final class ChatRuntimeStore: ObservableObject {
 /// Runtime + Brain chips for a chat without a bot (the bot chat keeps
 /// `ComposerAgentChips`, which adds the Bot chip).
 struct ComposerChatChips: View {
+    var iconOnly = false
     /// The chat already has a session (a pick then opens a fresh chat).
     let hasActiveSession: Bool
     /// Opens the brain (model) picker.
@@ -142,8 +143,8 @@ struct ComposerChatChips: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            row(namedRuntime: true, namedBrain: true)
-            row(namedRuntime: false, namedBrain: true)
+            row(namedRuntime: !iconOnly, namedBrain: !iconOnly)
+            row(namedRuntime: false, namedBrain: !iconOnly)
             row(namedRuntime: false, namedBrain: false)
         }
         .sheet(isPresented: $isRuntimePickerPresented) {

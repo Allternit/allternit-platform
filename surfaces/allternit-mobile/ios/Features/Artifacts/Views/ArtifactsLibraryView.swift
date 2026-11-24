@@ -54,17 +54,11 @@ struct ArtifactsLibraryView: View {
                 if searching || !searchDraft.isEmpty {
                     ProjectsSearchField(query: $searchDraft, placeholder: "Search artifacts")
                 }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        titleRow
-                        if let notice { noticeBar(notice) }
-                        makeSection
-                        toolsSection
-                        yourArtifacts
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 4)
-                    .padding(.bottom, 112)
+                PolishedTabPage(title: "Artifacts", introKey: .artifacts, hero: { ArtifactsIntroHero() }) {
+                    if let notice { noticeBar(notice) }
+                    makeSection
+                    toolsSection
+                    yourArtifacts
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable { await store.reload() }
@@ -73,7 +67,7 @@ struct ArtifactsLibraryView: View {
             Menu {
                 newMenuItems
             } label: {
-                ProjectsNewLabel(title: "New artifact")
+                NewArtifactPill()
             }
             .accessibilityLabel("New artifact")
             .padding(.bottom, 14)
@@ -164,17 +158,6 @@ struct ArtifactsLibraryView: View {
     }
 
     // MARK: - Chrome
-
-    private var titleRow: some View {
-        HStack(spacing: 12) {
-            Text("Artifacts")
-                .font(.system(size: 30, weight: .medium, design: .serif))
-                .tracking(-0.3)
-                .foregroundColor(Color("TextPrimary"))
-            Spacer()
-        }
-        .padding(.top, 4)
-    }
 
     private var filtersOn: Bool { store.scope != .all || store.kind != nil }
 
@@ -283,7 +266,7 @@ struct ArtifactsLibraryView: View {
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(Array(tiles.enumerated()), id: \.element) { index, kind in
                         Button { tileTapped(kind) } label: { createCard(kind) }
-                            .buttonStyle(.plain)
+                            .buttonStyle(ArtifactTilePressStyle())
                             .accessibilityAddTraits(selectedTile == kind ? .isSelected : [])
                             // amt2-enter: the row slides in on open, 45 ms apart.
                             .opacity(tilesShown ? 1 : 0)
@@ -294,9 +277,9 @@ struct ArtifactsLibraryView: View {
                             .accessibilityHint(kind.description)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 14)
             }
-            .padding(.horizontal, -16)
+            .padding(.horizontal, -14)
             .onAppear {
                 if ReducedMotion.current { tilesShown = true } else { DispatchQueue.main.async { tilesShown = true } }
             }
@@ -325,9 +308,10 @@ struct ArtifactsLibraryView: View {
                 }
             }
             .frame(width: 136, height: 95)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(selectedTile == kind ? Color("FillNeutral") : Color("BgPanel")))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(selectedTile == kind ? Color("TextPrimary") : Color("BorderStrong"), lineWidth: selectedTile == kind ? 2 : 1))
-            .shadow(color: .black.opacity(0.05), radius: 1, y: 1)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(PolishTokens.neutralFill))
+            // Soft inner edge; the picked tile gets an ink ring.
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(selectedTile == kind ? PolishTokens.ink : PolishTokens.glassBorder, lineWidth: selectedTile == kind ? 2 : 1))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(kind.label)
@@ -356,10 +340,10 @@ struct ArtifactsLibraryView: View {
         case .noFilter:
             start(tile)
         case .filter(let kind):
-            Haptics.selection()
+            Haptics.light()
             setKind(kind)
         case .clear:
-            Haptics.selection()
+            Haptics.light()
             setKind(nil)
         }
     }
@@ -515,20 +499,7 @@ struct ArtifactsLibraryView: View {
     private var toolsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionLabel("Or start from your connected tools")
-            Button(action: { showingConnectors = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "powerplug")
-                        .font(.system(size: 13))
-                    Text("Connect your tools")
-                        .font(.system(size: 14))
-                }
-                .foregroundColor(Color("TextPrimary"))
-                .padding(.horizontal, 14)
-                .frame(height: 34)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("BgPanel")))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderStrong"), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
+            GlassPill(title: "Connect your tools", systemImage: "powerplug") { showingConnectors = true }
         }
     }
 
@@ -688,6 +659,11 @@ struct ArtifactsLibraryView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
                     .accessibilityAddTraits(.updatesFrequently)
+            } else if items.isEmpty, !filtered, !store.archived {
+                EmptyBox(
+                    title: "No artifacts yet",
+                    line: "Ask for a doc, deck, sheet or page in any chat, pick an Output in the message box, or tap + to make something new."
+                )
             } else if items.isEmpty {
                 stateMessage(
                     icon: nil,
@@ -1095,6 +1071,139 @@ struct PickedMovie: Transferable {
             let copy = folder.appendingPathComponent(received.file.lastPathComponent)
             try FileManager.default.copyItem(at: received.file, to: copy)
             return PickedMovie(url: copy)
+        }
+    }
+}
+
+
+// MARK: - Polish pieces
+
+/// Tiles shrink a little on press (polish contract, pressPill 0.94).
+private struct ArtifactTilePressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? PolishTokens.pressPill : 1)
+            .animation(reduceMotion ? nil : PolishTokens.press, value: configuration.isPressed)
+    }
+}
+
+/// The floating "New artifact" label: a glass pill (the Menu keeps every item).
+private struct NewArtifactPill: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "plus").font(.system(size: 15, weight: .semibold))
+            Text("New artifact").font(.system(size: 16, weight: .semibold))
+        }
+        .foregroundStyle(PolishTokens.ink)
+        .padding(.horizontal, 22)
+        .frame(height: 48)
+        .polishGlass(cornerRadius: 24)
+        .contentShape(Capsule())
+    }
+}
+
+/// First-visit intro hero: the real Artifacts page. Docs gets tapped, then
+/// three artifacts appear under "Your artifacts". Settles on the end state
+/// with Reduce Motion.
+private struct ArtifactsIntroHero: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var docsPressed = false
+    @State private var shown = 0
+
+    private let types = ["Docs", "Sheets", "Slides"]
+    private let mine: [(String, String)] = [("Q4 plan", "Doc"), ("Budget 2027", "Sheet"), ("Investor deck", "Slides")]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            label("Make something new", trailing: "12 types")
+            HStack(spacing: 7) {
+                ForEach(Array(types.enumerated()), id: \.offset) { i, name in
+                    VStack(alignment: .leading, spacing: 3) {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(PolishTokens.neutralFill)
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(PolishTokens.glassBorder, lineWidth: 1))
+                            .overlay(thumb(i, progress: 1).padding(.horizontal, 22).padding(.vertical, 6))
+                            .frame(height: 38)
+                            .scaleEffect(i == 0 && docsPressed ? PolishTokens.pressPill : 1)
+                        Text(name).font(.system(size: 10, weight: .semibold)).foregroundStyle(PolishTokens.ink)
+                    }
+                }
+            }
+            label("Your artifacts", trailing: nil).padding(.top, 6)
+            HStack(spacing: 7) {
+                ForEach(Array(mine.enumerated()), id: \.offset) { i, item in
+                    VStack(alignment: .leading, spacing: 3) {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(PolishTokens.neutralFill)
+                            .overlay(thumb(i, progress: 1).padding(6))
+                            .frame(height: 46)
+                        Text(item.0).font(.system(size: 10, weight: .semibold)).foregroundStyle(PolishTokens.ink).lineLimit(1)
+                        Text("\(item.1) · just now").font(.system(size: 9)).foregroundStyle(Color("TextTertiary")).lineLimit(1)
+                    }
+                    .opacity(shown > i ? 1 : 0)
+                    .offset(y: shown > i ? 0 : 12)
+                    .scaleEffect(shown > i ? 1 : 0.9)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("BgPanel"))
+        .task { await play() }
+    }
+
+    private func label(_ text: String, trailing: String?) -> some View {
+        HStack {
+            Text(text).font(.system(size: 10, weight: .medium)).foregroundStyle(Color("TextSecondary"))
+            Spacer()
+            if let trailing { Text(trailing).font(.system(size: 10)).foregroundStyle(Color("TextSecondary")) }
+        }
+    }
+
+    /// A tiny white page: lines for a doc, cells for a sheet, a bar for slides.
+    private func thumb(_ i: Int, progress: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .fill(Color.white)
+            .overlay(alignment: .top) {
+                Group {
+                    if i == 0 {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(0..<3, id: \.self) { j in
+                                Capsule().fill(j == 0 ? PolishTokens.ink : Color(hex: "#D4D4D4")).frame(height: 2.5)
+                                    .padding(.trailing, CGFloat(j) * 8)
+                            }
+                        }
+                    } else if i == 1 {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 4), spacing: 2) {
+                            ForEach(0..<12, id: \.self) { j in
+                                RoundedRectangle(cornerRadius: 1).fill([2, 5, 8].contains(j) ? Color(hex: "#15803D") : Color(hex: "#E5E5E5")).frame(height: 4)
+                            }
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Capsule().fill(PolishTokens.ink).frame(height: 3).padding(.trailing, 14)
+                            RoundedRectangle(cornerRadius: 2).fill(PolishTokens.coral.opacity(0.2)).frame(height: 9)
+                        }
+                    }
+                }
+                .padding(5)
+            }
+            .shadow(color: .black.opacity(0.08), radius: 1.5, y: 1)
+    }
+
+    private func play() async {
+        if reduceMotion { shown = 3; return }
+        shown = 0
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        withAnimation(PolishTokens.press) { docsPressed = true }
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        withAnimation(PolishTokens.press) { docsPressed = false }
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        for n in 1...3 {
+            withAnimation(PolishTokens.base) { shown = n }
+            try? await Task.sleep(nanoseconds: 450_000_000)
         }
     }
 }
