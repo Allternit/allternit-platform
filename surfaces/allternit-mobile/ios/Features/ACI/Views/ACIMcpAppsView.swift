@@ -469,7 +469,7 @@ struct ACIMcpAppsView: View {
 // MARK: - Dock bar centre
 
 private struct ACIDockTopKey: PreferenceKey {
-    static var defaultValue: CGFloat? = nil
+    static let defaultValue: CGFloat? = nil
     static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) { value = nextValue() ?? value }
 }
 

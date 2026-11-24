@@ -36,6 +36,7 @@ struct CodeLaunchComposer: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @StateObject private var dictation = DictationController()
     @State private var dictationBase = ""
+    @State private var showsPairing = false
     @FocusState private var isFocused: Bool
 
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -55,7 +56,7 @@ struct CodeLaunchComposer: View {
                 CodeContextBar(state: contextState, terminal: terminal)
             }
             CodePromptEdge(strong: isFocused, terminal: terminal, isRunning: isRunning, usage: lastRunUsage,
-                           onPair: { self.sheet = .pairing })
+                           onPair: { showsPairing = true })
                 .zIndex(1)
             HStack(alignment: .bottom, spacing: 4) {
                 if let onAttach {
@@ -159,6 +160,7 @@ struct CodeLaunchComposer: View {
         .task(id: "\(sessionId ?? "")-\(contextRefresh)") {
             await contextState.load(sessionId: sessionId)
         }
+        .sheet(isPresented: $showsPairing) { RuntimePairingView() }
         .sheet(isPresented: $contextState.showsUsage) {
             NavigationStack {
                 List {
