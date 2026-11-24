@@ -27,13 +27,17 @@ struct ArtifactCardPreview: View {
     let summary: ArtifactV2Summary
 
     @State private var preview: ArtifactCardPreviewStore.Preview? = nil
-    @State private var pulse = false
+    /// A picture that arrived after the card was already waiting: dots bloom into it once.
+    @State private var revealing: UIImage?
     @ReducedMotion private var reduceMotion
 
     var body: some View {
         ZStack {
             Color("FillNeutral")
             content
+            if let revealing {
+                DotFieldView(mode: .reveal(revealing, .cells, duration: 0.8), anchorTop: true)
+            }
         }
         .clipped()
         .accessibilityHidden(true)
@@ -42,7 +46,16 @@ struct ArtifactCardPreview: View {
         .task(id: "\(summary.id)@\(summary.currentVersion)") {
             let store = ArtifactCardPreviewStore.shared
             preview = store.cached(summary)
-            if preview == nil { preview = await store.preview(for: summary) }
+            if preview == nil {
+                let loaded = await store.preview(for: summary)
+                preview = loaded
+                // No byte progress exists for a thumbnail, so band field, then cells bloom.
+                if case .image(let image)? = loaded, !reduceMotion {
+                    revealing = image
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    revealing = nil
+                }
+            }
         }
     }
 
@@ -50,12 +63,7 @@ struct ArtifactCardPreview: View {
     private var content: some View {
         switch preview {
         case nil:
-            Color("BorderSubtle")
-                .opacity(pulse ? 0.45 : 0.15)
-                .onAppear {
-                    guard !reduceMotion else { return }
-                    withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { pulse = true }
-                }
+            DotFieldView(mode: .field(.band, amplitude: 0.45), pitch: 7)
         case .image(let image)?:
             Color.clear.overlay(alignment: .top) {
                 Image(uiImage: image).resizable().scaledToFill()
