@@ -28,6 +28,13 @@ import com.allternit.feature.chat.ChatSendRequest
 import com.allternit.feature.chat.ChatViewModel
 import com.allternit.feature.chat.ThreadShareSheet
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.allternit.core.design.GlassPill
 
 /** A composer send → the chat's send request (iOS ChatView onSend: model, effort, files, tools). */
 internal fun ComposerDraft.toChatRequest(): ChatSendRequest = ChatSendRequest(
@@ -41,7 +48,7 @@ internal fun ComposerDraft.toChatRequest(): ChatSendRequest = ChatSendRequest(
 )
 
 /**
- * The open chat (iOS ChatView): the header (☰ with the mode badge, the chat's name and ⋯), then [ChatScreen] with the shell's composer. Edit on the last user message loads its
+ * The open chat (iOS ChatView): the header (glass ☰, the chat's name and the glass pill with ⋯), then [ChatScreen] with the shell's composer. Edit on the last user message loads its
  * text into the composer and the next send replaces everything after it.
  */
 @Composable
@@ -118,7 +125,13 @@ internal fun ChatPage(
             leading = menuButton,
             trailing = {
                 Box {
-                    PhoneIconButton(com.allternit.core.design.R.drawable.ph_dots_three, "Chat options", testTag = "chatOptions", iconSize = 20) { menuOpen = true }
+                    GlassPill(
+                        onClick = { menuOpen = true },
+                        modifier = Modifier.testTag("chatOptions").semantics { contentDescription = "Chat options" },
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                    ) {
+                        Icon(painterResource(com.allternit.core.design.R.drawable.ph_dots_three), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(20.dp))
+                    }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, containerColor = c.bgPrimary, shape = RoundedCornerShape(16.dp)) {
                         if (chat.currentSessionId == null) {
                             Text("Send a message to start this chat.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))

@@ -51,6 +51,7 @@ import com.allternit.core.auth.Account
 import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.Haptics
 import com.allternit.core.design.Motion
+import com.allternit.core.design.PolishHaptic
 import com.allternit.core.design.R as DesignR
 import com.allternit.feature.chat.ChatBackends
 import com.allternit.feature.chat.ChatViewModel
@@ -67,6 +68,26 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 internal enum class DrawerValue { Closed, Open }
+
+/** The contract's push spring (stiffness 380, damping 36): damping ratio = 36 / (2 * sqrt(380)). */
+private val PushSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.9234f, stiffness = 380f)
+
+/** The glass ☰ (panel A). The mode badge is gone (D1); the label still names the mode. */
+@Composable
+internal fun ShellMenuButton(mode: ShellMode, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    com.allternit.core.design.GlassCircleButton(
+        onClick = onOpen,
+        contentDescription = "Open menu. ${mode.label} mode",
+        modifier = modifier.testTag("phoneMenuButton"),
+    ) {
+        androidx.compose.material3.Icon(
+            androidx.compose.ui.res.painterResource(DesignR.drawable.ph_list),
+            contentDescription = null,
+            tint = AllternitTheme.colors.textPrimary,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
 
 /** What fills the page under the drawer. Chat, sections and settings are stubs until later steps. */
 private sealed interface ShellPage {
@@ -179,17 +200,26 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
 
 
     fun setDrawer(open: Boolean) {
-        scope.launch { drawer.animateTo(if (open) DrawerValue.Open else DrawerValue.Closed, Motion.standardSpring()) }
+        scope.launch { drawer.animateTo(if (open) DrawerValue.Open else DrawerValue.Closed, PushSpring) }
     }
 
     // One light haptic per open (any way of opening), the hub closes, and Recents refresh
     // each time the drawer is revealed (iOS onChange(isSidebarOpen)).
     LaunchedEffect(drawer.settledValue) {
         if (drawer.settledValue == DrawerValue.Open && drawer.targetValue == DrawerValue.Open) {
-            Haptics.perform(view, Haptics.Kind.Tap)
+            PolishHaptic.perform(view, PolishHaptic.Kind.Light)
             hubOpen = false
             if (account != null) store.load()
         }
+    }
+
+    // A soft haptic when the drawer starts closing (the open haptic is above).
+    var lastDrawerTarget by remember { mutableStateOf(drawer.targetValue) }
+    LaunchedEffect(drawer.targetValue) {
+        if (lastDrawerTarget == DrawerValue.Open && drawer.targetValue == DrawerValue.Closed) {
+            PolishHaptic.perform(view, PolishHaptic.Kind.Soft)
+        }
+        lastDrawerTarget = drawer.targetValue
     }
 
     /** Mode changes return to that mode’s home. */
@@ -296,7 +326,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
 
     // Wave D: what the Projects and Artifacts screens need from the shell.
     val shellMenuButton: @Composable () -> Unit = {
-        PhoneMenuButton(mode = mode, onOpen = { setDrawer(true) })
+        ShellMenuButton(mode = mode, onOpen = { setDrawer(true) })
     }
     fun openHubSection(m: ShellMode, section: HubSection) {
         pickMode(m)
@@ -491,7 +521,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 drawer.targetValue,
             )
         }
-        val fling = AnchoredDraggableDefaults.flingBehavior(drawer, { distance: Float -> distance * 0.25f }, Motion.standardSpring())
+        val fling = AnchoredDraggableDefaults.flingBehavior(drawer, { distance: Float -> distance * 0.25f }, PushSpring)
         val offset = drawer.offset.let { if (it.isNaN()) 0f else it }
         val p = if (widthPx > 0f) (offset / widthPx).coerceIn(0f, 1f) else 0f
 
@@ -511,12 +541,12 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                 Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        translationX = p * widthPx
-                        val s = 1f - 0.06f * p
+                        translationX = p * 300.dp.toPx()
+                        val s = 1f - 0.08f * p
                         scaleX = s
                         scaleY = s
                         transformOrigin = TransformOrigin(0f, 0.5f)
-                        shape = if (p > 0f) RoundedCornerShape((36 * p).dp) else RectangleShape
+                        shape = if (p > 0f) RoundedCornerShape((38 * p).dp) else RectangleShape
                         clip = p > 0f
                     }
                     .background(c.bgPrimary),
@@ -533,7 +563,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             store = store,
                             models = models,
                             menuButton = {
-                                PhoneMenuButton(
+                                ShellMenuButton(
                                     mode = mode,
                                     onOpen = { setDrawer(true) },
                                 )
@@ -576,7 +606,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                             store = store,
                             models = models,
                             menuButton = {
-                                PhoneMenuButton(
+                                ShellMenuButton(
                                     mode = mode,
                                     onOpen = { setDrawer(true) },
                                 )
@@ -808,7 +838,7 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.16f * p))
+                            .background(Color(0xFF1F1E1D).copy(alpha = 0.06f * p))
                             .testTag("drawerScrim")
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
