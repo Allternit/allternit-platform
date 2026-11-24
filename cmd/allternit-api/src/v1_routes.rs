@@ -1244,6 +1244,7 @@ fn tool_frames_for_part(
     part: &serde_json::Value,
     msg_id: &str,
     sent: &mut HashMap<String, ToolFrameState>,
+    progress_sent: &mut HashMap<String, String>,
 ) -> Vec<serde_json::Value> {
     let Some(call_id) = part.get("callID").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else {
         return Vec::new();
@@ -1280,7 +1281,38 @@ fn tool_frames_for_part(
         frames.push(start);
         sent.insert(call_id.to_string(), ToolFrameState::Started);
     }
+    // Live progress: a running part that carries `progress_detail` (today only
+    // media_generate) gets one `tool_progress` frame per distinct value.
+    if status == "running" {
+        let meta = [part.pointer("/metadata"), part.pointer("/state/metadata")]
+            .into_iter()
+            .flatten()
+            .find(|m| m.get("progress_detail").is_some());
+        if let Some(meta) = meta {
+            let detail = &meta["progress_detail"];
+            let key = detail.to_string();
+            if progress_sent.get(call_id) != Some(&key) {
+                let mut out = serde_json::Map::new();
+                if let Some(p) = meta.get("progress") {
+                    out.insert("progress".into(), p.clone());
+                }
+                out.insert("progress_detail".into(), detail.clone());
+                if let Some(poster) = meta.get("poster") {
+                    out.insert("poster".into(), poster.clone());
+                }
+                frames.push(json!({
+                    "type": "tool_progress",
+                    "messageId": msg_id,
+                    "toolCallId": call_id,
+                    "toolName": tool_name,
+                    "metadata": out,
+                }));
+                progress_sent.insert(call_id.to_string(), key);
+            }
+        }
+    }
     if settled {
+        progress_sent.remove(call_id);
         frames.push(if status == "completed" {
             // run_code's `files[]` + `run` are added by the caller off the
             // async stream (gizzi_chat_stream::run_code_payload_async).
@@ -2415,6 +2447,8 @@ async fn agent_chat_bridge(
         // callID → whether its tool_use start / final frame went out, so each
         // tool call reaches the client as exactly one start and one end.
         let mut tool_frames_sent: HashMap<String, ToolFrameState> = HashMap::new();
+        // callID → last `progress_detail` forwarded as a `tool_progress` frame.
+        let mut tool_progress_sent: HashMap<String, String> = HashMap::new();
         // Newest assistant usage seen on the bus (message.updated carries the
         // full message info incl. tokens) — attached to the finish frame.
         let mut last_usage: Option<serde_json::Value> = None;
@@ -2659,7 +2693,7 @@ async fn agent_chat_bridge(
                         if part_type == "tool"
                             && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
                         {
-                            for mut frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent) {
+                            for mut frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent, &mut tool_progress_sent) {
                                 let settled_ok = frame["type"] == "tool_result";
                                 // run_code: produced files → uploads (once per call, via
                                 // its manifest), `files[]` + `run` on the frame. The file
@@ -3488,32 +3522,34 @@ mod tests {
     #[test]
     fn tool_frames_one_start_one_end_per_call() {
         let mut sent = HashMap::new();
+        let mut progress = HashMap::new();
         let running = json!({"type": "tool", "tool": "web_search", "callID": "c1",
             "state": {"status": "running", "input": {"query": "x"}}});
         let done = json!({"type": "tool", "tool": "web_search", "callID": "c1",
             "state": {"status": "completed", "input": {"query": "x"}, "output": "3 results"}});
 
-        let start = tool_frames_for_part(&running, "m1", &mut sent);
+        let start = tool_frames_for_part(&running, "m1", &mut sent, &mut progress);
         assert_eq!(start.len(), 1);
         assert_eq!(start[0]["type"], "content_block_start");
         assert_eq!(start[0]["content_block"]["type"], "tool_use");
         assert_eq!(start[0]["content_block"]["id"], "c1");
-        assert!(tool_frames_for_part(&running, "m1", &mut sent).is_empty());
+        assert!(tool_frames_for_part(&running, "m1", &mut sent, &mut progress).is_empty());
 
-        let end = tool_frames_for_part(&done, "m1", &mut sent);
+        let end = tool_frames_for_part(&done, "m1", &mut sent, &mut progress);
         assert_eq!(end.len(), 1);
         assert_eq!(end[0]["type"], "tool_result");
         assert_eq!(end[0]["result"], "3 results");
-        assert!(tool_frames_for_part(&done, "m1", &mut sent).is_empty());
+        assert!(tool_frames_for_part(&done, "m1", &mut sent, &mut progress).is_empty());
     }
 
     #[test]
     fn send_user_message_frames_carry_the_card_metadata() {
         let mut sent = HashMap::new();
+        let mut progress = HashMap::new();
         let meta = json!({"text": "Report ready", "files": [{"name": "r.md", "size": 5, "display": "render"}], "push": "sent"});
         let done = json!({"type": "tool", "tool": "send_user_message", "callID": "c2",
             "state": {"status": "completed", "input": {}, "output": "Delivered", "metadata": meta}});
-        let frames = tool_frames_for_part(&done, "m1", &mut sent);
+        let frames = tool_frames_for_part(&done, "m1", &mut sent, &mut progress);
         let end = frames.iter().find(|f| f["type"] == "tool_result").unwrap();
         assert_eq!(end["metadata"]["text"], "Report ready");
         assert_eq!(end["metadata"]["files"][0]["name"], "r.md");
@@ -3523,7 +3559,7 @@ mod tests {
         let meta = json!({"action": "create", "status": "ok", "automation": {"id": "routine-1", "title": "Call the bank"}});
         let made = json!({"type": "tool", "tool": "automation", "callID": "c4",
             "state": {"status": "completed", "input": {}, "output": "Scheduled", "metadata": meta}});
-        let frames = tool_frames_for_part(&made, "m1", &mut sent);
+        let frames = tool_frames_for_part(&made, "m1", &mut sent, &mut progress);
         let end = frames.iter().find(|f| f["type"] == "tool_result").unwrap();
         assert_eq!(end["metadata"]["automation"]["id"], "routine-1");
 
@@ -3531,7 +3567,7 @@ mod tests {
         let mut sent = HashMap::new();
         let other = json!({"type": "tool", "tool": "bash", "callID": "c3",
             "state": {"status": "completed", "input": {}, "output": "ok", "metadata": {"secret": 1}}});
-        let frames = tool_frames_for_part(&other, "m1", &mut sent);
+        let frames = tool_frames_for_part(&other, "m1", &mut sent, &mut progress);
         assert!(frames.iter().find(|f| f["type"] == "tool_result").unwrap().get("metadata").is_none());
     }
 
@@ -3577,11 +3613,37 @@ mod tests {
     }
 
     #[test]
+    fn tool_progress_frame_once_per_distinct_progress_detail() {
+        let mut sent = HashMap::new();
+        let mut progress = HashMap::new();
+        let part = |detail: serde_json::Value, status: &str| json!({"type": "tool", "tool": "media_generate", "callID": "g1",
+            "state": {"status": status, "input": {}, "output": "done",
+                "metadata": {"progress": "Rendering", "progress_detail": detail}}});
+        let a = part(json!({"pct": 10}), "running");
+        let first = tool_frames_for_part(&a, "m1", &mut sent, &mut progress);
+        let types: Vec<_> = first.iter().map(|f| f["type"].as_str().unwrap()).collect();
+        assert_eq!(types, ["content_block_start", "tool_progress"]);
+        assert_eq!(first[1]["toolCallId"], "g1");
+        assert_eq!(first[1]["metadata"]["progress"], "Rendering");
+        assert_eq!(first[1]["metadata"]["progress_detail"]["pct"], 10);
+        assert!(tool_frames_for_part(&a, "m1", &mut sent, &mut progress).is_empty());
+        let b = part(json!({"pct": 20}), "running");
+        let next = tool_frames_for_part(&b, "m1", &mut sent, &mut progress);
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0]["type"], "tool_progress");
+        let done = part(json!({"pct": 100}), "completed");
+        let end = tool_frames_for_part(&done, "m1", &mut sent, &mut progress);
+        assert_eq!(end.len(), 1);
+        assert_eq!(end[0]["type"], "tool_result");
+    }
+
+    #[test]
     fn tool_frames_settled_first_sight_gets_start_and_error() {
         let mut sent = HashMap::new();
+        let mut progress = HashMap::new();
         let failed = json!({"type": "tool", "tool": "bash", "callID": "c2",
             "state": {"status": "error", "input": {}, "error": "exit 1"}});
-        let frames = tool_frames_for_part(&failed, "m1", &mut sent);
+        let frames = tool_frames_for_part(&failed, "m1", &mut sent, &mut progress);
         let types: Vec<_> = frames.iter().map(|f| f["type"].as_str().unwrap()).collect();
         assert_eq!(types, ["content_block_start", "tool_error"]);
         assert_eq!(frames[1]["error"], "exit 1");
