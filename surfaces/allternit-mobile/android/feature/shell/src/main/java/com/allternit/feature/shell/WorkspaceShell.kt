@@ -108,7 +108,8 @@ private sealed interface ShellPage {
  * The signed-in shell (iOS MainWorkspaceView, PWA PhoneShell): one page fills the screen, no
  * bottom bar. The drawer is min(80%, 360dp) wide (iOS sidebarWidth), springs in from the left (☰ tap or a pan from
  * the left edge), and the page pushes right with it, scaled to 0.94 with rounded corners.
- * ☰ opens only the drawer; its mode icon opens the Shelves hub.
+ * ☰ opens only the drawer; its mode orb opens the four-mode pill. Only a hold on the composer (or
+ * ACI) mode orb opens the Shelves hub.
  *
  * [account] is null for the debug "Continue without signing in" path: no API calls then.
  * [openSettingsOnStart] opens Settings first (a first-run checklist fix).
@@ -605,8 +606,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                                 voiceOnOpen = true
                                 page = ShellPage.Chat(session = null, draft = ComposerDraft())
                             },
-                            codeHome = if (mode == ShellMode.Code) ({ codeScroll ->
-                                com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it }, dockScroll = codeScroll)
+                            codeHome = if (mode == ShellMode.Code) ({
+                                com.allternit.feature.code.CodeHome(codeHost, codeStore, onRoute = { codeRoute = it })
                             }) else null,
                             onCodeSessions = if (mode == ShellMode.Code) ({ codeRoute = com.allternit.feature.code.CodeRoute.Overview }) else null,
                             codeActions = if (mode == ShellMode.Code) CodeComposerActions(
@@ -906,8 +907,8 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
                     mode = mode,
                     account = account,
                     store = store,
-                    // Shelves is also reachable from screens without a composer.
-                    onModeDial = { setDrawer(false); focusManager.clearFocus(); hubOpen = true },
+                    // The drawer orb switches mode in place; the rail swaps with it.
+                    onPickMode = ::pickMode,
                     botsWaiting = botsStore.waitingCount,
                     onRow = { row -> openPage(ShellPage.Section(row)) },
                     onOpenSession = {

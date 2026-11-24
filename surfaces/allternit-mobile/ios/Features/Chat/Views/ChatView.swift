@@ -35,7 +35,7 @@ struct ChatView: View {
     }
 
     /// The open chat's name, else no title (ChatsScreen `activeChat?.name`).
-    /// Home has no header title (Eoj 2026-11-20): the A:// mark on the page is the brand.
+    /// The launch screen shows the A://TERNIT wordmark in the bar instead.
     private var title: String {
         let id = viewModel.currentSessionId ?? selectedSessionId
         if let name = sessions.session(id: id)?.name, !name.isEmpty { return name }
@@ -47,6 +47,8 @@ struct ChatView: View {
             PhoneHeader(
                 title: title,
                 wideSides: true,
+                // Home's launch: the A://TERNIT pixel wordmark, centred in the bar.
+                wordmark: viewModel.messages.isEmpty ? .home : nil,
                 onMenu: { isSidebarOpen = true }
             ) {
                 HStack(spacing: 0) {
@@ -60,22 +62,14 @@ struct ChatView: View {
                     }
                 }
             }
-            // Home launch: the A://TERNIT block title docks into this bar's
-            // centre, so the bar's centre is open while the launch screen shows.
-            .mask(DockHeaderHole(active: viewModel.messages.isEmpty))
-            .zIndex(1)
 
             ChatContentView(
                 sessionId: selectedSessionId,
                 viewModel: viewModel,
                 launchStyle: true,
-                launchTopInset: PhoneHeaderMetrics.barHeight,
                 chatMenuHoldsExtras: true,
                 onNewChat: startNewChat
             )
-            // The launch screen reaches up under the bar so the dock can draw
-            // in it (the bar stays on top; the composer does not move).
-            .padding(.top, viewModel.messages.isEmpty ? -PhoneHeaderMetrics.barHeight : 0)
 
         }
         .background(Color("BgPrimary"))
@@ -257,10 +251,6 @@ struct ChatContentView: View {
     /// deck, the template gallery) and the compact deck in a session. Other
     /// hosts get the plain composer.
     var launchStyle: Bool = false
-    /// Home launch: height of the bar above this view. The launch screen's own
-    /// frame reaches up under it (the host pulls it up by the same amount) so
-    /// the docking A://TERNIT title can draw in the bar.
-    var launchTopInset: CGFloat = 0
     /// Code's Terminal choice: this same thread drawn as a terminal session
     /// (dark surface, `❯` prompts, `●` tool lines) with the Code prompt and
     /// its status row in place of the chat composer.
@@ -523,11 +513,8 @@ struct ChatContentView: View {
     /// scrolls below it.
     private var launchLayout: some View {
         GeometryReader { proxy in
-            DockingTitleScrollView(title: "TERNIT", markLabel: "Allternit",
-                                   chrome: .overlay(barCenter: launchTopInset / 2)) {
+            ScrollView {
                 VStack(spacing: 0) {
-                    // Room for the bar the screen reaches under.
-                    Color.clear.frame(height: launchTopInset)
                     if let transientError = viewModel.transientError {
                         TransientErrorBanner(message: transientError, onDismiss: {
                             viewModel.transientError = nil
@@ -558,22 +545,15 @@ struct ChatContentView: View {
                         .transition(.opacity)
                     }
                 }
+                .padding(.horizontal, 14)
                 .padding(.bottom, 8)
-                // The kit adds the 14 pt sides and the title's room; the rest
-                // of the zone keeps the old height so the composer stays put.
-                .frame(maxWidth: .infinity,
-                       minHeight: proxy.size.height - launchTitleRoom(width: proxy.size.width))
+                .frame(minHeight: proxy.size.height)
                 .animation(.easeOut(duration: 0.2), value: inputText.isEmpty)
                 .animation(.easeOut(duration: 0.2), value: agentModeStore.isAgentEnabled(for: modeStore.mode))
             }
             .scrollDismissesKeyboard(.interactively)
             .background { BotWashedBackground().ignoresSafeArea() }
         }
-    }
-
-    /// Height the dock kit reserves above the content for the big title.
-    private func launchTitleRoom(width: CGFloat) -> CGFloat {
-        DockTitleLayout(text: "TERNIT", mark: true).titleHeight(width: width) + 8 + 12
     }
 
     // MARK: Session
@@ -1044,8 +1024,8 @@ struct ChatContentView: View {
 /// a serif title, centered. One greeting per app session, from the web's
 /// chat pool (launchGreeting.ts), with the signed-in first name.
 struct ChatLaunchGreeting: View {
-    /// Home draws the A://TERNIT block title above the greeting, so it drops
-    /// the small mark here. A bot's face still shows.
+    /// Home shows the A://TERNIT wordmark in its bar, so it drops the small
+    /// mark here. A bot's face still shows.
     var showsMark = true
     /// In a bot's own chat the bot's face stands in for the mark (web
     /// ActiveAgentMascot on the launch header).
@@ -1594,20 +1574,5 @@ private struct JumpDistanceTracker: ViewModifier {
         } else {
             content
         }
-    }
-}
-
-/// Mask for a bar that hosts a docking title: the bar everywhere, with an open
-/// slot in the centre while `active`, so the title drawn under it shows through.
-struct DockHeaderHole: View {
-    var active: Bool
-    var body: some View {
-        Rectangle().fill(Color.black)
-            .overlay {
-                if active {
-                    Rectangle().fill(Color.black).frame(width: 210).blendMode(.destinationOut)
-                }
-            }
-            .compositingGroup()
     }
 }

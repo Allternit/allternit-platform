@@ -35,7 +35,9 @@ import SwiftUI
 // BotRoute / ACITabView's own destination; if a host cannot route to one, it
 // falls back to the mode's root tab, never a new screen.
 //
-// The shell hosts Shelves. The drawer mode icon and composer orb open it.
+// The shell hosts Shelves. Only a hold on the mode orb opens it: the composer's
+// orb, or ACI's floating orb (ACI has no composer). The drawer's orb is tap-only
+// and opens the four-mode pill.
 // Header New is removed; overview lists keep their bottom New action.
 
 // MARK: - Modes
@@ -171,7 +173,7 @@ enum ModeHubSpec {
 
     // MARK: Events
 
-    /// Contract events; the phone drawer's mode icon posts `openModeHub`.
+    /// Contract events; a hold on the composer (or ACI) mode orb posts `openModeHub`.
     static let openModeHub = Notification.Name("allternit:open-mode-hub")
     static let modeArrive = Notification.Name("allternit:mode-arrive")
 }

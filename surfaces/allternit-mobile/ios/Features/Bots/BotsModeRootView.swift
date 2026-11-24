@@ -114,7 +114,7 @@ struct BotsModeRootView: View {
                 // screens keep their own navigation bars.
                 .toolbar(.hidden, for: .navigationBar)
                 .safeAreaInset(edge: .top, spacing: 0) {
-                    PhoneHeader(title: "Bots", wideSides: true, dockMounted: showsDock, onMenu: { onOpenSidebar?() }) {
+                    PhoneHeader(title: "Bots", wideSides: true, wordmark: .bots, onMenu: { onOpenSidebar?() }) {
                         // One glass pill (the Projects and Artifacts pill): search
                         // the team + a sliders popover with layout and the actions.
                         ProjectsPill(
@@ -237,12 +237,6 @@ struct BotsModeRootView: View {
                 navigator.path = [.chat(botId: bot.id, sessionId: sessionId)]
             }
         }
-    }
-
-    /// The launchpad draws the BOTS block title over the header; pushed screens
-    /// keep their own bars, and signed-out has no scroll to dock into.
-    private var showsDock: Bool {
-        navigator.path.isEmpty && (auth.isSignedIn || auth.isSkippingAuth)
     }
 
     @ViewBuilder

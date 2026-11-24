@@ -54,14 +54,20 @@ struct ArtifactsLibraryView: View {
                 if searching || !searchDraft.isEmpty {
                     ProjectsSearchField(query: $searchDraft, placeholder: "Search artifacts")
                 }
-                PolishedTabPage(title: "Artifacts", introKey: .artifacts, hero: { ArtifactsIntroHero() }) {
-                    if let notice { noticeBar(notice) }
-                    makeSection
-                    toolsSection
-                    yourArtifacts
+                // No nav bar here: the title docks into LibrarySectionHeader's
+                // centre, measured from this page's top (the search field can
+                // sit between them).
+                ACIDockReader { dock in
+                    PolishedTabPage(title: "Artifacts", chrome: .overlay(barCenter: dock.barCenter),
+                                    introKey: .artifacts, hero: { ArtifactsIntroHero() }) {
+                        if let notice { noticeBar(notice) }
+                        makeSection
+                        toolsSection
+                        yourArtifacts
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                    .refreshable { await store.reload() }
                 }
-                .scrollDismissesKeyboard(.interactively)
-                .refreshable { await store.reload() }
             }
             // Floating "New artifact": keeps every item the old bar's menu had.
             Menu {

@@ -60,12 +60,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Tap runs [onTap]; holding for [ModeHubSpec.HOLD_MILLIS] runs [onHold] once (medium haptic) and the
- * release afterwards does nothing. The press scales to 0.94 (contract), except in reduced motion.
+ * release afterwards does nothing. A null [onHold] is tap-only. The press scales to 0.94 (contract),
+ * except in reduced motion.
  */
 internal fun Modifier.holdOrTap(
     @Suppress("UNUSED_PARAMETER") reduced: Boolean,
     onPressedChange: (Boolean) -> Unit,
-    onHold: () -> Unit,
+    onHold: (() -> Unit)?,
     onTap: () -> Unit,
 ): Modifier = composed {
     val view = LocalView.current
@@ -75,7 +76,7 @@ internal fun Modifier.holdOrTap(
     onKeyEvent {
         when {
             it.type == KeyEventType.KeyUp && (it.key == Key.Enter || it.key == Key.Spacebar || it.key == Key.DirectionCenter) -> { tap.value(); true }
-            it.type == KeyEventType.KeyUp && it.key == Key.Menu -> { hold.value(); true }
+            it.type == KeyEventType.KeyUp && it.key == Key.Menu -> hold.value?.let { h -> h(); true } ?: false
             else -> false
         }
     }.focusable().pointerInput(Unit) {
@@ -83,15 +84,20 @@ internal fun Modifier.holdOrTap(
             awaitFirstDown()
             pressed.value(true)
             try {
+                val onHoldNow = hold.value
                 var cancelled = false
-                val up = withTimeoutOrNull(ModeHubSpec.HOLD_MILLIS) {
+                val up = if (onHoldNow == null) {
                     waitForUpOrCancellation().also { if (it == null) cancelled = true }
+                } else {
+                    withTimeoutOrNull(ModeHubSpec.HOLD_MILLIS) {
+                        waitForUpOrCancellation().also { if (it == null) cancelled = true }
+                    }
                 }
-                if (up == null && !cancelled) {
+                if (up == null && !cancelled && onHoldNow != null) {
                     // The timeout hit with the finger still down: the hold completes.
                     HubHaptic.Medium.play(view)
                     pressed.value(false)
-                    hold.value()
+                    onHoldNow()
                     waitForUpOrCancellation()
                 } else {
                     pressed.value(false)
@@ -105,7 +111,8 @@ internal fun Modifier.holdOrTap(
 /**
  * The mode orb (CONTRACT.md "New orb" sibling; mock `Combo`, phone variant): a 36dp glass circle showing the
  * current mode's icon. Tap opens a pill of the 4 modes ([expanded]); tapping a mode picks it ([onPick]) and
- * the host collapses the pill. Hold 450 ms on the orb or any pill item opens the hub sheet ([onOpenHub]).
+ * the host collapses the pill. Hold 450 ms on the orb or any pill item opens the hub sheet ([onOpenHub]);
+ * a null [onOpenHub] is tap-only (the drawer's switcher: Shelves opens only from the composer or ACI orb).
  *
  * The host owns [expanded] so a tap outside (or the hub opening) can collapse it. Hidden in the HUD
  * composer and in the Bots-only app: the host does not compose it there.
@@ -118,7 +125,7 @@ internal fun ModeOrb(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onPick: (ShellMode) -> Unit,
-    onOpenHub: () -> Unit,
+    onOpenHub: (() -> Unit)?,
     modifier: Modifier = Modifier,
     botsWaiting: Int = 0,
     /** The bot Bots mode is focused on (page or chat); its face replaces the mode icon. A bot with no avatar shows Gizzi (web W14, iOS I14). Null shows the mode icon. */
@@ -150,14 +157,14 @@ internal fun ModeOrb(
                     .holdOrTap(
                         reduced = reduced,
                         onPressedChange = { pressed = it },
-                        onHold = { onOpenHub() },
+                        onHold = onOpenHub,
                         onTap = { HubHaptic.Light.play(view); onExpandedChange(true) },
                     )
                     .semantics {
                         role = Role.Button
                         contentDescription = if (focusedBot != null) "Mode: ${mode.label}, ${focusedBot.displayName}. Change mode" else "Mode: ${mode.label}. Change mode"
                         onClick(label = "Shows the modes") { onExpandedChange(true); true }
-                        customActions = listOf(CustomAccessibilityAction("Show all modes") { onOpenHub(); true })
+                        if (onOpenHub != null) customActions = listOf(CustomAccessibilityAction("Show all modes") { onOpenHub(); true })
                     },
                 contentAlignment = Alignment.Center,
             ) {
@@ -205,7 +212,7 @@ private fun PillMode(
     reduced: Boolean,
     badge: Int,
     onPressedChange: (Boolean) -> Unit,
-    onHold: () -> Unit,
+    onHold: (() -> Unit)?,
     onTap: () -> Unit,
 ) {
     val c = AllternitTheme.colors

@@ -20,9 +20,9 @@ enum RecentsDateFilter: String, CaseIterable {
 }
 
 /// The phone drawer (allternit-ai src/fabric-session/phone/PhoneDrawer.tsx):
-/// the active mode's rail, laid out like Claude iOS. Top line: the mode dial
-/// (tap opens Shelves),
-/// the mode's wordmark, Inbox and a round search button. Then the mode's rail
+/// the active mode's rail, laid out like Claude iOS. Top line: the mode orb
+/// (tap opens the four-mode pill over the line; Shelves is the composer
+/// orb's hold only), the mode's wordmark, Inbox and a round search button. Then the mode's rail
 /// rows (Projects, Artifacts, Automation Tasks, Customize, More), Teammates,
 /// Pinned, and Recents with See all + a filter — swipe a recent left to
 /// delete it, long-press to drag it into your own order. The list fades
@@ -44,6 +44,9 @@ struct HistorySidebarView: View {
     @ObservedObject private var usage = UsageStore.shared
 
     @State private var actionError: String? = nil
+    /// The header orb's four-mode pill is open over the top line.
+    @State private var drawerModesOpen = false
+    @ReducedMotion private var drawerModesReduced
 
     @State private var statusFilter: RecentsStatusFilter = .all
     @State private var dateFilter: RecentsDateFilter = .all
@@ -249,48 +252,51 @@ struct HistorySidebarView: View {
 
     // MARK: - Header
 
-    /// `phone-drawer-top-modes`: dial · wordmark · Inbox · search.
+    /// `phone-drawer-top-modes`: mode orb · wordmark · Inbox · search. The orb
+    /// is the regular switcher: tap opens the four-mode pill over the line
+    /// (the rest of the line fades under it); a pick swaps the rail in place.
     private var header: some View {
-        HStack(spacing: 8) {
-            // Tap closes the drawer and opens the shell’s Shelves hub.
-            Button {
-                Haptics.medium()
-                NotificationCenter.default.post(name: ModeHubSpec.openModeHub, object: nil)
-            } label: {
-                Image(systemName: modeStore.shellMode.icon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Color("BgPrimary"))
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(Color("TextPrimary")))
-                    .frame(width: 44, height: 44)
-                    .overlay(alignment: .topTrailing) {
-                        if botStore.waitingCount > 0 {
-                            Text(botStore.waitingCount > 9 ? "9+" : "\(botStore.waitingCount)")
-                                .font(.system(size: 10, weight: .bold))
-                                .padding(4)
-                                .background(Color("FillNeutral"), in: Capsule())
-                        }
+        ZStack(alignment: .leading) {
+            HStack(spacing: 8) {
+                // The orb's slot; the orb floats above so its pill can cover the line.
+                Color.clear.frame(width: 40, height: 44)
+                ShellWordmark(mode: modeStore.shellMode)
+                    .padding(.leading, 6)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .clipped()
+                roundButton(
+                    systemName: "tray",
+                    label: inboxCount == 0 ? "Needs you" : "Needs you, \(inboxCount) waiting",
+                    id: "drawerInbox",
+                    badge: inboxCount
+                ) {
+                    isInboxPresented = true
+                }
+                roundButton(systemName: "magnifyingglass", label: "Search chats, projects and bots", id: "drawerSearch") {
+                    isSearchPresented = true
+                }
+            }
+            .opacity(drawerModesOpen ? 0 : 1)
+            .allowsHitTesting(!drawerModesOpen)
+            .accessibilityHidden(drawerModesOpen)
+            ShellModeOrb(size: 40, opensShelves: false, onOpenChange: { drawerModesOpen = $0 })
+                .overlay(alignment: .topTrailing) {
+                    if !drawerModesOpen && botStore.waitingCount > 0 {
+                        Text(botStore.waitingCount > 9 ? "9+" : "\(botStore.waitingCount)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 4)
+                            .frame(minWidth: 16, minHeight: 16)
+                            .background(Capsule().fill(Theme.statusError))
+                            .offset(x: 4, y: -4)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open Shelves, \(modeStore.shellMode.label) mode")
-            .accessibilityIdentifier("modeHubDrawerButton")
-            ShellWordmark(mode: modeStore.shellMode)
-                .padding(.leading, 6)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .clipped()
-            roundButton(
-                systemName: "tray",
-                label: inboxCount == 0 ? "Needs you" : "Needs you, \(inboxCount) waiting",
-                id: "drawerInbox",
-                badge: inboxCount
-            ) {
-                isInboxPresented = true
-            }
-            roundButton(systemName: "magnifyingglass", label: "Search chats, projects and bots", id: "drawerSearch") {
-                isSearchPresented = true
-            }
+                }
+                .accessibilityIdentifier("drawerModeOrb")
         }
+        .frame(minHeight: 44)
+        .animation(drawerModesReduced ? nil : PolishTokens.base, value: drawerModesOpen)
         .padding(.leading, 12)
         .padding(.trailing, 14)
         .padding(.top, 6)

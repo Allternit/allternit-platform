@@ -278,7 +278,6 @@ private struct CodePromptEdge: View {
                 brainName: modelLabel,
                 state: chipState,
                 warning: chipState == .needsStep ? "Pair a computer" : nil,
-                background: .clear,
                 action: { showsRuntimeBrain = true }
             )
             DashedHairline(strong: strong, terminal: terminal).frame(width: 10)
@@ -441,7 +440,8 @@ struct CodeInk {
 
 /// The Code prompt's controls (CodeBottomStatusBar with CodeWorkspaceBar
 /// leading), icons only so all eight fit one row under the prompt; each
-/// keeps its words as its accessibility label. Computer · working folder ·
+/// keeps its words as its accessibility label. The computer also shows its
+/// name (it left the top bar, Eoj 2026-11-24). Computer · working folder ·
 /// branch · worktree · permission mode on the left; the context meter and the
 /// Chat/Terminal toggle on the right.
 struct CodeDeckRow: View {
@@ -474,6 +474,13 @@ struct CodeDeckRow: View {
     /// local is "This computer".
     private var environmentLabel: String {
         environmentStore.environment == .cloud ? (relay.activeDevice?.name ?? "Cloud") : "This computer"
+    }
+
+    /// The connected computer's name, shown by its icon; with none paired,
+    /// where the thread runs.
+    private var computerName: String {
+        guard let device = relay.activeDevice else { return environmentLabel }
+        return device.name.isEmpty ? "Allternit runtime" : device.name
     }
 
     private var cloudStatus: String? {
@@ -539,16 +546,31 @@ struct CodeDeckRow: View {
 
     // MARK: Items
 
-    /// The computer the thread runs on; a dot while a cloud runtime wakes.
+    /// The computer the thread runs on, its icon and name; a dot while a
+    /// cloud runtime wakes.
     private var environmentButton: some View {
-        icon(environmentStore.environment == .cloud ? "cloud" : "desktopcomputer",
-             label: "Environment: \(environmentLabel)\(cloudStatus.map { ", \($0)" } ?? "")") { sheet = .environment }
-            .overlay(alignment: .topTrailing) {
-                if cloudStatus != nil {
-                    Circle().fill(Theme.statusWarning).frame(width: 6, height: 6).offset(x: -8, y: 10)
-                        .allowsHitTesting(false)
-                }
+        Button { sheet = .environment } label: {
+            HStack(spacing: 2) {
+                Image(systemName: environmentStore.environment == .cloud ? "cloud" : "desktopcomputer")
+                    .font(.system(size: 15))
+                    .frame(width: 30, height: 40)
+                    .overlay(alignment: .topTrailing) {
+                        if cloudStatus != nil {
+                            Circle().fill(Theme.statusWarning).frame(width: 6, height: 6).offset(x: -5, y: 10)
+                        }
+                    }
+                Text(computerName)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 96, alignment: .leading)
             }
+            .foregroundColor(ink.primary)
+            .padding(.trailing, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Environment: \(computerName)\(cloudStatus.map { ", \($0)" } ?? "")")
     }
 
     /// ComposerUsageMeter: the session's context fill as HUD blocks and a
