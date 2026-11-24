@@ -2,8 +2,8 @@ Make an image or a video for the user. The result is saved to the session's Outp
 
 Lanes:
 - native (available now): you write the image or video as code; the user's Allternit app renders it in a sandbox (a PNG, or an MP4 with optional sound), and the render comes back to you to check. Costs nothing and works with any model.
-- subscription (images only): the user's connected image subscription makes the image on their Sessions computer. Pass prompt (and optionally provider). The user confirms every image in the app before anything is sent, and it can take a minute or two. If the result says the lane is not available, nothing was sent: offer the native lane or ask the user.
-- cloud / own_key: photoreal and model-generated images and footage (GPT Image, Higgsfield, Veo). Not available in this build yet. If the request needs photo-realistic output (real-looking people, places, products) and the subscription lane is not available, say that plainly and ask the user in the chat how they'd like to proceed, e.g. a stylized native version instead.
+- aci (images only): the image site the user signed in to in this device's own ACI browser makes the image. This is the default for image prompts without code. It requires a person-sent chat and confirmation of the exact prompt in the app. Leave provider unset or use the one value the provider field lists. The browser session must be signed in; OAuth chat sign-in alone does not enable hosted image tools. No Sessions, cloud computer, connected Desktop, or API-key fallback. On web/PWA without a local browser executor, show unavailable. subscription is a legacy spelling of this same local lane.
+- cloud / own_key: photoreal and model-generated images and footage (GPT Image, Higgsfield, Veo). Not available in this build yet. If the request needs photo-realistic output (real-looking people, places, products) and the local ACI image lane is not available, say that plainly and ask the user in the chat how they'd like to proceed, e.g. a stylized native version instead.
 
 Briefs and follow-ups
 - Write a full visual brief: subject, setting, style, framing, light, mood, palette and size. Stay true to the request and add no false facts.
@@ -37,3 +37,5 @@ Native video (kind "video"): motion graphics, title cards, logo stings, kinetic 
 - duration 1–60s (default 6), fps 24/25/30/60 (default 30), motionBlur 1–8 (default 4), size default 1920×1080 (1080×1920 vertical, 1080×1080 square; max 4K).
 - The result attaches a contact sheet: six timestamped stills across the video. Check pacing, framing, text and that the motion reads. Fix with the same title (it replaces the previous version); at most two fix rounds.
 label: optional, 3-8 words saying what this call does.
+
+ACI images: return only actual downloaded image bytes, never a screenshot. On sign-in, provider challenge, cancellation or unavailable browser, state the exact reason. Do not auto-retry an ambiguous submission. Progress is in the generation card; do not narrate it. Do not claim success until a valid image returns.

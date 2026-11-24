@@ -1,0 +1,317 @@
+{
+  "agy-after-working.txt": {
+    "agent": null,
+    "hideFrom": 34,
+    "status": "needs-you",
+    "mode": null,
+    "dialog": {
+      "question": "Allow creation of this file?",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes, allow creation",
+          "selected": true,
+          "index": 0
+        },
+        {
+          "key": "2",
+          "label": "No, deny creation",
+          "selected": false,
+          "index": 1
+        }
+      ]
+    }
+  },
+  "agy-dialog.txt": {
+    "agent": "Antigravity",
+    "hideFrom": 34,
+    "status": "needs-you",
+    "mode": null,
+    "dialog": {
+      "question": "Allow creation of this file?",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes, allow creation",
+          "selected": true,
+          "index": 0
+        },
+        {
+          "key": "2",
+          "label": "No, deny creation",
+          "selected": false,
+          "index": 1
+        }
+      ]
+    }
+  },
+  "agy-done.txt": {
+    "agent": "Antigravity",
+    "hideFrom": 35,
+    "status": "idle",
+    "mode": null,
+    "dialog": null
+  },
+  "agy-idle.txt": {
+    "agent": "Antigravity",
+    "hideFrom": 16,
+    "status": "idle",
+    "mode": "Auto",
+    "dialog": null
+  },
+  "agy-mode.txt": {
+    "agent": "Antigravity",
+    "hideFrom": 35,
+    "status": "idle",
+    "mode": "Accept-edits",
+    "dialog": null
+  },
+  "agy-slash.txt": {
+    "agent": "Antigravity",
+    "hideFrom": 40,
+    "status": "idle",
+    "mode": null,
+    "dialog": null
+  },
+  "agy-trust.txt": {
+    "agent": "Antigravity",
+    "hideFrom": 8,
+    "status": "needs-you",
+    "mode": null,
+    "dialog": {
+      "question": "Do you trust the contents of this project?",
+      "options": [
+        {
+          "key": "",
+          "label": "Yes, I trust this folder",
+          "selected": true,
+          "index": 0
+        },
+        {
+          "key": "",
+          "label": "No, exit",
+          "selected": false,
+          "index": 1
+        }
+      ]
+    }
+  },
+  "agy-working.txt": {
+    "agent": "Antigravity",
+    "hideFrom": 34,
+    "status": "working",
+    "mode": null,
+    "dialog": null
+  },
+  "claude-done.txt": {
+    "agent": "Claude Code",
+    "hideFrom": 36,
+    "status": "working",
+    "mode": "Manual",
+    "dialog": null
+  },
+  "claude-idle-after.txt": {
+    "agent": "Claude Code",
+    "hideFrom": 36,
+    "status": "idle",
+    "mode": "Manual",
+    "dialog": null
+  },
+  "claude-idle.txt": {
+    "agent": "Claude Code",
+    "hideFrom": 35,
+    "status": "idle",
+    "mode": "Bypass permissions",
+    "dialog": null
+  },
+  "claude-permission.txt": {
+    "agent": "Claude Code",
+    "hideFrom": 25,
+    "status": "needs-you",
+    "mode": null,
+    "dialog": {
+      "question": "Do you want to create notes.md?",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes",
+          "selected": true,
+          "index": 0
+        },
+        {
+          "key": "2",
+          "label": "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)",
+          "selected": false,
+          "index": 1
+        },
+        {
+          "key": "3",
+          "label": "No",
+          "selected": false,
+          "index": 2
+        }
+      ]
+    }
+  },
+  "claude-slash.txt": {
+    "agent": "Claude Code",
+    "hideFrom": 36,
+    "status": "idle",
+    "mode": "Bypass permissions",
+    "dialog": null
+  },
+  "claude-trust.txt": {
+    "agent": "Claude Code",
+    "hideFrom": 35,
+    "status": "needs-you",
+    "mode": null,
+    "dialog": {
+      "question": "Security guide",
+      "options": [
+        {
+          "key": "",
+          "label": "No, exit",
+          "selected": true,
+          "index": 0
+        },
+        {
+          "key": "",
+          "label": "Yes, I trust this folder",
+          "selected": false,
+          "index": 1
+        }
+      ]
+    }
+  },
+  "claude-working.txt": {
+    "agent": "Claude Code",
+    "hideFrom": 36,
+    "status": "working",
+    "mode": "Manual",
+    "dialog": null
+  },
+  "codex-idle.txt": {
+    "agent": "Codex",
+    "hideFrom": 36,
+    "status": "idle",
+    "mode": null,
+    "dialog": null
+  },
+  "codex-mode.txt": {
+    "agent": "Codex",
+    "hideFrom": 35,
+    "status": "idle",
+    "mode": "Plan",
+    "dialog": null
+  },
+  "codex-slash.txt": {
+    "agent": "Codex",
+    "hideFrom": 36,
+    "status": "idle",
+    "mode": null,
+    "dialog": null
+  },
+  "codex-trust.txt": {
+    "agent": "Codex",
+    "hideFrom": 8,
+    "status": "needs-you",
+    "mode": null,
+    "dialog": {
+      "question": "decision will be saved.",
+      "options": [
+        {
+          "key": "1",
+          "label": "Trust and continue",
+          "selected": true,
+          "index": 0
+        },
+        {
+          "key": "2",
+          "label": "Back to Agent Command Center",
+          "selected": false,
+          "index": 1
+        }
+      ]
+    }
+  },
+  "gizzi-done.txt": {
+    "agent": null,
+    "hideFrom": 35,
+    "status": "idle",
+    "mode": null,
+    "dialog": null
+  },
+  "gizzi-idle.txt": {
+    "agent": null,
+    "hideFrom": 35,
+    "status": "idle",
+    "mode": null,
+    "dialog": null
+  },
+  "gizzi-mode.txt": {
+    "agent": null,
+    "hideFrom": 35,
+    "status": "idle",
+    "mode": "Accept edits",
+    "dialog": null
+  },
+  "gizzi-slash.txt": {
+    "agent": "Gizzi",
+    "hideFrom": 35,
+    "status": "idle",
+    "mode": null,
+    "dialog": null
+  },
+  "gizzi-start.txt": null,
+  "gizzi-working.txt": {
+    "agent": null,
+    "hideFrom": 35,
+    "status": "working",
+    "mode": null,
+    "dialog": null
+  },
+  "grok-signin.txt": null,
+  "kimi-idle.txt": {
+    "agent": "Kimi",
+    "hideFrom": 35,
+    "status": "idle",
+    "mode": null,
+    "dialog": null
+  },
+  "kimi-slash.txt": {
+    "agent": "Kimi",
+    "hideFrom": 40,
+    "status": "idle",
+    "mode": null,
+    "dialog": null
+  },
+  "kimi-trust.txt": null,
+  "opencode-after.txt": {
+    "agent": null,
+    "hideFrom": 32,
+    "status": "idle",
+    "mode": "Build",
+    "dialog": null
+  },
+  "opencode-mode.txt": {
+    "agent": null,
+    "hideFrom": 32,
+    "status": "idle",
+    "mode": "Plan",
+    "dialog": null
+  },
+  "opencode-working-late.txt": {
+    "agent": null,
+    "hideFrom": 33,
+    "status": "working",
+    "mode": "Build",
+    "dialog": null
+  },
+  "opencode-working.txt": {
+    "agent": null,
+    "hideFrom": 33,
+    "status": "working",
+    "mode": "Build",
+    "dialog": null
+  }
+}

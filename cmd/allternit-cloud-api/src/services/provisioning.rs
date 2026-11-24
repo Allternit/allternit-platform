@@ -74,6 +74,9 @@ mod free;
 mod orgo;
 #[path = "provisioning_credit.rs"]
 mod credit;
+#[path = "provision_ssh_keys.rs"]
+mod ssh_keys;
+pub use ssh_keys::{start_ssh_key_sweeper, SshKeyInput};
 #[path = "provisioning_plan_hours.rs"]
 mod plan_hours;
 pub use plan_hours::{
@@ -375,6 +378,272 @@ pub struct ProvisionSpec {
     pub instance_id: String,
     /// Routing class (Orgo size and auto-stop; Incus ignores it).
     pub class: ComputeClass,
+    /// Orgo city code (`nyc`, `chi`, `lon`, `syd`; Orgo's `region`). `None`
+    /// = Orgo's default (any US city). Incus ignores it.
+    pub region: Option<String>,
+    /// Orgo starter template ref (`template_ref`). `None` = default Ubuntu.
+    pub template: Option<String>,
+}
+
+/// Cities a cloud computer can be created in (contract `CloudComputerSettings.location`).
+pub const CLOUD_LOCATIONS: &[&str] = &["nyc", "chi", "lon", "syd"];
+
+/// How long ago the newest Orgo daily backup may be for a rebuild to run.
+/// Orgo backs up running computers once a day; 48 h leaves room for a
+/// backup that ran late, and anything older is refused.
+pub const REBUILD_BACKUP_MAX_AGE_HOURS: i64 = 48;
+
+/// One Orgo starter template a client may pick on create.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct StarterTemplate {
+    /// The Orgo `template_ref` (e.g. `system/coding@1.0.4`).
+    pub id: &'static str,
+    pub name: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'static str>,
+}
+
+/// Starter templates offered on create (Ubuntu only, Eoj gate G5). A
+/// template is added here only after our first-boot `setup.sh`
+/// (allternit-computer-cloud/guest/orgo/setup.sh) has passed on a computer
+/// made from it; custom template builds need Orgo's Scale plan and are out.
+/// Empty = clients show "default Ubuntu" only.
+pub const STARTER_TEMPLATES: &[StarterTemplate] = &[];
+
+/// The starter template with this id, if it is offered.
+pub fn starter_template(id: &str) -> Option<&'static StarterTemplate> {
+    STARTER_TEMPLATES.iter().find(|template| template.id == id)
+}
+
+/// The plain name of a [`CLOUD_LOCATIONS`] code, for user-facing messages.
+pub fn city_name(code: &str) -> &str {
+    match code {
+        "nyc" => "New York",
+        "chi" => "Chicago",
+        "lon" => "London",
+        "syd" => "Sydney",
+        other => other,
+    }
+}
+
+/// A requested location, trimmed and lower-cased: `Ok(None)` when absent or
+/// blank, `Err(())` when it is not one of [`CLOUD_LOCATIONS`].
+pub fn normalize_location(raw: Option<&str>) -> Result<Option<String>, ()> {
+    match raw.map(|value| value.trim().to_ascii_lowercase()) {
+        None => Ok(None),
+        Some(value) if value.is_empty() => Ok(None),
+        Some(value) if CLOUD_LOCATIONS.contains(&value.as_str()) => Ok(Some(value)),
+        Some(_) => Err(()),
+    }
+}
+
+/// Where and from what a cloud computer is created (Orgo only).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CloudPlacement {
+    pub location: Option<String>,
+    pub template: Option<String>,
+    /// Orgo `Idempotency-Key` for this create when it must differ from the
+    /// instance id (a rebuild makes a second computer for the same row).
+    pub idempotency_key: Option<String>,
+}
+
+impl CloudPlacement {
+    /// True when nothing Orgo-specific was asked for.
+    pub fn is_empty(&self) -> bool {
+        self.location.is_none() && self.template.is_none()
+    }
+}
+
+/// Marker Orgo puts in a create refused for a full city (`code`), kept in
+/// the error text by `orgo_error`.
+pub const REGION_UNAVAILABLE_CODE: &str = "REGION_UNAVAILABLE";
+
+/// Prefix of the 400 when a location/template is asked of a class that is
+/// not routed to Orgo.
+pub const LOCATION_NOT_AVAILABLE: &str = "location_not_available";
+
+/// True when a create failed because the asked city has no room.
+pub fn is_region_unavailable(error: &ApiError) -> bool {
+    matches!(error, ApiError::ServiceUnavailable(message) if message.contains(REGION_UNAVAILABLE_CODE))
+}
+
+/// Errors of the console cloud-settings routes (restart, rebuild), each a
+/// plain `{ "error": <code> }` body clients branch on.
+#[derive(Debug)]
+pub enum CloudActionError {
+    /// The id is not one of the caller's cloud computers (paired/desktop ids too).
+    NotACloudComputer,
+    /// The computer is not running; nothing is woken implicitly.
+    Asleep { status: String },
+    /// The computer is mid-change (provisioning, waking, error, ...).
+    Busy { status: String },
+    /// The host or tier cannot do this (Incus standby, free computers).
+    NotSupported(&'static str),
+    /// No Orgo daily backup newer than [`REBUILD_BACKUP_MAX_AGE_HOURS`].
+    NoRecentBackup { latest: Option<DateTime<Utc>> },
+    /// The backup list could not be read; nothing destructive ran.
+    BackupCheckFailed(String),
+    /// The stored city has no room for the new computer.
+    RegionUnavailable { location: Option<String> },
+    /// A move target that is not one of [`CLOUD_LOCATIONS`].
+    InvalidLocation,
+    /// A move to the city the computer is already in.
+    SameLocation { location: String },
+    /// A restore asked for a backup id that is not one of the computer's
+    /// finished daily backups.
+    BackupNotFound,
+    /// The provider says this computer cannot be restored right now.
+    RestoreUnavailable,
+    /// An SSH key the add route refuses before anything is written
+    /// (`private_key`, `invalid_public_key`, `too_many_keys`, `invalid_expiry`, ...).
+    SshKeyRefused { code: &'static str, message: String },
+    /// The same key (fingerprint) is already on this computer.
+    SshKeyExists,
+    /// No key with that id on this computer.
+    SshKeyNotFound,
+    Api(ApiError),
+}
+
+impl CloudActionError {
+    /// HTTP status and JSON body.
+    pub fn parts(&self) -> (u16, serde_json::Value) {
+        use serde_json::json;
+        match self {
+            Self::NotACloudComputer => (
+                404,
+                json!({
+                    "error": "not_a_cloud_computer",
+                    "message": "This works only on your Allternit Cloud computers.",
+                }),
+            ),
+            Self::Asleep { status } => (
+                409,
+                json!({
+                    "error": "asleep",
+                    "status": status,
+                    "message": "This computer is asleep. Wake it first; the console never wakes it for you.",
+                }),
+            ),
+            Self::Busy { status } => (
+                409,
+                json!({
+                    "error": "busy",
+                    "status": status,
+                    "message": "This computer is in the middle of another change. Try again in a few minutes. Nothing was changed.",
+                }),
+            ),
+            Self::NotSupported(what) => (
+                501,
+                json!({
+                    "error": "not_supported",
+                    "action": what,
+                    "message": "This computer can't do that yet. Nothing was changed.",
+                }),
+            ),
+            Self::NoRecentBackup { latest } => (
+                409,
+                json!({
+                    "error": "no_recent_backup",
+                    "latestBackupAt": latest.map(|at| at.to_rfc3339()),
+                    "maxAgeHours": REBUILD_BACKUP_MAX_AGE_HOURS,
+                    "message": "Rebuild is held: there is no backup from the last 48 hours, and a rebuild erases the only copy of the disk. Nothing was changed.",
+                }),
+            ),
+            Self::BackupCheckFailed(_) => (
+                503,
+                json!({
+                    "error": "backup_check_failed",
+                    "message": "Couldn't read this computer's backups, so nothing was changed. Try again in a few minutes.",
+                }),
+            ),
+            Self::RegionUnavailable { location } => (
+                503,
+                json!({
+                    "error": "region_unavailable",
+                    "location": location,
+                    "message": format!(
+                        "{} has no room for a new computer right now. Try again later or pick another city. Nothing was changed.",
+                        location.as_deref().map(city_name).unwrap_or("That city")
+                    ),
+                }),
+            ),
+            Self::InvalidLocation => (
+                400,
+                json!({
+                    "error": "invalid_location",
+                    "locations": CLOUD_LOCATIONS,
+                    "message": "Pick New York, Chicago, London or Sydney.",
+                }),
+            ),
+            Self::SameLocation { location } => (
+                409,
+                json!({
+                    "error": "same_location",
+                    "location": location,
+                    "message": format!("This computer is already in {}.", city_name(location)),
+                }),
+            ),
+            Self::BackupNotFound => (
+                404,
+                json!({
+                    "error": "backup_not_found",
+                    "message": "That backup is no longer there. Backups are kept for 7 days. Nothing was changed.",
+                }),
+            ),
+            Self::RestoreUnavailable => (
+                409,
+                json!({
+                    "error": "restore_unavailable",
+                    "message": "This computer can't be restored right now. Try again in a few minutes. Nothing was changed.",
+                }),
+            ),
+            Self::SshKeyRefused { code, message } => (400, json!({ "error": code, "message": message })),
+            Self::SshKeyExists => (
+                409,
+                json!({
+                    "error": "key_exists",
+                    "message": "That key is already on this computer. Nothing was changed.",
+                }),
+            ),
+            Self::SshKeyNotFound => (
+                404,
+                json!({
+                    "error": "key_not_found",
+                    "message": "That key is no longer on this computer.",
+                }),
+            ),
+            Self::Api(error) => match error {
+                ApiError::NotFound(_) => Self::NotACloudComputer.parts(),
+                other => {
+                    // The provider's own text is logged, never shown.
+                    tracing::warn!(error = %other, "cloud action failed");
+                    (
+                        503,
+                        json!({
+                            "error": "unavailable",
+                            "message": "Couldn't reach this computer's host. Try again in a few minutes.",
+                        }),
+                    )
+                }
+            },
+        }
+    }
+}
+
+impl From<ApiError> for CloudActionError {
+    fn from(error: ApiError) -> Self {
+        Self::Api(error)
+    }
+}
+
+/// Where to reach a computer's SSH server (Orgo's Direct SSH). The port is
+/// never 22: port 22 on the host is Orgo's server, not the computer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SshEndpoint {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub command: String,
 }
 
 /// Backend seam the scheduling/lifecycle logic programs against. Tests
@@ -436,6 +705,38 @@ pub trait ProvisionBackend: Send + Sync + std::fmt::Debug {
     /// meeting reaper to save a bot account's Chrome profile back.
     async fn pull_file(&self, _name: &str, _path: &str, _max_bytes: usize) -> Result<Option<Vec<u8>>, ProvisionError> {
         Err(unsupported("file reads"))
+    }
+    /// Reboot a running computer in place (Orgo `POST /computers/{id}/restart`).
+    async fn restart(&self, _name: &str) -> Result<(), ProvisionError> {
+        Err(unsupported("restarts"))
+    }
+    /// When the newest finished daily backup was taken; `Ok(None)` when
+    /// there is none. Read before a rebuild.
+    async fn latest_backup_at(&self, _name: &str) -> Result<Option<DateTime<Utc>>, ProvisionError> {
+        Err(unsupported("daily backups"))
+    }
+    /// The provider's daily backups (Orgo `GET /computers/{id}/backups`).
+    async fn list_backups(&self, _name: &str) -> Result<CloudBackupList, ProvisionError> {
+        Err(unsupported("daily backups"))
+    }
+    /// Put the computer's disk back to daily backup `backup_id`, in place
+    /// (same computer, same id). Never a restore as a new computer.
+    async fn restore_backup(&self, _name: &str, _backup_id: &str) -> Result<(), ProvisionError> {
+        Err(unsupported("backup restores"))
+    }
+    /// Replace the computer's SSH public keys with `keys` (one OpenSSH line
+    /// each) and turn SSH on (Orgo `POST /computers/{id}/ssh`). Returns true
+    /// when the provider needs one restart before the keys work.
+    async fn set_ssh_keys(&self, _name: &str, _keys: &[String]) -> Result<bool, ProvisionError> {
+        Err(unsupported("SSH keys"))
+    }
+    /// Turn SSH off and remove every key (Orgo `DELETE /computers/{id}/ssh`).
+    async fn disable_ssh(&self, _name: &str) -> Result<(), ProvisionError> {
+        Err(unsupported("SSH keys"))
+    }
+    /// Where to connect (Orgo `GET /computers/{id}/ssh`); `Ok(None)` while SSH is off.
+    async fn ssh_endpoint(&self, _name: &str) -> Result<Option<SshEndpoint>, ProvisionError> {
+        Err(unsupported("SSH keys"))
     }
 
     // -- Customer restore points and downloadable copies -------------------
@@ -501,6 +802,49 @@ fn unsupported(what: &str) -> ProvisionError {
 pub struct InstanceSnapshot {
     pub name: String,
     pub created_at: String,
+}
+
+/// One provider daily backup (Orgo `GET /computers/{id}/backups`), as the
+/// console shows it: `{ id, createdAt, sizeBytes?, kind }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudBackup {
+    pub id: String,
+    #[serde(serialize_with = "serialize_rfc3339")]
+    pub created_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    /// `daily` unless the provider names another kind.
+    pub kind: String,
+    /// False while the backup is still being made, after it failed, or when
+    /// its status is one we do not know. Unfinished backups are never shown,
+    /// restored from, or counted by the rebuild check.
+    #[serde(skip)]
+    pub finished: bool,
+}
+
+fn serialize_rfc3339<S: serde::Serializer>(at: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+}
+
+/// A provider's backup list: the backups, newest first, and whether the
+/// provider says the computer can be restored now (`None` = not said).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CloudBackupList {
+    pub backups: Vec<CloudBackup>,
+    pub can_restore: Option<bool>,
+}
+
+impl CloudBackupList {
+    /// Finished backups only, newest first.
+    pub fn finished(&self) -> impl Iterator<Item = &CloudBackup> {
+        self.backups.iter().filter(|backup| backup.finished)
+    }
+
+    /// When the newest finished backup was taken.
+    pub fn newest_finished_at(&self) -> Option<DateTime<Utc>> {
+        self.finished().map(|backup| backup.created_at).max()
+    }
 }
 
 /// Progress of a downloadable copy.
@@ -2438,7 +2782,20 @@ impl ProvisioningService {
         user_id: &str,
         subscription_id: Option<&str>,
     ) -> Result<InstanceView, ApiError> {
-        let view = self.create_tier(user_id, subscription_id, TIER_PAID).await?;
+        self.create_placed(user_id, subscription_id, &CloudPlacement::default())
+            .await
+    }
+
+    /// [`Self::create`] with a city and/or starter template (Orgo only).
+    pub async fn create_placed(
+        &self,
+        user_id: &str,
+        subscription_id: Option<&str>,
+        placement: &CloudPlacement,
+    ) -> Result<InstanceView, ApiError> {
+        let view = self
+            .create_tier_placed(user_id, subscription_id, TIER_PAID, placement)
+            .await?;
         // Upgrade path (decision 16): the paid computer replaces the
         // account's free one, which is kept sleeping until it is deleted.
         if let Err(error) = self.retire_free_on_upgrade(user_id, &view.id).await {
@@ -2465,14 +2822,35 @@ impl ProvisioningService {
         subscription_id: Option<&str>,
         tier: &str,
     ) -> Result<InstanceView, ApiError> {
+        self.create_tier_placed(user_id, subscription_id, tier, &CloudPlacement::default())
+            .await
+    }
+
+    /// [`Self::create_tier`] with a placement. A computer asked for a city or
+    /// template never falls back to the standby pool (which has neither).
+    pub(crate) async fn create_tier_placed(
+        &self,
+        user_id: &str,
+        subscription_id: Option<&str>,
+        tier: &str,
+        placement: &CloudPlacement,
+    ) -> Result<InstanceView, ApiError> {
         let class = ComputeClass::for_owner(user_id, tier);
         let routed_to_orgo = self.routing.provider_for(class) == ComputeProvider::Orgo;
-        match self.create_tier_on(user_id, subscription_id, tier, false).await {
+        match self
+            .create_tier_on(user_id, subscription_id, tier, false, placement)
+            .await
+        {
             Err(ApiError::ServiceUnavailable(message))
-                if routed_to_orgo && message.starts_with(orgo::CLOUD_POOL_FULL) =>
+                if routed_to_orgo
+                    && placement.is_empty()
+                    && message.starts_with(orgo::CLOUD_POOL_FULL) =>
             {
                 tracing::warn!(%user_id, ?class, "orgo at capacity; placing the computer on the standby pool");
-                match self.create_tier_on(user_id, subscription_id, tier, true).await {
+                match self
+                    .create_tier_on(user_id, subscription_id, tier, true, &CloudPlacement::default())
+                    .await
+                {
                     Ok(view) => Ok(view),
                     Err(fallback) => {
                         tracing::warn!(%user_id, ?class, error = %fallback, "standby pool has no room either");
@@ -2492,6 +2870,7 @@ impl ProvisioningService {
         subscription_id: Option<&str>,
         tier: &str,
         standby_only: bool,
+        placement: &CloudPlacement,
     ) -> Result<InstanceView, ApiError> {
         let free = tier == TIER_FREE;
         // Developer computers (the hosted driver) ride the free lane with
@@ -2513,6 +2892,11 @@ impl ProvisioningService {
         }
         let class = ComputeClass::for_owner(user_id, tier);
         let want_orgo = !standby_only && self.routing.provider_for(class) == ComputeProvider::Orgo;
+        if !placement.is_empty() && !want_orgo {
+            return Err(ApiError::BadRequest(format!(
+                "{LOCATION_NOT_AVAILABLE}: a location or template needs an Orgo cloud computer"
+            )));
+        }
         // A first boot that failed on Orgo minutes ago: wait before buying
         // another computer (a bad .deb URL would otherwise buy one per call).
         if want_orgo && self.orgo_first_boot_backoff(user_id, tier).await? {
@@ -2708,9 +3092,9 @@ impl ProvisioningService {
                 id, user_id, subscription_id, host_id, incus_name, status,
                 pairing_code_hash, pairing_expires_at,
                 cpu_cores, memory_mb, disk_gb, plan_id, restored_from, tier,
-                last_activity_at, last_owner_activity_at
+                last_activity_at, last_owner_activity_at, location, template
             ) VALUES ($1, $2, $3, $4, $5, 'provisioning', $6, $7, $8, $9, $10, $11, $12, $13,
-                      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $14, $15)
             "#,
         )
         .bind(&instance_id)
@@ -2726,6 +3110,8 @@ impl ProvisioningService {
         .bind(plan_id.as_deref())
         .bind(restore.as_ref().map(|(id, _, _)| id.as_str()))
         .bind(tier)
+        .bind(placement.location.as_deref())
+        .bind(placement.template.as_deref())
         .execute(&mut *transaction)
         .await;
         if let Err(error) = inserted {
@@ -2781,9 +3167,21 @@ impl ProvisioningService {
                 class,
                 cpu,
                 &bootstrap,
+                placement,
             )
             .await;
         if let Err(error) = result {
+            if is_region_unavailable(&error) {
+                // Orgo made nothing: drop the row instead of leaving an
+                // `error` computer the user never got.
+                tracing::info!(%instance_id, "asked city is full; create undone");
+                sqlx::query("DELETE FROM provisioned_instances WHERE id = $1 AND device_id IS NULL")
+                    .bind(&instance_id)
+                    .execute(&self.db)
+                    .await?;
+                self.release_allocation(&host_id, allocation).await;
+                return Err(error);
+            }
             tracing::warn!(%instance_id, %error, "provisioned instance create failed; marking error");
             let message = format!("{error}");
             sqlx::query(
@@ -3039,6 +3437,7 @@ impl ProvisioningService {
         class: ComputeClass,
         cpu: CpuShare,
         bootstrap: &BootstrapContract,
+        placement: &CloudPlacement,
     ) -> Result<(), ApiError> {
         let row: Option<(String, Option<String>)> = sqlx::query_as(
             "SELECT incus_endpoint, region FROM provisioned_hosts WHERE id = $1",
@@ -3097,8 +3496,15 @@ impl ProvisioningService {
                 (self.defaults.desktop_uid, self.defaults.desktop_gid),
                 node_init.as_ref(),
             ),
-            instance_id: instance_id.to_string(),
+            // The Orgo Idempotency-Key: the instance id, or a fresh key when
+            // the same row gets a second computer (rebuild).
+            instance_id: placement
+                .idempotency_key
+                .clone()
+                .unwrap_or_else(|| instance_id.to_string()),
             class,
+            region: placement.location.clone(),
+            template: placement.template.clone(),
         };
         backend.create(&spec).await.map_err(|error| error.to_api_error())?;
         let files = vec![InstanceFile {
@@ -4522,6 +4928,8 @@ mod tests {
             user_data: "#cloud-config\nruncmd: [init]\n".to_string(),
             instance_id: "pi_test".to_string(),
             class: ComputeClass::Paid,
+            region: None,
+            template: None,
         }
     }
 
@@ -4898,7 +5306,9 @@ pub(crate) mod pg_tests {
     const MIGRATION_066: &str = include_str!("../../migrations_pg/066_paired_computer_orgs.sql");
     const MIGRATION_081: &str = include_str!("../../migrations_pg/081_paired_cloud_computers.sql");
     const MIGRATION_CREDIT: &str = include_str!("../../migrations_pg/132_credit_computers.sql");
+    const MIGRATION_SSH_KEYS: &str = include_str!("../../migrations_pg/156_computer_ssh_keys.sql");
     const MIGRATION_PLAN_HOURS: &str = include_str!("../../migrations_pg/134_plan_computer_hours.sql");
+    const MIGRATION_153: &str = include_str!("../../migrations_pg/153_computers_console.sql");
 
     async fn test_pool() -> PgPool {
         let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
@@ -4991,6 +5401,8 @@ pub(crate) mod pg_tests {
         for sql in [MIGRATION_017, MIGRATION_066, MIGRATION_081] {
             apply_migration_sql(&pool, &schema, sql).await;
         }
+        // Computers console columns (location, template) the create path writes.
+        apply_migration_sql(&pool, &schema, MIGRATION_153).await;
         create_schedules_stub(&pool).await;
         sqlx::query("INSERT INTO users (id) VALUES ('user_1'), ('user_2')")
             .execute(&pool)
@@ -5180,6 +5592,14 @@ pub(crate) mod pg_tests {
         apply_migration_sql(pool, &schema, MIGRATION_014).await;
         apply_migration_sql(pool, &schema, MIGRATION_018).await;
         apply_migration_sql(pool, &schema, MIGRATION_019).await;
+        // Migration 153's provisioned_instances columns (location, template); its
+        // paired_computers half needs tables this helper does not create.
+        for col in ["location", "template"] {
+            sqlx::query(&format!("ALTER TABLE provisioned_instances ADD COLUMN IF NOT EXISTS {col} TEXT"))
+                .execute(pool)
+                .await
+                .unwrap();
+        }
         create_schedules_stub(pool).await;
         insert_host(pool, "host_a", 16, 32768, 200).await;
     }
@@ -6677,6 +7097,419 @@ pub(crate) mod pg_tests {
         async fn backend(&self, _host_id: &str, endpoint: &str) -> Result<Arc<dyn ProvisionBackend>, ApiError> {
             Ok(if is_orgo_endpoint(endpoint) { self.orgo.clone() } else { self.standby.clone() })
         }
+    }
+
+    fn console_service(pool: &PgPool, orgo: Arc<dyn ProvisionBackend>) -> Arc<ProvisioningService> {
+        Arc::new(
+            ProvisioningService::with_registry(
+                pool.clone(),
+                Arc::new(SplitRegistry { orgo, standby: Arc::new(MockBackend::default()) }),
+            )
+            .with_defaults(test_defaults())
+            .with_free_defaults(test_free_defaults())
+            .with_routing(orgo_routing(false, true)),
+        )
+    }
+
+    async fn stored_location(pool: &PgPool, id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT location FROM provisioned_instances WHERE id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_city_is_sent_and_stored_and_a_full_city_leaves_nothing() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, seen, _) = orgo::tests::console_orgo(false).await;
+        let service = console_service(&pool, orgo);
+        let placement = CloudPlacement { location: Some("lon".to_string()), ..Default::default() };
+        let view = service.create_placed("user_1", Some("sub_1"), &placement).await.unwrap();
+        assert_eq!(view.provider, "orgo");
+        assert_eq!(stored_location(&pool, &view.id).await.as_deref(), Some("lon"));
+        let create = seen().into_iter().find(|(m, p, _, _)| m == "POST" && p == "/computers").unwrap();
+        assert_eq!(create.3["region"], "lon");
+
+        // A full city: 503 region_unavailable, no row, no held allocation.
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (full, _, _) = orgo::tests::console_orgo(true).await;
+        let service = console_service(&pool, full);
+        let error = service.create_placed("user_1", Some("sub_1"), &placement).await.unwrap_err();
+        assert!(is_region_unavailable(&error), "{error:?}");
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM provisioned_instances")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "nothing is left half-created");
+        let allocated: i32 = sqlx::query_scalar("SELECT cpu_cores_allocated FROM provisioned_hosts WHERE id = 'host_o'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(allocated, 0);
+    }
+
+    #[tokio::test]
+    async fn restart_and_rebuild_act_only_on_the_owners_cloud_computer() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, seen, set_backups) = orgo::tests::console_orgo(false).await;
+        let service = console_service(&pool, orgo);
+        let placement = CloudPlacement { location: Some("chi".to_string()), ..Default::default() };
+        let view = service.create_placed("user_1", Some("sub_1"), &placement).await.unwrap();
+        let id = view.id.clone();
+        // Let the background first boot finish (the fake answers at once).
+        for _ in 0..200 {
+            if seen().iter().any(|(_, _, _, body)| {
+                body["command"].as_str().is_some_and(|c| c.contains("allternit-orgo-ensure"))
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        set_status(&pool, &id, "running").await;
+
+        // Paired/desktop ids and other users' computers: 404 not_a_cloud_computer.
+        for (computer, user) in [("pc_box", "user_1"), (id.as_str(), "user_2")] {
+            for error in [
+                service.restart_cloud(computer, user).await.unwrap_err(),
+                service.rebuild_cloud(computer, user).await.unwrap_err(),
+            ] {
+                assert_eq!(error.parts().0, 404);
+                assert_eq!(error.parts().1["error"], "not_a_cloud_computer");
+                assert!(error.parts().1["message"].is_string());
+            }
+        }
+
+        // Restart reaches Orgo while running; a stopped computer is asleep, not woken.
+        service.restart_cloud(&id, "user_1").await.unwrap();
+        assert!(seen().iter().any(|(m, p, _, _)| m == "POST" && p.ends_with("/restart")));
+        set_status(&pool, &id, "stopped").await;
+        let asleep = service.restart_cloud(&id, "user_1").await.unwrap_err();
+        assert_eq!(asleep.parts().0, 409);
+        assert_eq!(asleep.parts().1["error"], "asleep");
+        set_status(&pool, &id, "running").await;
+
+        // Rebuild with only an old backup: 409 no_recent_backup, nothing deleted.
+        let old = (Utc::now() - Duration::hours(72)).to_rfc3339();
+        set_backups(serde_json::json!({ "backups": [{ "id": "b1", "created_at": old }] }));
+        let held = service.rebuild_cloud(&id, "user_1").await.unwrap_err();
+        assert_eq!(held.parts().0, 409);
+        assert_eq!(held.parts().1["error"], "no_recent_backup");
+        assert!(!seen().iter().any(|(m, _, _, _)| m == "DELETE"), "no destructive call");
+        set_backups(serde_json::Value::Null);
+        let none = service.rebuild_cloud(&id, "user_1").await.unwrap_err();
+        assert_eq!(none.parts().1["error"], "no_recent_backup");
+        assert!(!seen().iter().any(|(m, _, _, _)| m == "DELETE"));
+        // An answer we can't read is "couldn't check" (503), not "no backup",
+        // and a recent backup in an unknown state does not count.
+        set_backups(serde_json::json!({ "snapshots": [{ "when": "today" }] }));
+        let unreadable = service.rebuild_cloud(&id, "user_1").await.unwrap_err();
+        assert_eq!(unreadable.parts().0, 503);
+        assert_eq!(unreadable.parts().1["error"], "backup_check_failed");
+        let recent_pending = (Utc::now() - Duration::hours(1)).to_rfc3339();
+        set_backups(serde_json::json!({ "backups": [{ "id": "b9", "created_at": recent_pending, "status": "uploading" }] }));
+        let pending = service.rebuild_cloud(&id, "user_1").await.unwrap_err();
+        assert_eq!(pending.parts().1["error"], "no_recent_backup");
+        assert!(!seen().iter().any(|(m, _, _, _)| m == "DELETE"));
+
+        // A backup from 2 hours ago: delete + create in the same city, same row id.
+        sqlx::query("UPDATE provisioned_instances SET device_id = 'rt_old' WHERE id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let recent = (Utc::now() - Duration::hours(2)).to_rfc3339();
+        set_backups(serde_json::json!({ "backups": [{ "id": "b2", "created_at": recent }] }));
+        let rebuilt = service.rebuild_cloud(&id, "user_1").await.unwrap();
+        assert_eq!(rebuilt.id, id, "the console row id is kept");
+        assert_eq!(rebuilt.status, "provisioning");
+        let log = seen();
+        assert!(log.iter().any(|(m, _, _, _)| m == "DELETE"));
+        let creates: Vec<_> = log.iter().filter(|(m, p, _, _)| m == "POST" && p == "/computers").collect();
+        assert_eq!(creates.len(), 2);
+        assert_eq!(creates[1].3["region"], "chi");
+        assert_eq!(creates[1].3["name"], creates[0].3["name"]);
+        assert_ne!(creates[1].2, creates[0].2, "a second launch gets its own idempotency key");
+        assert_eq!(stored_location(&pool, &id).await.as_deref(), Some("chi"));
+        let (device, live): (Option<String>, i64) = sqlx::query_as(
+            "SELECT device_id, (SELECT COUNT(*) FROM provisioned_instances WHERE user_id = 'user_1' AND status <> 'deleted') FROM provisioned_instances WHERE id = $1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(device, None, "the new computer pairs again");
+        assert_eq!(live, 1, "still one computer");
+    }
+
+    #[tokio::test]
+    async fn ssh_keys_go_to_orgo_as_one_set_and_only_public_keys_are_stored() {
+        const LAPTOP: &str =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl eoj@laptop";
+        const AGENT: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f";
+        let pool = migrated_pool().await;
+        let schema: String = sqlx::query_scalar("SELECT current_schema()").fetch_one(&pool).await.unwrap();
+        apply_migration_sql(&pool, &schema, MIGRATION_SSH_KEYS).await;
+        apply_migration_sql(&pool, &schema, MIGRATION_SSH_KEYS).await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, seen, _) = orgo::tests::console_orgo(false).await;
+        let service = console_service(&pool, orgo);
+        let view = service
+            .create_placed("user_1", Some("sub_1"), &CloudPlacement { location: Some("nyc".to_string()), ..Default::default() })
+            .await
+            .unwrap();
+        let id = view.id.clone();
+        for _ in 0..200 {
+            if seen().iter().any(|(_, _, _, body)| {
+                body["command"].as_str().is_some_and(|c| c.contains("allternit-orgo-ensure"))
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        set_status(&pool, &id, "running").await;
+        let input = |key: &str, label: &str, agent: Option<i64>| SshKeyInput {
+            label: Some(label.to_string()),
+            public_key: Some(key.to_string()),
+            kind: agent.map(|_| "agent".to_string()),
+            expires_in_minutes: agent,
+        };
+        let key_sets = || -> Vec<serde_json::Value> {
+            seen()
+                .into_iter()
+                .filter(|(m, p, _, _)| m == "POST" && p.ends_with("/ssh"))
+                .map(|(_, _, _, body)| body["public_key"].clone())
+                .collect()
+        };
+        let stored = || async {
+            sqlx::query_scalar::<_, String>("SELECT public_key FROM computer_ssh_keys ORDER BY created_at")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+
+        // Paired/desktop ids and other users' computers: 404 not_a_cloud_computer.
+        for (computer, user) in [("pc_box", "user_1"), (id.as_str(), "user_2")] {
+            for error in [
+                service.ssh_keys(computer, user).await.unwrap_err(),
+                service.add_ssh_key(computer, user, input(LAPTOP, "Laptop", None)).await.unwrap_err(),
+                service.remove_ssh_key(computer, user, "sshk_x").await.unwrap_err(),
+            ] {
+                assert_eq!(error.parts().0, 404);
+                assert_eq!(error.parts().1["error"], "not_a_cloud_computer");
+            }
+        }
+
+        // A private key is refused before anything is sent or stored.
+        let private = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----";
+        let refused = service.add_ssh_key(&id, "user_1", input(private, "Oops", None)).await.unwrap_err();
+        assert_eq!(refused.parts().0, 400);
+        assert_eq!(refused.parts().1["error"], "private_key");
+        assert!(refused.parts().1["message"].as_str().unwrap().contains("public key"));
+        assert!(key_sets().is_empty());
+        assert!(stored().await.is_empty());
+
+        // A person's key, then an agent key: Orgo gets the whole set each time.
+        let (laptop, restart) = service.add_ssh_key(&id, "user_1", input(LAPTOP, "Laptop", None)).await.unwrap();
+        assert!(!restart);
+        assert_eq!((laptop.kind.as_str(), laptop.label.as_str(), laptop.expires_at.as_deref()), ("computer", "Laptop", None));
+        assert_eq!(laptop.fingerprint, "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU");
+        let again = service.add_ssh_key(&id, "user_1", input(LAPTOP, "Twice", None)).await.unwrap_err();
+        assert_eq!(again.parts().1["error"], "key_exists");
+        let (agent, _) = service.add_ssh_key(&id, "user_1", input(AGENT, "Deploy bot", Some(30))).await.unwrap();
+        assert_eq!(agent.kind, "agent");
+        assert!(agent.expires_at.is_some());
+        assert_eq!(key_sets(), vec![serde_json::json!(LAPTOP), serde_json::json!(format!("{LAPTOP}\n{AGENT}"))]);
+        let too_long = service.add_ssh_key(&id, "user_1", input(AGENT, "x", Some(2 * 24 * 60))).await.unwrap_err();
+        assert_eq!(too_long.parts().1["error"], "invalid_expiry");
+
+        // The list has both keys (no key material) and where to connect.
+        let list = service.ssh_keys(&id, "user_1").await.unwrap();
+        assert_eq!(list.keys.iter().map(|k| k.id.clone()).collect::<Vec<_>>(), vec![laptop.id.clone(), agent.id.clone()]);
+        let connect = list.connect.unwrap();
+        assert_eq!((connect.host.as_str(), connect.port, connect.user.as_str()), ("203.0.113.7", 40022, "root"));
+
+        // Removing a key sends the set without it.
+        service.remove_ssh_key(&id, "user_1", &laptop.id).await.unwrap();
+        assert_eq!(key_sets().last().unwrap(), &serde_json::json!(AGENT));
+        assert_eq!(stored().await, vec![AGENT.to_string()]);
+        let missing = service.remove_ssh_key(&id, "user_1", &laptop.id).await.unwrap_err();
+        assert_eq!(missing.parts().1["error"], "key_not_found");
+
+        // An expired agent key: the sweep turns SSH off (it was the last key), then forgets it.
+        sqlx::query("UPDATE computer_ssh_keys SET expires_at = NOW() - INTERVAL '1 minute'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        service.sweep_expired_ssh_keys(Utc::now()).await;
+        assert!(seen().iter().any(|(m, p, _, _)| m == "DELETE" && p.ends_with("/ssh")));
+        assert!(stored().await.is_empty());
+
+        // Mid-change computers refuse; nothing is sent.
+        set_status(&pool, &id, "provisioning").await;
+        let sent = key_sets().len();
+        let busy = service.add_ssh_key(&id, "user_1", input(LAPTOP, "Laptop", None)).await.unwrap_err();
+        assert_eq!(busy.parts().1["error"], "busy");
+        assert_eq!(key_sets().len(), sent);
+    }
+
+    #[tokio::test]
+    async fn backups_list_finished_ones_and_restore_needs_a_listed_id_on_the_owners_computer() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, seen, set_backups) = orgo::tests::console_orgo(false).await;
+        let service = console_service(&pool, orgo);
+        let view = service
+            .create_placed("user_1", Some("sub_1"), &CloudPlacement { location: Some("nyc".to_string()), ..Default::default() })
+            .await
+            .unwrap();
+        let id = view.id.clone();
+        for _ in 0..200 {
+            if seen().iter().any(|(_, _, _, body)| {
+                body["command"].as_str().is_some_and(|c| c.contains("allternit-orgo-ensure"))
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        set_status(&pool, &id, "running").await;
+
+        // Paired/desktop ids and other users' computers: 404 not_a_cloud_computer.
+        for (computer, user) in [("pc_box", "user_1"), (id.as_str(), "user_2")] {
+            for error in [
+                service.cloud_backups(computer, user).await.unwrap_err(),
+                service.restore_cloud_backup(computer, user, "b1").await.unwrap_err(),
+            ] {
+                assert_eq!((error.parts().0, error.parts().1["error"].clone()), (404, serde_json::json!("not_a_cloud_computer")));
+            }
+        }
+
+        // Only finished backups are listed, newest first.
+        let day = |hours: i64| (Utc::now() - Duration::hours(hours)).to_rfc3339();
+        set_backups(serde_json::json!({ "backups": [
+            { "id": "b_old", "created_at": day(50), "size_bytes": 5_000_000_000u64 },
+            { "id": "b_new", "created_at": day(2) },
+            { "id": "b_bad", "created_at": day(1), "status": "failed" }
+        ]}));
+        let list = service.cloud_backups(&id, "user_1").await.unwrap();
+        assert_eq!(list.backups.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["b_new", "b_old"]);
+        assert_eq!(serde_json::to_value(&list.backups[1]).unwrap()["sizeBytes"], 5_000_000_000u64);
+
+        // A failed or unknown backup id is 404 backup_not_found; nothing sent.
+        for missing in ["b_bad", "nope"] {
+            let error = service.restore_cloud_backup(&id, "user_1", missing).await.unwrap_err();
+            assert_eq!(error.parts().0, 404);
+            assert_eq!(error.parts().1["error"], "backup_not_found");
+        }
+        assert!(!seen().iter().any(|(_, p, _, _)| p.ends_with("/backup/restore")));
+
+        // Orgo says "not now": 409 restore_unavailable; nothing sent.
+        set_backups(serde_json::json!({ "can_restore": false, "backups": [{ "id": "b_new", "created_at": day(2) }] }));
+        let error = service.restore_cloud_backup(&id, "user_1", "b_new").await.unwrap_err();
+        assert_eq!((error.parts().0, error.parts().1["error"].clone()), (409, serde_json::json!("restore_unavailable")));
+        assert!(!seen().iter().any(|(_, p, _, _)| p.ends_with("/backup/restore")));
+
+        // A listed backup restores in place: same row, one restore call, no delete or create.
+        set_backups(serde_json::json!({ "backups": [{ "id": "b_new", "created_at": day(2) }] }));
+        let creates_before = seen().iter().filter(|(m, p, _, _)| m == "POST" && p == "/computers").count();
+        let restored = service.restore_cloud_backup(&id, "user_1", "b_new").await.unwrap();
+        assert_eq!(restored.id, id);
+        let log = seen();
+        let restores: Vec<_> = log.iter().filter(|(m, p, _, _)| m == "POST" && p.ends_with("/backup/restore")).collect();
+        assert_eq!(restores.len(), 1);
+        assert_eq!(restores[0].3["backup_id"], "b_new");
+        assert!(!log.iter().any(|(m, _, _, _)| m == "DELETE"));
+        assert_eq!(log.iter().filter(|(m, p, _, _)| m == "POST" && p == "/computers").count(), creates_before);
+
+        // An answer we can't read holds the restore (503), never guesses.
+        set_backups(serde_json::json!({ "unexpected": true }));
+        let error = service.restore_cloud_backup(&id, "user_1", "b_new").await.unwrap_err();
+        assert_eq!((error.parts().0, error.parts().1["error"].clone()), (503, serde_json::json!("backup_check_failed")));
+        assert!(service.cloud_backups(&id, "user_1").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn move_creates_in_the_new_city_first_and_a_full_city_keeps_the_old_computer() {
+        let pool = migrated_pool().await;
+        insert_orgo_host(&pool, "host_o", 64, 262_144, 2000).await;
+        let (orgo, seen, _) = orgo::tests::console_orgo_full_city("lon").await;
+        let service = console_service(&pool, orgo);
+        let placement = CloudPlacement { location: Some("chi".to_string()), ..Default::default() };
+        let view = service.create_placed("user_1", Some("sub_1"), &placement).await.unwrap();
+        let id = view.id.clone();
+        for _ in 0..200 {
+            if seen().iter().any(|(_, _, _, body)| {
+                body["command"].as_str().is_some_and(|c| c.contains("allternit-orgo-ensure"))
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        set_status(&pool, &id, "running").await;
+        sqlx::query("UPDATE provisioned_instances SET device_id = 'rt_old' WHERE id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let old_name: String = sqlx::query_scalar("SELECT incus_name FROM provisioned_instances WHERE id = $1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        // Paired/desktop ids and other users' computers: 404.
+        for (computer, user) in [("pc_box", "user_1"), (id.as_str(), "user_2")] {
+            let error = service.move_cloud(computer, user, "syd").await.unwrap_err();
+            assert_eq!((error.parts().0, error.parts().1["error"].clone()), (404, serde_json::json!("not_a_cloud_computer")));
+        }
+        // Not a city, or the city it is already in.
+        assert_eq!(service.move_cloud(&id, "user_1", "dfw").await.unwrap_err().parts().1["error"], "invalid_location");
+        let same = service.move_cloud(&id, "user_1", "chi").await.unwrap_err();
+        assert_eq!((same.parts().0, same.parts().1["error"].clone()), (409, serde_json::json!("same_location")));
+        assert_eq!(same.parts().1["message"], "This computer is already in Chicago.");
+
+        // London is full: 503 and the old computer is exactly as it was.
+        let full = service.move_cloud(&id, "user_1", "lon").await.unwrap_err();
+        let (code, body) = full.parts();
+        assert_eq!((code, body["error"].as_str(), body["location"].as_str()), (503, Some("region_unavailable"), Some("lon")));
+        assert!(body["message"].as_str().unwrap().starts_with("London has no room"));
+        assert!(!seen().iter().any(|(m, _, _, _)| m == "DELETE"), "nothing deleted");
+        let (status, device, name, location): (String, Option<String>, String, Option<String>) = sqlx::query_as(
+            "SELECT status, device_id, incus_name, location FROM provisioned_instances WHERE id = $1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((status.as_str(), device.as_deref()), ("running", Some("rt_old")));
+        assert_eq!((name.as_str(), location.as_deref()), (old_name.as_str(), Some("chi")));
+
+        // Sydney has room: the new computer is created, then the old one deleted.
+        let moved = service.move_cloud(&id, "user_1", "syd").await.unwrap();
+        assert_eq!(moved.id, id, "the console row id is kept");
+        assert_eq!(moved.status, "provisioning");
+        let log = seen();
+        let syd_create = log
+            .iter()
+            .position(|(m, p, _, b)| m == "POST" && p == "/computers" && b["region"] == "syd")
+            .expect("a create in Sydney");
+        let delete = log.iter().position(|(m, _, _, _)| m == "DELETE").expect("the old computer is deleted");
+        assert!(syd_create < delete, "create before delete");
+        assert_eq!(log[syd_create].3["name"], format!("{old_name}-syd"));
+        let (device, name, location, live): (Option<String>, String, Option<String>, i64) = sqlx::query_as(
+            "SELECT device_id, incus_name, location, (SELECT COUNT(*) FROM provisioned_instances WHERE user_id = 'user_1' AND status <> 'deleted') FROM provisioned_instances WHERE id = $1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(device, None, "the new computer pairs again");
+        assert_eq!(name, format!("{old_name}-syd"));
+        assert_eq!(location.as_deref(), Some("syd"));
+        assert_eq!(live, 1, "still one computer");
     }
 
     #[tokio::test]

@@ -16,6 +16,7 @@
 
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
+import type { PaneRender } from "@/runtime/integrations/pane-render"
 import type { MessageV2 } from "@/runtime/session/message-v2"
 import { fabricConfigured } from "@/runtime/providers/fabric/client"
 import {
@@ -52,6 +53,10 @@ export interface SubscriptionTaskInput {
   /** What the person is confirming, in plain words (shown on the card). */
   summary: string
   options?: Record<string, unknown>
+  /** Called when the gateway reports a partial artifact (a picture taking shape). */
+  onPartial?: (detail: PaneRender.ProgressDetail) => void
+  /** Which lane a partial belongs to in the progress report. */
+  progressLane?: PaneRender.ProgressDetail["lane"]
 }
 
 /**
@@ -122,6 +127,15 @@ export async function runSubscriptionTask(ctx: Tool.Context, input: Subscription
     if (ctx.abort.aborted) onAbort()
     ctx.metadata({ title: `${input.title} — ${providerName(input.provider)} is working`, metadata: { taskID: task.task_id } })
     final = await followFabricTask(task.task_id, ctx.abort, {
+      onPartial: input.onPartial
+        ? (preview) =>
+            input.onPartial!({
+              lane: input.progressLane ?? "picture",
+              stage: "drawing",
+              label: "Drawing",
+              ...(preview ? { preview } : {}),
+            })
+        : undefined,
       onProgress: (label) =>
         ctx.metadata({ title: `${input.title} — ${label}`, metadata: { taskID: task.task_id, progress: label } }),
     })

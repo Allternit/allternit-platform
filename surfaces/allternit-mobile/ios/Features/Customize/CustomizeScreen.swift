@@ -42,6 +42,8 @@ struct CustomizeScreen: View {
     @State private var connectorDetail: DirectoryEntry? = nil
     /// A curated collection opened from the connectors hero.
     @State private var collection: String? = nil
+    @Namespace private var tabNS
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum CustomizeSection: String, CaseIterable {
         case skills, connectors, plugins
@@ -77,7 +79,7 @@ struct CustomizeScreen: View {
     /// The "Build for the Allternit directory" pages (web Sources, Publish).
     enum DirectoryPage: Hashable { case sources, publish }
 
-    enum Scope { case yours, discover }
+    enum Scope: Hashable { case yours, discover }
     enum Sort { case recommended, name }
 
     private var all: [CustomizeItem] { items[section] ?? [] }
@@ -116,42 +118,45 @@ struct CustomizeScreen: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                LibraryPlainHeader(onMenu: { openLibraryDrawer($isSidebarOpen) })
+            PolishedTabPage(
+                title: "Customize",
+                description: "Skills, connectors, and plugins that shape what the agent can do.",
+                introKey: .customize,
+                hero: { CustomizeIntroHero() }
+            ) {
                 if !auth.isSignedIn && !auth.isSkippingAuth {
                     FriendlyStateView(style: .empty, icon: "person.crop.circle", title: "Sign in to customize",
                                       message: "Skills, connectors and plugins belong to your account.",
                                       actionTitle: "Sign in", action: { auth.isPresentingAuth = true })
-                        .frame(maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            header
-                            Rectangle().fill(Color("BorderSubtle")).frame(height: 1).padding(.horizontal, -24)
-                            if let note = connect.note {
-                                HStack(spacing: 12) {
-                                    Text(note)
-                                        .font(.system(size: 13))
-                                        .foregroundColor(Color("TextPrimary"))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    Button("Dismiss") { connect.note = nil }
-                                        .font(.system(size: 13))
-                                        .foregroundColor(Color("TextSecondary"))
-                                        .underline()
-                                }
-                                .padding(.vertical, 8)
+                    VStack(alignment: .leading, spacing: 0) {
+                        header
+                        Rectangle().fill(Color("BorderSubtle")).frame(height: 1)
+                        if let note = connect.note {
+                            HStack(spacing: 12) {
+                                Text(note)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(Color("TextPrimary"))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Button("Dismiss") { connect.note = nil }
+                                    .font(.system(size: 13))
+                                    .foregroundColor(Color("TextSecondary"))
+                                    .underline()
                             }
-                            landing.padding(.top, 20)
+                            .padding(.vertical, 8)
                         }
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 96)
+                        landing.padding(.top, 20)
                     }
-                    .scrollDismissesKeyboard(.interactively)
-                    .refreshable { await load(section, force: true) }
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .refreshable { await load(section, force: true) }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    PhoneMenuButton(onOpen: { openLibraryDrawer($isSidebarOpen) })
                 }
             }
             .background(Color("BgPrimary").ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: DirectoryPage.self) { page in
                 switch page {
                 case .sources:
@@ -233,24 +238,12 @@ struct CustomizeScreen: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Customize")
-                .font(.system(size: 30, weight: .medium, design: .serif))
-                .tracking(-0.3)
-                .foregroundColor(Color("TextPrimary"))
-                .padding(.top, 16)
-            Text("Skills, connectors, and plugins that shape what the agent can do.")
-                .font(.system(size: 15))
-                .foregroundColor(Color("TextSecondary"))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 6)
-
             HStack(spacing: 8) {
                 searchField
-                filterButton
-                sortButton
+                filterSortPill
                 addButton
             }
-            .padding(.top, 16)
+            .padding(.top, 4)
 
             HStack(spacing: 4) {
                 ForEach(CustomizeSection.allCases, id: \.self) { tab in
@@ -269,14 +262,14 @@ struct CustomizeScreen: View {
                     .foregroundColor(Color("TextSecondary"))
                     .padding(.horizontal, 12)
                     .padding(.top, 4)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 10)
                 }
             }
             .padding(.top, 16)
             .padding(.horizontal, -12)
 
             scopeToggle
-                .padding(.top, 4)
+                .padding(.top, 12)
                 .padding(.bottom, 12)
         }
     }
@@ -292,15 +285,25 @@ struct CustomizeScreen: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 36)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(PolishTokens.neutralFill))
     }
 
     private func iconLabel(_ icon: String, active: Bool) -> some View {
         PhIcon(icon, size: 16)
             .foregroundColor(active ? Color("TextPrimary") : Color("TextSecondary"))
             .frame(width: 36, height: 36)
-            .background(RoundedRectangle(cornerRadius: 8).fill(active ? Color("FillNeutral") : Color.clear))
+            .background(Circle().fill(active ? PolishTokens.neutralFill : Color.clear))
+            .contentShape(Circle())
+    }
+
+    /// Filter and sort share one glass pill.
+    private var filterSortPill: some View {
+        HStack(spacing: 0) {
+            filterButton
+            sortButton
+        }
+        .foregroundStyle(PolishTokens.ink)
+        .polishGlass(cornerRadius: 18)
     }
 
     private var filterButton: some View {
@@ -345,7 +348,7 @@ struct CustomizeScreen: View {
             .foregroundColor(Color("BgPrimary"))
             .padding(.horizontal, 12)
             .frame(height: 36)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("TextPrimary")))
+            .background(Capsule().fill(PolishTokens.ink))
             .fixedSize()
         }
     }
@@ -359,43 +362,32 @@ struct CustomizeScreen: View {
                 .padding(.top, 4)
                 .padding(.bottom, 10)
                 .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(active ? Color("TextPrimary") : Color.clear)
-                        .frame(height: 2)
+                    if active {
+                        Rectangle()
+                            .fill(PolishTokens.ink)
+                            .frame(height: 2)
+                            .matchedGeometryEffect(id: "customizeTabUnderline", in: tabNS)
+                    }
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(active ? .isSelected : [])
+        .accessibilityAddTraits(active ? [.isButton, .isSelected] : .isButton)
     }
 
     private var scopeToggle: some View {
-        HStack(spacing: 2) {
-            ForEach([Scope.yours, .discover], id: \.self) { option in
-                let active = option == effectiveScope
-                Button(action: { scope = option; showAll = false; collection = nil }) {
-                    Text(option == .yours ? "Yours" : "Discover")
-                        .font(.system(size: 14, weight: active ? .medium : .regular))
-                        .foregroundColor(active ? Color("TextPrimary") : Color("TextTertiary"))
-                        .padding(.horizontal, 12)
-                        .frame(height: 30)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(active ? Color("BgPanel") : Color.clear)
-                                .shadow(color: .black.opacity(active ? 0.06 : 0), radius: 1, y: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(active ? .isSelected : [])
-            }
-        }
-        .padding(3)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color("FillNeutral")))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+        SlidingSegmented(
+            items: [.init(id: Scope.yours, title: "Yours"), .init(id: Scope.discover, title: "Discover")],
+            selection: Binding(
+                get: { effectiveScope },
+                set: { scope = $0; showAll = false; collection = nil }
+            )
+        )
     }
 
     private func select(_ next: CustomizeSection) {
         guard next != section else { return }
-        section = next
+        Haptics.selection()
+        withAnimation(reduceMotion ? nil : PolishTokens.base) { section = next }
         scope = nil
         showAll = false
         collection = nil
@@ -708,7 +700,7 @@ struct CustomizeScreen: View {
             onOpen: { open(item) },
             logo: { PhIcon(section.icon, size: 36).foregroundColor(Color("TextSecondary")) },
             action: {
-                PolishCardAddButton(added: item.enabled, pending: isPending,
+                CustomizeGlassAddButton(added: item.enabled, pending: isPending,
                                     label: item.enabled ? "\(item.name) added" : isPending ? "Adding \(item.name)" : "Add \(item.name)",
                                     action: { add(item) })
             }
@@ -925,5 +917,143 @@ struct CustomizeItem: Identifiable {
         enabled = connector.isConnected
         capability = nil
         self.connector = connector
+    }
+}
+
+// MARK: - Card add button and intro hero
+
+/// The card's small glass circle: + to add, a spinner while adding, a check once added.
+private struct CustomizeGlassAddButton: View {
+    let added: Bool
+    var pending: Bool = false
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            guard !added && !pending else { return }
+            Haptics.light()
+            action()
+        } label: {
+            Group {
+                if pending {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    PhIcon(added ? "check" : "plus", size: 14)
+                }
+            }
+            .foregroundStyle(PolishTokens.ink)
+            .frame(width: 28, height: 28)
+            .polishGlass(cornerRadius: 14)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(-8)
+        .accessibilityLabel(label)
+    }
+}
+
+/// First-visit intro hero: the real Skills, Connectors and Plugins tabs with
+/// real names, the underline sliding between them, and the first card in each
+/// turning to added.
+private struct CustomizeIntroHero: View {
+    private struct Tab: Identifiable {
+        let id: String
+        let names: [String]
+        let icon: String
+        var title: String { id }
+    }
+
+    private var tabs: [Tab] {
+        let plugins = FeaturePlugins.all.map(\.name).filter { $0.hasPrefix("Allternit for") }
+        return [
+            Tab(id: "Skills", names: Array(SkillCatalog.entries.map(\.name).prefix(3)), icon: "book-open"),
+            Tab(id: "Connectors", names: ["GitHub", "Gmail", "Slack"], icon: "plugs-connected"),
+            Tab(id: "Plugins", names: Array((plugins.isEmpty ? FeaturePlugins.all.map(\.name) : plugins).prefix(3)), icon: "puzzle-piece"),
+        ]
+    }
+
+    @State private var index = 0
+    @State private var added = false
+    @Namespace private var ns
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let tabs = tabs
+        let tab = tabs[min(index, tabs.count - 1)]
+        VStack(alignment: .leading, spacing: 0) {
+            BlockText("CUSTOMIZE", height: 8)
+                .padding(.bottom, 10)
+            HStack(spacing: 14) {
+                ForEach(Array(tabs.enumerated()), id: \.element.id) { i, t in
+                    Text(t.title)
+                        .font(.system(size: 11, weight: i == index ? .semibold : .regular))
+                        .foregroundStyle(i == index ? PolishTokens.ink : Color("TextSecondary"))
+                        .padding(.bottom, 5)
+                        .overlay(alignment: .bottom) {
+                            if i == index {
+                                Rectangle().fill(PolishTokens.ink).frame(height: 2)
+                                    .matchedGeometryEffect(id: "heroTab", in: ns)
+                            }
+                        }
+                }
+                Spacer(minLength: 0)
+            }
+            .overlay(alignment: .bottom) { Rectangle().fill(PolishTokens.glassBorder).frame(height: 1) }
+            Text("For you")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color("TextSecondary"))
+                .padding(.top, 8)
+                .padding(.bottom, 5)
+            HStack(spacing: 7) {
+                ForEach(Array(tab.names.enumerated()), id: \.offset) { j, name in
+                    VStack(alignment: .leading, spacing: 4) {
+                        PhIcon(tab.icon, size: 15)
+                            .foregroundStyle(Color("TextSecondary"))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 42)
+                            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color("BgPanel")))
+                            .overlay(alignment: .topTrailing) {
+                                let on = j == 0 && added
+                                ZStack {
+                                    Circle().fill(on ? PolishTokens.ink : Color.white)
+                                    Circle().strokeBorder(PolishTokens.glassBorder, lineWidth: 1)
+                                    Image(systemName: on ? "checkmark" : "plus")
+                                        .font(.system(size: 7, weight: .bold))
+                                        .foregroundStyle(on ? Color.white : PolishTokens.ink)
+                                }
+                                .frame(width: 15, height: 15)
+                                .padding(3)
+                            }
+                        Text(name)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(PolishTokens.ink)
+                            .lineLimit(2)
+                            .padding(.horizontal, 2)
+                    }
+                    .padding(4)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(PolishTokens.neutralFill))
+                }
+            }
+            .id(tab.id)
+            .transition(.opacity)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("BgPrimary"))
+        .task {
+            if reduceMotion { added = true; return }
+            while !Task.isCancelled {
+                added = false
+                try? await Task.sleep(for: .milliseconds(700))
+                if Task.isCancelled { break }
+                withAnimation(.easeOut(duration: 0.4)) { added = true }
+                try? await Task.sleep(for: .milliseconds(1200))
+                if Task.isCancelled { break }
+                withAnimation(PolishTokens.base) { index = (index + 1) % 3 }
+            }
+        }
     }
 }

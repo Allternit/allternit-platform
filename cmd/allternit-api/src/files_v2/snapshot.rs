@@ -74,7 +74,9 @@ pub(crate) fn build(v: &Inner) -> Result<Built, Fail> {
     let all = v.drive.roots()?;
     let mut wire_roots = Vec::new();
     let mut files = Vec::new();
-    for rec in all.iter().filter(|r| !r.policy.protected) {
+    // Disk roots (whole-disk files, step 2.11) never leave the computer:
+    // the cloud serves the snapshot without the whole-disk grant.
+    for rec in all.iter().filter(|r| !r.policy.protected && !v.is_disk_root(r)) {
         let mut root = roots::to_wire(v, rec, &all, &req)?;
         root.path_hint = None;
         root.usage_bytes = None;

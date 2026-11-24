@@ -118,6 +118,19 @@ pub(crate) fn cowork_turn_finish_frame(
     frame
 }
 
+/// Machine `code` and ISO `reset_at` from a Gizzi session error
+/// (`{name, message, data: {metadata: {code, resetAt}}}`), when present.
+pub(crate) fn gizzi_error_code_and_reset(error: &serde_json::Value) -> (Option<String>, Option<String>) {
+    let meta = error.get("data").and_then(|d| d.get("metadata"));
+    let pick = |key: &str| {
+        meta.and_then(|m| m.get(key))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    (pick("code"), pick("resetAt"))
+}
+
 pub(crate) fn gizzi_error_text(error: &serde_json::Value) -> String {
     error
         .get("message")
@@ -292,11 +305,19 @@ fn chat_event_stream(
                                 let error = props.get("error").cloned().unwrap_or(json!({"message": "Unknown Gizzi error"}));
                                 let error_text = gizzi_error_text(&error);
                                 let finish = cowork_turn_finish(saw_text, saw_tool, Some(error_text.clone()));
-                                yield Ok(Event::default().data(json!({
+                                let (error_code, error_reset_at) = gizzi_error_code_and_reset(&error);
+                                let mut error_frame = json!({
                                     "type": "error",
                                     "messageId": message_id,
                                     "error": error_text,
-                                }).to_string()));
+                                });
+                                if let Some(code) = error_code {
+                                    error_frame["code"] = json!(code);
+                                }
+                                if let Some(reset_at) = error_reset_at {
+                                    error_frame["reset_at"] = json!(reset_at);
+                                }
+                                yield Ok(Event::default().data(error_frame.to_string()));
                                 yield Ok(Event::default().data(
                                     cowork_turn_finish_frame(&message_id, &finish, None).to_string(),
                                 ));
@@ -705,6 +726,14 @@ mod tests {
             "quota"
         );
         assert_eq!(gizzi_error_text(&json!("plain")), "plain");
+        // A person-plan usage limit keeps its code and reset time for the error frame.
+        let limit = json!({"name": "APIError", "message": "ChatGPT limit reached.", "data": {"metadata": {
+            "code": "subscription_sharing_usage_limit_exceeded", "resetAt": "2026-11-21T15:40:00.000Z"}}});
+        assert_eq!(
+            gizzi_error_code_and_reset(&limit),
+            (Some("subscription_sharing_usage_limit_exceeded".to_string()), Some("2026-11-21T15:40:00.000Z".to_string()))
+        );
+        assert_eq!(gizzi_error_code_and_reset(&json!({"message": "x"})), (None, None));
         assert_eq!(gizzi_error_text(&json!({"name": "Auth"})), "Auth");
     }
 }

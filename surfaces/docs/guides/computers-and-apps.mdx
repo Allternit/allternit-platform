@@ -109,6 +109,10 @@ Settings → Computers (and the Computers tab on your phone) has a **Restore poi
 
 Your cloud computer is also backed up off-site every night, encrypted, and kept for 8 days. Restore points don't replace that backup: they live on the same host as the computer.
 
+### Restoring a daily backup from the Computers console
+
+The console's **Backups** tab (and `gizzi computers backups <computer>` in the terminal) lists the daily backups of a cloud computer. **Restore** puts the computer back to that backup, in place: everything changed since that backup is erased and can't be brought back. The app asks first, and `gizzi computers restore <computer> <backup>` asks too unless you pass `--yes`. If Restore is missing, your account can't restore that computer right now. Any error shows the server's own message.
+
 ## Connected tools
 
 MCP tools belong to the session's tool belt. Connect the server, complete its authentication, and check the available tools before assigning work that relies on it. CLI harness sessions can receive the session's tools and instructions through the CLI tool bridge; supported computer operations still require a reachable host.
@@ -143,6 +147,20 @@ All routes below use the existing authenticated computer visibility rules:
 Clipboard and file transfer require this user's active control lease on this device, or this user's active bot desktop take-over. Watching access alone cannot transfer data. Step recording hooks into both direct computer tool calls and structured subtask steps; it never bypasses action policy, lease or approvals.
 
 File uploads use 1 MB chunks so they fit through the phone runtime relay. The runtime checks ownership and active control on every chunk and isolates partial uploads by user, computer, and upload ID. Up to four partial uploads are retained in memory; entries older than ten minutes are pruned on the next upload. No destination file is written until all bytes arrive in order.
+
+## Pair one computer once
+
+<Note>
+The unified Computers console is behind the `computers_console` flag. This change is prepared for the build train and is not live yet.
+</Note>
+
+Run `gizzi pair` on the computer you want to add. If Gizzi Code is not installed, follow [Installation](/cli/installation) first. Desktop sign-in and the older pairing commands on the same machine appear in one row. Screen sharing remains an optional setup step.
+
+The console keeps distinct machine IDs separate even when computers have the same name. Old clients without an ID join by hostname only when the match is unambiguous. Existing saved computer IDs continue to open the machine through its aliases.
+
+Rename applies to the machine. **Hold to unpair** signs out every runtime grouped with it and removes its screen-sharing pairing. Only the owner can do this. A cloud computer uses Delete in Settings instead. If the server does not support machine unpair yet, the app shows that the action is unavailable and leaves the computer paired.
+
+The development CLI also accepts `allternit computers unpair <id> --yes`. The confirmation flag is required. See [Pairing contract](/dev/computer-pairing) for the API and identity rules.
 
 ## Online, asleep or offline
 

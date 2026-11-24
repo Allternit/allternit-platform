@@ -6,6 +6,8 @@
  *   - an acp / stream-json runtime has no CLI_ADAPTERS key in local-cli-driver.ts
  *   - a `tool` points to a missing tools[].id
  *   - a Line uses an unknown role
+ *   - `plans` is missing, not a list, repeats, or names a provider outside
+ *     the subscription providers (claude, chatgpt, kimi, gemini, copilot)
  * Run: bun script/check-runtime-registry.ts   (not a build)
  */
 import { readFileSync } from "node:fs"
@@ -57,7 +59,16 @@ function checkLines(owner: string, lines: unknown) {
   }
 }
 
+const PLAN_PROVIDERS = new Set(["claude", "chatgpt", "kimi", "gemini", "copilot"])
+
 for (const r of runtimes) {
+  if (!Array.isArray(r.plans)) errors.push(`runtime "${r.id}": plans is missing (a list of subscription providers, [] for none)`)
+  else {
+    for (const p of r.plans) {
+      if (!PLAN_PROVIDERS.has(p)) errors.push(`runtime "${r.id}": plans names "${p}", not a subscription provider (${[...PLAN_PROVIDERS].join(", ")})`)
+    }
+    if (new Set(r.plans).size !== r.plans.length) errors.push(`runtime "${r.id}": plans repeats a provider`)
+  }
   if (r.tool != null && !toolIds.has(r.tool)) errors.push(`runtime "${r.id}": tool "${r.tool}" is not in tools[]`)
   if ((r.adapter?.kind === "acp" || r.adapter?.kind === "stream-json") && !adapterKeys.has(r.tool)) {
     errors.push(`runtime "${r.id}": ${r.adapter.kind} but "${r.tool}" has no CLI_ADAPTERS key`)

@@ -158,8 +158,9 @@ internal fun WorkspaceShell(account: Account?, openSettingsOnStart: Boolean = fa
     // One chat for the shell (iOS keeps one ChatViewModel): a running reply survives a trip
     // to the home and back. It shares the shell's OkHttp client and API.
     val chatBackend = remember { ChatBackends.create(context, ShellApi.okHttp, ShellApi.api) }
-    val chat = remember { ChatViewModel(chatBackend, context.contentResolver) }
+    val chat = remember(account?.userId) { ChatViewModel(chatBackend, context.contentResolver).also { it.attachBrowserImages(context, account?.userId ?: "signed-out") } }
     DisposableEffect(chat) { onDispose { chat.dispose() } }
+    com.allternit.feature.chat.BrowserImageHost(chat)
     var hubOpen by remember { mutableStateOf(false) }
     val drawer = remember { AnchoredDraggableState(if (launch.sidebar) DrawerValue.Open else DrawerValue.Closed) }
     // Wave C sheets: Inbox (drawer tray), Quick task and Continue CLI session (New pill hold).

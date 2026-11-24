@@ -1,3 +1,6 @@
+import SwiftUI
+import ImageIO
+import CryptoKit
 import AVFoundation
 import UIKit
 import WebKit
@@ -29,9 +32,12 @@ final class NativePaneRenderer {
 
     func take(_ requestId: String) -> Bool { taken.insert(requestId).inserted }
 
-    func run(_ request: PaneRenderRequest, client: AgentChatClient) async -> PaneRenderResult {
+    func run(_ request: PaneRenderRequest, client: AgentChatClient, browserConfirmed: Bool = false, browserLocal: Bool = false) async -> PaneRenderResult {
         switch request.kind {
-        case .image: return await renderImage(request)
+        case .browserImage:
+            guard browserConfirmed else { return PaneRenderResult(ok: false, error: "Confirm this exact image prompt in the originating chat first.", code: "confirmation_required") }
+            return await ACIBrowserImageJob.shared.run(request, client: client, local: browserLocal)
+        case .image: return await renderImage(request, client: client)
         case .video: return await renderVideo(request, client: client)
         case .check: return await check(request)
         }
@@ -118,6 +124,21 @@ final class NativePaneRenderer {
         image.jpegData(compressionQuality: quality).map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
     }
 
+    /// A progress preview: at most 320 px wide, a small JPEG data URL (the
+    /// card shows it blurred or as a frame thumbnail, never the final art).
+    static func thumbnailURL(_ image: UIImage) -> String? {
+        let w = 320.0
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let scale = min(1, w / size.width)
+        let small = Self.resized(image, width: max(1, Int((size.width * scale).rounded())), height: max(1, Int((size.height * scale).rounded())))
+        return dataURL(jpeg: small, quality: 0.6)
+    }
+
+    static func thumbnailURL(fromDataURL url: String) -> String? {
+        image(fromDataURL: url).flatMap { thumbnailURL($0) }
+    }
+
     static func image(fromDataURL url: String) -> UIImage? {
         guard let comma = url.firstIndex(of: ","), let data = Data(base64Encoded: String(url[url.index(after: comma)...])) else { return nil }
         return UIImage(data: data)
@@ -130,7 +151,19 @@ final class NativePaneRenderer {
 
     // MARK: - Image
 
-    private func renderImage(_ r: PaneRenderRequest) async -> PaneRenderResult {
+    private func renderImage(_ r: PaneRenderRequest, client: AgentChatClient) async -> PaneRenderResult {
+        let progress = PaneRenderProgressReporter(requestId: r.requestId, client: client)
+        progress.report(stage: .drawing) { .init(lane: .picture, stage: .drawing, label: "Drawing the picture") }
+        let result = await drawImage(r)
+        if result.ok, let png = result.image {
+            progress.report(stage: .saving) {
+                .init(lane: .picture, stage: .saving, label: "Saving", fraction: 1, preview: Self.thumbnailURL(fromDataURL: png))
+            }
+        }
+        return result
+    }
+
+    private func drawImage(_ r: PaneRenderRequest) async -> PaneRenderResult {
         let head = "<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=\(r.width), initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"\(Self.frameCSP)\">"
         switch r.format {
         case "canvas":
@@ -257,6 +290,8 @@ final class NativePaneRenderer {
         let total = max(1, Int((duration * Double(fps)).rounded()))
         let samples = max(1, min(16, r.motionBlur ?? 1))
         let deadline = Date().addingTimeInterval((r.timeoutMs ?? 600_000) / 1000 - 5)
+        let progress = PaneRenderProgressReporter(requestId: r.requestId, client: client)
+        progress.report(stage: .drawing) { .init(lane: .motion, stage: .drawing, label: "Setting up the scene") }
         guard let (view, _) = await loadView(html: videoDocument(r, samples: samples), width: 16, height: 16) else {
             return .failed("The app has no window to render in.")
         }
@@ -268,6 +303,7 @@ final class NativePaneRenderer {
         // The score first: the writer interleaves, so audio goes in alongside the frames.
         var pcm: (left: [Float], right: [Float])? = nil
         if r.audio?.isEmpty == false {
+            progress.report(stage: .drawing) { .init(lane: .motion, stage: .drawing, label: "Scoring the audio") }
             let out = try? await view.callAsyncJavaScript("return await window.__audio()", contentWorld: .page) as? [String: Any]
             if let error = out?["error"] as? String { return .failed(error) }
             if let l = (out?["l"] as? String).flatMap({ Data(base64Encoded: $0) }), let rr = (out?["r"] as? String).flatMap({ Data(base64Encoded: $0) }) {
@@ -300,14 +336,20 @@ final class NativePaneRenderer {
                 }
             }
             guard await encoder.appendFrame(frame, index: i) else { encoder.cancel(); return .failed("The encoder stopped at frame \(i).") }
+            progress.report(stage: .rendering) {
+                .init(lane: .motion, stage: .rendering, label: "Frame \(i + 1) of \(total)", frame: i + 1, frames: total,
+                      fraction: Double(i + 1) / Double(total), preview: Self.thumbnailURL(UIImage(cgImage: frame)))
+            }
             if sheetPicks.contains(i) { stills.append((i, UIImage(cgImage: frame))) }
         }
         if let pcm, audioCursor < pcm.left.count {
             await encoder.appendAudio(left: pcm.left[audioCursor...], right: pcm.right[audioCursor...], at: audioCursor)
         }
+        progress.report(stage: .encoding) { .init(lane: .motion, stage: .encoding, label: "Encoding the video") }
         guard await encoder.finish(), let data = try? Data(contentsOf: url) else {
             return .failed("The video couldn't be encoded: \(encoder.errorText ?? "unknown error").")
         }
+        progress.report(stage: .saving) { .init(lane: .motion, stage: .saving, label: "Saving the video", fraction: 1) }
         let stored: String
         do { stored = try await client.uploadMediaArtifact(data, mime: "video/mp4") }
         catch { return .failed("The video rendered but couldn't be saved: \(error.localizedDescription)") }
@@ -635,4 +677,680 @@ private final class VideoEncoder {
     }
 
     func cancel() { writer.cancelWriting() }
+}
+
+/// Durable submission fence. A replay can never click Send again, including after a crash.
+/// Only identity hashes are stored here; website credentials remain inside WebKit.
+struct ACIBrowserImageLedger {
+    let defaults: UserDefaults
+    private let key = "aci.browser-image.submissions.v1"
+    func reserve(_ request: PaneRenderRequest) -> Bool {
+        var jobs = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
+        guard jobs[request.requestId] == nil else { return false }
+        let identity = request.sessionId + "\n" + (request.prompt ?? "")
+        jobs[request.requestId] = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        defaults.set(jobs, forKey: key)
+        return defaults.synchronize()
+    }
+    func recordConversation(_ url: URL, requestId: String) {
+        guard url.scheme == "https", url.host == "chatgpt.com", url.absoluteString.count <= 2048 else { return }
+        var conversations = defaults.dictionary(forKey: key + ".conversations") as? [String: String] ?? [:]
+        conversations[requestId] = url.absoluteString
+        defaults.set(conversations, forKey: key + ".conversations")
+        defaults.synchronize()
+    }
+    func conversation(requestId: String) -> URL? {
+        (defaults.dictionary(forKey: key + ".conversations")?[requestId] as? String).flatMap(URL.init(string:))
+    }
+}
+
+/// Fixed ChatGPT adapter, never a page-to-native message bridge. The browser owns its
+/// private website session. OAuth used for text chat does not authorize this session.
+@MainActor
+final class ACIBrowserImageJob: ObservableObject {
+    static let shared = ACIBrowserImageJob()
+    static var websiteDataStore = WKWebsiteDataStore.nonPersistent()
+    static let sourceLimit = 20 * 1024 * 1024
+    static let pngLimit = 8 * 1024 * 1024
+    private let world = WKContentWorld.world(name: "allternit-image-job")
+    @Published private(set) var isBusy = false
+    @Published private(set) var needsResume = false
+    @Published private(set) var resumeLabel = "Resume image job"
+    private var resumeRequested = false
+    private(set) var hasSubmitted = false
+    func resume() { resumeRequested = true }
+    private(set) var epoch = 0
+    private var activeRequestId: String?
+
+    func cancel() {
+        epoch += 1
+        guard isBusy, let web = ACIBrowserController.shared.webView, let id = activeRequestId else { return }
+        Task {
+            _ = try? await call(web, "if(window.__aciImage?.id === id) { window.__aciImage.abort?.abort(); document.querySelector('button[data-testid=\"stop-button\"]')?.click(); } return {stopped:true};", ["id": id])
+        }
+    }
+    func signOut() {
+        ACILocalImageStore.shared.resetForAccountChange()
+        cancel()
+        ACIBrowserBridge.shared.stopBot()
+        ACIBrowserController.shared.tearDown()
+        Self.websiteDataStore = .nonPersistent()
+    }
+
+    enum Failure: LocalizedError {
+        case stopped, unsupported, expired, replay, image
+        var errorDescription: String? {
+            switch self {
+            case .stopped: return "Image job stopped. Check the ChatGPT conversation before starting another image."
+            case .unsupported: return "ChatGPT's image controls are unavailable. In the ACI browser, sign in and open a regular empty New chat with Create image available, then start a new image action. No prompt was automatically retried."
+            case .expired: return "Image job timed out. Check the image in ChatGPT before starting another image action."
+            case .replay: return "This image request was already handled or may have been submitted. Check the ACI ChatGPT conversation. It will not be sent again."
+            case .image: return "ChatGPT did not return a supported image within the download and image size limits."
+            }
+        }
+        var code: String {
+            switch self {
+            case .stopped: return "cancelled"
+            case .unsupported: return "needs_user"
+            case .expired: return "timeout"
+            case .replay: return "ambiguous_submission"
+            case .image: return "invalid_image"
+            }
+        }
+    }
+
+    /// Inspect dimensions before full pixel allocation. Final PNG must fit the relay envelope.
+    static func normalize(_ data: Data, mime: String) throws -> PaneRenderResult {
+        guard ["image/png", "image/jpeg", "image/webp", "image/heic"].contains(mime.lowercased()),
+              !data.isEmpty, data.count <= sourceLimit,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) == 1,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              (1...4096).contains(width), (1...4096).contains(height), width * height <= 16_000_000,
+              let decoded = UIImage(data: data) else { throw Failure.image }
+        // UIKit drawing applies EXIF orientation and removes provider metadata.
+        let rotated = decoded.imageOrientation == .left || decoded.imageOrientation == .right || decoded.imageOrientation == .leftMirrored || decoded.imageOrientation == .rightMirrored
+        let size = CGSize(width: rotated ? height : width, height: rotated ? width : height)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let clean = UIGraphicsImageRenderer(size: size, format: format).image { _ in decoded.draw(in: CGRect(origin: .zero, size: size)) }
+        guard let png = clean.pngData(), png.count <= pngLimit else { throw Failure.image }
+        return PaneRenderResult(ok: true, image: "data:image/png;base64," + png.base64EncodedString(), width: Int(size.width), height: Int(size.height))
+    }
+
+    private func call(_ web: WKWebView, _ script: String, _ args: [String: Any] = [:]) async throws -> [String: Any] {
+        guard web.url?.scheme == "https", web.url?.host == "chatgpt.com" else { throw Failure.unsupported }
+        let value = try await web.callAsyncJavaScript(script, arguments: args, in: nil, contentWorld: world)
+        guard let result = value as? [String: Any] else { throw Failure.unsupported }
+        return result
+    }
+
+    func run(_ request: PaneRenderRequest, client: AgentChatClient, local: Bool = false) async -> PaneRenderResult {
+        let executorId = UUID().uuidString
+        let generation = epoch
+        let owner = ACILocalImageStore.shared.owner
+        // Claim before every actionable refusal; a conflict must never produce a reply.
+        if !local {
+            do { try await client.claimBrowserImage(requestId: request.requestId, executorId: executorId) }
+            catch { return PaneRenderResult(ok: false, error: "Image job is unavailable or already owned.", code: "executor_conflict") }
+        }
+        func refused(_ text: String, _ code: String) -> PaneRenderResult {
+            PaneRenderResult(ok: false, error: text, code: code, executorId: local ? nil : executorId)
+        }
+        guard generation == epoch, owner == ACILocalImageStore.shared.owner else { return refused(Failure.stopped.localizedDescription, Failure.stopped.code) }
+        guard !isBusy else { return refused("Another image job owns the ACI browser.", "browser_busy") }
+        guard request.kind == .browserImage, request.engine == "chatgpt-aci", let prompt = request.prompt,
+              let time = request.time, let timeout = request.timeoutMs,
+              time.isFinite, timeout.isFinite, timeout > 0, timeout <= 600_000,
+              Date().timeIntervalSince1970 * 1000 - time >= -30_000,
+              Date().timeIntervalSince1970 * 1000 - time <= timeout else {
+            return refused("Unsupported or expired browser image request.", "unsupported")
+        }
+        guard ACIBrowserImageLedger(defaults: .standard).reserve(request) else {
+            return refused(Failure.replay.localizedDescription, Failure.replay.code)
+        }
+        isBusy = true
+        hasSubmitted = false
+        activeRequestId = request.requestId
+        let deadline = Date(timeIntervalSince1970: (time + timeout) / 1000)
+        defer {
+            isBusy = false
+            hasSubmitted = false
+            needsResume = false
+            resumeRequested = false
+            activeRequestId = nil
+            if let web = ACIBrowserController.shared.webView {
+                Task { _ = try? await call(web, "if(window.__aciImage?.id === id) { window.__aciImage.abort?.abort(); window.__aciImage.download = null; window.__aciImage.active = false; } return {cleared:true};", ["id": request.requestId]) }
+            }
+        }
+        func check() throws {
+            guard epoch == generation, owner == ACILocalImageStore.shared.owner, !Task.isCancelled else { throw Failure.stopped }
+            guard Date() < deadline else { throw Failure.expired }
+        }
+        var throttle = GenerationProgressThrottle()
+        var observedPreview: String?
+        func report(_ stage: GenerationStage, _ label: String, bytes: Int? = nil, total: Int? = nil, preview: String? = nil) async throws {
+            try check()
+            guard preview != nil || throttle.shouldSend(stage: stage, now: ProcessInfo.processInfo.systemUptime) else { return }
+            if let preview { observedPreview = preview }
+            let detail = GenerationProgressDetail(lane: .picture, stage: stage, label: label, preview: observedPreview, bytes: bytes, totalBytes: total)
+            GenerationProgressStore.shared.set(request.toolCall ?? request.requestId, detail: detail)
+            if !local, await client.postPaneRenderProgress(requestId: request.requestId, detail: detail, executorId: executorId) == false { cancel(); throw Failure.stopped }
+        }
+        do {
+            try await report(.queued, "Opening ChatGPT in the ACI browser")
+            // The confirmed chat action presents the browser. Do not route to a remote machine.
+            for _ in 0..<50 {
+                try check()
+                if let web = ACIBrowserController.shared.webView, web.url != nil { break }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            guard let web = ACIBrowserController.shared.webView else { throw Failure.unsupported }
+            // An already retained page/draft is the person's property. Never navigate it away.
+            guard web.url?.host == "chatgpt.com" else { throw Failure.unsupported }
+            func pauseForPerson(_ label: String) async throws {
+                resumeLabel = label
+                needsResume = true
+                resumeRequested = false
+                defer { needsResume = false; resumeRequested = false }
+                while !resumeRequested || UIApplication.shared.applicationState != .active || web.url?.host != "chatgpt.com" || web.isLoading {
+                    try await report(.queued, "Needs you: " + label)
+                    try await Task.sleep(for: .seconds(1))
+                }
+                try check()
+            }
+            var ready = false
+            while !ready {
+                try check()
+                guard UIApplication.shared.applicationState == .active else {
+                    try await report(.queued, "Paused while the app is in the background")
+                    try await Task.sleep(for: .seconds(1)); continue
+                }
+                if !web.isLoading, web.url?.host == "chatgpt.com" {
+                    let state = try await call(web, Self.prepareScript, ["prompt": prompt, "id": request.requestId])
+                    if state["ready"] as? Bool == true { ready = true; break }
+                    if let label = state["needsUser"] as? String { try await pauseForPerson(label) }
+                    else if state["working"] as? Bool != true { throw Failure.unsupported }
+                }
+                try await Task.sleep(for: .seconds(1))
+            }
+            try check()
+            // Save both the app chat identity and current website conversation before Send.
+            if let url = web.url { ACIBrowserImageLedger(defaults: .standard).recordConversation(url, requestId: request.requestId) }
+            // The durable fence above is already on disk before the only Send operation.
+            hasSubmitted = true // Lock navigation even if Send's acknowledgement is ambiguous.
+            let submitted = try await call(web, Self.submitScript, ["prompt": prompt, "id": request.requestId])
+            guard submitted["sent"] as? Bool == true else { throw Failure.unsupported }
+            try await report(.drawing, "Waiting for ChatGPT to generate this image")
+            while true {
+                try check()
+                guard UIApplication.shared.applicationState == .active else {
+                    try await report(.queued, "Paused; reconnecting when the app returns")
+                    try await Task.sleep(for: .seconds(1)); continue
+                }
+                let state = try await call(web, Self.resultScript)
+                if let url = web.url { ACIBrowserImageLedger(defaults: .standard).recordConversation(url, requestId: request.requestId) }
+                if let label = state["needsUser"] as? String {
+                    try await pauseForPerson(label)
+                    continue
+                }
+                if state["unsupported"] as? Bool == true { throw Failure.unsupported }
+                if let preview = state["preview"] as? String, preview.hasPrefix("data:image/jpeg;base64,"), preview.utf8.count <= 180_000 {
+                    try await report(.rendering, "ChatGPT image preview", preview: preview)
+                }
+                if state["ready"] as? Bool == true { break }
+                try await report(observedPreview == nil ? .drawing : .rendering, "Waiting for this ChatGPT turn's finished image")
+                try await Task.sleep(for: .seconds(1))
+            }
+            // Fetch in the authenticated WebKit context. Only the adapter's current-turn
+            // image is eligible. No URL supplied by native RPC or by page messages is accepted.
+            _ = try await call(web, Self.downloadScript)
+            var data = Data()
+            var mime = ""
+            while true {
+                try check()
+                guard UIApplication.shared.applicationState == .active else {
+                    try await report(.queued, "Download paused; reconnecting when the app returns")
+                    try await Task.sleep(for: .seconds(1)); continue
+                }
+                let state = try await call(web, Self.bytesScript)
+                if state["error"] as? Bool == true { throw Failure.image }
+                let received = state["bytes"] as? Int ?? 0
+                try await report(.downloading, "Downloading the generated image", bytes: received, total: state["total"] as? Int)
+                if let chunk = state["chunk"] as? String {
+                    guard chunk.count <= 90_000, let decoded = Data(base64Encoded: chunk), data.count + decoded.count <= Self.sourceLimit else { throw Failure.image }
+                    data.append(decoded)
+                }
+                if state["done"] as? Bool == true { mime = state["mime"] as? String ?? ""; break }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            try await report(.saving, "Validating and saving the image", bytes: data.count, total: data.count)
+            var result = try Self.normalize(data, mime: mime)
+            result.executorId = executorId
+            if let image = result.image.flatMap({ NativePaneRenderer.image(fromDataURL: $0) }) {
+                let ratio = min(1, 320 / max(image.size.width, image.size.height))
+                let size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+                let format = UIGraphicsImageRendererFormat(); format.scale = 1
+                let thumb = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+                if let jpeg = thumb.jpegData(compressionQuality: 0.65), jpeg.count <= 128 * 1024 {
+                    try await report(.saving, "Saving the generated image", preview: "data:image/jpeg;base64," + jpeg.base64EncodedString())
+                }
+            }
+            try check()
+            return result
+        } catch is CancellationError {
+            return PaneRenderResult(ok: false, error: Failure.stopped.localizedDescription, code: Failure.stopped.code, executorId: executorId)
+        } catch let failure as Failure {
+            return PaneRenderResult(ok: false, error: failure.localizedDescription, code: failure.code, executorId: executorId)
+        } catch {
+            return PaneRenderResult(ok: false, error: "The ACI image job was interrupted. Check ChatGPT before starting another image action.", code: "ambiguous_submission", executorId: executorId)
+        }
+    }
+
+    // All scripts are fixed native resources in an isolated content world. Provider DOM
+    // differences fail closed. No general eval, message handler, screenshot or token bridge.
+    static let prepareScript = #"""
+    const visible = e => !!e && e.getClientRects().length > 0;
+    const buttons = () => [...document.querySelectorAll('button,[role="button"],[role="menuitem"]')].filter(visible);
+    const name = e => (e.getAttribute('aria-label') || e.innerText || '').trim();
+    const challenge = document.querySelector('iframe[src*="challenge"], #challenge-running') || /verify you are human|checking your browser/i.test(document.body.innerText);
+    if (challenge) return {needsUser:'Finish verification, then tap Resume'};
+    if (buttons().some(e => /^(log in|sign in)$/i.test(name(e)))) return {needsUser:'Sign in to ChatGPT, then tap Resume'};
+    const c = document.querySelector('#prompt-textarea[contenteditable="true"], textarea#prompt-textarea');
+    if (!visible(c)) return {unsupported:true};
+    const turns = document.querySelectorAll('[data-conversation-role], [data-message-author-role], [data-user-message-bubble]');
+    if (location.pathname !== '/' || new URL(location.href).searchParams.get('temporary-chat') === 'true' ||
+        /temporary chat/i.test(document.title) || buttons().some(e => /temporary/i.test(name(e)) && e.getAttribute('aria-pressed') === 'true') || turns.length) {
+      return {needsUser:'Open a regular empty New chat (not Temporary Chat), then tap Resume'};
+    }
+    if (document.querySelector('button[data-testid="stop-button"], button[aria-label="Stop generating"]')) return {unsupported:true};
+    const text = () => c instanceof HTMLTextAreaElement ? c.value : c.innerText;
+    // Never replace a draft, even if it happens to match this job's prompt.
+    let p = window.__aciPrepare;
+    if (!p || p.id !== id) {
+      if (text().trim()) return {needsUser:'Keep or save your draft and open an empty New chat, then tap Resume'};
+      p = window.__aciPrepare = {id, mode:false, filled:false, menuOpened:false};
+    }
+    if (!p.mode) {
+      const create = buttons().find(e => /^create image$/i.test(name(e)));
+      if (create) { create.click(); p.mode = true; return {ready:false, working:true}; }
+      const tools = buttons().find(e => /^(tools|view all tools|add files and more|add photos & files)$/i.test(name(e)));
+      if (!p.menuOpened && tools) { tools.click(); p.menuOpened = true; return {ready:false, working:true}; }
+      return {unsupported:true};
+    }
+    // Confirm the explicit image mode remains selected before editing or Send.
+    const modeShown = buttons().some(e => /^(create image|image|remove create image|remove image)$/i.test(name(e))) ||
+      [...document.querySelectorAll('[data-testid*="composer"]')].some(e => /create image/i.test(e.innerText));
+    if (!modeShown) return {unsupported:true};
+    if (!p.filled) {
+      if (text().trim()) return {unsupported:true};
+      c.focus();
+      if (c instanceof HTMLTextAreaElement) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(c, prompt);
+        c.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:prompt}));
+      } else {
+        const selection = window.getSelection(), range = document.createRange();
+        range.selectNodeContents(c); selection.removeAllRanges(); selection.addRange(range);
+        if (!document.execCommand('insertText', false, prompt)) return {unsupported:true};
+      }
+      p.filled = true;
+      return {ready:false, working:true};
+    }
+    const send = buttons().find(e => e.matches('button[data-testid="send-button"]') || /^send prompt$/i.test(name(e)));
+    if (text() !== prompt || !send) return {unsupported:true};
+    return {ready:!send.disabled, working:true};
+    """#
+    static let submitScript = #"""
+    const c = document.querySelector('#prompt-textarea[contenteditable="true"], textarea#prompt-textarea');
+    const b = [...document.querySelectorAll('button')].find(e => e.getClientRects().length &&
+      (e.dataset.testid === 'send-button' || /^send prompt$/i.test(e.getAttribute('aria-label') || '')));
+    const modeShown = [...document.querySelectorAll('button,[role="button"]')].some(e =>
+      /^(create image|image|remove create image|remove image)$/i.test((e.getAttribute('aria-label') || e.innerText || '').trim())) ||
+      [...document.querySelectorAll('[data-testid*="composer"]')].some(e => /create image/i.test(e.innerText));
+    if (!modeShown || !window.__aciPrepare?.mode || window.__aciPrepare.id !== id || !c ||
+        (c instanceof HTMLTextAreaElement ? c.value : c.innerText) !== prompt || !b || b.disabled ||
+        location.pathname !== '/' || document.querySelector('[data-conversation-role], [data-message-author-role], [data-user-message-bubble]')) return {sent:false};
+    const selector = '[data-conversation-role="user"], [data-message-author-role="user"], [data-user-message-bubble]';
+    window.__aciImage = {id, prompt, users:new Set(document.querySelectorAll(selector)), turn:null, image:null, active:true};
+    const job = window.__aciImage;
+    // Guard provider SPA links as well as the native navigation controls. Authentication
+    // and verification controls remain usable; New chat/history wait until completion.
+    const navigationGuard = event => {
+      if (!job.active) { document.removeEventListener('click', navigationGuard, true); return; }
+      const target = event.target instanceof Element ? event.target.closest('a,button,[role="button"]') : null;
+      if (!target) return;
+      const label = (target.getAttribute('aria-label') || target.innerText || '').trim();
+      const href = target.getAttribute('href');
+      let leavesConversation = false;
+      if (href) {
+        try {
+          const url = new URL(href, location.href);
+          leavesConversation = url.origin === location.origin && (url.pathname === '/' || /^\/(c|g)\//.test(url.pathname));
+        } catch { /* Non-navigation control. */ }
+      }
+      if (leavesConversation || /^(new chat|temporary chat)$/i.test(label)) {
+        event.preventDefault(); event.stopImmediatePropagation();
+      }
+    };
+    document.addEventListener('click', navigationGuard, true);
+    // The one Send operation. Observation never calls this script again.
+    b.click(); return {sent:true};
+    """#
+    static let resultScript = #"""
+    const j = window.__aciImage;
+    if (!j) return {unsupported:true};
+    if (document.querySelector('iframe[src*="challenge"], #challenge-running') || /verify you are human|checking your browser/i.test(document.body.innerText))
+      return {needsUser:'Finish verification without leaving this conversation, then tap Resume'};
+    if ([...document.querySelectorAll('button')].some(e => /^(log in|sign in)$/i.test((e.getAttribute('aria-label') || e.innerText).trim())))
+      return {needsUser:'Sign in without leaving this conversation, then tap Resume'};
+    const selector = '[data-conversation-role="user"], [data-conversation-role="assistant"], [data-message-author-role="user"], [data-message-author-role="assistant"], [data-user-message-bubble]';
+    const all = [...document.querySelectorAll(selector)].filter(e => !e.parentElement?.closest(selector));
+    const role = e => e.dataset.conversationRole || e.dataset.messageAuthorRole || 'user';
+    const users = all.filter(e => role(e) === 'user' && !j.users.has(e));
+    const userText = e => (e.matches('[data-user-message-bubble]') ? e : e.querySelector('[data-user-message-bubble]') || e).innerText;
+    if (users.length > 1 || (users.length === 1 && userText(users[0]).trim() !== j.prompt.trim())) return {unsupported:true};
+    if (j.turn && !j.turn.isConnected) return {unsupported:true};
+    if (!users.length) return {ready:false};
+    if (j.turn && j.turn !== users[0]) return {unsupported:true};
+    j.turn = users[0];
+    const replies = all.slice(all.indexOf(j.turn)+1).filter(e => role(e) === 'assistant');
+    if (!replies.length) return {ready:false};
+    const reply = replies[replies.length-1];
+    const allowed = i => {
+      try {
+        const u = new URL(i.currentSrc || i.src, location.href);
+        return (u.protocol === 'https:' && u.hostname === 'chatgpt.com' && /^\/backend-api\/(estuary\/content|files\/)/.test(u.pathname)) ||
+          (u.protocol === 'blob:' && u.origin === location.origin);
+      } catch { return false; }
+    };
+    const images = [...reply.querySelectorAll('img')].filter(i => i.complete && i.naturalWidth >= 256 && i.naturalHeight >= 256 && allowed(i));
+    if (images.length > 1) return {unsupported:true};
+    const busy = !!document.querySelector('button[data-testid="stop-button"], button[aria-label="Stop generating"]') ||
+      reply.getAttribute('aria-busy') === 'true' || !!reply.querySelector('[aria-busy="true"], [data-is-streaming="true"]');
+    if (!images.length) {
+      if (!busy) {
+        j.noImageSince ??= Date.now();
+        if (Date.now() - j.noImageSince > 30000) return {unsupported:true};
+      }
+      return {ready:false};
+    }
+    j.image = images[0];
+    // Only real current-turn pixels. A tainted canvas leaves BlockPulse in place.
+    let preview;
+    if (j.previewSource !== j.image.currentSrc || j.previewWidth !== j.image.naturalWidth) {
+      try {
+        const canvas = document.createElement('canvas');
+        const ratio = Math.min(1, 320 / Math.max(j.image.naturalWidth, j.image.naturalHeight));
+        canvas.width = Math.max(1, Math.round(j.image.naturalWidth * ratio));
+        canvas.height = Math.max(1, Math.round(j.image.naturalHeight * ratio));
+        canvas.getContext('2d').drawImage(j.image, 0, 0, canvas.width, canvas.height);
+        const data = canvas.toDataURL('image/jpeg', 0.65);
+        if (data.startsWith('data:image/jpeg;base64,') && data.length <= 180000) preview = data;
+        j.previewSource = j.image.currentSrc; j.previewWidth = j.image.naturalWidth;
+      } catch { /* No fake preview or provider-private URL. */ }
+    }
+    const finished = /image created|created image/i.test(reply.innerText) ||
+      [...reply.querySelectorAll('button,a,[role="button"]')].some(e =>
+        /^(download( this image| image)?|save image|copy image)$/i.test((e.getAttribute('aria-label') || e.getAttribute('title') || e.innerText || '').trim()));
+    if (!busy && !finished) {
+      j.finishWaitSince ??= Date.now();
+      if (Date.now() - j.finishWaitSince > 30000) return {unsupported:true};
+    }
+    return {ready:!busy && finished, preview};
+    """#
+    static let downloadScript = #"""
+    const j = window.__aciImage;
+    if (!j?.image?.isConnected) return {error:true};
+    const url = new URL(j.image.currentSrc || j.image.src, location.href);
+    if (!(url.protocol === 'https:' && url.hostname === 'chatgpt.com' && /^\/backend-api\/(estuary\/content|files\/)/.test(url.pathname)) && !(url.protocol === 'blob:' && url.origin === location.origin)) return {error:true};
+    j.download = {bytes:0, chunks:[], done:false, error:false, mime:''};
+    const d = j.download, abort = new AbortController(); j.abort = abort;
+    const timer = setTimeout(() => abort.abort(), 60000);
+    (async () => {
+      try {
+        const response = await fetch(url.href, {credentials:'same-origin', signal:abort.signal});
+        if (!response.ok) throw Error('download');
+        if (url.protocol !== 'blob:') {
+          const finalURL = new URL(response.url);
+          if (finalURL.protocol !== 'https:' || finalURL.hostname !== 'chatgpt.com' ||
+              !/^\/backend-api\/(estuary\/content|files\/)/.test(finalURL.pathname)) throw Error('source');
+        }
+        d.mime = (response.headers.get('content-type') || '').split(';')[0].toLowerCase();
+        if (!['image/png','image/jpeg','image/webp','image/heic'].includes(d.mime)) throw Error('mime');
+        const total = Number(response.headers.get('content-length'));
+        if (total > 20*1024*1024) throw Error('size');
+        if (total > 0) d.total = total;
+        const reader = response.body.getReader();
+        for (;;) {
+          const {done,value} = await reader.read(); if (done) break;
+          d.bytes += value.length; if (d.bytes > 20*1024*1024) { await reader.cancel(); throw Error('size'); }
+          for (let offset=0; offset<value.length; offset+=65536) {
+            const chunk=value.subarray(offset,offset+65536); let binary='';
+            for (const byte of chunk) binary += String.fromCharCode(byte);
+            d.chunks.push(btoa(binary));
+          }
+        }
+        d.done=true;
+      } catch { d.error=true; } finally {clearTimeout(timer);}
+    })();
+    return {started:true};
+    """#
+    static let bytesScript = #"""
+    const d = window.__aciImage?.download;
+    if (!d) return {error:true};
+    const chunk = d.chunks.shift();
+    return {bytes:d.bytes,total:d.total,mime:d.mime,error:d.error,chunk,done:d.done && !d.chunks.length};
+    """#
+}
+
+/// App-owned history and Outputs for phone-only image actions. No runtime resolution,
+/// upload, OAuth credential, or website-private URL is needed to save or reopen a result.
+@MainActor
+final class ACILocalImageStore: ObservableObject {
+    static let shared = ACILocalImageStore()
+    static let prefix = "aci_local_"
+    static func isLocal(_ id: String?) -> Bool { id?.hasPrefix(prefix) == true }
+    struct Turn: Codable, Identifiable {
+        let id: String
+        let messageId: String
+        let prompt: String
+        let created: Date
+        var filename: String?
+        var error: String?
+        var pending: Bool
+    }
+    struct TextTurn: Codable {
+        let id: String
+        let role: String
+        let content: String
+        let created: Date
+    }
+    struct Thread: Codable, Identifiable {
+        let id: String
+        var title: String
+        let created: Date
+        var updated: Date
+        var prelude: [TextTurn]
+        var turns: [Turn]
+        var archived: Bool = false
+    }
+    @Published private(set) var threads: [String: Thread] = [:]
+    private let directory: URL?
+    private let ownerOverride: String?
+    private var loadedOwner: String?
+    var owner: String { ownerOverride ?? AuthManager.shared.currentUserId ?? "device" }
+    init(directory: URL? = nil, owner: String? = nil) {
+        self.directory = directory
+        self.ownerOverride = owner
+    }
+    private var root: URL {
+        let base = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("ACIImages", isDirectory: true)
+        let hash = SHA256.hash(data: Data(owner.utf8)).map { String(format: "%02x", $0) }.joined()
+        return base.appendingPathComponent(hash, isDirectory: true)
+    }
+    func reloadIfNeeded() {
+        guard loadedOwner != owner else { return }
+        loadedOwner = owner
+        let saved = try? Data(contentsOf: root.appendingPathComponent("history.json"))
+        var loaded = saved.flatMap { try? JSONDecoder().decode([String: Thread].self, from: $0) } ?? [:]
+        for key in Array(loaded.keys) {
+            for index in loaded[key]!.turns.indices where loaded[key]!.turns[index].pending {
+                loaded[key]!.turns[index].pending = false
+                loaded[key]!.turns[index].error = "This image may have been submitted before the app closed. Check the ACI ChatGPT conversation. It will not be sent again."
+            }
+        }
+        threads = loaded
+    }
+    func resetForAccountChange() { loadedOwner = nil; threads = [:] }
+    private func save() throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONEncoder().encode(threads).write(to: root.appendingPathComponent("history.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+    func createChat(history: [MessageRecord]) throws -> String {
+        reloadIfNeeded()
+        let id = Self.prefix + UUID().uuidString
+        let before = threads
+        threads[id] = Thread(id: id, title: "ChatGPT images", created: Date(), updated: Date(),
+            prelude: history.filter { !$0.isStreaming }.map { TextTurn(id: $0.id, role: $0.role, content: $0.content, created: $0.createdAt) }, turns: [])
+        do { try save() } catch { threads = before; throw error }
+        return id
+    }
+    func begin(sessionId: String, id: String, messageId: String, prompt: String, history: [MessageRecord] = []) throws {
+        reloadIfNeeded()
+        let before = threads
+        if threads[sessionId] == nil {
+            threads[sessionId] = Thread(id: sessionId, title: String(prompt.prefix(60)), created: Date(), updated: Date(),
+                prelude: history.filter { !$0.isStreaming }.map { TextTurn(id: $0.id, role: $0.role, content: $0.content, created: $0.createdAt) }, turns: [])
+        }
+        guard threads[sessionId]?.turns.contains(where: { $0.id == id }) == false else { throw ACIBrowserImageJob.Failure.replay }
+        threads[sessionId]?.turns.append(Turn(id: id, messageId: messageId, prompt: prompt, created: Date(), pending: true))
+        threads[sessionId]?.updated = Date()
+        do { try save() } catch { threads = before; throw error }
+        NotificationCenter.default.post(name: .historyMutated, object: nil)
+    }
+    func finish(sessionId: String, id: String, owner expectedOwner: String, result: PaneRenderResult) throws {
+        guard owner == expectedOwner else { throw ACIBrowserImageJob.Failure.stopped }
+        reloadIfNeeded()
+        guard let index = threads[sessionId]?.turns.firstIndex(where: { $0.id == id }) else { throw ACIBrowserImageJob.Failure.stopped }
+        if result.ok {
+            guard let image = result.image, image.hasPrefix("data:image/png;base64,"),
+                  let data = Data(base64Encoded: String(image.dropFirst("data:image/png;base64,".count))),
+                  data.count <= ACIBrowserImageJob.pngLimit else { throw ACIBrowserImageJob.Failure.image }
+            let filename = SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined() + ".png"
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try data.write(to: root.appendingPathComponent(filename), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            threads[sessionId]?.turns[index].filename = filename
+        }
+        threads[sessionId]?.turns[index].pending = false
+        threads[sessionId]?.turns[index].error = result.error
+        threads[sessionId]?.updated = Date()
+        try save()
+        NotificationCenter.default.post(name: .historyMutated, object: nil)
+    }
+    func file(_ turn: Turn) -> URL? {
+        guard let filename = turn.filename,
+              filename == SHA256.hash(data: Data(turn.id.utf8)).map({ String(format: "%02x", $0) }).joined() + ".png" else { return nil }
+        let url = root.appendingPathComponent(filename)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+    func entry(messageId: String) -> Turn? {
+        threads.values.lazy.flatMap(\.turns).first { $0.messageId == messageId }
+    }
+    func messages(sessionId: String) -> [MessageRecord] {
+        reloadIfNeeded()
+        guard let thread = threads[sessionId] else { return [] }
+        var messages = thread.prelude.map { MessageRecord(id: $0.id, role: $0.role, content: $0.content, createdAt: $0.created) }
+        for turn in thread.turns {
+            messages.append(MessageRecord(id: turn.id + "-user", role: "user", content: turn.prompt, createdAt: turn.created))
+            messages.append(MessageRecord(id: turn.messageId, role: "assistant", content: "", isStreaming: turn.pending,
+                toolCalls: [ToolCallRecord(id: turn.id, toolName: "media_generate", state: turn.pending ? .running : (turn.error == nil ? .done : .failed),
+                    input: ["kind": "image", "engine": "chatgpt-aci", "prompt": turn.prompt], error: turn.error, startedAt: turn.created)], createdAt: turn.created.addingTimeInterval(0.001)))
+        }
+        return messages.sorted { $0.createdAt < $1.createdAt }
+    }
+    func appendText(sessionId: String, message: MessageRecord) throws {
+        reloadIfNeeded()
+        guard threads[sessionId] != nil else { return }
+        threads[sessionId]?.prelude.removeAll { $0.id == message.id }
+        threads[sessionId]?.prelude.append(TextTurn(id: message.id, role: message.role, content: message.content, created: message.createdAt))
+        threads[sessionId]?.updated = Date()
+        try save()
+    }
+    func sessions() -> [AgentSession] {
+        reloadIfNeeded()
+        let formatter = ISO8601DateFormatter()
+        return threads.values.filter { Self.isLocal($0.id) }.compactMap { thread in
+            let object: [String: Any] = ["id": thread.id, "name": thread.title, "created_at": formatter.string(from: thread.created),
+                "updated_at": formatter.string(from: thread.updated), "message_count": thread.prelude.count + thread.turns.count * 2,
+                "active": !thread.archived, "metadata": ["originSurface": "chat", "archived": thread.archived] as [String: Any]]
+            guard let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
+            return try? JSONDecoder().decode(AgentSession.self, from: data)
+        }
+    }
+    func archive(_ id: String, archived: Bool) throws { reloadIfNeeded(); threads[id]?.archived = archived; try save() }
+    func rename(_ id: String, title: String) throws { reloadIfNeeded(); threads[id]?.title = title; try save() }
+    func delete(_ id: String) throws {
+        reloadIfNeeded()
+        if threads[id]?.turns.contains(where: { $0.pending }) == true { ACIBrowserImageJob.shared.cancel() }
+        for turn in threads[id]?.turns ?? [] { if let url = file(turn) { try FileManager.default.removeItem(at: url) } }
+        threads[id] = nil
+        try save()
+    }
+}
+
+/// The existing generation card owns progress; this is the finished local image and its
+/// file actions. ShareLink's Download action exposes Save to Files without a server upload.
+struct ACILocalImageTurnView: View {
+    let messageId: String
+    @ObservedObject private var store = ACILocalImageStore.shared
+    @State private var opened = false
+    var body: some View {
+        if let turn = store.entry(messageId: messageId), let file = store.file(turn),
+           let image = UIImage(contentsOfFile: file.path) {
+            VStack(alignment: .leading, spacing: 10) {
+                Image(uiImage: image).resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 12))
+                HStack {
+                    Button("Open", systemImage: "arrow.up.right.square") { opened = true }
+                    ShareLink(item: file) { Label("Download", systemImage: "arrow.down.to.line") }
+                    Button("Copy prompt", systemImage: "doc.on.doc") { UIPasteboard.general.string = turn.prompt }
+                }
+                .font(.footnote)
+            }
+            .sheet(isPresented: $opened) {
+                NavigationStack {
+                    ScrollView { Image(uiImage: image).resizable().scaledToFit() }
+                        .navigationTitle("ChatGPT image")
+                        .toolbar { Button("Done") { opened = false }; ShareLink(item: file) }
+                }
+            }
+        }
+    }
+}
+
+struct ACILocalImageOutputs: View {
+    let sessionId: String?
+    @ObservedObject private var store = ACILocalImageStore.shared
+    @State private var opened = false
+    var body: some View {
+        if let sessionId, let thread = store.threads[sessionId], thread.turns.contains(where: { $0.filename != nil }) {
+            Button("Outputs", systemImage: "photo.on.rectangle") { opened = true }
+                .font(.footnote)
+                .sheet(isPresented: $opened) {
+                    NavigationStack {
+                        ScrollView {
+                            LazyVStack(spacing: 20) {
+                                ForEach(thread.turns.filter { $0.filename != nil }) { turn in
+                                    ACILocalImageTurnView(messageId: turn.messageId)
+                                }
+                            }.padding()
+                        }
+                        .navigationTitle("Outputs")
+                        .toolbar { Button("Done") { opened = false } }
+                    }
+                }
+        }
+    }
 }

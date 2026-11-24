@@ -218,7 +218,10 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         // session's artifact pane, edited through its editor's tools).
         .route("/pane-artifact/:id/reply", post(reply_pane_artifact))
         // The app's rendered image for a media_generate (native lane) call.
-        .route("/pane-render/:id/reply", post(reply_pane_render))
+        .route("/pane-render", get(list_pane_renders))
+        .route("/pane-render/:id/progress", post(progress_pane_render))
+        .route("/pane-render/:id/claim", post(claim_pane_render))
+        .route("/pane-render/:id/reply", post(reply_pane_render).layer(axum::extract::DefaultBodyLimit::max(PANE_REPLY_BODY_LIMIT)))
         // The app's capture for a capture_screen_context call (its front
         // window or its own view). Secrets are redacted and the text marked
         // untrusted here, before the runtime (and the model) sees it.
@@ -525,6 +528,7 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
         .flatten()
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default();
+    let runtime = session_runtime_of(&stored_metadata);
 
     let mut metadata = serde_json::Map::new();
     metadata.insert("project_id".to_string(), json!(info.project_id));
@@ -579,8 +583,88 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
         // Code environment status (Contract C), unchanged from gizzi. Also
         // mirrored in `metadata.environment` for clients that read the bag.
         "environment": info.environment,
+        // The runtime the session's turns run on (Harness & Bots 2.0).
+        "runtime": runtime,
         "metadata": serde_json::Value::Object(metadata),
     })
+}
+
+/// The runtime a session runs on, for list/get: the checked `runtime` a plain
+/// chat stored at create, else the runtime of its `botBrain` (bot sessions),
+/// else `allternit`.
+fn session_runtime_of(bag: &serde_json::Map<String, serde_json::Value>) -> String {
+    let registry = crate::cli_catalog::runtime_registry();
+    if let Some(id) = bag.get("runtime").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        return registry.get(id).map(|r| r.id.clone()).unwrap_or_else(|| id.to_string());
+    }
+    if let Some(brain) = bag.get("botBrain").filter(|b| b.as_object().is_some_and(|m| !m.is_empty())) {
+        let mut brain = brain.clone();
+        crate::bot_brain::normalize_bot_brain(&mut brain, registry);
+        if let Some(id) = brain.get("runtime").and_then(|v| v.as_str()) {
+            return id.to_string();
+        }
+    }
+    crate::bot_brain::RUNTIME_ALLTERNIT.to_string()
+}
+
+/// Store a checked runtime change on a session's metadata bag, over the
+/// client's raw keys: the canonical `runtime` and normalized `botBrain` (and
+/// `agent_session` from `nativeSessionId`; the old runtime's native session is
+/// dropped). `Cleared` stores `runtime: "allternit"` (and drops a stale
+/// `botBrain` the update did not replace). Turns then follow the bag through
+/// `plain_runtime_turn_model`, the way they do after create.
+fn apply_runtime_patch(
+    bag: &mut serde_json::Map<String, serde_json::Value>,
+    change: &crate::bot_brain::RuntimePatch,
+    update_had_brain: bool,
+) {
+    use crate::bot_brain::RuntimePatch;
+    match change {
+        RuntimePatch::Unchanged => {}
+        RuntimePatch::Set(rt) => {
+            match rt.brain.get("nativeSessionId").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                Some(native) => bag.insert("agent_session".to_string(), json!(native)),
+                None => bag.remove("agent_session"),
+            };
+            bag.insert("runtime".to_string(), json!(rt.runtime));
+            bag.insert("botBrain".to_string(), rt.brain.clone());
+        }
+        RuntimePatch::Cleared => {
+            bag.insert("runtime".to_string(), json!(crate::bot_brain::RUNTIME_ALLTERNIT));
+            if !update_had_brain {
+                bag.remove("botBrain");
+            }
+        }
+    }
+}
+
+/// The model a plain chat's turn runs on when the session was created on a
+/// runtime other than `allternit` (`runtime` stored by `create_session`): the
+/// runtime CLI's provider with the asked model when that CLI knows it, else
+/// the session brain's model, else the CLI's default. Bot and agent sessions
+/// (`isBot` / `agentId`) and sessions without a runtime get `None` and keep
+/// their own path. `provider` / `model` are the turn's asked model, if any.
+pub(crate) fn plain_runtime_turn_model(
+    db: &DbHandle,
+    session_id: &str,
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> Option<(String, String)> {
+    let bag = db.get_session_metadata(session_id).ok().flatten()?;
+    let bag = bag.as_object()?;
+    if bag.get("isBot").and_then(|v| v.as_bool()) == Some(true)
+        || bag.get("agentId").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty())
+    {
+        return None;
+    }
+    let runtime = bag.get("runtime").and_then(|v| v.as_str()).filter(|s| !s.is_empty())?;
+    let registry = crate::cli_catalog::runtime_registry();
+    let stored = bag.get("botBrain").and_then(crate::bot_brain::brain_model_pair);
+    let (provider, model) = match (provider, model) {
+        (Some(p), Some(m)) if !m.is_empty() => (Some(p.to_string()), Some(m.to_string())),
+        _ => stored.unzip(),
+    };
+    crate::bot_brain::runtime_turn_model(runtime, provider.as_deref(), model.as_deref(), registry)
 }
 
 fn extract_message_content(parts: &[GizziMessagePart]) -> String {
@@ -1229,14 +1313,52 @@ async fn create_session(
                 v.as_bool().unwrap_or(false) || v.as_str() == Some("true")
             });
 
+    // A plain chat (no bot) on a picked runtime (`metadata.botBrain` /
+    // `metadata.runtime`, Harness & Bots 2.0): checked by the shared runtime
+    // rules and the install check, then every turn runs on that runtime's CLI
+    // (see `plain_runtime_turn_model`). 422/409 instead of a silent fallback
+    // to the default harness. `allternit` or nothing named: unchanged.
+    let plain_runtime = if body.agent_id.is_none() {
+        let asked = body.model.as_ref().map(|m| format!("{}/{}", m.provider_id, m.model_id));
+        match crate::bot_brain::plain_session_runtime(
+            body.metadata.as_ref(),
+            asked.as_deref(),
+            crate::cli_catalog::runtime_registry(),
+            crate::bot_brain::tool_installed,
+        ) {
+            Ok(runtime) => runtime,
+            Err((status, error)) => {
+                let status = StatusCode::from_u16(status).unwrap_or(StatusCode::UNPROCESSABLE_ENTITY);
+                return (status, Json(error)).into_response();
+            }
+        }
+    } else {
+        None
+    };
+    let runtime_model = plain_runtime.as_ref().and_then(|rt| {
+        let (provider, model) = crate::bot_brain::brain_model_pair(&rt.brain)
+            .or_else(|| body.model.as_ref().map(|m| (m.provider_id.clone(), m.model_id.clone())))
+            .unzip();
+        crate::bot_brain::runtime_turn_model(
+            &rt.runtime,
+            provider.as_deref(),
+            model.as_deref(),
+            crate::cli_catalog::runtime_registry(),
+        )
+    });
+
     // The client's model, else the explicit platform default, else the bound
     // bot's saved brain. None chosen → the session is created without a
     // model (gizzi accepts that) and the first turn answers `no_brain`.
-    let model_ref = body
-        .model
-        .map(|m| json!(GizziModelRef::normalized(m)))
-        .or_else(default_model_ref)
-        .or_else(|| body.agent_id.as_deref().and_then(|id| agent_saved_model(&state.db, id)));
+    // A plain chat on a runtime starts on that runtime CLI's model.
+    let model_ref = match runtime_model.clone() {
+        Some((tool, model)) => Some(json!(GizziModelRef::new(tool, model, None))),
+        None => body
+            .model
+            .map(|m| json!(GizziModelRef::normalized(m)))
+            .or_else(default_model_ref)
+            .or_else(|| body.agent_id.as_deref().and_then(|id| agent_saved_model(&state.db, id))),
+    };
     if let Some(model_ref) = model_ref {
         payload.insert("model".to_string(), model_ref);
     }
@@ -1257,6 +1379,9 @@ async fn create_session(
     }
     let agent_harness = if let Some(ref agent_id) = body.agent_id {
         resolve_agent_harness(&state.db, agent_id).await
+    } else if let Some((ref tool, _)) = runtime_model {
+        // The picked runtime's CLI, never the default brain's harness.
+        crate::config::build_gizzi_harness_for_provider(tool)
     } else {
         // Fall back to the brain configured in the Gizzi runtime so regular
         // (non-agent) sessions still route through the user's chosen provider.
@@ -1329,6 +1454,14 @@ async fn create_session(
             bag.entry("agentName".to_string())
                 .or_insert_with(|| json!(agent_name));
         }
+        // The checked runtime and normalized brain; turns read them back.
+        if let Some(rt) = plain_runtime {
+            if let Some(native) = rt.brain.get("nativeSessionId").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                bag.entry("agent_session".to_string()).or_insert_with(|| json!(native));
+            }
+            bag.insert("runtime".to_string(), json!(rt.runtime));
+            bag.insert("botBrain".to_string(), rt.brain);
+        }
         let _ = state
             .db
             .set_session_metadata(&session.id, &serde_json::Value::Object(bag));
@@ -1369,6 +1502,24 @@ async fn update_session(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
     });
+    // A plain chat moved to another runtime (`metadata.runtime` /
+    // `metadata.botBrain`): the same checks and errors as create, before
+    // anything changes, and only when the runtime or brain really changes.
+    let runtime_patch = match body.metadata.as_ref() {
+        Some(patch) => match crate::bot_brain::plain_session_runtime_patch(
+            state.db.get_session_metadata(&session_id).ok().flatten().as_ref(),
+            patch,
+            crate::cli_catalog::runtime_registry(),
+            crate::bot_brain::tool_installed,
+        ) {
+            Ok(change) => change,
+            Err((status, error)) => {
+                let status = StatusCode::from_u16(status).unwrap_or(StatusCode::UNPROCESSABLE_ENTITY);
+                return (status, Json(error)).into_response();
+            }
+        },
+        None => crate::bot_brain::RuntimePatch::Unchanged,
+    };
     let mut payload = serde_json::Map::new();
     if let Some(name) = body.name {
         payload.insert("title".to_string(), json!(name));
@@ -1409,10 +1560,12 @@ async fn update_session(
                 if let Some(object) = metadata.as_object() {
                     let mut object = object.clone();
                     crate::code_session_status::strip_server_owned(&mut object);
+                    let had_brain = object.contains_key("botBrain");
                     crate::code_session_status::update_bag(&state.db, &session.id, |bag| {
                         for (key, value) in object {
                             bag.insert(key, value);
                         }
+                        apply_runtime_patch(bag, &runtime_patch, had_brain);
                         true
                     });
                 }
@@ -1561,6 +1714,23 @@ async fn send_message(
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/message", urlencoding::encode(&session_id));
     let mut payload = send_message_payload(&body);
+    // A plain chat created on a runtime (Claude Code, Codex, …) runs every
+    // turn on that runtime's CLI, whatever model the client sends.
+    let asked = payload.get("model").and_then(|m| {
+        Some((m.get("providerID")?.as_str()?.to_string(), m.get("modelID")?.as_str()?.to_string()))
+    });
+    if let Some((tool, model)) = plain_runtime_turn_model(
+        &state.db,
+        &session_id,
+        asked.as_ref().map(|a| a.0.as_str()),
+        asked.as_ref().map(|a| a.1.as_str()),
+    ) {
+        let auth = asked
+            .as_ref()
+            .filter(|a| a.0 == tool)
+            .and_then(|_| payload["model"].get("authProfileId").and_then(|v| v.as_str()).map(str::to_string));
+        payload["model"] = json!(GizziModelRef::new(tool, model, auth));
+    }
     // No model named and no platform default: a bot thread runs on what the
     // thread/bot saved; otherwise the user has to pick a brain first. A
     // no-reply note starts no turn, so it needs no brain.
@@ -1573,6 +1743,9 @@ async fn send_message(
     // A bot's session: the turn runs as the bot (see `bot_turn_marker`).
     if let Some(bot) = session_bot_marker(&state.db, &session_id) {
         payload["bot"] = bot;
+        if let Some(metadata) = payload.get_mut("metadata").and_then(serde_json::Value::as_object_mut) {
+            metadata.remove("turn");
+        }
     }
 
     match gizzi_json::<GizziMessage>(&client, reqwest::Method::POST, &path, Some(payload)).await {
@@ -1748,6 +1921,40 @@ async fn reply_pane_artifact(
 ) -> impl IntoResponse {
     let client = gizzi_client(&headers);
     let path = format!("/v1/pane-artifact/{}/reply", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn list_pane_renders(headers: HeaderMap) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, "/v1/pane-render", None).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn claim_pane_render(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/pane-render/{}/claim", urlencoding::encode(&request_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn progress_pane_render(
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/pane-render/{}/progress", urlencoding::encode(&request_id));
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
         Ok(value) => Json(value).into_response(),
         Err(response) => response,
@@ -1950,6 +2157,11 @@ fn send_message_payload(body: &SendMessageBody) -> serde_json::Value {
     }
     if let Some(zone) = body.metadata.as_ref().and_then(crate::v1_routes::turn_time_zone) {
         payload["metadata"]["time_zone"] = json!(zone);
+    }
+    // Foreground composer sends can invoke a person-confirmed local image
+    // job regardless of their chat model. Persist-only notes grant nothing.
+    if body.no_reply != Some(true) && body.metadata.as_ref().and_then(|m| m.get("turn")).and_then(|v| v.as_str()) == Some("person") {
+        payload["metadata"]["turn"] = json!("person");
     }
     payload
 }
@@ -2673,6 +2885,9 @@ async fn transform_bus_event(
         "pane_render.requested" => Some(json!({
             "type": "pane_render_requested",
             "request_id": props.get("id"),
+            "engine": props.get("engine"),
+            "prompt": props.get("prompt"),
+            "toolCall": props.get("toolCall"),
             "session_id": props.get("sessionID"),
             "kind": props.get("kind"),
             "format": props.get("format"),
@@ -3328,6 +3543,22 @@ mod send_message_payload_tests {
             "metadata": { "time_zone": "Mars/Olympus" }
         })));
         assert!(payload.get("metadata").is_none());
+    }
+
+    #[test]
+    fn local_image_person_marker_is_not_granted_by_persist_only_notes() {
+        let request = send_message_payload(&body(serde_json::json!({
+            "text": "Make a blue mug image", "metadata": { "turn": "person" }
+        })));
+        assert_eq!(request["metadata"]["turn"], "person");
+        let note = send_message_payload(&body(serde_json::json!({
+            "text": "Saved image", "noReply": true, "metadata": { "turn": "person" }
+        })));
+        assert!(note.pointer("/metadata/turn").is_none());
+        let invalid = send_message_payload(&body(serde_json::json!({
+            "text": "Make an image", "metadata": { "turn": true }
+        })));
+        assert!(invalid.pointer("/metadata/turn").is_none());
     }
 
     #[test]
@@ -4489,6 +4720,96 @@ mod tests {
         db.set_session_metadata("s-code", &json!({"sessionMode": "code"})).unwrap();
         assert!(session_bot_marker(&db, "s-code").is_none());
         assert!(session_bot_marker(&db, "missing").is_none());
+    }
+
+    #[test]
+    fn plain_session_runtime_patch_is_checked_and_rerouted() {
+        use crate::bot_brain::{plain_session_runtime_patch, RuntimePatch};
+        let temp = std::env::temp_dir().join(format!("plain-runtime-patch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let registry = crate::cli_catalog::runtime_registry();
+        let stored = json!({ "runtime": "claude", "agent_session": "n-claude", "botBrain": { "runtime": "claude", "mode": "native_harness", "harness": "claude", "modelRef": "anthropic/claude-sonnet-5-5" } });
+        db.set_session_metadata("s-plain", &stored).unwrap();
+        let check = |patch: serde_json::Value, installed: bool| {
+            plain_session_runtime_patch(db.get_session_metadata("s-plain").unwrap().as_ref(), &patch, registry, |_| installed)
+        };
+
+        // The same runtime and brain sent back: never checked, even with the CLI gone.
+        assert_eq!(check(stored.clone(), false), Ok(RuntimePatch::Unchanged));
+        assert_eq!(check(json!({ "title": "x", "permission": {} }), false), Ok(RuntimePatch::Unchanged));
+        // A change is checked like create: 422s and 409, same bodies.
+        let (status, body) = check(json!({ "botBrain": { "runtime": "hermes", "modelRef": "subs-claude/claude-sonnet-5-5" } }), true).unwrap_err();
+        assert_eq!((status, body["error"].as_str()), (422, Some(crate::bot_brain::PLAN_NOT_ALLOWED)));
+        let (status, body) = check(json!({ "runtime": "nope" }), true).unwrap_err();
+        assert_eq!((status, body["error"].as_str()), (422, Some(crate::bot_brain::RUNTIME_UNKNOWN)));
+        let (status, body) = check(json!({ "runtime": "codex" }), false).unwrap_err();
+        assert_eq!(status, 409);
+        assert_eq!(body["message"], "Codex isn't installed on this computer.");
+
+        // Moved to Codex: stored, and the next turn runs on the Codex CLI.
+        let change = check(json!({ "runtime": "codex" }), true).unwrap();
+        assert!(matches!(change, RuntimePatch::Set(ref rt) if rt.runtime == "codex"));
+        let mut bag = db.get_session_metadata("s-plain").unwrap().unwrap().as_object().cloned().unwrap();
+        bag.insert("runtime".into(), json!("codex"));
+        apply_runtime_patch(&mut bag, &change, false);
+        assert!(bag.get("agent_session").is_none(), "the Claude native session is dropped");
+        assert_eq!(bag["botBrain"]["harness"], "codex");
+        db.set_session_metadata("s-plain", &serde_json::Value::Object(bag)).unwrap();
+        let codex = crate::cli_catalog::find("codex-cli").unwrap().default_model().to_string();
+        assert_eq!(plain_runtime_turn_model(&db, "s-plain", None, None), Some(("codex-cli".to_string(), codex)));
+
+        // Back to Allternit: turns leave the CLI path, list/get say allternit.
+        let change = check(json!({ "runtime": "allternit" }), false).unwrap();
+        assert_eq!(change, RuntimePatch::Cleared);
+        let mut bag = db.get_session_metadata("s-plain").unwrap().unwrap().as_object().cloned().unwrap();
+        apply_runtime_patch(&mut bag, &change, false);
+        assert_eq!(session_runtime_of(&bag), "allternit");
+        db.set_session_metadata("s-plain", &serde_json::Value::Object(bag)).unwrap();
+        assert_eq!(plain_runtime_turn_model(&db, "s-plain", Some("anthropic"), Some("x")), None);
+
+        // Bot sessions are never checked or rerouted by an update.
+        db.set_session_metadata("s-bot", &json!({ "isBot": true, "agentId": "b1" })).unwrap();
+        let bot = plain_session_runtime_patch(db.get_session_metadata("s-bot").unwrap().as_ref(), &json!({ "runtime": "nope" }), registry, |_| false);
+        assert_eq!(bot, Ok(RuntimePatch::Unchanged));
+    }
+
+    #[test]
+    fn plain_chat_turns_run_on_the_runtime_cli_and_bot_sessions_do_not() {
+        let temp = std::env::temp_dir().join(format!("plain-runtime-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let claude = |m: &str| Some(("claude-cli".to_string(), m.to_string()));
+        let default = crate::cli_catalog::find("claude-cli").unwrap().default_model().to_string();
+
+        // A plain chat created on Claude Code: the stored brain's model, on the CLI.
+        db.set_session_metadata(
+            "s-plain",
+            &json!({ "runtime": "claude", "botBrain": { "runtime": "claude", "mode": "native_harness", "harness": "claude", "modelRef": "anthropic/claude-sonnet-5-5" } }),
+        )
+        .unwrap();
+        assert_eq!(plain_runtime_turn_model(&db, "s-plain", None, None), claude("claude-sonnet-5-5"));
+        // A model the CLI runs is kept; one it can't run falls back to its default.
+        assert_eq!(plain_runtime_turn_model(&db, "s-plain", Some("claude-cli"), Some("claude-sonnet-5-5")), claude("claude-sonnet-5-5"));
+        assert_eq!(plain_runtime_turn_model(&db, "s-plain", Some("openai"), Some("gpt-5")), claude(&default));
+        assert_eq!(session_runtime_of(db.get_session_metadata("s-plain").unwrap().unwrap().as_object().unwrap()), "claude");
+
+        // Allternit or no runtime: unchanged.
+        db.set_session_metadata("s-allternit", &json!({ "runtime": "allternit" })).unwrap();
+        assert_eq!(plain_runtime_turn_model(&db, "s-allternit", Some("anthropic"), Some("x")), None);
+        db.set_session_metadata("s-none", &json!({ "projectId": "p" })).unwrap();
+        assert_eq!(plain_runtime_turn_model(&db, "s-none", None, None), None);
+        assert_eq!(session_runtime_of(db.get_session_metadata("s-none").unwrap().unwrap().as_object().unwrap()), "allternit");
+
+        // Bot sessions keep the bot path, even with a runtime in the bag.
+        db.set_session_metadata(
+            "s-bot",
+            &json!({ "isBot": true, "agentId": "b1", "runtime": "claude", "botBrain": { "mode": "native_harness", "harness": "claude" } }),
+        )
+        .unwrap();
+        assert_eq!(plain_runtime_turn_model(&db, "s-bot", None, None), None);
+        // Their runtime still reads from the brain for list/get.
+        assert_eq!(session_runtime_of(db.get_session_metadata("s-bot").unwrap().unwrap().as_object().unwrap()), "claude");
     }
 
     #[test]

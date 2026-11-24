@@ -2033,7 +2033,7 @@ mod tests {
 /// A client-supplied machine id, or None if it is not a plain 16-64 character
 /// token (letters, digits, `-`, `_`). A bad value is ignored, not an error:
 /// the pairing then falls back to hostname + platform.
-fn clean_machine_id(raw: Option<&str>) -> Option<String> {
+pub(crate) fn clean_machine_id(raw: Option<&str>) -> Option<String> {
     let id = raw?.trim();
     let ok = (16..=64).contains(&id.len())
         && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');

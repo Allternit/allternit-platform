@@ -52,6 +52,9 @@ unicode-normalization = "0.1"
 # Files drive v2 (`src/files_v2`): wire types and the engine (contracts/files-drive).
 allternit-files-core = { workspace = true }
 allternit-files-engine = { workspace = true }
+# Computers console: /v1/host/* (snapshot, services, ports, updates, findings,
+# logs, actions, elevation, port forward) and the heartbeat hostSample.
+host-probe = { workspace = true, features = ["http"] }
 tokio-util = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
@@ -63,6 +66,8 @@ cipher = "0.4"
 
 # Internal crates - the Factory engine & Cowork
 allternit-factory-engine = { path = "../../factory/engine" }
+# The terminal API over the pane engine (shared with allternit-node).
+allternit-terminal-service = { workspace = true }
 allternit-cowork-runtime = { path = "../../infrastructure/executor/cowork/cowork/allternit-cowork-runtime" }
 allternit-cowork-scheduler = { path = "../../infrastructure/executor/cowork/cowork/allternit-cowork-scheduler" }
 allternit-gc-agents = { workspace = true }

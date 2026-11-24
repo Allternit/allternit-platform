@@ -96,6 +96,7 @@ fn req(kind: PrincipalKind) -> Req {
         unlocked: false,
         device_name: None,
         guest: None,
+        whole_disk: false,
     }
 }
 

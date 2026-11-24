@@ -5,6 +5,8 @@ import {
   responsesBody,
   type TurnEvent,
 } from "../../../src/runtime/providers/person-plan/stream"
+import { PersonPlanError } from "../../../src/runtime/providers/person-plan/language-model"
+import { ProviderError } from "../../../src/runtime/providers/error"
 
 /** A body that arrives in the given chunks (split mid-line on purpose). */
 function body(chunks: string[]): ReadableStream<Uint8Array> {
@@ -117,5 +119,36 @@ describe("cloud plan stream (chat completions)", () => {
   test("an in-stream error carries the server's message", async () => {
     const events = await collect(parseChatCompletionsStream(body([chunk({ error: { code: "runner_busy", message: "Busy. Try again" } })])))
     expect(events).toEqual([{ type: "error", code: "runner_busy", message: "Busy. Try again" }])
+  })
+})
+
+describe("usage-limit reset time", () => {
+  test("a Responses usage limit with resets_at carries the code and an ISO reset_at", async () => {
+    const failed = sse("response.failed", {
+      type: "response.failed",
+      response: { status: "failed", error: { code: "subscription_sharing_usage_limit_exceeded", message: "Usage limit reached", resets_at: 1795362000 } },
+    })
+    const events = await collect(parseResponsesStream(body([created, failed])))
+    expect(events[0]).toMatchObject({
+      type: "error",
+      code: "subscription_sharing_usage_limit_exceeded",
+      resetAt: new Date(1795362000 * 1000).toISOString(),
+    })
+  })
+
+  test("no reset time in the event leaves resetAt absent", async () => {
+    const failed = sse("response.failed", {
+      type: "response.failed",
+      response: { status: "failed", error: { code: "subscription_sharing_usage_limit_exceeded", message: "Usage limit reached" } },
+    })
+    const [ev] = await collect(parseResponsesStream(body([failed])))
+    expect(ev).not.toHaveProperty("resetAt")
+  })
+
+  test("the session error object keeps code and resetAt in metadata", () => {
+    const err = new PersonPlanError("ChatGPT limit reached.", "subscription_sharing_usage_limit_exceeded", "2026-11-21T15:40:00.000Z")
+    const parsed = ProviderError.parseUnknownProviderError({ providerID: "chatgpt", error: err })
+    expect(parsed.metadata.code).toBe("subscription_sharing_usage_limit_exceeded")
+    expect(parsed.metadata.resetAt).toBe("2026-11-21T15:40:00.000Z")
   })
 })

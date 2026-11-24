@@ -120,14 +120,16 @@ struct FreeweightsCatalogView: View {
 
     var body: some View {
         let ids = store.filter == .everything ? store.results.map(\.id) : store.localIds
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                searchRow
-                chips
-                content(ids)
-            }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 24)
+        PolishedTabPage(
+            title: "Freeweights",
+            description: "Open-weights models with checked licenses. Download one to this iPhone, or send a pull to your computer.",
+            taller: true,
+            introKey: .freeweights,
+            hero: { FreeweightsIntroHero() }
+        ) {
+            searchRow
+            chips
+            content(ids)
         }
         .refreshable { await store.reload() }
         .task {

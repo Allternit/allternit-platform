@@ -15,6 +15,18 @@ import { PERSON_TURN_HEADER, refusal } from "./rules"
 import { personTurn } from "./turn"
 import type { ChatMessage } from "./stream"
 
+/**
+ * A person-plan failure that keeps the provider's machine code and reset time
+ * so session.error (and the chat stream's error frame) can carry them.
+ * `providerCode` is deliberately not `code`, which Node uses for system errors.
+ */
+export class PersonPlanError extends Error {
+  constructor(message: string, readonly providerCode?: string, readonly resetAt?: string) {
+    super(message)
+    this.name = "PersonPlanError"
+  }
+}
+
 /** Text-only history from an AI SDK prompt: user and assistant text, nothing else. */
 export function chatMessagesFromPrompt(prompt: any[]): ChatMessage[] {
   const out: ChatMessage[] = []
@@ -83,8 +95,8 @@ export class PersonPlanLanguageModel implements LanguageModelV2 {
       async start(controller) {
         controller.enqueue({ type: "stream-start", warnings: [] })
         let open = false
-        const fail = (message: string) => {
-          controller.enqueue({ type: "error", error: new Error(message) })
+        const fail = (message: string, code?: string, resetAt?: string) => {
+          controller.enqueue({ type: "error", error: new PersonPlanError(message, code, resetAt) })
           controller.enqueue({
             type: "finish",
             finishReason: "error",
@@ -106,7 +118,7 @@ export class PersonPlanLanguageModel implements LanguageModelV2 {
             }
             if (open) controller.enqueue({ type: "text-end", id: "text-1" })
             open = false
-            if (ev.type === "error") return fail(ev.message)
+            if (ev.type === "error") return fail(ev.message, ev.code, ev.resetAt)
             const inputTokens = ev.inputTokens ?? 0
             const outputTokens = ev.outputTokens ?? 0
             controller.enqueue({

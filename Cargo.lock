@@ -222,6 +222,7 @@ dependencies = [
  "allternit-model-source",
  "allternit-session-manager",
  "allternit-studio-spec",
+ "allternit-terminal-service",
  "allternitos-cloud-contracts",
  "anyhow",
  "async-stream",
@@ -243,6 +244,7 @@ dependencies = [
  "hex",
  "hkdf 0.12.4",
  "hmac 0.12.1",
+ "host-probe",
  "hostname",
  "http-body-util",
  "image",
@@ -1068,6 +1070,7 @@ dependencies = [
  "ctrlc",
  "ed25519-dalek 2.2.0",
  "futures-util",
+ "host-probe",
  "interprocess",
  "jsonc-parser",
  "libc",
@@ -1611,6 +1614,7 @@ dependencies = [
 name = "allternit-node-daemon"
 version = "0.1.0"
 dependencies = [
+ "allternit-terminal-service",
  "anyhow",
  "chrono",
  "clap",
@@ -2381,6 +2385,22 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "allternit-terminal-service"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "bytes 1.12.0",
+ "chrono",
+ "futures 0.3.32",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -7114,13 +7134,20 @@ dependencies = [
 name = "host-probe"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "chrono",
  "dirs 5.0.1",
+ "futures-util",
+ "hex",
+ "hmac 0.12.1",
  "regex",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sysinfo",
  "thiserror 1.0.69",
+ "tokio",
+ "tower 0.5.3",
  "uuid",
  "windows-sys 0.59.0",
 ]

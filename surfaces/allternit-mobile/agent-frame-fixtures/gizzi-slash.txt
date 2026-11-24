@@ -1,0 +1,40 @@
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│         ▀▀           ⡎⡅⢹⠁⡩⠃⡩⠃⢹⠁ ⢰⠉⢰⢱⢸⢱⢸⠍  v2.17.0                                                                    │
+│    ▀▀▀▀▀  ▀▀▀▀▀      ⠈⠁⠉⠁⠉⠁⠉⠁⠉⠁  ⠉ ⠁⠈⠁⠈⠉                                                                             │
+│   ▄█▀▀▀▀▀▀▀▀▀▀█▄     Send /help for help information.                                                                │
+│ ▄▄██████████████▄▄                                                                                                   │
+│  ▀█████▀▀▀▀█████▀    Directory: …/tmp/claude-501/-Users-joe/3280b1f9-af7a-40d3-884c-123934319c77/scratchpad/mockrepo │
+│   ▀█▀▀▀▀▀▀▀▀▀▀█▀     Session:   1636483a-5886-4c13-980f-3bc96b74b524                                                 │
+│    ▀██████████▀      Model:     claude-cli/claude-sonnet-5-5                                                         │
+│    ██ ██  ██ ██                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  /branch [name]                 [built-in] Create a branch of the current conversation at this point
+  /btw <question>                [built-in] Ask a quick side question without interrupting the main conversation
+  /clear                         [built-in] Start a new session (/new): clear conversation history and free up context
+  /compact <optional custom su…  [built-in] Clear conversation history but keep a summary in context. Optional: /comp…
+  /context [files]               [built-in] Visualize current context usage as a colored grid; `/context files` lists…
+  /copy [N|path]                 [built-in] Copy Gizzi's last response to clipboard (or /copy N for the Nth-latest)
+  /cost                          [built-in] Show the total cost and duration of the current session
+  /dash                          [built-in] Show a dashboard of current session status, model, context, and usage
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚙ 11 bots
+  claude-cli/claude-sonnet-5-5  effort: medium                                    credits $0.00 · context: 0% (0/200k)

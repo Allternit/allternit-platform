@@ -1,13 +1,13 @@
 ---
 title: "Computer pairing"
-description: "The three pairing paths that exist today, and the single runtime pairing model they will share."
+description: "Every way a computer is paired, and how they all land in one Computers row per machine."
 ---
 
-<Warning>
-Design — waiting on Eoj review. Nothing on this page except "Today" is built.
-</Warning>
+<Note>
+One row per machine is built (Computers console step 2.10, cloud-api migration 159). It is not compiled or live until the build train ships it.
+</Note>
 
-## Today: three paths
+## The pairing paths
 
 | Path | Command | Where it lands | Code |
 |---|---|---|---|
@@ -59,7 +59,52 @@ unpaired -> code_issued -> approved -> device_token_issued -> online
 
 Optional, after `online`: `screen_share_off` to `screen_share_on` (mesh IP assigned, VNC enabled).
 
-### Draft SQL for migration 153 (not a migration file)
+## One row per machine (built, step 2.10)
+
+### The machine key
+
+Every pairing path sends the same key, and the console groups by it when it reads the list. It is the key the active-machine cap already counts machines by (`services::quota_service::machine_key_for`), so one Mac is one machine for billing and for Computers.
+
+1. **`mid:<machine id>`**: the random id in `~/.allternit/machine-id`, made once by whichever client runs first. Desktop (`auth-manager.ts` `machineId()`), `gizzi pair` (`pairing.ts` `machineId()`), `ao fabric pair` (`factory/pane/src/ao/fabric/cloud.rs` `shared_machine_id()`) and `allternit computer pair` (`computer-pair.ts` `machineId()`) all read and write that file.
+2. **Hostname key** for clients too old to send a machine id: lower-case hostname without `.local`, then `|platform`. A row without a machine id joins by hostname only when that key names exactly one machine. Generic hostnames (`localhost`, `ubuntu`, `debian`, `vps` and similar) never join by hostname, so two default VPS images stay two rows. Two rows with different machine ids never join, whatever their hostnames, display names or stored runtime links. A code-paired row that supplies a machine id promotes a matched legacy machine to that id, so later pairings cannot replace it.
+3. **Stored link**: `paired_computers.runtime_device_id`, written at redeem time when the machine id names a live runtime device.
+4. **Same owner and name**, for code-paired rows from before 2.10 that have neither. The name must be nonempty, nongeneric and match exactly one compatible machine. An ambiguous match stays separate.
+
+Shared rows (paired by someone else in your organization) never join your machines.
+
+Why this key: it already exists on every runtime device (migration 119), Desktop and gizzi already share the file, and the cap already treats it as "the machine". Nothing new has to be trusted. The machine id names a machine and is not a credential: grouping happens only inside one account.
+
+### Row id and aliases
+
+| Field | Rule |
+|---|---|
+| `id` | The code-paired row's id when the machine has one (as before 2.10), else its oldest runtime device's id |
+| `aliases` | Every other runtime device id and paired row id of the machine |
+| `runtimeId` | The device holding a relay, else the Desktop (it serves host data), else one that reported lately |
+| `pairedId` | The `paired_computers.id`, for screen sharing and Factory peer tickets |
+
+Every console route resolves a row id or an alias to the same machine (`computers_host::resolve_target`), so a client that saved an old id keeps working. Nothing is merged or copied in the database. Migration 159 is additive. Keep its columns and table when rolling code back.
+
+### Rename and unpair
+
+- `PATCH /api/v1/computers/paired/:id {name}` stores the name in `computer_machine_names` by machine key, so it covers every alias and survives re-pairing.
+- `POST /api/v1/computers/:id/unpair {confirm:true}` revokes every runtime device of the machine, deletes its code-paired rows and its name, in one transaction. A cloud computer is deleted from Settings, not unpaired.
+- `DELETE /api/v1/computers/paired/:id` still removes only that code-paired row.
+
+Account erase covers `computer_machine_names`.
+
+### What each old command does now
+
+| Command | Sends | Row |
+|---|---|---|
+| Allternit Desktop sign-in | `machineId`, hostname, `darwin-arm64` style platform | joins the machine |
+| `gizzi pair` | the same | joins the machine |
+| `allternit-factory pane fabric pair` (`ao fabric pair`) | `machineId` from the same file (new in 2.10) | joins the machine |
+| `allternit computer pair <code>` | `machineId`, `hostname`, `platform` (new in 2.10) | joins the machine; adds `pairedId` and the mesh address |
+
+`POST /api/v1/computers/pairing-codes` now answers `command: "gizzi pair"` (the visible command), `installCommand`, and `codeCommand` (`allternit computer pair <code>`, the optional screen-share step). The ao and `allternit` CLIs print `gizzi pair` as the pairing command for your own computers.
+
+### Existing links (migration 153_computers_console.sql)
 
 ```sql
 ALTER TABLE public.paired_computers
@@ -72,7 +117,7 @@ ALTER TABLE public.provisioned_instances
   ADD COLUMN IF NOT EXISTS template TEXT NULL;
 ```
 
-The table name for cloud instances must be confirmed against `migrations_pg` before the real file is written. Never drop a column in the same train that stops using it.
+Migration 153 uses `provisioned_instances` for cloud computers. Migration 159 adds the machine identity columns and names table. Never drop a column in the same train that stops using it.
 
 ## Related
 

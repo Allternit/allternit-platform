@@ -383,6 +383,8 @@ function handleRelaySocketOpen(relaySocket: WebSocket, message: any): void {
     '/webhooks', '/ws', '/panes', '/status', '/health',
     // gizzi pty attach (/v1/pty/:id/connect) for the native phone app.
     '/v1/pty/',
+    // Computers console port forward (/v1/host/forward?port=N, WS -> TCP on this computer).
+    '/v1/host/',
   ];
   if (!identity || !socketId || !requestPath.startsWith('/') || requestPath.includes('..')
     || requestPath.includes('://') || !allowedPrefixes.some((prefix) => requestPath.startsWith(prefix))) return;
@@ -416,14 +418,26 @@ function handleRelaySocketOpen(relaySocket: WebSocket, message: any): void {
       body_encoding: isBinary ? 'base64' : 'utf8',
     }));
   });
+  let localFailed = false;
   local.on('close', (code, reason) => {
     relayLocalSockets.delete(socketId);
     if (relaySocket.readyState === WebSocket.OPEN) {
-      relaySocket.send(JSON.stringify({ type: 'socket_close', socket_id: socketId, code, reason: reason.toString() }));
+      // A refused upgrade (the host forward answers 502 when its TCP dial fails)
+      // or a dropped socket closes locally as 1006, which must not go on the
+      // wire. Tell the cloud 1011 (local failure); 1005 means a clean close
+      // without a code.
+      const wireCode = localFailed || code === 1006 ? 1011 : code === 1005 ? 1000 : code;
+      relaySocket.send(JSON.stringify({
+        type: 'socket_close',
+        socket_id: socketId,
+        code: wireCode,
+        reason: wireCode === 1011 && !reason.length ? 'Local runtime socket failed' : reason.toString(),
+      }));
     }
   });
   local.on('error', (error) => {
     console.error('[AgentDaemon] Local runtime socket:', error.message);
+    localFailed = true;
     local.close(1011, 'Local runtime socket failed');
   });
 }

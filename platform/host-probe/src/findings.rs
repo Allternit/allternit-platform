@@ -81,6 +81,11 @@ pub struct HostFinding {
     pub detail: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggested_action: Option<SuggestedAction>,
+    /// Bytes the suggested `space.clean` action is estimated to free
+    /// (contract `HostFinding.reclaimBytes`). Only set when there is an
+    /// estimate; never guessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reclaim_bytes: Option<u64>,
 }
 
 /// Body of `GET /v1/host/findings`. `sources` is additive: which inputs could
@@ -247,6 +252,7 @@ fn disk_rules(input: &FindingsInput, os: OsFamily, out: &mut Vec<HostFinding>) {
                 action_type: ActionType::SpaceClean,
                 target: c.id.clone(),
             }),
+            reclaim_bytes: items.first().map(|c| c.bytes),
         });
         for c in items.iter().skip(1) {
             let id = format!("space-clean:{}", c.id);
@@ -263,6 +269,7 @@ fn disk_rules(input: &FindingsInput, os: OsFamily, out: &mut Vec<HostFinding>) {
                     action_type: ActionType::SpaceClean,
                     target: c.id.clone(),
                 }),
+                reclaim_bytes: Some(c.bytes),
             });
         }
     }
@@ -300,6 +307,7 @@ fn service_rules(input: &FindingsInput, out: &mut Vec<HostFinding>) {
                 action_type: ActionType::ServiceRestart,
                 target: s.unit.clone(),
             }),
+            reclaim_bytes: None,
         });
     }
 }
@@ -369,6 +377,7 @@ fn update_rules(input: &FindingsInput, out: &mut Vec<HostFinding>) {
                 "all-security".into()
             },
         }),
+        reclaim_bytes: None,
     });
 }
 
@@ -485,6 +494,7 @@ fn port_rules(input: &FindingsInput, out: &mut Vec<HostFinding>) {
                 action_type: ActionType::PortFree,
                 target: port.to_string(),
             }),
+            reclaim_bytes: None,
         });
     }
 }
@@ -869,6 +879,12 @@ mod tests {
                 target: "docker-prune".into()
             })
         );
+        // reclaimBytes = the estimate of the suggested item, also in JSON.
+        assert_eq!(d.reclaim_bytes, Some(3 * GB));
+        assert_eq!(
+            serde_json::to_value(d).unwrap()["reclaimBytes"],
+            serde_json::json!(3 * GB)
+        );
         assert!(
             d.detail.contains("about 3.0 GB")
                 && d.detail.contains("about 2.0 GB")
@@ -895,6 +911,7 @@ mod tests {
             let a = x.suggested_action.as_ref().unwrap();
             assert_eq!(a.action_type, ActionType::SpaceClean);
             assert!(clean_items().iter().any(|i| i.id == a.target));
+            assert!(x.reclaim_bytes.is_some_and(|b| b >= 600 * MB));
         }
 
         input.disks[0] = disk("/", 96 * GB, 100 * GB);

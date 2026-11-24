@@ -157,7 +157,7 @@ private enum class FilesSegment(val title: String) { Browse("Browse"), Space("Sp
 
 /** Browse (the Files drive of this computer) | Space (disk bars + clean-ups). No Trash: the Files drive has no Trash client. */
 @Composable
-internal fun FilesTab(computer: ConsoleComputer, onClose: () -> Unit) {
+internal fun FilesTab(computer: ConsoleComputer, onClose: () -> Unit, onOpenSettings: (() -> Unit)? = null) {
     val c = AllternitTheme.colors
     var segment by remember { mutableStateOf(FilesSegment.Browse) }
     Row(Modifier.fillMaxWidth().clip(CircleShape).background(c.fillNeutral).border(1.dp, c.borderSubtle, CircleShape).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -173,7 +173,8 @@ internal fun FilesTab(computer: ConsoleComputer, onClose: () -> Unit) {
         FilesSegment.Browse -> {
             // The Files drive client (:feature:computer AciFiles) keyed on the runtime device behind this row.
             val device = remember(computer.relayId, computer.name, computer.status) { AciDevice(computer.relayId, computer.name, if (computer.isOnline) "online" else "offline", null, null) }
-            Box(Modifier.fillMaxWidth().height(520.dp).testTag("aciConsoleFilesBrowse")) { AciComputerFilesScreen(device, onClose = onClose, embedded = true) }
+            Box(Modifier.fillMaxWidth().height(520.dp).testTag("aciConsoleFilesBrowse")) { AciComputerFilesScreen(device, onClose = onClose, embedded = true,
+                diskRoots = computer.wholeDisk?.takeIf { it.showsRootsSwitcher }?.roots.orEmpty(), onOpenSettings = onOpenSettings) }
         }
         FilesSegment.Space -> SpaceView(computer)
     }

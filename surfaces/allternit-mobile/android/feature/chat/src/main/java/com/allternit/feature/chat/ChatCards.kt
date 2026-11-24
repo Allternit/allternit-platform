@@ -182,9 +182,18 @@ internal fun ChatErrorCard(
     /** Draws only these actions (credits is left out when no Cloud model is listed). */
     availableActions: Set<ChatErrorAction> = emptySet(),
     onAction: (ChatErrorAction) -> Unit = {},
+    /** Typed errors only: "Connect ChatGPT" (true) opens the device sign-in, "Open Connections" (false) the Connections page. */
+    onConnect: (Boolean) -> Unit = {},
 ) {
     val uri = androidx.compose.ui.platform.LocalUriHandler.current
     val c = AllternitTheme.colors
+    // A typed error frame (errors B): the reason, when a limit resets, and one way out. Exactly one card.
+    error.typed?.let { info ->
+        CardChrome(Modifier.widthIn(max = 320.dp), border = AllternitStatic.StatusWarning.copy(alpha = 0.4f)) {
+            ErrorBody(info, ChatErrorInfo.Lane.Chat, onChooseModel, onConnect, onRetry, center = false)
+        }
+        return
+    }
     var details by remember { mutableStateOf(false) }
     CardChrome(Modifier.widthIn(max = 320.dp), border = AllternitStatic.StatusWarning.copy(alpha = 0.4f)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

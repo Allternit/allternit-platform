@@ -54,6 +54,12 @@ export function cancelFabricTask(taskID: string): Promise<unknown> {
 export interface FollowHandlers {
   onText?: (delta: string) => void
   onProgress?: (label: string) => void
+  /**
+   * The gateway reported a partial artifact (`artifact.partial`). `preview` is the
+   * provider's URL for it when it has one; the gateway log keeps only the byte count
+   * of inline preview bytes, so there is no data URL to forward.
+   */
+  onPartial?: (preview: string | undefined) => void
   /** A non-terminal status change (queued, running, streaming, …). */
   onStatus?: (status: string) => void
   /** The provider accepted the prompt (the Send landed). */
@@ -95,6 +101,11 @@ export async function followFabricTask(
         if (msg.event === "progress") {
           const label = payload?.label ?? payload?.event?.label
           if (typeof label === "string" && label.trim()) handlers.onProgress?.(label.trim())
+          continue
+        }
+        if (msg.event === "artifact.partial") {
+          const url = payload?.ref?.provider_url
+          handlers.onPartial?.(typeof url === "string" && /^https?:\/\//.test(url) ? url : undefined)
           continue
         }
         if (msg.event === "submitted") {

@@ -1,0 +1,40 @@
+
+▗ ▗   ▖ ▖  Claude Code v2.1.329
+           Opus 5.5 with high effort · Claude Max
+ ▘▘   ▝▝   /private/tmp/claude-501/-Users-joe/3280b1f9-af7a-40d3-884c-123934319c77/scratchpad/mockrepo · /rc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ❯ /answer-me-with-html               Turns an answer into one visual HTML page: you write a short Markdown draft,
+                                       the bundled `am` CLI builds the page (diagrams, tables, charts, live React, s…
+    * /agent-orchestrator   Orchestrate external CLI agents (kimi, codex, agy, claude, grok, gizzi) through the Allt…
+    /build-train                       Run the Allternit build train — the ONE agent that builds. Waits (no tokens)
+                                       until every coding session is quiet, merges all train-ready PRs onto one bran…
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

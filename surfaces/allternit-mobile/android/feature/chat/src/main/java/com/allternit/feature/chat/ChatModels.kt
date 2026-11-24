@@ -40,6 +40,10 @@ data class ChatSendRequest(
     val research: Boolean = false,
     /** Standing instructions for this turn (agent-chat `systemPrompt`, iOS AgentChatRequest). Null falls back to [ChatViewModel.systemPromptFor]. */
     val systemPrompt: String? = null,
+    /** Explicit Image deck action, never inferred from text. */
+    val browserImage: Boolean = false,
+    /** Set only by a foreground composer; helpers and routines leave this false. */
+    val personTurn: Boolean = false,
 )
 
 /** iOS ToolCallRecord.State / MessageRecord.ToolStatus.State. */
@@ -63,6 +67,8 @@ data class ToolCallRecord(
     val run: JsonObject? = null,
     val startedAt: Long? = null,
     val finishedAt: Long? = null,
+    /** Local validated ACI result retained when the runtime later replaces output text. */
+    val browserImageResult: String? = null,
 )
 
 /** The single status line under a reply (iOS MessageRecord.ToolStatus). */
@@ -104,7 +110,7 @@ data class QuestionItem(val header: String?, val question: String, val options: 
  * The inline error card's data (iOS ChatError, ChatErrorCardView): built from a finish frame
  * with status "error", a stream error, or a transport failure.
  */
-data class ChatError(val name: String?, val message: String?, val raw: String) {
+data class ChatError(val name: String?, val message: String?, val raw: String, val typed: ChatErrorInfo? = null) {
     val isModelError: Boolean get() = name == NO_BRAIN || name == "ProviderModelNotFoundError"
 
     /**
@@ -200,6 +206,7 @@ data class MessageRecord(
             run = call.run ?: old.run,
             startedAt = old.startedAt ?: call.startedAt,
             finishedAt = call.finishedAt ?: old.finishedAt,
+            browserImageResult = call.browserImageResult ?: old.browserImageResult,
         )
         return copy(toolCalls = toolCalls.toMutableList().also { it[index] = merged })
     }

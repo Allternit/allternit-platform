@@ -75,6 +75,7 @@ final class ChatGPTDeviceStore: ObservableObject {
     /// Returns false when OpenAI didn't confirm the revoke (tokens are gone
     /// from the phone either way).
     func signOut() async -> Bool {
+        ACIBrowserImageJob.shared.signOut()
         let confirmed = await ChatGPTAuthService.shared.signOut()
         signedIn = false
         email = nil

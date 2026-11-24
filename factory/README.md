@@ -1,12 +1,13 @@
 # Allternit Factory
 
 The engine behind Gizzi and Allternit Desktop (SPEC: Allternit Factory). One binary,
-`allternit-factory` (`cmd/allternit-factory`), built from two crates here:
+`allternit-factory` (`cmd/allternit-factory`), built from the first two crates here:
 
 | Crate | Path | What it is |
 |---|---|---|
 | `allternit-factory-engine` | `factory/engine` | Ledger, Gate, the four parts (`agents`, `orchestration`, `workflows`, `workspace`), the HTTP service, the remote bridge. |
 | `allternit-factory-pane` | `factory/pane` | The pane engine: live agent terminals, the TUI wall, the socket API, UHP and fabric surfaces. A fork of Herdr v0.9.0 (Apache-2.0, see `pane/LICENSE` and `pane/NOTICE`). Its internal layout stays Herdr's so upstream fixes still merge. |
+| `allternit-terminal-service` | `factory/terminal-service` | The terminal API over the pane engine socket (create, list, input, resize, close, stream), used by allternit-api's `/terminal/*` routes and next by allternit-node. A library, not part of the `allternit-factory` binary. |
 
 `allternit-factory` is internal; people run `gizzi agents|orchestration|workflows|workspace …`.
 The command tree, exit codes and `--json` contract are in `allternit-factory --help`.

@@ -22,6 +22,9 @@ final class ACIComputersClient: Sendable {
         case asleep(ConsoleSnapshot?)
         /// 403 `needs_elevation` from `POST host/actions`: the one-time admin helper is not set up on that computer.
         case needsElevation(String)
+        /// 403 `whole_disk_off` from a Files route: the path is outside the Files drive and whole-disk
+        /// browsing is off. Carries the server's plain message.
+        case wholeDiskOff(String)
 
         var errorDescription: String? {
             switch self {
@@ -34,6 +37,7 @@ final class ACIComputersClient: Sendable {
             case .notAvailable: return "Not available on your account yet."
             case .asleep: return "Asleep, not woken."
             case .needsElevation: return "This change needs the one-time admin helper on that computer."
+            case .wholeDiskOff(let message): return message
             }
         }
     }
@@ -211,6 +215,51 @@ final class ACIComputersClient: Sendable {
         let lastSample: ConsoleSnapshot?
         let servicesCount: Int?
         let lastBackupAt: String?
+        /// The runtime device behind this row (console 2.3). Relay
+        /// (`allternit-relay://`), Terminal and the Files drive are keyed by it;
+        /// the row id stays the key for every `/computers/:id/*` route.
+        let runtimeId: String?
+
+        var relayId: String { runtimeId ?? id }
+        /// Every id of this machine (one row per machine since #2825); empty from an older server.
+        let aliases: [String]
+        /// The paired-row id, when this machine has one (paired-only actions use it).
+        let pairedId: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, kind, group, name, provider, region, os, osFamily, address, reach, status
+            case lastSample, servicesCount, lastBackupAt, aliases, pairedId, runtimeId, wholeDisk
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            kind = try c.decode(String.self, forKey: .kind)
+            group = try c.decode(String.self, forKey: .group)
+            name = try c.decode(String.self, forKey: .name)
+            provider = try c.decode(String.self, forKey: .provider)
+            region = try c.decodeIfPresent(String.self, forKey: .region)
+            os = try c.decode(String.self, forKey: .os)
+            osFamily = try c.decode(String.self, forKey: .osFamily)
+            address = try c.decodeIfPresent(String.self, forKey: .address)
+            reach = try c.decode(String.self, forKey: .reach)
+            status = try c.decode(String.self, forKey: .status)
+            lastSample = try c.decodeIfPresent(ConsoleSnapshot.self, forKey: .lastSample)
+            servicesCount = try c.decodeIfPresent(Int.self, forKey: .servicesCount)
+            lastBackupAt = try c.decodeIfPresent(String.self, forKey: .lastBackupAt)
+            aliases = (try? c.decodeIfPresent([String].self, forKey: .aliases)) ?? []
+            pairedId = try? c.decodeIfPresent(String.self, forKey: .pairedId)
+            runtimeId = try c.decodeIfPresent(String.self, forKey: .runtimeId)
+            wholeDisk = try c.decodeIfPresent(WholeDisk.self, forKey: .wholeDisk)
+        }
+
+        /// True when `other` is this machine's `id` or any of its aliases.
+        func matches(_ other: String) -> Bool { id == other || aliases.contains(other) }
+        /// Whole-disk Files (platform #2829). Missing from an older server = unavailable.
+        var wholeDisk: WholeDisk? = nil
+
+        /// Always a full value, so callers never branch on a missing field.
+        var wholeDiskState: WholeDisk { wholeDisk ?? WholeDisk(enabled: false, available: false, reason: nil, roots: []) }
 
         var isOnline: Bool { !["offline", "asleep", "stopped"].contains(status.lowercased()) }
         var isAsleep: Bool { status.lowercased() == "asleep" }
@@ -226,6 +275,63 @@ final class ACIComputersClient: Sendable {
             }
             return out
         }
+    }
+
+    /// One whole-disk root: `/` on Linux and macOS, one entry per drive letter on Windows.
+    struct WholeDiskRoot: Decodable, Sendable, Equatable, Identifiable {
+        let id: String
+        let path: String
+        let label: String
+    }
+
+    /// `wholeDisk` on a console row and in the PATCH answer. Lenient: a missing or odd field never drops the row.
+    struct WholeDisk: Decodable, Sendable, Equatable {
+        let enabled: Bool
+        let available: Bool
+        let reason: String?
+        let roots: [WholeDiskRoot]
+
+        init(enabled: Bool, available: Bool, reason: String?, roots: [WholeDiskRoot]) {
+            self.enabled = enabled; self.available = available; self.reason = reason; self.roots = roots
+        }
+
+        enum CodingKeys: String, CodingKey { case enabled, available, reason, roots }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? false
+            available = (try? c.decode(Bool.self, forKey: .available)) ?? false
+            reason = try? c.decode(String.self, forKey: .reason)
+            roots = ((try? c.decode([ACILossy<WholeDiskRoot>].self, forKey: .roots)) ?? []).compactMap(\.value)
+        }
+
+        /// The roots switcher shows only while the setting is on and the server sent roots.
+        var showsRootsSwitcher: Bool { enabled && !roots.isEmpty }
+
+        /// Plain words for `reason`, shown as text when the switch is not available.
+        var reasonCopy: String {
+            switch reason {
+            case "not_owner": return "Only the owner of this computer can turn this on."
+            case "not_a_server": return "Allternit Desktop already reaches its own files, so this doesn’t apply."
+            case "no_runtime": return "Pair this computer first, then you can turn this on."
+            default: return "Not available on this computer."
+            }
+        }
+    }
+
+    static let wholeDiskWarning = "Anyone using this computer from Allternit can open, change or delete any file on it, not only the Files drive."
+
+    private struct WholeDiskAnswer: Decodable { let wholeDisk: WholeDisk? }
+
+    /// PATCH /api/v1/computers/:id/file-roots. Turning on sends `confirm: true`; the caller held to confirm first.
+    /// Owner only; 403/409 carry a plain `message` the user sees as is.
+    func setWholeDisk(id: String, on: Bool) async throws -> WholeDisk {
+        let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let payload: [String: Any] = on ? ["wholeDisk": true, "confirm": true] : ["wholeDisk": false]
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let data = try await cloud("api/v1/computers/\(enc)/file-roots", method: "PATCH", body: body)
+        let answer = try? JSONDecoder().decode(WholeDiskAnswer.self, from: data)
+        return answer?.wholeDisk ?? WholeDisk(enabled: on, available: true, reason: nil, roots: [])
     }
 
     private struct ConsoleEnvelope: Decodable {
@@ -414,14 +520,21 @@ final class ACIComputersClient: Sendable {
         let id: String
         let createdAt: String
         let sizeBytes: Double?
+        let kind: String?         // optional; absent on older servers
+    }
+
+    /// The backups list plus whether the server allows restoring (`canRestore`; absent means yes).
+    struct CloudBackupList: Sendable {
+        let backups: [CloudBackup]
+        let canRestore: Bool
     }
 
     private struct FindingsEnvelope: Decodable { let findings: [ACILossy<HostFinding>]? }
     private struct KeysEnvelope: Decodable { let keys: [ACILossy<SSHKey>]? }
-    private struct BackupsEnvelope: Decodable { let backups: [ACILossy<CloudBackup>]? }
+    private struct BackupsEnvelope: Decodable { let backups: [ACILossy<CloudBackup>]?; let canRestore: Bool? }
     private struct ApprovalEnvelope: Decodable { let approvalId: String?; let approval_id: String? }
 
-    private func jsonBody(_ dict: [String: String]) -> Data? { try? JSONSerialization.data(withJSONObject: dict) }
+    private func jsonBody(_ dict: [String: Any]) -> Data? { try? JSONSerialization.data(withJSONObject: dict) }
 
     func hostFindings(id: String) async throws -> [HostFinding] {
         let env = try? JSONDecoder().decode(FindingsEnvelope.self, from: try await cloud(hostPath(id, "host/findings")))
@@ -483,28 +596,62 @@ final class ACIComputersClient: Sendable {
 
     /// Orgo daily backups (cloud computers only).
     func cloudBackups(id: String) async throws -> [CloudBackup] {
-        let data = try await cloud(hostPath(id, "backups"))
-        let decoder = JSONDecoder()
-        if let rows = try? decoder.decode([ACILossy<CloudBackup>].self, from: data) { return rows.compactMap(\.value) }
-        return ((try? decoder.decode(BackupsEnvelope.self, from: data))?.backups ?? []).compactMap(\.value)
+        try await cloudBackupList(id: id).backups
     }
 
+    func cloudBackupList(id: String) async throws -> CloudBackupList {
+        let data = try await cloud(hostPath(id, "backups"))
+        let decoder = JSONDecoder()
+        if let rows = try? decoder.decode([ACILossy<CloudBackup>].self, from: data) {
+            return CloudBackupList(backups: rows.compactMap(\.value), canRestore: true)
+        }
+        let env = try? decoder.decode(BackupsEnvelope.self, from: data)
+        return CloudBackupList(backups: (env?.backups ?? []).compactMap(\.value), canRestore: env?.canRestore ?? true)
+    }
+
+    /// Restore is in place: changes since the backup are erased, so the server needs `confirm: true`.
     func restoreCloudBackup(id: String, backupId: String) async throws {
-        _ = try await cloud(hostPath(id, "backups/restore"), method: "POST", body: jsonBody(["backupId": backupId]))
+        _ = try await cloud(hostPath(id, "backups/restore"), method: "POST", body: jsonBody(["backupId": backupId, "confirm": true]))
     }
 
     /// Cloud settings: restart, move (`location` = nyc | chi | lon | syd), rebuild.
+    /// Move and rebuild erase the disk, so both send `confirm: true` (the
+    /// caller shows a hold-to-confirm first); without it the server answers 400.
     func restartCloud(id: String) async throws { _ = try await cloud(hostPath(id, "restart"), method: "POST") }
     func moveCloud(id: String, location: String) async throws {
-        _ = try await cloud(hostPath(id, "move"), method: "POST", body: jsonBody(["location": location]))
+        let body = try? JSONSerialization.data(withJSONObject: ["location": location, "confirm": true] as [String: Any])
+        _ = try await cloud(hostPath(id, "move"), method: "POST", body: body)
     }
-    func rebuildCloud(id: String) async throws { _ = try await cloud(hostPath(id, "rebuild"), method: "POST") }
+    func rebuildCloud(id: String) async throws {
+        let body = try? JSONSerialization.data(withJSONObject: ["confirm": true])
+        _ = try await cloud(hostPath(id, "rebuild"), method: "POST", body: body)
+    }
 
-    /// Paired computers: rename and remove (`DELETE /api/v1/computers/paired/:id` exists today).
+    /// Paired computers: rename. `removePaired` only drops the paired row; Remove in the UI uses `unpair`.
     func renamePaired(id: String, name: String) async throws {
         let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         _ = try await cloud("api/v1/computers/paired/\(enc)", method: "PATCH", body: jsonBody(["name": name]))
     }
+    /// Remove a machine: `POST /api/v1/computers/:id/unpair {confirm:true}` revokes every
+    /// alias of the machine (a bare `DELETE paired/:id` would leave its runtimes paired).
+    func unpair(id: String) async throws {
+        let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let body = try? JSONSerialization.data(withJSONObject: ["confirm": true])
+        _ = try await cloud("api/v1/computers/\(enc)/unpair", method: "POST", body: body)
+    }
+
+    /// Plain sentence for each unpair error code (400 confirm_required, 403 not_owner,
+    /// 404 not found, 409 cloud_computer).
+    static func unpairMessage(_ code: String) -> String {
+        switch code {
+        case "confirm_required": return "Confirm to remove this computer. Nothing was changed."
+        case "not_owner": return "Only the person who paired this computer can remove it."
+        case "cloud_computer": return "This is an Allternit cloud computer. It can't be unpaired. Remove it from your cloud settings."
+        case "not_found", "computer_not_found": return "This computer is already gone. Pull to refresh."
+        default: return "Couldn't remove this computer. Nothing was changed."
+        }
+    }
+
     func removePaired(id: String) async throws {
         let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         _ = try await cloud("api/v1/computers/paired/\(enc)", method: "DELETE")
@@ -541,15 +688,31 @@ final class ACIComputersClient: Sendable {
     /// Non-2xx → the server's `detail` / `message` / `error`, else a plain
     /// sentence (never a raw status code): a 502/503/504 with no body is the
     /// computer or relay not answering.
-    private static func check(_ response: URLResponse, data: Data) throws {
+    static func check(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { throw Failure.server("Couldn't load this. Try again.") }
         guard (200...299).contains(http.statusCode) else {
             let path = http.url?.path ?? ""
+            if path.hasSuffix("/unpair") {
+                struct UnpairError: Decodable { let error: String?; let message: String? }
+                let body = try? JSONDecoder().decode(UnpairError.self, from: data)
+                if let code = body?.error,
+                   ["confirm_required", "not_owner", "cloud_computer", "not_found", "computer_not_found"].contains(code) {
+                    throw Failure.server(unpairMessage(code))
+                }
+                if [404, 405, 501].contains(http.statusCode) { throw Failure.notAvailable }
+                if let message = body?.message, !message.isEmpty { throw Failure.server(message) }
+            }
             let consolePath = path.hasSuffix("computers/console") || path.contains("/host/") || path.hasSuffix("/metrics")
                 || path.contains("/ssh-keys") || path.hasSuffix("/backups") || path.hasSuffix("/backups/restore")
                 || path.hasSuffix("/approvals") || path.hasSuffix("/restart") || path.hasSuffix("/move")
                 || path.hasSuffix("/rebuild") || path.contains("/computers/paired/") || path.hasSuffix("/computers/snippets")
-            if [404, 405, 501].contains(http.statusCode), consolePath {
+            if http.statusCode == 404, path.hasSuffix("/file-roots") {
+                throw Failure.server("This computer isn't on your account any more.")
+            }
+            // Restore answers with its own plain `message` (501 while the server gate is off,
+            // 404 backup_not_found, 409 restore_unavailable / busy): show it, never "not available".
+            let isRestore = path.hasSuffix("/backups/restore")
+            if [404, 405, 501].contains(http.statusCode), consolePath, !isRestore {
                 throw Failure.notAvailable
             }
             if http.statusCode == 409, consolePath {
@@ -560,8 +723,11 @@ final class ACIComputersClient: Sendable {
             }
             if http.statusCode == 403 {
                 struct Elevation: Decodable { let error: String?; let message: String? }
-                if let e = try? JSONDecoder().decode(Elevation.self, from: data), e.error == "needs_elevation" {
-                    throw Failure.needsElevation(e.message ?? "")
+                if let e = try? JSONDecoder().decode(Elevation.self, from: data) {
+                    if e.error == "needs_elevation" { throw Failure.needsElevation(e.message ?? "") }
+                    if e.error == "whole_disk_off" {
+                        throw Failure.wholeDiskOff(e.message ?? "Turn on whole-disk browsing for this computer in its Settings first.")
+                    }
                 }
             }
             struct Body: Decodable { let detail: String?; let message: String?; let error: String? }

@@ -1,7 +1,8 @@
 // :feature:code — Code mode (handoffs/android-native-2026-11-18, wave F1). A port of iOS Features/Code:
 // the Code home and sessions overview, computer pairing, the changeset review and session diffs,
 // the file browser and editor, dev-server ports and preview, and the terminal (a native VT screen
-// over the pty WebSocket, like iOS SwiftTerm; no WebView or xterm.js).
+// over the runtime's /terminal/* service and its SSE stream, like iOS SwiftTerm; no WebView or
+// xterm.js). A coding agent in a shell gets a native composer (AgentFrame.kt).
 // :feature:shell depends on it; only :app's nativeapp flavor ships it.
 plugins {
     alias(libs.plugins.android.library)
@@ -25,6 +26,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    // AgentFrameTest reads the agent-frame screen corpus shared with the web and iOS parsers
+    // (surfaces/allternit-mobile/agent-frame-fixtures) straight from that folder, never a copy.
+    sourceSets.getByName("test").resources.srcDir("../../../agent-frame-fixtures")
 }
 
 kotlin {

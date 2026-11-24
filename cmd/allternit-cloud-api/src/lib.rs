@@ -674,9 +674,18 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::computers_console::routes())
         // Computers console history: GET /api/v1/computers/:id/metrics (same caller rule).
         .merge(routes::computer_metrics::routes())
+        // Computers console alert rules + incidents (step 2.8).
+        .merge(routes::computer_alerts::routes())
         // Computers console live host data, approvals and port forwards through
         // the runtime relay; never wakes a computer (same caller rule).
         .merge(routes::computers_host::routes())
+        // Computers console snippets: CRUD + run on many computers, approval required (step 2.9).
+        .merge(routes::computer_snippets::routes())
+        // One computer, one row: unpair a whole machine by any of its ids (step 2.10).
+        .merge(routes::computer_machines::routes())
+        // Whole-disk file roots on servers, setting-gated, default off (step 2.11).
+        .merge(routes::computer_file_roots::routes())
+        .merge(routes::computers_cloud::routes())
         // Phone stream relay (Phones 2.0): the account's runtime upserts and
         // lists its registered phones with its device credential.
         .merge(routes::registered_phones::routes())

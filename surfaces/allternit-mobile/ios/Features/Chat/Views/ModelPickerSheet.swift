@@ -55,10 +55,15 @@ struct ModelPickerSheet: View {
                 .padding(.bottom, 24)
             }
         }
-        .background(Color("BgPrimary").ignoresSafeArea())
+        .background(Color("BgPrimary"), in: RoundedRectangle(cornerRadius: PolishTokens.sheetRadius, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: PolishTokens.sheetRadius, style: .continuous))
+        // Floats: inset 6 from the screen edges, radius 36 (panel A brain sheet).
+        .padding(PolishTokens.sheetInset)
+        .presentationBackground(.clear)
         .presentationDetents([.fraction(0.86), .large])
-        .presentationCornerRadius(28)
+        .presentationCornerRadius(PolishTokens.sheetRadius)
         .presentationDragIndicator(.hidden)
+        .animation(PolishTokens.sheet, value: modelStore.selectedModelId)
         .onAppear {
             modelStore.fetchModelsIfNeeded()
             usage.fetchUsageIfNeeded()
@@ -179,17 +184,18 @@ struct ModelPickerSheet: View {
     private func overviewChip(icon: AnyView, title: String, detail: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                icon.frame(width: 28, height: 28).foregroundColor(Color("TextPrimary"))
+                icon.frame(width: 28, height: 28).foregroundColor(active ? Color("BgPrimary") : Color("TextPrimary"))
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(title).font(.system(size: 12, weight: .semibold)).foregroundColor(Color("TextPrimary"))
-                    Text(detail).font(.system(size: 10.5)).foregroundColor(Color("TextTertiary"))
+                    Text(title).font(.system(size: 12, weight: .semibold)).foregroundColor(active ? Color("BgPrimary") : Color("TextPrimary"))
+                    Text(detail).font(.system(size: 10.5)).foregroundColor(active ? Color("BgPrimary").opacity(0.65) : Color("TextTertiary"))
                 }
             }
             .padding(.leading, 6)
             .padding(.trailing, 10)
             .padding(.vertical, 6)
-            .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(active ? Color("AccentPrimary") : Color("BorderSubtle"), lineWidth: 1))
+            // The picked chip is black (ink); the others stay neutral.
+            .background(active ? Color("TextPrimary") : Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(active ? Color.clear : Color("BorderSubtle"), lineWidth: 1))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(active ? [.isSelected] : [])
@@ -330,7 +336,7 @@ struct ModelPickerSheet: View {
                 .background(Color("FillNeutral"), in: RoundedRectangle(cornerRadius: 7))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(row.name).font(.system(size: 14)).foregroundColor(Color("TextPrimary").opacity(row.available ? 1 : 0.5)).lineLimit(1)
+                    Text(row.name).font(.system(size: 14, weight: selected ? .semibold : .regular)).foregroundColor(Color("TextPrimary").opacity(row.available ? 1 : 0.5)).lineLimit(1)
                     if row.offline {
                         HStack(spacing: 3) {
                             Circle().fill(Theme.statusSuccess).frame(width: 5, height: 5)
@@ -346,10 +352,12 @@ struct ModelPickerSheet: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 9)
+        .background(selected ? Color("FillNeutral") : Color.clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(selected ? Color("BorderSubtle") : Color.clear, lineWidth: 1))
         .contentShape(Rectangle())
         .onTapGesture {
             guard row.available else { return }
-            Haptics.light()
+            Haptics.selection()
             modelStore.userSelectedModel(row.id)
             dismiss()
         }
@@ -508,7 +516,7 @@ struct ModelPickerSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(model.name)
-                        .font(.system(size: 14))
+                        .font(.system(size: 14, weight: selected ? .semibold : .regular))
                         .foregroundColor(Color("TextPrimary"))
                         .lineLimit(1)
                     if model.isDefault { rowBadge("Default") }
@@ -546,6 +554,8 @@ struct ModelPickerSheet: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+        .background(selected ? Color("FillNeutral") : Color.clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(selected ? Color("BorderSubtle") : Color.clear, lineWidth: 1))
         .contentShape(Rectangle())
         .onTapGesture { choose(model) }
         .accessibilityElement(children: .combine)
@@ -569,7 +579,7 @@ struct ModelPickerSheet: View {
     }
 
     private func choose(_ model: RuntimeModel) {
-        Haptics.light()
+        Haptics.selection()
         // A locked Cloud row opens the credits sheet and keeps the old selection.
         if modelStore.isCloudLocked(model.id) {
             creditsRequest = CloudCreditsGate.request(modelId: model.id, reason: plan.cloudModels?.reason)
@@ -710,6 +720,7 @@ extension EnvironmentValues {
 /// chips for runtime and brain.
 struct ComposerAgentChips: View {
     let bot: AgentRecord
+    var iconOnly = false
 
     @ObservedObject private var registry = RuntimeRegistryStore.shared
     @ObservedObject private var modelStore = ModelStore.shared
@@ -743,8 +754,8 @@ struct ComposerAgentChips: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            row(namedRuntime: true, namedBrain: true, namedBot: true)
-            row(namedRuntime: false, namedBrain: true, namedBot: false)
+            row(namedRuntime: !iconOnly, namedBrain: !iconOnly, namedBot: !iconOnly)
+            row(namedRuntime: false, namedBrain: !iconOnly, namedBot: false)
             row(namedRuntime: false, namedBrain: false, namedBot: false)
         }
         .sheet(item: $openLayer) { layer in
@@ -806,7 +817,7 @@ struct ComposerAgentChips: View {
         } label: {
             HStack(spacing: 4) {
                 icon(layer)
-                if named || locked {
+                if named || (locked && !iconOnly) {
                     // Long names are cut by length: the row is measured at
                     // its ideal width (ViewThatFits), where truncation never runs.
                     Text(Self.short(label, layer == .brain ? 16 : 13))

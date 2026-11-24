@@ -44,12 +44,27 @@ struct ACINavigationState: Equatable, Sendable {
 /// update pass — so they go through this @MainActor controller instead.
 @MainActor
 final class ACIBrowserController: ObservableObject {
+    static let shared = ACIBrowserController()
+    // Retain the website session and delegates when its SwiftUI view is hidden.
+    var retainedDelegate: NSObject?
+    @Published var popup: WKWebView?
+
+    func tearDown() {
+        popup?.stopLoading()
+        popup = nil
+        webView?.stopLoading()
+        webView?.removeFromSuperview()
+        webView = nil
+        retainedDelegate = nil
+        loadedInitialURL = false
+        navigation = ACINavigationState()
+    }
     @Published private(set) var navigation = ACINavigationState()
 
     /// Set by the representable in `makeUIView`; weak so the controller can
     /// outlive a torn-down web view without holding it. Read by
     /// ACIBrowserBridge when a bot drives this browser.
-    fileprivate(set) weak var webView: WKWebView?
+    fileprivate(set) var webView: WKWebView?
 
     private var loadedInitialURL = false
 
@@ -60,15 +75,17 @@ final class ACIBrowserController: ObservableObject {
     }
 
     func load(_ url: URL) {
+        guard !ACIBrowserImageJob.shared.hasSubmitted else { return }
         Task {
             let tunneled = await InstanceConnection.tunnelLocalhost(url: url)
+            guard !ACIBrowserImageJob.shared.hasSubmitted else { return }
             webView?.load(URLRequest(url: tunneled))
         }
     }
 
-    func goBack() { webView?.goBack() }
-    func goForward() { webView?.goForward() }
-    func reload() { webView?.reload() }
+    func goBack() { guard !ACIBrowserImageJob.shared.hasSubmitted else { return }; webView?.goBack() }
+    func goForward() { guard !ACIBrowserImageJob.shared.hasSubmitted else { return }; webView?.goForward() }
+    func reload() { guard !ACIBrowserImageJob.shared.hasSubmitted else { return }; webView?.reload() }
 
     /// Called by the navigation delegate (main actor) on every milestone.
     func update(_ mutate: (inout ACINavigationState) -> Void) {
@@ -86,7 +103,7 @@ struct ACIWebBrowserView: View {
     let onExit: () -> Void
     let onStartAgentRun: ((String) -> Void)?
 
-    @StateObject private var controller = ACIBrowserController()
+    @StateObject private var controller = ACIBrowserController.shared
     @State private var urlText: String
     @FocusState private var urlFieldFocused: Bool
     
@@ -94,6 +111,7 @@ struct ACIWebBrowserView: View {
     @State private var extensionInput = ""
     @State private var runError: String?
 
+    @ObservedObject private var imageJob = ACIBrowserImageJob.shared
     @ObservedObject private var bridge = ACIBrowserBridge.shared
     @ObservedObject private var phone = AppPhoneService.shared
 
@@ -110,7 +128,7 @@ struct ACIWebBrowserView: View {
         VStack(spacing: 0) {
             urlBar
             progressBar
-            if bridge.isBotActive {
+            if bridge.isBotActive || imageJob.isBusy {
                 botBanner
             }
             ACIBrowserWebView(controller: controller)
@@ -121,6 +139,14 @@ struct ACIWebBrowserView: View {
         .animation(.easeOut(duration: 0.2), value: bridge.isBotActive)
         .onAppear { bridge.attach(controller) }
         .onDisappear { bridge.detach(controller) }
+        .sheet(isPresented: Binding(get: { controller.popup != nil }, set: { if !$0 { controller.popup = nil } })) {
+            if let popup = controller.popup {
+                VStack {
+                    Button("Close sign-in window") { controller.popup = nil }
+                    ACILoginPopup(webView: popup)
+                }
+            }
+        }
         .alert("Couldn't start the run", isPresented: Binding(
             get: { runError != nil },
             set: { if !$0 { runError = nil } }
@@ -203,10 +229,15 @@ struct ACIWebBrowserView: View {
             Image(systemName: "cursorarrow.motionlines")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.accent)
-            Text("Bot is using the browser")
+            Text(imageJob.needsResume ? imageJob.resumeLabel : (imageJob.isBusy ? "Making your ChatGPT image" : "Bot is using the browser"))
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(Color("TextPrimary"))
             Spacer()
+            if imageJob.needsResume {
+                Button("Resume") { imageJob.resume() }
+                    .accessibilityLabel(imageJob.resumeLabel)
+                    .font(.system(size: 13, weight: .semibold))
+            }
             Button("Stop") { bridge.stopBot() }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(Theme.statusError)
@@ -449,11 +480,21 @@ private struct ACIBrowserWebView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
+        if let webView = controller.webView {
+            webView.removeFromSuperview()
+            webView.navigationDelegate = context.coordinator
+            webView.uiDelegate = context.coordinator
+            controller.retainedDelegate = context.coordinator
+            return webView
+        }
         let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = ACIBrowserImageJob.websiteDataStore
         // The bot bridge's element reader, in its own content world.
         configuration.userContentController.addUserScript(ACIBrowserBridge.userScript)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
+        controller.retainedDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         controller.webView = webView
         return webView
@@ -494,6 +535,15 @@ extension ACIBrowserWebView.Coordinator: WKNavigationDelegate {
             decisionHandler(.allow)
             return
         }
+        // Once Send is attempted, user navigation/reloads cannot abandon this job.
+        // Provider redirects and login popups remain available for visible verification.
+        let authentication = (url.host == "chatgpt.com" && (url.path.hasPrefix("/auth/") || url.path == "/auth" || url.path.hasPrefix("/login"))) ||
+            ["auth.openai.com", "auth0.openai.com", "accounts.openai.com"].contains(url.host ?? "")
+        if ACIBrowserImageJob.shared.hasSubmitted, navigationAction.targetFrame?.isMainFrame == true,
+           navigationAction.navigationType != .other, !authentication {
+            decisionHandler(.cancel)
+            return
+        }
         let host = url.host ?? ""
         if host == "localhost" || host == "127.0.0.1" {
             decisionHandler(.cancel)
@@ -527,4 +577,23 @@ extension ACIBrowserWebView.Coordinator: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         sync(webView, isLoading: false, progress: 0)
     }
+}
+
+// Login windows share WebKit's supplied configuration and session. They have no native script handlers.
+private struct ACILoginPopup: UIViewRepresentable {
+    let webView: WKWebView
+    func makeUIView(context: Context) -> WKWebView { webView }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+}
+
+extension ACIBrowserWebView.Coordinator: WKUIDelegate {
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard navigationAction.targetFrame == nil else { return nil }
+        let popup = WKWebView(frame: .zero, configuration: configuration)
+        popup.uiDelegate = self
+        controller.popup = popup
+        return popup
+    }
+    func webViewDidClose(_ webView: WKWebView) { controller.popup = nil }
 }

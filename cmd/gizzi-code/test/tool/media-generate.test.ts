@@ -1,5 +1,5 @@
 import { describe, expect, test, spyOn, afterEach } from "bun:test"
-import { MediaGenerateTool, videoTimeoutMs } from "../../src/runtime/tools/builtins/media-generate"
+import { MediaGenerateTool, videoTimeoutMs, browserImageResult } from "../../src/runtime/tools/builtins/media-generate"
 import { PaneRender } from "../../src/runtime/integrations/pane-render"
 
 const ctx = {
@@ -100,5 +100,43 @@ describe("tool.media_generate", () => {
   test("video budget grows with the work and caps at 15 minutes", () => {
     expect(videoTimeoutMs(1, 1)).toBeGreaterThanOrEqual(90_000)
     expect(videoTimeoutMs(3600, 8)).toBe(15 * 60_000)
+  })
+})
+
+
+describe("local ACI image boundary regressions", () => {
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII="
+
+  test("accepts the actual PNG dimensions and rejects a mismatched result", () => {
+    expect(browserImageResult({ ok: true, image: png })).toMatchObject({ width: 1, height: 1 })
+    expect(browserImageResult({ ok: true, image: png, width: 2048 })).toBeUndefined()
+    expect(browserImageResult({ ok: false, image: png })).toBeUndefined()
+  })
+
+  test("provider URLs, screenshot JPEGs and truncated PNGs cannot become output PNGs", () => {
+    expect(browserImageResult({ ok: true, image: "https://chatgpt.com/private.png" })).toBeUndefined()
+    expect(browserImageResult({ ok: true, image: png.replace("image/png", "image/jpeg") })).toBeUndefined()
+    const bytes = Buffer.from(png.split(",")[1]!, "base64").subarray(0, 33)
+    expect(browserImageResult({ ok: true, image: `data:image/png;base64,${bytes.toString("base64")}` })).toBeUndefined()
+  })
+
+  test("a tiny PNG header cannot claim excessive image dimensions", () => {
+    const bytes = Buffer.from(png.split(",")[1]!, "base64")
+    bytes.writeUInt32BE(4097, 16)
+    expect(browserImageResult({ ok: true, image: `data:image/png;base64,${bytes.toString("base64")}` })).toBeUndefined()
+  })
+
+  test("background tool invocations return a person-required result without waiting on an app", async () => {
+    const tool = await MediaGenerateTool.init()
+    const result = await tool.execute({ kind: "image", prompt: "a mug", lane: "aci", provider: "chatgpt" }, ctx)
+    expect(result.metadata).toMatchObject({ ok: false, lane: "aci", code: "person_required" })
+    expect(result.attachments).toBeUndefined()
+  })
+
+  test("the legacy subscription lane cannot send to a remote subscription worker", async () => {
+    const tool = await MediaGenerateTool.init()
+    const result = await tool.execute({ kind: "image", prompt: "a mug", lane: "subscription", provider: "chatgpt" }, ctx)
+    expect(result.metadata).toMatchObject({ ok: false, lane: "aci", code: "person_required" })
+    expect(result.output).toContain("Nothing was sent")
   })
 })

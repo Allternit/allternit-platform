@@ -6,6 +6,7 @@ on:
     paths:
       - 'cmd/allternit-computer-cloud/guest/**'
       - 'cmd/allternit-factory/**'
+      - 'cmd/allternit-node/**'
       - 'factory/**'
       - '.github/workflows/desktop-image.yml'
   workflow_dispatch:
@@ -57,9 +58,16 @@ jobs:
         # (allternit-factory pane server; allternit-factory pane tty).
         run: cargo build --release -p allternit-factory
 
+      - name: Build allternit-node
+        # The node daemon (crate allternit-node-daemon) serves the computer's
+        # terminals from that pane engine once it is paired. build-image.sh
+        # installs both through install-pane-engine.sh.
+        run: cargo build --release -p allternit-node-daemon
+
       - name: Build desktop image
         env:
           FACTORY_BIN: ${{ github.workspace }}/target/release/allternit-factory
+          NODE_BIN: ${{ github.workspace }}/target/release/allternit-node
           IMAGE_NAME: ${{ github.event.inputs.image_name || 'allternit-desktop' }}
         run: |
           sudo -E bash cmd/allternit-computer-cloud/guest/build-image.sh

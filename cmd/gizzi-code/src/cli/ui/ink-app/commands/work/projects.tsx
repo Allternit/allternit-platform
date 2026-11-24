@@ -108,6 +108,7 @@ export const call: LocalJSXCommandCall = async (onDone, context) => {
     return (
       <WorkPane
         title="Projects"
+        blockTitle
         subtitle={data ? `${data.filter(p => p.lifecycle === 'active').length} active` : undefined}
         items={data}
         error={error && `Couldn't load projects: ${error}`}

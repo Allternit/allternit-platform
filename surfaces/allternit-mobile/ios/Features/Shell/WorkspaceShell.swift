@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Mode host shell
 
@@ -9,15 +10,19 @@ import SwiftUI
 /// Arc drawer (HistorySidebarView): min(80% of the screen, 360) wide (D5). It
 /// springs in from the left edge and the page pushes right with it, scaled to
 /// 0.94 with ~36 pt corners (the menu button rides on the page). It closes
-/// with a tap on the visible page strip or a drag/flick back to the edge. Holding ☰
-/// fans the modes out over everything (MenuOverlayHost); the fan and the drawer
-/// are never open together. Cowork is NOT a mode; it's a composer-level toggle inside Home.
+/// with a tap on the visible page strip or a drag/flick back to the edge. The drawer mode icon opens Shelves. Cowork is NOT a mode; it's a composer-level toggle inside Home.
 struct MainWorkspaceView: View {
     @EnvironmentObject private var modeStore: AppModeStore
     @ObservedObject private var botColors = BotColorStore.shared
     @ObservedObject private var railBackdrop = RailBackdropStore.shared
     @ObservedObject private var computeGate = ComputeStatusStore.shared
     @ReducedMotion private var reduceMotion
+    @State private var isModeHubPresented = false
+    @State private var isMeetingsPresented = false
+    @ObservedObject private var meetings = MeetingsStore.shared
+    @ObservedObject private var hubAgents = AgentHubStore.shared
+    @ObservedObject private var hubBots = BotModeStore.shared
+    @ObservedObject private var hubSessions = ShellSessionsStore.shared
     @State private var isSidebarOpen = false
     @State private var dragOffset: CGFloat = 0
     @State private var selectedSessionId: String? = nil
@@ -38,7 +43,7 @@ struct MainWorkspaceView: View {
 
     /// Arc spring.smooth: critically damped, never overshoots the edge.
     private var drawerAnimation: Animation {
-        Motion.pick(Motion.drawer, reduced: reduceMotion)
+        Motion.pick(PolishTokens.push, reduced: reduceMotion)
     }
 
     var body: some View {
@@ -97,24 +102,44 @@ struct MainWorkspaceView: View {
                     .onChange(of: proxy.size.width) { _, width in screenWidth = width }
             }
         )
-        // ☰ hold: the mode fan and the bots shelf, over the page and the
-        // drawer so the header can't clip them (C8, MenuOverlayHost).
-        .overlay { MenuOverlayHost() }
-        .onAppear {
-            MenuHoldController.shared.install(
-                modeStore: modeStore,
-                isDrawerOpen: { isSidebarOpen },
-                isDrawerAtRest: { !isSidebarOpen && dragOffset == 0 },
-                openDrawer: { setSidebar(true) },
-                closeDrawer: { setSidebar(false) }
-            )
+        .environment(\.modeHubPresented, isModeHubPresented)
+        .overlay {
+            if isModeHubPresented {
+                ModeHubSheet(isPresented: $isModeHubPresented,
+                             currentMode: modeStore.shellMode,
+                             items: hubItems,
+                             enabledFlags: meetings.isEnabled ? ["meetings"] : [],
+                             onOpen: openHubSection,
+                             onOpenMode: selectHubMode)
+                    .accessibilityAddTraits(.isModal)
+                    .zIndex(20)
+            }
         }
-        // Opening the drawer closes the fan; the two are never open together.
-        // The light haptic plays here so every way of opening (☰ on any
-        // screen, edge pan, a binding) gets exactly one.
+        .sheet(isPresented: $isMeetingsPresented) { MeetingsView() }
+        .onReceive(NotificationCenter.default.publisher(for: ModeHubSpec.openModeHub)) { _ in
+            // Dismiss the keyboard before the bottom sheet takes focus.
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            setSidebar(false)
+            isModeHubPresented = true
+            Task { await ShellSessionsStore.shared.load() }
+            AgentHubStore.shared.fetchAgentsIfNeeded()
+            Task { await hubBots.refreshAll() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .composerNewItem)) { _ in
+            switch modeStore.shellMode {
+            case .home:
+                selectedSessionId = nil
+                modeStore.selectBarItem(.chats)
+                NotificationCenter.default.post(name: .shellNewChat, object: nil)
+            case .bots:
+                modeStore.selectBarItem(.agents)
+                hubBots.pendingNewThread = true
+            case .code, .aci:
+                break // Their live hosts reset their own session, even if selection is already nil.
+            }
+        }
         .onChange(of: isSidebarOpen) { _, open in
-            if open { Haptics.light() }
-            MenuHoldController.shared.dispatch(open ? .drawerOpened : .drawerClosed)
+            if open { Haptics.light(); isModeHubPresented = false }
         }
         // The waiting games window, over every mode (WaitingGamesLayer).
         .overlay { WaitingGamesLayer() }
@@ -163,8 +188,6 @@ struct MainWorkspaceView: View {
                 }
             )
             .environmentObject(modeStore)
-            // The shell's fan draws under this cover: ☰ here is tap only.
-            .environment(\.menuHoldEnabled, false)
         }
         .onReceive(NotificationCenter.default.publisher(for: .shellOpenOverview)) { _ in
             Task { await ShellSessionsStore.shared.load() }
@@ -173,11 +196,24 @@ struct MainWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: .shellOpenDrawer)) { _ in
             setSidebar(true)
         }
+        // Connections › Runtimes "New chat on <Runtime>": a fresh chat on Chats
+        // (ChatRuntimeStore already holds the runtime).
+        .onReceive(NotificationCenter.default.publisher(for: .shellNewChatOnRuntime)) { _ in
+            isOverviewPresented = false
+            selectedSessionId = nil
+            modeStore.selectBarItem(.chats)
+            setSidebar(false)
+            NotificationCenter.default.post(name: .shellNewChat, object: nil)
+        }
         // Universal Links + push taps (DeepLinkRouter) and the Meet your bots intro.
         .modifier(DeepLinkHost())
         // Allternit calls: ring polling + the incoming / live call screens.
         .modifier(InappCallHost())
         .modifier(MeetYourBotsHost())
+        // First-visit intro for each mode, driven by the shell mode store (D2).
+        .modeIntros()
+        // Team + bot arrivals follow the intros (I13).
+        .modeArrivals()
         .onReceive(NotificationCenter.default.publisher(for: .openChatSession)) { note in
             // Bot Home / quick task post this: land on Chats with that
             // session loaded, from whichever section is showing.
@@ -252,6 +288,74 @@ struct MainWorkspaceView: View {
                 modeStore.selectBarItem(.code)
             }
             #endif
+        }
+    }
+
+    private func selectHubMode(_ mode: ShellMode) {
+        let from = modeStore.shellMode
+        modeStore.setShellMode(mode)
+        if from != mode {
+            NotificationCenter.default.post(name: ModeHubSpec.modeArrive, object: nil,
+                userInfo: ["from": from.hubId, "to": mode.hubId])
+        }
+    }
+
+    private func hubItems(_ section: ModeHubSection) -> [ModeHubItem] {
+        switch section.id {
+        case "recents", "sessions":
+            return hubSessions.openSessions(for: section.mode).prefix(4).map {
+                ModeHubItem(id: $0.id, title: $0.name ?? "Untitled chat")
+            }
+        case "main-bot", "bots":
+            let bots = section.id == "main-bot" ? hubBots.bots.filter(\.isMainBot) : hubBots.bots
+            return bots.prefix(4).map { ModeHubItem(id: $0.id, title: $0.botDisplayName) }
+        case "bot-projects":
+            return hubBots.projects.prefix(4).map { ModeHubItem(id: $0.id, title: $0.title) }
+        case "groups":
+            return hubBots.groups.prefix(4).map { ModeHubItem(id: $0.id, title: $0.name) }
+        default:
+            return [] // Sections without a loaded preview still open their real list.
+        }
+    }
+
+    private func openHubSection(_ section: ModeHubSection, _ item: ModeHubItem?) {
+        guard let target = section.target else { return }
+        selectHubMode(section.mode)
+        switch target {
+        case .tab(let tab):
+            modeStore.selectBarItem(tab)
+            if section.id == "recents" || section.id == "sessions" {
+                if let item { selectedSessionId = item.id }
+                else { isOverviewPresented = true }
+            }
+        case .meetingsSheet:
+            isMeetingsPresented = true
+        case .bots(let part):
+            modeStore.selectBarItem(.agents)
+            switch part {
+            case .mainBot:
+                if let bot = hubBots.bots.first(where: \.isMainBot) {
+                    hubBots.pendingOpenBotId = bot.id
+                } else { hubBots.pendingHome = true }
+            case .launchpad:
+                if let item { hubBots.pendingOpenBotId = item.id }
+                else { hubBots.pendingHome = true }
+            case .groups:
+                hubBots.pendingRoute = item.map { .group($0.id) } ?? .groups
+            case .office: hubBots.pendingRoute = .office
+            case .projects:
+                if let item, let project = hubBots.projects.first(where: { $0.id == item.id }) {
+                    hubBots.pendingRoute = .project(project)
+                } else { modeStore.selectBarItem(.projects) }
+            }
+        case .aci(let part):
+            modeStore.selectBarItem(.aci)
+            switch part {
+            case .computers: ACINavStore.shared.open(.computers)
+            case .mcpApps: ACINavStore.shared.open(.apps)
+            case .extensions: ACINavStore.shared.open(.extensions)
+            case .teach: ACINavStore.shared.openTeach()
+            }
         }
     }
 
@@ -384,8 +488,8 @@ struct MainWorkspaceView: View {
         }
         .background(Color("BgPrimary"))
         // Hidden from VoiceOver while the menu is open (useInert).
-        .accessibilityHidden(isSidebarOpen)
-        .allowsHitTesting(!isSidebarOpen)
+        .accessibilityHidden(isSidebarOpen || isModeHubPresented)
+        .allowsHitTesting(!isSidebarOpen && !isModeHubPresented)
         // Left-edge pan opens the menu (useDrawerEdgeOpen, 24pt strip).
         .overlay(alignment: .leading) {
             if !isSidebarOpen {
@@ -408,14 +512,20 @@ struct MainWorkspaceView: View {
                 .accessibilityAddTraits(.isButton)
                 .accessibilityHidden(!isSidebarOpen)
         }
-        .clipShape(RoundedRectangle(cornerRadius: reduceMotion ? 0 : 36 * p, style: .continuous))
-        // Scale from the leading edge so the page's left edge sits exactly on
-        // the drawer's right edge (visible sliver = screen - drawer width).
-        .scaleEffect(reduceMotion ? 1 : 1 - 0.06 * p, anchor: UnitPoint(x: 0, y: 0.5))
-        .offset(x: reduceMotion ? 0 : p * sidebarWidth)
+        // Polish push: x 300, scale .92, radius 38, dim .06.
+        .overlay {
+            PolishTokens.pushDim
+                .opacity(p)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: reduceMotion ? 0 : PolishTokens.pushCornerRadius * p, style: .continuous))
+        .scaleEffect(reduceMotion ? 1 : 1 - (1 - PolishTokens.pushScale) * p)
+        .offset(x: reduceMotion ? 0 : p * PolishTokens.pushX)
     }
 
     private func setSidebar(_ open: Bool) {
+        if open != isSidebarOpen { open ? Haptics.light() : Haptics.soft() }
         withAnimation(drawerAnimation) {
             isSidebarOpen = open
             dragOffset = 0

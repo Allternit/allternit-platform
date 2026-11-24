@@ -185,10 +185,14 @@ final class PtySession: ObservableObject {
         self.attachedInstanceName = attachedInstanceName
     }
 
-    init(service: TerminalServiceClient, attachedInstanceName: String? = nil) {
+    /// `sessionId`: attach to a terminal that already runs on the computer
+    /// (one the Code sessions view lists, or one a Move just started)
+    /// instead of creating a new shell; its stream replays the screen.
+    init(service: TerminalServiceClient, attachedInstanceName: String? = nil, sessionId: String? = nil) {
         self.client = .shared
         self.service = service
         self.attachedInstanceName = attachedInstanceName
+        self.ptyId = sessionId
     }
 
     deinit {

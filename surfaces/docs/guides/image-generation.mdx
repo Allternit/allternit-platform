@@ -1,0 +1,32 @@
+---
+title: Make an image in ACI
+description: Generate an image on the device where you are chatting
+---
+
+<Note>This device-local image flow is in development. Its app changes must pass the build train and real device checks before release.</Note>
+
+Ask for an image in chat, or use the image action beside the composer when your selected chat model does not have tools. Review the exact prompt before sending it. The app runs ChatGPT in that device’s own ACI browser: Desktop on Desktop, iPhone on iPhone, Android on Android. This feature does not require a Sessions computer, cloud computer or another connected Desktop.
+
+## Sign in on this device
+
+ChatGPT OAuth enables chat models. The browser image flow uses a ChatGPT web session on the same device. If that session is missing, open ACI and sign in there. The app does not copy your Safari login or put OAuth tokens into the page. A provider verification prompt needs your attention; generation pauses until you handle it.
+
+Desktop and iPhone keep this private browser session in memory in this implementation. After restarting the app, you may need to sign in to ChatGPT again. Saved image files and local image history remain on the device.
+
+The normal website must work in the device’s ACI browser. If ChatGPT rejects that browser or the app cannot obtain the image, the card shows the reason. It does not silently switch devices or spend an API key.
+
+## Watch and return to chat
+
+The generation card starts with Allternit’s BlockPulse and the real stage. When an image preview is available it appears in the same frame. During saving and downloading, the preview sharpens as actual bytes arrive. If a total size or completion estimate is unknown, the app leaves it out.
+
+You can open ACI to see the provider, then return to chat. The generation job owns its browser session, so hiding the ACI view is different from stopping the job. Use Stop to cancel. The finished image appears on the original turn and in Outputs, with Download, Open and Copy prompt actions. The running chip, peek and older-turn card show the same generation.
+
+## When the phone is interrupted
+
+The operating system may suspend the app after you lock the phone or leave it. The app does not promise continued background browser execution. On return it checks the existing provider conversation before continuing. A lost connection does not automatically send the prompt again. If the app cannot tell whether ChatGPT accepted the request, it asks you to check the existing generation rather than risking a duplicate.
+
+Web and PWA browsers cannot assume they can control ChatGPT across origins. When no same-device browser integration is available, the image action explains that limitation. It never redirects the request to another computer.
+
+Android stores a new phone-only image conversation locally. Its image actions and Outputs need no computer. The existing computer-backed text-model route still needs a separate runtime chat; the image flow does not change that model transport.
+
+For the request, progress and result contract, see [Device-local ACI image jobs](/dev/aci-image-jobs).

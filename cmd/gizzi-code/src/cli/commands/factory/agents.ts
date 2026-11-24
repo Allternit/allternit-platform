@@ -17,6 +17,7 @@ import { AgentModesCommand } from "@/cli/commands/agent"
 import { AgentHubCommand } from "@/cli/commands/agent-hub"
 import { RuntimeLocalCommands } from "@/cli/commands/runtime"
 import { BotCommand } from "@/cli/commands/bot"
+import { AdoptCommand } from "./adopt"
 
 const P = "agents" as const
 
@@ -68,7 +69,8 @@ export const AgentsCommand = cmd({
           options: { "rm-worktree": { type: "boolean", describe: "also remove the worktree it was started in" } },
         }),
       )
-      .command(engineVerb(P, { command: "sessions", describe: "live agent sessions on this computer: address, status, what each is doing" }))
+      .command(engineVerb(P, { command: "sessions", describe: "live agent sessions on this computer: address, status, whether it can move here, holders, what each is doing" }))
+      .command(AdoptCommand)
       .command(engineVerb(P, { command: "whoami", describe: "which bot and team this terminal is" }))
       .command(
         engineVerb(P, {

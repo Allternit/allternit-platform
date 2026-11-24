@@ -44,6 +44,13 @@ final class FilesComputerModel: ObservableObject {
     /// Bumped after a write, so open folder screens list again.
     @Published private(set) var revision = 0
 
+    /// Whole-disk roots from the console row (`wholeDisk.roots`), set only while the setting is on.
+    @Published var diskRoots: [ACIComputersClient.WholeDiskRoot] = []
+    /// The server's own message after a 403 `whole_disk_off`, with a way to the Settings switch.
+    @Published private(set) var wholeDiskOffMessage: String?
+    /// Opens the console Settings tab; set by the Files tab.
+    var openSettings: (() -> Void)?
+
     init(computerId: ComputerId, name: String) {
         self.computerId = computerId
         self.name = name
@@ -113,6 +120,31 @@ final class FilesComputerModel: ObservableObject {
         self.freshness = freshness
         items.sort { ($0.kind == .folder ? 0 : 1, $0.name.localizedLowercase) < ($1.kind == .folder ? 0 : 1, $1.name.localizedLowercase) }
         return (items, freshness)
+    }
+
+    /// A root for a whole-disk path: the one the computer already has, else it is added first.
+    /// Throws `FilesError.wholeDiskOff` (message kept) when the setting is off on the server.
+    func diskRoot(_ disk: ACIComputersClient.WholeDiskRoot) async throws -> Root {
+        if let existing = roots.first(where: { $0.pathHint == disk.path }) { return existing }
+        do {
+            let added = try await client.addRoot(name: disk.label, localPath: disk.path)
+            if !roots.contains(where: { $0.id == added.id }) { roots.append(added) }
+            wholeDiskOffMessage = nil
+            return added
+        } catch let failure as FilesError where failure.isWholeDiskOff {
+            wholeDiskOffMessage = failure.localizedDescription
+            throw failure
+        }
+    }
+
+    /// Roots shown first: the Files drive folders, without the whole-disk roots added from the switcher.
+    var driveRoots: [Root] {
+        sortedRoots.filter { root in !diskRoots.contains { $0.path == root.pathHint } }
+    }
+
+    /// Remember a 403 `whole_disk_off` seen anywhere in Files so the screen can offer the switch.
+    func noteWholeDiskOff(_ error: Error) {
+        if let failure = error as? FilesError, failure.isWholeDiskOff { wholeDiskOffMessage = failure.localizedDescription }
     }
 
     // MARK: Actions that may need the computer awake

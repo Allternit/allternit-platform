@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "_doc": "The one list of coding CLIs Allternit supports. Read by gizzi (src/runtime/providers/discovery/subprocess.ts — its subprocess brains) and embedded by allternit-api (src/cli_catalog.rs — CLI provider rows, sign-in, GET /api/v1/cli-tools/catalog). adapter: builtin = a protocol adapter in local-cli-driver.ts CLI_ADAPTERS; text = one-shot argv from headless.args ({prompt} is exactly one argv element, never a shell string; {model} from headless.modelArgs); unsupported = listed, not runnable as a brain yet. install.harness = the Factory installs it (pin + licence in factory/pane/src/ao/harness/harness.json); otherwise method npm|uv|brew|script with the pin verified against the registry on the date in _verified. Logos are paths in the web app's public dir. Version 2 adds model order and defaults as data: the order of a tool's models[] is the vendor's order (best/newest first) and is meaningful; a model with default: true is the tool's default model (at most one per tool; a tool whose only model is the placeholder \"default\" needs none, otherwise the first model is the default); defaultRank (lower = preferred) ranks the tools that may be picked automatically as the default CLI brain, mirroring Desktop's CLI_DEFAULT_ORDER (allternit-ai src/lib/default-brain.ts) - a tool without it is never an automatic default; liveModels {args, parser: codex-json|tsv|grok|ollama} is the command that prints the CLI's own model list, and models[] is the fallback when it fails; retired maps an old model id to its current id so saved choices keep working. Version 3 adds runtimes[]: the one list of runtimes a bot can run on (see CONTRACT-harness-bots-2.md). A runtime points to a tool with tool (null for allternit); adapter.kind says how it is driven; brains is \"any\" or a list of provider ids; look holds data-only terminal/desktop tokens; liveUi is the runtime's own web app. Run script/check-runtime-registry.ts after editing.",
+  "_doc": "The one list of coding CLIs Allternit supports. Read by gizzi (src/runtime/providers/discovery/subprocess.ts — its subprocess brains) and embedded by allternit-api (src/cli_catalog.rs — CLI provider rows, sign-in, GET /api/v1/cli-tools/catalog). adapter: builtin = a protocol adapter in local-cli-driver.ts CLI_ADAPTERS; text = one-shot argv from headless.args ({prompt} is exactly one argv element, never a shell string; {model} from headless.modelArgs); unsupported = listed, not runnable as a brain yet. install.harness = the Factory installs it (pin + licence in factory/pane/src/ao/harness/harness.json); otherwise method npm|uv|brew|script with the pin verified against the registry on the date in _verified. Logos are paths in the web app's public dir. Version 2 adds model order and defaults as data: the order of a tool's models[] is the vendor's order (best/newest first) and is meaningful; a model with default: true is the tool's default model (at most one per tool; a tool whose only model is the placeholder \"default\" needs none, otherwise the first model is the default); defaultRank (lower = preferred) ranks the tools that may be picked automatically as the default CLI brain, mirroring Desktop's CLI_DEFAULT_ORDER (allternit-ai src/lib/default-brain.ts) - a tool without it is never an automatic default; liveModels {args, parser: codex-json|tsv|grok|ollama} is the command that prints the CLI's own model list, and models[] is the fallback when it fails; retired maps an old model id to its current id so saved choices keep working. Version 3 adds runtimes[]: the one list of runtimes a bot can run on (see CONTRACT-harness-bots-2.md). A runtime points to a tool with tool (null for allternit); adapter.kind says how it is driven; brains is \"any\" or a list of provider ids; look holds data-only terminal/desktop tokens; liveUi is the runtime's own web app. plans lists the subscription providers (claude, chatgpt, kimi, gemini, copilot) whose plan the runtime may use; allowed() in runtime-registry.ts is the rule (fits, then the plan check). Run script/check-runtime-registry.ts after editing.",
   "_verified": "2026-10-19 (npm registry, PyPI, formulae.brew.sh, vendor CLI docs)",
   "tools": [
     {
@@ -1809,6 +1809,13 @@
         "local",
         "credits"
       ],
+      "plans": [
+        "claude",
+        "chatgpt",
+        "kimi",
+        "gemini",
+        "copilot"
+      ],
       "more": false,
       "systemLayer": {
         "via": "none"
@@ -1833,6 +1840,9 @@
       "access": [
         "plan",
         "key"
+      ],
+      "plans": [
+        "claude"
       ],
       "more": false,
       "systemLayer": {
@@ -2030,6 +2040,9 @@
         "plan",
         "key"
       ],
+      "plans": [
+        "chatgpt"
+      ],
       "more": false,
       "systemLayer": {
         "via": "append-flag"
@@ -2194,6 +2207,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -2363,6 +2377,9 @@
         "plan",
         "key"
       ],
+      "plans": [
+        "kimi"
+      ],
       "more": false,
       "systemLayer": {
         "via": "acp-session"
@@ -2514,6 +2531,9 @@
         "plan",
         "key"
       ],
+      "plans": [
+        "gemini"
+      ],
       "more": false,
       "systemLayer": {
         "via": "acp-session"
@@ -2657,6 +2677,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -2794,6 +2815,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "acp-session"
@@ -2930,6 +2952,7 @@
         "key",
         "local"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -3087,6 +3110,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -3222,6 +3246,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "acp-session"
@@ -3405,6 +3430,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "acp-session"
@@ -3588,6 +3614,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "acp-session"
@@ -3748,6 +3775,7 @@
         "key",
         "local"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -3836,6 +3864,7 @@
         "key",
         "local"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "acp-session"
@@ -4022,6 +4051,7 @@
         "key",
         "local"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -4147,6 +4177,7 @@
         "key",
         "local"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "agents-md"
@@ -4282,6 +4313,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "agents-md"
@@ -4417,6 +4449,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "acp-session"
@@ -4552,6 +4585,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "acp-session"
@@ -4694,6 +4728,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "acp-session"
@@ -4829,6 +4864,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "acp-session"
@@ -4964,6 +5000,7 @@
         "key",
         "local"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "none"
@@ -5098,6 +5135,7 @@
       "access": [
         "key"
       ],
+      "plans": [],
       "more": true,
       "status": {
         "label": "API key or Enterprise only",
@@ -5289,6 +5327,9 @@
         "plan",
         "key"
       ],
+      "plans": [
+        "copilot"
+      ],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -5470,6 +5511,7 @@
         "key",
         "local"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -5616,6 +5658,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -5755,6 +5798,7 @@
         "key",
         "local"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -5835,6 +5879,7 @@
         "key",
         "local"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "agents-md"
@@ -6018,6 +6063,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "agents-md"
@@ -6153,6 +6199,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "agents-md"
@@ -6301,6 +6348,7 @@
       "access": [
         "key"
       ],
+      "plans": [],
       "more": false,
       "systemLayer": {
         "via": "agents-md"
@@ -6470,6 +6518,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "agents-md"
@@ -6606,6 +6655,7 @@
         "key",
         "local"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "agents-md"
@@ -6698,6 +6748,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "agents-md"
@@ -6853,6 +6904,7 @@
         "plan",
         "key"
       ],
+      "plans": [],
       "more": true,
       "systemLayer": {
         "via": "agents-md"

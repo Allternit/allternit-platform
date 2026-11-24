@@ -1285,6 +1285,9 @@ async fn main() {
         // Kernel UI backend: agent rules, routing policy, decision types, templates, activity.
         .merge(allternit_api::kernel_ui::router())
         .merge(allternit_api::kernel_ui::api_router())
+        // Computers console node routes (`/v1/host/*`, host-probe). Relayed
+        // calls also need the cloud's relay signature (host_routes docs).
+        .merge(allternit_api::host_routes::router())
         .nest("/api/v1", v1_routes)
         .nest("/api/v1", bb_router())
         // The tool registry is also served under /api/v1 because the

@@ -10,7 +10,7 @@
  *
  * Free of CLI imports so bun tests can drive `handle` with a stubbed fetch.
  */
-import { platformApiBase, platformToken } from "@/runtime/bots/platform-api"
+import { fetchWithPlatformToken, platformApiBase } from "@/runtime/bots/platform-api"
 import { clearWaiting, markRead, registerMessaging, readPending, sessionKey, touchWaiting, unreadNotice } from "@/runtime/live/inbox"
 
 export const MAX_WAIT_SECS = 600
@@ -79,13 +79,12 @@ export function toolList(env: NodeJS.ProcessEnv = process.env) {
 }
 
 export async function api(path: string, init?: RequestInit): Promise<any> {
-  const token = await platformToken().catch(() => undefined)
-  if (!token) throw new Error("This runtime isn't connected to your Allternit account. Run `gizzi login`.")
-  const res = await fetch(`${platformApiBase()}${path}`, {
+  const res = await fetchWithPlatformToken(`${platformApiBase()}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(init?.headers ?? {}) },
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     signal: AbortSignal.timeout(35_000),
   })
+  if (!res) throw new Error("This runtime isn't connected to your Allternit account. Run `gizzi login`.")
   const text = await res.text()
   let body: any = text
   try {

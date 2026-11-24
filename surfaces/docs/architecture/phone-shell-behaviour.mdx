@@ -1,6 +1,6 @@
 ---
 title: 'Phone shell behaviour'
-description: 'The rules the phone layout and the iPhone app share: composer deck, permission, mic, computer chip, calm errors, Code status signals, accounts and the menu hold.'
+description: 'The rules the phone layout and the iPhone app share: composer rest line and Tools, permission, mic, computer chip, calm errors, Code status signals, accounts and the Shelves hub.'
 ---
 
 The phone layout (`allternit-ai`, `src/fabric-session/phone/`) and the iPhone app follow one contract. This page is for developers. For the user view, see [Composer](/guides/chat-composer#on-a-phone) and [Code session list](/guides/code-session-list).
@@ -9,18 +9,18 @@ The phone layout (`allternit-ai`, `src/fabric-session/phone/`) and the iPhone ap
 
 | Id | Rule |
 | --- | --- |
-| C1 | The deck band is open at rest and joins the composer card's bottom edge. A swipe down of 24 px on the card folds it; a swipe up of 24 px opens it. The choice persists per device. On phones (iOS, the native Android app, the ai.allternit.com phone layout, the PWA) the grey **tools** tab shows only while the band is folded, and tapping it opens the band. An open band has no tab between it and the card; screen readers fold it with the band's **Hide tools** action. On Desktop, which has no swipe, the tab stays visible and folds or opens the band. |
+| C1 | The composer rests as one line (+, the line, send) and grows on focus. Tools (Agent mode, Plugins, Artifacts) sit behind the sliders button, not in a band under the card. There is no Output control. |
 | C2 | The permission pill is removed. **+** shows Permission and a page with Auto, Ask, Read-only, from the same store. |
 | C3 | The mic sits left of the voice button and toggles dictation. A failure shows one calm line. |
 | C4 | The computer chip sits above the composer in Chat, Bots and Code. **✕** shrinks it to a dot on **+**. |
 | C5 | No status number or code in UI text. |
 | C6 | Code status order: Archived, Needs input, Working, Ready for review, Done. |
 | C7 | An account row is a person or one of their orgs. Tapping an org switches with Clerk `setActive`. Tapping a remembered person signs out and opens sign-in with that email filled in. |
-| C8 | Menu hold: tap opens the drawer, hold 0.35 s opens the fan, a further 0.4 s on Bots opens the shelf. |
+| C8 | **☰** only opens the drawer; it has no hold. The Shelves hub is the only mode switch: hold the mode orb for 450 ms, or tap the drawer's mode icon, which fires `allternit:open-mode-hub`. The hub rises from the bottom edge. |
 
-## Deck open rules
+## Composer rest and Tools
 
-`src/components/composer-deck/deck-open.ts` exports `deckOpen({ focused, hasDraft, swipedOpen, modeArmed })`, `nextSwipedOpen(current, startY, endY)` and `DECK_SWIPE_PX` (24). `ComposerDeck` takes `bandOpen` and `onFocusWithinChange`. Hosts with no deck are unchanged.
+The composer is one line at rest and opens on focus. The focus ring draws only for keyboard focus (`src/lib/input-modality.ts` sets `data-modality` on the html element). The mode orb and the New orb sit at the composer's top corners. The New orb shows only when a session is open, and logic for the new item lives in `src/shell/new-item.ts`. Hosts with no composer, such as Settings, open the hub through the `allternit:open-mode-hub` event.
 
 ## Code status signals (C6)
 
@@ -33,9 +33,15 @@ The node owns the signals, in `cmd/allternit-api/src/code_session_status.rs`. Th
 - Web helpers: `codeSessionFilterStatus`, `isNeedsInput`, `needsInputKind`, `isReadyForReview` in `src/lib/code-session-status.ts`. Filters live in `components/session-overview/code-session-filter.ts`.
 - Known limits: events while the node is disconnected are missed, and a thread placed on another server takes its flags from that server.
 
-## Menu hold state machine
+## Shelves hub
 
-`src/fabric-session/phone/menu-hold.ts` is a pure reducer: `reduceMenuHold(state, event)` returns `{ state, effects }`. Constants: `HOLD_MS` 350, `BOTS_HOLD_MS` 400, `HOLD_SLOP_PX` 12. State is `{ overlay: 'none' | 'fan' | 'shelf', pressing, held, target, drawerOpen, lockedMode, openedByAction }`. Events: `press`, `release`, `cancel`, `holdTimer`, `botsHoldTimer`, `move`, `pick`, `openFan`, `drawerOpened`, `drawerClosed`, `outsideTap`, `setLocked`. `menuOverlayVisible` never reports the fan or shelf while the drawer is open. `menu-hold.test.ts` includes a random-walk test of that rule. `phone-nav.ts` routes events through `dispatchMenuHold`. With `lockedMode` (the Bots app), a hold goes straight to the shelf.
+`src/shell/mode-hub/contract.ts` holds the sections for each mode, the timings (`HOLD_MS` 450, `HOVER_INTENT_MS` 120), the haptic map and the event names. `ModeHubHost` is mounted once in the phone shell and once in the desktop shell. After a pick it fires `allternit:mode-arrive` with `{ from, to }`. With reduced motion, states change at once. The old menu hold fan and Bots shelf (`menu-hold.ts`) are removed.
+
+## Titles, intros and arrivals
+
+The motion numbers (dock distance, springs, intro unlock, arrival timeline, drawer push) live in `src/design/polish/contract.ts` and `dock-math.ts`. Swift and Kotlin copy them. Arrivals and mode intros trigger on a change in the shell mode store, and also on `allternit:mode-arrive`, so pill taps, rail buttons and deep links count. With reduced motion, titles and arrivals fade. Haptics do nothing on Desktop and iOS Safari. For users, see [Phone titles, intros and arrivals](/guides/phone-titles-and-intros).
+
+First-visit intros store their seen state in the account flags `intro*SeenAt` (see [Account flags](/api/me#account-flags)). Each client keeps a local cache so an intro shows once even when offline.
 
 ## Calm errors
 
@@ -60,15 +66,14 @@ These open a screen directly, for screenshots and checks. They exist in DEBUG bu
 | --- | --- |
 | `-calm-gallery` | The design gallery: haptics, motion, glass surfaces. |
 | `-calm-chip=none`, `noComputer`, `cantReach`, `waking`, `gate`, `starting`, `suspended`, `runway` | The computer chip in that state. |
-| `-calm-deck-open` | Chat with the composer deck open. |
+| `-calm-deck-open` | Chat with the composer open. |
 | `-calm-swipe-tip` | The swipe-up tip. |
 | `-open-plus-sheet` | The Add to chat sheet. |
 | `-open-plus-permission` | The Permission page in the sheet. |
 | `-open-plus-computer` | The Computer page in the sheet. |
 | `-open-chat-menu` | The chat ⋯ menu. |
 | `-calm-drawer-open` | The drawer, open. |
-| `-calm-fan` | The mode fan (was `-open-mode-dial`). |
-| `-calm-shelf` | The bots shelf. |
+| `-calm-fan` | The Shelves hub (was the mode fan). |
 | `-calm-recents-select` | The recents overview in select mode. |
 | `-calm-overview-menu` | The overview ⋯ menu. |
 | `-calm-search` | Overview search. |
