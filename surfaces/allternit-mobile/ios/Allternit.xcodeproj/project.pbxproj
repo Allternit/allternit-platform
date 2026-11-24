@@ -781,6 +781,7 @@
 		CDBE766ADDB1A7D4ABB915A5 /* LoopDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA1F5C46AE2770C71DDB998A /* LoopDetailView.swift */; };
 		CE5C0D1CAD568747CB13871F /* OnDeviceStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B7E6C4171698FB1EB345DDE /* OnDeviceStorage.swift */; };
 		CEBA5B0E5446EA915B95779D /* TalkIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3E20F23087ED407F24BFE7C /* TalkIntents.swift */; };
+		CEC878A10BE82BA30FD64D28 /* ShellWordmark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68770CA580D8EB085E9D933C /* ShellWordmark.swift */; };
 		CF133711F3DABE67BF22605F /* BotFormModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04121F7ECE6C6C2E89B41C14 /* BotFormModel.swift */; };
 		CF3DDCF1ECA6987106D2BA7C /* agent-frame-fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 8132B6EA2B362BB5C668DF57 /* agent-frame-fixtures */; };
 		CFA280024CB6E4DC76505C7D /* CoworkProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93E956710126053EB031C4BB /* CoworkProject.swift */; };
@@ -1441,6 +1442,7 @@
 		6835A1BA6B53B5D99908A86C /* AutomationTasksPhoneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationTasksPhoneView.swift; sourceTree = "<group>"; };
 		683D928817A8F0D03BBDAB8B /* SampleHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
 		6873E8A44AEBA097FF065BFB /* FilesDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilesDashboardView.swift; sourceTree = "<group>"; };
+		68770CA580D8EB085E9D933C /* ShellWordmark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellWordmark.swift; sourceTree = "<group>"; };
 		6878E4CDD256FFFAF91E6A26 /* LoopActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopActivityAttributes.swift; sourceTree = "<group>"; };
 		6898AC580AE4F2DA70B58BF8 /* pdf-templates.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "pdf-templates.js"; sourceTree = "<group>"; };
 		68A7DF64FF7D38E51B509122 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
@@ -2618,6 +2620,7 @@
 				D67DA49FC0BE293248CD0D62 /* SessionOverviewView.swift */,
 				CC0FCE23EDD7E1E9117E5454 /* ShellSearchView.swift */,
 				EEA17DED9B0AFAA5D59A2E83 /* ShellSessionsStore.swift */,
+				68770CA580D8EB085E9D933C /* ShellWordmark.swift */,
 				281FE115C268C778621CA8D5 /* WorkspaceShell.swift */,
 				402BF862DE836568C255CC14 /* Backdrop */,
 				EE2F0E294EF37B64A79609DF /* ModeHub */,
@@ -5105,6 +5108,7 @@
 				B309E02609EF8F546B8721C8 /* SharedPhoneRun.swift in Sources */,
 				F498763B791A4897EDCC5C49 /* ShellSearchView.swift in Sources */,
 				245B99D1CE7E7E24D84FF973 /* ShellSessionsStore.swift in Sources */,
+				CEC878A10BE82BA30FD64D28 /* ShellWordmark.swift in Sources */,
 				E949F4453779DBD9E7181285 /* SherpaOnnx.swift in Sources */,
 				AC0F80AEBAED5B2ECE689ED7 /* ShortcutBridge.swift in Sources */,
 				A1416B7DDF3C1E6AD9B1D91E /* SignInStageChrome.swift in Sources */,
