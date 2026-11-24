@@ -42,20 +42,32 @@ struct BotLaunchpadView: View {
     private var selectedBot: AgentRecord? { selectedBotId.flatMap { id in bots.first { $0.id == id } } }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if showsPickHow { pickHowCard }
-                roster
-                header
+        // BOTS block title (T11): it docks into the PhoneHeader's centre while the
+        // page scrolls. The header sits just above this view, so its centre is
+        // half a bar (PhoneHeader.barHeight 52 / 2) above our top edge; the dock draws from the screen's top.
+        GeometryReader { geo in
+            DockingTitleScrollView(
+                title: "Bots",
+                chrome: .overlay(barCenter: geo.frame(in: .global).minY - 26)
+            ) {
+                VStack(alignment: .leading, spacing: 24) {
+                    if showsPickHow { pickHowCard }
+                    roster
+                    header
+                }
+                .padding(.top, 8)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 8)
-            .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.interactively)
         // One bot in To: the top of the page wears its colour (BotColorWash),
-        // and so do the header and the Bots rail.
-        .background { BotWashedBackground(color: .some(colors.hex(for: selectedBot))).ignoresSafeArea() }
+        // and so do the header and the Bots rail. The dock paints its own page
+        // fill, so the wash is a see-through layer on top of it.
+        .overlay(alignment: .top) {
+            BotColorWash(color: colors.hex(for: selectedBot))
+                .frame(height: BotColorWash.height)
+                .allowsHitTesting(false)
+        }
         .claimsBotTint(selectedBotId)
         .overlay {
             if let id = arrivingBotId, let bot = bots.first(where: { $0.id == id }) {
