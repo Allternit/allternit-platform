@@ -16,3 +16,5 @@ f63d120981d97e9595189a2a97f21efc3cec98c0:platform/host-probe/src/http.rs:generic
 5c4fe3669538529cbbf596ce14befdbf0ad798a9:platform/host-probe/fixtures/logs/mask-cases.txt:jwt:30
 5c4fe3669538529cbbf596ce14befdbf0ad798a9:platform/host-probe/fixtures/logs/mask-cases.txt:private-key:51
 acfbb0728dc25fdfa933440e59c206c377fe6158:cmd/allternit-cloud-api/src/routes/computers_host_tests.rs:generic-api-key:486
+# 2026-11-23: truncated fake PEM headers in the SSH key rejection test
+149078a9c95625a13a91811f11655a8ea5752214:cmd/allternit-cloud-api/src/services/provision_ssh_keys.rs:private-key:619

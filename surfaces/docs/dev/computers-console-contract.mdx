@@ -214,9 +214,9 @@ Errors:
 
 | Route | Body and result | Status |
 |---|---|---|
-| `GET /api/v1/computers/:id/ssh-keys` | `{ keys: [...] }` | planned (step 2.7) |
-| `POST /api/v1/computers/:id/ssh-keys` | Add a key | planned (step 2.7) |
-| `DELETE /api/v1/computers/:id/ssh-keys/:keyId` | Remove a key | planned (step 2.7) |
+| `GET /api/v1/computers/:id/ssh-keys` | `{ keys: [{ id, label, fingerprint, kind, keyType, createdAt, expiresAt }], connect }`. Oldest first. `kind` is `computer` (a person's key, `expiresAt` null) or `agent` (short-lived, `expiresAt` set). The key itself is never sent back. `connect` is `{ host, port, user, command }` from Orgo while the computer runs and has keys, otherwise null. Never wakes the computer | built (step 2.7) |
+| `POST /api/v1/computers/:id/ssh-keys` | `{ label, publicKey, kind?, expiresInMinutes? }` returns 201 with the key's fields plus `requiresRestart` (and a `message` when it is true). `expiresInMinutes` is for agent keys only: default 60, 5 to 1440. 400 `{ error }` with a plain `message`: `private_key` (nothing is stored), `invalid_public_key`, `one_key_only`, `public_key_required`, `too_many_keys` (20 keys or 16 KB), `invalid_kind`, `invalid_expiry`. 409 `key_exists`, 409 `asleep` or `busy` | built (step 2.7) |
+| `DELETE /api/v1/computers/:id/ssh-keys/:keyId` | `{ removed, requiresRestart }`. Removing the last key turns SSH off on the computer. 404 `key_not_found` | built (step 2.7) |
 | `GET /api/v1/computers/snippets` | `{ snippets: [{ id, name, command, description? }] }` (a bare array is also accepted) | planned (step 2.9) |
 | `POST /api/v1/computers/snippets/:id/run` | `{ computers: [], approvalConfirmed }` returns `{ runs: [{ computerId, approvalId, changeId, status, error }] }` | planned (step 2.9) |
 | `POST /api/v1/computers/:id/restart` | No body. `{ instance }`. 409 `{ error: "asleep", status }` when it is not running (never woken), 409 `{ error: "busy", status }` mid-change | built (step 2.4) |
@@ -230,7 +230,7 @@ Errors:
 
 Snippet runs reuse the approval mint above, one approval per computer.
 
-For the routes above that act on cloud computers (restart, move, rebuild, backups), `:id` must be one of the caller's own cloud rows. A paired or desktop id is 404 `{ error: "not_a_cloud_computer" }`, and a computer on a host that cannot do the action is 501 `{ error: "not_supported", action }`. Every error body also carries a plain `message` that clients can show as it is.
+For the routes above that act on cloud computers (restart, move, rebuild, backups, SSH keys), `:id` must be one of the caller's own cloud rows. A paired or desktop id is 404 `{ error: "not_a_cloud_computer" }`, and a computer on a host that cannot do the action is 501 `{ error: "not_supported", action }`. Every error body also carries a plain `message` that clients can show as it is.
 
 Location and template are picked on create: `POST /api/v1/provisioned-instances` takes optional `location` (`nyc`, `chi`, `lon` or `syd`) and `template` (an id from `GET /api/v1/computers/templates`). A location outside those four is 400 `{ error: "invalid_location", locations }`, and a template not on the list is 400 `{ error: "invalid_template" }`. A location asked of a computer that is not routed to Orgo is 400 `{ error: "location_not_available" }`. A full city is 503 `{ error: "region_unavailable", location }`, and no computer or row is left behind. The location is stored in `provisioned_instances.location` and shown as the console row's `region`.
 
@@ -284,7 +284,14 @@ Until the helper sits there, `GET /v1/host/elevation/plan` and `POST /v1/host/el
 
 ## SSH key model
 
-Each computer gets its own key. Agents get short-lived keys. The probe writes a marked `authorized_keys` block and only edits inside the markers. Paired computers are reached over their mesh IP (the mesh `autogroup:self` rule is untouched). Cloud computers use the Orgo SSH endpoint. Mesh stays off for cloud computers.
+Each computer has its own list of public keys in `computer_ssh_keys` (migration 156): people's keys, and short-lived agent keys that expire. Only public keys are stored. A pasted private key is refused with a plain message before anything is written. Keys are owner-only, like the other cloud settings routes.
+
+- **Cloud computers (built, step 2.7)** use Orgo's Direct SSH (Linux only). Orgo replaces the whole key set on each `POST /computers/{id}/ssh` (one key per line, 16 KB at most) and `DELETE /computers/{id}/ssh` turns SSH off. So every add or remove sends the full current set, under a lock on the computer's row, and the row is written only after Orgo takes it. When Orgo answers `requires_restart: true`, the console says to restart once; the old keys keep working until then. Connect on the port from `connect`, never 22 (port 22 on that host is Orgo's server).
+- **Agent keys** expire after `expiresInMinutes`. A sweep every 5 minutes sends the set without the expired keys, then deletes them. An expired key stays listed (with its past `expiresAt`) until the computer has dropped it, so the list never hides a key that still works.
+- **Rebuild and move** make a fresh disk with no keys, so the list is cleared.
+- **Standby (Incus) and free computers** answer 501 `{ error: "not_supported", action: "ssh_keys" }`.
+- **Paired and desktop computers are not built yet.** They answer 404 `not_a_cloud_computer`. The plan: the probe writes a marked `authorized_keys` block and edits only inside the markers. They are reached over their mesh IP (the mesh `autogroup:self` rule is untouched). Mesh stays off for cloud computers. This needs a node action for keys (the action list above has none), approved through the approval flow.
+- Orgo does not report SSH logins, so there is no last-used time.
 
 ## Cloud computer settings (Orgo)
 
@@ -307,6 +314,9 @@ Each computer gets its own key. Agents get short-lived keys. The probe writes a 
 |---|---|
 | 153 | Pairing link (`paired_computers.runtime_device_id`), instance location and template |
 | 154 | `computer_metric_samples`, alert rules |
-| 155 | SSH keys, snippets |
+| 155 | Taken by `155_platform_agent_runtime.sql` (Harness & Bots P6, #2784) |
+| 156 | `computer_ssh_keys` (step 2.7) |
+
+Snippets (step 2.9) take the next free number above 156.
 
 Take the next free number above origin/main and open PRs when the files are written. Production applies migrations through the cloud-api deploy, not sqlx (see the cloud-api deploy notes).

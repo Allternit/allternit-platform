@@ -1341,6 +1341,75 @@ impl ProvisionBackend for OrgoBackend {
             message: "orgo: backup restore answer is not an in-place restore".to_string(),
         })
     }
+
+    /// `POST /computers/{id}/ssh` `{ public_key }`: one key per line; the keys
+    /// sent replace the keys on the computer (Orgo Direct SSH, Linux only).
+    /// `requires_restart: true` = the key is in place after one restart.
+    async fn set_ssh_keys(&self, name: &str, keys: &[String]) -> Result<bool, ProvisionError> {
+        let id = self.require_id(name).await?;
+        let (status, json) = self
+            .send(
+                reqwest::Method::POST,
+                &format!("/computers/{id}/ssh"),
+                Some(&serde_json::json!({ "public_key": keys.join("\n") })),
+                None,
+            )
+            .await?;
+        if !is_success(status) {
+            return Err(orgo_error(status, &json));
+        }
+        Ok(json.get("requires_restart").and_then(|v| v.as_bool()).unwrap_or(false))
+    }
+
+    /// `DELETE /computers/{id}/ssh`: SSH off, saved keys removed (on a running
+    /// computer Orgo also deletes `/root/.ssh/authorized_keys`).
+    async fn disable_ssh(&self, name: &str) -> Result<(), ProvisionError> {
+        let id = self.require_id(name).await?;
+        let (status, json) = self
+            .send(reqwest::Method::DELETE, &format!("/computers/{id}/ssh"), None, None)
+            .await?;
+        if is_success(status) {
+            Ok(())
+        } else {
+            Err(orgo_error(status, &json))
+        }
+    }
+
+    /// `GET /computers/{id}/ssh`: `ipv4_host`, `ipv4_port`, `ssh_user`,
+    /// `ssh_command`. `enabled: false` (Orgo may still return the last port)
+    /// or no usable port is `None`.
+    async fn ssh_endpoint(&self, name: &str) -> Result<Option<SshEndpoint>, ProvisionError> {
+        let id = self.require_id(name).await?;
+        let (status, json) = self
+            .send(reqwest::Method::GET, &format!("/computers/{id}/ssh"), None, None)
+            .await?;
+        if !is_success(status) {
+            return Err(orgo_error(status, &json));
+        }
+        Ok(parse_orgo_ssh(&json))
+    }
+}
+
+/// Reads Orgo's `GET /computers/{id}/ssh` answer; `None` unless SSH is on
+/// and the host and a port other than 22 are there.
+pub(crate) fn parse_orgo_ssh(json: &serde_json::Value) -> Option<SshEndpoint> {
+    if json.get("enabled").and_then(|v| v.as_bool()) != Some(true) {
+        return None;
+    }
+    let host = json.get("ipv4_host").and_then(|v| v.as_str()).filter(|h| !h.is_empty())?.to_string();
+    let port = json
+        .get("ipv4_port")
+        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+        .and_then(|p| u16::try_from(p).ok())
+        .filter(|p| *p != 0 && *p != 22)?;
+    let user = json.get("ssh_user").and_then(|v| v.as_str()).filter(|u| !u.is_empty()).unwrap_or("root").to_string();
+    let command = json
+        .get("ssh_command")
+        .and_then(|v| v.as_str())
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("ssh -p {port} {user}@{host}"));
+    Some(SshEndpoint { host, port, user, command })
 }
 
 /// True when an Orgo restore answer is an operation on `source_id` itself:
@@ -1868,6 +1937,8 @@ impl ProvisioningService {
                 CloudActionError::Api(error)
             });
         }
+        // The fresh disk has no SSH keys; the console list says so.
+        super::ssh_keys::forget_ssh_keys(&self.db, &row.id).await;
         tracing::info!(id = %row.id, "cloud computer rebuilt; first boot running");
         Ok(self.get_for_user(&row.id, user_id).await?)
     }
@@ -2006,6 +2077,8 @@ impl ProvisioningService {
         if row.status == "running" {
             record_instance_stopped(&self.db, &row.id, "move").await?;
         }
+        // The computer in the new city starts with no SSH keys.
+        super::ssh_keys::forget_ssh_keys(&self.db, &row.id).await;
         tracing::info!(id = %row.id, from = ?current, to = %target, "cloud computer moved; first boot running");
         Ok(self.get_for_user(&row.id, user_id).await?)
     }
@@ -2352,6 +2425,10 @@ pub(crate) mod tests {
         /// The `POST /computers/{id}/backup/restore` answer (Null = an
         /// in-place restore operation on that computer).
         restore_reply: serde_json::Value,
+        /// The keys `POST /computers/{id}/ssh` saved (None = SSH off).
+        ssh_keys: Option<String>,
+        /// Answer `POST /computers/{id}/ssh` with `requires_restart: true`.
+        ssh_requires_restart: bool,
     }
 
     type FakeState = Arc<Mutex<Fake>>;
@@ -2517,6 +2594,35 @@ pub(crate) mod tests {
                             other => other.clone(),
                         };
                         reply(StatusCode::ACCEPTED, answer)
+                    }
+                    ("POST", ["ssh"]) => {
+                        let keys = json_body["public_key"].as_str().unwrap_or("").to_string();
+                        if keys.len() > 16 * 1024 {
+                            return reply(
+                                StatusCode::BAD_REQUEST,
+                                serde_json::json!({ "error": "public_key too large (max 16 KB)" }),
+                            );
+                        }
+                        fake.ssh_keys = Some(keys);
+                        let restart = fake.ssh_requires_restart;
+                        reply(StatusCode::OK, serde_json::json!({ "success": true, "requires_restart": restart }))
+                    }
+                    ("GET", ["ssh"]) => {
+                        let enabled = fake.ssh_keys.is_some();
+                        reply(
+                            StatusCode::OK,
+                            serde_json::json!({
+                                "enabled": enabled,
+                                "ipv4_host": "203.0.113.7",
+                                "ipv4_port": 40022,
+                                "ssh_user": "root",
+                                "ssh_command": "ssh -p 40022 root@203.0.113.7",
+                            }),
+                        )
+                    }
+                    ("DELETE", ["ssh"]) => {
+                        fake.ssh_keys = None;
+                        reply(StatusCode::OK, serde_json::json!({ "success": true }))
                     }
                     ("POST", ["bash"]) => {
                         let command = json_body["command"].as_str().unwrap_or("").to_string();
