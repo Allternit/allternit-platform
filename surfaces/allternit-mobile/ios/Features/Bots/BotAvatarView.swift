@@ -488,3 +488,174 @@ struct PortraitAvatar: View {
         }
     }
 }
+
+// MARK: - Bot presence (Allo motion kit)
+
+/// What the bot is doing on the phone. Wave 2 only passes this.
+enum BotPresence: Equatable {
+    case idle        // bob
+    case suitUp      // call went live: headset spins in
+    case talking     // bot speaking: head tilt + mic pulse
+    case listening   // on a call, other side speaking: bob, headset on, mic still
+    case suitDown    // call ended: headset spins out
+
+    var headsetOn: Bool { self == .suitUp || self == .talking || self == .listening }
+}
+
+/// Headset band (web CallHeadset path, 96-unit box).
+private struct HeadsetBand: Shape {
+    func path(in rect: CGRect) -> Path {
+        let k = rect.width / 96
+        var p = Path()
+        p.move(to: CGPoint(x: 16 * k, y: 44 * k))
+        p.addCurve(to: CGPoint(x: 80 * k, y: 44 * k),
+                   control1: CGPoint(x: 16 * k, y: 2 * k), control2: CGPoint(x: 80 * k, y: 2 * k))
+        return p
+    }
+}
+
+/// The two ear cups.
+private struct HeadsetCups: Shape {
+    func path(in rect: CGRect) -> Path {
+        let k = rect.width / 96
+        var p = Path()
+        for x in [9.0, 76.0] {
+            p.addRoundedRect(in: CGRect(x: x * k, y: 36 * k, width: 11 * k, height: 18 * k),
+                             cornerSize: CGSize(width: 4 * k, height: 4 * k))
+        }
+        return p
+    }
+}
+
+/// The mic boom.
+private struct HeadsetBoom: Shape {
+    func path(in rect: CGRect) -> Path {
+        let k = rect.width / 96
+        var p = Path()
+        p.move(to: CGPoint(x: 14 * k, y: 53 * k))
+        p.addCurve(to: CGPoint(x: 34 * k, y: 64 * k),
+                   control1: CGPoint(x: 14 * k, y: 64 * k), control2: CGPoint(x: 24 * k, y: 68 * k))
+        return p
+    }
+}
+
+/// The headset: band and cups in the text color, mic tip in the live-call green.
+private struct BotHeadset: View {
+    var size: CGFloat
+    var micScale: CGFloat = 1
+    var micOpacity: Double = 1
+
+    var body: some View {
+        let k = size / 96
+        // Under 36 pt the band goes from 5 to 6 units so it still reads.
+        let band: CGFloat = (size < 36 ? 6 : 5) * k
+        ZStack {
+            HeadsetBand().stroke(Color("TextPrimary"), style: StrokeStyle(lineWidth: band, lineCap: .round))
+            HeadsetCups().fill(Color("TextPrimary"))
+            HeadsetBoom().stroke(Color("TextPrimary"), style: StrokeStyle(lineWidth: 3 * k, lineCap: .round))
+            Circle().fill(Theme.statusSuccess)
+                .frame(width: 7 * k, height: 7 * k)
+                .scaleEffect(micScale)
+                .opacity(micOpacity)
+                .position(x: 36 * k, y: 63 * k)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Suit-up / suit-down: y -46, rotate -200 (in) or +160 (out), scale 0.55, fade.
+private struct HeadsetSpin: ViewModifier {
+    var y: CGFloat
+    var degrees: Double
+    var active: Bool
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(active ? 0.55 : 1, anchor: UnitPoint(x: 0.5, y: 30.0 / 96))
+            .rotationEffect(.degrees(active ? degrees : 0), anchor: UnitPoint(x: 0.5, y: 30.0 / 96))
+            .offset(y: active ? y : 0)
+            .opacity(active ? 0 : 1)
+    }
+}
+
+private extension View {
+    @ViewBuilder func presenceMatched(_ ns: Namespace.ID?, id: String) -> some View {
+        if let ns { matchedGeometryEffect(id: id, in: ns) } else { self }
+    }
+}
+
+/// One wrapper around a bot's avatar for the bot phone: bob and talk tilt on the
+/// container, a headset that spins in and out, a glance toward a new message
+/// (Gizzi only), and shrink-to-chip when a caller passes a namespace.
+/// Gizzi is a raster asset on iOS, so blink and look-around have no eyes to
+/// move; every look gets the container motion. Static under Reduce Motion.
+struct BotPresenceView: View {
+    let bot: AgentRecord
+    var size: CGFloat = 40
+    var presence: BotPresence = .idle
+    /// A new message arrived on this side (-1 left ... 1 right). Gizzi turns toward it for 1.2 s.
+    var lookAt: CGFloat? = nil
+    /// Pass a namespace to make the avatar a shared element (big face to chip).
+    var namespace: Namespace.ID? = nil
+    var matchedId: String = "botPresenceFace"
+
+    @ReducedMotion private var reduceMotion
+    @State private var glance: CGFloat = 0
+
+    private static let spring = Animation.spring(response: 0.38, dampingFraction: 0.45) // ~stiffness 260, damping 14
+
+    var body: some View {
+        let box = size < 36 ? max(size, 34) : size
+        Group {
+            if reduceMotion {
+                content(box: box, t: 0)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
+                    content(box: box, t: tl.date.timeIntervalSinceReferenceDate)
+                }
+            }
+        }
+        .frame(width: box, height: box)
+        .presenceMatched(namespace, id: matchedId)
+        .onChange(of: lookAt) { _, new in
+            guard let new, !reduceMotion, BotAvatarSource.resolve(bot) == .gizzi else { return }
+            withAnimation(.easeOut(duration: 0.25)) { glance = new }
+            Task {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                withAnimation(.easeOut(duration: 0.25)) { glance = 0 }
+            }
+        }
+    }
+
+    private func content(box: CGFloat, t: Double) -> some View {
+        let k = box / 96
+        let talking = presence == .talking
+        var y = 0.0, tilt = 0.0, micScale = 1.0, micOpacity = 1.0
+        if !reduceMotion {
+            if talking {
+                let p = (t / 0.9).truncatingRemainder(dividingBy: 1)          // 0.9 s loop
+                tilt = p < 1.0 / 3 ? -9 * p : p < 2.0 / 3 ? -3 + 15 * (p - 1.0 / 3) : 2 - 6 * (p - 2.0 / 3)
+                y = -1.5 * sin(.pi * p)
+                let m = sin(.pi * (t / 0.6).truncatingRemainder(dividingBy: 1)) // 0.6 s mic loop
+                micScale = 1 + 0.6 * m
+                micOpacity = 1 - 0.3 * m
+            } else {
+                y = -2 * (1 - cos(2 * .pi * t / 2.4)) / 2                      // 2.4 s bob, 0 to -2 to 0
+            }
+        }
+        return ZStack {
+            BotAvatarView(bot: bot, size: box, live: presence != .idle)
+            if presence.headsetOn {
+                BotHeadset(size: box, micScale: micScale, micOpacity: micOpacity)
+                    .transition(reduceMotion ? .identity : .asymmetric(
+                        insertion: .modifier(active: HeadsetSpin(y: -46 * k, degrees: -200, active: true),
+                                             identity: HeadsetSpin(y: -46 * k, degrees: -200, active: false)),
+                        removal: .modifier(active: HeadsetSpin(y: -46 * k, degrees: 160, active: true),
+                                           identity: HeadsetSpin(y: -46 * k, degrees: 160, active: false))))
+            }
+        }
+        .animation(reduceMotion ? nil : Self.spring, value: presence.headsetOn)
+        .offset(x: glance * 3 * k, y: y * k)
+        .rotationEffect(.degrees(tilt))
+    }
+}
