@@ -119,7 +119,9 @@ Auth: a Clerk session JWT, or an API token with the `account` scope.
 
 **Device tokens may read /me/flags.** `GET` also accepts a paired computer's runtime device credential (`allternit_runtime_…`) and answers with the flags of the account that owns the device. This is how a gizzi that is only paired reads `files_drive`. It is read-only: a `PUT` with a device credential is a `403`. The credential must be valid, unexpired and not revoked. No other route accepts it because of this (device credentials elsewhere keep only their existing narrow routes, such as Cloud chat completions).
 
-The only flag today is `botsIntroSeenAt`: when the person finished or skipped the **Meet your bots** card (an ISO-8601 time). Every allowed flag is always present in the response, `null` when unset.
+The flags are all ISO-8601 times. `botsIntroSeenAt` is when the person finished or skipped the **Meet your bots** card. It also marks the Bots mode intro as seen. The first-visit intros have one key each: `introHomeSeenAt`, `introCodeSeenAt`, `introAciSeenAt`, `introProjectsSeenAt`, `introArtifactsSeenAt`, `introAutomationSeenAt`, `introCustomizeSeenAt` and `introFreeweightsSeenAt`. See [Phone titles, intros and arrivals](/guides/phone-titles-and-intros).
+
+To show an intro again, `PUT` the key with `null`. This clears it. For example, `{ "introHomeSeenAt": null }`. Every allowed flag is always present in the response, `null` when unset.
 
 Response (both methods):
 
@@ -131,7 +133,7 @@ Response (both methods):
 }
 ```
 
-`PUT` body: an object of the flags to set. Each value must be an RFC 3339 / ISO-8601 time string of at most 40 characters. Only the flags you send change; other metadata on the account is kept.
+`PUT` body: an object of the flags to set. Each value must be an RFC 3339 / ISO-8601 time string of at most 40 characters, or `null` to clear an intro key. Only the flags you send change; other metadata on the account is kept.
 
 ```json
 { "botsIntroSeenAt": "2026-10-20T12:00:00.000Z" }
