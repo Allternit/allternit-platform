@@ -252,10 +252,76 @@ function renderDiff(hunks: Hunk[], filePath: string, write: Write) {
 }
 
 // ---------------------------------------------------------------------------
+// Braille dot progress (media and audio generation)
+// ---------------------------------------------------------------------------
+
+const DOT_REST = "\u2802" // one dot
+const DOT_FILLED = "\u28FF" // all eight dots
+// Light to dense, for the soft edges of the sweeping band.
+const DOT_RAMP = ["\u2802", "\u2806", "\u2816", "\u2836", "\u28B6", "\u28F6", "\u28FE"]
+const BAND_HALF = 3
+export const DOT_FPS = 10
+
+/**
+ * One braille line: a light band sweeping across resting dots. Pure: the same
+ * (width, t, fraction) always gives the same string.
+ *
+ * `t` is seconds. With a real `fraction` (0 to 1) the cells it has covered are
+ * solid and the band sweeps only over the rest; without one the band sweeps the
+ * whole width. A missing or non-finite `t` draws the still frame (no band).
+ */
+export function dotBandFrame(width: number, t: number | undefined, fraction?: number): string {
+  const w = Math.max(1, Math.floor(width))
+  const done = fraction === undefined || !Number.isFinite(fraction) ? 0 : Math.round(Math.min(1, Math.max(0, fraction)) * w)
+  const span = w - done
+  let out = DOT_FILLED.repeat(done)
+  if (span <= 0) return out
+  const moving = t !== undefined && Number.isFinite(t)
+  // The band enters left of the open stretch and leaves past its right end.
+  const cycle = span + BAND_HALF * 2
+  const center = moving ? ((((t as number) * 14) % cycle) + cycle) % cycle - BAND_HALF : -Infinity
+  for (let i = 0; i < span; i++) {
+    const d = Math.abs(i - center)
+    const level = Math.max(0, Math.round((1 - d / (BAND_HALF + 1)) * (DOT_RAMP.length - 1)))
+    out += d <= BAND_HALF ? DOT_RAMP[level]! : DOT_REST
+  }
+  return out
+}
+
+export type ProgressDetailLite = { label?: string; fraction?: number; stage?: string }
+
+export function progressDetailOf(meta: Record<string, unknown> | undefined): ProgressDetailLite | undefined {
+  const d = meta?.progress_detail
+  if (d && typeof d === "object") return d as ProgressDetailLite
+  if (typeof meta?.progress === "string") return { label: meta.progress }
+  return undefined
+}
+
+/** The text beside the dots: the real stage label, seconds, and a percent only when the fraction is real. */
+export function dotProgressText(detail: ProgressDetailLite, elapsedS: number): string {
+  const bits = [detail.label || detail.stage || "Working", `${Math.max(0, Math.floor(elapsedS))}s`]
+  if (typeof detail.fraction === "number" && Number.isFinite(detail.fraction)) bits.push(`${Math.round(Math.min(1, Math.max(0, detail.fraction)) * 100)}%`)
+  return bits.join(" \u00B7 ")
+}
+
+/** Animate only on a real, colored terminal, and not when the user asked for less motion. */
+export function shouldAnimateDots(env: Record<string, string | undefined> = process.env, isTTY: boolean = !!process.stdout.isTTY): boolean {
+  if (!isTTY) return false
+  if (env.NO_COLOR !== undefined && env.NO_COLOR !== "") return false
+  if (env.TERM === "dumb") return false
+  const reduced = env.GIZZI_REDUCED_MOTION ?? env.REDUCED_MOTION
+  if (reduced && reduced !== "0" && reduced.toLowerCase() !== "false") return false
+  return true
+}
+
+// ---------------------------------------------------------------------------
 // The printer
 // ---------------------------------------------------------------------------
 
-type Tracked = { header: Header; printed: boolean; liveChars: number; liveLines: number; liveHidden: number }
+type Tracked = { header: Header; printed: boolean; liveChars: number; liveLines: number; liveHidden: number; startedAt: number; lastLabel?: string }
+
+/** Where the animated line is drawn; defaults to stdout. */
+export type DotSink = { write(text: string): unknown }
 
 export class ToolPrinter {
   private parts = new Map<string, Tracked>()
@@ -264,7 +330,13 @@ export class ToolPrinter {
   private toolCount = 0
   private changes: TurnSummary.FileChange[] = []
 
-  constructor(private readonly write: Write) {}
+  private dots?: { id: string; timer?: ReturnType<typeof setInterval>; drawn: boolean }
+  private detail?: ProgressDetailLite
+
+  constructor(
+    private readonly write: Write,
+    private readonly opts: { animate?: boolean; sink?: DotSink; now?: () => number } = {},
+  ) {}
 
   get tools() {
     return this.toolCount
@@ -277,7 +349,7 @@ export class ToolPrinter {
   private track(part: PrintToolPart, t: NormalTool): Tracked {
     let tracked = this.parts.get(part.id)
     if (!tracked) {
-      tracked = { header: headerFor(t, part), printed: false, liveChars: 0, liveLines: 0, liveHidden: 0 }
+      tracked = { header: headerFor(t, part), printed: false, liveChars: 0, liveLines: 0, liveHidden: 0, startedAt: this.now() }
       this.parts.set(part.id, tracked)
       this.toolCount++
     }
@@ -302,12 +374,63 @@ export class ToolPrinter {
 
   /** Called before other output (assistant text) so the next header gets a gap. */
   separate() {
+    this.stopDots()
     this.bodyAbove = true
     this.last = ""
   }
 
+  private now(): number {
+    return (this.opts.now ?? Date.now)()
+  }
+
+  private get animate(): boolean {
+    return this.opts.animate ?? shouldAnimateDots()
+  }
+
+  /** Draw the one braille line in place; static runs print a plain line when the stage changes. */
+  private progress(part: PrintToolPart, tracked: Tracked) {
+    const detail = progressDetailOf(part.state.metadata)
+    if (!detail) return
+    this.detail = detail
+    if (!this.animate) {
+      if (tracked.lastLabel === (detail.label ?? "")) return
+      tracked.lastLabel = detail.label ?? ""
+      this.body(`  ${dim("\u2837")} ${detail.label || detail.stage || "Working"}`)
+      return
+    }
+    if (!this.dots || this.dots.id !== part.id) {
+      this.stopDots()
+      this.detail = detail
+      this.dots = { id: part.id, drawn: false }
+      this.dots.timer = setInterval(() => this.drawDots(tracked), Math.round(1000 / DOT_FPS))
+      this.dots.timer.unref?.()
+    }
+    this.drawDots(tracked)
+  }
+
+  private drawDots(tracked: Tracked) {
+    if (!this.dots || !this.detail) return
+    const elapsed = (this.now() - tracked.startedAt) / 1000
+    const text = dotProgressText(this.detail, elapsed)
+    const room = columns() - 4 - text.length - 1
+    const width = Math.max(8, Math.min(24, room))
+    const line = `  ${coral(dotBandFrame(width, elapsed, this.detail.fraction))} ${dim(text)}`
+    ;(this.opts.sink ?? process.stdout).write(`\r\u001b[2K${line}`)
+    this.dots.drawn = true
+  }
+
+  /** Stop the animation and erase its line so the next output starts clean. */
+  private stopDots() {
+    if (!this.dots) return
+    if (this.dots.timer) clearInterval(this.dots.timer)
+    if (this.dots.drawn) (this.opts.sink ?? process.stdout).write("\r\u001b[2K")
+    this.dots = undefined
+    this.detail = undefined
+  }
+
   /** A part update from the event stream. */
   update(part: PrintToolPart) {
+    if (part.state.status !== "running") this.stopDots()
     const t = normalizeTool(part.tool, part.state.input)
     const status = part.state.status
     if (status === "pending") return
@@ -317,6 +440,7 @@ export class ToolPrinter {
       // Edits print their header with counts once the change is known.
       if (t.name !== "edit" && t.name !== "write" && t.name !== "patch") this.ensureHeader(part, tracked)
       if (t.name === "bash") this.live(part, tracked)
+      else if (part.state.metadata && (t.name === "media_generate" || part.state.metadata.progress_detail)) this.progress(part, tracked)
       return
     }
 
