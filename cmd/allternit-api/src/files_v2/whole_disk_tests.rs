@@ -99,7 +99,7 @@ async fn call(
         b = b.header("x-allternit-whole-disk", "on");
     }
     if via == Via::RelaySigned {
-        for (k, v) in signed_headers(TOKEN, OWNER, method, &path, &bytes) {
+        for (k, v) in signed_headers(TOKEN, OWNER, method, path.split('?').next().unwrap(), &bytes) {
             b = b.header(k, v);
         }
     }
@@ -176,6 +176,7 @@ async fn a_signed_disk_root_is_never_shared_or_given_to_agents_and_stays_hidden_
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let id = body["root"]["id"].as_str().unwrap().to_string();
+    let top = body["root"]["root_item_id"].as_str().unwrap().to_string();
     assert_eq!(body["root"]["policy"]["shareable"], false, "{body}");
     assert_eq!(body["root"]["policy"]["agent_process"], false, "{body}");
 
@@ -187,7 +188,7 @@ async fn a_signed_disk_root_is_never_shared_or_given_to_agents_and_stays_hidden_
         "a disk root showed without the grant: {plain}"
     );
 
-    let (status, body) = call(&e, Via::Relay, "GET", &format!("/roots/{id}/list"), None).await;
+    let (status, body) = call(&e, Via::Relay, "GET", &format!("/roots/{id}/list?parent_id={top}"), None).await;
     assert_eq!(
         (status, body["error"].as_str()),
         (StatusCode::FORBIDDEN, Some("whole_disk_off")),
@@ -197,7 +198,7 @@ async fn a_signed_disk_root_is_never_shared_or_given_to_agents_and_stays_hidden_
         &e,
         Via::RelaySigned,
         "GET",
-        &format!("/roots/{id}/list"),
+        &format!("/roots/{id}/list?parent_id={top}"),
         None,
     )
     .await;
