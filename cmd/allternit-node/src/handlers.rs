@@ -12,8 +12,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::config::NodeConfig;
+use crate::engine::EngineSlot;
 use crate::launch::{self, LaunchAction};
-use crate::terminal::TerminalStore;
+use crate::terminal::{PtySpec, TerminalStore};
+use allternit_terminal_service as terminal_service;
+use futures_util::StreamExt;
 
 /// One inbound relay request handed to the handlers.
 #[derive(Debug, Clone)]
@@ -66,7 +69,11 @@ pub struct RelayStats {
 
 pub struct DaemonState {
     pub config: NodeConfig,
+    /// The PTY fallback (no pane engine on this computer). These die with
+    /// the daemon.
     pub terminals: TerminalStore,
+    /// The Factory pane engine, when one answers: it serves terminals first.
+    pub engine: EngineSlot,
     pub started: Instant,
     pub relay: RelayStats,
 }
@@ -74,6 +81,7 @@ pub struct DaemonState {
 impl DaemonState {
     pub fn new(config: NodeConfig) -> Arc<Self> {
         Arc::new(Self {
+            engine: EngineSlot::new(config.pane_socket.clone()),
             config,
             terminals: TerminalStore::new(),
             started: Instant::now(),
@@ -113,7 +121,7 @@ fn body_json(body: &[u8]) -> Value {
 
 /// Route one request. Pure dispatch — the relay client owns envelopes.
 pub async fn handle(state: &Arc<DaemonState>, request: &InboundRequest) -> HandlerResponse {
-    let (path, _query) = request
+    let (path, query) = request
         .path
         .split_once('?')
         .unwrap_or((request.path.as_str(), ""));
@@ -127,18 +135,19 @@ pub async fn handle(state: &Arc<DaemonState>, request: &InboundRequest) -> Handl
         ("GET", "/api/v1/node/processes") => processes().await,
         ("POST", "/api/v1/node/processes/kill") => kill_process(&request.body).await,
         ("POST", "/api/v1/node/launch") => launch(state, &request.body).await,
-        ("POST", "/terminal/create") => terminal_create(state, &request.body),
+        ("POST", "/terminal/create") => terminal_create(state, &request.body).await,
+        ("GET", "/terminal/list") => terminal_list(state, query).await,
         ("POST", path) if path.starts_with("/terminal/") && path.ends_with("/input") => {
-            terminal_action(state, path, "input", &request.body)
+            terminal_action(state, path, "input", &request.body).await
         }
         ("POST", path) if path.starts_with("/terminal/") && path.ends_with("/resize") => {
-            terminal_action(state, path, "resize", &request.body)
+            terminal_action(state, path, "resize", &request.body).await
         }
         ("POST", path) if path.starts_with("/terminal/") && path.ends_with("/close") => {
-            terminal_action(state, path, "close", &request.body)
+            terminal_action(state, path, "close", &request.body).await
         }
         ("GET", path) if path.starts_with("/terminal/") && path.ends_with("/stream") => {
-            terminal_stream(state, path)
+            terminal_stream(state, path).await
         }
         _ => HandlerResponse::not_found(
             "allternit-node serves node.core endpoints (health, exec, fs, processes, metrics, launch, terminal) only",
@@ -587,21 +596,6 @@ async fn launch(state: &Arc<DaemonState>, body: &[u8]) -> HandlerResponse {
     )
 }
 
-#[derive(Debug, Deserialize)]
-struct CreateTerminalRequest {
-    #[serde(default = "default_shell")]
-    shell: String,
-    #[serde(default)]
-    cwd: Option<String>,
-    #[serde(default = "default_cols")]
-    cols: u16,
-    #[serde(default = "default_rows")]
-    rows: u16,
-}
-
-fn default_shell() -> String {
-    "/bin/zsh".to_string()
-}
 /// The shell to spawn: the one asked for when this computer has it, else
 /// `$SHELL`, else bash or sh. The web UI asks for `/bin/zsh`, which a Linux
 /// cloud computer usually doesn't have (ENOENT).
@@ -618,22 +612,73 @@ fn resolve_shell(requested: &str) -> String {
         .unwrap_or_else(|| "/bin/sh".to_string())
 }
 
-fn default_cols() -> u16 {
-    80
-}
-fn default_rows() -> u16 {
-    24
+/// What an engine terminal call answered, as a relay response. A 503 means
+/// the engine stopped answering: the next request probes for it again.
+async fn engine_reply(state: &Arc<DaemonState>, mut reply: terminal_service::Reply) -> HandlerResponse {
+    if reply.status == 503 {
+        state.engine.forget().await;
+        reply.body.message = "the Factory pane engine on this computer is not answering".to_string();
+    }
+    HandlerResponse::json(
+        reply.status,
+        serde_json::to_value(&reply.body).unwrap_or_else(|_| json!({})),
+    )
 }
 
-fn terminal_create(state: &Arc<DaemonState>, body: &[u8]) -> HandlerResponse {
-    let request: CreateTerminalRequest = serde_json::from_slice(body).unwrap_or(CreateTerminalRequest {
-        shell: default_shell(),
-        cwd: None,
-        cols: default_cols(),
-        rows: default_rows(),
-    });
-    let shell = resolve_shell(&request.shell);
-    match state.terminals.create(&shell, request.cwd.as_deref(), request.cols, request.rows) {
+/// A request body as `T`; an empty body is `{}` (every field defaulted).
+fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, serde_json::Error> {
+    if body.iter().all(u8::is_ascii_whitespace) {
+        serde_json::from_slice(b"{}")
+    } else {
+        serde_json::from_slice(body)
+    }
+}
+
+/// The PTY create for a create request: `command` + `args` when given, else
+/// the shell.
+fn pty_spec(request: &terminal_service::CreateTerminalRequest) -> PtySpec {
+    let program = request
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
+    let argv = match program {
+        Some(program) => std::iter::once(program.to_string())
+            .chain(request.args.iter().cloned())
+            .collect(),
+        None => vec![resolve_shell(&request.shell)],
+    };
+    PtySpec {
+        argv,
+        cwd: request.cwd.clone(),
+        cols: request.cols,
+        rows: request.rows,
+        env: request.env.clone(),
+        title: request.title.clone(),
+    }
+}
+
+/// `POST /terminal/create` — the same body as allternit-api (`shell`, `cwd`,
+/// `cols`, `rows`, `command`, `args`, `env`, `title`) on both paths. A body
+/// that doesn't parse creates the default shell, as it always has here.
+async fn terminal_create(state: &Arc<DaemonState>, body: &[u8]) -> HandlerResponse {
+    let request = match parse_body::<terminal_service::CreateTerminalRequest>(body) {
+        Ok(request) => request,
+        Err(_) => serde_json::from_slice(b"{}").expect("an empty create request parses"),
+    };
+    if let Some(engine) = state.engine.get().await {
+        return match engine.create(request, None).await {
+            Ok(session_id) => HandlerResponse::json(
+                200,
+                terminal_envelope(true, "Terminal session created", Some(json!({ "session_id": session_id }))),
+            ),
+            Err(reply) => engine_reply(state, reply).await,
+        };
+    }
+    if let Err(message) = terminal_service::validate_env(&request.env) {
+        return HandlerResponse::json(400, terminal_envelope(false, &message, None));
+    }
+    match state.terminals.create_with(pty_spec(&request)) {
         Ok(created) => HandlerResponse::json(
             200,
             terminal_envelope(true, "Terminal session created", Some(json!({ "session_id": created.session_id }))),
@@ -643,6 +688,45 @@ fn terminal_create(state: &Arc<DaemonState>, body: &[u8]) -> HandlerResponse {
             terminal_envelope(false, &format!("unable to create terminal: {error}"), None),
         ),
     }
+}
+
+/// `?preview=N` from a query string.
+fn preview_param(query: &str) -> Option<u32> {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(key, _)| *key == "preview")
+        .and_then(|(_, value)| value.parse().ok())
+}
+
+/// The `GET /terminal/list` body: `terminals` plus which backend served them
+/// (`"pane"` or `"missing"`, so a client can tell a computer whose image has
+/// no pane engine yet). PTY sessions the node still holds come after the
+/// engine's terminals.
+pub fn list_body(mut terminals: Vec<Value>, ptys: Vec<Value>, engine: &str) -> Value {
+    terminals.extend(ptys);
+    json!({ "terminals": terminals, "engine": engine })
+}
+
+/// `GET /terminal/list?preview=N`.
+async fn terminal_list(state: &Arc<DaemonState>, query: &str) -> HandlerResponse {
+    let ptys: Vec<Value> = state
+        .terminals
+        .list()
+        .iter()
+        .map(crate::terminal::list_entry)
+        .collect();
+    if let Some(engine) = state.engine.get().await {
+        match engine.list(preview_param(query)).await {
+            Ok(listed) => {
+                let terminals = listed["terminals"].as_array().cloned().unwrap_or_default();
+                return HandlerResponse::json(200, list_body(terminals, ptys, "pane"));
+            }
+            Err(reply) if reply.status == 503 => state.engine.forget().await,
+            Err(reply) => return engine_reply(state, reply).await,
+        }
+    }
+    HandlerResponse::json(200, list_body(Vec::new(), ptys, "missing"))
 }
 
 fn terminal_session_id(path: &str) -> Option<&str> {
@@ -655,10 +739,48 @@ fn terminal_session_id(path: &str) -> Option<&str> {
     None
 }
 
-fn terminal_action(state: &Arc<DaemonState>, path: &str, action: &str, body: &[u8]) -> HandlerResponse {
+/// `POST /terminal/:id/{input,resize,close}`. A PTY id this node holds goes
+/// to the PTY; any other id goes to the pane engine when there is one (which
+/// answers 404 for an id it doesn't know), else to the PTY path as before.
+async fn terminal_action(state: &Arc<DaemonState>, path: &str, action: &str, body: &[u8]) -> HandlerResponse {
     let Some(session_id) = terminal_session_id(path) else {
         return HandlerResponse::not_found("malformed terminal path");
     };
+    if !state.terminals.contains(session_id) {
+        if let Some(engine) = state.engine.get().await {
+            let reply = match action {
+                "input" => match serde_json::from_slice::<terminal_service::TerminalInputRequest>(body) {
+                    Ok(request) => engine.input(session_id, &request.content).await,
+                    Err(error) => {
+                        return HandlerResponse::json(
+                            400,
+                            terminal_envelope(false, &format!("invalid input request: {error}"), None),
+                        )
+                    }
+                },
+                "resize" => match serde_json::from_slice::<terminal_service::TerminalResizeRequest>(body) {
+                    Ok(request) => engine.resize(session_id, request.cols, request.rows).await,
+                    Err(error) => {
+                        return HandlerResponse::json(
+                            400,
+                            terminal_envelope(false, &format!("invalid resize request: {error}"), None),
+                        )
+                    }
+                },
+                // Old clients send no body; `{graceful: true}` asks the program to quit first.
+                _ => {
+                    let request = parse_body::<terminal_service::TerminalCloseRequest>(body).unwrap_or_default();
+                    engine.close(session_id, request.graceful).await
+                }
+            };
+            return engine_reply(state, reply).await;
+        }
+    }
+    pty_action(state, session_id, action, body)
+}
+
+/// Today's PTY behaviour for input/resize/close.
+fn pty_action(state: &Arc<DaemonState>, session_id: &str, action: &str, body: &[u8]) -> HandlerResponse {
     let result: Result<Value, String> = match action {
         "input" => {
             #[derive(Deserialize)]
@@ -704,13 +826,51 @@ fn terminal_action(state: &Arc<DaemonState>, path: &str, action: &str, body: &[u
     }
 }
 
-/// GET /terminal/:id/stream → SSE. Replays the in-memory scrollback, then
-/// forwards live PTY output until the pane exits (or the subscriber lags out
-/// and resyncs). The relay carries this as response_start + response_chunk*.
-fn terminal_stream(state: &Arc<DaemonState>, path: &str) -> HandlerResponse {
+/// True when an SSE chunk holds the terminal's `{"type":"exit",…}` event.
+pub fn is_exit_event(chunk: &[u8]) -> bool {
+    String::from_utf8_lossy(chunk)
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .any(|data| serde_json::from_str::<Value>(data).is_ok_and(|event| event["type"] == "exit"))
+}
+
+/// GET /terminal/:id/stream → SSE, routed like [`terminal_action`]. Engine
+/// terminals replay the engine's scrollback (also after a node restart), then
+/// live output, then the exit event (with `exit_code`); the response then
+/// ends, the same frames and ending the PTY stream has always sent over the
+/// relay (response_start + response_chunk* + response_end).
+async fn terminal_stream(state: &Arc<DaemonState>, path: &str) -> HandlerResponse {
     let Some(session_id) = terminal_session_id(path) else {
         return HandlerResponse::not_found("malformed terminal path");
     };
+    if !state.terminals.contains(session_id) {
+        if let Some(engine) = state.engine.get().await {
+            let mut stream = match engine.stream(session_id).await {
+                Ok(stream) => stream,
+                Err(reply) => return engine_reply(state, reply).await,
+            };
+            let (tx, rx) = tokio::sync::mpsc::channel(64);
+            tokio::spawn(async move {
+                while let Some(Ok(chunk)) = stream.next().await {
+                    let exit = is_exit_event(&chunk);
+                    if tx.send(chunk.to_vec()).await.is_err() || exit {
+                        return; // subscriber gone, or the program exited
+                    }
+                }
+            });
+            return HandlerResponse {
+                status: 200,
+                content_type: "text/event-stream",
+                body: ResponseBody::Stream(rx, Some(session_id.to_string())),
+            };
+        }
+    }
+    pty_stream(state, session_id)
+}
+
+/// The PTY stream: replays the in-memory scrollback, then forwards live PTY
+/// output until the pane exits (or the subscriber lags out and resyncs).
+fn pty_stream(state: &Arc<DaemonState>, session_id: &str) -> HandlerResponse {
     if !state.terminals.alive(session_id) && state.terminals.scrollback(session_id).is_none() {
         return HandlerResponse::json(
             404,
@@ -792,8 +952,117 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         DaemonState::new(NodeConfig {
             fs_roots: vec![temp.path().to_path_buf()],
+            // No pane engine: the tests never reach a real one on the host.
+            pane_socket: Some(std::path::PathBuf::from("/nonexistent/allternit-node-test/herdr.sock")),
             ..NodeConfig::default()
         })
+    }
+
+    async fn call(state: &Arc<DaemonState>, method: &str, path: &str, body: &[u8]) -> (u16, Value) {
+        let response = handle(
+            state,
+            &InboundRequest {
+                method: method.into(),
+                path: path.into(),
+                body: body.to_vec(),
+            },
+        )
+        .await;
+        let ResponseBody::Full(bytes) = response.body else {
+            panic!("{method} {path} must be buffered");
+        };
+        (response.status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn without_an_engine_list_says_engine_missing() {
+        let state = test_state();
+        let (status, body) = call(&state, "GET", "/terminal/list?preview=16", b"").await;
+        assert_eq!(status, 200);
+        assert_eq!(body, json!({ "terminals": [], "engine": "missing" }));
+    }
+
+    #[tokio::test]
+    async fn without_an_engine_unknown_ids_are_404_and_close_still_succeeds() {
+        let state = test_state();
+        let (status, body) = call(&state, "POST", "/terminal/nope/input", br#"{"content":"ls\r"}"#).await;
+        assert_eq!(status, 404);
+        assert_eq!(body["success"], false);
+        let (status, _) = call(&state, "GET", "/terminal/nope/stream", b"").await;
+        assert_eq!(status, 404);
+        let (status, body) = call(&state, "POST", "/terminal/nope/close", br#"{"graceful":true}"#).await;
+        assert_eq!(status, 200);
+        assert_eq!(body["success"], true);
+    }
+
+    #[tokio::test]
+    async fn without_an_engine_a_bad_env_key_is_refused_before_spawning() {
+        let state = test_state();
+        let (status, body) = call(
+            &state,
+            "POST",
+            "/terminal/create",
+            br#"{"command":"claude","env":{"A=B":"1"}}"#,
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert_eq!(body["success"], false);
+        assert_eq!(state.terminals.session_count(), 0);
+    }
+
+    #[test]
+    fn a_pty_list_item_has_the_engine_fields_with_no_pane() {
+        let item = crate::terminal::list_entry(&crate::terminal::PtyListing {
+            session_id: "s1".into(),
+            title: None,
+            cwd: Some("/home/me/proj/".into()),
+            command: vec!["/bin/bash".into()],
+            running: false,
+            exit_code: Some(0),
+            pid: Some(42),
+            created_at: "2026-11-22T00:00:00+00:00".into(),
+        });
+        assert_eq!(
+            item,
+            json!({
+                "session_id": "s1",
+                "pane_id": null,
+                "title": "proj",
+                "cwd": "/home/me/proj/",
+                "command": ["/bin/bash"],
+                "running": false,
+                "exit_code": 0,
+                "pid": 42,
+                "created_at": "2026-11-22T00:00:00+00:00",
+            })
+        );
+        let untitled = crate::terminal::list_entry(&crate::terminal::PtyListing {
+            session_id: "s2".into(),
+            title: Some("  ".into()),
+            cwd: None,
+            command: vec![],
+            running: true,
+            exit_code: None,
+            pid: None,
+            created_at: String::new(),
+        });
+        assert_eq!(untitled["title"], "Terminal");
+    }
+
+    #[test]
+    fn the_list_puts_engine_terminals_first_and_names_the_backend() {
+        let body = list_body(vec![json!({ "session_id": "e1" })], vec![json!({ "session_id": "p1" })], "pane");
+        assert_eq!(body["engine"], "pane");
+        assert_eq!(body["terminals"][0]["session_id"], "e1");
+        assert_eq!(body["terminals"][1]["session_id"], "p1");
+    }
+
+    #[test]
+    fn the_engine_stream_ends_on_the_exit_event_only() {
+        assert!(is_exit_event(b"data: {\"exit_code\":0,\"type\":\"exit\"}\n\n"));
+        assert!(is_exit_event(b"data: {\"type\":\"exit\",\"exit_code\":null}\n\n"));
+        assert!(!is_exit_event(b"data: {\"type\":\"data\",\"data\":\"type exit\"}\n\n"));
+        assert!(!is_exit_event(b"event: ping\ndata: {}\n\n"));
     }
 
     #[tokio::test]

@@ -3030,9 +3030,15 @@
         "allternit/factory/engine",
         "allternit/factory/terminal-service",
         "allternit/cmd/allternit-api",
+        "allternit/cmd/allternit-node",
         "allternit/cmd/gizzi-code/src/cli"
       ],
-      "decisions": [],
+      "decisions": [
+        {
+          "on": "2026-11-22",
+          "note": "Cloud computers: allternit-node serves /terminal/* from the Factory pane engine through allternit-terminal-service when one answers (terminals survive a node restart; list, previews, pane_id, create with a command, graceful close), else its portable-pty terminals as before. /terminal/list adds engine: pane|missing. The node never starts the engine; images get it in the next step."
+        }
+      ],
       "evidence": [
         "allternit/factory/engine/src/agents/live_sessions.rs",
         "allternit/cmd/allternit-api/src/netops/presence.rs",
@@ -3042,6 +3048,7 @@
         "allternit/factory/engine/src/agents/adopt.rs",
         "allternit/cmd/allternit-api/src/terminal_routes.rs",
         "allternit/factory/terminal-service/src/lib.rs",
+        "allternit/cmd/allternit-node/src/engine.rs",
         "allternit/cmd/allternit-factory/src/bots.rs",
         "allternit/surfaces/docs/guides/live-sessions.mdx"
       ]

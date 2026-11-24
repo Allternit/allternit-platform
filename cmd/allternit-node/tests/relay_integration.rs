@@ -205,6 +205,8 @@ async fn handlers_serve_terminal_contract_end_to_end() {
     let temp = tempfile::tempdir().unwrap();
     let state = DaemonState::new(NodeConfig {
         fs_roots: vec![temp.path().to_path_buf()],
+        // The PTY path: never reach a pane engine running on the host.
+        pane_socket: Some(temp.path().join("no-engine.sock")),
         ..NodeConfig::default()
     });
 
