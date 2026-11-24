@@ -39,6 +39,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -51,6 +53,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyBox
+import com.allternit.core.design.GlassPill
+import com.allternit.core.design.ProvideDockScroll
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.R as DesignR
@@ -90,6 +95,7 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
         if (match != null) openComputer = match else pickerOpen = true
     }
 
+    val scroll = rememberScrollState()
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = {
         scope.launch {
             refreshing = true
@@ -97,38 +103,45 @@ internal fun AciComputersPane(host: AciHost, devices: List<AciDevice>?, onRefres
             refreshing = false
         }
     }, modifier = Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp).testTag("aciComputers")) {
-            AciViewHeader("Computers")
-            AciWideButton(DesignR.drawable.ph_plus, "Add a computer", "aciAddComputer") { pairOpen = true }
+        Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp).testTag("aciComputers")) {
+            // Only the header gets the dock scroll: the console sheets and dialogs below must not dock their own bars.
+            ProvideDockScroll(scroll) { AciViewHeader("Computers") }
+            GlassPill(
+                onClick = { pairOpen = true },
+                modifier = Modifier.padding(bottom = 12.dp).fillMaxWidth().testTag("aciAddComputer").semantics(mergeDescendants = true) { contentDescription = "Add a computer" },
+                height = 48.dp,
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(painterResource(DesignR.drawable.ph_plus), null, tint = c.textPrimary, modifier = Modifier.size(18.dp))
+                    Text("Add a computer", color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
             AciWideButton(DesignR.drawable.ph_desktop, "View a computer's screen", "aciViewScreen") { pickerOpen = true }
             if (consoleOn) AciConsoleSection(host.restorePoints)
             when {
                 devices == null -> Text("Loading computers…", color = c.textSecondary, fontSize = 14.sp, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp))
-                devices.isEmpty() -> AciDashedCard {
-                    Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textPrimary.copy(alpha = 0.4f), modifier = Modifier.size(40.dp).padding(bottom = 4.dp))
-                        Spacer(Modifier.height(8.dp))
-                        Text("No computers paired", color = c.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                        Spacer(Modifier.height(4.dp))
-                        Text("Open Allternit Desktop on a computer signed in to this account, and it shows up here.", color = c.textTertiary, fontSize = 12.sp, textAlign = TextAlign.Center)
-                    }
-                }
-                else -> devices.forEach { d ->
-                    val online = d.status != "offline"
-                    Column(
-                        Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(onClickLabel = "Open ${d.displayName}") { detail = d }
-                            .padding(vertical = 16.dp).testTag("aciComputerRow"),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(d.displayName, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Box(Modifier.size(8.dp).clip(CircleShape).background(if (online) AllternitStatic.StatusSuccess else c.textTertiary))
-                            Text(if (online) "Online" else "Offline", color = c.textPrimary, fontSize = 14.sp)
+                devices.isEmpty() -> EmptyBox(
+                    "No computers paired", "Open Allternit Desktop on a computer signed in to this account, and it shows up here.",
+                    icon = { Icon(painterResource(DesignR.drawable.ph_desktop), null, tint = c.textPrimary, modifier = Modifier.size(18.dp)) },
+                )
+                else -> AciRoundedCard {
+                    devices.forEach { d ->
+                        val online = d.status != "offline"
+                        Column(
+                            Modifier.fillMaxWidth().heightIn(min = 44.dp).clickable(onClickLabel = "Open ${d.displayName}") { detail = d }
+                                .padding(vertical = 16.dp).testTag("aciComputerRow"),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(d.displayName, color = c.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                Box(Modifier.size(8.dp).clip(CircleShape).background(if (online) AllternitStatic.StatusSuccess else c.textTertiary))
+                                Text(if (online) "Online" else "Offline", color = c.textPrimary, fontSize = 14.sp)
+                            }
+                            Text(lastSeen(d.lastSeenAt), color = c.textSecondary, fontSize = 13.sp)
                         }
-                        Text(lastSeen(d.lastSeenAt), color = c.textSecondary, fontSize = 13.sp)
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
                     }
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(c.borderSubtle))
                 }
             }
             Spacer(Modifier.height(24.dp))

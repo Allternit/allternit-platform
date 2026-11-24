@@ -25,6 +25,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.EmptyBox
+import com.allternit.core.design.FilterPills
+import com.allternit.core.design.ProvideDockScroll
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -117,45 +120,56 @@ internal fun AciExtensionsView() {
     val mine = store.items.filter(::match)
     val market = MARKETPLACE.filter(::match)
 
+    val scroll = rememberScrollState()
+    // The header lives in the scroll so its title docks as the page scrolls (see the clipping note in the PR).
+    ProvideDockScroll(scroll) {
     Column(Modifier.fillMaxSize().testTag("aciExtensions")) {
-        Column(Modifier.padding(horizontal = 16.dp)) {
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 56.dp)) {
             AciViewHeader("ACI Extensions", bottom = 16.dp)
             AciSearchField(query, "Search extensions", { query = it }, "aciExtSearch")
-            AciChipRow {
-                AciChip("All", category == null, "aciExtCat-all") { category = null }
-                EXTENSION_CATEGORIES.forEach { (id, label) -> AciChip(label, category == id, "aciExtCat-$id") { category = id } }
-                AciChip(if (marketplace) "My Extensions" else "Marketplace", marketplace, "aciExtMarketplace") { marketplace = !marketplace }
-                AciChip("＋ Upload Extension", false, "aciExtUpload") { uploadOpen = true }
+            FilterPills(
+                options = listOf("All") + EXTENSION_CATEGORIES.map { it.second }, selectedIndex = EXTENSION_CATEGORIES.indexOfFirst { it.first == category } + 1,
+                onSelect = { i -> category = if (i == 0) null else EXTENSION_CATEGORIES[i - 1].first },
+                modifier = Modifier.padding(vertical = 4.dp), itemTag = { i -> if (i == 0) "aciExtCat-all" else "aciExtCat-${EXTENSION_CATEGORIES[i - 1].first}" },
+            )
+            Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AciGlassAction(if (marketplace) "My Extensions" else "Marketplace", "aciExtMarketplace") { marketplace = !marketplace }
+                AciGlassAction("＋ Upload Extension", "aciExtUpload") { uploadOpen = true }
             }
-        }
-        toast?.let { Text(it, color = c.textPrimary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("aciExtToast")) }
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp).padding(bottom = 48.dp)) {
+            toast?.let { Text(it, color = c.textPrimary, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp).testTag("aciExtToast")) }
+            Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
             if (marketplace) {
                 Text("Extension Marketplace", color = c.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 Text("Install curated browser capabilities into Allternit.", color = c.textSecondary, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
-                if (market.isEmpty()) AciStateCard("No extensions found", "Nothing in the marketplace matches.")
-                market.forEach { e ->
-                    val installed = store.items.any { it.name == e.name && it.installed }
-                    AciListRow("${e.icon}  ${e.name}", "${e.description}\nv${e.version} · ${e.author}", if (installed) "Installed" else "Install", "aciExtMarket-${e.id}") {
-                        if (installed) detail = e else { store.installFromMarketplace(e); toast = "Added and enabled ${e.name}" }
+                if (market.isEmpty()) EmptyBox("No extensions found", "Nothing in the marketplace matches.", Modifier.testTag("aciState"))
+                else AciRoundedCard {
+                    market.forEach { e ->
+                        val installed = store.items.any { it.name == e.name && it.installed }
+                        AciListRow("${e.icon}  ${e.name}", "${e.description}\nv${e.version} · ${e.author}", if (installed) "Installed" else "Install", "aciExtMarket-${e.id}") {
+                            if (installed) detail = e else { store.installFromMarketplace(e); toast = "Added and enabled ${e.name}" }
+                        }
                     }
                 }
             } else {
-                if (mine.isEmpty()) AciStateCard("No extensions found", "Install one from the Marketplace, or upload your own.", "Open Marketplace", { marketplace = true })
-                mine.forEach { e ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            AciListRow("${e.icon}  ${e.name}", "${e.description}\nv${e.version} · ${e.author}", null, "aciExt-${e.id}") { detail = e }
+                if (mine.isEmpty()) EmptyBox("No extensions found", "Install one from the Marketplace, or upload your own.", Modifier.testTag("aciState"), onClick = { marketplace = true })
+                else AciRoundedCard {
+                    mine.forEach { e ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                AciListRow("${e.icon}  ${e.name}", "${e.description}\nv${e.version} · ${e.author}", null, "aciExt-${e.id}") { detail = e }
+                            }
+                            if (e.installed) AciGlassAction(if (e.enabled) "On" else "Off", "aciExtToggle-${e.id}", "${if (e.enabled) "Turn off" else "Turn on"} ${e.name}") { store.toggle(e.id) }
+                            else AciGlassAction("Install", "aciExtInstall-${e.id}") { store.install(e.id); toast = "Added and enabled ${e.name}" }
                         }
-                        if (e.installed) AciPillButton(if (e.enabled) "On" else "Off", "aciExtToggle-${e.id}", "${if (e.enabled) "Turn off" else "Turn on"} ${e.name}") { store.toggle(e.id) }
-                        else AciPillButton("Install", "aciExtInstall-${e.id}") { store.install(e.id); toast = "Added and enabled ${e.name}" }
                     }
                 }
                 Text("Build your own extensions", color = c.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 20.dp))
                 Text("Our SDK allows you to create native ACI extensions that interact with agent context, handle page automation, and surface unique tools.", color = c.textSecondary, fontSize = 13.sp)
                 AciPillButton("Open Developer Documentation", "aciExtDocs") { openExternal(context, "https://allternit.com/developers") }
             }
+            }
         }
+    }
     }
     if (uploadOpen) AciUploadExtensionSheet({ uploadOpen = false }) { name, desc, url -> store.addCustom(name, desc, url); toast = "Added and enabled $name"; uploadOpen = false }
     detail?.let { e ->
