@@ -49,8 +49,7 @@ import androidx.compose.ui.unit.dp
 import com.allternit.core.api.gen.AgentSession
 import com.allternit.core.auth.Account
 import com.allternit.core.design.AllternitTheme
-import com.allternit.core.design.Haptics
-import com.allternit.core.design.Motion
+import androidx.compose.foundation.layout.size
 import com.allternit.core.design.PolishHaptic
 import com.allternit.core.design.R as DesignR
 import com.allternit.feature.chat.ChatBackends
