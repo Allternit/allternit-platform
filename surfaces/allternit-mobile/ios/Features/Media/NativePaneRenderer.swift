@@ -31,7 +31,7 @@ final class NativePaneRenderer {
 
     func run(_ request: PaneRenderRequest, client: AgentChatClient) async -> PaneRenderResult {
         switch request.kind {
-        case .image: return await renderImage(request)
+        case .image: return await renderImage(request, client: client)
         case .video: return await renderVideo(request, client: client)
         case .check: return await check(request)
         }
@@ -118,6 +118,21 @@ final class NativePaneRenderer {
         image.jpegData(compressionQuality: quality).map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
     }
 
+    /// A progress preview: at most 320 px wide, a small JPEG data URL (the
+    /// card shows it blurred or as a frame thumbnail, never the final art).
+    static func thumbnailURL(_ image: UIImage) -> String? {
+        let w = 320.0
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let scale = min(1, w / size.width)
+        let small = Self.resized(image, width: max(1, Int((size.width * scale).rounded())), height: max(1, Int((size.height * scale).rounded())))
+        return dataURL(jpeg: small, quality: 0.6)
+    }
+
+    static func thumbnailURL(fromDataURL url: String) -> String? {
+        image(fromDataURL: url).flatMap { thumbnailURL($0) }
+    }
+
     static func image(fromDataURL url: String) -> UIImage? {
         guard let comma = url.firstIndex(of: ","), let data = Data(base64Encoded: String(url[url.index(after: comma)...])) else { return nil }
         return UIImage(data: data)
@@ -130,7 +145,19 @@ final class NativePaneRenderer {
 
     // MARK: - Image
 
-    private func renderImage(_ r: PaneRenderRequest) async -> PaneRenderResult {
+    private func renderImage(_ r: PaneRenderRequest, client: AgentChatClient) async -> PaneRenderResult {
+        let progress = PaneRenderProgressReporter(requestId: r.requestId, client: client)
+        progress.report(stage: .drawing) { .init(lane: .picture, stage: .drawing, label: "Drawing the picture") }
+        let result = await drawImage(r)
+        if result.ok, let png = result.image {
+            progress.report(stage: .saving) {
+                .init(lane: .picture, stage: .saving, label: "Saving", fraction: 1, preview: Self.thumbnailURL(fromDataURL: png))
+            }
+        }
+        return result
+    }
+
+    private func drawImage(_ r: PaneRenderRequest) async -> PaneRenderResult {
         let head = "<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=\(r.width), initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"\(Self.frameCSP)\">"
         switch r.format {
         case "canvas":
@@ -257,6 +284,8 @@ final class NativePaneRenderer {
         let total = max(1, Int((duration * Double(fps)).rounded()))
         let samples = max(1, min(16, r.motionBlur ?? 1))
         let deadline = Date().addingTimeInterval((r.timeoutMs ?? 600_000) / 1000 - 5)
+        let progress = PaneRenderProgressReporter(requestId: r.requestId, client: client)
+        progress.report(stage: .drawing) { .init(lane: .motion, stage: .drawing, label: "Setting up the scene") }
         guard let (view, _) = await loadView(html: videoDocument(r, samples: samples), width: 16, height: 16) else {
             return .failed("The app has no window to render in.")
         }
@@ -268,6 +297,7 @@ final class NativePaneRenderer {
         // The score first: the writer interleaves, so audio goes in alongside the frames.
         var pcm: (left: [Float], right: [Float])? = nil
         if r.audio?.isEmpty == false {
+            progress.report(stage: .drawing) { .init(lane: .motion, stage: .drawing, label: "Scoring the audio") }
             let out = try? await view.callAsyncJavaScript("return await window.__audio()", contentWorld: .page) as? [String: Any]
             if let error = out?["error"] as? String { return .failed(error) }
             if let l = (out?["l"] as? String).flatMap({ Data(base64Encoded: $0) }), let rr = (out?["r"] as? String).flatMap({ Data(base64Encoded: $0) }) {
@@ -300,14 +330,20 @@ final class NativePaneRenderer {
                 }
             }
             guard await encoder.appendFrame(frame, index: i) else { encoder.cancel(); return .failed("The encoder stopped at frame \(i).") }
+            progress.report(stage: .rendering) {
+                .init(lane: .motion, stage: .rendering, label: "Frame \(i + 1) of \(total)", frame: i + 1, frames: total,
+                      fraction: Double(i + 1) / Double(total), preview: Self.thumbnailURL(UIImage(cgImage: frame)))
+            }
             if sheetPicks.contains(i) { stills.append((i, UIImage(cgImage: frame))) }
         }
         if let pcm, audioCursor < pcm.left.count {
             await encoder.appendAudio(left: pcm.left[audioCursor...], right: pcm.right[audioCursor...], at: audioCursor)
         }
+        progress.report(stage: .encoding) { .init(lane: .motion, stage: .encoding, label: "Encoding the video") }
         guard await encoder.finish(), let data = try? Data(contentsOf: url) else {
             return .failed("The video couldn't be encoded: \(encoder.errorText ?? "unknown error").")
         }
+        progress.report(stage: .saving) { .init(lane: .motion, stage: .saving, label: "Saving the video", fraction: 1) }
         let stored: String
         do { stored = try await client.uploadMediaArtifact(data, mime: "video/mp4") }
         catch { return .failed("The video rendered but couldn't be saved: \(error.localizedDescription)") }

@@ -966,7 +966,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                     toolName: payload.toolName,
                     text: payload.detail?.title ?? payload.toolName,
                     state: .running,
-                    startedAt: Date()
+                    // A live report for a call already running (media_generate
+                    // progress) must not restart its clock.
+                    startedAt: message.toolStatus?.toolName == payload.toolName && message.toolStatus?.state == .running
+                        ? (message.toolStatus?.startedAt ?? Date()) : Date()
                 )
                 message.upsertToolCall(id: payload.toolCallId, name: payload.toolName, state: .running, detail: payload.detail)
             }
@@ -1038,7 +1041,10 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
                 raw: raw
             )
             updateMessage(messageId) { message in
-                message.error = card
+                // One error per failure: a typed error frame that already
+                // told the reason (and the way out) is not replaced by the
+                // finish frame's plainer copy of it.
+                if message.error?.info == nil { message.error = card }
             }
             reportPetOffer(raw)
             return true
@@ -1049,9 +1055,17 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
             // The API's streamed no_brain error carries its fixed message.
             let name: String? = reason == AgentChatClientError.noBrainMessage ? "no_brain" : nil
             updateMessage(messageId) { message in
-                message.error = ChatError(name: name, message: reason, raw: reason)
+                if message.error?.info == nil { message.error = ChatError(name: name, message: reason, raw: reason) }
             }
             if name == nil { reportPetOffer(reason) }
+            return true
+
+        case .streamErrorFrame(let frame):
+            flushPendingDeltas()
+            presentCreditsSheetIfRelayed(frame.message)
+            let card = ChatError(info: frame.info, raw: [frame.code, frame.message].compactMap { $0 }.joined(separator: ": "))
+            updateMessage(messageId) { $0.error = card }
+            reportPetOffer(frame.message)
             return true
 
         case .questionClosed(let requestID):
@@ -1294,6 +1308,13 @@ final class ChatViewModel: ObservableObject {    @Published var messages: [Messa
     private func updateMessage(_ id: String, _ mutate: (inout MessageRecord) -> Void) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         mutate(&messages[index])
+        // Progress cards live in a store keyed by tool call id: a generation
+        // that ends here (done, failed, stopped, error, app backgrounded)
+        // clears its entry, so no spinner outlives its turn.
+        let message = messages[index]
+        if message.toolCalls.contains(where: { GenerationProgressStore.isMediaGenerate($0.toolName) }) {
+            GenerationProgressStore.shared.sync(calls: message.toolCalls, replyIsLive: message.isStreaming && message.error == nil)
+        }
     }
 }
 
