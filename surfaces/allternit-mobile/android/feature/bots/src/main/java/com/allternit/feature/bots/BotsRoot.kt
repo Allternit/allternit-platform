@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,6 +60,7 @@ import com.allternit.core.design.AllternitTheme
 import com.allternit.core.design.FriendlyState
 import com.allternit.core.design.FriendlyStyle
 import com.allternit.core.design.Haptics
+import com.allternit.core.design.ProvideDockScroll
 import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.feature.artifacts.LibraryIconButton
 import com.allternit.feature.artifacts.LibrarySearchField
@@ -334,6 +336,9 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
         return
     }
 
+    // BOTS is the block title: it docks into the bar as the launchpad scrolls (only when signed in, where there is a page to scroll).
+    val dockScroll = rememberScrollState()
+    val rootBody: @Composable () -> Unit = {
     Column(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().testTag("botsModeRoot")) {
         LibraryHeader(
             title = "Bots", onBack = null, leading = host.menuButton,
@@ -361,9 +366,11 @@ fun BotsModeRoot(host: BotsHost, store: BotModeStore, launch: BotsLaunch = BotsL
                 actionTitle = "Sign in", onAction = host.openSignIn,
             ) { Icon(painterResource(com.allternit.core.design.R.drawable.ph_house), null, tint = c.accentPrimary, modifier = Modifier.size(28.dp)) }
         } else {
-            BotLaunchpad(host, store, nav, query, Modifier.weight(1f))
+            BotLaunchpad(host, store, nav, query, Modifier.weight(1f), dockScroll)
         }
     }
+    }
+    if (host.signedIn) ProvideDockScroll(dockScroll, rootBody) else rootBody()
 
     if (optionsOpen) BotsOptionsSheet(
         waiting = store.waitingCount, paused = pause.paused,
@@ -450,7 +457,7 @@ private sealed interface RosterEntry {
  * thread for it; a send to the team starts a bot project the main bot coordinates.
  */
 @Composable
-private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator, query: String, modifier: Modifier) {
+private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator, query: String, modifier: Modifier, dockScroll: ScrollState) {
     val c = AllternitTheme.colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -538,7 +545,9 @@ private fun BotLaunchpad(host: BotsHost, store: BotModeStore, nav: BotNavigator,
     }
 
     Column(modifier.fillMaxWidth()) {
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = 8.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        Column(Modifier.weight(1f).verticalScroll(dockScroll).padding(top = 8.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            // Room for the BOTS block title, which sits in the page under the bar and docks into it as this column scrolls.
+            Spacer(Modifier.height(16.dp))
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("YOUR TEAM", color = c.textTertiary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp, modifier = Modifier.padding(horizontal = 20.dp))
                 when (layout) {
