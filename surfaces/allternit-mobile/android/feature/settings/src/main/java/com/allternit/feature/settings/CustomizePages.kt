@@ -150,22 +150,19 @@ private fun slugify(v: String) = v.trim().lowercase().replace(Regex("[^a-z0-9]+"
 
 /** The Yours list of skills or plugins, with a switch per item, a remove, and (skills) a create form. */
 @Composable
-internal fun CapabilitiesBody(host: SettingsHost, plugins: Boolean, query: String, allowCreate: Boolean, filter: Int = 0, sortAsc: Boolean = true, createRequested: Boolean = false, onCreateHandled: () -> Unit = {}) {
+internal fun CapabilitiesBody(host: SettingsHost, plugins: Boolean, query: String, allowCreate: Boolean) {
     val scope = rememberCoroutineScope()
     val kind = if (plugins) "plugin" else "skill"
     val (load, reload) = rememberLoad("caps_$kind") { scanCaps(host, plugins) }
     var error by remember { mutableStateOf<String?>(null) }
     var removing by remember { mutableStateOf<Cap?>(null) }
     var creating by remember { mutableStateOf(false) }
-    LaunchedEffect(createRequested) { if (createRequested && allowCreate) { creating = true; onCreateHandled() } }
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var instructions by remember { mutableStateOf("") }
     LoadView(load, reload, "load your ${kind}s") { caps ->
         val shown = caps.filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
-            .filter { filter == 0 || (filter == 1) == it.enabled }
-            .let { l -> if (sortAsc) l.sortedBy { it.name.lowercase() } else l.sortedByDescending { it.name.lowercase() } }
-        if (shown.isEmpty()) StateBox(if (query.isBlank() && filter == 0) "No ${kind}s yet" else "No ${kind}s match", if (plugins) "Plugins you install on your computer show up here." else "Add one from Discover, or write your own.", null, null) else CCard {
+        if (shown.isEmpty()) StateBox(if (query.isBlank()) "No ${kind}s yet" else "No ${kind}s match", if (plugins) "Plugins you install on your computer show up here." else "Add one from Discover, or write your own.", null, null) else CCard {
             shown.forEachIndexed { i, cap ->
                 if (i > 0) SDivider()
                 SToggleRow(cap.name, "${kind}_${cap.name}", cap.enabled, detail = cap.dir, onChange = { on ->
@@ -272,7 +269,7 @@ private val CATALOG = listOf(
 private const val OFFICIAL_SKILL_ID = "allternit-allternit-codebase-to-course"
 
 @Composable
-private fun SkillDirectory(host: SettingsHost, query: String, filter: Int, sortAsc: Boolean) {
+private fun SkillDirectory(host: SettingsHost, query: String) {
     val scope = rememberCoroutineScope()
     val (installed, reload) = rememberLoad("catalogInstalled") { runtimeLoad(host, "GET", "/api/v1/skills/catalog/installed") }
     var busy by remember { mutableStateOf<String?>(null) }
@@ -298,22 +295,23 @@ private fun SkillDirectory(host: SettingsHost, query: String, filter: Int, sortA
         val have = body.listUnder("skills").mapNotNull { it.str("id") }.toSet()
         val rows = CATALOG
             .filter { (category == null || it.category == category) && (query.isBlank() || it.name.contains(query, ignoreCase = true) || it.blurb.contains(query, ignoreCase = true)) }
-            .filter { filter == 0 || (filter == 1) == (it.id in have) }
-            .let { l -> if (sortAsc) l.sortedBy { it.name.lowercase() } else l.sortedByDescending { it.name.lowercase() } }
         if (rows.isEmpty()) StateBox("No skills match", "Try another word or category.", null, null) else {
             val official = CATALOG.first { it.id == OFFICIAL_SKILL_ID }
-            if (category == null && query.isBlank() && filter == 0) {
-                OfficialSkillCard(official, added = official.id in have, busy = busy == official.id) { install(official.id) }
-                SLabel("For you")
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                rows.chunked(2).forEach { pair ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        pair.forEach { s ->
-                            SkillCard(s, added = s.id in have, busy = busy == s.id, enabled = busy == null, modifier = Modifier.weight(1f)) { install(s.id) }
+            if (category == null && query.isBlank()) OfficialSkillCard(official, added = official.id in have, busy = busy == official.id) { install(official.id) }
+            CCard(Modifier.padding(top = 8.dp)) {
+                rows.forEachIndexed { i, s ->
+                    if (i > 0) SDivider()
+                    val added = s.id in have
+                    SRow(s.name, "directory_${s.id}", detail = "${s.blurb} · ${s.author}", chevron = false, enabled = !added && busy == null, onClick = { install(s.id) }, trailing = {
+                        GlassCircleButton(
+                            onClick = { if (!added && busy == null) install(s.id) },
+                            contentDescription = if (added) "${s.name} added" else "Add ${s.name}",
+                            size = 28.dp,
+                        ) {
+                            if (busy == s.id) androidx.compose.material3.Text("...", color = AllternitTheme.colors.textPrimary, fontSize = 11.sp)
+                            else Icon(painterResource(if (added) DesignR.drawable.ph_check_bold else DesignR.drawable.ph_plus_bold), contentDescription = null, tint = AllternitTheme.colors.textPrimary, modifier = Modifier.size(13.dp))
                         }
-                        if (pair.size == 1) Spacer(Modifier.weight(1f))
-                    }
+                    })
                 }
             }
         }
@@ -349,38 +347,9 @@ private fun OfficialSkillCard(s: CatalogSkill, added: Boolean, busy: Boolean, on
     }
 }
 
-/** A "For you" skill card (radius 20): the + is a small glass circle that turns to a check once added. */
-@Composable
-private fun SkillCard(s: CatalogSkill, added: Boolean, busy: Boolean, enabled: Boolean, modifier: Modifier, onAdd: () -> Unit) {
-    val c = AllternitTheme.colors
-    Column(
-        modifier.clip(RoundedCornerShape(20.dp)).background(PolishGlass.track())
-            .clickable(enabled = !added && enabled, role = Role.Button, onClickLabel = "Add ${s.name}") { onAdd() }
-            .testTag("directory_${s.id}")
-            .padding(6.dp),
-    ) {
-        Box(
-            Modifier.fillMaxWidth().height(66.dp).clip(RoundedCornerShape(15.dp)).background(if (PolishGlass.isDark()) Color(0xFF3A3A3C) else Color.White),
-        ) {
-            Icon(painterResource(DesignR.drawable.ph_book_open), contentDescription = null, tint = c.textSecondary, modifier = Modifier.align(Alignment.Center).size(22.dp))
-            GlassCircleButton(
-                onClick = { if (!added && enabled) onAdd() },
-                contentDescription = if (added) "${s.name} added" else "Add ${s.name}",
-                size = 26.dp,
-                modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
-            ) {
-                if (busy) androidx.compose.material3.Text("...", color = c.textPrimary, fontSize = 11.sp)
-                else Icon(painterResource(if (added) DesignR.drawable.ph_check_bold else DesignR.drawable.ph_plus_bold), contentDescription = null, tint = c.textPrimary, modifier = Modifier.size(12.dp))
-            }
-        }
-        androidx.compose.material3.Text(s.name, color = c.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 7.dp))
-        androidx.compose.material3.Text(s.blurb, color = c.textSecondary, fontSize = 11.sp, lineHeight = 15.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 4.dp))
-    }
-}
-
 /** The connector list. [onlyConnected] is the Customize "Yours" view. */
 @Composable
-internal fun ConnectorsBody(query: String, onlyConnected: Boolean, filter: Int = 0, sortAsc: Boolean = true) {
+internal fun ConnectorsBody(query: String, onlyConnected: Boolean) {
     val scope = rememberCoroutineScope()
     val openLink = rememberLinkOpener()
     val (load, reload) = rememberLoad("connectorsList") { Net.get("connectors").toLoad("load connectors") }
@@ -408,9 +377,9 @@ internal fun ConnectorsBody(query: String, onlyConnected: Boolean, filter: Int =
     LoadView(load, reload, "load connectors") { body ->
         val rows = body.listUnder("connectors", "items").filter {
             val connected = it["connection"].obj.str("status") == "connected"
-            (!onlyConnected || connected) && (filter == 0 || (filter == 1) == connected) && (query.isBlank() || (it.str("name") ?: "").contains(query, ignoreCase = true) || (it.str("category") ?: "").contains(query, ignoreCase = true))
-        }.let { l -> if (sortAsc) l.sortedBy { (it.str("name") ?: it.str("id") ?: "").lowercase() } else l.sortedByDescending { (it.str("name") ?: it.str("id") ?: "").lowercase() } }
-        if (rows.isEmpty()) StateBox(if (query.isBlank() && filter == 0) (if (onlyConnected) "Nothing connected yet" else "No connectors yet") else "No connectors match", if (onlyConnected) "Connect an app from Discover and it shows up here." else "Try another word.", null, null) else CCard {
+            (!onlyConnected || connected) && (query.isBlank() || (it.str("name") ?: "").contains(query, ignoreCase = true) || (it.str("category") ?: "").contains(query, ignoreCase = true))
+        }
+        if (rows.isEmpty()) StateBox(if (query.isBlank()) (if (onlyConnected) "Nothing connected yet" else "No connectors yet") else "No connectors match", if (onlyConnected) "Connect an app from Discover and it shows up here." else "Try another word.", null, null) else CCard {
             rows.forEachIndexed { i, c ->
                 val id = c.str("id") ?: return@forEachIndexed
                 val connected = c["connection"].obj.str("status") == "connected"
@@ -465,22 +434,18 @@ fun ConnectorsRoot(onBack: () -> Unit) {
     }
 }
 
-private val CUSTOMIZE_TABS = listOf("Skills", "Connectors", "Plugins", "More")
+private val CUSTOMIZE_TABS = listOf("Skills", "Connectors", "Plugins")
 
 /**
  * iOS CustomizeScreen (section: customize): Skills, Connectors and Plugins, each with Yours and Discover, a search
- * field, and the More tab (MCP servers, Webhooks, Sources, Publish). The drawer's Customize row and Settings > Customize open it.
- * Polished: the docking block title, search on the neutral fill, filter and sort in one glass pill, the ink Add pill
- * with its menu, and tabs whose underline slides.
+ * field, and the More group (MCP servers, Webhooks, Sources, Publish). The drawer's Customize row and Settings > Customize open it.
+ * Polished: the docking block title, search on the neutral fill, and tabs whose underline slides.
  */
 @Composable
 fun CustomizeRoot(host: SettingsHost, onBack: () -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
     var discover by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    var filter by remember { mutableIntStateOf(0) }
-    var sortAsc by remember { mutableStateOf(true) }
-    var createRequested by remember { mutableStateOf(false) }
     val scroll = rememberScrollState()
     var more by remember { mutableStateOf<String?>(null) }
     BackHandler { if (more != null) more = null else onBack() }
@@ -490,8 +455,7 @@ fun CustomizeRoot(host: SettingsHost, onBack: () -> Unit) {
         "sources" -> { SourcesPage { more = null }; return }
         "publish" -> { PublishPage({ more = null }, { more = null; tab = 2 }, host.onClose); return }
     }
-    fun go(t: Int, disc: Boolean) { tab = t; discover = disc; query = ""; filter = 0 }
-    val c = AllternitTheme.colors
+        val c = AllternitTheme.colors
     val dockOffset = rememberDockOffset(scroll)
     Box(Modifier.fillMaxSize().background(c.bgPrimary).statusBarsPadding().navigationBarsPadding().testTag("customizeScreen")) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
@@ -505,50 +469,23 @@ fun CustomizeRoot(host: SettingsHost, onBack: () -> Unit) {
                 if (host.account == null) {
                     StateBox("Sign in to customize", "Skills, connectors and plugins belong to your account.", "Sign in", host.onClose)
                 } else {
-                    val isMore = tab == 3
-                    if (!isMore) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            CustomizeSearch(query, "Search ${CUSTOMIZE_TABS[tab].lowercase()}", { query = it }, Modifier.weight(1f))
-                            FilterSortPill(
-                                filterLabels = when {
-                                    tab == 1 -> listOf("All", "Connected", "Not connected")
-                                    discover && tab == 0 -> listOf("All", "Added", "Not added")
-                                    else -> listOf("All", "On", "Off")
-                                },
-                                filter = filter, onFilter = { filter = it }, sortAsc = sortAsc, onSort = { sortAsc = !sortAsc },
-                            )
-                            AddInkPill(
-                                listOf(
-                                    "Create skill" to { go(0, false); createRequested = true },
-                                    "Browse skills" to { go(0, true) },
-                                    "Connect an app" to { go(1, true) },
-                                    "Plugin marketplaces" to { go(2, true) },
-                                    "Sources" to { more = "sources" },
-                                    "Publish" to { more = "publish" },
-                                ),
-                            )
-                        }
-                    }
-                    SlidingTabRow(CUSTOMIZE_TABS, tab, { go(it, discover && it != 3) }, Modifier.padding(top = 4.dp), carets = setOf(3))
-                    if (!isMore) {
-                        SlidingSegmented(listOf("Yours", "Discover"), if (discover) 1 else 0, { discover = it == 1; filter = 0 })
-                    }
+                    CustomizeSearch(query, "Search ${CUSTOMIZE_TABS[tab].lowercase()}", { query = it }, Modifier.fillMaxWidth())
+                    SlidingTabRow(CUSTOMIZE_TABS, tab, { tab = it; query = "" }, Modifier.padding(top = 4.dp))
+                    SlidingSegmented(listOf("Yours", "Discover"), if (discover) 1 else 0, { discover = it == 1 })
                     when (tab) {
-                        0 -> if (discover) SkillDirectory(host, query, filter, sortAsc) else CapabilitiesBody(host, plugins = false, query = query, allowCreate = true, filter = filter, sortAsc = sortAsc, createRequested = createRequested, onCreateHandled = { createRequested = false })
-                        1 -> ConnectorsBody(query, onlyConnected = !discover, filter = filter, sortAsc = sortAsc)
-                        2 -> if (discover) StateBox("Plugin marketplaces", "Add a marketplace source and publish plugins from Allternit on the web or iPhone. Plugins you install show up under Yours.", null, null) else CapabilitiesBody(host, plugins = true, query = query, allowCreate = false, filter = filter, sortAsc = sortAsc)
-                        else -> {
-                            SLabel("More")
-                            CCard {
-                                SRow("MCP servers", "customize_more_mcp", icon = DesignR.drawable.ph_plugs_connected_thin, onClick = { more = "mcp" })
-                                SDivider()
-                                SRow("Webhooks", "customize_more_webhooks", icon = DesignR.drawable.ph_webhooks_logo, onClick = { more = "webhooks" })
-                                SDivider()
-                                SRow("Sources", "customize_more_sources", icon = DesignR.drawable.ph_plugs_connected_thin, onClick = { more = "sources" })
-                                SDivider()
-                                SRow("Publish", "customize_more_publish", icon = DesignR.drawable.ph_arrow_square_out, onClick = { more = "publish" })
-                            }
-                        }
+                        0 -> if (discover) SkillDirectory(host, query) else CapabilitiesBody(host, plugins = false, query = query, allowCreate = true)
+                        1 -> ConnectorsBody(query, onlyConnected = !discover)
+                        else -> if (discover) StateBox("Plugin marketplaces", "Add a marketplace source and publish plugins from Allternit on the web or iPhone. Plugins you install show up under Yours.", null, null) else CapabilitiesBody(host, plugins = true, query = query, allowCreate = false)
+                    }
+                    SLabel("More")
+                    CCard {
+                        SRow("MCP servers", "customize_more_mcp", icon = DesignR.drawable.ph_plugs_connected_thin, onClick = { more = "mcp" })
+                        SDivider()
+                        SRow("Webhooks", "customize_more_webhooks", icon = DesignR.drawable.ph_webhooks_logo, onClick = { more = "webhooks" })
+                        SDivider()
+                        SRow("Sources", "customize_more_sources", icon = DesignR.drawable.ph_plugs_connected_thin, onClick = { more = "sources" })
+                        SDivider()
+                        SRow("Publish", "customize_more_publish", icon = DesignR.drawable.ph_arrow_square_out, onClick = { more = "publish" })
                     }
                 }
             }
