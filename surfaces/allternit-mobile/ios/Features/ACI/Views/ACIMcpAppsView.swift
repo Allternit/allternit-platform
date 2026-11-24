@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// ACI › MCP Apps, the web's `McpAppsView compact` (views/mini-apps/
 /// McpAppsView.tsx): "MCP Apps" header, one compact bar (Installed ·
@@ -64,43 +65,37 @@ struct ACIMcpAppsView: View {
     @State private var isConnectorsOpen = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            ACIViewHeader(title: "MCP Apps", subtitle: "Connect apps and services the agent can use.", bottom: 16)
-                .padding(.horizontal, 16)
-            ACICompactBar(query: $query, searchLabel: "Search MCP Apps", placeholder: "Search apps") {
-                ForEach(Tab.allCases, id: \.self) { item in
-                    ACIBarChip(title: item.label, isOn: tab == item) { go(item) }
+        Group {
+            if tab == .build {
+                // Build keeps its own scroll, so it keeps the serif title.
+                VStack(spacing: 0) {
+                    ACIViewHeader(title: "MCP Apps", subtitle: Self.subtitle, bottom: 16)
+                        .padding(.horizontal, 16)
+                    bar
+                    noticeRow
+                    ACIMcpBuildTab(model: model)
                 }
-            } actions: {
-                ACIBarIcon(systemName: "plus", label: "Add by URL") { isAddOpen = true }
-            }
-            .onChange(of: query) { _, next in
-                limit = Self.pageSize
-                if !next.isEmpty {
-                    route = .landing
-                    if tab == .build { go(.discover) }
+            } else {
+                ACIDockReader { dock in
+                    ACIDockingScroll(title: "MCP Apps", dock: dock) {
+                        // The pinned bar pins at the scroll view's top edge, below the docked title.
+                        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                            ACIViewHeader(title: "MCP Apps", subtitle: Self.subtitle, bottom: 16, dock: dock)
+                                .padding(.horizontal, 2)
+                            Section {
+                                if tab == .installed { installed } else { discover }
+                            } header: {
+                                VStack(spacing: 0) {
+                                    bar
+                                    noticeRow
+                                }
+                                .padding(.horizontal, -14)
+                                .background(Color("BgPrimary"))
+                            }
+                        }
+                    }
+                    .refreshable { await model.refresh() }
                 }
-            }
-            if let notice = model.notice ?? connect.note {
-                HStack(spacing: 12) {
-                    Text(notice)
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextPrimary"))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Dismiss") { model.notice = nil; connect.note = nil }
-                        .font(.system(size: 13))
-                        .foregroundColor(Color("TextSecondary"))
-                        .underline()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Color("FillNeutral"))
-                .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
-            }
-            switch tab {
-            case .installed: installed
-            case .discover: discover
-            case .build: ACIMcpBuildTab(model: model)
             }
         }
         .background(Color("BgPrimary"))
@@ -142,6 +137,45 @@ struct ACIMcpAppsView: View {
         }))
     }
 
+    private static let subtitle = "Connect apps and services the agent can use."
+
+    private var bar: some View {
+        ACICompactBar(query: $query, searchLabel: "Search MCP Apps", placeholder: "Search apps") {
+            ForEach(Tab.allCases, id: \.self) { item in
+                ACIBarChip(title: item.label, isOn: tab == item) { go(item) }
+            }
+        } actions: {
+            ACIBarIcon(systemName: "plus", label: "Add by URL") { isAddOpen = true }
+        }
+        .onChange(of: query) { _, next in
+            limit = Self.pageSize
+            if !next.isEmpty {
+                route = .landing
+                if tab == .build { go(.discover) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var noticeRow: some View {
+        if let notice = model.notice ?? connect.note {
+            HStack(spacing: 12) {
+                Text(notice)
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextPrimary"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Dismiss") { model.notice = nil; connect.note = nil }
+                    .font(.system(size: 13))
+                    .foregroundColor(Color("TextSecondary"))
+                    .underline()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color("FillNeutral"))
+            .overlay(alignment: .bottom) { Rectangle().fill(Color("BorderSubtle")).frame(height: 1) }
+        }
+    }
+
     private func go(_ next: Tab) {
         tab = next
         model.notice = nil
@@ -155,57 +189,43 @@ struct ACIMcpAppsView: View {
     @ViewBuilder
     private var installed: some View {
         if !model.loaded {
-            ScrollView {
-                PolishCardSkeletons(count: 6).padding(.horizontal, 16).padding(.top, 20)
-            }
+            PolishCardSkeletons(count: 6).padding(.horizontal, 2).padding(.top, 20)
         } else if let failure = model.failure, model.apps.isEmpty {
-            ScrollView {
-                SettingsFailureView(failure: failure, subject: "your apps") { Task { await model.refresh() } }
-                    .padding(16)
-            }
+            SettingsFailureView(failure: failure, subject: "your apps") { Task { await model.refresh() } }
+                .padding(2)
+                .padding(.vertical, 14)
         } else {
             let shown = q.isEmpty ? model.apps : model.apps.filter { $0.name.lowercased().contains(q) }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let failure = model.failure {
-                        HStack(spacing: 8) {
-                            Text(failure.message).foregroundColor(Color("TextSecondary"))
-                            Button("Retry") { Task { await model.refresh() } }
-                                .fontWeight(.medium)
-                                .foregroundColor(Color("TextPrimary"))
-                                .underline()
-                        }
-                        .font(.system(size: 14))
+            VStack(alignment: .leading, spacing: 16) {
+                if let failure = model.failure {
+                    HStack(spacing: 8) {
+                        Text(failure.message).foregroundColor(Color("TextSecondary"))
+                        Button("Retry") { Task { await model.refresh() } }
+                            .fontWeight(.medium)
+                            .foregroundColor(Color("TextPrimary"))
+                            .underline()
                     }
-                    if shown.isEmpty {
-                        VStack(spacing: 12) {
-                            Text(q.isEmpty ? "No apps connected yet. Add one and it shows up here." : "No installed apps match “\(query.trimmingCharacters(in: .whitespaces))”.")
-                                .font(.system(size: 14))
-                                .foregroundColor(Color("TextSecondary"))
-                                .multilineTextAlignment(.center)
-                            if q.isEmpty {
-                                Button("Browse apps") { go(.discover) }
-                                    .buttonStyle(DirectoryPrimaryButton())
-                            }
+                    .font(.system(size: 14))
+                }
+                if shown.isEmpty {
+                    VStack(spacing: 12) {
+                        EmptyBox(icon: "square.grid.2x2",
+                                 title: q.isEmpty ? "No apps connected yet" : "No matches",
+                                 line: q.isEmpty ? "Add one and it shows up here." : "No installed apps match “\(query.trimmingCharacters(in: .whitespaces))”.")
+                        if q.isEmpty {
+                            GlassPill(title: "Browse apps") { go(.discover) }
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 40)
-                        .background(Color("BgPanel"))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
-                        .padding(.top, 16)
-                    } else {
-                        PolishCardGrid {
-                            ForEach(shown) { app in installedCard(app) }
-                        }
+                    }
+                    .padding(.top, 16)
+                } else {
+                    PolishCardGrid {
+                        ForEach(shown) { app in installedCard(app) }
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 20)
-                .padding(.bottom, 40)
             }
-            .refreshable { await model.refresh() }
+            .padding(.horizontal, 2)
+            .padding(.top, 20)
+            .padding(.bottom, 40)
         }
     }
 
@@ -217,18 +237,12 @@ struct ACIMcpAppsView: View {
             status: app.connected ? .ok : .attention,
             statusLabel: app.connected ? "Connected" : "Needs sign-in",
             footer: app.connected ? "Connected" : "Needs sign-in",
+            radius: 20,
             onOpen: { selected = app },
             logo: { AppLogoView(id: app.logoKey ?? app.appId, name: app.name, url: app.url, size: 52) },
             action: {
                 if !app.connected && !app.readOnly {
-                    Button("Reconnect") { Task { await reconnect(app) } }
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(Color("TextPrimary"))
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
-                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
-                        .buttonStyle(.plain)
+                    GlassPill(title: "Reconnect") { Task { await reconnect(app) } }
                 }
             },
             extras: {
@@ -272,30 +286,30 @@ struct ACIMcpAppsView: View {
     private var discover: some View {
         let all = directory
         VStack(spacing: 0) {
-            if case .landing = route { categoryRow(all) }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if model.catalogState == .failed {
-                        HStack(spacing: 8) {
-                            Text(model.catalogMessage ?? "Couldn’t load apps.").foregroundColor(Color("TextSecondary"))
-                            Button("Retry") { Task { await model.loadCatalog() } }
-                                .fontWeight(.medium)
-                                .foregroundColor(Color("TextPrimary"))
-                                .underline()
-                        }
-                        .font(.system(size: 14))
-                    }
-                    if model.catalogState == .loading && model.catalog.isEmpty {
-                        PolishCardSkeletons(count: 8)
-                    } else {
-                        discoverBody(all)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 40)
+            if case .landing = route {
+                categoryRow(all)
+                    .padding(.horizontal, -14)
             }
-            .refreshable { await model.refresh() }
+            VStack(alignment: .leading, spacing: 16) {
+                if model.catalogState == .failed {
+                    HStack(spacing: 8) {
+                        Text(model.catalogMessage ?? "Couldn’t load apps.").foregroundColor(Color("TextSecondary"))
+                        Button("Retry") { Task { await model.loadCatalog() } }
+                            .fontWeight(.medium)
+                            .foregroundColor(Color("TextPrimary"))
+                            .underline()
+                    }
+                    .font(.system(size: 14))
+                }
+                if model.catalogState == .loading && model.catalog.isEmpty {
+                    PolishCardSkeletons(count: 8)
+                } else {
+                    discoverBody(all)
+                }
+            }
+            .padding(.horizontal, 2)
+            .padding(.top, 16)
+            .padding(.bottom, 40)
         }
     }
 
@@ -368,11 +382,7 @@ struct ACIMcpAppsView: View {
     @ViewBuilder
     private func paged(_ list: [DirectoryEntry], emptyText: String) -> some View {
         if list.isEmpty {
-            Text(emptyText)
-                .font(.system(size: 14))
-                .foregroundColor(Color("TextSecondary"))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
+            EmptyBox(icon: "square.grid.2x2", title: emptyText, line: "Try another category or search.")
         } else {
             DirectoryGrid(list: Array(list.prefix(limit)), busy: connect.busy, onOpen: { detail = $0 }, onAdd: add)
             if list.count > limit {
@@ -398,51 +408,48 @@ struct ACIMcpAppsView: View {
         let top = categories.prefix(5)
         let rest = categories.dropFirst(5)
         let restActive = rest.contains { $0.name == category }
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                pill("All", isOn: category == nil) { category = nil }
-                ForEach(top, id: \.name) { item in
-                    pill(item.name, isOn: category == item.name) { category = item.name }
-                }
-                if !rest.isEmpty {
-                    Menu {
-                        ForEach(rest, id: \.name) { item in
-                            Button("\(item.name)  \(item.count)") { category = item.name }
-                        }
-                    } label: {
-                        pillLabel(restActive ? (category ?? "More") : "More", isOn: restActive, caret: true)
-                    }
-                    .accessibilityLabel("More categories")
-                }
+        let picks = Binding<String>(
+            get: { category ?? "" },
+            set: { category = $0.isEmpty ? nil : $0; limit = Self.pageSize }
+        )
+        return HStack(spacing: 8) {
+            FilterPills<String>(
+                items: [FilterPills<String>.Item(id: "", title: "All")]
+                    + top.map { FilterPills<String>.Item(id: $0.name, title: $0.name) },
+                selection: picks
+            )
+            if !rest.isEmpty {
                 Menu {
-                    ForEach(SourceFilter.allCases, id: \.self) { option in
-                        Button { filter = option } label: {
-                            if filter == option { Label(option.label, systemImage: "checkmark") } else { Text(option.label) }
-                        }
+                    ForEach(rest, id: \.name) { item in
+                        Button("\(item.name)  \(item.count)") { category = item.name }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Text(filter.label)
-                        PhIcon("caret-down", size: 12)
-                    }
-                    .font(.system(size: 13))
-                    .foregroundColor(Color("TextPrimary"))
-                    .padding(.horizontal, 12)
-                    .frame(height: 32)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color("BgPanel")))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color("BorderSubtle"), lineWidth: 1))
+                    pillLabel(restActive ? (category ?? "More") : "More", isOn: restActive, caret: true)
                 }
-                .accessibilityLabel("Filter by source")
+                .accessibilityLabel("More categories")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            Menu {
+                ForEach(SourceFilter.allCases, id: \.self) { option in
+                    Button { filter = option } label: {
+                        if filter == option { Label(option.label, systemImage: "checkmark") } else { Text(option.label) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(filter.label)
+                    PhIcon("caret-down", size: 12)
+                }
+                .font(.system(size: 13))
+                .foregroundColor(Color("TextPrimary"))
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .background(Capsule().fill(PolishTokens.neutralFill))
+            }
+            .accessibilityLabel("Filter by source")
+            .fixedSize()
+            .padding(.trailing, 14)
         }
-    }
-
-    private func pill(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: { action(); limit = Self.pageSize }) { pillLabel(title, isOn: isOn, caret: false) }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(isOn ? .isSelected : [])
+        .padding(.vertical, 10)
     }
 
     private func pillLabel(_ title: String, isOn: Bool, caret: Bool) -> some View {
@@ -456,6 +463,41 @@ struct ACIMcpAppsView: View {
         .frame(height: 32)
         .background(Capsule().fill(isOn ? Color("TextPrimary") : Color("FillNeutral")))
         .fixedSize()
+    }
+}
+
+// MARK: - Dock bar centre
+
+private struct ACIDockTopKey: PreferenceKey {
+    static var defaultValue: CGFloat? = nil
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) { value = nextValue() ?? value }
+}
+
+/// Gives `ACIViewHeader(dock:)` / `ACIDockingScroll` the y of the ACI header's
+/// centre, in the coordinates of the view it wraps. The ACI views sit under
+/// `ACIPhoneHeader` (and sometimes a nudge card), so the centre is measured from
+/// the view's own top: window safe-area top + half the 52 pt bar, minus where
+/// this view starts on screen. Until measured it assumes the bar sits directly
+/// above the view.
+struct ACIDockReader<Content: View>: View {
+    @ViewBuilder var content: (ACIViewDock) -> Content
+    @State private var top: CGFloat? = nil
+
+    private static var headerCenter: CGFloat {
+        let safeTop = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?.safeAreaInsets.top ?? 0
+        return safeTop + PhoneHeader.barHeight / 2
+    }
+
+    var body: some View {
+        let center = top.map { Self.headerCenter - $0 } ?? -PhoneHeader.barHeight / 2
+        content(ACIViewDock(barCenter: center))
+            .background(GeometryReader { geo in
+                Color.clear.preference(key: ACIDockTopKey.self, value: geo.frame(in: .global).minY)
+            })
+            .onPreferenceChange(ACIDockTopKey.self) { top = $0 }
     }
 }
 
