@@ -261,6 +261,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // Harness & Bots 2.0: runtimes are the coding CLIs themselves (Claude Code, Codex, Antigravity…), so the
       // runtime registry, picker, runtime views, system layers and bot/runtime CLI pages name them and their brains.
       if (['api/runtimes.mdx', 'build-on-allternit/add-a-runtime.mdx', 'cli/runtime.mdx', 'cli/bot.mdx', 'concepts/agent-model.mdx', 'concepts/control-layer.mdx', 'concepts/system-layers.mdx', 'guides/agent-card.mdx', 'guides/brains-and-access.mdx', 'guides/runtime-views.mdx', 'guides/runtimes.mdx', 'architecture.mdx', 'api/agent-sessions.mdx', 'byoc/managed-agents.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Terminal workspace: tabs take the coding agent's name, and the resume/fork table lists each CLI's own commands.
+      if (['code/terminal-and-prompt.mdx', 'code/on-a-phone.mdx', 'api/terminal.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Guard's model picker lists the detected CLI brains and their source ids by name.
       if (mdxPath.endsWith('guides/guard.mdx')) continue;
       // gizzi connect names the plans it signs in to (ChatGPT direct sign-in, plan rows).
