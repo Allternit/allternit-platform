@@ -1,9 +1,49 @@
 ---
 title: "Phone titles, intros and arrivals"
-description: "How tab titles, first-visit intros, arrivals, glass buttons, haptics and switchers work on the phone layout, the PWA, the iPhone app and the Android app."
+description: "How docking titles, first-visit intros, arrivals, glass buttons, haptics and switchers work on the phone layout, the PWA, Desktop, the iPhone app, the Android app and Gizzi Code."
 ---
 
-This page covers the phone finish. It applies to the iPhone app, the Android app, m.allternit.com and the phone layout of ai.allternit.com. Desktop shows the titles, intros and arrivals but has no drawer push or brain sheet.
+This page covers the phone finish. It applies to the iPhone app, the Android app, m.allternit.com and the phone layout of ai.allternit.com. Desktop shows the titles, intros and arrivals but has no drawer push or brain sheet. Gizzi Code shows block titles only.
+
+## Views with a docking title
+
+Every titled view opens with its name in the A:// block type and docks it into the top bar as you scroll. One shared header does this on each surface, so a view does not need its own code.
+
+- **Tabs:** Projects, Artifacts, Automation Tasks, Customize and Freeweights.
+- **Mode titles:** Home, Bots, ACI and Code. See below.
+- **Other views:** Group chats, Marketplace, Create bot, MCP Apps, ACI Extensions, Computers, Teach and Settings. Each keeps its existing name. On iOS, Marketplace now reads "Marketplace" instead of "Discover agents".
+
+| Surface | Where the title docks |
+| --- | --- |
+| Phone layout and PWA | The top bar (PhoneHeader). |
+| Desktop | A slim 44 px bar at the top of the view's own pane, centred. All views that use the shared ViewHeader get it. |
+| iPhone app | PhoneSettingsPage, ACIViewHeader and PhoneHeader. Lists stay lists. |
+| Android app | LibraryHeader, SPage, the ACI headers and the Code bar. |
+| Gizzi Code | The title is drawn in half-block type at the top of the view. It does not dock, because a terminal redraws whole rows. |
+
+Gizzi Code shows the title on `/bots`, `/mcp`, `/config`, `/computers`, the plugin marketplace, `/artifact`, `/customize`, `/cowork-project` and `/model`.
+
+## Mode titles
+
+The four modes use these titles:
+
+- **Home:** the A://TERNIT wordmark, with the A:// mark in front. The greeting stays below it.
+- **Bots:** "BOTS".
+- **ACI:** "ACI".
+- **Code:** "GIZZI CODE".
+
+The A:// mark appears only on Home. The mark's centre stays coral, even while the letters fly.
+
+### Code computer name
+
+At the top of Code, the top bar shows the computer name. The computer picker works as before. When the first letter starts to land, the name fades out and GIZZI CODE takes the centre. Scroll back up and the name returns.
+
+## Docking rules
+
+- **Short screens keep the big title.** If the content fits the screen, the title does not dock. This holds on the Home and Code launch screens. Nothing moves when you scroll a little.
+- **Chat logs never dock.** The Home thread and the group chat room keep their current headers. The dock goes on the group list instead.
+- **Sheets dock into their own header.** The Create bot sheet docks its title into the sheet's own top bar, next to Cancel and Save.
+- **No wrapping.** A title that is too wide for the screen shrinks to fit. It never wraps onto two lines.
 
 ## Tab titles
 

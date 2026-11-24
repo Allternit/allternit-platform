@@ -5549,12 +5549,19 @@
         "allternit/surfaces/allternit-mobile/scripts",
         "allternit/cmd/allternit-cloud-api/src/routes/me_flags.rs",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/components",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/screens/bots-pane",
+        "allternit/surfaces/allternit-mobile/ios/Features/Bots",
+        "allternit/surfaces/allternit-mobile/ios/Features/Code",
         "allternit/surfaces/docs"
       ],
       "decisions": [
         {
           "on": "2026-11-23",
           "note": "2026-11-23 Eoj approved mobile refresh A/A2/B: block-type tab titles that dock letter by letter on scroll, first-visit intros per tab and mode"
+        },
+        {
+          "on": "2026-11-24",
+          "note": "Eoj approved PLAN-2: every titled view docks its title on every surface through one shared header (web ViewHeader, iOS PhoneSettingsPage/ACIViewHeader/PhoneHeader, Android LibraryHeader/SPage/ACI headers/CodeScaffold). Mode titles: Home A://TERNIT, Bots BOTS, ACI ACI, Code GIZZI CODE with the computer-name swap. Short screens keep the big title; chat logs never dock; sheets dock into their own header."
         }
       ],
       "evidence": [
