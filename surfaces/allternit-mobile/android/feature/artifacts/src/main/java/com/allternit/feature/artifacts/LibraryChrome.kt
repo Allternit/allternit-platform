@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.zIndex
 import com.allternit.core.design.DockingBlockTitle
+import com.allternit.core.design.dockDescription
 import com.allternit.core.design.LocalDockOffset
 import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
@@ -87,6 +88,8 @@ fun DockTitleLayer(
     barCenter: Dp = com.allternit.core.design.DockSpec.BAR_CENTER.dp,
     top: Dp = com.allternit.core.design.DockSpec.TOP.dp,
     label: String? = null,
+    /** The grey line under the big title; fades and drifts with the scroll but is visible at rest. */
+    description: String? = null,
 ) {
     var originX by remember { mutableIntStateOf(0) }
     var originY by remember { mutableIntStateOf(0) }
@@ -106,6 +109,17 @@ fun DockTitleLayer(
             },
     ) {
         DockingBlockTitle(title, scrollOffset, barCenter, Modifier, top, markLabel = label)
+        if (!description.isNullOrEmpty()) {
+            val ds = com.allternit.core.design.DockSpec
+            val lines = com.allternit.core.design.wrapLines(title).size.coerceAtLeast(1)
+            Text(
+                description, color = AllternitTheme.colors.textSecondary, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .padding(start = ds.LEFT.dp, end = ds.LEFT.dp, top = (top.value + lines * ds.LG + 6f).dp)
+                    .dockDescription(scrollOffset)
+                    .semantics { contentDescription = "" },
+            )
+        }
     }
 }
 
@@ -125,7 +139,7 @@ fun LibraryHeader(
     val offset = LocalDockOffset.current
     if (offset != null && title.isNotBlank()) {
         Box(Modifier.fillMaxWidth().zIndex(1f)) {
-            DockTitleLayer(title, offset, label = if (subtitle.isNullOrEmpty()) null else "$title, $subtitle")
+            DockTitleLayer(title, offset, label = if (subtitle.isNullOrEmpty()) null else "$title, $subtitle", description = subtitle)
             LibraryHeaderRow(title, null, onBack, backTag, leading, glass, trailing, showTitle = false)
         }
     } else {
