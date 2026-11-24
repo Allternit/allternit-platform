@@ -119,6 +119,8 @@ pub mod phone_sync;
 pub mod account_sync;
 pub mod cloud_files;
 pub mod relay_auth;
+/// Computers console node routes (`/v1/host/*`, served by host-probe).
+pub mod host_routes;
 pub mod runtime_events;
 /// `status.snapshot` producer for the iPhone system surfaces.
 pub mod status_snapshot;

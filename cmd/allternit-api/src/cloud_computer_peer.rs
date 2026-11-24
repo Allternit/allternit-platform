@@ -238,10 +238,15 @@ enum Report {
 
 async fn report(config: &PairedConfig, mesh_ip: &str) -> Report {
     let url = format!("{}/api/v1/computers/paired/{}/report", config.cloud_url.trim_end_matches('/'), config.computer_id);
+    let mut body = serde_json::json!({ "meshIp": mesh_ip, "vncReady": false });
+    // Computers console (D4): the HostSnapshot rides the report too (cloud-api stores it as this computer's sample).
+    if let Some(sample) = crate::host_routes::host_api().host_sample().await {
+        body[crate::netops::presence::HOST_SAMPLE_KEY] = sample;
+    }
     let sent = crate::net_client::client()
         .post(url)
         .header("x-allternit-computer-secret", &config.secret)
-        .json(&serde_json::json!({ "meshIp": mesh_ip, "vncReady": false }))
+        .json(&body)
         .timeout(Duration::from_secs(20))
         .send()
         .await;
