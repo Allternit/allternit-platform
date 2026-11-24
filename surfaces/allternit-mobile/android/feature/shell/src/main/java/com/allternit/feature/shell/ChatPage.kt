@@ -38,13 +38,13 @@ import com.allternit.core.design.GlassPill
 
 /** A composer send → the chat's send request (iOS ChatView onSend: model, effort, files, tools). */
 internal fun ComposerDraft.toChatRequest(): ChatSendRequest = ChatSendRequest(
-    text = text,
+    text = if (agentModeId == "image-codex") "Generate an image using media_generate with lane \"codex\" and provider \"codex\" on my selected runtime. Ask me to confirm before sending. Image brief:\n\n$text" else text,
     browserImage = agentModeId == "image",
     personTurn = true,
     attachments = attachments.map { ChatAttachmentInput(it.name, it.uri, it.kind, it.bytes, it.mediaType) },
     runtimeModelId = modelId,
     effort = effort,
-    agentModeId = agentModeId,
+    agentModeId = if (agentModeId == "image-codex") "image" else agentModeId,
     webSearch = webSearch,
     research = research,
 )

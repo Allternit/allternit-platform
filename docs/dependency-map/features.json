@@ -5484,19 +5484,25 @@
       "label": "Picture and motion generation with live progress",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "media_generate renders pictures and motion from code, or requests ChatGPT images in the same device’s ACI browser. Live progress carries real stages, thumbnails and download bytes to chat and the Motion editor.",
+      "description": "media_generate renders pictures and motion from code, or requests ChatGPT images in the same device’s ACI browser. Live progress carries real stages, thumbnails and download bytes to chat and the Motion editor. Codex CLI is an explicit image option and confirmed backup on the selected runtime, with structured image results and no API-key fallback.",
       "touches": [
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
         "allternit/cmd/gizzi-code/src/runtime/server",
         "allternit/cmd/gizzi-code/src/runtime/providers",
         "allternit-ai/src/components/ai-elements",
-        "allternit-ai/src/lib/media"
+        "allternit-ai/src/lib/media",
+        "allternit/surfaces/allternit-mobile/ios/Features/Chat/Views/ChatView.swift",
+        "allternit/surfaces/allternit-mobile/android/feature/shell"
       ],
       "decisions": [
         {
           "on": "2026-11-21",
           "note": "Eoj approved the generation-experience plan (~/.claude/plans/generation-experience-2026-11-20.md): one progress contract (PaneRender.ProgressDetail, POST /pane-render/:id/progress, pane_render.progress event, forwarded by media_generate as metadata.progress_detail) that every surface mirrors."
+        },
+        {
+          "on": "2026-11-23",
+          "note": "Eoj requested Codex CLI image generation as another product option and backup to ChatGPT ACI. Shared runtime tool plus web, iOS and Android controls; each send requires confirmation."
         }
       ],
       "evidence": [

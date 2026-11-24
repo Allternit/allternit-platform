@@ -757,6 +757,15 @@ struct ChatContentView: View {
                 .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isStreaming)
                 .font(.footnote)
             }
+            Button("Create image with Codex CLI", systemImage: "photo.badge.plus") {
+                let prompt = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+                viewModel.sendMessage("Generate an image using media_generate with lane \"codex\" and provider \"codex\" on my selected runtime. Ask me to confirm before sending. Image brief:\n\n" + prompt,
+                                      runtimeModelId: modelForSend, effort: modelStore.effortForSend, personInitiated: true)
+                inputText = ""
+            }
+            .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isStreaming || viewModel.isCreatingSession || viewModel.pendingBrowserImage != nil || !attachmentStore.attachments.isEmpty || (modelForSend ?? "").isEmpty)
+            .font(.footnote)
+            .accessibilityHint("Uses Codex CLI and its ChatGPT sign-in on the selected runtime. You confirm before it runs. Also available as a backup to ChatGPT images.")
             ACILocalImageOutputs(sessionId: viewModel.currentSessionId)
             RunningGenerationsStrip()
                 // A signed-out error card's "Connect ChatGPT" opens the sign-in here.

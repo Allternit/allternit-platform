@@ -49,3 +49,15 @@ The explicit Desktop and iOS image paths integrate with their existing local per
 ## Verification boundary
 
 Source syntax and documentation checks do not establish ChatGPT WebView support. The release train must compile each native target and run the focused contract/ownership/history tests. A real signed-in image run on each supported device must verify prompt confirmation, image mode, current-turn correlation, byte download, original-chat output, Stop, navigation, suspension, account change and replay after interruption. Report unsupported authentication or changed provider markup explicitly. The successful standalone Codex and Safari probes are separate evidence.
+
+## Codex CLI provider
+
+`media_generate` also accepts `lane: "codex", provider: "codex"` for image prompts. `provider: "codex"` or `"codex-cli"` with the ACI or legacy subscription lane selects the same explicit Codex option. A person turn and an always-ask `subscription` permission are required. There is no automatic fallback after browser submission.
+
+The executor is `cmd/gizzi-code/src/runtime/tools/builtins/codex-image.ts` on the selected runtime. It starts the installed CLI with `codex app-server --listen stdio://`, checks `account/read` for ChatGPT authentication, starts an ephemeral read-only thread, and asks only for built-in image generation. API-key environment variables are removed for the child. Shell tools are disabled, and requests for other approvals are refused. The 10-minute job owns cancellation and process teardown.
+
+Only a completed structured `imageGeneration` item is accepted. Inline bytes or an artifact path under the job folder or Codex generated-images folder pass through the existing bounded PNG validator before attachment. Agent text, markdown paths, arbitrary file paths and file references without downloadable bytes do not establish success. Stream data is bounded to 24 MiB and PNG bytes to 8 MiB. Progress uses the existing picture stages and tool metadata, so every client receives the same card.
+
+Desktop, web, PWA, iOS and Android send an explicit Codex image request through normal runtime chat. Gizzi CLI/TUI can call the same media tool directly. This execution path does not alter the browser-image pane-render contract. The existing user and developer guide navigation entries cover both provider choices.
+
+Protocol evidence: installed Codex 0.171.0 app-server JSON schemas include `imageGeneration`, `savedPath`, `result` and `fileId`; OpenAI source: https://github.com/openai/codex/tree/main/codex-rs/ext/image-generation.

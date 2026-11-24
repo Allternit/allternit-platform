@@ -1,6 +1,6 @@
 ---
-title: Make an image in ACI
-description: Generate an image on the device where you are chatting
+title: Make an image
+description: Choose ChatGPT ACI or Codex CLI for images
 ---
 
 <Note>This device-local image flow is in development. Its app changes must pass the build train and real device checks before release.</Note>
@@ -30,3 +30,13 @@ Web and PWA browsers cannot assume they can control ChatGPT across origins. When
 Android stores a new phone-only image conversation locally. Its image actions and Outputs need no computer. The existing computer-backed text-model route still needs a separate runtime chat; the image flow does not change that model transport.
 
 For the request, progress and result contract, see [Device-local ACI image jobs](/dev/aci-image-jobs).
+
+## Codex CLI option and backup
+
+Choose **Create image with Codex CLI** beside the composer on Desktop, web, PWA or iPhone. On Android, select **Image · Codex CLI** in the composer modes. Enter the image brief and confirm the request when asked. A chat brain and a selected runtime are required.
+
+This option runs the installed Codex CLI on your selected runtime, using that runtime's ChatGPT sign-in. Install a current Codex CLI and run `codex login` there first. It is separate from the same-device ChatGPT ACI browser. Web and phone clients can receive its image through their runtime chat. This option does not use an OpenAI API key.
+
+If ChatGPT ACI fails, you can choose Codex CLI as a backup with the same brief. Check an interrupted ChatGPT conversation before creating another image. The app does not automatically resend an ambiguous browser request. Each Codex request asks for confirmation.
+
+The result must contain actual image bytes. A text reply from Codex is not a generated image. Missing sign-in, unsupported CLI versions, unavailable image tools, limits and cancellation appear as failures. Use Stop in the running chat to cancel. Image edits with reference attachments are not supported by this option.

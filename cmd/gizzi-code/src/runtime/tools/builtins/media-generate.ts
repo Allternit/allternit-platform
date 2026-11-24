@@ -4,6 +4,7 @@ import { LabelField } from "@/runtime/primitives/gap-types"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { PaneRender } from "@/runtime/integrations/pane-render"
 import DESCRIPTION from "@/runtime/tools/builtins/media-generate.txt"
+import { generateCodexImage } from "./codex-image"
 
 interface Meta {
   ok: boolean
@@ -203,6 +204,25 @@ async function aciImage(prompt: string, title: string, provider: string | undefi
   }
 }
 
+async function codexImage(prompt: string, title: string, ctx: Tool.Context) {
+  const user = [...ctx.messages].reverse().find((m) => m.info.role === "user")?.info
+  if (!user || user.role !== "user" || user.bot || !isPersonTurn(user.metadata)) {
+    return { title: `Image: ${title}`, output: "Codex images need a request you send yourself in chat. Nothing was sent.", metadata: meta({ ok: false, lane: "codex", provider: "codex", code: "person_required" }) }
+  }
+  // Always-ask permission works on native clients and the TUI as well as web.
+  // This is a local CLI job, not a remote Subscription Fabric task.
+  await ctx.ask({ permission: "subscription", patterns: ["codex:image.generate"], always: [], metadata: {
+    toolName: "media_generate", provider: "codex", prompt,
+    summary: `Create this image with Codex CLI on the selected runtime, using its ChatGPT sign-in. This is a separate request from ChatGPT ACI.\n\n${prompt}`,
+  } })
+  const result = await generateCodexImage(prompt, ctx.abort, reportProgress(ctx, `Image: ${title}`, { lane: "codex", provider: "codex" }))
+  const image = browserImageResult(result)
+  if (!image) return { title: `Image: ${title} — not finished`, output: result.error ?? "Codex returned an invalid or oversized PNG. No image was attached.", metadata: meta({ ok: false, lane: "codex", provider: "codex", code: result.code ?? "invalid_image" }) }
+  return { title: `Image: ${title}`, output: `Made "${title}" with Codex CLI. The image is attached and available in Outputs.`,
+    metadata: meta({ ok: true, lane: "codex", provider: "codex", width: image.width, height: image.height }),
+    attachments: [{ type: "file" as const, mime: "image/png", url: image.image, filename: `${title}.png` }] }
+}
+
 export const MediaGenerateTool = Tool.define("media_generate", {
   description: DESCRIPTION,
   parameters: z.object({
@@ -211,13 +231,13 @@ export const MediaGenerateTool = Tool.define("media_generate", {
     prompt: z.string().describe("What the user asked for, in their words"),
     title: z.string().optional().describe("Short name for the output; reuse it to replace a previous version"),
     lane: z
-      .enum(["native", "aci", "cloud", "subscription", "own_key"])
+      .enum(["native", "aci", "codex", "cloud", "subscription", "own_key"])
       .optional()
       .describe("How to make it; aci = ChatGPT image in this device’s ACI browser after prompt confirmation; native = code rendering. subscription is a legacy alias of aci, never a remote route."),
     provider: z
       .string()
       .optional()
-      .describe("ACI image provider: chatgpt. No automatic provider or device fallback."),
+      .describe("Image provider: chatgpt (device-local ACI) or codex (Codex CLI on the selected runtime, with confirmation). Codex is also an explicit backup after an ACI failure. Never automatically retry an ambiguous browser submission."),
     format: PaneRender.Format.optional().describe("Native lane: svg, html or canvas (video: canvas)"),
     code: z
       .string()
@@ -237,6 +257,9 @@ export const MediaGenerateTool = Tool.define("media_generate", {
     const noun = params.kind === "video" ? "Video" : "Image"
     const title = (params.title ?? params.prompt).trim().slice(0, 80) || noun
     const lane = params.lane ?? (params.code ? "native" : params.kind === "image" ? "aci" : undefined)
+    if (params.kind === "image" && (lane === "codex" || (["aci", "subscription"].includes(lane ?? "") && ["codex", "codex-cli"].includes(params.provider ?? "")))) {
+      return codexImage(params.prompt, title, ctx)
+    }
     if ((lane === "aci" || lane === "subscription") && params.kind === "image") {
       // The old name remains accepted but never routes back to Sessions.
       return aciImage(params.prompt, title, params.provider, ctx)
