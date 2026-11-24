@@ -187,6 +187,15 @@ internal fun ShellHome(
     val codeScroll = rememberScrollState()
     val codeDock = rememberDockOffset(codeScroll)
     val codeDocks = mode == ShellMode.Code && codeHome != null && onCodeSessions != null
+    // T13: the bar keeps the selected computer's name (iOS ShellHeaderTitle); "Code" when none is selected.
+    var computerName by remember { mutableStateOf<String?>(null) }
+    val codeHost = codeActions?.host
+    LaunchedEffect(codeDocks, codeHost) {
+        if (codeDocks && codeHost != null) {
+            val relay = codeHost.backend.relay
+            computerName = relay.listDevices()?.firstOrNull { it.id == relay.activeRuntimeId }?.name?.takeIf { it.isNotBlank() }
+        }
+    }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Box(Modifier.fillMaxWidth().zIndex(1f)) {
         if (mode == ShellMode.Home) {
@@ -237,8 +246,9 @@ internal fun ShellHome(
             titleContent = if (codeDocks) ({
                 val nLetters = remember { com.allternit.core.design.titleCells("GIZZI CODE").n }
                 Text(
-                    text = mode.label,
+                    text = computerName ?: mode.label,
                     color = AllternitTheme.colors.textPrimary,
+                    overflow = TextOverflow.Ellipsis,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = (-0.2).sp,
