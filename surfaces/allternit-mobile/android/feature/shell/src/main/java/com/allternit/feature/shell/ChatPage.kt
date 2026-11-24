@@ -158,7 +158,8 @@ internal fun ChatPage(
                 editingId = null
                 prefill = ""
             },
-            greeting = { LaunchGreeting() },
+            // T7: no dock inside the chat thread; its empty state keeps the plain mark greeting.
+            greeting = { LaunchGreeting(showMark = true) },
             composer = {
                 com.allternit.feature.chat.voice.VoiceBarSlot(voiceHost, onEnd = endVoice)
                 Composer(
